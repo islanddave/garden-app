@@ -5,6 +5,7 @@ import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
+import StorageDeadlineAlert from '../components/today/StorageDeadlineAlert.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
 import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
@@ -56,6 +57,16 @@ export default function Today() {
       <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
         {formatDate(data?.plan_date) || 'Your garden, at a glance'}
       </p>
+
+      {/* V4-STORAGEDEADLINE-001 — storage-crop lift deadlines, as an OPERATIONAL ALERT rather than
+          a band (Dave 2026-08-14). "Dig the sweet potatoes this week or lose them" is time-bounded,
+          actionable, and failure-to-act destroys the crop — the §Reward UX operational-alert
+          category, not the "these look ready" standing list he unmounted the day before (BD-008).
+          Ambient by construction: renders NOTHING unless a sourced deadline is genuinely near, and
+          goes silent again 14 days past it. On 2026-08-14 it renders nothing and will until Oct 1;
+          that silence IS the design. Deliberately ABOVE the cultivation lead — a crop about to be
+          lost outranks a sow window about to close. */}
+      <StorageDeadlineAlert />
 
       {/* PANEL Q1 (harvest-panel-decisions-20260812.md) — the cultivation lead line, the demoted
           third region of Today: one or two imperative lines at the very top, no heading, no count,
