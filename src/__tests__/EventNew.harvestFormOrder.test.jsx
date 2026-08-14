@@ -124,7 +124,7 @@ describe('V4-HARVFORMORDER-001 — harvest order', () => {
 
     // Collapsed: none of the deferred controls are in the tree at all.
     expect(screen.queryByLabelText('Notes')).toBe(null)
-    expect(screen.queryByLabelText('Event date and time')).toBe(null)
+    expect(screen.queryByLabelText('Event date')).toBe(null)
     expect(screen.queryByText('Take photo')).toBe(null)
 
     const toggle = screen.getByTestId('harvest-more-toggle')
@@ -136,7 +136,7 @@ describe('V4-HARVFORMORDER-001 — harvest order', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
 
     const notes = screen.getByLabelText('Notes')
-    const when = screen.getByLabelText('Event date and time')
+    const when = screen.getByLabelText('Event date')
     expect(screen.getByText('Take photo')).toBeTruthy()
     expect(precedes(notes, when)).toBe(true)
     // The whole disclosure sits BELOW the quantity field it was moved out of the way of.
@@ -205,7 +205,7 @@ describe('V4-HARVFORMORDER-001 — every OTHER type keeps the shipped photo-firs
       expect(order.includes('Notes')).toBe(false)
       const notesToggle = screen.getByTestId('notes-disclosure')
       expect(screen.queryByLabelText('Notes')).toBe(null)
-      const when = screen.getByLabelText('Event date and time')
+      const when = screen.getByLabelText('Event date')
       expect(when.compareDocumentPosition(notesToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       // No Harvest panel, and none of S4's machinery leaks onto this path.
       expect(order.includes('Harvest *')).toBe(false)

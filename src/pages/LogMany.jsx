@@ -6,6 +6,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups, PRIMARY_EVENT_TYPES } from '../lib/eventTypes.js'
 import Icon from '../components/Icon.jsx'
+import Section from '../components/FormSection.jsx'
 import { ScopeChecklist } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePicker.jsx'
@@ -332,7 +333,7 @@ export default function LogMany() {
     <Shell>
       <Header />
 
-      <Section label="What happened?">
+      <Section label="What happened?" style={SECTION_SPACING}>
         {/* V4-EVENTSEL-003: the SAME tile-grid selector as Log Event (EventNew). primaries =
             shared first-class set minus photo; available = BATCH_EVENT_TYPES scopes the "More"
             panel to batch-eligible types; handlePick routes harvest to per-plant, else selects. */}
@@ -359,7 +360,7 @@ export default function LogMany() {
           it reads as a property of the batch rather than of any one planting. Per-row overrides
           live in the Review list below and are opt-in: the batch chip alone is a complete answer. */}
       {depthApplies && (
-        <Section label="How much water">
+        <Section label="How much water" style={SECTION_SPACING}>
           <WaterDepthChips
             value={batchDepth}
             onChange={(v) => { setBatchDepth(v); setBatchDepthTouched(true) }}
@@ -371,9 +372,16 @@ export default function LogMany() {
         </Section>
       )}
 
-      <Section label="When?">
+      <Section label="When?" style={SECTION_SPACING}>
         {/* V3-EVENT-008 (V002 §5): back-dating for bulk frost / bring-in events logged the
-            morning after. Defaults to today (empty = server "now"); future dates blocked. */}
+            morning after. Defaults to today (empty = server "now"); future dates blocked.
+
+            V4-EVENTSEL-005: this surface KEPT `type="date"` and Log Event moved onto it — see the
+            long note at Log Event's When block. Log Event's datetime-local was discarding the time
+            it collected before the POST, so converging here was converging on the honest control.
+            `max` and "Reset to today" stay: they are real Log-Many affordances (a bulk back-date is
+            the whole point of this field), not scaffold divergence. The aria-label likewise keeps
+            its back-date hint — that hint describes an affordance Log Event does not have. */}
         <input
           type="date"
           value={eventDate}
@@ -489,16 +497,12 @@ function Header() {
     </div>
   )
 }
-function Section({ label, children }) {
-  // V4-EVENTSEL-004: card styling matches Log Event's Section (white bordered box + uppercase
-  // label) so the event selector looks IDENTICAL on both surfaces (neat box, "More" contained).
-  return (
-    <div style={{ marginBottom: 16, backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '16px 18px' }}>
-      {label && <label style={{ display: 'block', fontSize: '0.77rem', fontWeight: 700, color: P.mid, marginBottom: 10, letterSpacing: '0.4px', textTransform: 'uppercase' }}>{label}</label>}
-      {children}
-    </div>
-  )
-}
+// V4-EVENTSEL-005: the section card now comes from the shared <Section> (components/FormSection)
+// that Log Event also renders — V4-EVENTSEL-004 had matched two private copies by hand and said so
+// in a comment, which is the arrangement this replaces. Log Many's sections are loose children of a
+// plain container rather than flex children of a gap:16 <form>, so they pass their own outer
+// spacing; the card itself is identical on both surfaces because it is now literally one module.
+const SECTION_SPACING = { marginBottom: 16 }
 function Shell({ children }) {
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>

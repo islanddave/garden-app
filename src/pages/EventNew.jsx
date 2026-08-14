@@ -35,6 +35,7 @@ import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, SelectChip } from '../components/forms'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
+import Section from '../components/FormSection.jsx'
 import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedback.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
@@ -1853,11 +1854,31 @@ export default function EventNew() {
           /* ── Date / time ── */
   const whenBlock = (
           <Section label="When?">
+            {/* V4-EVENTSEL-005 — ONE When control across Log Event and Log Many, and it is
+                `type="date"`, NOT `datetime-local`.
+
+                The row's original note said homogenize ON datetime-local. That direction was
+                falsified by the submit path: line ~987 does `form.event_date.split('T')[0]` and
+                sends the DATE ONLY. The time this picker collected was never transmitted — the
+                server then re-synthesizes one, `normalizeEventDate()` turning a bare YYYY-MM-DD
+                into `T12:00:00Z`. That is the origin of the noon-UTC placeholder sitting on 545 of
+                577 harvests: a control that asked for a time, dropped it, and had a fake one
+                stamped back on. Homogenizing Log Many onto this control would have spread that.
+
+                So the two surfaces converge on the honest control instead. Nothing is lost — no
+                user-entered time ever reached the database from here. Restoring real times is a
+                server change (the batch/single INSERT plus an offset-aware parse) and is not this
+                row's work; when it happens, BOTH surfaces move together from one component.
+
+                `.slice(0, 10)` is not cosmetic: stashed drafts written by earlier builds hold a
+                datetime-local string (`2026-08-01T10:00`), and an <input type="date"> renders a
+                value in that shape as EMPTY. Slicing keeps a restored draft's date visible. The
+                submit-side `.split('T')[0]` already tolerates both shapes. */}
             <Input
-              type="datetime-local"
-              value={form.event_date}
+              type="date"
+              value={form.event_date.slice(0, 10)}
               onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
-              aria-label="Event date and time"
+              aria-label="Event date"
             />
           </Section>
   )
@@ -2222,23 +2243,10 @@ function PreserveOffer({ onOpen, onDismiss }) {
   )
 }
 
-function Section({ label, children }) {
-  return (
-    <div style={{
-      backgroundColor: P.white, border: `1px solid ${P.border}`,
-      borderRadius: 10, padding: '16px 18px',
-    }}>
-      <label style={{
-        display: 'block', fontSize: '0.77rem', fontWeight: 700,
-        color: P.mid, marginBottom: 10,
-        letterSpacing: '0.4px', textTransform: 'uppercase',
-      }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
+// V4-EVENTSEL-005: `Section` was declared identically here and in LogMany.jsx. It is now imported
+// from the shared components/FormSection.jsx (see the import at the top of this file). No `style`
+// is passed at the call sites — these sections are flex children of the gap:16 <form>, so the card
+// deliberately carries no outer margin of its own.
 
 // SuccessScreen retained for reference; V1.2a-1 flow navigates straight to dashboard.
 // eslint-disable-next-line no-unused-vars

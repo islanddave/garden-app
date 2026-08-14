@@ -191,12 +191,12 @@ describe('BUG-HARVUNITSTICKY-001 — planting swap re-seeds an explicitly touche
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2.5' } })
     fireEvent.click(screen.getByTestId('harvest-more-toggle'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'first picking' } })
-    fireEvent.change(screen.getByLabelText('Event date and time'), { target: { value: '2026-08-10T14:30' } })
+    fireEvent.change(screen.getByLabelText('Event date'), { target: { value: '2026-08-10' } })
     await pickPlanting('pl-cuke')
     await waitFor(() => expect(unitValue()).toBe('count'))
     expect(screen.getByLabelText('Harvest quantity').value).toBe('2.5')
     expect(screen.getByLabelText('Notes').value).toBe('first picking')
-    expect(screen.getByLabelText('Event date and time').value).toBe('2026-08-10T14:30')
+    expect(screen.getByLabelText('Event date').value).toBe('2026-08-10')
   })
 
   // REGRESSION PIN — the entry-level reset on event-type change (EventNew ~L528) still works:
