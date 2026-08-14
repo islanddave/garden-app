@@ -1,13 +1,4 @@
-// `React` is imported for its SIDE EFFECT on the unit-test transform, not because this file names
-// it. The Vite BUILD uses the automatic JSX runtime (no React binding needed), but the vitest
-// pipeline here (vitest 2.1.9 against @vitejs/plugin-react 5.2.0) does not apply the plugin's
-// automatic transform, so esbuild's default CLASSIC transform emits `React.createElement` and any
-// rendering test of this file dies with `ReferenceError: React is not defined`. Every component in
-// this repo that a unit test renders already imports React; this file was simply never rendered in
-// a test until deleteNotFoundTolerance.test.jsx. Harmless in the bundle, required for coverage.
-// Seven sibling files still lack it (Achievements, AuthCallback, Home, Inventory, Login, Tasks,
-// ZonePicker) and will hit the same wall the day someone writes their first render test.
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'

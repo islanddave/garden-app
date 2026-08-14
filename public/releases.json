@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.18.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Critters have gone quiet. The arrival animations and the little sprites on your Garden tiles are hidden — they had become visual noise on the screens you use to actually get work done. Nothing about earning them changed: every critter still triggers, logs and accrues exactly as before, and they are all still there in the collection.",
+      "Back now keeps your place everywhere it should. Container pages and the Harvests log join the photo library and feed — and Harvests brings back your filters and which view you were on, not just the scroll position, so a Back no longer dumps you on Totals.",
+      "Container event counts tell the truth. The number beside a container's event log counted archived events the log itself no longer shows — on eight containers it disagreed, and on four of them it promised events over a completely empty log.",
+      "Retake is beside the photo instead of below everything. On a 360px screen it was sitting 22 pixels below the fold, so deciding whether to keep a shot meant scrolling past all four destination cards first.",
+      "You can delete a single photo. Until now the only way to remove a blurry shot or a duplicate was to delete the whole event it was attached to, which threw away a real record to get rid of an image. The delete discloses what else it affects, and the photo goes to Recently Deleted where you can restore it."
+    ]
+  },
+  {
     "version": "4.17.0",
     "date": "2026-08-14",
     "highlights": [
