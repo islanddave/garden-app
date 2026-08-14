@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.19.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "The Garden filter row is one tap instead of twelve chips. Twelve facet chips wrapped into a scrap-heap on a phone screen; they are now a single selector, ordered type, then location, then lifecycle.",
+      "Snap can finally add a plant it has never seen. Its two-field form was an outlier that could not create a variety or a crop type, so a genuinely new plant — hydrangeas, say — could not be captured at all. Snap now uses the same planting form as everywhere else, and still saves in the same number of taps: type a name and go.",
+      "Logging a date no longer invents a time you did not enter. Log Event offered a time field, threw the time away before saving, and stamped noon UTC on instead — which is why 545 of your harvests carry an identical placeholder timestamp. Both logging screens now ask for a date, and mean it.",
+      "Log Many and Log Event share one layout. Same sections, same order, same date control, instead of two forms that drifted apart.",
+      "Deleting or renaming a location by name can no longer hit the wrong one. Two locations under different parents may legitimately share a short name; the app now resolves to exactly one row, or tells you it was ambiguous, instead of quietly writing to every match."
+    ]
+  },
+  {
     "version": "4.18.0",
     "date": "2026-08-14",
     "highlights": [
