@@ -851,6 +851,28 @@ export const handler = async (event) => {
       // interim 30 was a stopgap that traded a blank tab for a hard cut with no pagination.
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '120', 10), 200);
 
+      // V4-ARCHIVEHIDE-001 (L2). Archived plantings must not be LOADED by an aggregate gallery, so
+      // the predicate is a WHERE-clause anti-join, not a client filter — a row filtered in the
+      // browser was still queried, serialised and shipped. Measured on prod 2026-08-13: 28 live
+      // photos hang off the 19 archived plantings (7 via photos.plant_id, 21 via photos.event_id ->
+      // event_log.plant_id — the second path is why there are TWO anti-joins and not one; a single
+      // predicate on p.plant_id closes a quarter of the leak and reads as if it closed all of it).
+      //
+      // AXIS: archived_at, NOT deleted_at. The two are orthogonal (lambda/plants/index.js:269-281
+      // archives with `AND p.deleted_at IS NULL` still in the WHERE) and every template below keeps
+      // its existing deleted_at predicate untouched.
+      //
+      // NOT APPLIED to the ?attachedTo branch, deliberately. That branch is the planting's OWN
+      // gallery on PlantingDetail (src/pages/PlantingDetail.jsx:116) and its every row is by
+      // construction that one planting's. Filtering there does nothing when the planting is live
+      // and blanks the page when it is archived — which would delete the ONLY route an archived
+      // planting still has (lambda/events/index.js:658-661: "Deletion hides; archiving does not").
+      // The four branches below are aggregates over MANY plantings; those are the default views.
+      //
+      // PLANT AXIS ONLY. plant_projects also carries archived_at (3 archived projects in prod) but
+      // whether archiving a container hides its contents is an open Dave ruling (R3 recon §2
+      // DAVE-DECISION 3), and this lane does not guess it.
+
       let rows;
       if (attachedTo) {
         rows = await sql`
@@ -882,6 +904,15 @@ export const handler = async (event) => {
             LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
               AND p.deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM public.garden_node gna
+                WHERE gna.id = p.plant_id AND gna.archived_at IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM public.event_log ea
+                JOIN public.garden_node gne ON gne.id = ea.plant_id
+                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+              )
               AND p.location_id IN (
                 WITH RECURSIVE loc_subtree AS (
                   SELECT id FROM locations WHERE id = ${locationId} AND deleted_at IS NULL
@@ -906,6 +937,15 @@ export const handler = async (event) => {
             WHERE p.created_by = ANY(${householdIds})
               AND p.project_id = ${projectId}
               AND p.deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM public.garden_node gna
+                WHERE gna.id = p.plant_id AND gna.archived_at IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM public.event_log ea
+                JOIN public.garden_node gne ON gne.id = ea.plant_id
+                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+              )
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;
@@ -922,6 +962,15 @@ export const handler = async (event) => {
             LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
               AND p.deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM public.garden_node gna
+                WHERE gna.id = p.plant_id AND gna.archived_at IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM public.event_log ea
+                JOIN public.garden_node gne ON gne.id = ea.plant_id
+                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+              )
               AND p.space_id = ${spaceId}
             ORDER BY p.created_at DESC
             LIMIT ${limit}
@@ -936,6 +985,15 @@ export const handler = async (event) => {
             LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
               AND p.deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM public.garden_node gna
+                WHERE gna.id = p.plant_id AND gna.archived_at IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM public.event_log ea
+                JOIN public.garden_node gne ON gne.id = ea.plant_id
+                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+              )
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;

@@ -129,13 +129,26 @@ export const handler = async (event) => {
 
       // M2 — capture-events/week, derived from EXISTING tables (no new write path).
       // Union created_at across the three garden-data tables, bucket by ISO week, last 8 weeks.
+      //
+      // V4-ARCHIVEHIDE-001 (L7): the two garden_node/container arms counted ARCHIVED rows. AXIS is
+      // archived_at, not deleted_at. Prod 2026-08-13: 3 archived plantings + 1 archived project fall
+      // inside the 8-week window, so this lowers recent weekly capture counts by up to 4.
+      //
+      // THIS IS THE WEAKEST OF THE SIX AND THE FIRST TO REVERT IF DAVE DISAGREES. Two honest
+      // arguments against it: (1) the route is admin-only (403 above), so it is not a "default view"
+      // in the user-facing sense the ticket is written about; (2) M2 measures CAPTURE ACTIVITY, and
+      // archiving in week 9 does not un-capture what was captured in week 1 — filtering makes a past
+      // week's number change retroactively. Note also that these arms do not filter deleted_at
+      // either, so the two lifecycle axes are now asymmetric here on purpose rather than by
+      // oversight: closing archived alone was the scoped ask, and widening it to deleted_at would be
+      // an unbriefed behaviour change to a shipped metric.
       const m2 = await sql`
         SELECT to_char(date_trunc('week', created_at), 'IYYY-"W"IW') AS iso_week,
                COUNT(*)::int AS captures
         FROM (
           SELECT created_at FROM event_log
-          UNION ALL SELECT created_at FROM public.garden_node
-          UNION ALL SELECT created_at FROM public.container
+          UNION ALL SELECT created_at FROM public.garden_node WHERE archived_at IS NULL
+          UNION ALL SELECT created_at FROM public.container WHERE archived_at IS NULL
         ) c
         WHERE created_at >= now() - interval '8 weeks'
         GROUP BY 1
