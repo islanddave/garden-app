@@ -14,7 +14,7 @@
 // with the real calendar; the engine's own math is covered by CultivationLead.test.jsx and
 // sowEngine.test.js against fixed dates.
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
 const { planState, fetchMock, toastMock, engineState } = vi.hoisted(() => ({
@@ -39,6 +39,7 @@ import Today from '../pages/Today.jsx'
 const READY = '/api/events/harvest-ready'
 const SOW = '/api/inventory-items/sow-candidates'
 const WATCH = '/api/harvests/watch?limit=200'
+const PLANTS = '/api/plants'
 
 // Would render inside HarvestReadyBand IF it were still mounted — the unmount test wires it on
 // purpose so the band's absence is proof of the unmount, not of an empty candidate list.
@@ -56,11 +57,19 @@ const watchCand = {
   basis: 'sown 118d ago; catalogue 95d from transplant', variety_ref: null,
 }
 
-function wire({ sowItems = [], ready = [], watch = [watchCand] } = {}) {
+// V4-STORAGEDEADLINE-001 — a live sweet potato planting. The dataset's only sourced deadline opens
+// 10-01, so this fixture is what makes "silent on 08-12" a real silence rather than an empty garden.
+const sweetPotato = {
+  id: 'p-sp1', name: 'Beauregard', status: 'vegetative',
+  variety_ref: { id: 'v-sp', name: 'Beauregard', crop_type_slug: 'sweet_potato' },
+}
+
+function wire({ sowItems = [], ready = [], watch = [watchCand], plants = [] } = {}) {
   fetchMock.mockImplementation((url) => {
     if (url === SOW) return Promise.resolve({ items: sowItems })
     if (url === READY) return Promise.resolve({ time_zone: 'America/New_York', et_doy: 202, candidates: ready })
     if (url === WATCH) return Promise.resolve({ candidates: watch, snoozed: [] })
+    if (url === PLANTS) return Promise.resolve(plants)
     return Promise.resolve(null)
   })
 }
@@ -117,5 +126,63 @@ describe('Today composition (panel Q1, re-anchored post-BD-008)', () => {
     expect(screen.queryByRole('region', { name: /Due for a pick/i })).toBeNull()
     expect(document.body.textContent).not.toMatch(/Due for a pick/i)
     expect(fetchMock.mock.calls.some(([u]) => u === READY)).toBe(false)
+  })
+})
+
+// V4-STORAGEDEADLINE-001 — the storage-crop lift deadline, mounted as an OPERATIONAL ALERT rather
+// than a band (Dave 2026-08-14, after unmounting HarvestReadyBand the day before for being a
+// standing list he correctly ignored). Both halves are pinned here because both are the decision:
+// it renders NOTHING when nothing is at risk, and when something IS at risk it sits at the very top
+// of Today — above the cultivation lead, because a crop about to be lost outranks a sow window
+// about to close.
+//
+// The system clock is pinned rather than the prop injected: Today mounts the component with no
+// todayISO, so only a pinned clock proves what the USER's path renders. `shouldAdvanceTime` keeps
+// findBy*/waitFor working under fake timers.
+describe('Today composition — storage-deadline operational alert (V4-STORAGEDEADLINE-001)', () => {
+  beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('renders NOTHING in August even with a live sweet potato planting wired', async () => {
+    // Silence with the data present. If this ever goes non-null without the dataset changing,
+    // someone widened the criteria to make the surface show something — which is the failure mode
+    // the whole design exists to avoid.
+    vi.setSystemTime(new Date(2026, 7, 12, 9, 0, 0))
+    wire({ plants: [sweetPotato] })
+    render(<Today />)
+    await screen.findByRole('region', { name: /Worth checking soon/i })
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => u === PLANTS)).toBe(true))
+    expect(screen.queryByTestId('storage-deadline-alert')).toBeNull()
+  })
+
+  it('speaks once the check window opens, ABOVE the cultivation lead line', async () => {
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 0, 0)) // 2026-10-02, inside the 10-01..10-15 window
+    engineState.closing = [{ candidate: { variety_name: 'Winter Density' }, action: 'direct_sow', daysLeft: 5 }]
+    wire({ plants: [sweetPotato], sowItems: [{ variety_name: 'Winter Density' }] })
+    render(<Today />)
+
+    const alert = await screen.findByTestId('storage-deadline-alert')
+    expect(alert.textContent).toMatch(/Start checking sweet potatoes for lifting/)
+    expect(alert.textContent).toMatch(/Beauregard/)
+
+    const lead = await screen.findByTestId('cultivation-lead')
+    expect(alert.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    // Ambient, not an interrupt: an in-flow note, never a dialog/alert overlay.
+    expect(document.querySelector('[role="dialog"],[role="alertdialog"],[role="alert"]')).toBeNull()
+  })
+
+  it('says nothing about a crop the dataset deliberately left dateless (carrot)', async () => {
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 0, 0))
+    wire({
+      plants: [{
+        id: 'p-c1', name: 'Napoli', status: 'vegetative',
+        variety_ref: { id: 'v-c', name: 'Napoli', crop_type_slug: 'carrot' },
+      }],
+    })
+    render(<Today />)
+    await screen.findByRole('region', { name: /Worth checking soon/i })
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => u === PLANTS)).toBe(true))
+    expect(screen.queryByTestId('storage-deadline-alert')).toBeNull()
   })
 })
