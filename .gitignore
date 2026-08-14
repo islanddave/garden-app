@@ -22,3 +22,6 @@ __pycache__/
 # tracked until 2026-08-03; 462 stale files rode along on any `git add -A` (one unintended
 # 221k-line deletion shipped inside a care-engine commit and CI stayed green through it).
 coverage/
+
+# CodeGraph local index — machine-local, never committed
+.codegraph/
