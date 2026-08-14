@@ -240,6 +240,54 @@ export function validateHarvestFields(h) {
   return null;
 }
 
+// ── V4-EVENTSEL-005 — ONE batch-level note ──────────────────────────────────────────────────────
+// Log Many had no Notes field and POST /api/events/batch had no `notes` column in its INSERT, so a
+// client-only fix would have written a note the user typed into NOTHING, behind a green success
+// screen, across the whole batch. Silent loss behind a confirmation is worse than the missing
+// field, which is why the server half lands FIRST (Lambda-before-SPA).
+//
+// Dave's ruling: ONE note per batch, applied to every row, with the UI saying so. Per-row notes are
+// out of scope — Log Many exists for one activity across many plantings ("side-dressed the whole
+// bed"), and per-row text entry on a phone outdoors is the exact per-item tapping this surface was
+// built to remove.
+//
+// WHAT THE SINGLE-EVENT PATH ACTUALLY DOES (checked, not assumed): validatePostBody does NOT
+// validate `notes` at all — index.js binds `body.notes ?? null` raw, and event_log.notes is a plain
+// nullable `text` with no length CHECK. The trim/empty-to-null contract lives ONLY on the client
+// (EventNew.jsx: `form.notes.trim() || null`). So "match the single path" means matching that
+// CONTRACT — trim, blank becomes NULL — not copying a server validator that does not exist. It is
+// re-implemented here rather than trusted to the client because the batch body is a public
+// endpoint and one bad value fans out to up to 500 rows instead of one.
+//
+// The length bound is NEW (the single path has none). It exists because this is the fan-out path:
+// an unbounded note is stored 500 times, not once. 2000 is ~5x the longest note in prod (397 chars
+// over 405 notes as of 2026-08-14), so it cannot reject anything a human has ever written here.
+export const MAX_NOTES_LEN = 2000;
+export const NOTES_TYPE_ERROR = 'notes must be a string';
+export const NOTES_LENGTH_ERROR = `notes must be ${MAX_NOTES_LEN} characters or fewer`;
+
+// Returns null on success, or { status, error }.
+export function validateNotes(v) {
+  if (v == null) return null;
+  if (typeof v !== 'string') return { status: 400, error: NOTES_TYPE_ERROR };
+  // Bound the TRIMMED length so trailing whitespace cannot 400 a note that is otherwise in range —
+  // the trim is what gets stored, so the trim is what gets measured.
+  if (v.trim().length > MAX_NOTES_LEN) return { status: 400, error: NOTES_LENGTH_ERROR };
+  return null;
+}
+
+// Trimmed note, or null for absent/blank/whitespace-only.
+//
+// Empty-to-NULL is load-bearing, not tidiness. A '' written as an empty string rather than NULL is
+// a known defect class in this schema: every read surface tests `notes` for truthiness or renders
+// it directly, so a '' row is an "event with a note" that displays as a blank note. Prod currently
+// holds ZERO such rows (verified 2026-08-14) and this path must not introduce the first 500.
+export function normalizeNotes(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s === '' ? null : s;
+}
+
 // F9 UUID regex — applied before any SQL fires so Postgres never sees a malformed UUID.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -298,6 +346,11 @@ export function validateBatchBody(body) {
       return { status: 400, error: 'exclude_plant_ids must all be UUIDs' };
     }
   }
+
+  // V4-EVENTSEL-005 — ONE batch-level note, applied to every row. See validateNotes above for why
+  // this is validated server-side even though the single path is not.
+  const notesErr = validateNotes(body.notes);
+  if (notesErr) return notesErr;
 
   // V4-WATERMATH-001 F0 — the batch path now carries metadata (it previously carried NONE; see
   // buildBatchMetadataPlan). One batch-level object applied to every row, plus optional per-row
