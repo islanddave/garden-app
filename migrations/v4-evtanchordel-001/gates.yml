@@ -210,7 +210,17 @@ post:
        WHERE NOT g.tgisinternal
          AND t.relname IN ('event_log','photos','plants','locations')
          AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','garden_node_bump',
-                              'plants_entity_ins','plants_entity_softdel','trg_delete_entity_tags_plant',
+                              'plants_entity_ins','plants_entity_softdel',
+                              -- trg_delete_entity_tags_plant / _location are DROPPED by
+                              -- OPS-ENTITYTAGSDROP-001 (migrations/v4-entitytagsdrop-001). Both
+                              -- entries are RETAINED on purpose. This is a NOT IN allow-list
+                              -- asserting rowcount 0: it reds when a trigger APPEARS unlisted,
+                              -- never when a listed one DISAPPEARS, so removing them is not
+                              -- required — and that migration's 0r-rollback.sql RE-CREATES all
+                              -- three, so stripping the entries would red this gate during any
+                              -- rollback window. Verified against live prod by re-running this
+                              -- query with the three names filtered out: 0 rows.
+                              'trg_delete_entity_tags_plant',
                               'trg_delete_entity_tags_location','plants_entity_rename',
                               -- Added 2026-08-13 by BUG-ENTITYTAGORPHAN-001: read-only BEFORE DELETE
                               -- guards standing in for the foreign key entity_tag.entity_id cannot
