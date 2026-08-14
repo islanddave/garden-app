@@ -24,6 +24,17 @@ import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
 import PlantingSelect, { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import Button from '../components/forms/Button.jsx'
+// V4-PLANTFORMUNIFY-001 (BD-014) ⊇ V4-SNAPVARIETY-001 (BD-015): Snap was the LAST add/edit-planting
+// surface still hand-rolling its own fields (a bare name Input + a read-only <Select> over
+// pre-fetched varieties). Every other create path — Garden add/edit and the Sow sheet via
+// PlantingEditor, ProjectDetail's "+ Add planting" — already renders this same PlantForm. Adopting
+// it here is what closes BOTH rows: PlantForm hosts VarietyPicker (PlantForm.jsx:94), and
+// VarietyPicker owns the two-legged create (crop type -> variety, VarietyPicker.jsx submitNewCropType),
+// which is precisely the capability BD-015 says is missing — Dave could not capture "Hydrangeas"
+// because no hydrangea crop type existed and Snap could only pick from what was already there.
+// PlantForm is ALREADY in the frozen barrel set (FROZEN.md / formsPrimitivesFreeze.test.js), so this
+// adoption needs no freeze change; that freeze is a reason to use it, not to route around it.
+import { PlantForm } from '../components/forms/index.js'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger write on the event save below.
 import { recordCropLog } from '../lib/cropLogLedger.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
@@ -35,6 +46,19 @@ const MODES = [
   { id: 'inventory', label: 'Add inventory',     hint: 'Create a supply/equipment item with this photo' },
 ]
 const todayStr = () => todayLocalISO()
+
+// Mirrors PlantingEditor's EMPTY_FORM key-for-key EXCEPT project_id, which Snap deliberately does
+// not carry: PlantingEditor seeds `project_id: projects[0]?.id`, Snap has always POSTed
+// `project_id: null` and V3-CAPTURE-001's test pins that. Adopting the shared form must not quietly
+// start assigning every field capture to whichever project happens to sort first.
+// `status: 'seedling'` reproduces the value Snap hardcoded into its POST before this change, so the
+// default capture is byte-identical on the wire; it is now visible and changeable instead of implied.
+const SNAP_PLANT_FORM = {
+  name: '', variety: null, quantity: '1', notes: '', status: 'seedling',
+  sown_at: '', sown_at_approx: false, qty_initial: '',
+  source_type: '', source_ref: '', source_generation: '', lineage_note: '',
+  parent_plant_id: '', container_type: '', container_size: '', location_id: '',
+}
 const card = { background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 16 }
 const fieldStack = { display: 'flex', flexDirection: 'column', gap: 12 }
 const pickBtn = { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }
@@ -63,10 +87,13 @@ export default function CaptureFlow() {
   }
 
   const [plantings, setPlantings] = useState([])
-  const [varieties, setVarieties] = useState([])
+  const [locations, setLocations] = useState([])
   // mode forms
-  const [pName, setPName]   = useState('')
-  const [pVariety, setPVariety] = useState('')
+  // One controlled object, the shape PlantForm's contract documents. The old two-scalar state
+  // (pName + a bare variety-id string) is gone: `variety` is now the variety ROW, because the
+  // /api/plants dual-write needs both halves (`variety_id` canonical + `variety` flat text) and the
+  // id alone cannot produce the text — sending only the id is the one real trap recon flagged here.
+  const [plantForm, setPlantForm] = useState(SNAP_PLANT_FORM)
   const [evPlant, setEvPlant] = useState('')
   const [evType, setEvType]   = useState('watering')
   const [evDate, setEvDate]   = useState(todayStr())
@@ -79,8 +106,18 @@ export default function CaptureFlow() {
 
   useEffect(() => {
     let off = false
-    Promise.all([fetch('/api/plants'), fetch('/api/varieties').catch(() => [])])
-      .then(([pl, vr]) => { if (!off) { setPlantings(Array.isArray(pl) ? pl : []); setVarieties(Array.isArray(vr) ? vr : []) } })
+    // The eager /api/varieties GET that fed the old <Select> is DELETED, not merely unused:
+    // VarietyPicker owns its own list through useVarieties and searches server-side, so keeping the
+    // prefetch would issue a request on every Snap mount for a list only one of four destinations
+    // ever reads. Locations replace it and are cheaper in kind — they gate whether PlantForm renders
+    // its Location field at all (PlantForm.jsx:183), and they are fetched exactly as PlantingEditor
+    // fetches them so the two surfaces offer the same set.
+    Promise.all([fetch('/api/plants'), fetch('/api/locations/with-path').catch(() => [])])
+      .then(([pl, locs]) => {
+        if (off) return
+        setPlantings(Array.isArray(pl) ? pl : [])
+        setLocations(Array.isArray(locs) ? locs.filter(l => l.is_active) : [])
+      })
       .catch(() => {})
     return () => { off = true }
   }, [fetch])
@@ -107,7 +144,7 @@ export default function CaptureFlow() {
   function resetForNext() {
     if (preview) URL.revokeObjectURL(preview)
     setFile(null); setPreview(null); setMode(null); setResult(null); setErr(null)
-    setPName(''); setPVariety(''); setEvPlant(''); setEvType('watering'); setEvDate(todayStr())
+    setPlantForm(SNAP_PLANT_FORM); setEvPlant(''); setEvType('watering'); setEvDate(todayStr())
     setRpPlant(''); setInvName(''); setInvType('consumable'); setInvCat('other'); setInvQty('1'); setInvUnit('each')
     setStep('photo')
   }
@@ -118,16 +155,53 @@ export default function CaptureFlow() {
     return r.photo
   }
 
+  // PlantForm renders a real <form>, so its submit arrives as an event and must be prevented or the
+  // page reloads mid-capture. The other three destinations still drive save() from a plain button.
+  function submitPlanting(e) {
+    e?.preventDefault?.()
+    if (saving) return
+    save()
+  }
+
   async function save() {
     setSaving(true); setErr(null)
     try {
       if (mode === 'planting') {
-        if (!pName.trim()) throw new Error('Give the planting a name')
+        const f = plantForm
+        // Kept even though PlantForm marks Name `required`: jsdom does not run constraint validation
+        // for a dispatched click, and a whitespace-only name passes the browser check anyway.
+        if (!f.name.trim()) throw new Error('Give the planting a name')
+        const qty = parseInt(f.quantity, 10)
+        // Payload builder lifted key-for-key from PlantingEditor.handleAdd (the surface that owns the
+        // /api/plants wire contract) so Snap stops being a second, thinner contract for the same
+        // route. Two deliberate divergences: project_id stays null (see SNAP_PLANT_FORM), and there
+        // is no source_inventory_item_id — Snap has no packet deep-link.
+        // The '' -> null coercions are not cosmetic: source_type '' 400s, and status/notes '' would
+        // otherwise be written as empty strings rather than absent.
         const plant = await fetch('/api/plants', { method: 'POST', body: JSON.stringify({
-          name: pName.trim(), variety_id: pVariety || null, project_id: null, quantity: 1, status: 'seedling',
+          project_id: null,
+          name:       f.name.trim(),
+          // DUAL-WRITE. `variety` (flat text) and `variety_id` (canonical FK) are both real columns
+          // and every other create path sends both; posting the id alone silently diverges.
+          variety:    f.variety?.name ?? null,
+          variety_id: f.variety?.id ?? null,
+          quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
+          notes:      f.notes.trim() || null,
+          status:     f.status || null,
+          sown_at:           f.sown_at || null,
+          sown_at_approx:    !!f.sown_at_approx,
+          qty_initial:       f.qty_initial.trim() ? parseInt(f.qty_initial, 10) : null,
+          source_type:       f.source_type || null,
+          source_ref:        f.source_ref.trim() || null,
+          source_generation: f.source_generation.trim() || null,
+          lineage_note:      f.lineage_note.trim() || null,
+          parent_plant_id:   f.parent_plant_id || null,
+          container_type:    f.container_type || null,
+          container_size:    (f.container_size ?? '').trim() || null,
+          location_id:       f.location_id || null,
         }) })
         await attach({ plant_id: plant.id }, 'plants', plant.id)
-        setResult({ kind: 'planting', id: plant.id, label: `Planting “${plant.name ?? pName.trim()}” created`,
+        setResult({ kind: 'planting', id: plant.id, label: `Planting “${plant.name ?? f.name.trim()}” created`,
           undo: () => fetch('/api/plants/' + plant.id + '/archive', { method: 'PATCH', body: JSON.stringify({ archived: true }) }) })
       } else if (mode === 'event') {
         const pl = plantings.find(p => p.id === evPlant)
@@ -189,7 +263,15 @@ export default function CaptureFlow() {
 
       {preview && (
         <div style={{ position: 'relative', marginBottom: 14 }}>
-          <img src={preview} alt="capture preview" style={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
+          {/* The preview is a 280px hero while the photo is still being judged (steps 'photo'/'mode'
+              — accept it, or tap Retake, which is overlaid on it). Once a destination is chosen the
+              photo is settled and the preview's job drops to confirmation, so it becomes a 120px
+              band. That is not decoration: the shared PlantForm is taller than the two hand-rolled
+              fields it replaces, and on the 390x660 Chrome-Android reference viewport a 280px hero
+              plus the full form pushes Save off the bottom. Reclaiming 160px is what keeps
+              type-a-name-and-Save a no-scroll action, which is the entire reason Snap exists.
+              Same treatment for the 'done' step's result card, for the same reason. */}
+          <img src={preview} alt="capture preview" style={{ width: '100%', maxHeight: step === 'photo' || step === 'mode' ? 280 : 120, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
           {/* V4-SNAPDEST-001 (BD0806-08) — the accept/redo decision belongs WITH the photo.
               This control used to render last in the step-'mode' grid, below all four destination
               cards. Measured in the mobile harness at 360x660 (a realistic Chrome Android
@@ -260,23 +342,46 @@ export default function CaptureFlow() {
         </div>
       )}
 
-      {step === 'form' && (
+      {/* V4-PLANTFORMUNIFY-001 — the planting destination is now the SHARED form, so it owns its own
+          <form> element and its own submit/Back row and cannot share the generic card below.
+          FAST-CAPTURE GUARANTEE, deliberate and load-bearing: every field PlantForm adds over the old
+          two is either prefilled (quantity 1, status seedling) or marked optional, and the twelve
+          provenance fields stay inside the collapsed <details> — detailsDefaultOpen is left at its
+          false default here, unlike PlantingEditor which opens it for desk work. So the taps to
+          capture are UNCHANGED from before this row: type a name, hit Save. Nothing new is required
+          and nothing new is prompted for. */}
+      {step === 'form' && mode === 'planting' && (
+        <div style={card}>
+          <Note>No project needed — you’ll group it with tags in the V4 update.</Note>
+          <PlantForm
+            value={plantForm}
+            onChange={patch => setPlantForm(f => ({ ...f, ...patch }))}
+            onSubmit={submitPlanting}
+            submitting={saving}
+            submittingLabel="Saving…"
+            submitLabel="Save"
+            error={err}
+            locations={locations}
+            plantingOptions={plantings.map(p => ({ id: p.id, name: p.name }))}
+            /* project_id is injected as null by the payload builder, exactly as PlantingEditor
+               injects projects[0] under PROJECTS_HIDDEN — no visible project step either way. */
+            showProjectSelect={false}
+            idPrefix="cap-plant"
+            /* Back, not Cancel: PlantForm's built-in onCancel renders the word "Cancel", which on a
+               capture flow reads as discarding the photo. This step's escape goes back to the
+               destination list with the photo intact, so it keeps Snap's own label and lands in the
+               shared button row via extraActions. */
+            extraActions={
+              <Button data-testid="cap-back" variant="secondary" disabled={saving}
+                onClick={() => { setStep('mode'); setErr(null) }}>Back</Button>
+            }
+          />
+        </div>
+      )}
+
+      {step === 'form' && mode !== 'planting' && (
         <div style={card}>
           <div style={fieldStack}>
-            {mode === 'planting' && (
-              <>
-                <Field label="Planting name">
-                  <Input data-testid="cap-pname" value={pName} onChange={e => setPName(e.target.value)} placeholder="e.g. Charentais melon" />
-                </Field>
-                <Field label="Variety" optional>
-                  <Select value={pVariety} onChange={e => setPVariety(e.target.value)}>
-                    <option value="">— none —</option>
-                    {varieties.map(v => <option key={v.id} value={v.id}>{v.display_name ?? v.name}</option>)}
-                  </Select>
-                </Field>
-                <Note>No project needed — you’ll group it with tags in the V4 update.</Note>
-              </>
-            )}
             {mode === 'event' && (
               <>
                 <Field label="Planting">
