@@ -3,7 +3,7 @@
 // filterable history. Raw events come from /api/events/feed (offset paginated); we accumulate and
 // collapse the whole set each render so a Log-Many batch never splits across a page boundary.
 // Critters earned at logging time surface inline (the seed of the V4 social-feed vision).
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES } from '../lib/constants.js'
@@ -12,8 +12,14 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { collapseFeed, dedupeById, relativeTime, prettyEventType } from '../lib/feed.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import useScrollRestore from '../hooks/useScrollRestore.js'
 
 const PAGE = 30
+// V4-SCROLLRESTORE-001 — how deep a back-navigation will re-request in ONE round trip. The server
+// clamps /api/events/feed's limit at 100 (lambda/events/index.js), so this is the largest useful
+// value; it covers three "Load more" presses. Past that the restore lands the user at the bottom of
+// what did come back and they press Load more again, which is strictly better than page 1.
+const MAX_RESTORED_ROWS = 90
 
 export default function FeedPage() {
   const { fetch } = useApiFetch()
@@ -34,9 +40,21 @@ export default function FeedPage() {
     return () => { on = false }
   }, [fetch])
 
-  const buildQuery = useCallback((off) => {
+  // V4-SCROLLRESTORE-001: restore the scroll offset once the rows are committed, and carry the
+  // user's paging DEPTH across the navigation. Scroll alone is not enough here — "Load more" pages
+  // are client-accumulated, so a remount that fetched only page 1 gives the browser a document a
+  // third the height it had, the restore gets clamped, and the place is lost regardless of how well
+  // the offset was remembered. This is the one-problem-not-two coupling the ticket names.
+  const { restoredState, saveState } = useScrollRestore({ id: 'feed', ready: !loading })
+  useEffect(() => { saveState(rawEvents.length) }, [rawEvents.length, saveState])
+  // Identity, not value: setFilters always produces a fresh object, so this stays true for exactly
+  // the initial filter state — and stays true across StrictMode's double effect run, which a
+  // "first run" flag would not.
+  const initialFiltersRef = useRef(filters)
+
+  const buildQuery = useCallback((off, limit = PAGE) => {
     const p = new URLSearchParams()
-    p.set('limit', String(PAGE))
+    p.set('limit', String(limit))
     p.set('offset', String(off))
     if (filters.project_id) p.set('project_id', filters.project_id)
     if (filters.event_type) p.set('event_type', filters.event_type)
@@ -48,8 +66,15 @@ export default function FeedPage() {
   // Load (or reload on filter change) — resets to page 0.
   useEffect(() => {
     let on = true
+    // On a BACK-navigation to the untouched filter set, ask for the depth the user had paged to in
+    // one request rather than one page. A filter change is a different list, so it always starts at
+    // PAGE. `restoredState` is only non-undefined when there is also a real offset to restore, so a
+    // user who never scrolled never pays for a bigger query.
+    const depth = filters === initialFiltersRef.current
+      ? Math.min(Math.max(Number(restoredState) || 0, PAGE), MAX_RESTORED_ROWS)
+      : PAGE
     setLoading(true); setError(null)
-    fetch(buildQuery(0))
+    fetch(buildQuery(0, depth))
       .then(res => {
         if (!on) return
         const evs = res?.events ?? []
@@ -60,7 +85,7 @@ export default function FeedPage() {
       .catch(err => { if (on) setError(err.message || 'Failed to load activity') })
       .finally(() => { if (on) setLoading(false) })
     return () => { on = false }
-  }, [fetch, buildQuery])
+  }, [fetch, buildQuery, filters, restoredState])
 
   async function loadMore() {
     if (loadingMore) return

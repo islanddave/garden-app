@@ -15,6 +15,7 @@ import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
+import useScrollRestore from '../hooks/useScrollRestore.js'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -104,14 +105,42 @@ export default function PhotoLibrary() {
   // has to be bounded by us: render a window, grow it on scroll. Also gives the page the "more as
   // you scroll" behavior it lacked when the server limit was cut to 30.
   const PAGE = 24
-  const [shown, setShown] = useState(PAGE)
+  // V4-SCROLLRESTORE-001: a restored offset is worthless against a document that came back one page
+  // tall — the browser clamps the scroll and the position is lost anyway. The window size is
+  // therefore restored WITH the offset, at first render, so the tiles that hold that height exist in
+  // the same commit that the photos land in. (The restore loop's clamped scrollTo would also grow
+  // the window via the listener below, one PAGE per frame; that converges for a shallow window and
+  // races the 20-frame budget for a deep one. Restoring it outright is exact.)
+  // Capped hard: a corrupt sessionStorage blob must not be able to mount 1,000 live <img> and
+  // re-freeze the renderer (BUG-PHOTOTHUMB-001). The honest value can only be a window the user
+  // already grew by scrolling, so the cap never binds in practice.
+  const MAX_RESTORED_WINDOW = PAGE * 40
+  const { restoredState, saveState } = useScrollRestore({ id: 'photos', ready: !loading })
+  const [shown, setShown] = useState(() => {
+    const w = Number(restoredState)
+    return Number.isFinite(w) ? Math.min(Math.max(w, PAGE), MAX_RESTORED_WINDOW) : PAGE
+  })
+  useEffect(() => { saveState(shown) }, [shown, saveState])
   // BUG-PHOTOSELSTALE-001: a filter change REPLACES the photos array, so ids picked under the old
   // filter may no longer resolve to a row. The selection is reset here, alongside the window, for
   // the same reason the window is: both describe a view of a list that no longer exists.
   // CLEAR, not intersect — justification at `selectedPhotos` below.
   // Returning `prev` when already empty keeps the Set identity stable so mount and every
   // already-cleared filter change bail out of a re-render instead of churning a fresh Set.
+  // V4-SCROLLRESTORE-001: the MOUNT run is skipped. It was always a no-op — `shown` initialised to
+  // PAGE and `selected` to an empty Set, and the setSelected branch already bails on an empty Set —
+  // but now that the window can be restored above PAGE at first render, an unskipped mount run would
+  // collapse it right back and destroy the height the restore needs. Every subsequent (real) filter
+  // change behaves exactly as before.
+  // Keyed on the filter TUPLE rather than a mount flag: StrictMode runs every effect twice on mount,
+  // and a bare "skip the first run" flag would let the second run collapse the restored window in dev.
+  const lastFiltersRef = useRef(null)
   useEffect(() => {
+    const sig = `${filterProject}|${filterLocation}|${filterMode}`
+    if (lastFiltersRef.current === sig) return
+    const first = lastFiltersRef.current === null
+    lastFiltersRef.current = sig
+    if (first) return
     setShown(PAGE)
     setSelected(prev => (prev.size ? new Set() : prev))
   }, [filterProject, filterLocation, filterMode])
