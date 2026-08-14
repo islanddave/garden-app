@@ -87,11 +87,18 @@ const DIALOG_SURFACES = {
 // cannot, which is the entire reason it became a component. It renders the shared <Sheet>, which IS
 // the registered role="dialog" surface, so no new DIALOG_SURFACES entry is owed — the dismiss
 // behaviour is Sheet's, and the component deliberately adds no dialog chrome of its own.
+// V4-PHOTOREASSIGN-001 / W-PHOTODEL: components/photo/PhotoDeleteConfirm.jsx is the same deliberate
+// shape, one surface over — the STANDALONE photo delete needed a confirm that can disclose the
+// cover-photo consequence and the recovery path, which window.confirm cannot hold. It composes the
+// shared <Sheet> (so the dismiss behaviour is Sheet's, and no DIALOG_SURFACES entry is owed) and
+// deliberately reuses EventDeleteConfirm's grammar rather than minting a second confirm dialect.
+// Note PhotoLibrary.jsx stays in DIALOG_SURFACES for its own PhotoModal overlay, unrelated to this.
 const SHEET_SITES = [
   'App.jsx',
   'components/BottomNav.jsx',
   'components/HarvestExportSheet.jsx',
   'components/photo/EventDeleteConfirm.jsx',
+  'components/photo/PhotoDeleteConfirm.jsx',
   'components/HarvestTimeframeChips.jsx',
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',
