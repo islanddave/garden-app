@@ -82,6 +82,17 @@ function aggregate(rows) {
  *   calendar days before it; a harvest dated today-13 is IN, today-14 is OUT).
  * opts.seasonStart: 'YYYY-MM-DD' calendar-YEAR start. The "this year" bucket is
  *   [seasonStart, Dec 31 of seasonStart's year] — a 23:00 ET Dec 31 pick belongs to the OLD year.
+ *
+ * ⚠️ V4-SEASONCONV-001 — `seasonStart` CANNOT express a grow year, and `.year` is no longer read by
+ * any production surface. seasonEnd is derived below as `${seasonStart.slice(0,4)}-12-31`, so a
+ * caller passing a grow-year start ('2025-11-01', hoping for Nov 1 - Oct 31) silently gets the
+ * two-month window 2025-11-01..2025-12-31 instead: wrong end, no error. This bucket stays
+ * calendar-year on purpose — the app's season IS the grow year (Nov 1 - Oct 31, src/lib/growYear.js),
+ * and the one consumer that needed it, src/components/planting/HarvestFromPlanting.jsx, now derives
+ * that bucket by pre-filtering rows to growYearSpan() and reading THIS function's `allTime` over the
+ * subset. It converges there rather than here because growYear.js imports etDay FROM this file, so
+ * importing growYear back would close a cycle. Retire `.year`/`seasonStart` rather than "fixing"
+ * them; a grow-year-aware bucket needs a seasonEnd, not a re-read of seasonStart's year.
  */
 export function summarizeHarvests(rows, opts = {}) {
   const { today, windowDays = 14, timeZone = 'America/New_York' } = opts

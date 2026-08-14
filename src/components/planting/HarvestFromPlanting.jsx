@@ -11,9 +11,38 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { P } from '../../lib/constants.js'
 import { formatDate } from '../../lib/format.js'
-import { summarizeHarvests, formatEntries, cropNoun, harvestWindow } from '../../lib/harvestSummary.js'
+import { summarizeHarvests, formatEntries, cropNoun, harvestWindow, etDay } from '../../lib/harvestSummary.js'
+// growYear.js imports etDay FROM harvestSummary.js, so this file is the LEAF that may import both.
+// The reverse (harvestSummary -> growYear) would be a cycle — see growYearSlice below.
+import { growYearOfDayKey, growYearSpan } from '../../lib/growYear.js'
 
 const WINDOW_DAYS = 14
+
+// V4-SEASONCONV-001 — the season bucket is the GROW year (Nov 1 - Oct 31), not the calendar year.
+// Every other harvest surface already buckets on the grow year (Harvests.jsx, useHarvestSnapshot,
+// HarvestTimeframeChips, harvestExport, and all four lambda/harvests/* modules); this table was the
+// last calendar-year holdout, so a Nov or Dec pick would read as "next year" here and "this season"
+// everywhere else in the app.
+//
+// The convergence lives in the CALLER on purpose. summarizeHarvests' existing opts.seasonStart
+// override CANNOT express a grow year: it derives seasonEnd as `${seasonStart.slice(0,4)}-12-31`
+// (harvestSummary.js:94), so passing '2025-11-01' yields a two-month season 2025-11-01..2025-12-31 —
+// wrong end, silently, with no error. Widening that lib is out of the question here (it is shared,
+// and growYear.js already imports etDay from it, so a growYear import back would close a cycle).
+// Instead: pre-filter the rows to the grow-year span and reuse summarizeHarvests' OWN allTime bucket
+// over that subset. Same aggregation code path, no second bucketing implementation to drift.
+//
+// Clock-free like the lib it wraps: `today` is the server's et_today, never new Date().
+export function growYearSlice(rows, today, timeZone) {
+  const growYear = growYearOfDayKey(etDay(today, timeZone))
+  if (growYear == null) return { growYear: null, rows: [] }
+  const { start, end } = growYearSpan(growYear) // half-open [prev Nov 1, this Nov 1)
+  const keep = (r) => {
+    const d = etDay(r?.event_date, timeZone)
+    return d != null && d >= start && d < end
+  }
+  return { growYear, rows: (Array.isArray(rows) ? rows : []).filter(keep) }
+}
 
 export default function HarvestFromPlanting({ planting, fetch }) {
   const [data, setData] = useState(null)
@@ -42,6 +71,24 @@ export default function HarvestFromPlanting({ planting, fetch }) {
     timeZone: data?.time_zone,
   }), [data])
 
+  // V4-SEASONCONV-001. Deliberately NOT summary.year — that bucket is still calendar-year and is now
+  // unread by any production surface. Must sit above the early returns: it is a hook.
+  const season = useMemo(() => {
+    const timeZone = data?.time_zone
+    const today = data?.et_today
+    const attributed = growYearSlice(data?.rows ?? [], today, timeZone)
+    const unlinked = growYearSlice(data?.unattributed ?? [], today, timeZone)
+    return {
+      growYear: attributed.growYear,
+      bucket: summarizeHarvests(attributed.rows, {
+        today,
+        windowDays: WINDOW_DAYS,
+        unattributedRows: unlinked.rows,
+        timeZone,
+      }).allTime,
+    }
+  }, [data])
+
   if (failed) {
     return <div style={{ padding: '8px 0', color: P.light, fontSize: '0.85rem' }}>
       Couldn&rsquo;t load harvests from this planting.
@@ -66,10 +113,13 @@ export default function HarvestFromPlanting({ planting, fetch }) {
   // `window_` (trailing underscore) — `window` is the global; shadowing it inside a component is a
   // footgun waiting for the next person who reaches for window.matchMedia in this file.
   const window_ = harvestWindow(summary)
-  const seasonYear = String(summary.seasonStart ?? '').slice(0, 4)
+  // "2026 season" = the season ENDING Oct 2026 (growYear.js:3-4), matching harvestExport.js:28 and
+  // the Harvests page chips. Renaming alongside the math is not cosmetic: leaving "This year (2026)"
+  // over a Nov-1-based bucket would ship a mislabelled number the moment the two diverge.
+  const seasonLabel = season.growYear ? `${season.growYear} season` : 'This season'
   const rows = [
     { key: 'recent', label: `Last ${WINDOW_DAYS} days`, b: summary.recent },
-    { key: 'year', label: seasonYear ? `This year (${seasonYear})` : 'This year', b: summary.year },
+    { key: 'year', label: seasonLabel, b: season.bucket },
     { key: 'all', label: 'All time', b: summary.allTime },
   ]
 
