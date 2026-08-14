@@ -63,7 +63,7 @@ import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { DismissRegistryProvider } from './context/DismissRegistry.jsx'
-import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from './lib/featureFlags.js'
+import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED, CRITTERS_QUIET } from './lib/featureFlags.js'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -264,7 +264,12 @@ function AppShell({ user }) {
       )}
       {user && <TodayBand />}
       {user && <BottomNav />}
-      {user && <CritterArrivalController />}
+      {/* V4-CRITTERQUIET-001: the arrival animation is THE interrupt — it plays over whatever route
+          Dave is on, mid-task. Gated at the mount site rather than inside the controller so quiet
+          mode also stops the per-navigation /api/critters/active poll it exists to drive; nothing
+          else consumes that poll (the BottomNav dot and Collection fetch their own). The controller
+          and its tests are untouched, so flipping CRITTERS_QUIET false restores it exactly. */}
+      {user && !CRITTERS_QUIET && <CritterArrivalController />}
       {/* BUG-STALECLIENT-001: update affordance renders regardless of auth — a stale shell
           on the login screen needs the Refresh path too. */}
       <UpdateBanner />

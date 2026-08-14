@@ -20,6 +20,7 @@
 //   onLongPress         — (critter) => void; opens LoveMehPopover anchored to sprite
 //   onIntersect         — (critter) => void; fires once when sprite enters viewport (for actually_seen marking)
 //   spriteSize          — px (default 32)
+//   quiet               — V4-CRITTERQUIET-001: render as an INVISIBLE viewport sentinel (see below)
 //
 // Renders null when critter is null or species not in pool.
 
@@ -45,12 +46,14 @@ export default function CritterSprite({
   onLongPress = null,
   onIntersect = null,
   spriteSize = 32,
+  quiet = false,
 }) {
   const reducedMotion = useMemo(
     () => (prefersReducedMotion ?? detectReducedMotion()),
     [prefersReducedMotion]
   )
-  const skipLanding = inQuietHours || reducedMotion
+  // `quiet` joins the skip set: there is nothing to land, so no 3.5s timer either.
+  const skipLanding = inQuietHours || reducedMotion || quiet
   const [landingComplete, setLandingComplete] = useState(skipLanding)
   const [cleared, setCleared] = useState(false)
   const intersectedRef = useRef(false)
@@ -122,6 +125,49 @@ export default function CritterSprite({
 
   const species = SPECIES_BY_ID[critter.species_id]
   if (!species) return null
+
+  // V4-CRITTERQUIET-001 — INVISIBLE VIEWPORT SENTINEL.
+  //
+  // Read this before "simplifying" it to `if (quiet) return null`. onIntersect is not decorative:
+  // Garden.jsx accumulates the ids it fires into seenIdsRef and passes them to markCrittersViewed
+  // as actually_seen_critter_ids. When that array is empty Garden passes null, and the Lambda
+  // (lambda/critter/index.js) falls back to the legacy BULK mark-viewed path — every active critter
+  // stamped viewed_at on any Garden visit, including ones on tiles never scrolled to. Returning
+  // null here would therefore ship a second, invisible behavior change: a different set of rows
+  // getting a durable viewed_at write, with no visual symptom to notice it by.
+  //
+  // So the quiet arm keeps the element, the ref, and the geometry, and drops only the pixels. It
+  // sits at the SAME position/size as the sprite it replaces, so the IntersectionObserver geometry
+  // (threshold 0.1) resolves identically. HIDING MECHANISM IS LOAD-BEARING: opacity 0 +
+  // pointerEvents none, deliberately NOT display:none (zero-area box — IO stops reporting) and not
+  // visibility:hidden (paint-free, and IO reads layout boxes only, but it is the one hider with any
+  // engine-level ambiguity worth avoiding on a path whose failure is silent). The write set is
+  // unchanged; flipping CRITTERS_QUIET back leaves no viewed_at drift to unwind.
+  //
+  // Deliberately dropped in this arm: the <img> (no sprite art fetched), role/aria-label (a
+  // screen reader must not announce a critter that is not shown), the landing animation, the
+  // freshness desaturation, and the long-press handlers (no visible target to press).
+  // Deliberately KEPT above this line: the null-critter, cleared/faded, and unknown-species early
+  // returns — a critter that would not have fired onIntersect must still not fire it.
+  if (quiet) {
+    return (
+      <div
+        ref={ref}
+        aria-hidden="true"
+        data-testid="critter-view-sentinel"
+        data-species-id={species.species_id}
+        data-critter-id={critter.id ?? ''}
+        data-intersecting={isIntersecting ? 'true' : 'false'}
+        style={{
+          width: spriteSize,
+          height: spriteSize,
+          display: 'inline-block',
+          opacity: 0,
+          pointerEvents: 'none',
+        }}
+      />
+    )
+  }
 
   // Freshness: passive time orientation per §3.11.
   const earnedAtMs = critter.earned_at ? Date.parse(critter.earned_at) : Date.now()
