@@ -69,6 +69,11 @@ on:
         required: false
         default: true
         type: boolean
+      force_lambda:
+        description: 'Deploy Lambdas even if lambda/ is unchanged vs main. Needed for an IDEMPOTENT RE-PROMOTE: once main == dev_sha the pre-FF diff is vacuous and reports no change, so a re-dispatch after a failed Lambda leg would skip them. Prefer "Re-run failed jobs" on the original run, which resumes the blocked SPA in-place; use this when re-dispatching fresh.'
+        required: false
+        default: false
+        type: boolean
   # OPS-SHIPTRIGGER-001 (2026-07-09): git-channel promote trigger so a Cowork/remote session
   # can ship WITHOUT api.github.com (which the session egress proxy 403-gates for repos it isn't
   # bound to). Push an annotated/lightweight tag `promote-vX.Y.Z` pointing AT the exact dev SHA to
@@ -148,6 +153,9 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     environment: production
+    # OPS-PROMOTERACE-001: consumed by the deploy-lambdas job below to decide whether to run at all.
+    outputs:
+      lambda_changed: ${{ steps.lam.outputs.changed }}
     # 50 (was 30): the staging write-path smoke gate below polls up to ~27.5min + ~5min locate;
     # FF+snap need ~10min after. Widened 2026-07-23 after two promotes fail-closed when a runner-queue
     # backlog pushed the ~16min staging pipeline past the old window (staging was green both times).
@@ -328,6 +336,56 @@ jobs:
           fi
           echo "write-path staging smoke green for $DEV_SHA"
 
+      # OPS-PROMOTERACE-001 — decide whether the Lambdas need deploying, while main STILL points at
+      # the old code. This is the last moment the question is answerable: one line below, main == dev
+      # and the comparison is vacuous.
+      #
+      # Compares the git TREE SHA of `lambda/` on each side (plus this workflow's own blob, so a
+      # change to the deploy recipe redeploys). A tree SHA is one non-paginated call per side and is
+      # exact. Deliberately NOT the compare API: its `files` array caps at 300 entries and truncates
+      # silently — scripts/verify-deploy.py:161 already carries that bug, and this train alone
+      # touches 30 lambda files.
+      #
+      # Fails CLOSED: any error, any missing field => lambda_changed=true. Deploying Lambdas that did
+      # not change is a no-op costing ~6 minutes; skipping Lambdas that DID change is the bug this
+      # whole change exists to prevent.
+      - name: Detect lambda changes (pre-FF, while main is still the old code)
+        id: lam
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
+          FORCE: ${{ inputs.force_lambda }}
+        run: |
+          set -uo pipefail
+          if [ "${FORCE:-false}" = "true" ]; then
+            echo "force_lambda=true — deploying Lambdas regardless of diff"
+            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          # tree sha of a path at a ref, or empty string on any failure
+          subtree() {
+            api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" \
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('sha','') if isinstance(d,dict) else '')" 2>/dev/null || echo ""
+          }
+          MAIN_LAM=$(subtree main lambda)
+          DEV_LAM=$(subtree "$DEV_SHA" lambda)
+          MAIN_WF=$(subtree main .github/workflows/deploy-lambda.yml)
+          DEV_WF=$(subtree "$DEV_SHA" .github/workflows/deploy-lambda.yml)
+          echo "main lambda/ tree = ${MAIN_LAM:-<none>}"
+          echo "dev  lambda/ tree = ${DEV_LAM:-<none>}"
+          if [ -z "$MAIN_LAM" ] || [ -z "$DEV_LAM" ]; then
+            echo "::warning::could not resolve one or both lambda/ tree SHAs — failing CLOSED, deploying Lambdas"
+            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$MAIN_LAM" != "$DEV_LAM" ] || [ "$MAIN_WF" != "$DEV_WF" ]; then
+            echo "lambda code or deploy recipe changed -> Lambdas will deploy BEFORE the SPA"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "lambda/ identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fast-forward main -> dev SHA
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -384,12 +442,70 @@ jobs:
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py
 
-  deploy:
+  # OPS-PROMOTERACE-001 — THE ORDERING EDGE. Lambdas ship BEFORE the SPA, by graph, not by luck.
+  #
+  # Previously deploy-lambda.yml self-triggered on the `push: main` that the FF above produces, so it
+  # raced BOTH the SPA deploy and snap.py. Measured inversion: promote-gate 31657287769 served the new
+  # SPA 3m10s before the Lambdas finished. It is now an explicit predecessor, which also places it
+  # strictly AFTER snap.py (a step of `promote`), so the revert manifest records a clean pre-deploy
+  # Lambda set instead of a torn mix.
+  #
+  # Skipped entirely on an SPA-only promote — that is the common case and must stay cheap.
+  deploy-lambdas:
     needs: [resolve, promote]
+    if: ${{ needs.promote.outputs.lambda_changed == 'true' }}
+    uses: ./.github/workflows/deploy-lambda.yml
+    with:
+      ref: ${{ needs.resolve.outputs.dev_sha }}
+    secrets: inherit
+
+  deploy:
+    # `always()` + an explicit predicate, NOT a bare `needs:` — a bare needs would treat the SKIPPED
+    # lambda job (SPA-only promote) as unsatisfied and silently skip the SPA deploy too, which would
+    # turn every frontend-only promote into a no-op that still advanced main.
+    #
+    # The predicate WITHHOLDS the SPA if the Lambda deploy failed. That is deliberate and is the whole
+    # point: shipping a new frontend onto Lambdas that failed to update is the exact incompatibility
+    # this change exists to prevent. The cost is a half-shipped state (main advanced, Lambdas partial,
+    # old SPA still serving) — which is the RECOVERABLE direction, and `spa-withheld` below makes it
+    # loud rather than silent.
+    #
+    # Note deploy-lambda's matrix is `fail-fast: false` across 26 functions, so a single unrelated leg
+    # (e.g. photocdn-derivative, which has no SPA caller) can red the job. Recovery is "Re-run failed
+    # jobs" on this run, which resumes the SPA in-place once the leg goes green.
+    needs: [resolve, promote, deploy-lambdas]
+    if: ${{ always() && needs.promote.result == 'success' && (needs.deploy-lambdas.result == 'skipped' || needs.deploy-lambdas.outputs.deploy_result == 'success') }}
     uses: ./.github/workflows/deploy.yml
     with:
       ref: ${{ needs.resolve.outputs.dev_sha }}
     secrets: inherit
+
+  # Makes the half-shipped state impossible to miss: main is advanced and the Lambdas are partial,
+  # but the SPA was deliberately held back. Reds the run so the promote does not read as a success.
+  spa-withheld:
+    needs: [promote, deploy-lambdas]
+    # Mirrors the deploy gate exactly: fires only when the Lambda MATRIX failed, so a red
+    # verify-daily-plan (which does not withhold the SPA) does not produce a misleading
+    # "SPA withheld" report alongside a successfully-shipped frontend.
+    if: ${{ always() && needs.promote.result == 'success' && needs.deploy-lambdas.result != 'skipped' && needs.deploy-lambdas.outputs.deploy_result != 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report withheld SPA deploy
+        run: |
+          {
+            echo "## SPA deploy WITHHELD — Lambda deploy failed"
+            echo ""
+            echo "\`main\` HAS been fast-forwarded and the snapshot marker was taken, but one or more"
+            echo "Lambda functions failed to deploy, so the SPA was held back deliberately: a new"
+            echo "frontend against stale Lambdas is the incompatibility this ordering exists to prevent."
+            echo ""
+            echo "**Prod is still serving the PREVIOUS SPA.** That is the recoverable direction."
+            echo ""
+            echo "Recovery: open the failed \`deploy-lambdas\` legs, fix or re-run them, then"
+            echo "**Re-run failed jobs** on THIS run — the SPA deploy resumes in place."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::SPA deploy withheld — Lambda deploy failed. main is advanced; prod still serves the previous SPA. See the run summary."
+          exit 1
 
   # OPS-VERIFY-001 (advisory REPORT-ONLY, per L-147/L-161/L-141) — runs AFTER deploy and
   # gates NOTHING (no job needs it; FF + deploy already happened, so it cannot un-ship).

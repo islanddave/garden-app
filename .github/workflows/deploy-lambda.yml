@@ -1,10 +1,47 @@
 name: Deploy Lambda Functions
 
+# OPS-PROMOTERACE-001 (2026-08-14) — the `push: main` trigger is GONE, deliberately.
+#
+# It made this a SEPARATE workflow run kicked off by promote-gate's fast-forward, racing the SPA
+# deploy that promote-gate calls in the same breath. Nothing sequenced them. Measured on promote-gate
+# run 31657287769: this workflow ran 01:24:45->01:30:45 while the SPA deploy finished 01:27:35 — the
+# new frontend served against old Lambdas for 3m10s. The ~30s margin on a typical promote is
+# accidental (a vite build happens to take about as long as a 26-function matrix), not designed.
+#
+# It also raced `snap.py` inside the promote job, so the revertibility manifest recorded a TORN mix
+# of pre- and post-deploy Lambda package versions — see snap.py's L-221 note. `revert-to.py` restores
+# from that manifest, so the safety net was recording the wrong target.
+#
+# promote-gate now calls this workflow explicitly as a `needs:` predecessor of the SPA deploy, which
+# makes the ordering a graph edge instead of a coincidence, and puts it strictly AFTER snap.py.
+# `deploy-staging.yml:273` has always had the right topology (`deploy-frontend: needs: deploy-lambdas`);
+# prod was the outlier.
+#
+# Removing `push: main` is safe because `main` is capability-gated to the garden-bot App (3951762) and
+# promote-gate's fast-forward is the ONLY writer. This is also the only `push: main` workflow in the
+# repo, so nothing else changes shape.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'lambda/**'
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Exact SHA to deploy. promote-gate passes the promoted dev SHA so the Lambda code and the SPA build come from one commit.'
+        required: false
+        default: ''
+        type: string
+    outputs:
+      deploy_result:
+        # The SPA gate keys on THIS, not on the called workflow's aggregate result.
+        #
+        # `verify-daily-plan` below is a post-deploy safety-invariant check on garden-daily-plan; it
+        # hard-fails by design and is unrelated to the frontend. Under the old `push: main` topology it
+        # could not block the SPA (separate run); gating the SPA on the aggregate would newly let an
+        # unrelated invariant failure withhold a good frontend. It still reds the run — it just does
+        # not hold the SPA hostage.
+        #
+        # `deploy` is a fail-fast:false matrix over all 26 functions, so its own result already
+        # aggregates every leg: any failed function => this is not 'success' => the SPA is withheld.
+        description: 'Result of the 26-function deploy matrix only (excludes the post-deploy daily-plan invariant check).'
+        value: ${{ jobs.deploy.result }}
   workflow_dispatch:
 
 permissions:
@@ -29,7 +66,12 @@ jobs:
       fail-fast: false
 
     steps:
+      # Coupled-deploy determinism: promote-gate passes the promoted dev SHA so the Lambda code and
+      # the SPA build come from ONE commit, matching what `deploy.yml` already does with its own
+      # `ref` input. Empty (workflow_dispatch) => default checkout, i.e. the branch head, unchanged.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

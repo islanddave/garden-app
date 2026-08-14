@@ -113,3 +113,56 @@ def test_verify_combines():
     assert vd.verify("r", "t", "S")["verified"] is False
     vd.check_lambda_fresh = lambda repo, token, sha: (None, "unknown")
     assert vd.verify("r", "t", "S")["verified"] is False
+
+
+# ── OPS-PROMOTERACE-001 ────────────────────────────────────────────────────────────────────────
+# NOTE for anyone adding tests below: the verify() tests above (see the `vd.check_lambda_fresh = ...`
+# stubs) replace module attributes and never restore them, so by the time later tests run,
+# `vd.check_lambda_fresh` is whichever stub ran last. Capture the real callable HERE, at import time
+# — this line executes before any test does. Calling `vd.check_lambda_fresh` directly from a test
+# below would silently exercise a stub and pass or fail for the wrong reason.
+_REAL_CHECK_LAMBDA_FRESH = vd.check_lambda_fresh
+
+# deploy-lambda.yml lost its `push: main` trigger and is now invoked by promote-gate via
+# `workflow_call`. A called workflow creates NO standalone run — its jobs live inside the caller's
+# run. Without the promote-gate path below, check_lambda_fresh sees only stale standalone runs and
+# reports STALE LAMBDA on every promote forever. These pin that it does not.
+
+def test_lambda_job_ok_matches_called_workflow_jobs():
+    jobs = [{"name": "deploy-lambdas / deploy (events)", "conclusion": "success"},
+            {"name": "deploy-lambdas / deploy (plants)", "conclusion": "success"}]
+    assert vd._lambda_job_ok(jobs) is True
+
+def test_lambda_job_ok_false_when_a_leg_failed():
+    # fail-fast:false means one red leg among 26 is reachable — it must NOT read as deployed.
+    jobs = [{"name": "deploy-lambdas / deploy (events)", "conclusion": "success"},
+            {"name": "deploy-lambdas / deploy (photos)", "conclusion": "failure"}]
+    assert vd._lambda_job_ok(jobs) is False
+
+def test_lambda_job_ok_ignores_unrelated_jobs():
+    # 'deploy / deploy' is the SPA. It must not be mistaken for the Lambda deploy.
+    assert vd._lambda_job_ok([{"name": "deploy / deploy", "conclusion": "success"}]) is False
+
+def test_lambda_fresh_via_promote_gate_called_workflow():
+    vd._runs = lambda repo, token, wf, **kw: (
+        [{"id": 42, "head_sha": "SHA", "conclusion": "success", "created_at": "2026-08-14T12:00:00Z"}]
+        if wf == "promote-gate.yml" else []
+    )
+    vd._jobs = lambda repo, token, run_id: [
+        {"name": "deploy-lambdas / deploy (events)", "conclusion": "success"}]
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", "SHA")
+    assert ok is True
+    assert "promote-gate run 42" in msg
+
+def test_lambda_fresh_falls_through_when_promote_run_has_no_lambda_jobs():
+    # An SPA-only promote skips the lambda job entirely; freshness must fall through to the
+    # standalone-run path rather than claiming the Lambdas just deployed.
+    vd._runs = lambda repo, token, wf, **kw: (
+        [{"id": 43, "head_sha": "SHA", "conclusion": "success", "created_at": "2026-08-14T12:00:00Z"}]
+        if wf == "promote-gate.yml"
+        else [{"id": 9, "head_sha": "SHA", "conclusion": "success", "created_at": "2026-08-14T11:00:00Z"}]
+    )
+    vd._jobs = lambda repo, token, run_id: [{"name": "deploy / deploy", "conclusion": "success"}]
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", "SHA")
+    assert ok is True
+    assert "promote-gate" not in msg

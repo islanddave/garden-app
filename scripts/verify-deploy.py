@@ -142,7 +142,37 @@ def _compare(repo, token, base, head):
     return gh(f"/repos/{repo}/compare/{base}...{head}", token)
 
 
+def _lambda_job_ok(jobs):
+    """OPS-PROMOTERACE-001: the Lambda deploy is now a CALLED workflow inside promote-gate, so it
+    produces jobs named 'deploy-lambdas / deploy (<function>)' rather than a standalone run.
+    Success = at least one such job completed successfully and none failed."""
+    lam = [j for j in jobs if j.get("name", "").startswith("deploy-lambdas /")]
+    if not lam:
+        return False
+    if any(j.get("conclusion") not in ("success", "skipped") for j in lam):
+        return False
+    return any(j.get("conclusion") == "success" for j in lam)
+
+
 def check_lambda_fresh(repo, token, sha):
+    # OPS-PROMOTERACE-001 (2026-08-14): deploy-lambda.yml lost its `push: main` trigger and is now
+    # invoked by promote-gate via `workflow_call`. A called workflow does NOT create its own workflow
+    # run — its jobs appear inside the CALLER's run. So polling deploy-lambda.yml's runs alone would
+    # only ever see pre-change (and workflow_dispatch) runs, conclude main is ahead of the last one
+    # with lambda/ changes, and report STALE LAMBDA on every promote, forever. A permanent false
+    # alarm in a report-only check is worse than no check: it teaches the reader to ignore it.
+    #
+    # So: look for the Lambda deploy in BOTH places — a standalone run (workflow_dispatch, or any
+    # historical push-triggered run) and a promote-gate run carrying successful deploy-lambdas jobs.
+    for r in _runs(repo, token, "promote-gate.yml", status="completed"):
+        if r.get("head_sha") != sha:
+            continue
+        try:
+            if _lambda_job_ok(_jobs(repo, token, r["id"])):
+                return True, f"lambda deployed in promote-gate run {r['id']} on {sha[:10]} (current)"
+        except urllib.error.HTTPError:
+            pass  # fall through to the standalone-run path rather than failing the check
+
     runs = _runs(repo, token, "deploy-lambda.yml", status="completed")
     succ = [r for r in runs if r.get("conclusion") == "success"]
     if not succ:
