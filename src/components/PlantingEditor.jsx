@@ -213,8 +213,15 @@ export default function PlantingEditor({
     try {
       await fetch('/api/plants/' + plant.id, { method: 'DELETE' })
       onDeleted?.(plant.id)
-    } catch {
-      // non-fatal
+    } catch (error) {
+      // BUG-DELCLIENT-001 — 404 = no row matched = already gone, which is what the user wanted.
+      // BUG-DELNOOPOK-001 put a RETURNING gate on this route and apiFetch (src/lib/api.js:134-141)
+      // throws on any non-2xx with the code on e.status. Without this branch, a re-delete would
+      // skip onDeleted and leave the planting sitting in Garden's list even though the server has
+      // none — the editor closes below regardless, so the stale row would look like a failed close.
+      // Deliberate, 404-only, at this call site only; apiFetch must keep throwing 404s for GET/PUT.
+      if (error?.status === 404) onDeleted?.(plant.id)
+      // Anything else stays non-fatal exactly as before: no onDeleted, onClose() still fires.
     } finally {
       setDeleting(false)
       onClose?.()

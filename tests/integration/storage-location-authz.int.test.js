@@ -3,13 +3,20 @@
 // SecretsManager + Clerk; SQL is REAL). Compensating control for the RLS-off posture (see _authz.js).
 //
 // AUTH MODEL: household-scoped on `user_id = ANY(householdIds)` (owner column is user_id, NOT
-// created_by) + `deleted_at IS NULL`, on PUT/:id (index.js:92-94), DELETE/:id (:105-107) and the
-// list (:119). There is NO GET /:id route — the read is the household-scoped LIST, so the matrix's
-// array branch carries the read arms. Denied = 404 (PUT's `if (!rows.length)` gate).
+// created_by) + `deleted_at IS NULL`, on PUT/:id (index.js:93-101), DELETE/:id (:106-121) and the
+// list. There is NO GET /:id route — the read is the household-scoped LIST, so the matrix's array
+// branch carries the read arms. Denied = 404 on BOTH write verbs (`if (!rows.length)` — PUT at
+// :102, DELETE at :119).
 //
-// The generic matrix's write axis MUST be PUT: DELETE returns 200 UNCONDITIONALLY (no RETURNING
-// gate, index.js:102-109), so its status can't signal denial — same shape as the locations handler.
-// The DELETE ownership property is instead pinned by the custom block below (row-state, not status).
+// The generic matrix's write axis is PUT. That used to be FORCED: DELETE returned 200
+// UNCONDITIONALLY (no RETURNING gate), so its status could not signal denial at all.
+// BUG-DELNOOPOK-001 (2026-08-13) retired that constraint — DELETE now 404s on a foreign or
+// unknown id like every other verb. PUT nonetheless STAYS the write axis, for a different and
+// still-live reason: the matrix's `readBack` asserts the attempted mutation did NOT land
+// ('authz-mutated' must not appear), which only a mutating-but-not-destroying verb can express.
+// A DELETE axis would have nothing to read back but a deleted_at that must stay null — a weaker
+// claim, on a row the matrix could then no longer reuse. The DELETE ownership property is pinned
+// by the custom block below instead. Do not re-add the old rationale; it is now false.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, setTestUserId, testRunId } from './_harness.js'
 import { describeAuthzMatrix } from './_authz.js'
@@ -36,11 +43,14 @@ describeAuthzMatrix({
   },
 })
 
-// ── DELETE ownership — custom (0A.5). The generic matrix uses PUT because DELETE returns 200 with no
-// RETURNING gate. This block pins the DELETE path's ownership predicate directly: a foreign DELETE
-// returns 200 (the documented cosmetic weakness — a silent no-op success, NOT a leak) but must leave
-// the owner's row live. That non-mutation is the regression guard — it goes red the moment the
-// `user_id = ANY(householdIds)` predicate is dropped from the DELETE. ──────────────────────────────
+// ── DELETE ownership — custom (0A.5). The generic matrix uses PUT for the readBack reason in the
+// header; this block pins the DELETE path's ownership predicate directly. Since BUG-DELNOOPOK-001 a
+// foreign DELETE returns 404 (was: a silent no-op 200 — a cosmetic weakness, never a leak) AND must
+// leave the owner's row live. BOTH assertions are kept on purpose and they are separate claims: the
+// 404 proves the RESPONSE was gated, only the deleted_at read-back proves the UPDATE never fired.
+// A handler that 404s after mutating would pass the status check alone. The row-state assertion is
+// the soft-delete-bypass guard — it goes red the moment `user_id = ANY(householdIds)` is dropped
+// from the DELETE predicate; do not drop it as redundant now that the status is meaningful. ───────
 describe('AUTHZ storage-location DELETE /api/storage-locations/:id — ownership (0A.5)', () => {
   const RUN = testRunId()
   const OWNER = `authz_sldel_owner_${RUN}`
@@ -58,12 +68,12 @@ describe('AUTHZ storage-location DELETE /api/storage-locations/:id — ownership
     await directSql`DELETE FROM storage_location WHERE user_id IN (${OWNER}, ${FOREIGN})`
   })
 
-  it('foreign DELETE owner storage_location → 200 but row still live (deleted_at NULL)', async () => {
+  it('foreign DELETE owner storage_location → 404, row still live (deleted_at NULL)', async () => {
     setTestUserId(FOREIGN)
     const { status } = await callHandler(storageHandler, { method: 'DELETE', path: `/api/storage-locations/${locId}` })
-    expect(status).toBe(200) // handler is unconditionally 200 on DELETE — status alone cannot prove denial
+    expect(status).toBe(404) // BUG-DELNOOPOK-001 RETURNING gate: 0 rows scoped ⇒ 404, not a no-op 200
     const r = await directSql`SELECT deleted_at FROM storage_location WHERE id = ${locId}`
-    expect(r[0].deleted_at).toBeNull() // soft-delete-bypass regression guard
+    expect(r[0].deleted_at).toBeNull() // separate claim: assert the ROW, not the echo — see block header
   })
 
   it('owner DELETE own storage_location → 200 and row soft-deleted', async () => {

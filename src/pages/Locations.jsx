@@ -130,10 +130,19 @@ export default function Locations() {
     if (!window.confirm(`Delete "${loc.name}"?\n\nThis will also hide all child locations.`)) return
     try {
       await fetch('/api/locations/' + loc.id, { method: 'DELETE' })
-      load()
     } catch (err) {
-      setOpError(err.message)
+      // BUG-DELCLIENT-001 — a DELETE that matched no row is SUCCESS from the user's seat.
+      // BUG-DELNOOPOK-001 changed this route from an unconditional {ok:true} to 404-when-nothing-
+      // matched. apiFetch (src/lib/api.js:134-141) throws on every non-2xx and hangs the status on
+      // e.status, so without this the "already gone" case — double-submit, retry after a network
+      // blip, a second device, a stale list — would raise a red banner over an outcome the user
+      // already has. The tolerance is DELIBERATE and scoped to 404 on this one DELETE; do not
+      // widen it into apiFetch, which would mask genuine not-founds on GET/PUT app-wide.
+      // Anything else (403, 500, timeout status 0, network) still surfaces exactly as before.
+      if (err?.status !== 404) { setOpError(err.message); return }
     }
+    // Runs on both paths on purpose: the refetch is what makes the vanished row leave the tree.
+    load()
   }
 
   // PUT the collection route, not a /active sub-route: /api/locations/:id routes GET/PUT/DELETE
