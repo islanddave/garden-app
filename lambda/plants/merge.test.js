@@ -81,7 +81,15 @@ const baseResponses = (plants, events = []) => ({
 describe('resolveStatus', () => {
   it('takes the most advanced live stage, not the winner\'s', () => {
     expect(resolveStatus(['vegetative', 'fruiting'])).toBe('fruiting')
-    expect(resolveStatus(['harvested', 'fruiting'])).toBe('harvested')
+    // `harvested` is a milestone on an indeterminate crop, not an end state: a sibling still
+    // fruiting means the merged row is still producing. This asserted 'harvested' until a branch
+    // rehearsal showed it producing the group 6 regression §4.1 forbids (V4-MERGESTATUS-001).
+    expect(resolveStatus(['harvested', 'fruiting'])).toBe('fruiting')
+    // Order-independent: the reducer must not depend on which sibling it sees first.
+    expect(resolveStatus(['fruiting', 'harvested'])).toBe('fruiting')
+    // …and `harvested` still outranks every earlier live stage.
+    expect(resolveStatus(['harvested', 'vegetative'])).toBe('harvested')
+    expect(resolveStatus(['harvested', 'fruit_set'])).toBe('harvested')
   })
   it('never lets a terminal state outrank a living cohort', () => {
     // The regression this exists for: a merged row with any living sibling is alive.

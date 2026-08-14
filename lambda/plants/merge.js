@@ -113,10 +113,17 @@ export const PHENOLOGY_COLUMNS = ['sown_at', 'germinated_at', 'transplanted_at',
 
 // `status` is the sole carrier of stage (qty_lost/loss_cause are near-universally unset), so a
 // winner-takes-all status silently regresses a fruiting planting to vegetative.
+// `harvested` ranks BELOW `fruiting` deliberately. For the indeterminate crops this garden actually
+// grows (peppers, tomatoes), `harvested` records that fruit was picked — it is a milestone, not an
+// end state. A sibling still `fruiting` means the merged row is still producing, so ranking
+// `harvested` higher resolved group 6 (Chili Red) to `harvested` and told the user a live plant was
+// done. That is the exact "still-producing -> harvested" regression plan §4.1 exists to prevent;
+// the rank table contradicted the rule it was implementing. Measured on a branch rehearsal
+// 2026-08-14 before the swap. Ledger V4-MERGESTATUS-001.
 const STATUS_RANK = Object.freeze({
   seed: 0, sown: 1, germinated: 2, seedling: 3, rooting: 3, potting_up: 4,
-  transplanted: 5, vegetative: 6, flowering: 7, fruit_set: 8, fruiting: 9,
-  harvested: 10, dormant: 11, ended: 12, failed: 13, dead: 13, archived: 14,
+  transplanted: 5, vegetative: 6, flowering: 7, fruit_set: 8, harvested: 9,
+  fruiting: 10, dormant: 11, ended: 12, failed: 13, dead: 13, archived: 14,
 })
 const TERMINAL_STATUS = new Set(['ended', 'failed', 'dead', 'archived'])
 
