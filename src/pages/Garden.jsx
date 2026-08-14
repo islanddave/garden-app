@@ -16,7 +16,7 @@ import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
 import { SYSTEM_NOTIFICATIONS_ENABLED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
-import GroupByControl from '../components/forms/GroupByControl.jsx'
+import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -158,20 +158,35 @@ export default function Garden() {
     // leads — a real crop_type_slug grouping (tomato/pepper/...) from the cultivar join, since the
     // entity-tags 'type' facet is unpopulated in prod. The tag 'type' facet is skipped so it can't
     // shadow the crop-type option. Flag OFF keeps the exact prior options (Projects + tag facets).
-    const opts = PROJECTS_HIDDEN ? [{ value: 'crop_type', label: 'Type' }] : [{ value: 'none', label: 'Projects' }]
+    //
+    // V4-FACETSLUG-001 ordering (BD0806-21: "type, project, location, lifecycle"). The option SET is
+    // unchanged in both flag states — only the ORDER moves, so nothing about grouping behavior or the
+    // stale-value fallback shifts. Three notes on the literal spec:
+    //   * "project" is DEAD. PROJECTS_HIDDEN went true 2026-08-10 (the day the row was filed), so the
+    //     'none'/Projects option is unreachable under the flag. It is NOT resurrected; with the flag
+    //     OFF it keeps its historical lead position and the rest of the head follows it.
+    //   * "lifecycle" means the option LABELLED "Lifecycle", which is the `status` facet. The
+    //     lifecycle TAG facet is labelled "Lifespan". That inversion is live and deliberate; it sorts
+    //     down with the other tag facets rather than claiming the head slot the row asked for.
+    //   * 'status' and 'location' are STRUCTURAL (every planting has both) so they are offered
+    //     unconditionally — they do not depend on tagMap having anything in it. Promoting them into
+    //     the head is what makes the head stable regardless of which tag facets happen to be present.
+    const opts = []
+    if (PROJECTS_HIDDEN) {
+      opts.push({ value: 'crop_type', label: 'Type' }) // crop_type (cultivar join) replaces the tag 'type' facet
+    } else {
+      opts.push({ value: 'none', label: 'Projects' })
+      if (present.has('type')) opts.push({ value: 'type', label: LABELS.type })
+    }
+    opts.push({ value: 'location', label: LABELS.location })
+    opts.push({ value: 'status', label: 'Lifecycle' })
     for (const fct of ORDER) {
-      if (fct === 'type' && PROJECTS_HIDDEN) continue // crop_type (cultivar join) replaces the tag 'type' facet
-      // V4-GARDENLOCFILTER-001: 'location' is now STRUCTURAL (garden_node.location_id) and is appended
-      // unconditionally below. Skipped here so a stray location-facet tag can't add a duplicate option.
+      if (fct === 'type') continue // already placed in the head (or replaced by crop_type)
+      // V4-GARDENLOCFILTER-001: 'location' is STRUCTURAL (garden_node.location_id) and is placed in
+      // the head above. Skipped here so a stray location-facet tag can't add a duplicate option.
       if (fct === 'location') continue
       if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
     }
-    // 'status' groups by the planting's LIFECYCLE stage (seed->...->ended). Always available
-    // (every planting has a status), so appended unconditionally — it is NOT a tag facet.
-    opts.push({ value: 'status', label: 'Lifecycle' })
-    // 'location' groups by physical location (zone/area/shelf). Structural like 'status', so it is
-    // always offered — it does not depend on tagMap having anything in it.
-    opts.push({ value: 'location', label: 'Location' })
     return opts
   }, [tagMap])
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
@@ -591,8 +606,10 @@ export default function Garden() {
           and it now gets the full 390px width instead of sharing it with the switch. */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* V4-FACETSLUG-001: one tappable slug, not a 12-chip wrapping row. Today's CareNeeded
+              still renders GroupByControl (2 options) — that surface is untouched. */}
           {facetOptions.length > 1 && (
-            <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
+            <GroupBySlugSelect options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
           )}
           <Link to="/capture" data-testid="snap-entry-garden" style={btnGhostIcon}>
             <Icon name="media.camera" size={16} decorative style={{ color: P.green }} />Snap

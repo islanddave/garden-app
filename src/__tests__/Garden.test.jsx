@@ -104,12 +104,19 @@ describe('Garden — sort toggle removed (forced alpha) + Lifecycle grouping', (
   })
   it('offers a Lifecycle (status) grouping option', async () => {
     await renderGarden()
-    // 'status' is always available -> the Group-by control shows even with no tags.
-    expect(screen.getByText('Lifecycle')).toBeTruthy()
+    // 'status' is always available -> the Group-by control shows even with no tags. V4-FACETSLUG-001
+    // turned that control from a chip row into one native <select>, so the option is an <option>
+    // now; assert it through the combobox rather than by loose text.
+    const sel = screen.getByRole('combobox', { name: /Group by/i })
+    expect([...sel.options].map(o => o.textContent)).toContain('Lifecycle')
   })
   it('grouped view is collapsed-by-default with an Expand all toggle that reveals rows', async () => {
     await renderGarden()
-    await act(async () => { fireEvent.click(screen.getByText('Lifecycle')) })
+    // V4-FACETSLUG-001: choose the facet on the select (clicking an <option> is a no-op in jsdom
+    // AND on a real native picker — the change event is what group-by listens to).
+    await act(async () => {
+      fireEvent.change(screen.getByRole('combobox', { name: /Group by/i }), { target: { value: 'status' } })
+    })
     // collapsed by default -> the planting row is hidden
     expect(screen.queryByText('Sungold')).toBeNull()
     const expandAll = screen.getByLabelText('Expand all sections')
