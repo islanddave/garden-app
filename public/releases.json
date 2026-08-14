@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.21.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Weigh-in session mode for harvests. Open the log in session mode from the Harvests page and record a run of weights back to back, instead of walking the whole log-an-event flow once per item."
+    ]
+  },
+  {
     "version": "4.20.0",
     "date": "2026-08-14",
     "highlights": [
