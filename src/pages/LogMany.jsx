@@ -7,7 +7,7 @@ import { P } from '../lib/constants.js'
 import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups, PRIMARY_EVENT_TYPES } from '../lib/eventTypes.js'
 import Icon from '../components/Icon.jsx'
 import Section from '../components/FormSection.jsx'
-import { ScopeChecklist } from '../components/forms'
+import { ScopeChecklist, Textarea } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePicker.jsx'
 // V4-WATERMATH-001 F0 — batch amount class. ONE batch-level chip applies to every row; a per-row
@@ -82,6 +82,12 @@ function todayYMD() {
 
 const DRAFT_KEY = 'logmany'
 
+// V4-EVENTSEL-005 — ONE note for the whole batch. MUST equal MAX_NOTES_LEN in
+// lambda/events/validators.js; the two are pinned together by a source test
+// (src/__tests__/LogManyNotes.test.jsx) because a client cap looser than the server's turns a
+// server 400 into a mystery, and a client cap tighter than the server's silently truncates.
+export const MAX_BATCH_NOTE_LEN = 2000
+
 export default function LogMany() {
   const { fetch } = useApiFetch()
   const navigate = useNavigate()
@@ -105,6 +111,12 @@ export default function LogMany() {
   // V3-EVENT-008 (V002 §5): bulk back-dating. Frost / bring-in events are often logged
   // the morning after. Empty string = "now" (server defaults to today, noon-anchored).
   const [eventDate, setEventDate] = useState('')
+  // V4-EVENTSEL-005: ONE note for the batch. `showNotes` only ever OPENS something empty — the
+  // rendered open state is DERIVED (`showNotes || !!notes`), the same rule Log Event's notes
+  // disclosure uses, so collapsing can never hide text the user has already written and a restored
+  // draft carrying a note shows it without a tap.
+  const [notes, setNotes] = useState('')
+  const [showNotes, setShowNotes] = useState(false)
   const [scope, setScope]   = useState({ type: 'all' })
   const [selection, setSelection] = useState(null) // { committedCount, excludedIds } from ScopeChecklist
   const [saving, setSaving] = useState(false)
@@ -162,6 +174,10 @@ export default function LogMany() {
           if (draft) {
             if (draft.eventType && BATCH_EVENT_TYPES.includes(draft.eventType)) setEventType(draft.eventType)
             if (typeof draft.eventDate === 'string') setEventDate(draft.eventDate)
+            // V4-EVENTSEL-005: a typed note is the most expensive thing on this form to lose to a
+            // dismiss — it is the only free text here. Restored, and the derived-open rule above
+            // makes it VISIBLE on restore rather than hidden behind a collapsed disclosure.
+            if (typeof draft.notes === 'string') setNotes(draft.notes)
             const ds = draft.scope
             if (ds && (ds.type === 'all'
               || (ds.type === 'project' && proj.some(p => p.id === ds.project_id))
@@ -194,9 +210,9 @@ export default function LogMany() {
   // lastScope memory; from then on it persists real edits normally.
   useEffect(() => {
     if (result || !ready) return
-    const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all'
-    if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
-  }, [result, ready, eventType, eventDate, scope])
+    const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes
+    if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current })
+  }, [result, ready, eventType, eventDate, scope, notes])
 
   // V4-WATERMATH-001 F0: a new event type or a new scope is a new batch. Per-row overrides are
   // keyed by plant_id against a preview that has just been re-fetched, so keeping them would
@@ -224,6 +240,8 @@ export default function LogMany() {
     emoji: EVENT_TYPE_META[eventType]?.emoji ?? '📌',
   }
   const verbLabel = evMeta.label.toLowerCase()
+  // V4-EVENTSEL-005: DERIVED, not plain state — see the useState comment above.
+  const notesOpen = showNotes || !!notes
   const committedCount = selection?.committedCount ?? 0
   const scopeLabel = scope.type === 'all' ? 'all active plantings'
     : scope.type === 'project' ? (projects.find(p => p.id === scope.project_id)?.name ?? 'project')
@@ -236,7 +254,7 @@ export default function LogMany() {
     // the POST fails and the user dismisses OR exits, re-opening restores THIS key so the retry is
     // idempotent. V4-DRAFTFULLPAGE-001 (c): both surfaces — this is the byte whose loss on the
     // full page turned a failed batch into a non-idempotent retry.
-    writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
+    writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current })
     setSaving(true); setError(null)
     try {
       // V4-WATERMATH-001 F0 — batch metadata contract with the events Lambda (W-F0-LAMBDA):
@@ -251,10 +269,16 @@ export default function LogMany() {
       const overrideEntries = depthApplies
         ? Object.entries(rowDepth).filter(([plantId]) => !excludedIds.includes(plantId))
         : []
+      // V4-EVENTSEL-005 — ONE note, applied to every row server-side (the batch INSERT binds it
+      // once). Trimmed and omitted when blank so a whitespace-only field never becomes 500 rows of
+      // empty-string notes; the server re-does both (normalizeNotes) because this is a public
+      // endpoint and the client is not the guard.
+      const trimmedNotes = notes.trim()
       const r = await fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({
         idempotency_key: idemRef.current, event_type: eventType, scope,
         exclude_plant_ids: excludedIds,
         ...(eventDate ? { event_date: eventDate } : {}),
+        ...(trimmedNotes ? { notes: trimmedNotes } : {}),
         ...(depthApplies ? { metadata: waterDepthMetadata(batchDepth, batchDepthTouched) } : {}),
         ...(overrideEntries.length ? {
           plant_metadata: Object.fromEntries(
@@ -291,7 +315,12 @@ export default function LogMany() {
     } catch (err) { setError('Undo failed: ' + err.message) }
   }
 
-  function logMore() { idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null) }
+  // V4-EVENTSEL-005 — "Log more" clears the note; "Undo" keeps it.
+  // Deliberate asymmetry: "Log more" starts a DIFFERENT batch (event type and scope carry only
+  // because they are cheap re-picks), and silently re-attaching last batch's prose to a new set of
+  // plantings is the exact data-quality defect the "applies to all" label exists to prevent. Undo
+  // means "that batch was wrong, let me redo it", so the text the user just typed must survive.
+  function logMore() { idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null); setNotes(''); setShowNotes(false) }
 
   if (!ready) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
@@ -313,6 +342,15 @@ export default function LogMany() {
             <p data-testid="logmany-depth-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem' }}>
               Recorded as {waterDepthLabel(batchDepth)}
               {Object.keys(rowDepth).length > 0 && ` · ${Object.keys(rowDepth).length} changed`}
+            </p>
+          )}
+          {/* V4-EVENTSEL-005: name the note that was STORED, and on how many rows, beside the undo
+              that can take it back. Same operational register as the depth line above (Reward-UX
+              V101 — it reports a stored value, it does not celebrate one). Showing the text itself
+              is what makes "did my note go through?" answerable without opening an event. */}
+          {notes.trim() && (
+            <p data-testid="logmany-note-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+              Note saved on {result.count === 1 ? 'it' : `all ${result.count}`}: “{notes.trim()}”
             </p>
           )}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -396,6 +434,52 @@ export default function LogMany() {
           </button>
         )}
       </Section>
+
+      {/* ── V4-EVENTSEL-005: ONE note for the whole batch ──
+          Dave's ruling. Log Many exists for one activity across many plantings ("side-dressed the
+          whole bed"), so a single note is the real use case; per-row text entry on a phone outdoors
+          works against the speed that is this surface's entire purpose, and is explicitly NOT in
+          scope. If per-row notes are ever wanted they belong in the Review list as an opt-in
+          override, mirroring the water-depth chip — not in the main form.
+
+          THE LABEL IS LOAD-BEARING. A note field that silently lands on 30 events when the user
+          meant one is a data-quality defect, so the fan-out is stated in the collapsed header (the
+          only thing visible before a tap) AND under the field itself (where the user is while
+          typing). Same "Applies to every planting in this batch" grammar the water chip already
+          established on this page.
+
+          Collapsed by default, in Log Event's disclosure grammar rather than a Section, because the
+          card IS Log Event's notes card — this row exists to close a parity gap, and the two
+          surfaces should read the same. Collapsing also keeps a 90px textarea out of a form that
+          already carries a scope checklist. */}
+      <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px', ...SECTION_SPACING }}>
+        <button
+          type="button"
+          data-testid="logmany-notes-disclosure"
+          onClick={() => setShowNotes(s => !s)}
+          aria-expanded={notesOpen}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, minHeight: 44, width: '100%', display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <span aria-hidden="true">{notesOpen ? '▾' : '▸'}</span>
+          <span>Notes  ·  one for the whole batch</span>
+        </button>
+        {notesOpen && (
+          <div style={{ marginTop: 14 }}>
+            <Textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              aria-label="Notes for this batch"
+              aria-describedby="logmany-notes-scope"
+              maxLength={MAX_BATCH_NOTE_LEN}
+              style={{ height: 90, resize: 'vertical' }}
+              placeholder="Notes (optional — leave blank to save)"
+            />
+            <p id="logmany-notes-scope" data-testid="logmany-notes-scope" style={{ margin: '10px 2px 0', fontSize: '0.78rem', color: P.light, lineHeight: 1.45 }}>
+              Applies to every planting in this batch — the same note is saved on each one.
+            </p>
+          </div>
+        )}
+      </div>
 
       <ScopeChecklist
         scope={scope}

@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
@@ -264,6 +264,10 @@ export const handler = async (event) => {
 
       const eventType = body.event_type;
       const eventDate = normalizeEventDate(body.event_date) ?? new Date().toISOString();
+      // V4-EVENTSEL-005 — ONE note for the whole batch, written onto EVERY row. Normalized here
+      // (trim, blank to NULL) rather than trusted from the client: see normalizeNotes in
+      // validators.js for why the empty-string case matters at 500x fan-out.
+      const batchNotes = normalizeNotes(body.notes);
       const key = body.idempotency_key;
       const scope = body.scope;
       const scopeType = scope.type;
@@ -405,7 +409,7 @@ export const handler = async (event) => {
         // created_at. Set at the write, so provenance no longer depends on app_events surviving.
         sql`INSERT INTO event_log
               (project_id, location_id, plant_id, event_type, event_date, is_public,
-               logged_by, created_by, metadata, source)
+               logged_by, created_by, metadata, source, notes)
             SELECT p.container_id, pp.location_id, p.id, ${eventType}, ${eventDate}::timestamptz, true,
                    ${userId}, ${userId},
                    -- V4-WATERMATH-001 F0. WAS: jsonb_build_object('batch_id', …, 'batch_v', 1) —
@@ -415,7 +419,13 @@ export const handler = async (event) => {
                    -- Both objects already contain batch_id/batch_v (merged last, server-owned), so
                    -- every row still carries the batch identity the undo cascade keys on.
                    COALESCE(${overridesJson}::jsonb -> p.id::text, ${defaultMetadataJson}::jsonb),
-                   ${EVENT_SOURCE_BATCH}
+                   ${EVENT_SOURCE_BATCH},
+                   -- V4-EVENTSEL-005: the batch-level note, bound ONCE and written to every row of
+                   -- this INSERT ... SELECT. The ::text cast is mandatory, not decoration: this is
+                   -- the only nullable bare parameter in the statement, and an untyped NULL in a
+                   -- SELECT list is 42P18 "could not determine data type of parameter" (L-086), so
+                   -- a batch with no note would 500 on every call without it.
+                   ${batchNotes}::text
             FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
             WHERE p.id = ANY(${plantIds})`,
         sql`
