@@ -188,8 +188,35 @@ export default function CaptureFlow() {
       <input ref={fileRef} data-testid="capture-input" type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
 
       {preview && (
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ position: 'relative', marginBottom: 14 }}>
           <img src={preview} alt="capture preview" style={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
+          {/* V4-SNAPDEST-001 (BD0806-08) — the accept/redo decision belongs WITH the photo.
+              This control used to render last in the step-'mode' grid, below all four destination
+              cards. Measured in the mobile harness at 360x660 (a realistic Chrome Android
+              innerHeight once the toolbar is counted): it sat at y=634-682, i.e. 22px BELOW the
+              fold. Rejecting a shot you had already decided against required scrolling past four
+              choices about what to do with it.
+              OVERLAID on the preview rather than stacked under it, deliberately. A stacked row was
+              measured first and works — retake moves to y=304 — but it costs 56px of vertical, and
+              that pushed "Add inventory" (the last card, and the subject of this same ledger row)
+              from y=608 to y=705, i.e. off-screen. Buying adjacency for the photo by demoting a
+              destination card is not a trade this row wants. The overlay costs zero layout height,
+              so the destination list ends up HIGHER than it was at base.
+              Solid P.white fill, not a translucent scrim: the chip sits over arbitrary photo
+              content and contrast has to hold against a bright sky as well as dark soil.
+              Adjacency, not a new step — onPick() still auto-advances to 'mode', so choosing a
+              destination IS accepting the photo. The step guard reproduces the old visibility
+              exactly ('mode' only): retake is wrong in 'form' (Back exists) and in 'done'
+              (already uploaded).
+              Label and picker semantics are UNCHANGED on purpose: BUG-SNAPRETAKE-001's regression
+              test pins both the exact string and `capture` staying null (library, not forced
+              camera). This is a move, not a rewrite. */}
+          {step === 'mode' && (
+            <div style={{ position: 'absolute', right: 8, bottom: 8 }}>
+              <Button data-testid="cap-retake" variant="secondary" onClick={() => openPicker(false)}
+                style={{ backgroundColor: P.white, fontSize: '0.85rem' }}>Retake / choose photo</Button>
+            </div>
+          )}
           {file && !SAVE_TO_DEVICE_HIDDEN && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
               <button type="button" onClick={() => saveFileToDevice(file)} aria-label="Save photo to device"
@@ -217,6 +244,12 @@ export default function CaptureFlow() {
 
       {step === 'mode' && (
         <div style={{ display: 'grid', gap: 10 }}>
+          {/* The affirmative half of the ask ("Use Photo") is this caption, not a button. The
+              picker already auto-advances into this step, so a confirm control would be a second
+              tap that decides nothing — it would gate the flow on re-accepting a photo the user
+              just took. Naming the cards as the acceptance keeps one tap and still reads as a
+              decision about the photo. */}
+          <div style={{ fontSize: '0.82rem', fontWeight: 600, color: P.mid }}>Use this photo for…</div>
           {MODES.map(m => (
             <button key={m.id} data-testid={`mode-${m.id}`} onClick={() => { setMode(m.id); setStep('form') }}
               style={{ ...card, textAlign: 'left', cursor: 'pointer' }}>
@@ -224,7 +257,6 @@ export default function CaptureFlow() {
               <div style={{ fontSize: '0.82rem', color: P.light, marginTop: 2 }}>{m.hint}</div>
             </button>
           ))}
-          <Button variant="secondary" onClick={() => openPicker(false)}>Retake / choose photo</Button>
         </div>
       )}
 
