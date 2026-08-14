@@ -1,0 +1,394 @@
+# gates.yml
+# OPS-ARCHRESTORE-001 — the archive cold store gains an inverse, and the archive side is made
+# lossless first so that inverse can be honest.
+#
+# SEQUENCING (load-bearing — read before applying anything):
+#   0a-additive-ddl.sql — current_schema_fingerprint() + archive_row_data_drift() helpers, nullable
+#                         schema_fingerprint on both archive tables, new photo_detach_archive table.
+#                         Purely additive. MUST apply BEFORE 0c, because 0c's archive bodies write
+#                         to photo_detach_archive; applying 0c first leaves both archive routines
+#                         raising 42P01 on their next invocation — i.e. it breaks the escape hatch
+#                         v4-softdelcascade-001's RESTRICT FKs assume exists.
+#   0c-routines.sql     — CREATE OR REPLACE of both archive routines (capture the detach) plus the
+#                         three new un-archive functions. THE FIX, both halves.
+#
+# DEPLOY BOUNDARY — the falsifiable test, answered.
+#   QUESTION: would the CURRENTLY DEPLOYED prod code perform an operation this now rejects?
+#   METHOD: inherited from v4-archpreservguard-001, whose grep of all 27 deployed prod bundles at
+#   5c232164 (v4.14.0) established that NOTHING deployed calls archive_plant_events() or
+#   archive_container_events(); re-confirmed by repo grep at c509fff (v4.16.0) — the only callers
+#   anywhere in the tree are integration tests. The routines are operator-invoked escape hatches.
+#   RESULT: the archive routines gain a WRITE (the capture), not a rejection; the un-archive
+#   routines are new and have no caller, deployed or otherwise.
+#   ANSWER: NO. Safe to apply before or after a code deploy; no pre/post-deploy split.
+#
+#   COMPANION EDITS: none required, verified rather than assumed. tests/integration/_cleanup.js does
+#   not sweep event_log_archive or harvest_log_archive today (a pre-existing gap, unchanged by this
+#   migration — archive-preservation-guard.int.test.js already leaves rows behind), so the new
+#   archive-restore suite drains photo_detach_archive and both archive tables in its own afterAll
+#   rather than widening a file outside this migration's boundary.
+#
+# APPLY ORDER CONSEQUENCE FOR CI: gate-invariants.yml runs `--phase post --continuous-only` against
+# BOTH prod and staging and fires on `migrations/**` pushes. Apply to STAGING AND PROD BEFORE push.
+#
+# CROSS-MIGRATION RISK — measured, not predicted. The whole 389-gate corpus was run with
+# scripts/gate_runner.py against two identical local restores of the live prod schema (pg_dump
+# --schema-only from prod, PostgreSQL 17.10 both ends), one with this migration applied and one
+# without. NEWLY-FAILING GATES: 0. Identical status on all 389. The four that could plausibly have
+# broken all PASS with this migration applied:
+#   * v4-softdelcascade-001 post_archive_functions_detach_photos_before_deleting_events — positional
+#     over prosrc, regexp_instr('event_id\s*=\s*(NULL|CASE)') < regexp_instr('DELETE FROM
+#     public\.event_log'). The detach UPDATE keeps its SET clause verbatim and stays above the
+#     delete; the pre-image CTE added above it contains no `event_id =` NULL/CASE form.
+#   * v4-archpreservguard-001 post_preservation_guard_precedes_the_harvest_delete — positional,
+#     using position(), which returns 0 when the needle is absent. The literal
+#     `DELETE FROM public.harvest_log` is untouched in both bodies.
+#   * v4-archpreservguard-001 post_both_archive_routines_guard_preservation — both bodies still
+#     name preservation_log.
+#   * v4-softdelcascade-001 post_archive_has_no_foreign_keys — scoped to event_log_archive and
+#     harvest_log_archive; photo_detach_archive carries no FKs either, and this migration asserts
+#     that separately below.
+#
+# PRE-EXISTING DEFECT FOUND IN PASSING, DELIBERATELY NOT FIXED HERE (v4-archpreservguard-001 is
+# outside this migration's file boundary): its `pre_only_the_two_archive_routines_delete_harvest_log`
+# matches prosrc against 'delete\s+from\s+(public\.)?harvest_log\b'. In a PostgreSQL ARE `\b` is a
+# character-entry escape for BACKSPACE, not a word boundary, so that pattern matches NOTHING —
+# verified live: `'DELETE FROM public.harvest_log h WHERE' ~* 'delete\s+from\s+(public\.)?harvest_log\b'`
+# returns FALSE. The gate is vacuous and passes for the wrong reason. It is reported, not repaired.
+# (Independently, the correct spelling `\y` would also not match `harvest_log_archive`, so the new
+# un-archive functions are safe under either reading.)
+
+pre:
+  # The substrate 0a extends must be there. Standing invariant.
+  - name: pre_archive_tables_exist
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_both_archive_routines_exist
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+    expect: rowcount_eq
+    value: 2
+
+  # THE PREMISE OF THE WHOLE TICKET, asserted rather than quoted: neither archive routine records
+  # what its photo detach severs. continuous: false — 0c is precisely what makes this false.
+  - name: pre_archive_routines_do_not_capture_the_detach
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND p.prosrc NOT ILIKE '%photo_detach_archive%'
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_unarchive_routines_absent
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('unarchive_plant_events','unarchive_container_events',
+                           'unarchive_events_apply')
+    expect: rowcount_eq
+    value: 0
+
+  # schema_version is the fingerprint's source. If it were empty, every archive row would stamp NULL
+  # and the drift check would degrade to always-run rather than fail open. Standing invariant.
+  - name: pre_schema_version_has_rows
+    sql: |
+      SELECT 1 WHERE (SELECT count(*) FROM public.schema_version) > 0
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # THE ORDERING ARGUMENT OF THIS ENTIRE MIGRATION, made falsifiable. Fixing the archive side first
+  # is free ONLY while nothing has been archived: a non-empty archive table means detaches have
+  # already happened whose photo links were never captured, and no backfill can recover them
+  # (the severed value was written nowhere). If this fails, STOP — the migration is still correct
+  # going forward, but the README's "no historical data is lost by this ordering" claim is not, and
+  # the un-archive's photo relink will be silently empty for those rows.
+  # continuous: false — the archive legitimately populates the first time an operator runs the
+  # routine. An implicitly-continuous emptiness assert is a sweep time bomb (v4-softdelcascade-001
+  # names this as the 5th instance of that class).
+  - name: sweep_nothing_has_been_archived_yet
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.event_log_archive
+      UNION ALL
+      SELECT 1 FROM public.harvest_log_archive
+    expect: rowcount_eq
+    value: 0
+
+  # THE USUAL L-058 SWEEP IS DELIBERATELY ABSENT, and that is a decision rather than an omission.
+  # The obvious candidate — "no photo_detach_archive row lacks provenance", pre-flighting 0a's
+  # CHECK — cannot be written here: the sweep phase runs BEFORE 0a, so the table does not exist and
+  # PostgreSQL raises 42P01 at PARSE time even behind an information_schema guard (the planner
+  # resolves every relation reference regardless of the outer predicate). Measured, not assumed. It
+  # would also have been vacuous: 0a creates the table EMPTY and the CHECK is armed at creation, so
+  # there is no existing data for the predicate to be false over. post_photo_detach_archive_has_
+  # provenance_check asserts the constraint itself instead.
+
+post:
+  # ── 0a substrate ─────────────────────────────────────────────────────────────────────────────
+  - name: post_photo_detach_archive_exists
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'photo_detach_archive'
+    expect: rowcount_eq
+    value: 1
+
+  # The cold store must NOT re-create the coupling the archive family deliberately avoids. Same
+  # assertion v4-softdelcascade-001 makes for the other two archive tables, for the same reason:
+  # an FK would make the cold store refuse the very rows it exists to hold.
+  - name: post_photo_detach_archive_has_no_foreign_keys
+    sql: |
+      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relname = 'photo_detach_archive' AND c.contype = 'f'
+    expect: rowcount_eq
+    value: 0
+
+  # Provenance is what drives the un-archive: a captured row with neither key is unreachable by
+  # either entry point and is therefore silently lost. Mirrors event_log_archive_has_provenance.
+  - name: post_photo_detach_archive_has_provenance_check
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'photo_detach_archive_has_provenance' AND contype = 'c'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_photo_detach_archive_pre_image_must_be_an_object
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'photo_detach_archive_pre_image_is_object' AND contype = 'c'
+    expect: rowcount_eq
+    value: 1
+
+  # NO NEW TRIGGERS anywhere. scripts/restore-verify.py builds a table:trigger:function inventory
+  # and hard-fails on prod-vs-restore drift; this migration deliberately adds none, so that
+  # inventory is unchanged and needs no fixture update.
+  - name: post_photo_detach_archive_has_no_triggers
+    sql: |
+      SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+       WHERE c.relname = 'photo_detach_archive' AND NOT t.tgisinternal
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_fingerprint_columns_exist
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive','photo_detach_archive')
+         AND column_name = 'schema_fingerprint'
+    expect: rowcount_eq
+    value: 3
+
+  # The column is useless unless it DEFAULTS — the archive routines do not name it in their INSERT
+  # column lists on purpose, so that their bodies stay minimally diffed from the pre-migration
+  # definitions. If the default is ever dropped, every future archive row stamps NULL and the drift
+  # check silently degrades to always-run.
+  - name: post_fingerprint_columns_default_to_the_helper
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive','photo_detach_archive')
+         AND column_name = 'schema_fingerprint'
+         AND column_default LIKE '%current_schema_fingerprint%'
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_fingerprint_helpers_exist
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('current_schema_fingerprint','archive_row_data_drift')
+    expect: rowcount_eq
+    value: 2
+
+  # NOT VACUOUS: exercises the drift helper against a snapshot known to be one key short of
+  # event_log's real column set. If archive_row_data_drift ever returns NULL for a genuinely
+  # drifted snapshot, the un-archive's Guard 2 becomes decoration and reconstitution silently
+  # defaults the missing column.
+  - name: post_drift_helper_detects_a_missing_column
+    sql: |
+      SELECT 1 WHERE public.archive_row_data_drift(
+        'event_log',
+        (SELECT jsonb_object_agg(c.column_name, 'x')
+           FROM information_schema.columns c
+          WHERE c.table_schema = 'public' AND c.table_name = 'event_log'
+            AND c.column_name <> 'notes')) LIKE '%missing=[notes]%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_drift_helper_is_quiet_on_an_exact_match
+    sql: |
+      SELECT 1 WHERE public.archive_row_data_drift(
+        'event_log',
+        (SELECT jsonb_object_agg(c.column_name, 'x')
+           FROM information_schema.columns c
+          WHERE c.table_schema = 'public' AND c.table_name = 'event_log')) IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  # ── 0c, HALF 1: archiving is now lossless ────────────────────────────────────────────────────
+  - name: post_both_archive_routines_capture_the_detach
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND p.prosrc ILIKE '%photo_detach_archive%'
+    expect: rowcount_eq
+    value: 2
+
+  # THE CAPTURE MUST PRECEDE THE EVENT DELETE, or it is recording a link that has already been
+  # destroyed. Positional over prosrc, the same technique v4-softdelcascade-001 uses for the
+  # detach/delete ordering and v4-archpreservguard-001 for the preservation guard. Mutation-tested
+  # the same way: moving the INSERT below the event DELETE makes this fail.
+  - name: post_capture_precedes_the_event_delete
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND regexp_instr(p.prosrc, 'INSERT INTO public\.photo_detach_archive') > 0
+         AND regexp_instr(p.prosrc, 'DELETE FROM public\.event_log') > 0
+         AND regexp_instr(p.prosrc, 'INSERT INTO public\.photo_detach_archive')
+           < regexp_instr(p.prosrc, 'DELETE FROM public\.event_log')
+    expect: rowcount_eq
+    value: 2
+
+  # DUPLICATED FROM v4-softdelcascade-001 ON PURPOSE. That file owns the invariant; this migration
+  # is the one that could break it, so it is asserted here too — a corpus run that skipped
+  # softdelcascade would otherwise not notice.
+  - name: post_detach_still_precedes_the_event_delete
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND regexp_instr(p.prosrc, 'event_id\s*=\s*(NULL|CASE)') > 0
+         AND regexp_instr(p.prosrc, 'DELETE FROM public\.event_log') > 0
+         AND regexp_instr(p.prosrc, 'event_id\s*=\s*(NULL|CASE)')
+           < regexp_instr(p.prosrc, 'DELETE FROM public\.event_log')
+    expect: rowcount_eq
+    value: 2
+
+  # NOTHING WAS DROPPED BY THE CREATE OR REPLACE. All seven pre-existing guards, named by the table
+  # each protects: calibration evidence and preservation provenance in both routines, the
+  # cross-container harvest tripwire in the container one. A CREATE OR REPLACE that silently lost a
+  # guard would leave every other gate in this file green.
+  - name: post_all_preexisting_guards_survive
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND p.prosrc ILIKE '%cultivar_weight_sample%'
+         AND p.prosrc ILIKE '%preservation_log%'
+         AND p.prosrc ILIKE '%would leave photo(s) with no parent%'
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_container_cross_container_harvest_guard_survives
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname = 'archive_container_events'
+         AND p.prosrc ILIKE '%strand detail off a surviving event%'
+    expect: rowcount_eq
+    value: 1
+
+  # The archive routines' public contract is unchanged. A silently widened return shape would break
+  # every existing caller that reads the three columns positionally.
+  - name: post_archive_return_shape_unchanged
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND pg_get_function_result(p.oid) =
+             'TABLE(events_archived integer, harvests_archived integer, photos_detached integer)'
+    expect: rowcount_eq
+    value: 2
+
+  # ── 0c, HALF 2: the inverse ──────────────────────────────────────────────────────────────────
+  - name: post_unarchive_routines_exist
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('unarchive_plant_events','unarchive_container_events',
+                           'unarchive_events_apply')
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_unarchive_return_shape_is_symmetric_with_archive
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('unarchive_plant_events','unarchive_container_events',
+                           'unarchive_events_apply')
+         AND pg_get_function_result(p.oid) =
+             'TABLE(events_restored integer, harvests_restored integer, photos_relinked integer)'
+    expect: rowcount_eq
+    value: 3
+
+  # NO SILENT UNDER-RESTORE. `ON CONFLICT DO NOTHING` on the reconstitution INSERT would turn an id
+  # collision into a partial restore reported as a complete one — the confident-zero failure mode
+  # this project keeps hitting. The refusal is asserted structurally so a future "make it more
+  # forgiving" edit cannot land quietly.
+  - name: post_unarchive_uses_no_on_conflict
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('unarchive_plant_events','unarchive_container_events',
+                           'unarchive_events_apply')
+         AND p.prosrc !~* 'on\s+conflict'
+    expect: rowcount_eq
+    value: 3
+
+  # EVENT BEFORE HARVEST, the exact inverse of the archive order. harvest_log.event_id ->
+  # event_log(id) is RESTRICT, so reversing these two makes every restore carrying harvest detail
+  # fail with a bare 23503, and no other gate here would notice.
+  - name: post_unarchive_restores_events_before_harvests
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname = 'unarchive_events_apply'
+         AND regexp_instr(p.prosrc, 'INSERT INTO public\.event_log\M') > 0
+         AND regexp_instr(p.prosrc, 'INSERT INTO public\.harvest_log\M') > 0
+         AND regexp_instr(p.prosrc, 'INSERT INTO public\.event_log\M')
+           < regexp_instr(p.prosrc, 'INSERT INTO public\.harvest_log\M')
+    expect: rowcount_eq
+    value: 1
+
+  # EVERY GUARD BEFORE THE FIRST WRITE. Same class as v4-archpreservguard-001's
+  # post_preservation_guard_precedes_the_harvest_delete: a guard below the INSERT is decoration,
+  # because a half-restored batch would already be committed to the transaction.
+  - name: post_unarchive_guards_precede_the_first_write
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname = 'unarchive_events_apply'
+         AND regexp_instr(p.prosrc, 'RAISE EXCEPTION USING') > 0
+         AND regexp_instr(p.prosrc, 'INSERT INTO public\.event_log\M') > 0
+         AND regexp_instr(p.prosrc, 'RAISE EXCEPTION USING')
+           < regexp_instr(p.prosrc, 'INSERT INTO public\.event_log\M')
+    expect: rowcount_eq
+    value: 1
+
+  # The un-archive is DB-only by design. If a Lambda ever calls it, that is a product decision that
+  # needs its own review — an API that hard-deletes archive rows is a very different risk surface
+  # from an operator running a function. This gate cannot see the Lambdas; it pins the DB half of
+  # the claim, that the routines take a bare uuid and expose no other entry point.
+  - name: post_unarchive_entry_points_take_exactly_one_uuid
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('unarchive_plant_events','unarchive_container_events')
+         AND p.pronargs = 1
+         AND format_type(p.proargtypes[0], NULL) = 'uuid'
+    expect: rowcount_eq
+    value: 2
+
+  # continuous: false — apply-time receipts, which cannot be self-armed without becoming
+  # tautological.
+  - name: post_schema_version_0a_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.23.11-archrestore-001-capture'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_0c_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.23.11-archrestore-001'
+    expect: rowcount_eq
+    value: 1
