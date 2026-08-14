@@ -15,7 +15,8 @@ import FavoriteToggle from './FavoriteToggle.jsx'
 import PlantStatusBadge from './PlantStatusBadge.jsx'
 import CritterSprite from './CritterSprite.jsx'
 import PhotoUpload from './PhotoUpload.jsx'
-import PhotoImg from './PhotoImg.jsx'
+import PhotoView from './photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import CaretakerBadge from './CaretakerBadge.jsx'
 import { CRITTERS_QUIET } from '../lib/featureFlags.js'
 
@@ -46,6 +47,27 @@ export default function PlantingTile({
 }) {
   const variety = pl.variety_ref?.name
   const hasPhoto = Boolean(pl.featured_photo_view_url)
+
+  // V4-PHOTOUI-001 — call-site adapter onto the mandated <PhotoView> primitive.
+  //
+  // A PLANTING IS NOT A PHOTO, and the difference is load-bearing: photoModel reads `raw.id`, and a
+  // planting's `id` is the PLANT id. Passing `photo={pl}` straight through would hand PhotoImg the
+  // plant id as its photoId, silently re-pointing the 900s-presign self-heal at
+  // /api/photos/view-url/<plantId> — a 404, i.e. a permanent blank the first time a URL expires,
+  // with no symptom any static or jsdom test could see. Hence the explicit remap.
+  //
+  // NOT the resolveById arm: /api/plants presigns, so the URL is already in hand. photoModel treats
+  // featured_photo_view_url as a FULL source (never a thumb — no thumb derivative exists under that
+  // name), so tier=FULL yields a one-entry chain and PhotoView renders `initialUrl` + `photoId`
+  // exactly as the raw <PhotoImg> did. Byte-identical on purpose: this tile renders 24-at-a-time in
+  // a windowed Garden grid, where any per-tile mount fetch would be 24 requests, not one.
+  // plant_id is the photo's real parent (the featured photo is auto-promoted from this plant's own
+  // photos); PhotoView does not read parentage, but a fabricated orphan would be a lie in the model.
+  const photo = React.useMemo(() => (hasPhoto ? {
+    id: pl.featured_photo_id ?? null,
+    featured_photo_view_url: pl.featured_photo_view_url,
+    plant_id: pl.id,
+  } : null), [hasPhoto, pl.featured_photo_id, pl.featured_photo_view_url, pl.id])
   // photo-count (option a, frontend-only): render ONLY when a count field is present; omit
   // otherwise. /api/plants does not return one today, so the chip is inert until an additive
   // COUNT lands -- forward-compatible with zero further frontend change.
@@ -129,9 +151,9 @@ export default function PlantingTile({
         }}
       >
         {hasPhoto ? (
-          <PhotoImg
-            photoId={pl.featured_photo_id}
-            initialUrl={pl.featured_photo_view_url}
+          <PhotoView
+            photo={photo}
+            tier={TIER.FULL}
             sizes="(max-width: 720px) 50vw, 360px"
             alt=""
             decoding="async"

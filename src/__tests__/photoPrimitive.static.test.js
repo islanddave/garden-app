@@ -63,7 +63,11 @@ const PHOTOIMG_ALLOWED = new Set([
   'components/PhotoHero.jsx',              // tier-agnostic hero wrapper (V4-IMGRELIAB-001 frozen contract)
   'components/Lightbox.jsx',               // full-tier by definition; gallery slides carry pre-picked srcs
   'components/FacebookShareSheet.jsx',     // full-tier: shares the original, a thumb would be wrong
-  'components/PlantingTile.jsx',           // featured_photo_view_url — no thumb derivative exists for it
+  // components/PlantingTile.jsx — MIGRATED (V4-PHOTOUI-001). It never needed the id-only arm:
+  // /api/plants presigns, and photoModel already reads featured_photo_view_url as a FULL source, so
+  // <PhotoView tier=FULL> is the same one-entry chain the raw <PhotoImg> rendered by hand — zero
+  // extra network on a windowed 24-tile grid. The call-site adapter remaps the PHOTO id off the
+  // planting row; conflating it with the plant id would 404 every self-heal.
   // components/PutUpPhotoThumb.jsx — MIGRATED (V4-PHOTOIDARM-001). It was here because the primitive
   // could not express an id-only photo; <PhotoView resolveById> now can, over the SAME mount-mint.
   'components/SpaceAttachPicker.jsx',      // see clause 1
@@ -116,7 +120,7 @@ describe('photo drift guard: one object, one primitive (V4-PHOTOMODEL-001)', () 
   it('clause 2 is a RATCHET — the allow-list may only shrink', () => {
     // Pins the count so migrating a surface without deleting its entry, or re-adding one, fails
     // here. Update this number DOWNWARD only.
-    expect(PHOTOIMG_ALLOWED.size).toBe(12)
+    expect(PHOTOIMG_ALLOWED.size).toBe(11)
     for (const rel of PHOTOIMG_ALLOWED) {
       if (rel === 'components/photo/PhotoView.jsx') continue
       expect(/<PhotoImg\b/.test(stripComments(readFileSync(join(SRC, rel), 'utf8'))),
@@ -127,9 +131,12 @@ describe('photo drift guard: one object, one primitive (V4-PHOTOMODEL-001)', () 
   it('the migrated surfaces are actually on the primitive', () => {
     // A delisting is only real if the surface renders <PhotoView>. PutUpPhotoThumb joined this list
     // with V4-PHOTOIDARM-001; EventDetail is here because it is the surface the id-only arm was
-    // built for, and it must not quietly slide back to an allow-listed wrapper.
+    // built for, and it must not quietly slide back to an allow-listed wrapper. PlantingTile joined
+    // with V4-PHOTOUI-001 — it is the highest-volume photo surface in the app (24 tiles per Garden
+    // group), so a silent slide back is the one that costs the most.
     for (const rel of ['pages/PhotoLibrary.jsx', 'components/PhotosWall.jsx',
-                       'components/PutUpPhotoThumb.jsx', 'pages/EventDetail.jsx']) {
+                       'components/PutUpPhotoThumb.jsx', 'pages/EventDetail.jsx',
+                       'components/PlantingTile.jsx']) {
       const code = stripComments(readFileSync(join(SRC, rel), 'utf8'))
       expect(code.includes('<PhotoView'), `${rel} must render <PhotoView>`).toBe(true)
       expect(/<PhotoImg\b/.test(code), `${rel} must not render <PhotoImg> directly`).toBe(false)
