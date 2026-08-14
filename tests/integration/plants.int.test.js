@@ -540,9 +540,10 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
       method: 'PUT', path: `/api/plants/${trojanId}`, body: { name: 'trojan-edit' },
     })
     expect(put.status).toBe(404)
-    // DELETE too — it answers 200 either way, so only the read-back proves the predicate held.
+    // DELETE now 404s like GET/PUT above. The read-back is kept because the 404 proves the response
+    // was gated, while only the row state proves the soft-delete UPDATE never fired.
     const del = await callHandler(handler, { method: 'DELETE', path: `/api/plants/${trojanId}` })
-    expect(del.status).toBe(200)
+    expect(del.status).toBe(404)
     const rows = await directSql`SELECT name, deleted_at FROM plants WHERE id = ${trojanId}`
     expect(rows[0].name).toBe('trojan-' + RUN)
     expect(rows[0].deleted_at).toBeNull()

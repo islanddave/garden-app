@@ -19,8 +19,10 @@
 // mount (BrowserRouter doesn't reset scroll on push); breadcrumb is arbitrary-depth.
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 // V4-EVENTHISTPAGE-001 (BD0806-19) — the event log used to stop at the first 50 with nothing saying
-// so. GET /api/events (Route 4) reads `Math.min(parseInt(limit ?? '50'), 200)` and exposes NO offset
-// param, so 200 is a hard server ceiling and true server-side paging is not available on this route.
+// so. GET /api/events (Route 4) reads `Math.min(parseInt(limit ?? '50'), 200)`, so 200 is a hard
+// server ceiling per request. Route 4 DOES now expose an `offset` param (BUG-PROJEVENTTRUNC-001,
+// 2026-08-13) — ProjectDetail uses it because containers exceed the ceiling. This surface deliberately
+// does not: no planting comes close, so one ceiling-sized request is still the whole history.
 // Prod's busiest planting carries 156 events and none exceed 200, so asking for the ceiling returns
 // every planting's complete history today. The rows are then revealed a page at a time client-side —
 // a 156-row list dumped into one 390px scroll is not an improvement on a truncated one — and if the
@@ -55,7 +57,7 @@ import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
-import { describeHarvestWeight, sumHarvestWeights, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import { describeHarvestWeight, sumHarvestWeights, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 
 
 
@@ -995,14 +997,20 @@ function HarvestWeightChip({ entry }) {
   // weighings — the other ~63% are resolver-derived — so "where did this number come from" is not a
   // footnote, it is the difference between a measurement and an inference.
   //
-  // The sentence is therefore rendered VISIBLY, verbatim from describeHarvestWeight (the same
-  // read model, the same words, as the Harvests log — a grower who sees one phrasing here and
-  // another there has to work out whether they mean the same thing). It is a sibling of the chip,
-  // not a child, so the chip's own text/testid/label contract is byte-identical to before; it
-  // joins the existing baseline flex row and wraps to its own line at 390px rather than adding a
-  // block. MEASURED rows get nothing — sourceCopy is null for them by construction, and the
-  // ABSENCE of the ≈ already says "this was weighed" without spending a line to repeat it.
-  // title/aria-label are left in place: they cost nothing and still serve pointer + screen reader.
+  // The basis is therefore rendered VISIBLY, via the shared weightBasisLabel() — the SAME compressed
+  // label the Harvests log renders, from the same module, because a grower who reads "typical for
+  // this variety" on one screen and "Currently estimated from this variety's typical weight." on
+  // another has to work out whether the two mean the same thing. (Both surfaces landed the visible
+  // basis in parallel; the long sentence was this file's first cut and was reconciled onto the
+  // shared short form at merge.) It is a sibling of the chip, not a child, so the chip's own
+  // text/testid/label contract is byte-identical to before.
+  //
+  // MEASURED rows are labelled too ("weighed"), matching the log: the absence of ≈ is not a
+  // disclosure, and the label is what makes the ratchet visible at the one moment it pays off —
+  // when a row Dave weighed himself stops being a guess.
+  //
+  // title/aria-label keep the FULL sentence: they cost nothing, and on a pointer device the tooltip
+  // is the only place the longer wording still fits.
   return (
     <>
       <span
@@ -1013,11 +1021,13 @@ function HarvestWeightChip({ entry }) {
       >
         {wt.estimated ? `≈ ${wt.text}` : wt.text}
       </span>
-      {wt.estimated && wt.sourceCopy && (
-        <span data-testid="harvest-weight-source" style={{ fontSize: '0.7rem', color: P.light, lineHeight: 1.4 }}>
-          {wt.sourceCopy}
-        </span>
-      )}
+      <span aria-hidden="true" style={{ fontSize: '0.7rem', color: P.light }}>·</span>
+      {/* Deliberately NOT whiteSpace:nowrap — see the same note in Harvests.jsx. An unbreakable
+          label widens the row's min-content past 390px, which is how a prior harvest-row change
+          overflowed horizontally. */}
+      <span data-testid="harvest-weight-source" style={{ fontSize: '0.7rem', color: P.light, lineHeight: 1.4, minWidth: 0 }}>
+        {weightBasisLabel(entry)}
+      </span>
     </>
   )
 }

@@ -26,7 +26,10 @@ vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => null }))
 vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncStub.js'))
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
-import { ESTIMATE_SOURCE_COPY, ESTIMATE_SOURCE_FALLBACK, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import {
+  ESTIMATE_SOURCE_COPY, NO_WEIGHT_COPY,
+  ESTIMATE_SOURCE_SHORT, ESTIMATE_SOURCE_SHORT_FALLBACK, MEASURED_SHORT,
+} from '../lib/harvestWeight.js'
 
 const PLANTING = {
   id: 'pl1', name: 'Megatron Jalapeno', project_id: 'proj1', project_name: 'Peppers 2026',
@@ -80,28 +83,36 @@ describe('PlantingDetail timeline — weight chip', () => {
   // V4-HARVWEIGHTSURF-001 — the provenance must be VISIBLE, not only in `title`. Dave's only
   // surface is Chrome on Android, where a title attribute never fires: no hover exists, so the
   // sentence below was rendered to a dead-end attribute and the basis axis collapsed onto the bare
-  // ≈. These pin the sentence as rendered text, with the chip's own contract left byte-identical.
-  it('renders the provenance sentence as VISIBLE text, not only as a title attribute', async () => {
+  // ≈. These pin the basis as rendered text, with the chip's own contract left byte-identical.
+  //
+  // RECONCILED AT MERGE (2026-08-13): this surface and the Harvests log shipped the visible basis in
+  // two parallel lanes and chose different words — the full ESTIMATE_SOURCE_COPY sentence here, the
+  // compressed ESTIMATE_SOURCE_SHORT label there. A grower reading "typical for this variety" on one
+  // screen and "Currently estimated from this variety's typical weight." on the other has to work out
+  // whether they mean the same thing, so both now render the shared weightBasisLabel(). The FULL
+  // sentence survives in `title` for pointer devices, which is the only place it still fits.
+  it('renders the basis as VISIBLE text, not only as a title attribute', async () => {
     renderWith({ entries: [{ ...ENTRY, weight_grams: 492, weight_estimated: true, weight_basis: 'cultivar_sample' }] })
     const src = await screen.findByTestId('harvest-weight-source')
-    expect(src.textContent).toBe(ESTIMATE_SOURCE_COPY.cultivar_sample)
+    expect(src.textContent).toBe(ESTIMATE_SOURCE_SHORT.cultivar_sample)
     // Rendered text, reachable without any pointer interaction at all.
-    expect(screen.getByText(ESTIMATE_SOURCE_COPY.cultivar_sample)).toBeTruthy()
+    expect(screen.getByText(ESTIMATE_SOURCE_SHORT.cultivar_sample)).toBeTruthy()
     // The chip is untouched: same text, same testid, same title/aria-label as before.
     const chip = screen.getByTestId('harvest-weight')
     expect(chip.textContent).toBe('≈ 492 g')
+    // The full sentence is still the tooltip — the short label is the visible half, not a replacement.
     expect(chip.getAttribute('title')).toBe(ESTIMATE_SOURCE_COPY.cultivar_sample)
-    // Sibling, not child — the sentence must not leak into the chip's own text contract.
+    // Sibling, not child — the label must not leak into the chip's own text contract.
     expect(chip.contains(src)).toBe(false)
   })
 
   it('uses the shared vocabulary verbatim for every basis, including the unknown-value fallback', async () => {
     for (const [basis, copy] of [
-      ['cultivar', ESTIMATE_SOURCE_COPY.cultivar],
-      ['crop_type', ESTIMATE_SOURCE_COPY.crop_type],
-      // The enum has grown twice; an unrecognised value must degrade to the generic sentence
+      ['cultivar', ESTIMATE_SOURCE_SHORT.cultivar],
+      ['crop_type', ESTIMATE_SOURCE_SHORT.crop_type],
+      // The enum has grown twice; an unrecognised value must degrade to the generic label
       // rather than render `undefined` into it (harvestWeight.js's ?? fallback).
-      ['some_future_tier', ESTIMATE_SOURCE_FALLBACK],
+      ['some_future_tier', ESTIMATE_SOURCE_SHORT_FALLBACK],
     ]) {
       const { unmount } = renderWith({ entries: [{ ...ENTRY, weight_grams: 492, weight_estimated: true, weight_basis: basis }] })
       expect((await screen.findByTestId('harvest-weight-source')).textContent).toBe(copy)
@@ -110,10 +121,14 @@ describe('PlantingDetail timeline — weight chip', () => {
     }
   })
 
-  it('spends no line on a MEASURED row — the absent ≈ already says it was weighed', async () => {
+  // Also reconciled at merge: a MEASURED row now carries the "weighed" label rather than nothing.
+  // The absence of ≈ is not a disclosure, and the label is what makes the ratchet visible at the one
+  // moment it pays off — when a row Dave weighed himself stops being a guess. Matches the Harvests log.
+  it('labels a MEASURED row "weighed" rather than leaving the absent ≈ to carry it alone', async () => {
     renderWith({ entries: [{ ...ENTRY, weight_grams: 337, weight_estimated: false, weight_basis: 'measured' }] })
     await screen.findByTestId('harvest-weight')
-    expect(screen.queryByTestId('harvest-weight-source')).toBeNull()
+    expect((await screen.findByTestId('harvest-weight-source')).textContent).toBe(MEASURED_SHORT)
+    // The estimate wording must never appear on a row that was actually weighed.
     expect(screen.queryByText(/Currently estimated/)).toBeNull()
   })
 

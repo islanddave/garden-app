@@ -822,8 +822,17 @@ function HarvestReadout({ harvest }) {
           >
             {wt.estimated ? `≈ ${wt.text}` : wt.text}
           </div>
-          {/* 'Weighed.' is the same word the other surfaces put in their title= for a measured
-              weight — kept identical so the two never drift. */}
+          {/* BASIS VOCABULARY — two registers, deliberately, one rule:
+              a DENSE ROW gets the compressed label (weightBasisLabel → "typical for this variety",
+              "weighed"); a DETAIL PAGE gets the full sentence (ESTIMATE_SOURCE_COPY → "Currently
+              estimated from this variety's typical weight."). This is the detail page, so it takes
+              the sentence — it has the room, and it is the surface someone opens *because* they want
+              to know where the number came from.
+              Both registers come from the same module and the same basis value, so they cannot
+              disagree about facts, only about length. (Corrected 2026-08-13: the note here used to
+              claim 'Weighed.' was "the same word the other surfaces put in their title=" — the row
+              surfaces now render a visible "weighed" label of their own, so that sentence was
+              describing a world that no longer exists.) */}
           <div data-testid="event-harvest-weight-basis" style={{ marginTop: 2, fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
             {wt.sourceCopy ?? 'Weighed.'}
           </div>
