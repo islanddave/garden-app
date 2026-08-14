@@ -185,6 +185,19 @@ describe('ProjectDetail event log — paging', () => {
   })
 })
 
+// ── M14 — the count badge ────────────────────────────────────────────────────────────────────────
+// This block was rewritten, and the reason is worth stating: the previous version asserted the badge
+// NEVER shows project.event_count, which was the right call against the count as it then stood — a
+// plain COUNT over event_log, blind to the archived-planting filter shipped in the same change, and
+// therefore reading (67) above a log correctly rendering nothing on four prod projects. That count
+// is a live query in lambda/projects, not a stored column, so it now carries the list's own
+// predicate and IS the number of rows the list can return (verified on prod: 8 projects moved,
+// Peppers 5257 -> 4517, four to zero).
+//
+// What replaces "never trust it" is a narrower and stronger rule, because the Lambda and the SPA
+// deploy separately and a stale total is a real intermediate state: the badge may never contradict
+// something the user can see. Whenever the whole list is on screen it counts rendered rows; the
+// server total is used only where the list is a prefix and nothing on screen can disagree with it.
 describe('ProjectDetail event log — the count badge', () => {
   // It used to read (50) on a 5,257-event project: the truncation displayed as the total.
   it('counts loaded rows exactly once the history is complete', async () => {
@@ -194,15 +207,54 @@ describe('ProjectDetail event log — the count badge', () => {
     expect(screen.getByText('(3)')).toBeTruthy()
   })
 
-  // MUTATION: use project.event_count instead -> RED here, and wrong in prod: event_count is a
-  // plain COUNT over event_log that knows nothing about the archived-planting filter this change
-  // added to the same list, so three prod projects would show a non-zero badge over an empty log.
-  it('appends "+" while more remain, and never shows the server total', async () => {
+  // The whole point of M14: "(3+)" told the user nothing about how much history is behind the
+  // button. MUTATION: drop the serverEventTotal arm -> RED (reads "(3+)").
+  it('shows the server total while the list is still a prefix', async () => {
     wire({ eventPages: { 0: { events: page(1, 3), has_more: true } } })
     render(<ProjectDetail />)
     await waitFor(() => expect(rows()).toHaveLength(3))
-    expect(screen.getByText('(3+)')).toBeTruthy()
+    expect(screen.getByText('(5257)')).toBeTruthy()
+    expect(screen.queryByText('(3+)')).toBeNull()
+  })
+
+  // The deploy-window guard, and the one that keeps the badge honest on the four all-archived prod
+  // projects. A total of 5,257 over a COMPLETE list of 3 rows is a stale Lambda, and the badge must
+  // report what the user can count. MUTATION: prefer the server total unconditionally -> RED, and
+  // in prod that RED is the "(67) events" headline above "No events yet".
+  it('ignores the server total when the user can see the whole list', async () => {
+    wire({ eventPages: { 0: { events: page(1, 3), has_more: false } } })
+    render(<ProjectDetail />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
     expect(screen.queryByText('(5257)')).toBeNull()
+  })
+
+  // A total SMALLER than the rows already loaded cannot be describing this list. Falls back to the
+  // loaded count with the "+" rather than rendering a number the page has already disproved.
+  it('falls back to loaded-count "+" when the server total is implausibly small', async () => {
+    wire({ eventPages: { 0: { events: page(1, 3), has_more: true } } })
+    apiFetchSpy.mockImplementation(((prev) => (path, opts) => (
+      path === '/api/projects/proj-1' && (opts?.method ?? 'GET') === 'GET'
+        ? Promise.resolve({ ...PROJECT, event_count: 1 })
+        : prev(path, opts)
+    ))(apiFetchSpy.getMockImplementation()))
+    render(<ProjectDetail />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    expect(screen.getByText('(3+)')).toBeTruthy()
+  })
+
+  // A pre-event_count Lambda, or a payload that lost the field. Same fallback, no crash, no "(NaN)".
+  it('falls back to loaded-count "+" when the payload carries no count at all', async () => {
+    wire({ eventPages: { 0: { events: page(1, 3), has_more: true } } })
+    apiFetchSpy.mockImplementation(((prev) => (path, opts) => {
+      if (path === '/api/projects/proj-1' && (opts?.method ?? 'GET') === 'GET') {
+        const { event_count: _drop, ...rest } = PROJECT
+        return Promise.resolve(rest)
+      }
+      return prev(path, opts)
+    })(apiFetchSpy.getMockImplementation()))
+    render(<ProjectDetail />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    expect(screen.getByText('(3+)')).toBeTruthy()
   })
 })
 
