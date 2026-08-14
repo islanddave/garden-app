@@ -67,7 +67,9 @@ const plantRow = (id, over = {}) => ({
 
 const baseResponses = (plants, events = []) => ({
   'FROM merge_event WHERE op_id': [],
-  'FROM plants\n    WHERE id = ANY': plants,
+  // Group load. Keyed on the JOIN so it stays distinct from the readFingerprint probe below, which
+  // is still a bare `FROM plants WHERE id = ANY` — substring matching would otherwise collide.
+  'FROM plants p\n    LEFT JOIN plant_projects pp': plants,
   'FROM event_log\n    WHERE plant_id = ANY': events,
   'FROM event_log WHERE plant_id = ANY': [{ rows: events.length, max_updated_at: null }],
   'FROM photos WHERE plant_id = ANY': [{ rows: 0, max_updated_at: null }],
@@ -156,24 +158,41 @@ describe('planDedup', () => {
     expect(out.kept.sort()).toEqual(['a', 'b'])
   })
 
-  it('collapses same-day water from DIFFERENT batches — the ledger double-credit guard', () => {
-    // This is the B2 regression: batch dedup alone leaves both rows, the ledger folds credit per
-    // row, and the app then under-waters a real plant.
+  it('KEEPS same-day water from different batches — there is no water collapse, by decision', () => {
+    // Inverted 2026-08-14. This asserted droppedWater === ['b'] on the B2 "ledger double-credit"
+    // premise. Measured against prod, that premise is false: the ledger's per-row accumulating
+    // branches need water_depth light/deep, and prod has ZERO such rows in 10,114 water/rain rows —
+    // every one is null or 'normal', both of which ASSIGN rather than accumulate. Meanwhile 25.24%
+    // of plant-day water buckets garden-wide already hold multiple rows, 1,996 on plantings in no
+    // merge group, so the collapse enforced on 34 plants an invariant 278 others never had.
+    // It was also wrong mechanically: UTC day buckets against an America/New_York ledger.
+    // Re-measure water_depth on prod before ever re-adding this.
     const out = planDedup([
       ev('a', 'watering', 'B1', '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z'),
       ev('b', 'watering', 'B2', '2026-08-01T19:00:00Z', '2026-08-01T19:00:00Z'),
     ])
-    expect(out.droppedBatch).toEqual([])
-    expect(out.droppedWater).toEqual(['b'])
-    expect(out.kept).toEqual(['a'])
+    expect(out.dropped).toEqual([])
+    expect(out.kept).toEqual(['a', 'b'])
   })
 
-  it('keeps water on different days', () => {
+  it('keeps a 21:37 and a next-afternoon watering apart — the UTC-vs-ET bucket that misfired', () => {
+    // 2026-08-01T21:37 and 2026-08-02T14:11 ET are 2026-08-02T01:37Z and 2026-08-02T18:11Z — the
+    // SAME UTC day, different ET days. The old collapse dropped the second. Both must survive.
     const out = planDedup([
-      ev('a', 'watering', 'B1', '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z'),
-      ev('b', 'watering', 'B2', '2026-08-02T08:00:00Z', '2026-08-02T08:00:00Z'),
+      ev('a', 'watering', 'B1', '2026-08-02T01:37:00Z', '2026-08-02T01:37:00Z'),
+      ev('b', 'watering', 'B2', '2026-08-02T18:11:00Z', '2026-08-02T18:11:00Z'),
     ])
     expect(out.dropped).toEqual([])
+    expect(out.kept).toEqual(['a', 'b'])
+  })
+
+  it('still collapses a real batch fan-out — collapse (a) is untouched', () => {
+    const out = planDedup([
+      ev('a', 'watering', 'B1', '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z'),
+      ev('b', 'watering', 'B1', '2026-08-01T08:00:00Z', '2026-08-01T08:00:01Z'),
+    ])
+    expect(out.droppedBatch).toEqual(['b'])
+    expect(out.kept).toEqual(['a'])
   })
 
   it('never touches harvests even if one somehow carried a batch id', () => {
@@ -261,6 +280,45 @@ describe('mergeCore', () => {
     const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
     expect(r.status).toBe(404)
     expect(r.body.missing).toContain(LOSER1)
+  })
+
+  it('422s when siblings disagree on a column with no reconciliation rule', async () => {
+    // The silent wrong-verdict this prevents: container_type/container_size feed vesselProfile and
+    // therefore the water verdict. Group 3 Habanero really does span a whiskey_barrel 15gal, a
+    // fabric_bag 5gal and an unsized plastic_pot — opposite ends of VESSEL_CLASS_FACTOR. Without
+    // this guard the merged row silently inherits whichever sibling won on import order.
+    const plants = [
+      plantRow(WINNER, { container_type: 'whiskey_barrel', container_size: '15 gall' }),
+      plantRow(LOSER1, { container_type: 'fabric_bag', container_size: '5 gal' }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(422)
+    expect(r.body.divergences.map((d) => d.column).sort()).toEqual(['container_size', 'container_type'])
+    expect(sql.calls.some((c) => c.transaction)).toBe(false)   // refuses BEFORE any write
+  })
+
+  it('proceeds once the human supplies an override for the divergent column', async () => {
+    const plants = [
+      plantRow(WINNER, { container_type: 'whiskey_barrel' }),
+      plantRow(LOSER1, { container_type: 'fabric_bag' }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, {
+      winnerId: WINNER, loserIds: [LOSER1], ...ok,
+      overrides: { container_type: 'whiskey_barrel' },
+    })
+    expect(r.status).toBe(200)
+  })
+
+  it('does not refuse when only one sibling carries a value — null is absent, not disagreement', async () => {
+    const plants = [
+      plantRow(WINNER, { container_type: 'fabric_bag' }),
+      plantRow(LOSER1, { container_type: null }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
   })
 
   it('409s on fingerprint drift instead of silently sweeping a concurrent write', async () => {

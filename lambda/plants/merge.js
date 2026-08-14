@@ -111,6 +111,18 @@ export const FINGERPRINT_TABLES = ['event_log', 'photos', 'harvest_log', 'plants
 // surviving window conservative.
 export const PHENOLOGY_COLUMNS = ['sown_at', 'germinated_at', 'transplanted_at', 'planted_out_at']
 
+// Columns plan §4.1 flagged as "still needing an explicit rule" and never got one. Rather than let
+// them fall to winner-takes-all, mergeCore REFUSES (422) when live siblings disagree and no override
+// is supplied. container_type/container_size are the sharp end — they feed vesselProfile and thus the
+// water verdict — but the others carry identity a merge would silently discard.
+// featured_photo_id and notes are deliberately NOT guarded. Both diverge on almost every group, so
+// guarding them would bury the vessel and cultivar decisions that actually change behaviour under a
+// pile of thumbnail prompts — and neither loses information: the losers' photos all repoint to the
+// winner, so the "discarded" photo is still on the merged planting and is one tap to feature.
+export const DIVERGENCE_GUARDED = Object.freeze([
+  'container_type', 'container_size', 'location_id', 'variety_id', 'archived_at',
+])
+
 // `status` is the sole carrier of stage (qty_lost/loss_cause are near-universally unset), so a
 // winner-takes-all status silently regresses a fruiting planting to vegetative.
 // `harvested` ranks BELOW `fruiting` deliberately. For the indeterminate crops this garden actually
@@ -153,23 +165,38 @@ export function sumQty(values) {
 }
 
 /**
- * Build the drop set for one merge group. Two independent collapses, both group-scoped:
+ * Build the drop set for one merge group. ONE collapse, group-scoped:
  *
  *  (a) BATCH FAN-OUT — rows sharing (event_type, metadata->>'batch_id') are one real action recorded
  *      once per sibling. Keep the earliest, drop the rest.
  *
- *  (b) SAME-DAY WATER — the water ledger (lambda/daily-plan/ledger.js) folds credit PER EVENT ROW
- *      keyed on plant_id with no same-day dedup. Siblings watered in DIFFERENT batches on the same
- *      day both survive (a) and both land on the winner, so the ledger over-credits and the app
- *      stops telling the user a thirsty plant needs water. Measured: 14 of 15 approved groups gain
- *      same-day multi-row water days after (a) alone. That is a wrong-verdict regression, not a
- *      calibration nudge, so it is collapsed here rather than left for the ledger to absorb.
+ * THERE IS DELIBERATELY NO SAME-DAY WATER COLLAPSE. An earlier draft had one, on the premise that
+ * lambda/daily-plan/ledger.js folds water credit PER EVENT ROW and would over-credit a merged plant
+ * into a wrong "not thirsty" verdict. That premise was measured against prod and REFUTED:
+ *
+ *   * The ledger's per-row accumulating branches are `light` (ledger.js:265) and banked `deep`
+ *     (:261). Prod holds ZERO rows of either — 10,114 water/rain rows are 9,711 null + 403 'normal',
+ *     and both map to the `normal` branch, which ASSIGNS (D = 0 / containerResetWi) rather than
+ *     accumulating. The one exception: `normal` on a long-dry IN-GROUND profile (:267-269) does
+ *     decrement per row — bounded by inGroundCapWi and self-limiting once D falls under longDryWi.
+ *   * Decisively: 25.24% of ALL plant-day water buckets garden-wide already hold multiple rows,
+ *     1,996 of them on the 278 plantings in no merge group. The collapse imposed on 34 plants an
+ *     invariant the other 278 do not have. If multi-row same-day water broke the ledger, it would
+ *     already be breaking it everywhere.
+ *   * And it was wrong on its own terms: it bucketed by UTC while the ledger buckets by
+ *     America/New_York, so 24 of 37 dropped rows sat on an ET day NO SURVIVOR OCCUPIED (a 21:37
+ *     watering folded into the next afternoon's 14:11); it had no cross-sibling scoping, so 19 of 37
+ *     drops were already on the same planting pre-merge, 9 of them the winner deleting its own
+ *     history; and it always dropped the LATER row, moving the last-water reset backwards.
+ *
+ * Removing it costs ~200-250 rows across the full run, ~130-170 of them genuinely distinct history.
+ * With (a) alone the drop set matches plan §1 exactly. Do not re-add it without first re-measuring
+ * water_depth on prod — the whole argument turns on that distribution.
  *
  * Survivor selection is deterministic (created_at, id) so a branch rehearsal and the prod run pick
  * the same rows and can be diffed — without that the run is unverifiable.
  */
 export function planDedup(events) {
-  const WATER_TYPES = new Set(['watering', 'rain'])
   const ordered = [...events].sort((a, b) => {
     const t = new Date(a.created_at) - new Date(b.created_at)
     return t !== 0 ? t : String(a.id).localeCompare(String(b.id))
@@ -186,30 +213,11 @@ export function planDedup(events) {
     else { seenBatch.set(key, e); survivors.push(e) }
   }
 
-  const seenDay = new Map()
-  const droppedWater = []
-  for (const e of survivors) {
-    if (!WATER_TYPES.has(e.event_type)) continue
-    const day = toLocalDay(e.event_date)
-    const key = `${e.event_type} ${day}`
-    if (seenDay.has(key)) droppedWater.push(e.id)
-    else seenDay.set(key, e)
-  }
-
-  const waterSet = new Set(droppedWater)
   return {
-    dropped: [...droppedBatch, ...droppedWater],
+    dropped: [...droppedBatch],
     droppedBatch,
-    droppedWater,
-    kept: survivors.filter((e) => !waterSet.has(e.id)).map((e) => e.id),
+    kept: survivors.map((e) => e.id),
   }
-}
-
-/** Day bucket for the water collapse. event_date is timestamptz; the ledger buckets by the day the
- *  user experienced, so we take the ISO date of the value as stored rather than re-zoning it. */
-function toLocalDay(eventDate) {
-  if (eventDate instanceof Date) return eventDate.toISOString().slice(0, 10)
-  return String(eventDate).slice(0, 10)
 }
 
 /**
@@ -248,15 +256,35 @@ export async function mergeCore(sql, {
 
   // 2. Load the whole group, household-scoped and live, in one read — so a loser that is already
   //    deleted, foreign, or absent fails here rather than half-way through the cutover.
+  //
+  //    THE PREDICATE IS THE CANONICAL TWO-ARM ONE, byte-for-byte the form that gates
+  //    GET/PUT/PATCH-archive/DELETE/seen in index.js and loadOwnedPlantingRef in authz-parents.js.
+  //    It is NOT `created_by = ANY(householdIds)` alone. That is a correction, not a widening — the
+  //    bare form was WRONG IN BOTH DIRECTIONS:
+  //      * it 404'd rows whose CONTAINER the household owns but whose own created_by is a synthetic
+  //        import identity. 24 such rows existed in prod from rescue-intake-longriver-20260712; they
+  //        are visible, editable and deletable in the app, and merge alone refused them.
+  //      * it ACCEPTED a planting the caller created inside ANOTHER household's container — a row
+  //        they can neither read nor delete — and would have repointed its events onto their own
+  //        winner and soft-deleted it. The `project_id IS NULL` conjunct closes that, and it is
+  //        load-bearing exactly as index.js:588 and authz-parents.js:66 say. Do not simplify it away.
+  //    Bar chosen deliberately: what you may soft-delete one row at a time via DELETE /plants/{id}
+  //    (index.js:853-877, same predicate) is what you may soft-delete as a merge loser. A stricter
+  //    bar here buys nothing — those rows are reachable by DELETE regardless — and costs false 404s.
+  //    `pp.deleted_at IS NULL` is carried per the V4-SOFTDEL-001 F4 container-deleted gate, so merge
+  //    cannot operate on a planting stranded under a soft-deleted container.
   const groupIds = [winnerId, ...loserIds]
   const plants = await sql`
-    SELECT id, name, status, quantity, qty_initial, qty_current, qty_harvested, qty_lost,
-           loss_cause, sown_at, germinated_at, transplanted_at, planted_out_at,
-           sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx,
-           variety_id, project_id, location_id, notes, featured_photo_id, container_type,
-           container_size, archived_at, version, workspace_id, created_by
-    FROM plants
-    WHERE id = ANY(${groupIds}) AND deleted_at IS NULL AND created_by = ANY(${householdIds})
+    SELECT p.id, p.name, p.status, p.quantity, p.qty_initial, p.qty_current, p.qty_harvested,
+           p.qty_lost, p.loss_cause, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at,
+           p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx,
+           p.variety_id, p.project_id, p.location_id, p.notes, p.featured_photo_id, p.container_type,
+           p.container_size, p.archived_at, p.version, p.workspace_id, p.created_by
+    FROM plants p
+    LEFT JOIN plant_projects pp ON pp.id = p.project_id
+    WHERE p.id = ANY(${groupIds}) AND p.deleted_at IS NULL
+      AND ( (pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL)
+            OR (p.project_id IS NULL AND p.created_by = ANY(${householdIds})) )
   `
   if (plants.length !== groupIds.length) {
     const found = new Set(plants.map((p) => p.id))
@@ -277,6 +305,36 @@ export async function mergeCore(sql, {
         error: 'The group changed since it was read — re-read and retry', drift, current: liveFp,
       } }
     }
+  }
+
+  // 3b. REFUSE on unreconciled divergence rather than silently defaulting to the winner's value.
+  //     plan §4.1 listed these as "still needing an explicit rule" and no rule was ever written, so
+  //     they fell to winner-takes-all. For the vessel columns that is a silent WRONG WATER VERDICT:
+  //     container_type/container_size feed vesselProfile (daily-plan/ledger.js:109-128) via
+  //     engine.js:426, and group 3 Habanero spans a whiskey_barrel 15gal, a fabric_bag 5gal and an
+  //     unsized plastic_pot — opposite ends of VESSEL_CLASS_FACTOR, with fabric_bag carrying its own
+  //     heat ramp. Before a merge Dave gets three verdicts; after, one, chosen by import order.
+  //     Refusing converts that silent default into a required human decision, which is what §4 asked
+  //     for. Nothing here is guessable from the data: only Dave knows which pot the plant is in.
+  const divergences = []
+  for (const col of DIVERGENCE_GUARDED) {
+    if (col in overrides) continue
+    const distinct = [...new Set(plants.map((p) => p[col]).filter((v) => v != null).map(String))]
+    if (distinct.length > 1) {
+      divergences.push({
+        column: col,
+        values: plants
+          .filter((p) => p[col] != null)
+          .map((p) => ({ plant_id: p.id, name: p.name, value: p[col] })),
+      })
+    }
+  }
+  if (divergences.length) {
+    return { status: 422, body: {
+      error: 'Siblings disagree on columns with no reconciliation rule — supply overrides to proceed',
+      divergences,
+      hint: `Pass overrides.{${divergences.map((d) => d.column).join(',')}} with the value the merged planting should carry.`,
+    } }
   }
 
   // 4. Dedup plan over the group's live events.
@@ -312,7 +370,6 @@ export async function mergeCore(sql, {
       events_total: events.length,
       events_dropped: dedup.dropped.length,
       dropped_batch: dedup.droppedBatch.length,
-      dropped_water_sameday: dedup.droppedWater.length,
       events_kept: dedup.kept.length,
       resolved, fingerprint: liveFp,
     } }
@@ -363,7 +420,6 @@ export async function mergeCore(sql, {
     repoints,
     dropped: dedup.dropped,
     dropped_batch: dedup.droppedBatch,
-    water_collapsed: dedup.droppedWater,
     anchors_superseded: liveAnchors.map((a) => a.id),
     entity_memory_deleted: memoryRows,
     fingerprint: liveFp,
@@ -479,7 +535,6 @@ export async function mergeCore(sql, {
       loser_ids: loserIds,
       events_dropped: dedup.dropped.length,
       dropped_batch: dedup.droppedBatch.length,
-      dropped_water_sameday: dedup.droppedWater.length,
       rows_repointed: repoints.length,
       resolved,
     } }

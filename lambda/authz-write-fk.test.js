@@ -448,8 +448,16 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // Not a SITES row because there is no per-column loader: one set-wise predicate covers every
     // member at once, which is why it is asserted here instead of pre-absolved in NOT_IN_SITES.
     const src = decomment(readFileSync(join(here, 'plants/merge.js'), 'utf8')).replace(/\s+/g, ' ');
-    // The group load carries BOTH the household predicate and the live filter.
-    expect(src).toMatch(/FROM plants WHERE id = ANY\(\$\{groupIds\}\) AND deleted_at IS NULL AND created_by = ANY\(\$\{householdIds\}\)/);
+    // The group load carries the CANONICAL two-arm predicate plus the live filter — the same
+    // predicate that gates GET/PUT/DELETE/archive in plants/index.js, not a merge-local dialect.
+    expect(src).toMatch(/FROM plants p LEFT JOIN plant_projects pp ON pp\.id = p\.project_id WHERE p\.id = ANY\(\$\{groupIds\}\) AND p\.deleted_at IS NULL/);
+    expect(src).toMatch(/\(pp\.created_by = ANY\(\$\{householdIds\}\) AND pp\.deleted_at IS NULL\)/);
+    // The own-created_by arm is NEVER unguarded: without `project_id IS NULL` it reaches a planting
+    // the caller created inside ANOTHER household's container — a row they cannot even read, but
+    // could merge (and thereby soft-delete and absorb the events of). Mirrors the identical guard
+    // asserted in plants/project-less-write.test.js:108.
+    expect(src).toMatch(/\(p\.project_id IS NULL AND p\.created_by = ANY\(\$\{householdIds\}\)\)/);
+    expect(src).not.toMatch(/AND created_by = ANY\(\$\{householdIds\}\) `/);
     // A short count fails the WHOLE request — set-wise, so one foreign or deleted id aborts the
     // merge before any statement is built. A per-row skip here would silently merge the rest.
     expect(src).toMatch(/if \(plants\.length !== groupIds\.length\)/);

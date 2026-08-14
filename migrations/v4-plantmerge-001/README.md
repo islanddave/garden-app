@@ -50,11 +50,37 @@ not a sibling fan-out marker: 368 batches over 11,960 events, ~32 plants each; t
 plants across 10 merge groups, and 137 batches include plants in no merge group at all. A key of
 `(event_type, batch_id)` applied globally deletes events on plantings that are not being merged.
 
-**Same-day water must collapse too.** `lambda/daily-plan/ledger.js` folds water credit *per event
-row* keyed on `plant_id`, with no same-day dedup. Siblings watered in *different* batches on the same
-day both survive batch dedup and both land on the winner, so the ledger over-credits and the app
-stops telling the user a thirsty plant needs water. 14 of 15 approved groups exhibit this. It is a
-wrong-verdict regression, not a calibration nudge.
+**Same-day water must NOT collapse — this reversed on 2026-08-14.** An earlier draft collapsed
+same-day water on the premise that `lambda/daily-plan/ledger.js` folds credit *per event row* and
+would over-credit a merged plant. Two independent specialists measured that premise against prod and
+refuted it, converging on the same mechanical bug:
+
+- The ledger's per-row *accumulating* branches need `water_depth` `light` or `deep`. Prod has **zero**
+  such rows — 10,114 water/rain rows are 9,711 null + 403 `normal`, and both take the `normal` branch,
+  which **assigns** rather than accumulates. (Exception: `normal` on a long-dry in-ground profile,
+  `ledger.js:267-269`, decrements per row — bounded and self-limiting.)
+- **25.24% of all plant-day water buckets garden-wide already hold multiple rows**, 1,996 of them on
+  the 278 plantings in no merge group. The collapse imposed on 34 plants an invariant the other 278
+  never had. If multi-row same-day water broke the ledger it would already be broken everywhere.
+- It bucketed by **UTC** while the ledger buckets by **America/New_York**, so it both missed 42
+  same-ET-day pairs it was meant to catch and erased 80 water rows that were the only record on their
+  ET day. It also had no cross-sibling scoping (19 of 37 drops were already on one planting, 9 of
+  them the winner deleting its own history) and always dropped the *later* row, moving the last-water
+  reset backwards.
+
+With batch fan-out alone the drop set matches plan §1 **exactly** (group 1: 96, group 6: 55, and so
+on down the table). Do not re-add the collapse without first re-measuring `water_depth` on prod — the
+entire argument turns on that distribution.
+
+**Divergent scalars are refused, not defaulted.** Plan §4.1 listed `container_type`,
+`container_size`, `location_id`, `variety_id` and `archived_at` as "still needing an explicit rule",
+and none was written, so they fell to winner-takes-all. For the vessel columns that is a silent wrong
+water verdict — `vesselProfile` (`ledger.js:109-128`) derives drying behaviour from them, and group 3
+Habanero spans a whiskey barrel, a 5-gal fabric bag and an unsized plastic pot. `mergeCore` now
+returns **422** listing the divergence, and the caller must supply `overrides.<column>`. Only the
+gardener knows which pot the plant is actually in. `featured_photo_id` and `notes` are deliberately
+NOT guarded — they diverge on nearly every group and lose nothing, since the losers' photos repoint
+to the winner regardless.
 
 ## Surface policy
 

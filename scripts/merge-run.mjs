@@ -92,7 +92,7 @@ const allIds = groups.flatMap((g) => [g.winner.id, ...g.losers.map((l) => l.id)]
 const before = await audit(allIds)
 console.log(`garden before: ${before.plants} plantings · ${before.events} events · ${before.harvest.n} harvests · ${before.photos} photos\n`)
 
-const done = []; const held = []; const failed = []
+const done = []; const held = []; const failed = []; const needsRuling = []
 let plannedTotal = 0; let droppedTotal = 0
 
 for (const g of groups) {
@@ -134,6 +134,21 @@ for (const g of groups) {
     winnerId: g.winner.id, loserIds: g.losers.map((l) => l.id), opId: `${opId}-dry`,
     userId: HOUSEHOLD[0], householdIds: HOUSEHOLD, groupLabel: g.label, dryRun: true,
   })
+  // A 422 is "a human must rule on this", not a fault. In DRY RUN we collect them all so the whole
+  // decision list lands in one pass — surveying 13 groups one abort at a time is useless. In EXECUTE
+  // it still stops the run: proceeding past a group that needs a ruling is exactly the silent
+  // default the 422 exists to prevent.
+  if (dry.status === 422) {
+    needsRuling.push({ g, divergences: dry.body.divergences })
+    console.log(`RULE  ${tag}`)
+    for (const d of dry.body.divergences) {
+      console.log(`      ${d.column}:`)
+      for (const v of d.values) console.log(`        ${v.name.padEnd(34)} ${v.value}`)
+    }
+    console.log('')
+    if (EXECUTE) { failed.push({ g, why: 'needs a ruling (422)' }); break }
+    continue
+  }
   if (dry.status !== 200) {
     failed.push({ g, why: `dry run ${dry.status}: ${JSON.stringify(dry.body)}` })
     console.error(`ABORT ${tag} — dry run ${dry.status}: ${JSON.stringify(dry.body)}\n`); break
@@ -192,7 +207,8 @@ const photosClean = before.photos === after.photos
 
 console.log(`\n=== summary ===`)
 console.log(`  merged   ${done.length}`)
-console.log(`  held     ${held.length}${held.length ? ` (groups ${held.map((h) => h.n).join(', ')} — need a ruling)` : ''}`)
+console.log(`  held     ${held.length}${held.length ? ` (groups ${held.map((h) => h.n).join(', ')})` : ''}`)
+console.log(`  need a ruling ${needsRuling.length}${needsRuling.length ? ` (groups ${needsRuling.map((r) => r.g.n).join(', ')})` : ''}`)
 console.log(`  failed   ${failed.length}${failed.length ? ` — ${failed[0].why}` : ''}`)
 console.log(EXECUTE ? `  dropped  ${droppedTotal} events` : `  planned  ${plannedTotal} events would drop`)
 
@@ -205,6 +221,6 @@ if (EXECUTE && done.length) {
   console.log('        by the drop-set size on the NEXT logged event. Expected, not a bug.')
 }
 
-const ok = !failed.length && outsideClean && harvestClean && photosClean
+const ok = !failed.length && !needsRuling.length && outsideClean && harvestClean && photosClean
 if (!ok) console.error('\nFAILED — see above.')
 process.exit(ok ? 0 : 1)
