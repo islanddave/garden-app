@@ -103,18 +103,25 @@ function ConfirmBody({ photo, coverFor, sharingEnabled, busy, error, onCancel, o
           gap: 8,
         }}
       >
-        {covers.length > 0 ? (
+        {/* The named line and the generic hedge are NOT alternatives — the hedge renders in BOTH
+            cases, and that is the whole point. `coverForPhoto` sees PLANTINGS only; containers,
+            zones, inventory items and spaces each carry their own `featured_photo_id` that no
+            PhotoLibrary fetch returns. So a named line is always TRUE but never COMPLETE, and a
+            sentence like "This photo is the cover photo for Cherokee Purple." read alone implies a
+            finished list. A photo covering both that planting AND a container would clear the
+            container's cover undisclosed. "at least" plus the retained hedge says the true thing:
+            here is what we can see, and there may be more. */}
+        {covers.length > 0 && (
           <p data-testid="cover-disclosure" style={{ margin: 0, color: P.bannerInk, fontSize: '0.85rem', lineHeight: 1.45 }}>
-            {`This photo is the cover photo for ${coverNames(covers)}. Deleting it clears that cover — restoring the photo puts it back unless something else has taken the spot.`}
-          </p>
-        ) : (
-          // See the header: this is NOT "we checked and it is clear". It is the consequence stated
-          // without a claim to have checked, which is the only honest thing to say from a surface
-          // that cannot see every cover pointer.
-          <p data-testid="cover-disclosure-generic" style={{ margin: 0, color: P.bannerInk, fontSize: '0.85rem', lineHeight: 1.45 }}>
-            If this photo is the cover photo anywhere, that cover is cleared until you restore it.
+            {`This photo is the cover photo for at least ${coverNames(covers)}. Deleting it clears that cover — restoring the photo puts it back unless something else has taken the spot.`}
           </p>
         )}
+        {/* NOT "we checked and it is clear": the consequence stated without a claim to have
+            checked, which is the only honest thing to say from a surface that cannot see every
+            cover pointer. */}
+        <p data-testid="cover-disclosure-generic" style={{ margin: 0, color: P.bannerInk, fontSize: '0.85rem', lineHeight: 1.45 }}>
+          If this photo is the cover photo anywhere else, that cover is cleared until you restore it.
+        </p>
 
         {/* share_log.photo_id is a RETAIN pointer, not a null-on-delete one (lambda/photos/
             photoDelete.js PHOTO_POINTERS): a soft delete inside this app cannot retract a post

@@ -239,13 +239,22 @@ describe('W-PHOTODEL — the write is the SOFT delete, and only that', () => {
 })
 
 describe('W-PHOTODEL — the confirm discloses, and never over-claims', () => {
-  it('names a planting that has DESIGNATED this photo as its cover', async () => {
+  // The named line and the hedge are NOT alternatives — BOTH render. `coverForPhoto` sees plantings
+  // only; containers, zones, inventory items and spaces carry their own `featured_photo_id` that no
+  // PhotoLibrary fetch returns. So a named line is always TRUE but never COMPLETE. This test
+  // originally asserted the hedge was ABSENT once a cover was named, which pinned exactly the
+  // over-claim the surface's own header forbids: a photo covering both Sungold and a container would
+  // have been deleted from a sheet naming only Sungold, in a sentence shaped like a finished list.
+  it('names a planting that DESIGNATED this photo, and still hedges for the axes it cannot see', async () => {
     await mount({ plants: [PLANT_EXPLICIT] })
     await armDelete(STANDALONE)
     const line = screen.getByTestId('cover-disclosure')
     expect(line.textContent).toMatch(/Sungold/)
     expect(line.textContent).toMatch(/cover/i)
-    expect(screen.queryByTestId('cover-disclosure-generic')).toBeNull()
+    // "at least" is what keeps the named line honest about being partial.
+    expect(line.textContent).toMatch(/at least/i)
+    // The hedge survives alongside the name — absence here is the defect, not the pass.
+    expect(screen.getByTestId('cover-disclosure-generic')).toBeTruthy()
   })
 
   it('does NOT name a planting whose hero is only the effective fallback', async () => {
