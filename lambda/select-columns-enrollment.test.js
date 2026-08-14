@@ -33,24 +33,21 @@ const LAMBDA_DIR = resolve(process.cwd(), 'lambda')
 // Lambdas with NO select-columns.test.js as of 2026-08-14. Their SELECT columns are UNAUDITED
 // against prod's information_schema — an L-081 incident (column exists in staging, not prod, every
 // endpoint 500s on deploy) would not be caught for these.
-// 2026-08-14: 22 -> 17. Enrolled `locations`, `favorites`, `inventory-items`, `photos`,
-// `preservation`. `events` is deliberately NOT among them: at 3,074 lines and 30 table references it
-// is the single highest-value enrolment left and needs its own pass, not a rushed one — a wrong
-// column list fails CI against prod and blocks a promote.
-const UNENROLLED = [
-  'achievements', 'critter', 'daily-plan', 'daily-plan-read', 'dashboard',
-  'events', 'evidence-ingest', 'facebook-share', 'findings',
-  'shared-state', 'storage-location',
-  'tags', 'ux-events', 'xp-reconcile',
-]
+// 2026-08-14: 22 -> 0. Every Lambda that reads a row is now enrolled, `events` included. The list is
+// kept (empty) rather than deleted because its job now is to stay empty: a new Lambda lands here or
+// gets enrolled, and either way it cannot be born silently uncovered.
+const UNENROLLED = []
 
 // STRUCTURALLY EXEMPT, not debt. Phase 1 audits SELECT columns; a Lambda that never reads a row has
 // no SELECT columns to contract, so counting it as "unenrolled" overstates the gap — and an
 // overstated gap is the same species of misleading number as the vacuous green this row is about.
-// Verified below rather than trusted: a Lambda listed here that later grows a read FAILS.
+// Verified below rather than trusted — and that verification EARNED ITS KEEP on 2026-08-14: an
+// earlier version of it scanned only index.js, and only sql`` templates, and on that basis wrongly
+// exempted `members`, which reads locations and inventory_items from a SIBLING module. The check now
+// walks the whole Lambda and understands node-postgres .query() too. A guard that only inspects the
+// obvious file in the obvious dialect is the same vacuous gate this row is about.
 const NO_SQL_READS = [
-  'members',    // 0 sql`` templates at all — pure Clerk/membership logic, never touches the DB.
-  'app-events', // sql`` templates present but INSERT-only, no FROM. Phase 2 covers its column list.
+  'app-events', // sql`` present but INSERT-only (rate_limit_buckets upsert). No FROM, so no SELECT contract.
 ]
 
 // Ceiling, not a target. Lower it with every enrolment; never raise it without a ledger row saying
@@ -64,6 +61,26 @@ const lambdas = readdirSync(LAMBDA_DIR, { withFileTypes: true })
   .sort()
 
 const isEnrolled = (n) => existsSync(join(LAMBDA_DIR, n, 'select-columns.test.js'))
+
+// Every non-test .js in the Lambda, in BOTH query dialects. See the NO_SQL_READS note above for why
+// anything narrower than this is not good enough to base an exemption on.
+function lambdaSql(dir) {
+  const out = []
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, e.name)
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(full) }
+      else if (/\.js$/.test(e.name) && !/\.test\.js$/.test(e.name)) {
+        const src = readFileSync(full, 'utf8')
+          .split('\n').map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1')).join('\n')
+        out.push(...(src.match(/sql`[\s\S]*?`/g) ?? []))
+        out.push(...(src.match(/\.query\(\s*[`'"][\s\S]*?[`'"]/g) ?? []))
+      }
+    }
+  }
+  walk(dir)
+  return out.join('\n')
+}
 
 describe('L-081 Phase 1 enrollment ratchet (OPS-L081COLS-001)', () => {
   it('discovers the Lambda set — guards against this ratchet itself going vacuous', () => {
@@ -82,11 +99,7 @@ describe('L-081 Phase 1 enrollment ratchet (OPS-L081COLS-001)', () => {
   it('proves each exempt Lambda really has no SQL read — an exemption must not rot', () => {
     // The exemption is only honest while it is true. If one of these grows a SELECT, it becomes real
     // Phase 1 debt and has to move to UNENROLLED (or get enrolled) — this is what forces that.
-    const nowReads = NO_SQL_READS.filter((n) => {
-      const src = readFileSync(join(LAMBDA_DIR, n, 'index.js'), 'utf8')
-      const sqlOnly = (src.match(/sql`[\s\S]*?`/g) ?? []).join('\n')
-      return /\bFROM\s+/i.test(sqlOnly)
-    })
+    const nowReads = NO_SQL_READS.filter((n) => /\bFROM\s+/i.test(lambdaSql(join(LAMBDA_DIR, n))))
     expect(nowReads).toEqual([])
   })
 
