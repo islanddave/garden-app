@@ -21,6 +21,19 @@ const decomment = (s) => s.split('\n')
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
+// Bounded by the NEXT branch guard, not by a magic character count. The slice was `iLocation + 1200`
+// and BUG-PHOTOARCHAXIS-001 added one line to this branch's anti-join, which pushed the recursive CTE
+// past the window — a passing guard turned red on a change it does not assert anything about. A
+// length-bounded slice fails in both directions (silently vacuous when it shrinks, falsely red when
+// it grows); the branch boundary is the real bound. archive-hide.test.js already slices this way.
+const locationBranch = () => {
+  const iLocation = SRC.indexOf('} else if (locationId) {');
+  const iProject = SRC.indexOf('} else if (projectId) {');
+  expect(iLocation).toBeGreaterThan(-1);
+  expect(iProject).toBeGreaterThan(iLocation);
+  return SRC.slice(iLocation, iProject);
+};
+
 describe('photos Lambda — V4-PHOTOLOCFIND-001 space-scoped gallery', () => {
   it('reads the location_id query param', () => {
     expect(SRC).toMatch(/const locationId = event\.queryStringParameters\?\.location_id \?\? null/);
@@ -37,7 +50,7 @@ describe('photos Lambda — V4-PHOTOLOCFIND-001 space-scoped gallery', () => {
 
   it('walks the location subtree recursively (descendant spaces included, soft-deleted excluded)', () => {
     const iLocation = SRC.indexOf('} else if (locationId) {');
-    const block = SRC.slice(iLocation, iLocation + 1200);
+    const block = locationBranch();
     expect(block).toMatch(/WITH RECURSIVE loc_subtree AS \(/);
     expect(block).toMatch(/SELECT id FROM locations WHERE id = \$\{locationId\} AND deleted_at IS NULL/);
     expect(block).toMatch(/JOIN loc_subtree st ON l\.parent_id = st\.id/);
@@ -46,7 +59,7 @@ describe('photos Lambda — V4-PHOTOLOCFIND-001 space-scoped gallery', () => {
 
   it('is household-scoped and excludes soft-deleted photos', () => {
     const iLocation = SRC.indexOf('} else if (locationId) {');
-    const block = SRC.slice(iLocation, iLocation + 1200);
+    const block = locationBranch();
     expect(block).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
     expect(block).toMatch(/p\.deleted_at IS NULL/);
   });

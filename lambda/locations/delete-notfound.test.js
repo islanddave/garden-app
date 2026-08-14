@@ -36,11 +36,14 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+const REF = decomment(readFileSync(resolve(__dirname, 'ref.js'), 'utf8'));
 
-// Bounded to the DELETE's own statement so a match cannot be satisfied from the PUT above it,
-// which legitimately carries both the slug-or-uuid arm and a 404 gate.
-const start = SRC.indexOf('UPDATE locations\n          SET deleted_at = NOW()');
-const branch = start < 0 ? null : SRC.slice(start, start + 700);
+// Bounded to the DELETE's own arm so a match cannot be satisfied from the PUT above it, which
+// legitimately carries both a resolve step and a 404 gate. Anchored on the JS guard rather than on
+// the UPDATE, because BUG-LOCDELSLUG-001 put a resolve step AHEAD of the statement and a slice that
+// starts at the UPDATE cannot see it.
+const start = SRC.indexOf("if (method === 'DELETE') {");
+const branch = start < 0 ? null : SRC.slice(start, SRC.indexOf("return resp(405", start));
 
 describe('BUG-DELNOOPOK-001 — locations DELETE is RETURNING-gated on the slug-or-uuid key', () => {
   it('the DELETE statement is findable and bounded', () => {
@@ -61,9 +64,37 @@ describe('BUG-DELNOOPOK-001 — locations DELETE is RETURNING-gated on the slug-
   });
 
   // MUTATION: narrow back to `WHERE id = ${locId}` -> RED. Measured: that form 22P02s on a slug.
-  it('resolves slug OR uuid, exactly as GET and PUT do', () => {
-    expect(branch).toMatch(/\(slug = \$\{locId\} OR id::text = \$\{locId\}\)/);
+  //
+  // BUG-LOCDELSLUG-001 moved WHERE the slug-or-uuid arm lives without changing WHETHER the verb
+  // accepts a slug. The arm is now inside loadLocationRef (ref.js), which resolves to exactly one
+  // id; the statement keys on that id. Asserting the raw predicate here would now pin the very
+  // shape that soft-deleted N rows for one request, so this asserts the property the old assertion
+  // was reaching for — the verb accepts a slug, and it does so through the shared resolver.
+  it('resolves slug OR uuid through the shared resolver, exactly as GET and PUT do', () => {
+    expect(branch).toMatch(/await loadLocationRef\(sql, locId, householdIds\)/);
     expect(branch).not.toMatch(/WHERE id = \$\{locId\}/);
+    // The slug arm still exists, in exactly one place, and it is the place the verb calls.
+    expect(REF).toMatch(/\(slug = \$\{ref\} OR id::text = \$\{ref\}\)/);
+  });
+
+  // MUTATION: change `WHERE id = ${picked.row.id}` back to the inline slug-or-uuid predicate -> RED.
+  // That IS the multi-row soft-delete: a predicate that can match N rows, on a statement whose only
+  // gate distinguishes zero from non-zero.
+  it('the destructive statement keys on the RESOLVED id, never on the raw path segment', () => {
+    expect(branch).toMatch(/UPDATE locations\s*SET deleted_at = NOW\(\)\s*WHERE id = \$\{picked\.row\.id\}/);
+    expect(branch, 'the not-single-valued predicate is back on the UPDATE')
+      .not.toMatch(/SET deleted_at = NOW\(\)[\s\S]*\(slug = \$\{locId\}/);
+  });
+
+  // MUTATION: delete either gate line -> RED. 404 and 409 are different facts: 404 is "no such
+  // location you can see", 409 is "you named several". Collapsing 409 into 404 would send the
+  // caller to a not-found page for a location that exists twice; collapsing it into a silent pick
+  // restores the original defect with a resolver in front of it.
+  it('answers an ambiguous reference with a typed 409, distinct from the 404', () => {
+    expect(branch).toMatch(/if \(picked\.ambiguous\) return resp\(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY\)/);
+    expect(branch).toMatch(/if \(!picked\.row\) return resp\(404, \{ error: 'Not found' \}\)/);
+    expect(REF).toMatch(/AMBIGUOUS_REF_STATUS = 409/);
+    expect(REF).toMatch(/location_ref_ambiguous/);
   });
 
   // MUTATION: drop the household predicate -> RED. The 404 makes denial visible; it must still BE
@@ -74,9 +105,25 @@ describe('BUG-DELNOOPOK-001 — locations DELETE is RETURNING-gated on the slug-
   });
 
   // All three verbs on /api/locations/:id must agree on the key space — the asymmetry this fix
-  // closed existed for months precisely because nothing compared them.
-  it('GET, PUT and DELETE all resolve the same slug-or-uuid key', () => {
-    const arms = SRC.match(/\(slug = \$\{locId\} OR id::text = \$\{locId\}\)|\(l\.slug = \$\{locId\} OR l\.id::text = \$\{locId\}\)/g) ?? [];
-    expect(arms.length).toBeGreaterThanOrEqual(4); // GET, PUT id-resolve, PUT UPDATE, DELETE
+  // closed existed for months precisely because nothing compared them. They now agree by sharing
+  // ONE resolver rather than by carrying three copies of one predicate, which is what let the
+  // copies drift in the first place: the count-the-arms assertion this replaces would have stayed
+  // green through BUG-LOCDELSLUG-001, because four identical multi-row predicates satisfy it just
+  // as well as four correct ones.
+  it('GET, PUT and DELETE all resolve through the same rule', () => {
+    expect(SRC).toMatch(/resolveLocationRow\(rows, locId\)/);          // GET, on rows already fetched
+    const preflights = SRC.match(/await loadLocationRef\(sql, locId, householdIds\)/g) ?? [];
+    expect(preflights.length, 'PUT and DELETE must each pre-resolve').toBe(2);
+    const ambiguousGates = SRC.match(/picked\.ambiguous/g) ?? [];
+    expect(ambiguousGates.length, 'all three verbs must gate ambiguity').toBe(3);
+  });
+
+  // The rule itself is arithmetic on rows, so it is tested BEHAVIOURALLY in ref.test.js rather than
+  // as source text. This only pins that the handler has not grown a second, divergent copy of it.
+  it('carries no second copy of the slug-or-uuid predicate outside the resolver', () => {
+    const arms = SRC.match(/slug = \$\{locId\} OR id::text = \$\{locId\}/g) ?? [];
+    expect(arms.length, 'the mutating verbs must not re-derive the key space inline').toBe(0);
+    const getArm = SRC.match(/l\.slug = \$\{locId\} OR l\.id::text = \$\{locId\}/g) ?? [];
+    expect(getArm.length, 'GET fetches every match, then applies the rule').toBe(1);
   });
 });

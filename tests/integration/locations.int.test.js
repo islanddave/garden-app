@@ -330,3 +330,126 @@ describe('DELETE /api/locations/:id — soft-delete', () => {
     expect(rows[0].deleted_at).toBeNull()
   })
 })
+
+// BUG-LOCDELSLUG-001 — an ambiguous slug must resolve to nothing, not to everything.
+//
+// WRITTEN BUT UNRUN in the lane that authored it: the integration suite needs a fresh ephemeral
+// Neon branch and its own vitest config, neither available in a worktree. Every assertion below is
+// derived from handler source, and the unit half (lambda/locations/ref.test.js) exercises the same
+// rule behaviourally — but the claim "the DELETE touched zero rows" is proven only when this runs.
+//
+// THE FIXTURE IS THE POINT. `locations.slug` carries two PARTIAL unique indexes and no global one
+// (idx_locations_root_slug UNIQUE(slug) WHERE parent_id IS NULL; idx_locations_child_slug
+// UNIQUE(parent_id, slug) WHERE parent_id IS NOT NULL), so two children of DIFFERENT parents may
+// legally share a slug. That is the shape no uuid-keyed fixture can produce and the reason the
+// existing slug tests above all passed over the defect. Inserted through the handler's own POST,
+// which accepts body.slug verbatim, so this is a state a client can actually create.
+describe('GET/PUT/DELETE /api/locations/:slug — an ambiguous slug reference', () => {
+  const DUP = () => 'dup-child-' + RUN
+  let parentA, parentB, childA, childB
+
+  beforeAll(async () => {
+    setTestUserId(USER)
+    const pa = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name: 'amb-parent-a-' + RUN },
+    })
+    const pb = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name: 'amb-parent-b-' + RUN },
+    })
+    expect(pa.status).toBe(201)
+    expect(pb.status).toBe(201)
+    parentA = pa.body.id
+    parentB = pb.body.id
+    const ca = await callHandler(handler, {
+      method: 'POST', path: '/api/locations',
+      body: { name: 'Dup Child A', slug: DUP(), parent_id: parentA },
+    })
+    const cb = await callHandler(handler, {
+      method: 'POST', path: '/api/locations',
+      body: { name: 'Dup Child B', slug: DUP(), parent_id: parentB },
+    })
+    // If either 409s, the schema grew a global unique on slug and this whole class is dead — say so
+    // loudly rather than skipping, because the fix would then be over-engineering worth reverting.
+    expect(ca.status, `duplicate child slug rejected → ${JSON.stringify(ca.body)}`).toBe(201)
+    expect(cb.status, `duplicate child slug rejected → ${JSON.stringify(cb.body)}`).toBe(201)
+    childA = ca.body.id
+    childB = cb.body.id
+    expect(childA).not.toBe(childB)
+  })
+
+  it('DELETE by the shared slug -> 409, and BOTH rows are untouched', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'DELETE', path: `/api/locations/${DUP()}`,
+    })
+    expect(status, `ambiguous DELETE → ${JSON.stringify(body)}`).toBe(409)
+    expect(body.code).toBe('location_ref_ambiguous')
+    // The load-bearing half. Pre-fix this returned 200 {ok:true} with deleted_at set on BOTH rows —
+    // the status alone never distinguished one row from five, which is why the row read is asserted
+    // separately from the response.
+    const rows = await directSql`
+      SELECT id, deleted_at FROM locations WHERE id IN (${childA}, ${childB})
+    `
+    expect(rows).toHaveLength(2)
+    for (const r of rows) expect(r.deleted_at, `row ${r.id} was soft-deleted`).toBeNull()
+  })
+
+  it('PUT by the shared slug -> 409, and neither row was written', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'PUT', path: `/api/locations/${DUP()}`, body: { name: 'Overwritten ' + RUN },
+    })
+    expect(status, `ambiguous PUT → ${JSON.stringify(body)}`).toBe(409)
+    expect(body.code).toBe('location_ref_ambiguous')
+    const rows = await directSql`
+      SELECT name FROM locations WHERE id IN (${childA}, ${childB}) ORDER BY name
+    `
+    expect(rows.map((r) => r.name)).toEqual(['Dup Child A', 'Dup Child B'])
+  })
+
+  it('GET by the shared slug -> 409 rather than an arbitrary row', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'GET', path: `/api/locations/${DUP()}`,
+    })
+    expect(status, `ambiguous GET → ${JSON.stringify(body)}`).toBe(409)
+    expect(body.code).toBe('location_ref_ambiguous')
+  })
+
+  // The 409 must not become a blanket refusal of the duplicated slug's rows. Addressing either
+  // child BY ITS UUID is unambiguous by construction and has to keep working on all three verbs —
+  // this is the assertion that would fail if the fix were "reject anything that looks like a slug".
+  it('the same rows remain addressable by uuid on every verb', async () => {
+    setTestUserId(USER)
+    const get = await callHandler(handler, { method: 'GET', path: `/api/locations/${childA}` })
+    expect(get.status, `uuid GET → ${JSON.stringify(get.body)}`).toBe(200)
+    expect(get.body.id).toBe(childA)
+
+    const put = await callHandler(handler, {
+      method: 'PUT', path: `/api/locations/${childB}`, body: { name: 'Renamed B ' + RUN },
+    })
+    expect(put.status, `uuid PUT → ${JSON.stringify(put.body)}`).toBe(200)
+    expect(put.body.id).toBe(childB)
+
+    const del = await callHandler(handler, { method: 'DELETE', path: `/api/locations/${childB}` })
+    expect(del.status, `uuid DELETE → ${JSON.stringify(del.body)}`).toBe(200)
+    const rows = await directSql`
+      SELECT id, deleted_at FROM locations WHERE id IN (${childA}, ${childB})
+    `
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r.deleted_at]))
+    expect(byId[childB], 'the addressed row').toBeTruthy()
+    expect(byId[childA], 'its duplicate-slug sibling').toBeNull()
+  })
+
+  // Once one of the two is gone the slug is single-valued again, because the resolver scopes to
+  // live rows. A resolver that counted soft-deleted rows would keep 409-ing forever and strand the
+  // survivor — the failure mode of "just check for duplicates in the table".
+  it('resolves cleanly again once the duplicate is soft-deleted', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'GET', path: `/api/locations/${DUP()}`,
+    })
+    expect(status, `post-delete GET → ${JSON.stringify(body)}`).toBe(200)
+    expect(body.id).toBe(childA)
+  })
+})

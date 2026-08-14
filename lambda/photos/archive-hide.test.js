@@ -43,7 +43,7 @@ const BRANCHES = {
 };
 
 const PLANT_ANTIJOIN = /NOT EXISTS \(\s*SELECT 1 FROM public\.garden_node gna\s*WHERE gna\.id = p\.plant_id AND gna\.archived_at IS NOT NULL\s*\)/;
-const EVENT_ANTIJOIN = /NOT EXISTS \(\s*SELECT 1 FROM public\.event_log ea\s*JOIN public\.garden_node gne ON gne\.id = ea\.plant_id\s*WHERE ea\.id = p\.event_id AND gne\.archived_at IS NOT NULL\s*\)/;
+const EVENT_ANTIJOIN = /NOT EXISTS \(\s*SELECT 1 FROM public\.event_log ea\s*JOIN public\.garden_node gne ON gne\.id = ea\.plant_id\s*WHERE ea\.id = p\.event_id AND ea\.deleted_at IS NULL\s*AND gne\.archived_at IS NOT NULL\s*\)/;
 
 describe('photos Lambda — archived plantings are excluded from aggregate galleries (L2)', () => {
   it('the branch slices are real (a broken index would make every assertion vacuous)', () => {
@@ -82,6 +82,42 @@ describe('photos Lambda — archived plantings are excluded from aggregate galle
   it('did not trade the deleted_at axis for the archived_at axis', () => {
     for (const [name, block] of Object.entries(BRANCHES)) {
       expect(block, `${name} lost its deleted_at predicate`).toMatch(/AND p\.deleted_at IS NULL/);
+    }
+  });
+
+  // BUG-PHOTOARCHAXIS-001 — the two axes must stay SEPARATELY OBSERVABLE, which the EVENT_ANTIJOIN
+  // regex above now encodes but would not FAIL LOUDLY for: drop the scope and that regex simply
+  // stops matching, and the failure reads as "the anti-join went missing" rather than "the axes were
+  // conflated". These three pin the distinction directly.
+  //
+  // MUTATION (verified): delete `AND ea.deleted_at IS NULL` from the four anti-joins -> the first
+  // `it` below goes RED on all four branches with the conflation named in the message.
+  for (const name of ['locationId', 'projectId', 'spaceId', 'unfiltered']) {
+    it(`the ${name} branch scopes the event hop to LIVE events (archive axis only)`, () => {
+      expect(BRANCHES[name],
+        `${name} traverses photos.event_id -> event_log without scoping the intermediate to live ` +
+        'rows, so a photo stranded on a soft-deleted event is hidden by the ARCHIVE predicate — ' +
+        'the delete and archive axes are conflated').toMatch(/WHERE ea\.id = p\.event_id AND ea\.deleted_at IS NULL/);
+    });
+  }
+
+  // The scope belongs on the INTERMEDIATE (ea), never on the destination (gne). Putting it on gne
+  // would be the same conflation with the operands swapped: a soft-deleted-AND-archived planting
+  // would stop being hidden, which IS a live visibility change (21 live photos reach an archived
+  // planting through their event today).
+  it('scopes the intermediate event, not the planting it reaches', () => {
+    expect(SRC).not.toMatch(/gne\.deleted_at/);
+    const scoped = SRC.match(/ea\.deleted_at IS NULL/g) ?? [];
+    expect(scoped.length, 'expected the scope on all four aggregate branches').toBe(4);
+  });
+
+  // The plant anti-join is ONE hop and names the archive axis directly — there is no intermediate
+  // to scope, and adding a deleted_at term there would be a real behaviour change rather than a
+  // de-conflation. Pinned so a future sweep does not "make them consistent" by symmetry.
+  it('leaves the single-hop plant anti-join on the archive axis alone', () => {
+    for (const name of ['locationId', 'projectId', 'spaceId', 'unfiltered']) {
+      expect(BRANCHES[name]).toMatch(PLANT_ANTIJOIN);
+      expect(BRANCHES[name]).not.toMatch(/gna\.deleted_at/);
     }
   });
 });

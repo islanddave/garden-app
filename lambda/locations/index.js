@@ -6,6 +6,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateClear } from './validate.js';
+import { resolveLocationRow, loadLocationRef, AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY } from './ref.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -217,8 +218,15 @@ export const handler = async (event) => {
                ) fb ON TRUE
           WHERE (l.slug = ${locId} OR l.id::text = ${locId}) AND l.deleted_at IS NULL AND l.created_by = ANY(${householdIds})
         `;
-        if (!rows.length) return resp(404, { error: 'Not found' });
-        const row = rows[0];
+        // BUG-LOCDELSLUG-001. `rows[0]` was an arbitrary pick over a predicate that is not
+        // single-valued (ref.js carries the index evidence). GET is the one verb that can apply the
+        // rule for FREE — it has already fetched every match, so the tiebreak is arithmetic on rows
+        // in hand rather than the extra round trip PUT and DELETE have to pay. Same rule, same
+        // module: an id match wins, a lone slug match resolves, several 409.
+        const picked = resolveLocationRow(rows, locId);
+        if (picked.ambiguous) return resp(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY);
+        if (!picked.row) return resp(404, { error: 'Not found' });
+        const row = picked.row;
         const featured_photo_view_url = await resolvePhotoViewUrl(row.featured_photo_storage_path, { presign: getFeaturedPhotoViewUrl, sm });
         const { featured_photo_storage_path: _ignore, ...rest } = row;
         return resp(200, { ...rest, featured_photo_view_url });
@@ -229,14 +237,19 @@ export const handler = async (event) => {
 
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.location_id).
         // Resolve UUID first (route accepts slug OR uuid).
-        let actualLocationId = locId;
+        //
+        // BUG-LOCDELSLUG-001 made this resolution UNCONDITIONAL. It was already here, gated on
+        // `featured_photo_id` being present, and already took `idRows[0]` off the same
+        // not-single-valued predicate — so the PUT was paying for the round trip on its most common
+        // path and still ran the UPDATE against the raw ambiguous predicate, which writes SIX
+        // columns to EVERY match and reports rows[0] as the one that changed. Hoisting it out of
+        // the `if` costs one indexed lookup on the other paths and turns the whole verb
+        // single-target: everything below now keys on actualLocationId, never on locId.
+        const picked = await loadLocationRef(sql, locId, householdIds);
+        if (picked.ambiguous) return resp(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY);
+        if (!picked.row) return resp(404, { error: 'Not found' });
+        const actualLocationId = picked.row.id;
         if (Object.prototype.hasOwnProperty.call(body, 'featured_photo_id')) {
-          const idRows = await sql`
-            SELECT id::text AS id FROM locations
-             WHERE (slug = ${locId} OR id::text = ${locId}) AND deleted_at IS NULL AND created_by = ANY(${householdIds})
-          `;
-          if (!idRows.length) return resp(404, { error: 'Not found' });
-          actualLocationId = idRows[0].id;
           if (body.featured_photo_id != null) {
             // V4-AUTHZSWEEP-001: anchor on created_by, not uploaded_by. photos carries BOTH columns
             // and every other featured-photo validator (inventory-items, projects, plants) uses
@@ -300,11 +313,14 @@ export const handler = async (event) => {
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE featured_photo_id
             END
-          WHERE (slug = ${locId} OR id::text = ${locId})
+          WHERE id = ${actualLocationId}
             AND deleted_at IS NULL
             AND created_by = ANY(${householdIds})
           RETURNING *
         `;
+        // Still RETURNING-gated even though the row was just resolved: the resolve and the write are
+        // separate statements (neon runs each in its own transaction), so a concurrent DELETE in
+        // between makes this a real zero-row case rather than a redundant check.
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
       }
@@ -324,14 +340,27 @@ export const handler = async (event) => {
         // ships a slug here today (Locations.jsx:132 passes loc.id), so this is a latent trap
         // being closed, not a live bug — but leaving one verb of three on a different key while
         // that verb also starts returning 404 would make the asymmetry read as a real 404.
+        //
+        // BUG-LOCDELSLUG-001: that widening handed the verb a predicate that is not single-valued.
+        // `slug` carries no global unique index (ref.js has the measured index list), so a DELETE
+        // naming a duplicated child slug soft-deleted EVERY match and answered 200 {ok:true} — the
+        // `!rows.length` gate below distinguishes zero from non-zero, never one from five. Resolved
+        // to a single id FIRST, then keyed on that id, so the statement can only ever touch one row.
+        // Soft-Delete-Only makes this recoverable but not harmless: each extra row is a separate
+        // trip through POST /:id/restore that nobody knows to make, because the response said ok.
+        const picked = await loadLocationRef(sql, locId, householdIds);
+        if (picked.ambiguous) return resp(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY);
+        if (!picked.row) return resp(404, { error: 'Not found' });
         const rows = await sql`
           UPDATE locations
           SET deleted_at = NOW()
-          WHERE (slug = ${locId} OR id::text = ${locId})
+          WHERE id = ${picked.row.id}
             AND deleted_at IS NULL
             AND created_by = ANY(${householdIds})
           RETURNING id
         `;
+        // Kept: the resolve and the write are separate statements, so a concurrent delete between
+        // them is a genuine zero-row outcome and must still 404 rather than report ok.
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }

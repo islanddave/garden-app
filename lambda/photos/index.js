@@ -872,6 +872,25 @@ export const handler = async (event) => {
       // PLANT AXIS ONLY. plant_projects also carries archived_at (3 archived projects in prod) but
       // whether archiving a container hides its contents is an open Dave ruling (R3 recon §2
       // DAVE-DECISION 3), and this lane does not guess it.
+      //
+      // BUG-PHOTOARCHAXIS-001 — the event anti-join carries `ea.deleted_at IS NULL` because the
+      // hop it makes is through a row that has a lifecycle of its own. The plant anti-join is one
+      // hop and names the archive axis directly; the event anti-join is TWO hops, and without the
+      // scope on the intermediate it traverses a DEAD edge — a photo stranded on a soft-deleted
+      // event would be hidden by an ARCHIVE predicate, on the strength of a planting it reaches
+      // only through a row the user already deleted. The ?attachedTo branch below has always
+      // scoped the identical traversal (`e.deleted_at IS NULL` inside its event subquery); these
+      // four were the inconsistent ones, so this is the file agreeing with itself.
+      //
+      // INERT AS SHIPPED, measured on prod 2026-08-14: zero live photos carry an event_id whose
+      // event is soft-deleted, and the guarantee behind that zero is not luck — DELETE
+      // /api/events/:id DETACHES photos rather than deleting them (lambda/events/index.js: "photos
+      // -> DETACH, never delete", nulling the dangling event_id and re-parenting). So the delete
+      // axis on THIS edge is enforced upstream by that cascade, and there is deliberately no new
+      // hiding predicate here to match: the state this scope excludes is an orphan, and an orphaned
+      // photo should surface in the gallery, not vanish behind an unrelated planting's archive flag.
+      // 86 soft-deleted events exist in prod, none with an archived planting and none retaining a
+      // photo — the shape is reachable only by a future cascade leak, which is what this guards.
 
       let rows;
       if (attachedTo) {
@@ -911,7 +930,8 @@ export const handler = async (event) => {
               AND NOT EXISTS (
                 SELECT 1 FROM public.event_log ea
                 JOIN public.garden_node gne ON gne.id = ea.plant_id
-                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+                WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
+                  AND gne.archived_at IS NOT NULL
               )
               AND p.location_id IN (
                 WITH RECURSIVE loc_subtree AS (
@@ -944,7 +964,8 @@ export const handler = async (event) => {
               AND NOT EXISTS (
                 SELECT 1 FROM public.event_log ea
                 JOIN public.garden_node gne ON gne.id = ea.plant_id
-                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+                WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
+                  AND gne.archived_at IS NOT NULL
               )
             ORDER BY p.created_at DESC
             LIMIT ${limit}
@@ -969,7 +990,8 @@ export const handler = async (event) => {
               AND NOT EXISTS (
                 SELECT 1 FROM public.event_log ea
                 JOIN public.garden_node gne ON gne.id = ea.plant_id
-                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+                WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
+                  AND gne.archived_at IS NOT NULL
               )
               AND p.space_id = ${spaceId}
             ORDER BY p.created_at DESC
@@ -992,7 +1014,8 @@ export const handler = async (event) => {
               AND NOT EXISTS (
                 SELECT 1 FROM public.event_log ea
                 JOIN public.garden_node gne ON gne.id = ea.plant_id
-                WHERE ea.id = p.event_id AND gne.archived_at IS NOT NULL
+                WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
+                  AND gne.archived_at IS NOT NULL
               )
             ORDER BY p.created_at DESC
             LIMIT ${limit}
