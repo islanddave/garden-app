@@ -8,6 +8,16 @@ import SeverityBadge from '../components/SeverityBadge.jsx'
 import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+// V4-EVENTDETAILRICH-001 — the read view's three new blocks compose EXISTING primitives rather than
+// inventing an EventDetail-only dialect: Lightbox is the same gallery PlantingDetail and PhotosWall
+// open, and formatEntry / describeHarvestWeight are the shared harvest vocabulary. Every one of
+// these is already mounted on the planting page — which is the point: an event detail is a SUBSET of
+// that page, not a second design.
+//
+// PutUpPhotoThumb, not <PhotoView>, and not <PhotoImg> — see EventPhotos below for the full reason.
+import PutUpPhotoThumb from '../components/PutUpPhotoThumb.jsx'
+import Lightbox from '../components/Lightbox.jsx'
+import { formatEntry } from '../lib/harvestSummary.js'
 // DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with ProjectDetail's
 // event rows — the two delete surfaces must stay behaviorally identical).
 import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
@@ -29,7 +39,7 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 // estimateSourceCopy.test.js imports it from here, and that test is a read-path guard worth keeping
 // pointed at the consumer as well as at the module. src/lib is also the instrumented tree.
 export { estimateSourceCopy } from '../lib/harvestWeight.js'
-import { estimateSourceCopy } from '../lib/harvestWeight.js'
+import { estimateSourceCopy, describeHarvestWeight, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
 const METADATA_LABELS = {
@@ -93,6 +103,13 @@ function photoDeleteFailureCopy(failed, total) {
 // Value formatters for keys whose stored value is a code, not display text.
 const METADATA_VALUE_FORMAT = {
   water_depth: v => waterDepthLabel(v),
+}
+
+// The event type in words. Extracted because V4-EVENTDETAILRICH-001 reduced the type to ONE render
+// site and three call sites had the `.replace(/_/g, ' ')` inline — three chances for the header, the
+// kicker and the share title to drift apart on a type nobody has looked at in a year.
+function eventTypeLabel(type) {
+  return String(type ?? '').replace(/_/g, ' ')
 }
 
 export default function EventDetail() {
@@ -386,16 +403,30 @@ export default function EventDetail() {
         {' › Event'}
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span>{icon} {event.title || event.event_type.replace(/_/g, ' ')}</span>
-          {event.flagged_as_issue && (
-            <SeverityBadge reason="flagged" severity={event.severity} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 24 }}>
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span>{icon} {event.title || eventTypeLabel(event.event_type)}</span>
+            {event.flagged_as_issue && (
+              <SeverityBadge reason="flagged" severity={event.severity} />
+            )}
+          </h1>
+          {/* V4-EVENTDETAILRICH-001 — "drop the repeated type field". The Type ROW is gone from the
+              read view; the type is stated ONCE, here. Rendered only when a title exists: with no
+              title the <h1> above already IS the humanised type, and printing it again beneath
+              itself is the exact repetition the ticket names. With a title the type would otherwise
+              survive only as the header glyph — and on a generic `observation` the type is the one
+              thing identifying the event, so it keeps a words form rather than being deleted
+              outright (recon D3.2). */}
+          {event.title && (
+            <div data-testid="event-type-kicker" style={{ marginTop: 4, fontSize: '0.78rem', color: P.light, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
+              {eventTypeLabel(event.event_type)}
+            </div>
           )}
-        </h1>
+        </div>
         {!editing && (
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => shareEntity({ title: event.title || event.event_type.replace(/_/g, ' '), url: window.location.href })} aria-label="Share this event" style={outlineBtn}>Share</button>
+            <button onClick={() => shareEntity({ title: event.title || eventTypeLabel(event.event_type), url: window.location.href })} aria-label="Share this event" style={outlineBtn}>Share</button>
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
             <button onClick={armDelete} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
               {deleting ? '…' : 'Delete'}
@@ -680,13 +711,204 @@ export default function EventDetail() {
   )
 }
 
+// ── V4-EVENTDETAILRICH-001 (BD0806-18) ───────────────────────────────────────────────────────────
+// "Event detail pages are too sparse (harvest worst)." The read view rendered five label/value rows
+// and nothing else: on a harvest it showed the free-text event_log.quantity — a note — while the
+// harvest_log amount, the weight, the planting it came off, and the photos attached to it were ALL
+// already on the wire and ALL invisible. You had to tap Edit to see the amount you picked.
+//
+// The shape of the fix is Dave's own: an event detail is a SUBSET of the planting page. So each
+// block below is that page's treatment, narrowed to one event — same glyph, same formatter, same
+// weight vocabulary, same gallery. No new dialect.
+//
+// A shared uppercase label, so the new blocks sit in the same visual grammar as the rows they join.
+function FieldLabel({ children, style }) {
+  return (
+    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: P.light, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px', ...style }}>
+      {children}
+    </div>
+  )
+}
+
+// ⚠️ CROSS-LANE CONTRACT — fleet 20260813, pinned in BOTH lane briefs before either lane started.
+//
+//   GET /api/events/:id carries the planting's display name as the field `planting_name` — a
+//   string, and null when the event has no planting anchor.
+//
+// The server half (the one-line widening of the GET's SELECT) is a SIBLING LANE and a SEPARATE
+// deploy. This client therefore ships into a window where the key is simply ABSENT, and absent is
+// handled identically to null — the un-anchored render. It is deliberately NOT backfilled from
+// project_name or any other field: a project is not a planting, and quietly substituting one would
+// put a wrong name under a "Planting" label, which is worse than no label at all.
+//
+// A blank/whitespace name is treated as absent for the same reason — an empty labelled row is a
+// defect that reads as data.
+function PlantingAnchor({ event: ev }) {
+  const raw = ev.planting_name
+  const name = typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null
+  if (!name) return null
+  // lifecycle.sprout is PlantingDetail's OWN planting glyph (PlantingDetail.jsx:320) — the icon the
+  // ticket asks for, taken from the page this one subsets. The CROP-specific icon is a different
+  // ask: it needs variety_ref.crop_type_slug, i.e. a second join this GET does not make, and it is
+  // deferred rather than guessed (recon D3.1).
+  const label = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+      <Icon name="lifecycle.sprout" size={17} decorative style={{ color: P.greenLight, flexShrink: 0 }} />
+      {name}
+    </span>
+  )
+  return (
+    <div data-testid="event-planting">
+      <FieldLabel>Planting</FieldLabel>
+      <div style={{ fontSize: '0.95rem', fontWeight: 600, color: P.dark, lineHeight: 1.4 }}>
+        {/* Canonical un-scoped planting route (V4-UNSCOPEDROUTES-001). Linked only when the event
+            actually carries the anchor id — a name with no id is still worth showing, just not as a
+            link to nowhere. */}
+        {ev.plant_id
+          ? <Link to={`/plantings/${ev.plant_id}`} style={{ color: P.green, textDecoration: 'none' }}>{label}</Link>
+          : label}
+      </div>
+    </div>
+  )
+}
+
+// The harvest readout — the block this ticket exists for. Two axes, in the order the rest of the app
+// puts them: the NATIVE-unit amount is the headline ("6 zucchini" is what was picked), grams are the
+// second axis (Harvests.jsx:387-393, PlantingDetail's HarvestWeightChip).
+//
+// Two deliberate choices:
+//  • formatEntry is called with countNoun = null. This GET has no crop noun (planting_name is a
+//    display name — "3 Celebrity Rescues" is not English), and the shared formatter's contract is
+//    that 'count' is a SCHEMA token which renders as a bare number when no noun is known, NEVER as
+//    "3 count" (harvestSummary.js:199). Passing planting_name here would break that rule; Harvests.jsx
+//    excludes planting_name from its own countNoun for the same reason.
+//  • The provenance sentence is rendered VISIBLY, not as a title= tooltip. Every other weight surface
+//    delivers it through `title` + aria-label, and Dave is on Chrome/Android where a title tooltip
+//    never fires on touch — so on his device those surfaces reduce to a lone ≈ glyph. This page has
+//    the room, and its own EDIT form already prints the sentence in full, so the read view matches
+//    the editor rather than the tooltip.
+function HarvestReadout({ harvest }) {
+  const amount = harvest?.quantity != null
+    ? formatEntry({ quantity: harvest.quantity, unit: harvest.unit }, null)
+    : null
+  const wt = describeHarvestWeight(harvest)
+  return (
+    <div data-testid="event-harvest">
+      <FieldLabel>Harvest amount</FieldLabel>
+      {amount
+        ? (
+          <div data-testid="event-harvest-amount" style={{ fontSize: '1.05rem', fontWeight: 700, color: P.dark, lineHeight: 1.3 }}>
+            {amount}
+          </div>
+        )
+        : (
+          // Mirrors the Harvests log's wording for a harvest row with no amount recorded, so the
+          // same state does not read two different ways on two screens.
+          <div data-testid="event-harvest-amount" style={{ fontSize: '0.9rem', color: P.light, lineHeight: 1.4 }}>
+            harvest logged — no amount recorded
+          </div>
+        )}
+      {wt.state === 'none' ? (
+        // NOT an error: the ratchet state that improves the next time something is weighed.
+        <div data-testid="event-harvest-weight-none" style={{ marginTop: 6, fontSize: '0.8rem', color: P.light, lineHeight: 1.4 }}>
+          {NO_WEIGHT_COPY}
+        </div>
+      ) : (
+        <div style={{ marginTop: 6 }}>
+          <div
+            data-testid="event-harvest-weight"
+            aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
+            style={{ fontSize: '0.9rem', fontWeight: 600, color: wt.estimated ? P.light : P.green }}
+          >
+            {wt.estimated ? `≈ ${wt.text}` : wt.text}
+          </div>
+          {/* 'Weighed.' is the same word the other surfaces put in their title= for a measured
+              weight — kept identical so the two never drift. */}
+          <div data-testid="event-harvest-weight-basis" style={{ marginTop: 2, fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
+            {wt.sourceCopy ?? 'Weighed.'}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The event's own photos.
+//
+// ⚠️ WHY NOT <PhotoView>, THE MANDATED PRIMITIVE. GET /api/events/:id returns
+// { id, storage_path, cover_for } and NO view_url / thumb_url — presigning lives in the photos
+// Lambda and eventPhotos.js deliberately does not reach for it. PhotoView resolves what to render
+// from photoModel's `sources`, and with no URL on the row that chain is EMPTY, so PhotoView renders
+// `null` (PhotoView.jsx: `if (!p || !source) return null`). It cannot express an ID-ONLY photo today.
+//
+// PutUpPhotoThumb is the repo's EXISTING answer to exactly that shape — preservation_log has the
+// same problem (a photo_id whose Lambda resolves no URL) and the same resolution: hand the id to
+// PhotoImg's fetch-on-mount path (A2b P1) and let it mint against the household-scoped
+// GET /api/photos/view-url/:id. It is allow-listed in photoPrimitive.static.test.js for that reason.
+// Reusing it here is a naming stretch (its default alt says "Put-up photo", overridden below) but it
+// is the right MECHANISM, and it keeps this page out of the raw-<PhotoImg> ratchet the drift guard
+// is defending. THE REAL FIX is a ~3-line id-only arm in PhotoView (empty chain + p.id present →
+// render PhotoImg with photoId and no initialUrl), which would then let BOTH this surface and
+// PutUpPhotoThumb leave that allow-list. That file belongs to no lane in this fleet, so it is
+// reported, not edited — see the lane report.
+//
+// Tap opens the SAME shared Lightbox gallery the planting page uses; Lightbox resolves a slide by
+// `photoId ?? id` and tolerates a missing `src`, so the id-only rows feed it unmodified.
+// (PlantingDetail's lbFrozen snapshot is unnecessary here: this list comes off the event payload and
+// is not refetched while the gallery is open, so plain state suffices.)
+const PHOTO_THUMB_PX = 96
+
+function EventPhotos({ photos }) {
+  const [lightboxIndex, setLightboxIndex] = useState(null)
+  const list = photos ?? []
+  if (list.length === 0) return null
+  return (
+    <div data-testid="event-photos">
+      <FieldLabel style={{ marginBottom: 10 }}>
+        Photos
+        <span style={{ marginLeft: 6, fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>({list.length})</span>
+      </FieldLabel>
+      {/* flex-wrap rather than a fluid grid: PutUpPhotoThumb sizes itself in px and forwards no
+          style, so a 1fr track would not stretch it and would only add dead space. At the 390px
+          Android reference width this lands three thumbs per row. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        {list.map((ph, i) => (
+          <button
+            key={ph.id}
+            type="button"
+            onClick={() => setLightboxIndex(i)}
+            aria-label={`Open photo ${i + 1} of ${list.length}`}
+            style={{ display: 'block', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', lineHeight: 0 }}
+          >
+            <PutUpPhotoThumb photoId={ph.id} size={PHOTO_THUMB_PX} alt={`Photo ${i + 1} of ${list.length} on this event`} />
+          </button>
+        ))}
+      </div>
+      <Lightbox
+        open={lightboxIndex != null}
+        images={list}
+        index={lightboxIndex ?? 0}
+        onIndexChange={setLightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+      />
+    </div>
+  )
+}
+
 function EventFields({ event: ev }) {
   const d = new Date(ev.event_date)
   const dateStr = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 
+  // The harvest readout keys off the PERSISTED type paired with an actual harvest_log row — the same
+  // discriminator the edit panel uses (see `isHarvest` above). A 'harvest' event with no paired row
+  // has no amount to show and must fall through to the plain rows.
+  const isHarvestRead = ev.event_type === 'harvest' && ev.harvest != null
+
+  // NOTE the absent ['Type', …] row: V4-EVENTDETAILRICH-001 moved it to the header (see the kicker).
+  // `Quantity` here is event_log.quantity — free text, a note on the event. It is NOT the harvest
+  // amount, and on a harvest it now sits BELOW the real amount rather than impersonating it.
   const rows = [
     ['Date', dateStr],
-    ['Type', ev.event_type.replace(/_/g, ' ')],
     ev.quantity && ['Quantity', ev.quantity],
     ev.notes && ['Notes', ev.notes],
     ev.private_notes && ['Private notes', ev.private_notes],
@@ -700,11 +922,11 @@ function EventFields({ event: ev }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <PlantingAnchor event={ev} />
+      {isHarvestRead && <HarvestReadout harvest={ev.harvest} />}
       {rows.map(([label, value]) => (
         <div key={label}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: P.light, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            {label}
-          </div>
+          <FieldLabel>{label}</FieldLabel>
           <div style={{ fontSize: '0.9rem', color: P.dark, lineHeight: 1.5 }}>
             {label === 'Private notes' ? (
               <div style={{ backgroundColor: P.warn, borderRadius: 4, padding: '8px 10px', borderLeft: `3px solid ${P.warnBorder}` }}>
@@ -717,11 +939,11 @@ function EventFields({ event: ev }) {
         </div>
       ))}
 
+      <EventPhotos photos={ev.photos} />
+
       {metadataEntries.length > 0 && (
         <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: P.light, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Details
-          </div>
+          <FieldLabel style={{ marginBottom: 10 }}>Details</FieldLabel>
           <div style={{
             backgroundColor: P.cream, borderRadius: 8, padding: '12px 14px',
             border: `1px solid ${P.border}`,
