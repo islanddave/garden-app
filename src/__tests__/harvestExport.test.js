@@ -117,7 +117,10 @@ const ENTRIES = [
 ]
 
 describe('buildLogExport', () => {
-  it('is byte-exact: day sections in feed order, row label + native amount', () => {
+  // V4-HARVEXPORTGROUP-001 (BD-019): day -> crop type -> variety. The count leaf carries NO crop
+  // noun — "Sungold — 4", not "Sungold — 4 Cherry Tomatoes" — because the crop line above it
+  // already says so. Named units ("2 bunches") have no crop noun to drop and are untouched.
+  it('is byte-exact: day -> crop -> variety, in feed order, leaf drops the parent crop noun', () => {
     const out = buildLogExport({ entries: ENTRIES, timeframe: 'season:2026', cropNames: [], generatedOn: '2026-08-12', currentYear: 2026 })
     expect(out).toBe([
       'Garden harvests — Log',
@@ -125,17 +128,70 @@ describe('buildLogExport', () => {
       'Generated 2026-08-12',
       '',
       'Tue, Aug 11',
-      '  Sungold — 4 Cherry Tomatoes',
-      '  Genovese — 2 bunches',
+      '  Cherry Tomato',
+      '    Sungold — 4',
+      '  Basil',
+      '    Genovese — 2 bunches',
       '',
       'Mon, Aug 10',
-      '  Basil — no amount recorded',
+      '  Basil',
+      '    Unspecified — +1 unrecorded',
     ].join('\n'))
+  })
+
+  it('folds repeat pickings of ONE variety on ONE day into a single leaf, summed PER UNIT', () => {
+    const out = buildLogExport({
+      entries: [
+        { event_id: 'a', day_key: '2026-08-11', crop_type_slug: 'basil', crop_name: 'Basil', variety_name: 'Genovese', quantity: 2, unit: 'bunch', harvest_log_id: 'h1' },
+        { event_id: 'b', day_key: '2026-08-11', crop_type_slug: 'basil', crop_name: 'Basil', variety_name: 'Genovese', quantity: 3, unit: 'bunch', harvest_log_id: 'h2' },
+        // A different unit on the SAME variety must stay its own segment — 5 bunches + 1 cup is
+        // not 6 of anything. This is the file's standing no-conversion rule, at leaf grain.
+        { event_id: 'c', day_key: '2026-08-11', crop_type_slug: 'basil', crop_name: 'Basil', variety_name: 'Genovese', quantity: 1, unit: 'cup', harvest_log_id: 'h3' },
+      ],
+      timeframe: '', generatedOn: '2026-08-12',
+    })
+    expect(out).toContain('  Basil\n    Genovese — 5 bunches · 1 cup')
+    // The conversion mutant: 5 bunches + 1 cup collapsing to a single "6 <unit>" segment.
+    expect(out).not.toMatch(/—\s*6\b/)
+  })
+
+  it('drops the crop name the parent carries from the variety LABEL, but never to empty', () => {
+    const out = buildLogExport({
+      entries: [
+        { event_id: 'a', day_key: '2026-08-11', crop_type_slug: 'tomato', crop_name: 'Tomato', variety_name: 'Sungold Tomato', quantity: 2, unit: 'count', harvest_log_id: 'h1' },
+        // Whole name IS the crop: keep it rather than render a bare dash.
+        { event_id: 'b', day_key: '2026-08-11', crop_type_slug: 'ginger', crop_name: 'Ginger', variety_name: 'Ginger', quantity: 1, unit: 'count', harvest_log_id: 'h2' },
+      ],
+      timeframe: '', generatedOn: '2026-08-12',
+    })
+    expect(out).toContain('    Sungold — 2')
+    expect(out).toContain('  Ginger\n    Ginger — 1')
+  })
+
+  it('slug-less entries group under Unassigned and keep their planting name as the leaf', () => {
+    const out = buildLogExport({
+      entries: [{ event_id: 'a', day_key: '2026-08-11', crop_type_slug: null, crop_name: null, variety_name: null, planting_name: 'Back bed', quantity: 3, unit: 'count', harvest_log_id: 'h1' }],
+      timeframe: '', generatedOn: '2026-08-12',
+    })
+    expect(out).toContain('  Unassigned\n    Back bed — 3')
   })
 
   it('an empty range says so', () => {
     expect(buildLogExport({ entries: [], timeframe: '7d', generatedOn: '2026-08-12' }))
       .toBe(['Garden harvests — Log', 'Last 7 days · All crops', 'Generated 2026-08-12', '', 'No harvests match.'].join('\n'))
+  })
+})
+
+// V4-HARVEXPORTDAYS-001 (BD-018)
+describe('timeframeLabel — day-grain scopes', () => {
+  it('names Today and Yesterday so the export header states its own scope', () => {
+    expect(timeframeLabel('today')).toBe('Today')
+    expect(timeframeLabel('yesterday')).toBe('Yesterday')
+  })
+
+  it('carries the day-grain scope into the scope line like any other timeframe', () => {
+    expect(scopeLine('today', ['Basil'])).toBe('Today · Basil')
+    expect(scopeLine('yesterday', [])).toBe('Yesterday · All crops')
   })
 })
 

@@ -156,6 +156,32 @@ const LAST_PLANT_KEY = 'logone.lastPlant'
 const EVENTNEW_DRAFT_KEY = 'logone'
 const DRAFT_FORM_FIELDS = ['event_type', 'notes', 'private_notes', 'quantity', 'event_date', 'is_public', 'plant_id']
 
+// V4-HARVSCROLLANCHOR-001 (BD-016) + V4-HARVPOSTSAVESCROLL-001 (BD-017). Two filed defects, one
+// mechanism: nothing on this form ever positions the page, so the two moments that MOVE the user's
+// attention (focusing quantity; saving and being told to pick the next plant) leave the thing they
+// were sent to somewhere off-screen.
+//
+// Scroll only — NEVER viewport arithmetic. index.html ships interactive-widget=resizes-content
+// (V4-KBVIEWPORT-001), so the keyboard shrinks the layout viewport and the browser preserves
+// scrollTop across that resize: anchoring the section header to the top BEFORE the keyboard opens
+// leaves it at the top after. Computing a keyboard inset here instead is the exact regression
+// noViewportInsetArithmetic.static.test.js exists to catch — this file must stay free of
+// `visualViewport` entirely.
+const HARVEST_SECTION_ID = 'harvest-section'
+const PLANTING_SECTION_ID = 'planting-section'
+
+// `block:'start'` puts the section HEADER at the viewport top, which is what makes the rest of the
+// panel (chips, quantity, weight, error banner, Save) fall into the space the keyboard leaves.
+// Guarded for jsdom, which does not implement scrollIntoView — absence must be a silent no-op, not
+// a thrown save. Returns whether it actually ran so tests can assert the call rather than pixels.
+function anchorSectionToTop(id, behavior = 'smooth') {
+  if (typeof document === 'undefined') return false
+  const el = document.getElementById(id)
+  if (!el || typeof el.scrollIntoView !== 'function') return false
+  el.scrollIntoView({ block: 'start', behavior })
+  return true
+}
+
 function readLastProjectId() {
   try {
     return localStorage.getItem(LAST_PROJECT_KEY) || ''
@@ -1292,6 +1318,17 @@ export default function EventNew() {
       : null
 
     resetForNext(keepMode)
+    // V4-HARVPOSTSAVESCROLL-001 (BD-017): keepMode 'type' clears plant_id and the confirmation
+    // says "pick the next plant" — while the picker itself is left above the fold, so the next
+    // planting costs a manual scroll up. Send the user where the copy just told them to go.
+    // ONLY on 'type': keepMode 'plant' KEEPS the planting and clears event_type, so the next tap
+    // is the event-type row, and scrolling to a picker they are not being asked to touch would be
+    // a second defect of the same kind. rAF-deferred so it measures AFTER the reset's commit —
+    // the confirmation banner mounts in the same pass and moves everything below it.
+    if (keepMode === 'type') {
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn => setTimeout(fn, 0))
+      raf(() => anchorSectionToTop(PLANTING_SECTION_ID))
+    }
     clearDraft(EVENTNEW_DRAFT_KEY)   // saved to DB — the working draft is spent
     // Operational confirmation + undo. Undo = soft-delete the just-logged event. Rewards stay
     // ambient per Reward-UX V101 — never dispatched here.
@@ -1640,7 +1677,7 @@ export default function EventNew() {
                Scope stays project-bound (plants fed from the load effect above, which owns the
                deep-link/sticky validation); PROJHIDE/Lane 3 flips this to the unscoped source. ── */
   const plantingBlock = (
-          <Section label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
+          <Section id={PLANTING_SECTION_ID} label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
             <PlantingSelect
               plants={plantsForProject}
               value={form.plant_id}
@@ -1724,7 +1761,7 @@ export default function EventNew() {
           /* ── V1.2a-2 Wave 3: Harvest panel (harvest events only) ── */
   const harvestBlock = (
           form.event_type === 'harvest' && (
-            <Section label="Harvest *">
+            <Section id={HARVEST_SECTION_ID} label="Harvest *">
               {/* V4-HARVQTYCHIPS-001 — quick-pick chips ABOVE the field, not replacing it.
                   A chip fills the quantity in ONE tap with no keyboard; the field below is
                   untouched, so the 16.8% of harvests outside 1-6 cost exactly what they cost
@@ -1789,6 +1826,13 @@ export default function EventNew() {
                         setHarvest(h => ({ ...h, quantity: e.target.value }))
                         if (harvestError) setHarvestError(null)
                       }}
+                      // V4-HARVSCROLLANCHOR-001 (BD-016): Dave's spec — on quantity focus, anchor
+                      // the Harvest header + 1-6 chip row to the viewport top so quantity, weight,
+                      // the error banner and Save stay co-visible above the keyboard. Fired on
+                      // focus rather than after a resize listener so it lands BEFORE the browser's
+                      // own scroll-focused-input-into-view: with the field already visible the
+                      // browser has nothing left to correct, so there is no second competing scroll.
+                      onFocus={() => anchorSectionToTop(HARVEST_SECTION_ID)}
                       aria-label="Harvest quantity"
                       error={!!harvestError}
                       placeholder="e.g. 2.5"

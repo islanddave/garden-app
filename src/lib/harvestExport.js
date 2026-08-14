@@ -12,7 +12,7 @@
 // NO UNIT CONVERSION, ever. 3 cups + 2 heads is not 5 of anything, and grams are 73.5% server-
 // ESTIMATED — a converted number in a spreadsheet is a fabricated measurement. Units are emitted
 // natively and the weight line always carries its measured/estimated/unweighed qualifier.
-import { unitsLine, formatEntry, fmtFirstPick, seasonTotalPhrase } from './harvestSummary.js'
+import { unitsLine, fmtFirstPick, seasonTotalPhrase } from './harvestSummary.js'
 import { formatGrams, weightParts } from './harvestWeight.js'
 import { groupByDay, dayLabel } from './harvestGrouping.js'
 
@@ -22,6 +22,8 @@ import { groupByDay, dayLabel } from './harvestGrouping.js'
 export function timeframeLabel(timeframe) {
   const t = String(timeframe ?? '')
   if (t === '') return 'All time'
+  if (t === 'today') return 'Today'
+  if (t === 'yesterday') return 'Yesterday'
   if (t === '7d') return 'Last 7 days'
   if (t === 'month') return 'This month'
   const m = /^season:(\d{4})$/.exec(t)
@@ -105,7 +107,62 @@ export function buildTotalsExport({ aggregates, timeframe = '', cropNames = [], 
   return lines.join('\n')
 }
 
-/** Log mode: day-grouped lines, in the feed's own order and labels. */
+/**
+ * V4-HARVEXPORTGROUP-001 (BD-019): strip the crop noun the PARENT line already carries, so
+ * "Sungold Tomato" under a "Tomato" heading reads "Sungold". Leading or trailing only, on a word
+ * boundary, case-insensitive — never an interior match, which would maul "Tomatillo" style names.
+ *
+ * NEVER strips down to empty: a variety whose whole name IS the crop ("Ginger" under "Ginger", the
+ * single-unnamed-variety case) keeps its name rather than rendering a bare dash. Same instinct as
+ * buildTotalsExport's showVarieties rule — a leaf that repeats or erases its parent is noise.
+ */
+export function dropCropFromVariety(varietyName, cropName) {
+  const v = String(varietyName ?? '').trim()
+  const c = String(cropName ?? '').trim()
+  if (!v || !c) return v
+  const esc = c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const stripped = v.replace(new RegExp(`(^${esc}\\s+|\\s+${esc}$)`, 'i'), '').trim()
+  return stripped || v
+}
+
+/**
+ * Fold one day's entries into crop → variety, PRESERVING the feed's own order (first appearance
+ * wins at both levels) so the export still reads in the order Dave just looked at.
+ *
+ * Quantities are summed PER UNIT and rendered by unitsLine — never across units, per this file's
+ * standing no-conversion rule. Entries without a usable quantity are counted as `unquantified` and
+ * surfaced as "+N unrecorded" rather than dropped, so the export never silently under-reports.
+ */
+export function groupDayEntries(entries = []) {
+  const crops = []
+  const cropIx = new Map()
+  for (const e of entries) {
+    const cropKey = e.crop_type_slug ?? (e.crop_name ? `name:${e.crop_name}` : '__unassigned')
+    if (!cropIx.has(cropKey)) {
+      cropIx.set(cropKey, crops.length)
+      crops.push({ key: cropKey, label: e.crop_name || 'Unassigned', varieties: [], varIx: new Map() })
+    }
+    const crop = crops[cropIx.get(cropKey)]
+    const rawName = e.variety_name || null
+    const varKey = e.variety_id ?? (rawName ? `name:${rawName}` : (e.planting_name ? `plant:${e.planting_name}` : '__unspecified'))
+    if (!crop.varIx.has(varKey)) {
+      crop.varIx.set(varKey, crop.varieties.length)
+      const label = rawName
+        ? dropCropFromVariety(rawName, e.crop_name)
+        : (e.planting_name || (e.crop_name ? 'Unspecified' : 'Harvest'))
+      crop.varieties.push({ key: varKey, label, units: [], unitIx: new Map(), unquantified: 0 })
+    }
+    const v = crop.varieties[crop.varIx.get(varKey)]
+    const hasQty = e.harvest_log_id != null && e.quantity != null
+    if (!hasQty) { v.unquantified += 1; continue }
+    const unit = e.unit ?? null
+    if (!v.unitIx.has(unit)) { v.unitIx.set(unit, v.units.length); v.units.push({ unit, total: 0 }) }
+    v.units[v.unitIx.get(unit)].total += Number(e.quantity)
+  }
+  return crops
+}
+
+/** Log mode: day → crop type → variety, in the feed's own order and labels. */
 export function buildLogExport({ entries = [], timeframe = '', cropNames = [], generatedOn, currentYear = null } = {}) {
   const lines = header('Log', timeframe, cropNames, generatedOn)
   if (entries.length === 0) {
@@ -116,12 +173,17 @@ export function buildLogExport({ entries = [], timeframe = '', cropNames = [], g
   sections.forEach((sec, i) => {
     if (i > 0) lines.push('')
     lines.push(dayLabel(sec.day_key, currentYear))
-    for (const e of sec.entries) {
-      const name = e.variety_name || e.crop_name || e.planting_name || 'Harvest'
-      const countNoun = e.crop_name || e.variety_name || null
-      const hasQty = e.harvest_log_id != null && e.quantity != null
-      const qty = hasQty ? formatEntry({ quantity: e.quantity, unit: e.unit }, countNoun) : 'no amount recorded'
-      lines.push(`  ${name} — ${qty}`)
+    for (const crop of groupDayEntries(sec.entries)) {
+      lines.push(`  ${crop.label}`)
+      for (const v of crop.varieties) {
+        // countNoun is deliberately NULL: the crop line directly above already names the crop, so a
+        // count leaf reads "Sungold — 4", not "Sungold — 4 Cherry Tomatoes". This is the other half
+        // of BD-019's "drop the crop name the parent already carries" — in real data the repetition
+        // shows up in the AMOUNT (the count unit folds the crop noun in), not just in the label.
+        // Named units are untouched: "Genovese — 2 bunches" carries no crop noun to drop.
+        const segs = [unitsLine(v.units, null), v.unquantified > 0 ? `+${v.unquantified} unrecorded` : ''].filter(Boolean)
+        lines.push(`    ${v.label} — ${segs.join(' · ') || 'no amount recorded'}`)
+      }
     }
   })
   return lines.join('\n')

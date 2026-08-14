@@ -264,6 +264,8 @@ export const handler = async (event) => {
           AND (
             CASE ${tf.kind}
               WHEN 'all'   THEN true
+              WHEN 'today'     THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date = (now() AT TIME ZONE ${HARVEST_TZ})::date
+              WHEN 'yesterday' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date = ((now() AT TIME ZONE ${HARVEST_TZ})::date - 1)
               WHEN '7d'    THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= (now() AT TIME ZONE ${HARVEST_TZ})::date - INTERVAL '6 days'
               WHEN 'month' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= date_trunc('month', (now() AT TIME ZONE ${HARVEST_TZ})::date)
               WHEN 'season' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= make_date(${seasonYear}::int - 1, 11, 1)
@@ -318,6 +320,8 @@ export const handler = async (event) => {
           AND (
             CASE ${tf.kind}
               WHEN 'all'   THEN true
+              WHEN 'today'     THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date = (now() AT TIME ZONE ${HARVEST_TZ})::date
+              WHEN 'yesterday' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date = ((now() AT TIME ZONE ${HARVEST_TZ})::date - 1)
               WHEN '7d'    THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= (now() AT TIME ZONE ${HARVEST_TZ})::date - INTERVAL '6 days'
               WHEN 'month' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= date_trunc('month', (now() AT TIME ZONE ${HARVEST_TZ})::date)
               WHEN 'season' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= make_date(${seasonYear}::int - 1, 11, 1)
@@ -384,6 +388,8 @@ export const handler = async (event) => {
           AND (
             CASE ${tf.kind}
               WHEN 'all'   THEN true
+              WHEN 'today'     THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date = (now() AT TIME ZONE ${HARVEST_TZ})::date
+              WHEN 'yesterday' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date = ((now() AT TIME ZONE ${HARVEST_TZ})::date - 1)
               WHEN '7d'    THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= (now() AT TIME ZONE ${HARVEST_TZ})::date - INTERVAL '6 days'
               WHEN 'month' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= date_trunc('month', (now() AT TIME ZONE ${HARVEST_TZ})::date)
               WHEN 'season' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= make_date(${seasonYear}::int - 1, 11, 1)

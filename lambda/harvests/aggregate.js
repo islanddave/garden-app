@@ -3,11 +3,14 @@
 // week-bucketing and aggregation logic WITHOUT the handler's runtime deps (which are absent from the
 // root package.json under `npm ci` in CI). Same split rationale as lambda/preservation/attribution.js.
 
-// timeframe ∈ {7d, month, season:<year>, all}; absent -> 'all' (comprehensive aggregates/crop list).
-// Unknown -> null (handler returns 400). season:<year> parses the 4-digit grow-year label.
+// timeframe ∈ {today, yesterday, 7d, month, season:<year>, all}; absent -> 'all' (comprehensive
+// aggregates/crop list). Unknown -> null (handler returns 400). season:<year> parses the 4-digit
+// grow-year label. V4-HARVEXPORTDAYS-001 (BD-018): today/yesterday are DAY-GRAIN and resolve in
+// HARVEST_TZ server-side like every other arm — never against the client clock, which is why they
+// are kinds here rather than a client-computed from/to.
 export function parseTimeframe(raw) {
   if (raw == null || raw === '') return { kind: 'all' };
-  if (raw === '7d' || raw === 'month' || raw === 'all') return { kind: raw };
+  if (raw === 'today' || raw === 'yesterday' || raw === '7d' || raw === 'month' || raw === 'all') return { kind: raw };
   const m = /^season:(\d{4})$/.exec(raw);
   if (m) return { kind: 'season', year: Number(m[1]) };
   return null;

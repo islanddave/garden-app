@@ -41,7 +41,15 @@ export default function HarvestTimeframeChips({ value, onChange, seasonYears, ar
   const current = currentGrowYear(new Date())
   const years = Array.isArray(seasonYears) && seasonYears.length > 0 ? seasonYears : [current]
   const seasonActive = /^season:\d{4}$/.test(String(value ?? ''))
+  // V4-HARVEXPORTDAYS-001 (BD-018): Today/Yesterday lead the row — day-grain is the commonest
+  // export scope (log tonight's picking, or last night's after the fact) and reading order should
+  // match how often a chip is reached for. Both resolve SERVER-SIDE in HARVEST_TZ, so a tap near
+  // midnight or from a device on another clock still means the garden's day, not the browser's.
+  // These land on the shared row by design (§2b: ONE control) and so appear on the Harvests page
+  // too — a second export-only selector is exactly what this component exists to prevent.
   const fixed = [
+    { value: 'today', label: 'Today' },
+    { value: 'yesterday', label: 'Yesterday' },
     { value: '', label: 'All time' },
     { value: '7d', label: 'Last 7 days' },
     { value: 'month', label: 'This month' },

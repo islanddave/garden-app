@@ -20,9 +20,13 @@ import { P } from '../lib/constants.js'
 //
 // The `label &&` guard is LogMany's (EventNew's copy was unguarded). Every call site on both
 // surfaces passes a label today, so the guard is defensive only and preserves both behaviors.
-export default function FormSection({ label, children, style }) {
+// `id` is an optional DOM handle for scroll anchoring (V4-HARVSCROLLANCHOR-001 /
+// V4-HARVPOSTSAVESCROLL-001). An id rather than a forwarded ref deliberately: these sections are
+// declared as plain consts far from the effects that scroll to them, so a ref would have to be
+// threaded through the block-building code, and the card stays a plain function component.
+export default function FormSection({ label, children, style, id }) {
   return (
-    <div style={{
+    <div id={id} style={{
       backgroundColor: P.white, border: `1px solid ${P.border}`,
       borderRadius: 10, padding: '16px 18px',
       ...style,

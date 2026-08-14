@@ -2,6 +2,8 @@
 // runtime deps — runs under the root vitest config. Real-Postgres coverage (household scope, keyset
 // pagination, season boundaries, orphan render) lives in tests/integration/harvests.int.test.js.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates,
 } from './aggregate.js';
@@ -16,6 +18,11 @@ describe('parseTimeframe', () => {
     expect(parseTimeframe('month')).toEqual({ kind: 'month' });
     expect(parseTimeframe('all')).toEqual({ kind: 'all' });
   });
+  // V4-HARVEXPORTDAYS-001 (BD-018)
+  it('day-grain kinds pass through as their own kind, NOT rewritten to a range', () => {
+    expect(parseTimeframe('today')).toEqual({ kind: 'today' });
+    expect(parseTimeframe('yesterday')).toEqual({ kind: 'yesterday' });
+  });
   it('season:<year> parses the grow-year label', () => {
     expect(parseTimeframe('season:2026')).toEqual({ kind: 'season', year: 2026 });
   });
@@ -24,6 +31,40 @@ describe('parseTimeframe', () => {
     expect(parseTimeframe('season:26')).toBeNull();
     expect(parseTimeframe('season:')).toBeNull();
     expect(parseTimeframe('2026')).toBeNull();
+  });
+});
+
+// V4-HARVEXPORTDAYS-001 (BD-018). parseTimeframe accepting a kind is only half the feature: the
+// kind has to reach a WHEN arm in every one of index.js's timeframe CASE blocks (entries,
+// aggregates, first_pick). A kind with no arm falls to `ELSE true` and silently returns ALL TIME —
+// a wrong document that looks right, which is the failure mode this file's export sibling exists to
+// prevent. No DB in unit CI, so this is a source guard; it asserts the ARM COUNT rather than mere
+// presence, so it cannot pass vacuously if a fourth CASE block is added and left un-patched.
+describe('timeframe CASE arms (source guard)', () => {
+  // cwd-relative, matching the other source guards in this repo — vitest does not hand these
+  // files a file: import.meta.url.
+  const SRC = readFileSync(resolve(process.cwd(), 'lambda/harvests/index.js'), 'utf8');
+  const count = (re) => (SRC.match(re) || []).length;
+
+  it('has exactly as many today/yesterday arms as it has 7d arms — every block is covered', () => {
+    const blocks = count(/WHEN '7d'/g);
+    expect(blocks).toBe(3);
+    expect(count(/WHEN 'today'/g)).toBe(blocks);
+    expect(count(/WHEN 'yesterday'/g)).toBe(blocks);
+  });
+
+  it('both day-grain arms resolve in HARVEST_TZ and test a single ET day, not a range', () => {
+    for (const m of SRC.match(/WHEN 'today'.*/g) || []) {
+      expect(m).toMatch(/AT TIME ZONE \$\{HARVEST_TZ\}/);
+      expect(m).toMatch(/::date = \(now\(\) AT TIME ZONE \$\{HARVEST_TZ\}\)::date/);
+    }
+    for (const m of SRC.match(/WHEN 'yesterday'.*/g) || []) {
+      expect(m).toMatch(/AT TIME ZONE \$\{HARVEST_TZ\}/);
+      // date - 1 (integer) yields a DATE; `- INTERVAL '1 day'` yields a timestamp, which is a
+      // fragile thing to put on the right of an `=` against a date.
+      expect(m).toMatch(/::date - 1\)/);
+      expect(m).not.toMatch(/INTERVAL/);
+    }
   });
 });
 
