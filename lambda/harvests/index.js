@@ -192,6 +192,31 @@ export const handler = async (event) => {
   const householdIds = householdScope(userId);
 
   try {
+    // V4-ARCHIVEHIDE-001 (L3). The three read models below (entries, aggregates, weight totals) join
+    // garden_node with `deleted_at IS NULL` only, so harvests on ARCHIVED plantings were loaded and
+    // rendered on the Harvests page. Measured on prod 2026-08-13: 4 of 595 live harvest events, and
+    // 424 g of the weight totals, hang off the 19 archived plantings.
+    //
+    // AXIS: archived_at, NOT deleted_at — orthogonal columns (lambda/plants/index.js:269-281 archives
+    // a row whose deleted_at is still NULL). Every existing deleted_at predicate is left untouched.
+    //
+    // WHY A `NOT EXISTS` IN THE WHERE AND NOT `AND gn.archived_at IS NULL` ON THE JOIN: the join is a
+    // LEFT JOIN (orphan/plant-less harvests are legitimate rows and must survive), so a predicate in
+    // its ON clause NULLs the gn columns and keeps the harvest — the row would still be counted in
+    // every total, just anonymised. The anti-join drops it. `plant_id IS NULL` rows are unaffected:
+    // NOT EXISTS over a NULL id is true.
+    //
+    // CARVED OUT when ?plant= names one planting. That request is PlantingDetail's own harvest list
+    // (src/pages/PlantingDetail.jsx:234) and is the deliberate route to an archived planting, which
+    // lambda/events/index.js:658-661 already establishes as the rule ("Deletion hides; archiving does
+    // not"). No other caller sends ?plant= (useHarvests, useHarvestSnapshot, useHarvestFilterOptions,
+    // HarvestExportSheet, ComposeHarvestBand and EventNew's season totals are all unscoped), so the
+    // carve-out cannot re-open the aggregate leak.
+    //
+    // ⚠️ THIS CHANGES SEASON TOTALS by 424 g / 4 events. That is what "must not be loaded at all"
+    // asks for, but R3 recon §2 DAVE-DECISION 1 reads it the other way ("keep harvest/weight
+    // aggregates intact — they are season truth"). If Dave rules that archiving keeps the harvest
+    // record, this predicate is the one to revert, and reverting it is a three-line change.
     const out = { time_zone: HARVEST_TZ, timeframe: tf };
 
     if (wantEntries) {
@@ -249,6 +274,10 @@ export const handler = async (event) => {
           AND (${crop}::text IS NULL OR cv.crop_type_slug = ${crop}::text)
           AND (${project}::uuid IS NULL OR e.project_id = ${project}::uuid)
           AND (${plant}::uuid IS NULL OR e.plant_id = ${plant}::uuid)
+          AND (${plant}::uuid IS NOT NULL OR NOT EXISTS (
+                SELECT 1 FROM public.garden_node gna
+                WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
+              ))
           AND (${createdSince}::timestamptz IS NULL OR e.created_at >= ${createdSince}::timestamptz)
           AND (${curDate}::timestamptz IS NULL OR (e.event_date, e.id) < (${curDate}::timestamptz, ${curId}::uuid))
         ORDER BY e.event_date DESC, e.id DESC
@@ -299,6 +328,10 @@ export const handler = async (event) => {
           AND (${crop}::text IS NULL OR cv.crop_type_slug = ${crop}::text)
           AND (${project}::uuid IS NULL OR e.project_id = ${project}::uuid)
           AND (${plant}::uuid IS NULL OR e.plant_id = ${plant}::uuid)
+          AND (${plant}::uuid IS NOT NULL OR NOT EXISTS (
+                SELECT 1 FROM public.garden_node gna
+                WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
+              ))
       `;
       out.aggregates = computeAggregates(aggRows);
 
@@ -361,6 +394,10 @@ export const handler = async (event) => {
           AND (${crop}::text IS NULL OR cv.crop_type_slug = ${crop}::text)
           AND (${project}::uuid IS NULL OR e.project_id = ${project}::uuid)
           AND (${plant}::uuid IS NULL OR e.plant_id = ${plant}::uuid)
+          AND (${plant}::uuid IS NOT NULL OR NOT EXISTS (
+                SELECT 1 FROM public.garden_node gna
+                WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
+              ))
         GROUP BY GROUPING SETS ((), (cv.crop_type_slug))
       `;
       // Merge onto the shape computeAggregates already returns. Every crop row gets a weight object

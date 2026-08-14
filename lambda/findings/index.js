@@ -101,6 +101,15 @@ export const handler = async (event) => {
         -- uses (dashboard handlers.js, events/index.js:893) rather than inventing a narrower one;
         -- NULL status stays actionable, fail-open, matching those siblings.
         AND (p.status IS NULL OR p.status NOT IN ('dormant','ended','failed','rooting'))
+        -- V4-ARCHIVEHIDE-001 (L5): the garden_node join carried deleted_at only, so an ARCHIVED
+        -- planting could still raise Findings care copy with a Treated action. Findings is a pure
+        -- default care surface with no scoped variant, so there is no deliberate-route carve-out to
+        -- make here. Measured on prod 2026-08-13: 1 finding currently leaking (9 flagged events sit
+        -- on archived plantings; 8 are already excluded by the status/resolved gates above).
+        -- AXIS is archived_at, NOT deleted_at — orthogonal columns, and p.deleted_at IS NULL on the
+        -- join above is unchanged. Plant axis only: pp.archived_at is deliberately NOT added, since
+        -- whether archiving a CONTAINER hides its live plantings is an open Dave ruling.
+        AND p.archived_at IS NULL
         AND pp.created_by = ANY(${householdIds})
         AND (e.resolved_at IS NULL OR e.resolved_at > NOW() - (${ISSUE_WINDOW_DAYS} || ' days')::interval)
       ORDER BY e.event_date DESC

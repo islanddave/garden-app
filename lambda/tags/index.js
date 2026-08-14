@@ -253,6 +253,16 @@ export const handler = async (event) => {
         //    whole-garden planting->tags map in ONE round trip, avoiding N+1 over ~170 plantings.
         //    Shape: { entities: { <planting_id>: { direct: Tag[], projected: Tag[] } } }. Only 'plant'
         //    is supported (container-scope + cultivar projection are plant-specific). Read-only.
+        //    V4-ARCHIVEHIDE-001 (L4): both bulk queries walked garden_node on `deleted_at IS NULL`
+        //    alone, so an ARCHIVED planting's tags were loaded into the whole-garden map. The map is
+        //    consumed beside GET /api/plants (src/lib/projectTree.js), which already filters
+        //    archived_at — so today the extra keys are unreachable rather than rendered, and prod
+        //    measures 0 leaked rows (no archived planting currently carries a tag, 2026-08-13). It is
+        //    LATENT, not absent: tagging any planting and archiving it opens it, and "must not be
+        //    loaded at all" is not satisfied by a consumer that happens not to look. AXIS is
+        //    archived_at, not deleted_at; the existing deleted_at predicates are untouched.
+        //    NOT applied to the single-entity ?entity_id= read below — that is the planting's own
+        //    detail page, the one route an archived planting still has.
         if (!eid) {
           if (et !== 'plant') return resp(400, { error: 'bulk entity-tags is only supported for entity_type=plant' });
           const directRows = await sql`
@@ -262,6 +272,7 @@ export const handler = async (event) => {
             JOIN public.entity_tag et ON et.entity_type = 'plant' AND et.entity_id = gn.id AND et.deleted_at IS NULL
             JOIN public.tag t ON t.id = et.tag_id AND t.deleted_at IS NULL
             WHERE gn.deleted_at IS NULL
+              AND gn.archived_at IS NULL
               AND ( pp.created_by = ANY(${household})
                     OR (gn.container_id IS NULL AND gn.created_by = ANY(${household})) )
               AND ( (t.visibility = 'private' AND t.owner_id = ${userId})
@@ -274,6 +285,7 @@ export const handler = async (event) => {
             JOIN public.entity_tag et ON et.entity_type = 'cultivar' AND et.entity_id = gn.cultivar_id AND et.deleted_at IS NULL
             JOIN public.tag t ON t.id = et.tag_id AND t.deleted_at IS NULL AND t.source = 'derived'
             WHERE gn.deleted_at IS NULL
+              AND gn.archived_at IS NULL
               AND ( pp.created_by = ANY(${household})
                     OR (gn.container_id IS NULL AND gn.created_by = ANY(${household})) )`;
           return resp(200, { entities: assembleBulkEntities(directRows, projRows) });
