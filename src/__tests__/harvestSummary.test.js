@@ -44,20 +44,28 @@ describe('summarizeHarvests — windows', () => {
     expect(s.recentStart).toBe('2026-07-08')
   })
 
-  it('a 23:00 ET Dec 31 harvest counts to the OLD year, not the new one', () => {
-    // Same instant, expressed as UTC: 2027-01-01T04:00Z.
+  it('a 23:00 ET Dec 31 harvest is dated to the OLD day, not the new one', () => {
+    // Same instant, expressed as UTC: 2027-01-01T04:00Z. The ET projection is the whole point —
+    // it decides which grow year the row lands in once a caller slices by growYearSpan().
     const rows = [row('2027-01-01T04:00:00Z', 5, 'count')]
     const s = summarizeHarvests(rows, { today: '2027-01-05', windowDays: 14 })
-    expect(s.year.events).toBe(0)          // 2027 bucket is empty
     expect(s.allTime.events).toBe(1)
     expect(s.firstHarvestDate).toBe('2026-12-31')
+    expect(s.lastHarvestDate).toBe('2026-12-31')
   })
 
-  it('scopes "this year" to the calendar year of seasonStart', () => {
-    const rows = [row('2026-01-01', 3, 'count'), row('2025-12-31', 9, 'count')]
-    const s = summarizeHarvests(rows, opts())
-    expect(s.year.entries).toEqual([{ unit: 'count', quantity: 3, converted: false }])
-    expect(s.seasonStart).toBe('2026-01-01')
+  // M3 (2026-08-14). The `.year` / `.seasonStart` calendar-year API is RETIRED — see the
+  // summarizeHarvests docblock. The two assertions that pinned it are gone rather than relaxed;
+  // this one asserts the retirement itself so the dead bucket cannot quietly return, and so a
+  // future reader is not left wondering whether its absence was an oversight. The season bucket
+  // lives in HarvestFromPlanting (growYearSlice + allTime) and is covered by that file's tests.
+  it('exposes no calendar-year bucket — the season is the caller\'s grow year, not this lib\'s', () => {
+    const s = summarizeHarvests([row('2026-01-01', 3, 'count'), row('2025-12-31', 9, 'count')], opts())
+    expect(s.year).toBeUndefined()
+    expect(s.seasonStart).toBeUndefined()
+    // Both rows survive into allTime; nothing was dropped by removing the bucket.
+    expect(s.allTime.events).toBe(2)
+    expect(summarizeHarvests([], {}).year).toBeUndefined()   // the empty-summary shape too
   })
 
   it('zero-harvest empty state', () => {
@@ -125,7 +133,7 @@ describe('summarizeHarvests — unattributed', () => {
     const unattributedRows = [row(TODAY, 9, 'count'), row('2026-01-05', 9, 'count'), row('2025-06-01', 9, 'count')]
     const s = summarizeHarvests(rows, opts({ unattributedRows }))
     expect(s.recent.unattributed).toBe(1)
-    expect(s.year.unattributed).toBe(2)
+    // (the `.year` bucket that used to be asserted here at 2 is retired — M3, 2026-08-14)
     expect(s.allTime.unattributed).toBe(3)
     // quantities are untouched by the unlinked rows
     expect(s.allTime.entries).toEqual([{ unit: 'count', quantity: 3, converted: false }])

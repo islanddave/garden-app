@@ -3,6 +3,20 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  // OPS-JSXCLASSICFALLBACK-001. The unit run transforms JSX with esbuild, NOT with the plugin above.
+  // `@vitejs/plugin-react` 5.2.0 targets vite 6/7/8 (the top-level vite here is 8.0.9), but vitest
+  // 2.1.9 pins `vite-node` to its own nested vite@5.4.21 and that is the pipeline that transforms
+  // test-run modules — so the plugin's automatic-runtime configuration never reaches it and esbuild
+  // falls back to its DEFAULT `jsx: 'transform'` (classic), emitting bare `React.createElement`.
+  // Every .jsx in the repo that does not `import React` then throws `ReferenceError: React is not
+  // defined` the moment a test renders it — measured on src/pages/Home.jsx, 2026-08-14.
+  // It stayed invisible because until now no unit test had rendered any of the 10 such files.
+  // Setting the automatic runtime here is the systemic fix; the alternative (an `import React` in
+  // each affected file) treats the symptom and re-arms with every new component.
+  // This file governs the UNIT RUN ONLY — the production bundle is built from vite.config.js, where
+  // plugin-react runs under a vite it supports and is unaffected by this block.
+  // Guarded by src/__tests__/jsxAutomaticRuntime.test.jsx: revert this and that file goes red.
+  esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
   test: {
     environment: 'jsdom',
     globals: true,

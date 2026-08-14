@@ -80,19 +80,20 @@ function aggregate(rows) {
  * opts.today: 'YYYY-MM-DD' in the reporting zone (REQUIRED — no internal clock).
  * opts.windowDays: size of the "recent" window, INCLUSIVE of today (14 => today and the 13
  *   calendar days before it; a harvest dated today-13 is IN, today-14 is OUT).
- * opts.seasonStart: 'YYYY-MM-DD' calendar-YEAR start. The "this year" bucket is
- *   [seasonStart, Dec 31 of seasonStart's year] — a 23:00 ET Dec 31 pick belongs to the OLD year.
  *
- * ⚠️ V4-SEASONCONV-001 — `seasonStart` CANNOT express a grow year, and `.year` is no longer read by
- * any production surface. seasonEnd is derived below as `${seasonStart.slice(0,4)}-12-31`, so a
- * caller passing a grow-year start ('2025-11-01', hoping for Nov 1 - Oct 31) silently gets the
- * two-month window 2025-11-01..2025-12-31 instead: wrong end, no error. This bucket stays
- * calendar-year on purpose — the app's season IS the grow year (Nov 1 - Oct 31, src/lib/growYear.js),
- * and the one consumer that needed it, src/components/planting/HarvestFromPlanting.jsx, now derives
- * that bucket by pre-filtering rows to growYearSpan() and reading THIS function's `allTime` over the
- * subset. It converges there rather than here because growYear.js imports etDay FROM this file, so
- * importing growYear back would close a cycle. Retire `.year`/`seasonStart` rather than "fixing"
- * them; a grow-year-aware bucket needs a seasonEnd, not a re-read of seasonStart's year.
+ * RETIRED 2026-08-14 (M3, after V4-SEASONCONV-001): `opts.seasonStart` and the `.year` /
+ * `.seasonStart` keys on the result. They implemented a CALENDAR-year bucket that no production
+ * surface read any more, and that could not be widened into the app's real season without a
+ * `seasonEnd`: seasonEnd was derived as `${seasonStart.slice(0,4)}-12-31`, so a caller passing a
+ * grow-year start ('2025-11-01', hoping for Nov 1 - Oct 31) silently got the two-month window
+ * 2025-11-01..2025-12-31 — wrong end, no error. The app's season IS the grow year (Nov 1 - Oct 31,
+ * src/lib/growYear.js). The one consumer that needed a season bucket,
+ * src/components/planting/HarvestFromPlanting.jsx, derives it by pre-filtering rows to
+ * growYearSpan() and reading THIS function's `allTime` over the subset — it converges there rather
+ * than here because growYear.js imports etDay FROM this file, so importing growYear back would
+ * close a cycle. That cycle is still the reason a season bucket does not belong in this file.
+ * If a season bucket is ever wanted here, it needs an explicit seasonEnd; do not resurrect a
+ * bucket keyed on seasonStart's calendar year.
  */
 export function summarizeHarvests(rows, opts = {}) {
   const { today, windowDays = 14, timeZone = 'America/New_York' } = opts
@@ -101,30 +102,24 @@ export function summarizeHarvests(rows, opts = {}) {
   if (!today) {
     return emptySummary(windowDays)
   }
-  const seasonStart = opts.seasonStart || `${String(today).slice(0, 4)}-01-01`
-  const seasonEnd = `${seasonStart.slice(0, 4)}-12-31`
   const recentStart = addDays(today, -(windowDays - 1))
 
   const withDay = list.map(r => ({ ...r, _day: etDay(r.event_date, timeZone) })).filter(r => r._day)
   const unWithDay = unattributed.map(r => ({ ...r, _day: etDay(r.event_date, timeZone) })).filter(r => r._day)
 
   const inRecent = r => r._day >= recentStart && r._day <= today
-  const inSeason = r => r._day >= seasonStart && r._day <= seasonEnd
 
   const recentRows = withDay.filter(inRecent)
-  const seasonRows = withDay.filter(inSeason)
 
   const days = withDay.map(r => r._day).sort()
 
   return {
     recent: bucket(recentRows, unWithDay.filter(inRecent)),
-    year: bucket(seasonRows, unWithDay.filter(inSeason)),
     allTime: bucket(withDay, unWithDay),
     firstHarvestDate: days[0] ?? null,
     lastHarvestDate: days[days.length - 1] ?? null,
     windowDays,
     recentStart,
-    seasonStart,
     hasAny: withDay.length > 0,
   }
 }
@@ -136,9 +131,9 @@ function bucket(rows, unattributedRows) {
 function emptySummary(windowDays) {
   const empty = { entries: [], events: 0, unattributed: 0 }
   return {
-    recent: empty, year: empty, allTime: empty,
+    recent: empty, allTime: empty,
     firstHarvestDate: null, lastHarvestDate: null,
-    windowDays, recentStart: null, seasonStart: null, hasAny: false,
+    windowDays, recentStart: null, hasAny: false,
   }
 }
 

@@ -163,12 +163,22 @@ post:
   # would silently reintroduce exactly the caller class this migration defends against.
   # HEURISTIC BY CONSTRUCTION: it matches on prosrc text, so a routine merely MENTIONING such a
   # delete in a comment trips it. That false positive is the intended bias — it forces a read.
+  #
+  # OPS-VACUOUSGATEARE-001 (2026-08-14): the boundary escape below was `\b`, a BACKSPACE character
+  # in a PostgreSQL ARE, not a word boundary (that is `\y`) — so this gate matched nothing and
+  # passed unconditionally. Proved twice: `p.prosrc ~* '\b'` returns 0 of 87 user routines on live
+  # prod (no prosrc contains U+0008), and against a routine body containing
+  # `DELETE FROM plant_projects WHERE false` the `\y` form matches 1 and the `\b` form matches 0.
+  # The corrected gate still returns 0 on live prod today — there genuinely is no in-database
+  # hard-deleter of plants/plant_projects — but it now returns 0 because it looked, not because it
+  # could never match. See the sibling note in v4-archpreservguard-001/gates.yml for the full
+  # ARE-vs-PCRE escape table. Never write \b or \B in a gate pattern.
   - name: post_no_indb_routine_hard_deletes_plantings_or_containers
     sql: |
       SELECT 1 FROM pg_proc p
        JOIN pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname NOT IN ('pg_catalog','information_schema')
-         AND p.prosrc ~* 'delete\s+from\s+(public\.)?(plants|plant_projects)\b'
+         AND p.prosrc ~* 'delete\s+from\s+(public\.)?(plants|plant_projects)\y'
     expect: rowcount_eq
     value: 0
 
