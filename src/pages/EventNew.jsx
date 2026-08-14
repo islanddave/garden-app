@@ -43,6 +43,9 @@ import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger — fed at the same post-save moment as
 // logone.lastPlant below; PlantingSelect reads it at picker-open to band-order its crop chips.
 import { recordCropLog } from '../lib/cropLogLedger.js'
+// V4-HARVSESSION-002: chip-queue ranking — the same order the Today ready band shows, so the tray
+// and the band never disagree about what "next" means.
+import { rankHarvestReady } from '../lib/harvestReadiness.js'
 // V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
 // for the metadata contract with the events Lambda and why it is NOT quantity_numeric.
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
@@ -439,6 +442,27 @@ export default function EventNew() {
   // Session ledger — every confirmed save this mount. Undone rows stay listed struck-through
   // (excluded from totals): the ledger is an honest record of what happened, not a mutable cart.
   const [sessionRows, setSessionRows] = useState([])
+  // V4-HARVSESSION-002: pre-flight queue. Chips come from /api/events/harvest-ready (rank order);
+  // tapping one while the form is idle makes it CURRENT (fills planting+project, focuses qty);
+  // tapping while a planting is current QUEUES it; Save auto-advances to the next queued planting.
+  // `sessionQueue` holds UPCOMING plantings only — current lives in form.plant_id, done derives
+  // from sessionRows. This is user-tap seeding, not auto-seeding: the no-auto-seed misattribution
+  // guard (BUG-LOGTARGETREQ-001) is untouched because every attribution here is an explicit tap.
+  const [readyChips, setReadyChips] = useState([])
+  const [sessionQueue, setSessionQueue] = useState([])
+  const [focusQtyNonce, setFocusQtyNonce] = useState(0)
+  useEffect(() => {
+    if (!inHarvestSession) return
+    let off = false
+    apiFetch('/api/events/harvest-ready')
+      .then(d => { if (!off && d && Array.isArray(d.candidates)) setReadyChips(rankHarvestReady(d.candidates, d.et_doy)) })
+      .catch(() => { /* tray is supplementary — the picker path stays fully available */ })
+    return () => { off = true }
+  }, [inHarvestSession, apiFetch])
+  useEffect(() => {
+    if (!focusQtyNonce) return
+    document.getElementById('harvest-quantity')?.focus()
+  }, [focusQtyNonce])
   // V4-HARVESTCENTER-001 (L9): the harvest-log habit-stack trigger. After a harvest saves, offer an
   // ambient "preserve this?" affordance that opens /put-up carrying { prefill } (crop/variety/plant/
   // harvest_log). useOverlaySwap so an in-overlay trigger swaps the SAME overlay's content (preserving
@@ -881,6 +905,22 @@ export default function EventNew() {
     }
   }
 
+  // V4-HARVSESSION-002: chip → form. Sets BOTH ids from the ready row (plant_id ⇒ project_id
+  // invariant — under PROJECTS_HIDDEN the project step never renders, so the chip must carry it).
+  function fillFromChip(chip) {
+    setForm(f => ({ ...f, plant_id: chip.plant_id, project_id: chip.project_id }))
+    setFocusQtyNonce(n => n + 1)
+  }
+  function tapSessionChip(chip) {
+    if (chip.plant_id === form.plant_id) return
+    if (sessionQueue.some(q => q.plant_id === chip.plant_id)) {
+      setSessionQueue(q => q.filter(x => x.plant_id !== chip.plant_id))
+      return
+    }
+    if (!form.plant_id) fillFromChip(chip)
+    else setSessionQueue(q => [...q, chip])
+  }
+
   // (V4-HARVFEEDBACK-001 S5a: the confirmPhase-keyed focus effect that used to sit here moved into
   // components/PostSaveFeedback.jsx along with closeBtnRef — the ref's only consumer was the card's
   // Close button. Same derivation, same dep array; EventNew has no other .focus() call, so nothing
@@ -1215,6 +1255,8 @@ export default function EventNew() {
     const sessionRow = inHarvestSession && isHarvest && eventId
       ? {
           eventId,
+          // V4-HARVSESSION-002: plantId feeds the tray's done-✓ derivation.
+          plantId: form.plant_id || '',
           plantName: plantName ?? projName,
           qty: harvest.quantity,
           unit: harvest.unit,
@@ -1275,6 +1317,14 @@ export default function EventNew() {
         // V4-HARVSESSION-001: the session ledger IS the confirmation + undo surface — the
         // transient toast would duplicate it and pull attention from the next pile on the scale.
         setSessionRows(rows => [...rows, sessionRow])
+        // V4-HARVSESSION-002 auto-advance: the next queued planting fills in with qty focused, so
+        // the steady-state loop is numbers only. Closure-read of sessionQueue is safe here: no chip
+        // can be tapped between submit and this line (the same interaction thread is busy saving).
+        const [nextChip, ...restQueue] = sessionQueue
+        if (nextChip) {
+          setSessionQueue(restQueue)
+          fillFromChip(nextChip)
+        }
       } else {
         // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the
         // aria-modal sheet the toast IS AT-reachable, and the full-page rapid-entry flow keeps the
@@ -1717,6 +1767,14 @@ export default function EventNew() {
                       aria-label="Harvest quantity"
                       error={!!harvestError}
                       placeholder="e.g. 2.5"
+                      // V4-HARVSESSION-002 (session only): Enter hops to weight instead of the
+                      // form's default submit — the session loop is qty → grams → save, and an
+                      // Enter-submit from qty would skip the weigh. Non-session harvest keeps the
+                      // shipped Enter-saves-count-only behavior byte-identical.
+                      enterKeyHint={inHarvestSession ? 'next' : undefined}
+                      onKeyDown={inHarvestSession ? (e => {
+                        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('harvest-weight')?.focus() }
+                      }) : undefined}
                     />
                   </Field>
                 </div>
@@ -1759,6 +1817,14 @@ export default function EventNew() {
                       id="harvest-weight"
                       type="text"
                       inputMode="decimal"
+                      // V4-HARVSESSION-002 (session only): grams → Enter IS the save. Explicit
+                      // handler, NOT the form's implicit submission: Save is type="button", and a
+                      // multi-input form with no submit button gets no implicit Enter submission,
+                      // so without this the Enter key would be dead here.
+                      enterKeyHint={inHarvestSession ? 'done' : undefined}
+                      onKeyDown={inHarvestSession ? (e => {
+                        if (e.key === 'Enter') handleSubmit(e, { keepMode: 'type' })
+                      }) : undefined}
                       value={harvest.weight}
                       onChange={e => {
                         setHarvest(h => ({ ...h, weight: e.target.value }))
@@ -2014,6 +2080,40 @@ export default function EventNew() {
                viewport bottom for every type; the fold problem S4 solves is the SCROLL to quantity,
                not Save's document position. ── */
             <>
+              {/* V4-HARVSESSION-002: the pre-flight tray — pay the picker cost ONCE, in tap order.
+                  States: current (filled pill), queued (· N position suffix), done (✓ prefix, tap
+                  again for a second picking — same-day repeats are separate rows by design). The
+                  tray is supplementary: an empty/failed ready fetch renders nothing and the picker
+                  below remains the full path for anything not on the list. */}
+              {inHarvestSession && readyChips.length > 0 && (() => {
+                const donePlantIds = new Set(sessionRows.filter(r => !r.undone && r.plantId).map(r => r.plantId))
+                return (
+                  <Section label="Weigh-in queue — tap what's on the counter, in order">
+                    <div data-testid="harvest-session-tray" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {readyChips.map(chip => {
+                        const isCurrent = chip.plant_id === form.plant_id
+                        const queuePos = sessionQueue.findIndex(q => q.plant_id === chip.plant_id)
+                        const isDone = donePlantIds.has(chip.plant_id)
+                        return (
+                          // Wrapper carries the done-dimming: SelectChip spreads ...rest AFTER its
+                          // own style, so a style prop would REPLACE the chip's styling wholesale.
+                          <span key={chip.plant_id} style={isDone && !isCurrent ? { opacity: 0.55 } : undefined}>
+                            <SelectChip
+                              active={isCurrent}
+                              touch
+                              onClick={() => tapSessionChip(chip)}
+                              aria-label={`${chip.name}${isCurrent ? ' — weighing now' : queuePos >= 0 ? ` — queued ${queuePos + 1}` : isDone ? ' — logged, tap to weigh again' : ''}`}
+                              data-testid={`session-chip-${chip.plant_id}`}
+                            >
+                              {isDone ? '✓ ' : ''}{chip.name}{queuePos >= 0 ? ` · ${queuePos + 1}` : ''}
+                            </SelectChip>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </Section>
+                )
+              })()}
               {projectBlock}
               {plantingBlock}
               {harvestBlock}

@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.22.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Weigh-in session: pre-flight queue. Tap the plantings on your counter in order — the form fills itself, and each save advances to the next one with the cursor already in Quantity. Enter hops Quantity → Weight, and Enter on Weight saves, so a pile is: type count, Enter, type grams, Enter."
+    ]
+  },
+  {
     "version": "4.21.0",
     "date": "2026-08-14",
     "highlights": [
