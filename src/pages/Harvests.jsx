@@ -17,6 +17,14 @@ import { fmtQuantity, unitLabel, formatEntry, unitsLine, fmtFirstPick, addDays, 
 import { describeHarvestWeight, weightBasisLabel, formatGrams, weightParts, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { currentGrowYear, growYearOfDayKey, growYearSpan, growYearOptions, HARVEST_TZ } from '../lib/growYear.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
+import useScrollRestore from '../hooks/useScrollRestore.js'
+
+// V4-SCROLLRESTORE-001 (BD0806-05) — how many extra keyset pages a Back will re-walk. useHarvests
+// pages by opaque CURSOR, so depth cannot be re-requested in one shot the way FeedPage does it with
+// a raised limit; each page needs the previous page's cursor. Two extra requests is the budget, the
+// same reach FeedPage's limit=90 buys. Deeper than that, the restore lands at the bottom of what
+// came back with "Earlier this season" still offered — strictly better than page 1.
+const MAX_RESTORE_PAGES = 2
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b + S4 (V4-HARVDEFAULT-001). Route + snapshot strip + Log feed
 // + Totals, reading the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts
@@ -35,17 +43,50 @@ export default function Harvests() {
   // The ?crop= guard protects the live producer PlantingDetail's "All harvests →" and the deep-link
   // pin below — an aggregate row is not "all harvests" for the planting the user just left.
   const arrivedWithCrop = !!searchParams.get('crop')
-  const [view, setView] = useState(() => (arrivedWithCrop ? 'log' : 'totals')) // 'log' | 'totals'
+
+  // ── V4-SCROLLRESTORE-001 (BD0806-05) — back-nav restore ─────────────────────────────────────────
+  //
+  // This page needs more than an offset, and the reason is structural rather than a nicety. Every
+  // row in the Log deep-links out (a planting, or the event editor), so Back-to-/harvests is the
+  // ordinary way back — and on that Back the page rebuilds from nothing: it lands on TOTALS (the
+  // V4-HARVDEFAULT-001 bare-arrival default), with no filters, holding one page of entries. Aiming a
+  // restored 1,400px offset at that is not a near miss; it is a different document, and the browser
+  // clamps it to the bottom of a page the user was never on. So the whole shape the offset was
+  // measured against comes back with it: which view, the filter machine's state, and the depth.
+  //
+  // The filter tuple is restored WHOLE, never in part — the timeframe together with the default it
+  // is judged against and the touched flag — because `filterActive` and the off-season re-anchor
+  // effect both read those three as a set. Restoring a subset is how you get a page claiming a
+  // filter is active when it is showing the default, or re-anchoring the timeframe out from under a
+  // scroll position that was just restored against the old one.
+  //
+  // This is NOT filter persistence, and does not pre-empt the server-persisted last filter that
+  // design §9 names as phase 2: the hook only returns state for a history entry that has a real
+  // scroll offset filed against it, so a fresh arrival, a forward navigation, a new tab, and a user
+  // who never scrolled all behave exactly as they did before.
+  const [restoreReady, setRestoreReady] = useState(false)
+  const { restoredState, saveState } = useScrollRestore({ id: 'harvests', ready: restoreReady })
+  // Shape-checked, not trusted: the hook mirrors into sessionStorage, so this value is whatever that
+  // blob contains. Every field below re-checks its own type and falls through to the shipped
+  // default, so a partial or hand-edited entry degrades to today's behaviour rather than to a crash.
+  const restored = restoredState && typeof restoredState === 'object' ? restoredState : null
+  const restoredStr = (v, fallback) => (typeof v === 'string' ? v : fallback)
+
+  const [view, setView] = useState(() => (
+    restored?.v === 'log' || restored?.v === 'totals' ? restored.v : (arrivedWithCrop ? 'log' : 'totals')
+  )) // 'log' | 'totals'
   // V4-HARVDEFAULT-001 + boss condition C1: the bare-arrival default timeframe is the CURRENT
   // grow-year (from season 2 on, an all-time blend dilutes "what THIS season gave" into a number that
   // never visibly moves off-season). ?crop= arrivals keep '' (All time) — silently rescoping the
   // shipped "All harvests →" link to one season would contradict its own label and render an EMPTY
   // log for prior-season/overwintered plantings.
-  const [timeframe, setTimeframe] = useState(() => (arrivedWithCrop ? '' : `season:${currentGrowYear(new Date())}`)) // '' = all time
-  const [crop, setCrop] = useState(() => searchParams.get('crop') || '') // crop_type_slug; '' = all crops
-  const [cropLabel, setCropLabel] = useState('')
-  const [project, setProject] = useState('') // project_id (uuid); '' = all projects
-  const [projectLabel, setProjectLabel] = useState('')
+  const [timeframe, setTimeframe] = useState(() => (
+    restoredStr(restored?.tf, arrivedWithCrop ? '' : `season:${currentGrowYear(new Date())}`)
+  )) // '' = all time
+  const [crop, setCrop] = useState(() => restoredStr(restored?.c, searchParams.get('crop') || '')) // crop_type_slug; '' = all crops
+  const [cropLabel, setCropLabel] = useState(() => restoredStr(restored?.cl, ''))
+  const [project, setProject] = useState(() => restoredStr(restored?.p, '')) // project_id (uuid); '' = all projects
+  const [projectLabel, setProjectLabel] = useState(() => restoredStr(restored?.pl, ''))
   const [cropSheetOpen, setCropSheetOpen] = useState(false)
   const [projectSheetOpen, setProjectSheetOpen] = useState(false)
   // V4-HARVEXPORT-001: the page has no overflow menu (and minting one to HIDE a Dave-requested
@@ -54,8 +95,11 @@ export default function Harvests() {
   // The arrival DEFAULT is not a user-chosen filter: the empty-state chooser + clear-filters
   // affordance must not read it as one (a first-run user at the untouched default sees first-run
   // copy, never "No harvests match these filters"). Updated if the off-season effect re-anchors.
-  const defaultTimeframeRef = useRef(arrivedWithCrop ? '' : `season:${currentGrowYear(new Date())}`)
-  const timeframeTouched = useRef(false)
+  // V4-SCROLLRESTORE-001: restored together with `timeframe`, never separately — the pair is what
+  // `filterActive` compares, so restoring one without the other is what makes a page show the
+  // "Clear filters" empty state over its own untouched default.
+  const defaultTimeframeRef = useRef(restoredStr(restored?.dtf, arrivedWithCrop ? '' : `season:${currentGrowYear(new Date())}`))
+  const timeframeTouched = useRef(restored?.tt === true)
   const changeTimeframe = (v) => { timeframeTouched.current = true; setTimeframe(v) }
 
   // Crop/project scope the LOG (design §3b: "filters scope the Log only"). On the Totals tab we drop
@@ -80,7 +124,12 @@ export default function Harvests() {
   // last completed season's data; a near-empty current season would pin a number that never moves.
   // Data-driven, never calendar-gated; skipped the moment the user touches the timeframe, and never
   // on a ?crop= arrival (boss C1 — that arrival stays All time).
-  const reanchored = useRef(false)
+  // V4-SCROLLRESTORE-001: a restored entry counts as already re-anchored. Its saved timeframe/default
+  // pair IS the outcome of this effect on the visit being restored, so re-running it could only
+  // either no-op or move the timeframe — and moving it would swap the list out from under a scroll
+  // offset that was measured against the old one, which is the exact failure this restore exists to
+  // prevent. "Once" is per user-visit, and a Back is the same visit.
+  const reanchored = useRef(!!restored)
   useEffect(() => {
     if (arrivedWithCrop || timeframeTouched.current || reanchored.current || !snapshot) return
     const cur = currentGrowYear(new Date())
@@ -99,6 +148,36 @@ export default function Harvests() {
   // all-time first_pick, design §2b — the page's own aggregates are timeframe-scoped and would
   // self-collapse) up to the current season. Empty seasons included; they render the honest empty state.
   const seasonYears = growYearOptions(minFirstPickDay, currentGrowYear(new Date()))
+
+  // V4-SCROLLRESTORE-001, the depth half. Re-walk the Log to the number of entries the user had
+  // opened before letting the offset restore fire; without it the offset aims at a one-page document
+  // and the browser clamps it. Bounded twice — by request count (MAX_RESTORE_PAGES) and by the
+  // server's own cursor running out — so a page that keeps answering without growing `entries` can
+  // never turn one Back into an unbounded fetch loop. Only the Log pages; Totals has no depth.
+  const restoredDepth = view === 'log' && Number.isFinite(restored?.n) ? restored.n : 0
+  const [depthRestored, setDepthRestored] = useState(false)
+  const depthWalks = useRef(0)
+  useEffect(() => {
+    if (depthRestored || loading || loadingMore) return
+    if (entries.length >= restoredDepth || !hasMore || depthWalks.current >= MAX_RESTORE_PAGES) {
+      setDepthRestored(true)
+      return
+    }
+    depthWalks.current += 1
+    loadMore()
+  }, [depthRestored, loading, loadingMore, hasMore, entries.length, restoredDepth]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The hook's `ready` is fed through state rather than passed inline, because the value it gates on
+  // (`loading`, from useHarvests) is only available BELOW the hook call — and the hook has to be
+  // called above the useState initializers that read its restored view/filter state.
+  useEffect(() => { if (!loading && depthRestored) setRestoreReady(true) }, [loading, depthRestored])
+
+  useEffect(() => {
+    saveState({
+      v: view, tf: timeframe, dtf: defaultTimeframeRef.current, tt: timeframeTouched.current,
+      c: crop, cl: cropLabel, p: project, pl: projectLabel, n: entries.length,
+    })
+  }, [saveState, view, timeframe, crop, cropLabel, project, projectLabel, entries.length])
 
   const clearAll = () => { setTimeframe(''); setCrop(''); setCropLabel(''); setProject(''); setProjectLabel('') }
   // "See in log →" from an expanded Totals crop row: filter the Log to that crop and switch tabs

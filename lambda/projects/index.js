@@ -537,9 +537,31 @@ export const handler = async (event) => {
           `,
           sql`
             SELECT COUNT(*)::int AS count
-            FROM event_log
-            WHERE project_id = ${projectId}
-              AND deleted_at IS NULL
+            FROM event_log e
+            WHERE e.project_id = ${projectId}
+              AND e.deleted_at IS NULL
+              -- M14 / V4-ARCHIVEHIDE-001 L1 PARITY. This count is what ProjectDetail's "Event log
+              -- (N)" badge reads, and it must count the rows the LIST returns — not a different,
+              -- larger set. The list (GET /api/events?project_id=…, the project-scoped branch of
+              -- Route 4 in lambda/events/index.js) hides events whose planting is ARCHIVED; this
+              -- COUNT did not, so it over-reported on every project holding an archived planting.
+              -- Measured on prod before this line landed: 8 projects diverged — Peppers 5257 vs
+              -- 4517, Tomatoes 3277 vs 3238, Lettuce 96 vs 57, Succulents & Cacti 60 vs 59, and
+              -- four that the list empties completely (Loofah Sponge 67, Cilantro 32, Spinach 13,
+              -- Lithops 1). On those four the badge would have read a count above a log correctly
+              -- rendering "No events yet".
+              --
+              -- The predicate is COPIED from that branch and must stay identical to it, including
+              -- the NOT EXISTS shape: a join would drop events with no planting anchor, which the
+              -- list keeps. archived_at, never deleted_at — the two axes are orthogonal and
+              -- lambda/plants' archive UPDATE deliberately keeps deleted_at NULL so unarchive
+              -- stays recoverable.
+              --
+              -- NOT mirrored here: that branch's HIDE_EVENTS_UNDER_DELETED_PLANTING guard, which
+              -- is a compile-time FALSE constant in lambda/events and therefore a no-op on both sides
+              -- today. If it is ever switched on, this count diverges again and must follow it.
+              AND NOT EXISTS (SELECT 1 FROM public.garden_node ga
+                               WHERE ga.id = e.plant_id AND ga.archived_at IS NOT NULL)
           `,
         ]);
         if (!projectRows.length) return resp(404, { error: 'Not found' });

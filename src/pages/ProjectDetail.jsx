@@ -28,6 +28,7 @@ import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import { recordCropLog } from '../lib/cropLogLedger.js'
 import Spinner from '../components/forms/Spinner.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
+import useScrollRestore from '../hooks/useScrollRestore.js'
 
 
 // BUG-PROJEVENTTRUNC-001 — the project event log used to stop at 50 with nothing saying so.
@@ -38,6 +39,19 @@ import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 // carries 5,257 events), which Route 4 now supports via &offset= — see the contract note on that
 // handler. 200 is therefore the PAGE SIZE here, not a ceiling.
 const EVENT_PAGE_SIZE = 200
+
+// V4-SCROLLRESTORE-001 (BD0806-05) — how much of a paged log a Back re-opens.
+//
+// FeedPage restores its depth in ONE round trip by raising the limit. That is not available here:
+// Route 4 clamps limit at 200 and 200 is already this page's page size, so depth past the first page
+// is necessarily N requests, walked in sequence (offset paging needs the previous page's length).
+// Two extra requests is the budget — 600 rows, the same three-pages-deep reach FeedPage's limit=90
+// buys. Prod's busiest project holds 4,517 visible events; a user deeper than 600 lands at the
+// bottom of what came back with Show more still offered, which is strictly better than page 1 and
+// costs a Back no more than three requests.
+const MAX_RESTORED_EVENTS = EVENT_PAGE_SIZE * 3
+const MAX_RESTORE_PAGES = 2
+
 const eventsPath = (projectId, offset) =>
   `/api/events?project_id=${projectId}&limit=${EVENT_PAGE_SIZE}&offset=${offset}`
 
@@ -150,6 +164,10 @@ export default function ProjectDetail() {
   // client guess, so the button disappears on the page that proves the history is complete.
   const [eventsHasMore, setEventsHasMore] = useState(false)
   const [eventsMore,    setEventsMore]    = useState(false)
+  // V4-SCROLLRESTORE-001: false until the back-nav depth walk below has finished (or decided there
+  // is nothing to walk). Declared HERE, above the hook that reads it, because the hook's `ready` and
+  // the walk's target depth would otherwise be mutually dependent at first render.
+  const [depthRestored, setDepthRestored] = useState(false)
   const [showLogForm,   setShowLogForm]   = useState(false)
   const [eventForm,     setEventForm]     = useState(emptyEventForm())
   const [loggingEvent,  setLoggingEvent]  = useState(false)
@@ -281,6 +299,42 @@ export default function ProjectDetail() {
       setEventsMore(false)
     }
   }
+
+  // ── V4-SCROLLRESTORE-001 (BD0806-05) — back-nav restore for this page ───────────────────────────
+  //
+  // Every row in the event log deep-links to /projects/:id/events/:eventId, so Back-to-here is the
+  // routine path out of that page, and today it lands the user at the top of a log they had scrolled
+  // deep into. The offset itself is the shipped hook's job; what this page owns is making the
+  // document TALL ENOUGH to hold that offset before the restore fires.
+  //
+  // That is not decoration. The log is server-paged (BUG-PROJEVENTTRUNC-001, Route 4 &offset=) and a
+  // remount fetches page 0 only, so a user who had pressed "Show more" twice comes back to a document
+  // a third its old height; the browser clamps the restoring scrollTo to that height and the place is
+  // lost however faithfully the offset was remembered. So the DEPTH is re-requested first, and the
+  // hook is held at `ready: false` until it is.
+  //
+  // Bounded twice on purpose — by rows (MAX_RESTORED_EVENTS) and by request count
+  // (MAX_RESTORE_PAGES). The row bound alone is not enough: loadMoreEvents dedupes by id, so a server
+  // answering with rows this page already holds would leave events.length flat forever and turn one
+  // Back into an unbounded fetch loop. The request bound makes that terminate at 2.
+  const { restoredState: restoredDepthRaw, saveState: saveEventDepth } = useScrollRestore({
+    id: 'project-detail',
+    ready: !loading && !eventsLoading && depthRestored,
+  })
+  const restoredDepth = Math.min(Math.max(Number(restoredDepthRaw) || 0, 0), MAX_RESTORED_EVENTS)
+  const depthWalks = useRef(0)
+
+  useEffect(() => { saveEventDepth(events.length) }, [events.length, saveEventDepth])
+
+  useEffect(() => {
+    if (depthRestored || eventsLoading || eventsMore) return
+    if (events.length >= restoredDepth || !eventsHasMore || depthWalks.current >= MAX_RESTORE_PAGES) {
+      setDepthRestored(true)
+      return
+    }
+    depthWalks.current += 1
+    loadMoreEvents()
+  }, [depthRestored, eventsLoading, eventsMore, eventsHasMore, events.length, restoredDepth]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleAddPlant(e) {
     e.preventDefault()
@@ -650,6 +704,31 @@ export default function ProjectDetail() {
   // the armed id (a stale response for an abandoned arm must never populate another event's sheet).
   const confirmPhotos = confirmPhotoInfo?.evId === confirmDeleteEventId ? confirmPhotoInfo.photos : []
 
+  // M14 — the event-log count badge, made to agree with the list in every state.
+  //
+  // The events lane refused project.event_count outright, and was right about the COUNT it was
+  // looking at: a plain COUNT over event_log that knew nothing about the archived-planting filter
+  // shipped in the same change, reading (67) above a log that correctly rendered nothing on four
+  // prod projects. But event_count is a live query in lambda/projects, not a stored column, so the
+  // fix belonged at the source — it now carries the list's own archived-planting predicate (see the
+  // long note there) and is exactly the number of rows this list can return.
+  //
+  // The client still does not trust it blindly, because the Lambda and the SPA deploy through
+  // SEPARATE pipelines: for a window after an SPA-first deploy, event_count is whatever the old
+  // Lambda says. So the rule is "never contradict something the user can see":
+  //   • whole list on screen (no Show more) -> count the rendered rows. Exact by construction, and
+  //     immune to a stale server total — this is the branch that covers the four all-archived
+  //     projects, and it renders no badge at all there, because the log is empty.
+  //   • list is a prefix -> report the server total, which is the "200 of 4,517" the badge is for.
+  //     Nothing on screen can contradict it, and a total SMALLER than the rows already loaded is
+  //     self-evidently stale, so that falls back to the loaded count with a "+".
+  const serverEventTotal = Number.isFinite(project.event_count) ? project.event_count : null
+  const eventCountBadge = !eventsHasMore
+    ? String(events.length)
+    : (serverEventTotal != null && serverEventTotal >= events.length
+        ? String(serverEventTotal)
+        : `${events.length}+`)
+
 
   return (
     <Shell>
@@ -995,21 +1074,12 @@ export default function ProjectDetail() {
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
             Event log
             {/* The old badge read `({events.length})` against an unpaged fetch, so it displayed a
-                flat 50 on a 5,257-event project and presented the truncation as the total.
-                It counts LOADED rows and appends a "+" while the server says more remain, so it
-                is exact the moment the last page lands and never over-claims before then.
-
-                project.event_count is deliberately NOT used, even though it is already on the
-                payload: it is a plain COUNT over event_log and knows nothing about the archived-
-                planting filter this same change added to the list. On prod that gap is not
-                cosmetic — three projects (Loofah Sponge 67, Cilantro 32, Spinach 13) have EVERY
-                event on an archived planting, so the badge would read 67 above a log that
-                correctly renders nothing. An exact server total would have to re-derive the
-                list's predicates in a second query, and a count that drifts from its list is a
-                worse bug than a "+". */}
+                flat 50 on a 5,257-event project and presented the truncation as the total. M14
+                finished the job: see the eventCountBadge derivation above for why the server total
+                is now trustworthy and where it is still deliberately not trusted. */}
             {events.length > 0 && (
               <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>
-                ({events.length}{eventsHasMore ? '+' : ''})
+                ({eventCountBadge})
               </span>
             )}
           </h2>
