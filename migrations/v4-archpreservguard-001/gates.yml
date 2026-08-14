@@ -58,12 +58,24 @@ pre:
   # The premise: both routines exist and are the only in-database deleters of harvest_log. If a
   # third appears, it needs the same guard and this migration's reasoning must be re-read.
   # Standing invariant.
+  #
+  # OPS-VACUOUSGATEARE-001 (2026-08-14): the word-boundary escape below was `\b`, which in a
+  # PostgreSQL ADVANCED REGULAR EXPRESSION is the BACKSPACE character (U+0008), not PCRE's
+  # word boundary — PostgreSQL spells that `\y`. The gate therefore matched NOTHING and passed
+  # unconditionally from the day it was written. Measured on live prod 2026-08-14, pattern alone,
+  # before the proname exclusion: `\b` -> 0 routines, `\y` -> 2 (archive_plant_events,
+  # archive_container_events — exactly the two this gate exists to except). Both forms yield the
+  # declared rowcount 0, but only the `\y` form gets there by finding the real deleters and
+  # excluding them; the `\b` form got there by finding nothing at all.
+  # `\s` above is fine — class-shorthand escapes (\d \s \w) mean the same thing in an ARE as in
+  # PCRE. It is the CONSTRAINT escapes that differ: \y \m \M \Y are ARE's boundaries, and \b \B
+  # are character-entry escapes (backspace, backslash). Never write \b or \B in a gate pattern.
   - name: pre_only_the_two_archive_routines_delete_harvest_log
     sql: |
       SELECT 1 FROM pg_proc p
        JOIN pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname NOT IN ('pg_catalog','information_schema')
-         AND p.prosrc ~* 'delete\s+from\s+(public\.)?harvest_log\b'
+         AND p.prosrc ~* 'delete\s+from\s+(public\.)?harvest_log\y'
          AND p.proname NOT IN ('archive_plant_events','archive_container_events')
     expect: rowcount_eq
     value: 0
