@@ -224,22 +224,36 @@ describe('BUG-PLANTREHOMEFK-001 — schema pins and the class guard', () => {
     for (const r of rows) expect(r.confdeltype).toBe('r')
   })
 
-  it('plant_projects.parent_project_id is DELIBERATELY still SET NULL', async () => {
-    // The most load-bearing pin in this file. parent_project_id keeps SET NULL on a POLICY question,
-    // NOT a technical one — and the distinction was established by measurement after the first
-    // draft asserted the opposite. Measured 2026-08-13 on an ephemeral branch off staging: a
-    // same-statement parent+child delete, and a 3-level chain, SUCCEED under SET NULL, RESTRICT and
-    // NO ACTION alike; only the parent-alone-with-surviving-child case differs, where SET NULL
-    // flattens silently and both RESTRICT and NO ACTION refuse with 23503. This whole suite was
-    // re-run with the column flipped to RESTRICT: zero pre-existing failures, the only reds being
-    // this test and the class guard below. So RESTRICT is SAFE here; what is undecided is whether a
-    // parent container SHOULD be undeletable while it has children, or whether promoting its
-    // children to top-level is correct. If you are here because this failed: that question needs an
-    // answer on the record, not a schema change that assumes one.
+  it('plant_projects.parent_project_id is ON DELETE RESTRICT (V4-PARENTPROJFK-001)', async () => {
+    // SUPERSEDED 2026-08-13 by V4-PARENTPROJFK-001. This test used to assert that
+    // parent_project_id was DELIBERATELY still SET NULL, and it did its job exactly as designed —
+    // it was written so that a later sweep tidying up "the last SET NULL on this parent" would red
+    // instead of ship, and would have to put an answer on the record first. Here is that answer.
+    //
+    // THE MEASUREMENT DID NOT CHANGE, and it is what made the decision possible. Measured
+    // 2026-08-13 on an ephemeral branch off staging: a same-statement parent+child delete, and a
+    // 3-level chain, SUCCEED under SET NULL, RESTRICT and NO ACTION alike; only the
+    // parent-alone-with-surviving-child case differs, where SET NULL flattens silently and both
+    // RESTRICT and NO ACTION refuse with 23503. This whole suite was re-run with the column
+    // flipped: zero pre-existing failures, the only reds being this test and the class guard below.
+    // RESTRICT was SAFE before the policy call, not because of it — the exclusion was never a risk
+    // judgement.
+    //
+    // THE POLICY CHANGED. The open question this pin named — should a parent container be
+    // undeletable while it has children, or is promoting them to top-level correct? — was Dave's
+    // call, and Dave answered on 2026-08-13: flip to RESTRICT. Deciding evidence: 76 of 86
+    // containers carry a parent, max depth 3, 7 containers have children and 1 is a mid-level node.
+    // parent_project_id is the ONLY place the hierarchy is stored (container_closure is derived
+    // from it and cascades away with the deleted parent), so a silent flatten is an unrecoverable
+    // loss of user structure with no error and no record.
+    //
+    // Note this is a DATA-LOSS fix, not an authz one — unlike the plants case above, a container's
+    // predicate keys on its own created_by whether or not it has a parent. Full rationale and the
+    // two explicit escape hatches that replace the implicit SET NULL: migrations/v4-parentprojfk-001/.
     const [row] = await directSql`
       SELECT confdeltype FROM pg_constraint
        WHERE conname = 'plant_projects_parent_project_id_fkey'`
-    expect(row.confdeltype).toBe('n')
+    expect(row.confdeltype).toBe('r')
   })
 
   // ── The one that matters most ────────────────────────────────────────────────────────────────
@@ -257,8 +271,12 @@ describe('BUG-PLANTREHOMEFK-001 — schema pins and the class guard', () => {
       'event_log.event_log_project_id_fkey': 'r',
       'photos.photos_project_id_fkey': 'r',
       'harvest_log.harvest_log_project_id_fkey': 'r',
-      // Self-referential hierarchy. SET NULL deliberately — see the pin above.
-      'plant_projects.plant_projects_parent_project_id_fkey': 'n',
+      // Self-referential hierarchy. RESTRICT since V4-PARENTPROJFK-001 (was SET NULL, deliberately,
+      // pending a product decision that has now been made) — see the pin above. With this entry at
+      // 'r', every value in this map is now 'r', 'c' or 'a': there is no SET NULL left anywhere on
+      // plant_projects, which v4-parentprojfk-001's post_no_setnull_fk_remains_on_plant_projects
+      // asserts independently at the schema layer.
+      'plant_projects.plant_projects_parent_project_id_fkey': 'r',
       // Derived caches and closure rows, rebuilt from live data. Cascading with the container is
       // correct: none of these is user-authored content.
       'entity_memory.entity_memory_project_id_fkey': 'c',

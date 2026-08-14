@@ -1,0 +1,59 @@
+diff --git a/migrations/v4-plantrehomefk-001/gates.yml b/migrations/v4-plantrehomefk-001/gates.yml
+index 4429df4..cff73b1 100644
+--- a/migrations/v4-plantrehomefk-001/gates.yml
++++ b/migrations/v4-plantrehomefk-001/gates.yml
+@@ -138,23 +138,40 @@ post:
+     expect: rowcount_eq
+     value: 2
+ 
+-  # THE EXCLUSION, asserted — the most load-bearing gate in this file.
+-  # plant_projects.parent_project_id keeps SET NULL on a POLICY question, not a technical one.
+-  # MEASURED 2026-08-13 on an ephemeral branch off staging: a same-statement parent+child delete
+-  # (and a 3-level chain) SUCCEEDS under SET NULL, RESTRICT and NO ACTION alike; only the
+-  # parent-alone-with-surviving-child case differs, where SET NULL flattens silently and both
+-  # RESTRICT and NO ACTION refuse with 23503. The full integration suite was re-run with this column
+-  # flipped to RESTRICT: zero pre-existing failures. So RESTRICT here is SAFE — the open question is
+-  # whether a parent container SHOULD be undeletable while it has children, or whether promoting its
+-  # children to top-level is the correct behaviour. 76 live rows carry a parent_project_id.
+-  # This gate exists so that a future sweep tidying up "the last SET NULL on this parent" reds
+-  # instead of shipping. If you are here because this gate failed: that policy question needs an
+-  # answer on the record first — read 0c §SCOPE, which carries the full measurement.
+-  - name: post_parent_project_id_deliberately_still_set_null
++  # SUPERSEDED 2026-08-13 by V4-PARENTPROJFK-001. Recorded in place rather than allow-listed away,
++  # in the shape V4-CASCADESWEEP-001 used for v4-fbshare-p1's post_photo_fk_cascade.
++  #
++  # This gate used to assert that plant_projects.parent_project_id was DELIBERATELY still SET NULL,
++  # and it did its job exactly as designed: it exists so that a future sweep tidying up "the last SET
++  # NULL on this parent" reds instead of shipping, and V4-PARENTPROJFK-001 is that sweep. It reds.
++  # What follows is the answer on the record it demanded.
++  #
++  #   * THE MEASUREMENT DID NOT CHANGE, and is repeated here because it is what made the decision
++  #     possible: on an ephemeral branch off staging, 2026-08-13, a same-statement parent+child
++  #     delete (and a 3-level chain) SUCCEEDS under SET NULL, RESTRICT and NO ACTION alike; only the
++  #     parent-alone-with-surviving-child case differs, where SET NULL flattens silently and both
++  #     RESTRICT and NO ACTION refuse with 23503. The full integration suite was re-run with the
++  #     column flipped: zero pre-existing failures. RESTRICT was SAFE before the policy call, not
++  #     after it — the exclusion was never a risk judgement.
++  #   * THE POLICY CHANGED. This gate's own note names the open question — "whether a parent
++  #     container SHOULD be undeletable while it has children, or whether promoting its children to
++  #     top-level is the correct behaviour" — and records that it is Dave's call. Dave answered on
++  #     2026-08-13, on the evidence-backed recommendation in the soft-delete closeout recon §5b:
++  #     flip to RESTRICT. The exclusion is not being overturned by a session that decided it knew
++  #     better; it is being closed by the decision it was explicitly waiting for.
++  #   * THE EVIDENCE THAT DECIDED IT: 76 of 86 containers carry a parent, max depth 3, 7 containers
++  #     have children and 1 is a mid-level node. Flattening a mid-level node scatters a real
++  #     hierarchy with no error and no record — parent_project_id is the ONLY place the structure is
++  #     stored, and container_closure is derived from it and cascades away with the deleted parent.
++  #     "Refuse and name the rows" is this codebase's house answer everywhere else on this parent.
++  #
++  # Full rationale, the escape hatches that replace the implicit SET NULL, and the class gate that
++  # now asserts NO SET NULL remains on plant_projects at all: migrations/v4-parentprojfk-001/.
++  - name: post_parent_project_id_is_restrict
+     sql: |
+       SELECT 1 FROM pg_constraint
+        WHERE conname = 'plant_projects_parent_project_id_fkey'
+-         AND confdeltype = 'n'
++         AND confdeltype = 'r'
+     expect: rowcount_eq
+     value: 1
+ 
