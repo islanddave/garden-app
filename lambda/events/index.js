@@ -621,6 +621,14 @@ export const handler = async (event) => {
           -- filtered this; the feed/list/detail reads were the outliers, so undoing a container
           -- left its events on the feed with the container's name still resolving via this JOIN.
           AND pp.deleted_at IS NULL
+          -- V4-ARCHIVEHIDE-001 L1 — the PLANTING archive axis. pp.archived_at above covers the
+          -- CONTAINER only, which is why 932 live prod events hanging off 19 archived plantings
+          -- still reached this feed. archived_at and deleted_at are orthogonal columns (the archive
+          -- UPDATE in lambda/plants keeps deleted_at IS NULL) and must not be folded together, or
+          -- unarchive stops being recoverable. NOT EXISTS rather than a join so an event with no
+          -- planting anchor, and one whose planting row this query cannot see, both stay visible.
+          AND NOT EXISTS (SELECT 1 FROM public.garden_node ga
+                           WHERE ga.id = e.plant_id AND ga.archived_at IS NOT NULL)
           -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING. Disabled today, so
           -- this OR short-circuits on its first operand and the EXISTS never executes.
           AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
@@ -1875,6 +1883,22 @@ export const handler = async (event) => {
                 WHERE h.event_id = e.id AND h.deleted_at IS NULL
                 LIMIT 1
              ) x) AS harvest,
+            -- V4-EVENTDETAILRICH-001 (server half): the planting's display name, so the event
+            -- detail page can say WHAT was logged against rather than only linking a bare uuid.
+            -- pn was already joined here for the ownership gate and only its created_by was read,
+            -- so this is a projection widening with no new join and no new row cost.
+            --
+            -- WIRE CONTRACT, pinned: the field is planting_name, a string, and NULL whenever the
+            -- event has no planting anchor (the LEFT JOIN yields no pn row for plant_id IS NULL,
+            -- and equally for a soft-deleted planting, which the join already filters). A sibling
+            -- lane owns the consumer and was given exactly this name and these null semantics;
+            -- renaming it here silently breaks a surface whose tests live in another file.
+            --
+            -- Widened DELIBERATELY and additively: the strip below removes the two OWNER columns
+            -- because they are an authorization detail rather than part of the wire contract.
+            -- planting_name is the opposite -- it is contract -- so it is projected here and
+            -- deliberately NOT added to that strip list.
+            pn.display_name AS planting_name,
             -- BUG-NULLPROJEVENT-001 ownership columns; see eventOwnership.js.
             pp.created_by AS project_owner_id,
             pn.created_by AS plant_owner_id
@@ -2111,6 +2135,35 @@ export const handler = async (event) => {
       const plantId = event.queryStringParameters?.plant_id ?? null;
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '50', 10), 200);
 
+      // ── BUG-PROJEVENTTRUNC-001: offset paging + the response-shape contract ───────────────────
+      //
+      // THE CONTRACT (deliberately the same shape /api/events/feed already uses — this Lambda gets
+      // ONE paging envelope, not two):
+      //
+      //   GET /api/events?project_id=…              -> a BARE ARRAY of rows. Byte-identical to
+      //                                                what this route returned before this change.
+      //   GET /api/events?project_id=…&offset=<n>   -> { events, limit, offset, has_more }
+      //
+      // The discriminator is the PRESENCE of the offset param, not its value. offset=0 therefore
+      // opts a caller into the envelope on its very FIRST page, so a paging client never has to
+      // parse two shapes; and every pre-existing caller (PlantingDetail sends limit only, and is
+      // deliberately left alone — no planting exceeds the cap) omits offset and sees no change at
+      // all. That is what makes this additive rather than a breaking widening of Route 4.
+      //
+      // limit stays clamped at 200. On this route the cap is a PAGE SIZE, not a ceiling on
+      // history: prod's busiest project carries 5,257 events (44 projects exceed 50, 9 exceed 200),
+      // and offset is how the remainder is reached. has_more is `rows.length === limit`, the same
+      // rule the feed route uses — it can over-report by one page on an exact multiple, which
+      // costs one empty fetch and never hides a row.
+      //
+      // Every branch below orders by (event_date, created_at, id). The id is a TIEBREAKER and it is
+      // load-bearing for OFFSET paging specifically: the first two columns are not unique (a day of
+      // bulk logging shares both), and under a non-total ordering Postgres may legally return tied
+      // rows in a different order per page, which duplicates some and skips others across the seam.
+      const qp = event.queryStringParameters ?? {};
+      const paged = qp.offset != null;
+      const offset = Math.max(parseInt(qp.offset ?? '0', 10) || 0, 0);
+
       // BUG-UNSCOPEDPLANTLOG-001: plant_id WITHOUT project_id fell through BOTH branches below into
       // the unfiltered household feed — plantId was read and then silently ignored, so a
       // project-less planting's event log rendered the whole garden's most recent `limit` events
@@ -2147,9 +2200,13 @@ export const handler = async (event) => {
             -- for a planting that has a project).
             AND (e.project_id IS NULL
                  OR (pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL))
-          ORDER BY e.event_date DESC, e.created_at DESC
-          LIMIT ${limit}
+          ORDER BY e.event_date DESC, e.created_at DESC, e.id DESC
+          LIMIT ${limit} OFFSET ${offset}
         `;
+        // V4-ARCHIVEHIDE-001 L1 does NOT apply here: this arm is reached only by naming a planting
+        // explicitly, and an archived planting is still reachable on its own detail page by design.
+        // See the note on the project-scoped branch below.
+        if (paged) return resp(200, { events: plantRows, limit, offset, has_more: plantRows.length === limit });
         return resp(200, plantRows);
       }
 
@@ -2170,13 +2227,15 @@ export const handler = async (event) => {
               AND e.deleted_at IS NULL
               -- V4-SOFTDEL-001 F3 (container rule; see the /feed route above for the rationale).
               AND pp.deleted_at IS NULL
+              -- V4-ARCHIVEHIDE-001 L1 is deliberately ABSENT from this branch: see the note on the
+              -- project-scoped branch below. Naming a planting is the deliberate request for it.
               -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
               AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
                    OR e.plant_id IS NULL
                    OR EXISTS (SELECT 1 FROM public.garden_node gn
                                WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
-            ORDER BY e.event_date DESC, e.created_at DESC
-            LIMIT ${limit}
+            ORDER BY e.event_date DESC, e.created_at DESC, e.id DESC
+            LIMIT ${limit} OFFSET ${offset}
           `
         : projectId
         ? await sql`
@@ -2193,13 +2252,26 @@ export const handler = async (event) => {
               AND e.deleted_at IS NULL
               -- V4-SOFTDEL-001 F3 (container rule; see the /feed route above for the rationale).
               AND pp.deleted_at IS NULL
+              -- V4-ARCHIVEHIDE-001 L1 — the PLANTING archive axis, measured leaking 932 live prod
+              -- events off 19 archived plantings into this branch and the feed. Kept separate from
+              -- the soft-delete predicate above ON PURPOSE: archived_at and deleted_at are
+              -- orthogonal columns (the archive UPDATE in lambda/plants explicitly keeps
+              -- deleted_at IS NULL), and folding them together would make unarchive unrecoverable.
+              -- NOT EXISTS, not a join: an event with no planting anchor, and an event whose
+              -- planting row is not visible to this query at all, must both STAY on the surface.
+              -- Applied to the project-scoped and bare branches only. The two plant-scoped branches
+              -- name a planting explicitly and are exempt, matching the precedent already set by
+              -- GET /api/plants/:id and by the harvest-summary route in this file: deletion hides,
+              -- archiving does not, so an archived planting keeps its own detail page.
+              AND NOT EXISTS (SELECT 1 FROM public.garden_node ga
+                               WHERE ga.id = e.plant_id AND ga.archived_at IS NOT NULL)
               -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
               AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
                    OR e.plant_id IS NULL
                    OR EXISTS (SELECT 1 FROM public.garden_node gn
                                WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
-            ORDER BY e.event_date DESC, e.created_at DESC
-            LIMIT ${limit}
+            ORDER BY e.event_date DESC, e.created_at DESC, e.id DESC
+            LIMIT ${limit} OFFSET ${offset}
           `
         : await sql`
             SELECT
@@ -2214,14 +2286,20 @@ export const handler = async (event) => {
               AND e.deleted_at IS NULL
               -- V4-SOFTDEL-001 F3 (container rule; see the /feed route above for the rationale).
               AND pp.deleted_at IS NULL
+              -- V4-ARCHIVEHIDE-001 L1 (planting archive axis; full rationale on the project-scoped
+              -- branch above). This branch names nothing at all, so nothing here is a deliberate
+              -- request for an archived planting.
+              AND NOT EXISTS (SELECT 1 FROM public.garden_node ga
+                               WHERE ga.id = e.plant_id AND ga.archived_at IS NOT NULL)
               -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
               AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
                    OR e.plant_id IS NULL
                    OR EXISTS (SELECT 1 FROM public.garden_node gn
                                WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
-            ORDER BY e.event_date DESC, e.created_at DESC
-            LIMIT ${limit}
+            ORDER BY e.event_date DESC, e.created_at DESC, e.id DESC
+            LIMIT ${limit} OFFSET ${offset}
           `;
+      if (paged) return resp(200, { events: rows, limit, offset, has_more: rows.length === limit });
       return resp(200, rows);
     }
 

@@ -30,6 +30,34 @@ import Spinner from '../components/forms/Spinner.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 
 
+// BUG-PROJEVENTTRUNC-001 — the project event log used to stop at 50 with nothing saying so.
+//
+// There was never a client-side slice here; this page rendered every row it was given and passed no
+// limit, so the 50 was Route 4's SERVER default. Asking for the ceiling takes 35 of the 44 affected
+// prod projects to their complete history in one request. The other 9 need real paging (the busiest
+// carries 5,257 events), which Route 4 now supports via &offset= — see the contract note on that
+// handler. 200 is therefore the PAGE SIZE here, not a ceiling.
+const EVENT_PAGE_SIZE = 200
+const eventsPath = (projectId, offset) =>
+  `/api/events?project_id=${projectId}&limit=${EVENT_PAGE_SIZE}&offset=${offset}`
+
+// Route 4 answers a bare array unless the request carries &offset=, and this page always sends it —
+// so the envelope is what prod returns. The array arm is NOT dead code and must not be "cleaned up":
+// the Lambda and the SPA deploy separately (two pipelines, deployed in that order), so between them
+// this page runs against a Lambda that has never heard of offset. Tolerating both shapes is what
+// makes that window a smaller page instead of a blank log. Exported for its test.
+export function normalizeEventPage(data, pageSize = EVENT_PAGE_SIZE) {
+  if (Array.isArray(data)) return { events: data, hasMore: data.length >= pageSize }
+  return { events: Array.isArray(data?.events) ? data.events : [], hasMore: data?.has_more === true }
+}
+
+// BUG-DELNOOPOK-001 fallout. The DELETE routes now answer 404 rather than {ok:true} when nothing
+// matched, and apiFetch THROWS on any non-2xx — so the delete handlers below caught a 404 and
+// stopped, leaving the user parked on a page whose record is already gone. From the user's seat,
+// deleting something that is already deleted is the outcome they asked for. Narrow on purpose: only
+// 404. A 403, a 500 or a timeout (status 0) still fails loudly and must not navigate away.
+const isAlreadyGone = (err) => err?.status === 404
+
 function todayLocal() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
@@ -118,6 +146,10 @@ export default function ProjectDetail() {
 
   const [events,        setEvents]        = useState([])
   const [eventsLoading, setEventsLoading] = useState(true)
+  // BUG-PROJEVENTTRUNC-001 paging state. hasMore comes from the server envelope, never from a
+  // client guess, so the button disappears on the page that proves the history is complete.
+  const [eventsHasMore, setEventsHasMore] = useState(false)
+  const [eventsMore,    setEventsMore]    = useState(false)
   const [showLogForm,   setShowLogForm]   = useState(false)
   const [eventForm,     setEventForm]     = useState(emptyEventForm())
   const [loggingEvent,  setLoggingEvent]  = useState(false)
@@ -175,7 +207,7 @@ export default function ProjectDetail() {
     setEventsLoading(true)
     Promise.all([
       fetch('/api/projects/' + id),
-      fetch('/api/events?project_id=' + id),
+      fetch(eventsPath(id, 0)),
       fetch('/api/locations/with-path'),
       fetch('/api/projects'),
     ]).then(([proj, eventsData, locs, projects]) => {
@@ -186,7 +218,9 @@ export default function ProjectDetail() {
       setLocations((locs ?? []).filter(l => l.is_active))
       // Exclude current project from re-parent picker
       setAllProjects((projects ?? []).filter(p => p.id !== id && p.name))
-      setEvents(eventsData ?? [])
+      const page = normalizeEventPage(eventsData)
+      setEvents(page.events)
+      setEventsHasMore(page.hasMore)
       setLoading(false)
       setEventsLoading(false)
     }).catch(err => {
@@ -216,9 +250,36 @@ export default function ProjectDetail() {
     return () => { cancelled = true }
   }, [id, fetch])
 
+  // Deliberately refetches page 0 ONLY and resets paging, rather than re-walking every page the
+  // user had opened. One request after a write, which is what the delete-confirm suite pins; the
+  // cost is that someone who had paged deep collapses back to the first page after logging or
+  // deleting an event. Re-walking N pages would multiply every write by N requests to restore a
+  // scroll position the write already disturbed.
   async function refreshEvents() {
-    const data = await fetch('/api/events?project_id=' + id)
-    setEvents(data ?? [])
+    const page = normalizeEventPage(await fetch(eventsPath(id, 0)))
+    setEvents(page.events)
+    setEventsHasMore(page.hasMore)
+  }
+
+  // Appends the next page. Dedupes by id because OFFSET paging is positional: an event logged (or
+  // deleted) between two page fetches shifts every later row by one, which without this would
+  // duplicate a row or, worse, hide one. The server's total ORDER BY makes that a narrow window
+  // rather than a routine occurrence, but the window is real on a shared garden.
+  async function loadMoreEvents() {
+    if (eventsMore || !eventsHasMore) return
+    setEventsMore(true)
+    try {
+      const page = normalizeEventPage(await fetch(eventsPath(id, events.length)))
+      setEvents(prev => {
+        const seen = new Set(prev.map(e => e.id))
+        return [...prev, ...page.events.filter(e => !seen.has(e.id))]
+      })
+      setEventsHasMore(page.hasMore)
+    } catch (err) {
+      console.error('load more events failed', err)
+    } finally {
+      setEventsMore(false)
+    }
   }
 
   async function handleAddPlant(e) {
@@ -382,7 +443,16 @@ export default function ProjectDetail() {
     const photos = confirmPhotoInfo?.evId === evId ? confirmPhotoInfo.photos : []
     setDeletingId(evId)
     try {
-      await fetch('/api/events/' + evId, { method: 'DELETE' })
+      // Same 404 tolerance as the project delete above, for the same reason: an event already
+      // deleted (another device, a double-tap, a retried request) must still close the sheet and
+      // refresh the list, or the row sits there looking undeletable. The photo deletes below stay
+      // gated on the event delete NOT having failed for a real reason — an already-gone event is
+      // not a real reason to skip them.
+      try {
+        await fetch('/api/events/' + evId, { method: 'DELETE' })
+      } catch (err) {
+        if (!isAlreadyGone(err)) throw err
+      }
       if (deletePhotos && photos.length > 0) {
         // busy={deletingId != null} keeps the sheet up and disabled across these too.
         const results = await Promise.allSettled(
@@ -540,7 +610,15 @@ export default function ProjectDetail() {
         setProject(p => ({ ...p, archived_at: res?.archived_at ?? new Date().toISOString() }))
         setDeleting(false)
       } else {
-        await fetch('/api/projects/' + id, { method: 'DELETE' })
+        // A 404 here means the project is already gone — deleted on another device, or a retry of
+        // a delete that actually landed. Navigating away IS the correct outcome; the alternative
+        // is stranding the user on a detail page for a record that no longer exists. Anything
+        // else rethrows to the catch below, which keeps them here with the button re-enabled.
+        try {
+          await fetch('/api/projects/' + id, { method: 'DELETE' })
+        } catch (err) {
+          if (!isAlreadyGone(err)) throw err
+        }
         navigate('/projects')
       }
     } catch (err) {
@@ -916,9 +994,22 @@ export default function ProjectDetail() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
             Event log
+            {/* The old badge read `({events.length})` against an unpaged fetch, so it displayed a
+                flat 50 on a 5,257-event project and presented the truncation as the total.
+                It counts LOADED rows and appends a "+" while the server says more remain, so it
+                is exact the moment the last page lands and never over-claims before then.
+
+                project.event_count is deliberately NOT used, even though it is already on the
+                payload: it is a plain COUNT over event_log and knows nothing about the archived-
+                planting filter this same change added to the list. On prod that gap is not
+                cosmetic — three projects (Loofah Sponge 67, Cilantro 32, Spinach 13) have EVERY
+                event on an archived planting, so the badge would read 67 above a log that
+                correctly renders nothing. An exact server total would have to re-derive the
+                list's predicates in a second query, and a count that drifts from its list is a
+                worse bug than a "+". */}
             {events.length > 0 && (
               <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>
-                ({events.length})
+                ({events.length}{eventsHasMore ? '+' : ''})
               </span>
             )}
           </h2>
@@ -1094,6 +1185,27 @@ export default function ProjectDetail() {
                   onDelete={() => handleDeleteEvent(ev.id)}
                 />
               ))}
+              {/* An explicit button, not infinite scroll. Matches the shipped pattern on
+                  PlantingDetail, PhotoLibrary and Harvests; full width and 44pt-min so it is a
+                  comfortable thumb target at the bottom of a long scroll on a 390px phone. The
+                  label cannot carry a remaining count — the server sends has_more, not a total —
+                  so it promises nothing it cannot keep. */}
+              {eventsHasMore && (
+                <button
+                  type="button"
+                  data-testid="project-event-log-show-more"
+                  onClick={loadMoreEvents}
+                  disabled={eventsMore}
+                  style={{
+                    marginTop: 4, minHeight: 44, width: '100%',
+                    backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`,
+                    borderRadius: 6, fontSize: '0.85rem', fontWeight: 600, fontFamily: 'inherit',
+                    cursor: eventsMore ? 'default' : 'pointer',
+                  }}
+                >
+                  {eventsMore ? 'Loading…' : 'Show more  ·  older events'}
+                </button>
+              )}
             </div>
           </div>
         )}
