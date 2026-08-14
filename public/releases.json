@@ -1,5 +1,15 @@
 [
   {
+    "version": "4.23.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Duplicate plantings combined — 15 double-entered plantings folded into their originals, keeping the full combined history, photos and harvests",
+      "Your Dashboard total-events count drops by 492. Those were duplicate rows created when one bulk action was logged separately against each duplicate — no harvest, photo or weight was lost, and harvest totals are unchanged",
+      "Merged plantings now keep the most-advanced live stage: a planting whose sibling is still fruiting no longer reads as 'harvested'",
+      "Every merge records a full before-state snapshot, so any of them can be reversed"
+    ]
+  },
+  {
     "version": "4.22.1",
     "date": "2026-08-14",
     "highlights": [
