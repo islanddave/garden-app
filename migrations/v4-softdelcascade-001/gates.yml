@@ -504,6 +504,14 @@ post:
                            'event_log_archive','harvest_log_archive')
          AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','container_bump',
                               'container_closure_after_ins','container_reparent_after',
+                              -- trg_delete_entity_tags_project is DROPPED by
+                              -- OPS-ENTITYTAGSDROP-001 (migrations/v4-entitytagsdrop-001). The
+                              -- entry is RETAINED on purpose. This is a NOT IN allow-list
+                              -- asserting rowcount 0: it reds when a trigger APPEARS unlisted,
+                              -- never when a listed one DISAPPEARS — and that migration's
+                              -- 0r-rollback.sql RE-CREATES it, so stripping the entry would red
+                              -- this gate during any rollback window. Verified against live prod
+                              -- by re-running this query with the name filtered out: 0 rows.
                               'trg_delete_entity_tags_project',
                               -- Added 2026-08-13 by BUG-ENTITYTAGORPHAN-001: a read-only BEFORE
                               -- DELETE guard standing in for the foreign key entity_tag.entity_id

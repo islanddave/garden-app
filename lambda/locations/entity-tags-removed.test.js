@@ -4,6 +4,10 @@
 // traffic to the tags Lambda (src/lib/api.js '/api/entity-tags' -> VITE_API_TAGS, locked by
 // src/__tests__/api.test.js), which uses singular `entity_tag` exclusively. CONFIRMED-DEAD.
 // Removal ships BEFORE the entity_tags table drop (P1-data), per plan deploy-before-drop order.
+// UPDATE 2026-08-13: that drop is now authored as migrations/v4-entitytagsdrop-001 — the table,
+// its 3 legacy triggers and their functions are gone. This guard is KEPT, not retired: it costs
+// nothing and it is what stops the debris-table dependency silently resurrecting against a table
+// that no longer exists. Its assertions only get greener from the drop, never redder.
 //
 // Post-removal contract: /api/entity-tags returns an explicit 404 tombstone. NOTE: a bare
 // block deletion would NOT 404 — the trailing unguarded `if (method === 'GET')` list route

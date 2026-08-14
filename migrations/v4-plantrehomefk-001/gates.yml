@@ -213,6 +213,15 @@ post:
          AND t.relname IN ('plants','plant_projects','tasks')
          AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','container_bump',
                               'container_closure_after_ins','container_reparent_after',
+                              -- trg_delete_entity_tags_project / _plant are DROPPED by
+                              -- OPS-ENTITYTAGSDROP-001 (migrations/v4-entitytagsdrop-001). Both
+                              -- entries are RETAINED on purpose. This is a NOT IN allow-list
+                              -- asserting rowcount 0: it reds when a trigger APPEARS unlisted,
+                              -- never when a listed one DISAPPEARS, so removing them is not
+                              -- required — and that migration's 0r-rollback.sql RE-CREATES all
+                              -- three, so stripping the entries would red this gate during any
+                              -- rollback window. Verified against live prod by re-running this
+                              -- query with the three names filtered out: 0 rows.
                               'trg_delete_entity_tags_project','garden_node_bump',
                               'plants_entity_ins','plants_entity_rename','plants_entity_softdel',
                               'trg_delete_entity_tags_plant',

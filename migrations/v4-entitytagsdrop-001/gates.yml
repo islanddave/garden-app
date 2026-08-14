@@ -1,0 +1,274 @@
+# gates.yml
+# OPS-ENTITYTAGSDROP-001 — drop the legacy PLURAL `entity_tags` debris table and its three dead
+# AFTER DELETE triggers.
+#
+# SEQUENCING: 0a-evidence.sql (READ-ONLY capture, drops nothing), 0c-drop.sql (the destructive
+# step), 0r-rollback.sql (rebuilds table + constraints + indexes + RLS + policies + grant +
+# functions + triggers + the 2 rows).
+#
+# ┌─ THE ASSERTION THIS FILE EXISTS FOR ─────────────────────────────────────────────────────────┐
+# │ `post_singular_entity_tag_guards_still_present` is the single most important line here.      │
+# │ `entity_tags` (PLURAL) is 2 rows of dead smoke debris. `entity_tag` (SINGULAR) is the live   │
+# │ faceted tag system — 1,016 prod rows, all entity_type='cultivar', 412 of 424 cultivars       │
+# │ tagged — carrying the four BEFORE DELETE polymorphic-FK guards installed one day earlier by  │
+# │ v4-entitytagorphan-001. The names differ by one character. Four of the post gates below      │
+# │ assert the SINGULAR side is untouched, from four independent angles (table present, guards   │
+# │ present, guard function present, rows still there), because a migration that only asserts    │
+# │ what it removed would ship green after removing the wrong thing.                             │
+# └──────────────────────────────────────────────────────────────────────────────────────────────┘
+#
+# ENV PARITY — READ THIS BEFORE COPYING A GATE OUT OF THIS FILE.
+#   Staging's singular `entity_tag` holds ZERO rows; prod holds 1,016 (both measured 2026-08-13,
+#   owner DSN, exact). A both-envs "entity_tag row count > 1000" gate — the obvious spelling, and
+#   the one the ticket asked for verbatim — is RED ON STAGING FOREVER. It is scoped `env: prod`
+#   below. The env-independent half of the same protection (table present, 4 guards present) is
+#   what runs on both. This is the copy-propagation hazard this corpus keeps hitting: the gate that
+#   is right on one database and permanently wrong on the other.
+#   Staging also has no `garden_ro` role, which is why 0r-rollback.sql guards its GRANT.
+#
+# APPLY ORDER CONSEQUENCE FOR CI: gate-invariants.yml runs `--phase post --continuous-only` against
+# BOTH prod and staging and fires on `migrations/**` pushes. The post gates assert the POST-apply
+# state, so this directory must be applied to STAGING AND PROD BEFORE it is pushed.
+#
+# WHOLE-CORPUS OBLIGATION — do not run only this file. Three other migrations name the dropped
+# triggers in `post_no_new_triggers_on_touched_tables` allow-lists:
+#   migrations/v4-evtanchordel-001/gates.yml:213-214   (plant, location)
+#   migrations/v4-plantrehomefk-001/gates.yml:216,218  (project, plant)
+#   migrations/v4-softdelcascade-001/gates.yml:507     (project)
+# Those are `tgname NOT IN (...)` allow-lists asserting rowcount 0, so REMOVING a listed trigger
+# cannot red them — an allow-list breaks when a trigger APPEARS unlisted, not when a listed one
+# disappears. The three entries are therefore STALE-BUT-HARMLESS, and they are deliberately LEFT IN
+# PLACE: 0r-rollback.sql re-creates all three triggers, and a corpus run during a rollback window
+# with the entries stripped would go red on three migrations at once. Each site gains a comment
+# pointing here. Run `--all` on both environments anyway — the obligation is to MEASURE that, not
+# to assume it.
+
+pre:
+  # continuous: false on every pre gate — each asserts the pre-drop world and is false forever
+  # after 0c runs, by design. They also SELECT from a table 0c destroys, so leaving them continuous
+  # would turn the standing invariant sweep into a permanent 42P01.
+  - name: pre_plural_entity_tags_table_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'entity_tags'
+    expect: rowcount_eq
+    value: 1
+
+  # It is still debris. Exactly 2 rows on prod AND staging (2026-08-13, owner DSN, exact) — both
+  # v2 smoke-suite rows from 2026-05-01. A third row would mean something started writing to a
+  # table this migration is about to destroy, which changes the decision, not just the plan.
+  - name: pre_plural_entity_tags_holds_exactly_two_rows
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.entity_tags
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_three_legacy_delete_triggers_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_trigger g
+       JOIN pg_class t ON t.oid = g.tgrelid
+       WHERE NOT g.tgisinternal
+         AND g.tgname IN ('trg_delete_entity_tags_plant',
+                          'trg_delete_entity_tags_project',
+                          'trg_delete_entity_tags_location')
+         AND t.relname IN ('plants', 'plant_projects', 'locations')
+    expect: rowcount_eq
+    value: 3
+
+  # 0c drops each function as `name()`. A bare name fails if the function is overloaded, so the
+  # zero-argument shape is asserted rather than assumed: this gate counts only the signatures whose
+  # identity argument list is empty. If a variant with arguments ever exists, this reads 3 while
+  # pg_proc holds 4, and 0c's preflight (which counts both) refuses.
+  - name: pre_three_legacy_functions_present_and_zero_arg
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('delete_entity_tags_for_plant',
+                           'delete_entity_tags_for_project',
+                           'delete_entity_tags_for_location')
+         AND pg_get_function_identity_arguments(p.oid) = ''
+    expect: rowcount_eq
+    value: 3
+
+sweep:
+  # THE DEPENDENCY SWEEP THE PLAIN `DROP TABLE` ASSERTS. 0c deliberately does NOT use CASCADE: the
+  # bare form is the claim that nothing depends on this table, and a 2BP01 failure is INFORMATION,
+  # not an obstacle to route around by adding CASCADE. These three gates are that claim, measured.
+  #
+  # Every one of them resolves the table through pg_class.relname rather than a `::regclass` cast,
+  # so they return 0 rows BEFORE the drop (nothing depends on it) and 0 rows AFTER (it does not
+  # exist). That makes them standing invariants rather than apply-window checks, and it is why they
+  # are `continuous` while the pre gates above are not.
+  - name: sweep_no_incoming_fks_to_plural_entity_tags
+    sql: |
+      SELECT 1 FROM pg_constraint c
+       JOIN pg_class t ON t.oid = c.confrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'entity_tags'
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_no_dependent_views_on_plural_entity_tags
+    sql: |
+      SELECT 1 FROM pg_depend d
+       JOIN pg_rewrite r ON r.oid = d.objid
+       JOIN pg_class v ON v.oid = r.ev_class
+       JOIN pg_class t ON t.oid = d.refobjid
+       JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'entity_tags'
+         AND v.relname <> 'entity_tags'
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_no_triggers_on_plural_entity_tags
+    sql: |
+      SELECT 1 FROM pg_trigger g
+       JOIN pg_class t ON t.oid = g.tgrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE NOT g.tgisinternal AND t.relname = 'entity_tags'
+    expect: rowcount_eq
+    value: 0
+
+  # THE SINGULAR SIDE, BEFORE. Paired with the identically-shaped post gate below so the two can be
+  # diffed rather than merely each read as "fine". Deliberately duplicated across phases: the whole
+  # risk of this migration is a delta between these two numbers.
+  - name: sweep_singular_entity_tag_guards_present
+    sql: |
+      SELECT 1 FROM pg_trigger g
+       WHERE NOT g.tgisinternal
+         AND g.tgname IN ('trg_guard_entity_tag_plant',
+                          'trg_guard_entity_tag_project',
+                          'trg_guard_entity_tag_location',
+                          'trg_guard_entity_tag_cultivar')
+    expect: rowcount_eq
+    value: 4
+
+post:
+  # ── THE FIX, asserted from three angles: table, triggers, functions. ────────────────────────
+  - name: post_plural_entity_tags_table_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'entity_tags'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_legacy_delete_entity_tags_triggers_absent
+    sql: |
+      SELECT 1 FROM pg_trigger
+       WHERE NOT tgisinternal
+         AND tgname IN ('trg_delete_entity_tags_plant',
+                        'trg_delete_entity_tags_project',
+                        'trg_delete_entity_tags_location')
+    expect: rowcount_eq
+    value: 0
+
+  # Dropped by exact zero-argument signature. Matched here by name alone and unqualified by
+  # argument list on purpose: if some future overload were created, this gate should still see it.
+  - name: post_legacy_delete_entity_tags_functions_absent
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('delete_entity_tags_for_plant',
+                           'delete_entity_tags_for_project',
+                           'delete_entity_tags_for_location')
+    expect: rowcount_eq
+    value: 0
+
+  # The plain DROP TABLE is supposed to take the table's own dependents with it — 5 indexes and 3
+  # RLS policies. This asserts it actually did, rather than leaving named residue behind. It also
+  # catches the opposite mistake: a rollback that rebuilt the table but is being gate-checked as if
+  # 0c had run.
+  - name: post_no_plural_entity_tags_index_or_policy_residue
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname = 'public' AND tablename = 'entity_tags'
+      UNION ALL
+      SELECT 1 FROM pg_policy pol
+       JOIN pg_class t ON t.oid = pol.polrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'entity_tags'
+    expect: rowcount_eq
+    value: 0
+
+  # ── !! THE SINGULAR TABLE. FOUR INDEPENDENT ANGLES. !! ─────────────────────────────────────
+  # This is the whole reason this gate file is longer than the migration it guards.
+  #
+  # THE MOST IMPORTANT ASSERTION IN THIS FILE. The four BEFORE DELETE polymorphic-FK guards from
+  # v4-entitytagorphan-001 are the live tag system's ONLY referential integrity — entity_tag.
+  # entity_id can carry no declared foreign key, so these triggers ARE the constraint. This
+  # migration drops three triggers whose names differ from theirs by one character. If a fat-
+  # fingered singular/plural swap ever ships, this reads 3, or 1, or 0, and reds immediately.
+  # Env-independent: 4 on prod and 4 on staging.
+  - name: post_singular_entity_tag_guards_still_present
+    sql: |
+      SELECT 1 FROM pg_trigger g
+       JOIN pg_class t ON t.oid = g.tgrelid
+       WHERE NOT g.tgisinternal
+         AND g.tgname IN ('trg_guard_entity_tag_plant',
+                          'trg_guard_entity_tag_project',
+                          'trg_guard_entity_tag_location',
+                          'trg_guard_entity_tag_cultivar')
+         AND t.relname IN ('plants', 'plant_projects', 'locations', 'plant_varieties')
+    expect: rowcount_eq
+    value: 4
+
+  # Angle 2: the table itself. A guard count of 4 would also be satisfied momentarily by triggers
+  # standing on parents whose child table had been dropped, so presence is asserted separately.
+  - name: post_singular_entity_tag_table_still_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'entity_tag'
+    expect: rowcount_eq
+    value: 1
+
+  # Angle 3: the function the four guards execute. A trigger pointing at a dropped function fails
+  # loudly at delete time, but nothing else here would notice it was gone. v4-entitytagorphan-001
+  # asserts the same thing about its own subject; the two corroborate rather than one trusting the
+  # other. Env-independent.
+  - name: post_singular_entity_tag_guard_function_still_present
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname = 'guard_entity_tag_parent_delete'
+    expect: rowcount_eq
+    value: 1
+
+  # Angle 4: THE DATA. PROD ONLY — staging's entity_tag holds zero rows and always has (it is a
+  # smoke database; no smoke path creates a tag). Scoping this `env: prod` is not a weakening, it
+  # is the difference between an assertion and a permanent red that trains people to ignore the
+  # runner. Prod 2026-08-13: 1,016 rows, all entity_type='cultivar'. The floor is set at 1000
+  # rather than 1016 because tags legitimately grow — every cultivar created through
+  # POST /api/varieties mirrors its crop type into entity_tag — so an equality gate would go red on
+  # ordinary use. What must never happen is the count COLLAPSING, and 1000 catches that.
+  - name: post_singular_entity_tag_still_populated
+    env: prod
+    sql: |
+      SELECT 1 FROM public.entity_tag
+    expect: rowcount_gte
+    value: 1000
+
+  # The apply-window half of angle 4: at the moment 0c ran, not one row had been lost. 1,016 was
+  # the exact count immediately before the drop, so anything below it at apply time means this
+  # migration took rows with it. continuous: false — a later legitimate deletion of a tag is
+  # allowed to make this untrue, and the standing floor above is what survives.
+  - name: post_singular_entity_tag_lost_no_rows_at_apply
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.entity_tag
+    expect: rowcount_gte
+    value: 1016
+
+  # continuous: false — the apply-time receipt, which cannot be self-armed without becoming
+  # tautological. Same call v4-entitytagorphan-001 and v4-plantrehomefk-001 make for their own rows.
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.23.11-entitytagsdrop-001'
+    expect: rowcount_eq
+    value: 1

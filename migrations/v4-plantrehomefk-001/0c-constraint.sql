@@ -165,6 +165,11 @@
 -- catalog sweep of every routine in every non-system schema returns ZERO that delete from plants or
 -- plant_projects, and there is no BEFORE DELETE trigger on either table. The only AFTER DELETE
 -- trigger, trg_delete_entity_tags_project, deletes from entity_tags (a child) and is unaffected.
+--   [HISTORICAL, amended 2026-08-13] That trigger, its two siblings and the plural `entity_tags`
+--   table itself are DROPPED by OPS-ENTITYTAGSDROP-001 (migrations/v4-entitytagsdrop-001). The
+--   conclusion above is unchanged and gets STRONGER: after that migration there is no AFTER DELETE
+--   trigger on plant_projects at all. This migration's own trigger allow-list still names it —
+--   deliberately, see the comment at that gate in gates.yml.
 -- ANSWER: NO, for both flips. There is no writer coupling with the deployed artifact, so this
 -- migration is NOT split into pre-deploy and post-deploy files, and is SAFE TO APPLY BEFORE a code
 -- deploy. It changes only the action taken on a parent DELETE; no INSERT or UPDATE path changes.
