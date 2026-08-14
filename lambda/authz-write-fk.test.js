@@ -287,6 +287,18 @@ const NOT_IN_SITES = [
   'projects::parent_id',        // POST create: inline container.created_by SELECT (asserted below)
   'projects::new_parent_id',    // reparentCore step 3: household-scoped plant_projects SELECT
   'evidence-ingest::entity_id', // planting-typed arm scoped via planting_ref_id (asserted below)
+  // V4-PLANTMERGE-001 — mergeCore (plants/merge.js). NONE of these is body-settable. The four
+  // id-shaped ones are all written as the WINNER id, which is the ROUTE's path segment, and
+  // mergeCore's step 2 loads the ENTIRE group (winner + every loser) with
+  // `created_by = ANY(householdIds)` and 404s unless all of them match — set-wise, so one foreign
+  // id fails the whole merge before any statement is built. That is a stronger predicate than a
+  // per-column loader, and it is pinned by its own assertion below rather than absolved here.
+  'plants::winner_plant_id',    // merge_event.winner_plant_id = the path id (asserted below)
+  'plants::garden_node_id',     // UPDATE evidence/findings SET garden_node_id = <winner>
+  'plants::entity_id',          // UPDATE favorites SET entity_id = <winner>  (cf. favorites::entity_id)
+  'plants::target_id',          // UPDATE critter_state/treatment_association (cf. events::target_id)
+  'plants::op_id',              // text idempotency key, no FK at all (cf. projects::op_id)
+  'plants::workspace_id',       // copied off the winner's own row (cf. projects::workspace_id)
   'inventory-items::featured_photo_id', // must be a photo LINKED to this item + created_by
   // POST /api/share/facebook: `SELECT ... FROM photos WHERE id = ANY(photoIds) AND created_by =
   // ANY(householdIds) AND deleted_at IS NULL`, and a short count is a 404 for the WHOLE request
@@ -427,6 +439,25 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // The rejection must reuse the SAME 404 an absent entity gets — a 400 here would BE the
     // existence oracle ("exists, not yours" vs "no such entity") the loader contract forbids.
     expect(src).toMatch(/planting_ref_id, householdIds\)\) \{ warnRejectedFk\([^)]*\); return resp\(404, \{ error: 'Unknown entity_id' \}\); \}/);
+  });
+
+  it('mergeCore scopes the WHOLE merge group by created_by and refuses on any miss', () => {
+    // V4-PLANTMERGE-001. The merge writes the winner id into four FK-shaped columns across five
+    // tables and soft-deletes the losers, so an ungated group load would let a caller fold ANOTHER
+    // household's planting into their own — a destructive cross-household write, not just a bad FK.
+    // Not a SITES row because there is no per-column loader: one set-wise predicate covers every
+    // member at once, which is why it is asserted here instead of pre-absolved in NOT_IN_SITES.
+    const src = decomment(readFileSync(join(here, 'plants/merge.js'), 'utf8')).replace(/\s+/g, ' ');
+    // The group load carries BOTH the household predicate and the live filter.
+    expect(src).toMatch(/FROM plants WHERE id = ANY\(\$\{groupIds\}\) AND deleted_at IS NULL AND created_by = ANY\(\$\{householdIds\}\)/);
+    // A short count fails the WHOLE request — set-wise, so one foreign or deleted id aborts the
+    // merge before any statement is built. A per-row skip here would silently merge the rest.
+    expect(src).toMatch(/if \(plants\.length !== groupIds\.length\)/);
+    expect(src).toMatch(/status: 404/);
+    // groupIds must include the winner, or the winner itself would never be ownership-checked.
+    expect(src).toMatch(/const groupIds = \[winnerId, \.\.\.loserIds\]/);
+    // The winner may never appear among the losers — that would soft-delete the survivor.
+    expect(src).toMatch(/loserIds\.includes\(winnerId\)/);
   });
 
   it('the varieties source-project idempotency SELECT is household-scoped and deterministic', () => {

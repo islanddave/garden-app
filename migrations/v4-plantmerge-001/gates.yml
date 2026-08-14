@@ -1,0 +1,195 @@
+# gates.yml
+# V4-PLANTMERGE-001 — planting merge: merge_event table + archive_events_subset routine.
+#
+# STATUS AT AUTHORING (2026-08-14): AUTHORED, NOT APPLIED. No DDL executed on staging or prod.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING
+#
+#   staging apply -> rehearse 0r-rollback -> re-apply to staging -> PROD apply -> dev push -> promote
+#
+# The DDL must reach STAGING BEFORE THE DEV PUSH: CI's integration job branches off staging and does
+# NOT apply migrations, so a missing relation there presents as an infra flake, gets retried green,
+# and stays hidden. It must ALSO reach PROD before the promote — the merge endpoint references
+# merge_event and archive_events_subset on its write path, and unlike a non-fatal writer this one
+# 500s if the relation is absent.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * Every post gate carries `continuous: false` at authoring because the migration is UNAPPLIED;
+#     the scheduled sweep runs post gates against LIVE prod and would report a standing red.
+#   * The SCHEMA-SHAPE gates (table/columns/index/function) stay true forever once applied — flip
+#     those to `continuous: true` AFTER the prod apply.
+#   * post_starts_empty is PERMANENTLY window-scoped — never flip it. merge_event populates on the
+#     first merge, so its truth decays BY DESIGN. It exists only to prove the apply created an empty
+#     table rather than finding a populated one.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# WHAT THESE GATES DO NOT COVER
+#
+# These are SCHEMA gates. They prove the table and routine exist with the right shape. They do NOT
+# prove a merge is correct — that is the per-merge invariant set, which runs against a Neon branch
+# rehearsal (see README.md §Rehearsal) and is scoped to a specific group's ids, so it cannot live
+# in a static file. Do not read a green sweep here as "the merge is verified".
+
+pre:
+  - name: pre_plants_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_plants_has_primary_key
+    note: >
+      merge_event.winner_plant_id REFERENCES plants(id), which needs a unique constraint on the
+      target. Reads pg_catalog, NOT information_schema.table_constraints — that view is
+      privilege-filtered to the table owner and returns zero rows for garden_ro while the PK is
+      perfectly healthy (measured on live prod 2026-08-12, v4-weatherdaily-001 note).
+    sql: |
+      SELECT 1 FROM pg_class t
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_index i ON i.indrelid = t.oid AND i.indisprimary
+       WHERE n.nspname='public' AND t.relname='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_event_log_archive_present
+    note: >
+      archive_events_subset writes here. v4-archrestore-001 must already be applied; without it the
+      routine compiles (plpgsql is late-binding) and fails at first call, i.e. mid-merge.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='event_log_archive'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_event_log_archive_has_row_data
+    note: The snapshot column the routine depends on; a shape drift here loses the restore payload.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='event_log_archive' AND column_name='row_data'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_table_absent
+    note: Greenfield. A row here means someone already applied 0a — stop and diff before re-running.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='merge_event'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_routine_absent
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname='public' AND p.proname='archive_events_subset'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='merge_event'
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # flip true after prod apply
+
+  - name: post_all_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='merge_event'
+         AND column_name IN ('id','op_id','winner_plant_id','loser_plant_ids','group_label',
+                             'snapshot','snapshot_version','events_dropped','rows_repointed',
+                             'merged_at','merged_by','restored_at','restored_by','workspace_id')
+    expect: rowcount_eq
+    value: 14
+    continuous: false
+
+  - name: post_no_extra_columns
+    note: >
+      Paired with the gate above so the two together pin the column set EXACTLY. The IN-filter gate
+      alone passes happily on a table that also grew a column nobody intended.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='merge_event'
+    expect: rowcount_eq
+    value: 14
+    continuous: false
+
+  - name: post_op_id_unique
+    note: >
+      THE idempotency guarantee. Without this index a replayed op_id merges twice — the second run
+      folding an already-merged winner into itself. Load-bearing, not cosmetic.
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='merge_event' AND indexname='merge_event_op_uniq'
+         AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_winner_not_loser_check
+    note: >
+      Guards the one input that would soft-delete the survivor. Asserted at the DB, not only in the
+      Lambda, because a runner script or a psql session bypasses the Lambda entirely.
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.merge_event'::regclass AND conname='merge_event_winner_not_loser'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_losers_nonempty_check
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.merge_event'::regclass AND conname='merge_event_losers_nonempty'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_routine_present
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname='public' AND p.proname='archive_events_subset'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_routine_guards_present
+    note: >
+      The three refusals are the whole safety argument for the drop set — a subset archiver that
+      silently accepted a harvest would eat yield data. Asserted against prosrc so removing a guard
+      reds the gate rather than passing on shape alone.
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname='public' AND p.proname='archive_events_subset'
+         AND p.prosrc LIKE '%cultivar_weight_sample%'
+         AND p.prosrc LIKE '%harvest_log%'
+         AND p.prosrc LIKE '%photos%'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_starts_empty
+    note: >
+      PERMANENTLY window-scoped (L-369 category 1) — merge_event populates on the first merge, so
+      this decays by design. NEVER flip to continuous. It proves the apply created an empty table
+      rather than finding a populated one.
+    sql: |
+      SELECT 1 FROM public.merge_event
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_no_orphan_snapshot_version
+    note: >
+      Every row must carry the snapshot schema version its payload was written under. A NULL or 0
+      here means a restore cannot know how to read the payload.
+    sql: |
+      SELECT 1 FROM public.merge_event WHERE snapshot_version IS NULL OR snapshot_version < 1
+    expect: rowcount_eq
+    value: 0
+    continuous: false

@@ -10,6 +10,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
+import { mergeCore } from './merge.js';
 // BUG-PARENTOWN-001: body-supplied PARENT-id loaders. loadOwnedPlantingRef REPLACES household.js's
 // loadOwnedPlanting on this path — same query plus the load-bearing `project_id IS NULL` conjunct on
 // the own-created_by arm, matching this file's canonical by-id predicate and tags/index.js
@@ -117,6 +118,11 @@ export const handler = async (event) => {
   // (idMatch's /([^/]+)$/ won't match the /archive suffix). PATCH-only, symmetric set/unset.
   const archiveMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/archive$/);
   const restoreMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/restore$/);
+  // V4-PLANTMERGE-001: fold N sibling plantings into one surviving row. New-endpoint-only and
+  // additive — idMatch's /([^/]+)$/ does not match the /merge suffix, so no existing route changes
+  // shape. POST-only; the destructive half (soft-deleting the losers) is gated behind an explicit
+  // loser_ids list, and `dry_run: true` returns the full plan without writing anything.
+  const mergeMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/merge$/);
 
   try {
     // ── V4-RESTORESURFACE-001 — the recovery path for plantings (audit I9) ───────────────────────
@@ -251,6 +257,38 @@ export const handler = async (event) => {
       // Read back the trigger-maintained last_seen_at (no `p` alias → regex-safe).
       const back = await sql`SELECT last_seen_at FROM public.garden_node WHERE id = ${plantId}`;
       return resp(201, { leaf_id: ins[0].leaf_id, last_seen_at: back[0]?.last_seen_at ?? null });
+    }
+
+    // ── V4-PLANTMERGE-001 — merge N sibling plantings into this one ─────────────────────────────
+    //
+    // The winner is the path id; `loser_ids` are folded in and soft-deleted. Every child surface is
+    // repointed, batch fan-out duplicates are collapsed group-scoped, and the winner's own scalars
+    // are reconciled by rule (phenology -> latest cohort, status -> most advanced) rather than
+    // winner-takes-all. mergeCore owns all of it and returns {status, body} directly.
+    //
+    // `op_id` is required and is the idempotency key: a replay returns the first run's outcome
+    // instead of merging twice. `fingerprint` is the caller's pre-read of the group and is
+    // re-asserted inside the operation — a concurrent write to a loser between read and cutover
+    // 409s rather than being swept into the winner invisibly.
+    if (mergeMatch) {
+      const winnerId = mergeMatch[1];
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      let body;
+      try { body = JSON.parse(event.body ?? '{}'); }
+      catch { return resp(400, { error: 'Invalid JSON body' }); }
+
+      const r = await mergeCore(sql, {
+        winnerId,
+        loserIds: body.loser_ids,
+        opId: body.op_id,
+        fingerprint: body.fingerprint ?? null,
+        overrides: body.overrides ?? {},
+        groupLabel: body.group_label ?? null,
+        dryRun: body.dry_run === true,
+        userId,
+        householdIds,
+      });
+      return resp(r.status, r.body);
     }
 
     if (archiveMatch) {
