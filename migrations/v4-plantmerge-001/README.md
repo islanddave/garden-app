@@ -17,8 +17,15 @@ Canon: `Projects/Gardening/planting-merge-plan-V003-20260814.md`. Ledger: `V4-PL
 
 ## Status
 
-**AUTHORED, NOT APPLIED.** No DDL has run on staging or prod. Pre-gates verified green against live
-prod 2026-08-14 (6/6), so the apply is safe to sequence.
+**APPLIED — staging and prod, 2026-08-14.** Pre 6/6, post 10/10 on both. `0r` rollback rehearsed
+including its refuse-if-used guard; `archive_events_subset` smoke-tested end-to-end on staging and
+the probe event restored. Prod's guard was verified via the REFUSAL path only, so no prod event data
+has been touched. Live state re-verified 2026-08-14: `merge_event` and `archive_events_subset` exist
+on both envs, `merge_event` is empty — **no planting has been merged**.
+
+`post_starts_empty` in `gates.yml` stays `continuous: false` forever: `merge_event` populates on the
+first merge, so that gate's truth decays by design. The other 10 post gates are continuous, and a
+continuous-only sweep correctly reports `APPLY_WINDOW_ONLY=1, PASS=9`.
 
 ## Why not model on reparentCore
 
