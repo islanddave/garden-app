@@ -150,8 +150,17 @@ describe('PhotoLibrary — back-nav scroll restore', () => {
     prime(120)
     __seedScrollRestoreEntry('photos', 1200, 99999)
     render(<PhotoLibrary />)
-    await waitFor(() => expect(screen.queryByText(/Show more/)).toBeNull())
-    expect(tiles()).toBe(120)          // bounded by the photo count, not by the poisoned value
+    // Wait on the POSITIVE signal (the tiles are mounted), never on the absence of "Show more".
+    //
+    // This originally awaited `queryByText(/Show more/)` being null — but that is ALSO true before
+    // anything has rendered, so the wait resolved instantly against the empty first paint and the
+    // next line then read 0 tiles. It passed on a fast machine and failed in CI's America/New_York
+    // TZ job (a second, differently-timed run of the same suite), which is why three consecutive
+    // green local runs did not catch it. An absence assertion cannot distinguish "finished" from
+    // "not started"; only a positive one can.
+    await waitFor(() => expect(tiles()).toBe(120))  // bounded by the photo count, not the poisoned value
+    // NOW the absence is meaningful: everything is mounted, so there is genuinely no more to show.
+    expect(screen.queryByText(/Show more/)).toBeNull()
   })
 
   it.each([null, 'lots', -5])('falls back to one page for a nonsense stored window (%p)', async (bad) => {
