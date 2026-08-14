@@ -61,7 +61,14 @@
           "name": "Habanero"
         }
       ],
-      "winner_source": "rule"
+      "winner_source": "rule",
+      "overrides": {
+        "container_type": "whiskey_barrel",
+        "container_size": "15 gall",
+        "location_id": "29b091c0-514d-4a66-997a-51f59271f0ca"
+      },
+      "overrides_source": "dave",
+      "overrides_note": "Dave: whiskey barrel, Bag Area. The barrel sibling sat in 'Drive'; Dave placed the merged planting in the existing Bag Area (he described it as 'Pasture - Bag Area'; no such location exists and he confirmed Bag Area)."
     },
     {
       "n": 4,
@@ -77,7 +84,14 @@
         }
       ],
       "winner_source": "rule",
-      "winner_note": "first_event tied; created_at breaks it. Keeps the unsuffixed name."
+      "winner_note": "first_event tied; created_at breaks it. Keeps the unsuffixed name.",
+      "overrides": {
+        "container_type": "trough",
+        "container_size": "6x2 ft",
+        "location_id": "62277680-3131-40dc-9c84-13e0572a6f58"
+      },
+      "overrides_source": "dave",
+      "overrides_note": "Dave: trough. Matches the winner's own vessel; the Serrano 2 sibling was a 5-gal fabric bag in Bag Area."
     },
     {
       "n": 5,
@@ -108,7 +122,12 @@
         }
       ],
       "winner_source": "rule",
-      "winner_note": "Rehearsed 13/13 on a branch off prod 2026-08-14. Status resolves to fruiting, not harvested, after V4-MERGESTATUS-001."
+      "winner_note": "Rehearsed 13/13 on a branch off prod 2026-08-14. Status resolves to fruiting, not harvested, after V4-MERGESTATUS-001.",
+      "overrides": {
+        "container_type": "fabric_bag"
+      },
+      "overrides_source": "dave",
+      "overrides_note": "Dave: fabric bag. Only container_type diverged; both siblings are already in Bag Area."
     },
     {
       "n": 7,
@@ -144,7 +163,12 @@
           "name": "Edible Beauties Flower Mix Seeds"
         }
       ],
-      "winner_source": "rule"
+      "winner_source": "rule",
+      "overrides": {
+        "container_size": "8 in"
+      },
+      "overrides_source": "dave",
+      "overrides_note": "Dave: 8 in — the LOSER's value. Both are plastic pots in the Trough."
     },
     {
       "n": 9,
@@ -160,7 +184,12 @@
         }
       ],
       "winner_source": "rule",
-      "winner_note": "Russian tarragon is a DIFFERENT plant and is on the never-merge list; these two are both French."
+      "winner_note": "Russian tarragon is a DIFFERENT plant and is on the never-merge list; these two are both French.",
+      "overrides": {
+        "location_id": "29b091c0-514d-4a66-997a-51f59271f0ca"
+      },
+      "overrides_source": "dave",
+      "overrides_note": "Dave: Bag Area, the winner's location. The loser carried no vessel columns at all."
     },
     {
       "n": 10,
@@ -192,7 +221,12 @@
         }
       ],
       "winner_source": "rule",
-      "winner_note": "Loss figures already written to prod 2026-08-14 (16 initial / 10 lost / 6 alive). The loser's 'germination failure' status was STALE — 2 replants did come up."
+      "winner_note": "Loss figures already written to prod 2026-08-14 (16 initial / 10 lost / 6 alive). The loser's 'germination failure' status was STALE — 2 replants did come up.",
+      "overrides": {
+        "container_type": "solo_cup"
+      },
+      "overrides_source": "dave",
+      "overrides_note": "Dave: solo cup. Avoids tray_cell, which resolves the water-ledger confidence to LOW outright."
     },
     {
       "n": 12,
