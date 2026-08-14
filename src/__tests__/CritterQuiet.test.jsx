@@ -84,11 +84,13 @@ describe('V4-CRITTERQUIET-001 — CritterSprite quiet arm paints nothing', () =>
   it('renders a hidden, non-interactive sentinel that still occupies the sprite geometry', () => {
     render(<CritterSprite critter={critter()} quiet spriteSize={22} prefersReducedMotion={true} />)
     const el = screen.getByTestId('critter-view-sentinel')
-    expect(el.style.visibility).toBe('hidden')
+    expect(el.style.opacity).toBe('0')
     expect(el.style.pointerEvents).toBe('none')
     expect(el.getAttribute('aria-hidden')).toBe('true')
     // Geometry is load-bearing: IntersectionObserver reads layout boxes, so the sentinel must be
     // the same size/position as the sprite it replaces or the threshold(0.1) gate shifts.
+    // display:none would zero the box and stop IO reporting entirely — pin against it.
+    expect(el.style.display).toBe('inline-block')
     expect(el.style.width).toBe('22px')
     expect(el.style.height).toBe('22px')
   })

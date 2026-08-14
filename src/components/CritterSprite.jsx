@@ -138,9 +138,11 @@ export default function CritterSprite({
   //
   // So the quiet arm keeps the element, the ref, and the geometry, and drops only the pixels. It
   // sits at the SAME position/size as the sprite it replaces, so the IntersectionObserver geometry
-  // (threshold 0.1) resolves identically — visibility:hidden is invisible to paint and hit-testing
-  // but NOT to IntersectionObserver, which reads layout boxes only. The write set is unchanged;
-  // flipping CRITTERS_QUIET back leaves no viewed_at drift to unwind.
+  // (threshold 0.1) resolves identically. HIDING MECHANISM IS LOAD-BEARING: opacity 0 +
+  // pointerEvents none, deliberately NOT display:none (zero-area box — IO stops reporting) and not
+  // visibility:hidden (paint-free, and IO reads layout boxes only, but it is the one hider with any
+  // engine-level ambiguity worth avoiding on a path whose failure is silent). The write set is
+  // unchanged; flipping CRITTERS_QUIET back leaves no viewed_at drift to unwind.
   //
   // Deliberately dropped in this arm: the <img> (no sprite art fetched), role/aria-label (a
   // screen reader must not announce a critter that is not shown), the landing animation, the
@@ -160,7 +162,7 @@ export default function CritterSprite({
           width: spriteSize,
           height: spriteSize,
           display: 'inline-block',
-          visibility: 'hidden',
+          opacity: 0,
           pointerEvents: 'none',
         }}
       />
