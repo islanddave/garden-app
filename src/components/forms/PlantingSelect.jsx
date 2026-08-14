@@ -19,7 +19,14 @@
 //   'none'          — deliberately not tied to a planting     (PutUp — load-bearing, must survive)
 //   'project-level' — deliberately logged at project level    (PhotoLibrary upload + tag modal)
 // It controls the placeholder copy + the accessible description; clearing (chip ✕) returns to it.
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+// V4-PICKERA11Y-001 — this component is the WAI-ARIA 1.2 combobox REFERENCE MODEL for the app.
+// It was chosen as the model because no existing picker implemented the pattern: VarietyPicker has
+// the roles but no option identity and misuses aria-selected as a highlight flag; AssigneePicker
+// has no roles at all; SpaceAttachPicker is a dialog. The four pieces that were missing here —
+// aria-activedescendant, option `id`s, focus retention on commit, and Escape-closes-without-blur —
+// are exactly the pieces TalkBack (Chrome/Android, the only target) needs to narrate the list.
+// Where this deviates from APG the reason is stated inline at the deviation.
+import React, { useState, useEffect, useMemo, useRef, useCallback, useId } from 'react'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { T, inputChrome } from './formStyles.js'
@@ -388,7 +395,22 @@ export default function PlantingSelect({
   const [chipLayoutNonce, setChipLayoutNonce] = useState(0)
   const chipRowRef = useRef(null)
   const inputRef = useRef(null)
-  const listboxId = useMemo(() => `ps-list-${Math.random().toString(36).slice(2, 9)}`, [])
+  // The chip-mode "Change" button — the one control that still exists after a commit collapses the
+  // picker. select() hands focus here so the TalkBack cursor never falls to <body>. See select().
+  const changeBtnRef = useRef(null)
+  // V4-PICKERA11Y-001 (A9). Was `Math.random()`. aria-activedescendant points at an option id
+  // derived from this, so it must be stable across renders (random-per-mount already was) AND
+  // deterministic per instance for tests to assert on. useId gives both. Its ':' delimiters are
+  // legal in an id attribute but NOT in a CSS selector, so they are stripped: the active-option
+  // scroll below resolves through getElementById, and a future querySelector must not silently
+  // fail on a ':' it did not escape.
+  const listboxId = `ps-list-${useId().replace(/:/g, '')}`
+  // Option identity. Namespaced by listboxId, not bare `ps-opt-${id}`, because CaptureFlow and
+  // PhotoLibrary each render TWO PlantingSelects on one page — duplicate DOM ids would make
+  // aria-activedescendant resolve to the wrong picker's row. `data-testid` deliberately keeps the
+  // un-namespaced `ps-opt-${id}` form: 16 test files select on it.
+  const optionId = useCallback((p) => `${listboxId}-opt-${p.id}`, [listboxId])
+  const chipLabelId = `${listboxId}-chip-label`
 
   // Rendering inside the route-overlay Sheet? Context default is false (full page / no provider),
   // exactly the signal EventNew's sticky Save uses. Feeds chrome-inset zeroing in placement.
@@ -624,6 +646,34 @@ export default function PlantingSelect({
 
   useEffect(() => { setHighlight(0) }, [query, rows])
 
+  // ── V4-PICKERA11Y-001: the roving ACTIVE option ────────────────────────────
+  // Claim 1. The highlight was a background colour and nothing else (rowStyle), so ArrowDown moved
+  // a visual bar TalkBack could not see and never announced a row. This is the same `highlight`
+  // index, promoted to the row object, so there is exactly one source of truth for "which option is
+  // active" and the visual highlight and aria-activedescendant cannot drift apart.
+  //
+  // APG deviation, deliberate: DOM focus does NOT move to the option. That is the pattern's whole
+  // point here — on Chrome/Android moving focus out of the <input> dismisses the soft keyboard and
+  // breaks the typeahead, so the input keeps focus and only the ACTIVE DESCENDANT roves.
+  //
+  // `visible[highlight]` can be undefined when a crop chip shrinks the list under a stale highlight
+  // (chip toggles deliberately do not reset it — see the chip-state contract above). Undefined then
+  // means "no active option", which is exactly right: aria-activedescendant must be ABSENT, never
+  // an empty string, or TalkBack looks up an element that does not exist.
+  const activeOption = (open && !disabled) ? (visible[highlight] ?? null) : null
+
+  // A7. APG requires the active descendant be scrolled into view; with focus staying on the input
+  // the browser will never do it for us, and listboxStyle caps the panel height, so an arrowed-to
+  // row below the fold was announced but invisible. `block: 'nearest'` scrolls the minimum needed —
+  // 'center' would jump the list under a sighted user's thumb on every ArrowDown.
+  // jsdom implements neither scrollIntoView nor layout, hence the optional call; this behaviour is
+  // asserted by construction (spy), not by observing a scroll position.
+  useEffect(() => {
+    if (!activeOption) return
+    if (typeof document === 'undefined') return
+    document.getElementById(optionId(activeOption))?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeOption, optionId])
+
   const label = LABELERS[labelFormat] ?? LABELERS.qtyVariety
 
   const select = useCallback((p) => {
@@ -638,6 +688,32 @@ export default function PlantingSelect({
     setOpen(false)
     setQuery('')
     setTouched(true)
+    // V4-PICKERA11Y-001 claim 3 — the dropped cursor. Committing a choice swaps this component into
+    // chip mode, which does not render the <input> at all; the focused element was therefore
+    // UNMOUNTED and focus fell to <body>, so TalkBack lost its place mid-form and the next swipe
+    // restarted from the top of the page. The listbox's onMouseDown preventDefault kept focus on
+    // the input right up to the swap, which is why this reads as a render-shape bug rather than a
+    // focus bug. Move focus to a control that survives: the chip's "Change" button (aria-describedby
+    // the chip label, so focusing it announces WHAT was chosen as well as the button).
+    // Mirrors clear()'s existing setTimeout-refocus precedent rather than inventing a mechanism.
+    //
+    // NO FALLBACK TO THE INPUT — and that is load-bearing, not an omission. A host that does not
+    // echo `value` back never enters chip mode, so the <input> is still mounted AND still focused
+    // (the listbox's onMouseDown preventDefault held focus through the click); there is nothing to
+    // restore. Refocusing it anyway fires onFocus, which RE-OPENS the picker — and on EventNew an
+    // open picker hides the sticky band, taking the post-save confirmation strip out of the
+    // accessibility tree with it. Caught by EventNewOverlaySlice2 / EventNewPostSaveFeedback.
+    //
+    // The activeElement guard keeps this from stealing focus a host has deliberately moved
+    // elsewhere in the same commit; <body> is the expected value here, because that is precisely
+    // where focus lands when the input unmounts.
+    setTimeout(() => {
+      const btn = changeBtnRef.current
+      if (!btn || typeof document === 'undefined') return
+      const active = document.activeElement
+      if (active && active !== document.body && active !== inputRef.current) return
+      btn.focus()
+    }, 0)
   }, [onChange, onDerive])
 
   const clear = useCallback(() => {
@@ -660,9 +736,34 @@ export default function PlantingSelect({
       if (!open) { setOpen(true); return }
       if (visible[highlight]) select(visible[highlight])
     } else if (e.key === 'Escape') {
-      e.preventDefault()
+      // V4-PICKERA11Y-001 claim 4 + A5. TWO changes, and they are load-bearing TOGETHER — shipping
+      // either alone is worse than shipping neither:
+      //
+      // (a) GATE ON `open`. `e.preventDefault()` used to run unconditionally, and
+      //     DismissRegistry.jsx bails on `e.defaultPrevented`. That made Escape DEAD for the
+      //     hosting Sheet whenever focus sat in this input with the list closed. It was only
+      //     latent because (b) blurred immediately, so "closed + focused" was nearly unreachable.
+      //     Fixing (b) makes "closed + focused" the NORMAL post-Escape state, which would promote
+      //     that latent trap into "the sheet can never be closed by keyboard". VarietyPicker
+      //     already carries this exact gate for this exact reason; this is the port, not a new idea.
+      //
+      // (b) DO NOT BLUR. APG: Escape closes the popup and keeps focus in the combobox. Blurring
+      //     dropped the TalkBack cursor to <body> and made "dismiss the list" indistinguishable
+      //     from "leave the field entirely".
+      if (open) {
+        e.preventDefault()
+        e.stopPropagation()
+        setOpen(false)
+        // The blur we no longer fire was what marked the field touched (see onBlur). Set it here
+        // so the required-field error keeps its exact pre-change behaviour.
+        setTouched(true)
+      }
+    } else if (e.key === 'Tab') {
+      // Tab was unhandled, so focus left while the listbox stayed painted for the 150ms blur timer,
+      // leaving a floating panel over the next field. Close immediately. NEVER preventDefault here:
+      // Tab must still move focus, and this branch must not commit the highlighted option — a
+      // typeahead combobox that writes a value on Tab-out is a wrong-write generator.
       setOpen(false)
-      inputRef.current?.blur()
     }
   }
 
@@ -680,8 +781,15 @@ export default function PlantingSelect({
   if (selected && !open) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={chipStyle(disabled)} aria-live="polite" data-testid={dataTestId ? `${dataTestId}-chip` : undefined}>
-          <span style={{ fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
+        {/* V4-PICKERA11Y-001: the `aria-live="polite"` that used to sit here is REMOVED, not
+            relocated. It could never announce anything — this whole subtree mounts in the same
+            commit as its text, and a live region created together with its content is not spoken
+            (TalkBack watches for MUTATIONS to an already-present region). A dead live region reads
+            as coverage that does not exist. The selection is announced instead by moving focus here
+            (select()) onto a button that is aria-describedby the chip label below — a focus event,
+            which is announced deterministically rather than by live-region timing. */}
+        <div style={chipStyle(disabled)} data-testid={dataTestId ? `${dataTestId}-chip` : undefined}>
+          <span id={chipLabelId} style={{ fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
             {label(selected)}
           </span>
           {/* V4-PROJHIDE-001: the secondary project_name tag is hidden when projects aren't user-facing
@@ -699,7 +807,12 @@ export default function PlantingSelect({
         </div>
         {!disabled && (
           <button
+            ref={changeBtnRef}
             type="button"
+            // DESCRIBED by, not LABELLED by: the accessible NAME stays exactly "Change" (host tests
+            // and any future automation query it by that name), while TalkBack additionally reads
+            // the chosen planting when focus lands here after a commit.
+            aria-describedby={chipLabelId}
             onClick={() => { setOpen(true); setTimeout(() => inputRef.current?.focus(), 0) }}
             style={linkBtn}
           >
@@ -752,8 +865,57 @@ export default function PlantingSelect({
     </div>
   ) : null
 
+  // A6 — `role="alert"` is not a valid child of `role="listbox"` (which owns only options and
+  // groups), and neither is the Retry <button> it contains. This row is now a SIBLING of the <ul>
+  // inside the floating panel rather than a member of it. Moved, not duplicated: an sr-only copy
+  // alongside the visible one would have TalkBack read the failure twice.
+  const failureNotice = loadFailedEffective && !loading ? (
+    <div style={noteRow} role="alert">
+      {/* The old copy was unconditional and became false the moment PLANTING_REQUIRED_ENABLED
+          flips: telling someone they can save without a planting, on a form that will refuse
+          exactly that, is worse than saying nothing. Branch on the same prop that drives the
+          requiredness so the two can never disagree. */}
+      {required
+        ? 'Couldn’t load your plantings — this field is required, so retry before saving.'
+        : 'Couldn’t load your plantings — you can still save without one.'}
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          data-testid="ps-retry"
+          style={{
+            marginLeft: 8, padding: 0, border: 'none', background: 'none',
+            color: P.terra, fontSize: '0.8rem', fontWeight: 600,
+            textDecoration: 'underline', cursor: 'pointer',
+          }}
+        >
+          Retry
+        </button>
+      )}
+    </div>
+  ) : null
+
+  // The <ul> gives up its own floating-panel chrome to PanelShell whenever ANYTHING shares the
+  // panel with it — chips (V4-CROPFILTER-001) or now the failure notice. Without this the notice
+  // would sit inside an absolutely-positioned panel while the <ul> ALSO positioned itself at
+  // top:100% of that panel, i.e. below its own container.
+  const panelNested = chipsEligible || !!failureNotice
+
+  // A8 — result-count announcement. The typeahead and the crop-chip row both change the option set
+  // silently: TalkBack reads the listbox only when the user is inside it, so filtering from 40 rows
+  // to 0 produced no spoken feedback at all. This node is rendered UNCONDITIONALLY (empty string
+  // when there is nothing to say) precisely because a live region must pre-exist its content to be
+  // announced — the mistake the removed chip-mode aria-live made.
+  // Deliberately NOT role="status": that role is already used by host post-save confirmations
+  // (EventNew) which are queried singularly, and a second status node would collide with them.
+  // bare aria-live carries the same announcement semantics without claiming the role.
+  const liveCount = (!open || disabled || loading || loadFailedEffective) ? ''
+    : visible.length === 0 ? 'No plantings available'
+    : `${visible.length} planting${visible.length === 1 ? '' : 's'} available`
+
   return (
     <div style={{ position: 'relative' }}>
+      <div aria-live="polite" style={srOnly}>{liveCount}</div>
       <input
         ref={inputRef}
         id={id}
@@ -761,6 +923,10 @@ export default function PlantingSelect({
         role="combobox"
         aria-expanded={open}
         aria-controls={listboxId}
+        // V4-PICKERA11Y-001 claim 1 — the missing half of the combobox contract. `undefined` (the
+        // attribute ABSENT), never '': an empty aria-activedescendant is a dangling reference, and
+        // TalkBack treats it as "there is an active option, I just cannot find it".
+        aria-activedescendant={activeOption ? optionId(activeOption) : undefined}
         aria-autocomplete="list"
         aria-required={required || undefined}
         aria-invalid={showBlankError || undefined}
@@ -771,6 +937,11 @@ export default function PlantingSelect({
         inputMode={kbMode}
         onChange={e => { setQuery(e.target.value); setOpen(true) }}
         onFocus={() => { if (!disabled) setOpen(true) }}
+        // Required BY the Escape fix, not incidental to it. Escape now leaves focus on the input,
+        // so tapping the field to re-open it fires NO focus event (it is already focused) and
+        // onFocus alone can no longer re-open the list — the field would look dead. Idempotent:
+        // clicking an already-open picker is a no-op setState.
+        onClick={() => { if (!disabled && !open) setOpen(true) }}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         placeholder={effectivePlaceholder}
@@ -816,41 +987,16 @@ export default function PlantingSelect({
         </button>
       )}
       {open && !disabled && (
-        <PanelShell chips={chipRow} placement={placement}>
+        <PanelShell chips={chipRow} notice={failureNotice} placement={placement}>
         <ul
           id={listboxId}
           role="listbox"
           aria-label="Plantings"
-          style={listboxStyle(placement, chipsEligible)}
+          style={listboxStyle(placement, panelNested, chipsEligible)}
           // Keep input focus while clicking rows; onBlur's deferred close still runs after click.
           onMouseDown={e => e.preventDefault()}
         >
           {loading && <li style={noteRow} role="presentation">Loading plantings…</li>}
-          {loadFailedEffective && !loading && (
-            <li style={noteRow} role="alert">
-              {/* The old copy was unconditional and became false the moment PLANTING_REQUIRED_ENABLED
-                  flips: telling someone they can save without a planting, on a form that will refuse
-                  exactly that, is worse than saying nothing. Branch on the same prop that drives the
-                  requiredness so the two can never disagree. */}
-              {required
-                ? 'Couldn’t load your plantings — this field is required, so retry before saving.'
-                : 'Couldn’t load your plantings — you can still save without one.'}
-              {onRetry && (
-                <button
-                  type="button"
-                  onClick={onRetry}
-                  data-testid="ps-retry"
-                  style={{
-                    marginLeft: 8, padding: 0, border: 'none', background: 'none',
-                    color: P.terra, fontSize: '0.8rem', fontWeight: 600,
-                    textDecoration: 'underline', cursor: 'pointer',
-                  }}
-                >
-                  Retry
-                </button>
-              )}
-            </li>
-          )}
           {!loading && !loadFailedEffective && visible.length === 0 && (
             <li style={noteRow} role="presentation">
               {/* V4-CROPFILTER-001 filtered-to-empty: naming the CHIPS as the cause (and offering
@@ -880,7 +1026,11 @@ export default function PlantingSelect({
           {visible.map((p, i) => (
             <li
               key={p.id}
+              id={optionId(p)}
               role="option"
+              // aria-selected means SELECTED (the committed value), not highlighted — the active
+              // option is carried by aria-activedescendant above. VarietyPicker conflates the two;
+              // do not copy it from there.
               aria-selected={String(p.id) === String(value)}
               data-testid={`ps-opt-${p.id}`}
               onClick={() => select(p)}
@@ -970,13 +1120,17 @@ const linkBtn = {
 // it, so the list scrolls under a chip row that stays put. Chip position follows the flip so the
 // row is always adjacent to the INPUT edge of the panel — under the input when opening down,
 // above it when flipped up (the thumb reaches the same place either way).
-function PanelShell({ chips, placement, children }) {
-  if (!chips) return children
+// V4-PICKERA11Y-001 (A6): `notice` joins `chips` as a panel co-tenant — the load-failure alert,
+// evicted from inside the <ul> because role="alert" (and the Retry button in it) are invalid
+// children of role="listbox". It sits on the same side as the chips, i.e. adjacent to the INPUT
+// edge, so a failure message is never on the far side of an empty list from the field it describes.
+function PanelShell({ chips, notice, placement, children }) {
+  if (!chips && !notice) return children
   return (
     <div style={panelStyle(placement)} data-testid="ps-panel">
       {placement?.flip
-        ? <>{children}{chips}</>
-        : <>{chips}{children}</>}
+        ? <>{children}{notice}{chips}</>
+        : <>{chips}{notice}{children}</>}
     </div>
   )
 }
@@ -986,7 +1140,12 @@ function PanelShell({ chips, placement, children }) {
 // browser where the input is not laid out yet) behaves as it always did.
 // V4-CROPFILTER-001: `nested` = "the PanelShell above owns the positioning and chrome", so the
 // list keeps only its scroll behavior. Default false is the untouched pre-chip path.
-function listboxStyle(placement, nested = false) {
+// V4-PICKERA11Y-001 (A6): `nested` and `floorRows` split apart. `nested` = "PanelShell owns the
+// positioning" (true for chips OR the evicted failure notice); `floorRows` = the BD-011 three-row
+// floor, which exists ONLY to stop the chip tray starving the list and must stay OFF when the
+// panel's other tenant is the failure notice — otherwise a failed load paints a 140px empty box
+// under its own error message.
+function listboxStyle(placement, nested = false, floorRows = false) {
   const flip = !!placement?.flip
   if (nested) {
     return {
@@ -999,7 +1158,7 @@ function listboxStyle(placement, nested = false) {
       // again starve it to the one-row LIST_ABS_MIN while the tray takes the room. The panel's
       // own maxHeight (panelStyle) bounds the total; the tray cap bounds the chips.
       flex: '1 1 auto',
-      minHeight: LIST_MIN_H,
+      ...(floorRows ? { minHeight: LIST_MIN_H } : null),
       overflowY: 'auto',
       overscrollBehavior: 'contain',
     }
@@ -1100,4 +1259,16 @@ const noteRow = {
   padding: '10px',
   fontSize: '0.8rem',
   color: P.light,
+}
+
+// Screen-reader-only. Same recipe as Field.jsx's "(required)" affix and Spinner.jsx's label —
+// copied rather than imported because those own their own local copies and there is no shared
+// a11y style module yet; hoisting one is a separate change with its own freeze implications.
+const srOnly = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
 }
