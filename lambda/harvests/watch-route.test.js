@@ -472,12 +472,13 @@ describe('V4-ANCHORFLIP-001 derived anchor, at the route', () => {
     ]) expect(q).toContain(alias);
   });
 
-  // THE FLAG IS STILL FALSE. This asserts the shipped behaviour: the join runs, the columns arrive,
-  // and the tier stays shut — which is what makes applying the migration and deploying the Lambda
-  // ahead of Dave's decision a safe, observable no-op rather than a leap.
-  it('serves nothing from the derived tier while the flag is off', async () => {
+  // The flag FLIPPED TRUE 2026-08-14 (condition 9). This still asserts the shut behaviour, but via
+  // an explicit derivedEnabled:false rather than the module default — the join still runs and the
+  // columns still arrive, and the tier can still be shut off at the route without a redeploy. That
+  // kill switch is the rollback path for the flip, so it is now MORE important to pin, not less.
+  it('serves nothing from the derived tier when the tier is disabled', async () => {
     const sql = makeSql([[derivedRow()]]);
-    const res = await handleWatchGet(ctx(sql, { query: {} }));
+    const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled: false }));
     expect(res.body.candidates).toEqual([]);
     expect(res.body.excluded).toEqual({ no_anchor: 1 });
   });
@@ -546,7 +547,7 @@ describe('V4-ANCHORFLIP-001 derived anchor, at the route', () => {
   // a row they cannot dismiss — a 404 on the tap, on the only action the calibration table records.
   it('the dismissal path sees the same queue the GET served', async () => {
     const body = { plant_id: '33333333-2222-4333-8444-555555555555' };
-    const off = await handleDismissalPost(ctx(makeSql([[derivedRow()]]), { body }));
+    const off = await handleDismissalPost(ctx(makeSql([[derivedRow()]]), { body, derivedEnabled: false }));
     expect(off.statusCode).toBe(404);
     const on = await handleDismissalPost(ctx(
       makeSql([[derivedRow()], [{ id: PLANT }]]), { body, derivedEnabled: true },

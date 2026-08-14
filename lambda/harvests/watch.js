@@ -108,8 +108,16 @@ export const WATCH_SUPPRESS_DAYS = 10;
 // the ONLY thing holding the tier off — which is exactly the state the expert consult
 // (project-state/anchor-consult-20260812.md) required BEFORE the flip could be considered, because
 // flipping it while the route did not join was a runtime no-op that would have manufactured
-// confidence in an untested path. It stays FALSE here; flipping it is condition 9 and Dave's call.
-export const DERIVED_ANCHOR_ENABLED = false;
+// confidence in an untested path.
+//
+// FLIPPED TRUE 2026-08-14 (V4-ANCHORFLIP-001 condition 9 — Dave's call, the last of the 9). All of
+// conditions 1-8 shipped to prod in v4.14.0 and the anchor_kind CHECK migration is applied, so this
+// flag was the only remaining gate. Measured live effect at the time of the call: +2 watch rows,
+// 0 existing rows changed — the suppression rules below (conditions 3/4/5) are what shrank it from
+// the consult's original 9 net-new rows to 2 by removing the noise class the horticulture seat
+// identified. The tier can only ADD rows, never remove them (queue entry takes the EARLIEST
+// anchor), so this is a strictly additive change to the watch queue.
+export const DERIVED_ANCHOR_ENABLED = true;
 
 // ── The derived tier's suppression rules (V4-ANCHORFLIP-001 conditions 3/4/5) ────────────────────
 //

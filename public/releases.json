@@ -6,7 +6,8 @@
       "Harvest export and the Harvests page gain Today and Yesterday chips, so you can pull just tonight's picking — or last night's, after the fact",
       "The harvest export log now groups by day, then crop, then variety, instead of one flat list per day. Repeat pickings of the same variety on the same day fold into one line, and amounts in different units stay separate rather than being added together",
       "Tapping the harvest quantity field now pulls the Harvest panel to the top of the screen, so the quantity, weight and Save button stay above the keyboard",
-      "After saving a harvest, the page scrolls back to the planting picker instead of leaving it above the top of the screen"
+      "After saving a harvest, the page scrolls back to the planting picker instead of leaving it above the top of the screen",
+      "Plantings with no recorded sow or transplant date can now enter the harvest watch list using a derived estimate, so they stop being invisible. Derived estimates rank below real dates and never displace them"
     ]
   },
   {

@@ -288,10 +288,20 @@ describe('the derived tier in watch.js', () => {
     derived_anchor_confidence: 'baseline',
   };
 
-  it('is OFF by default, so a derived anchor admits nothing', () => {
-    expect(DERIVED_ANCHOR_ENABLED).toBe(false);
-    expect(resolveWatchAnchor(DERIVED_ROW, { etToday: TODAY })).toBeNull();
-    expect(classifyWatchCandidate(DERIVED_ROW, TODAY).reason).toBe('no_anchor');
+  // V4-ANCHORFLIP-001 condition 9 (2026-08-14): the flag is now ON. This test used to pin it OFF
+  // and assert the tier admitted nothing; inverting it is the point of the flip, not a weakening —
+  // the OFF behaviour is still covered directly below by passing derivedEnabled:false explicitly,
+  // which is the stronger form anyway (it tests the parameter rather than the module constant).
+  it('is ON, so a derived anchor now admits a candidate', () => {
+    expect(DERIVED_ANCHOR_ENABLED).toBe(true);
+    const anchor = resolveWatchAnchor(DERIVED_ROW, { etToday: TODAY });
+    expect(anchor).not.toBeNull();
+    expect(anchor.kind).toBe('derived');
+    expect(classifyWatchCandidate(DERIVED_ROW, TODAY).reason).not.toBe('no_anchor');
+  });
+
+  it('still admits NOTHING when the tier is disabled explicitly — the kill switch survives the flip', () => {
+    expect(resolveWatchAnchor(DERIVED_ROW, { etToday: TODAY, derivedEnabled: false })).toBeNull();
   });
 
   // Ranking and copy are asserted directly on the anchor shape, so they hold the moment the flag is
@@ -656,7 +666,11 @@ describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
 
   // ── The whole point: with the flag OFF none of this changes anything ────────────────────────────
 
-  it('is a strict no-op with the flag off', () => {
+  // V4-ANCHORFLIP-001 condition 9 (2026-08-14): the module flag is now ON, so this passes
+  // derivedEnabled:false EXPLICITLY rather than leaning on the default. That is the stronger
+  // assertion — it pins the kill switch itself, which is the thing that has to keep working after
+  // the flip, whereas the old form only re-asserted the constant.
+  it('is a strict no-op when the tier is disabled', () => {
     const rows = [
       BASE,
       { ...BASE, plant_id: 'p-2', harvest_habit: 'cut_and_come_again' },
@@ -664,7 +678,7 @@ describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
       { ...BASE, plant_id: 'p-4', derived_anchor_date: '2026-10-02' },
       { ...BASE, plant_id: 'p-5', sibling_first_pick_date: '2026-08-10' },
     ];
-    const { candidates, excluded } = buildWatchList(rows, TODAY);
+    const { candidates, excluded } = buildWatchList(rows, TODAY, { derivedEnabled: false });
     // Only the sibling row survives, exactly as it did before this item — every other row is
     // anchorless the moment the derived tier is off.
     expect(candidates.map((c) => c.plant_id)).toEqual(['p-5']);
