@@ -5,7 +5,12 @@
 //
 // Surfaces: POST (label-required, kind-enum, create returns 201 + RETURNING *), GET list (BARE
 // array, user-scoped, soft-delete excluded), PUT (COALESCE update, foreign-owner 404, kind-enum
-// 400), DELETE (idempotent soft-delete {ok:true}).
+// 400), DELETE (RETURNING-gated soft-delete, NOT idempotent -> 404).
+//
+// BUG-DELNOOPOK-001 (2026-08-13) changed the DELETE contract. It was "idempotent {ok:true}" — an
+// unconditional 200 that made not-found, already-deleted and NOT-OWNED indistinguishable, and that
+// forced storage-location-authz.int.test.js to pin the DELETE's ownership property by reading row
+// state instead of status. It now RETURNING-gates and 404s, matching the PUT above it.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
@@ -134,12 +139,30 @@ describe('DELETE /api/storage-locations/:id — soft-delete (idempotent)', () =>
     expect(rows[0].deleted_at).toBeTruthy()
   })
 
-  it('DELETE non-existent -> 200 {ok:true} (idempotent, mirrors locations)', async () => {
+  // BUG-DELNOOPOK-001 REVERSED this test's intent. It asserted 200 {ok:true} on a non-existent id
+  // and called it idempotence; it was the absence of a RETURNING-gate. Still mirrors locations —
+  // both routes moved to 404 in the same change. Do not restore the old assertion.
+  it('DELETE non-existent -> 404 (NOT idempotent, mirrors locations)', async () => {
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
       method: 'DELETE', path: `/api/storage-locations/00000000-0000-4000-8000-0000000000dd`,
     })
-    expect(status).toBe(200)
-    expect(body.ok).toBe(true)
+    expect(status).toBe(404)
+    expect(body.error).toBe('Not found')
+  })
+
+  // The foreign-owner arm, which the old contract could not express at all: with the gate in
+  // place, a not-owned DELETE is the same 404 as an unknown id — deliberately collapsed so the
+  // status never reveals that the row exists. storage-location-authz.int.test.js:39 additionally
+  // reads the row back; both claims matter, and neither replaces the other.
+  it("DELETE another user's storage_location -> 404, row untouched", async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'DELETE', path: `/api/storage-locations/${foreignId}`,
+    })
+    expect(status, `foreign DELETE → ${JSON.stringify(body)}`).toBe(404)
+    expect(body.error).toBe('Not found')
+    const rows = await directSql`SELECT deleted_at FROM storage_location WHERE id = ${foreignId}`
+    expect(rows[0].deleted_at).toBeNull()
   })
 })

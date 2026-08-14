@@ -104,13 +104,19 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        await sql`
+        // BUG-DELNOOPOK-001: RETURNING-gated. Was an unconditional {ok:true}, so a not-found /
+        // already-deleted / not-owned DELETE reported success; now 404, matching the PUT at :102.
+        // No slug arm here (unlike locations) — storage_location has no slug column and this
+        // route has only ever resolved by uuid on every verb.
+        const rows = await sql`
           UPDATE storage_location
           SET deleted_at = NOW()
           WHERE id = ${locId}
             AND deleted_at IS NULL
             AND user_id = ANY(${householdIds})
+          RETURNING id
         `;
+        if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
 

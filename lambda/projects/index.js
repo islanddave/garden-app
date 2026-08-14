@@ -290,10 +290,23 @@ export const handler = async (event) => {
     if (typesItemMatch) {
       const typeId = typesItemMatch[1];
       if (method === 'DELETE') {
-        await sql`
+        // BUG-DELNOOPOK-001: RETURNING-gated, so a not-found / already-deleted / not-owned DELETE
+        // 404s instead of reporting success. Collapsing those three into one status is deliberate
+        // (distinguishing them leaks existence) and matches every sibling route.
+        //
+        // The predicate is `created_by = ${userId}`, NOT `= ANY(${householdIds})`, and that is
+        // DELIBERATELY LEFT ALONE here: household-mode.test.js:60 pins it by name
+        // ('project_types delete guard remains owner-only (out of scope)'). Widening it is a
+        // separate authz decision, not a rider on a response-contract fix. The 404 does not make
+        // it user-visible: ProjectTypes.jsx:147 only renders the Delete button when
+        // `t.created_by === userId`, so a second household member has no path to this route for a
+        // type they do not own. Revisit only together with that test.
+        const rows = await sql`
           UPDATE project_types SET deleted_at = NOW()
           WHERE id = ${typeId} AND created_by = ${userId} AND deleted_at IS NULL
+          RETURNING id
         `;
+        if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
       return resp(405, { error: 'Method not allowed' });
@@ -786,13 +799,18 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        await sql`
+        // BUG-DELNOOPOK-001: RETURNING-gated. Was an unconditional {ok:true}, so a not-found /
+        // already-deleted / not-owned DELETE reported success; now 404, matching the PUT directly
+        // above (:784) and every other verb on this path.
+        const rows = await sql`
           UPDATE public.container
           SET deleted_at = NOW()
           WHERE id = ${projectId}
             AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
+          RETURNING id
         `;
+        if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
 

@@ -8,7 +8,13 @@
 // /with-path (bare array), GET /:id (slug-or-uuid resolve, foreign-owner 404,
 // non-existent 404, featured_photo_view_url key + storage_path stripped), PUT
 // (COALESCE update, foreign-owner 404, featured_photo_id strict-link 400), DELETE
-// (soft-delete, idempotent {ok:true}).
+// (slug-or-uuid resolve, RETURNING-gated soft-delete, NOT idempotent -> 404).
+//
+// BUG-DELNOOPOK-001 (2026-08-13) changed the DELETE contract on this route, in two ways. It was
+// "idempotent {ok:true}" — an unconditional 200 that made not-found, already-deleted and
+// NOT-OWNED indistinguishable; it now RETURNING-gates and 404s, matching GET and PUT on the same
+// path. And it resolved uuid ONLY while GET/PUT resolved slug-or-uuid, so a DELETE by slug 22P02'd
+// into a 500 (measured against live Neon, not assumed); all three verbs now share one key space.
 //
 // Locations are HOUSEHOLD-scoped (created_by = ANY(householdScope(userId))), not
 // project-scoped — no plant_projects fixture needed (unlike plants/events).
@@ -267,12 +273,60 @@ describe('DELETE /api/locations/:id — soft-delete', () => {
     expect(get.status).toBe(404)
   })
 
-  it('DELETE is idempotent: re-delete / non-existent -> 200 {ok:true} (no RETURNING-gate)', async () => {
+  // BUG-DELNOOPOK-001 REVERSED this test's intent. It asserted 200 {ok:true} on a non-existent id
+  // and called it idempotence; it was the absence of a RETURNING-gate. Do not restore it.
+  it('DELETE is NOT idempotent: re-delete / non-existent -> 404', async () => {
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
       method: 'DELETE', path: `/api/locations/00000000-0000-4000-8000-0000000000bb`,
     })
-    expect(status).toBe(200)
+    expect(status).toBe(404)
+    expect(body.error).toBe('Not found')
+  })
+
+  // BUG-DELNOOPOK-001, second defect. The route matcher takes any path segment and GET/PUT resolve
+  // `(slug = $1 OR id::text = $1)`, but DELETE compared the segment against the `uuid` column. A
+  // DELETE by slug therefore raised 22P02 and fell into the handler's catch as a 500 — never a
+  // silent no-op, and, once the 404 above landed, it would have been the one 500 hiding among the
+  // 404s. Both arms are asserted so a future narrowing back to uuid-only reds here.
+  it('DELETE resolves a slug, exactly as GET and PUT do (was 22P02 -> 500)', async () => {
+    setTestUserId(USER)
+    const slug = 'del-by-slug-' + RUN
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name: 'del-by-slug-' + RUN, slug },
+    })
+    expect(created.status).toBe(201)
+    const { status, body } = await callHandler(handler, { method: 'DELETE', path: `/api/locations/${slug}` })
+    expect(status, `DELETE by slug → ${JSON.stringify(body)}`).toBe(200)
     expect(body.ok).toBe(true)
+    const rows = await directSql`SELECT deleted_at FROM locations WHERE id = ${created.body.id}`
+    expect(rows[0].deleted_at).toBeTruthy()
+  })
+
+  // An unknown SLUG must be a clean 404, not a 500 — this is the assertion that would have caught
+  // the original defect, and it is the one a uuid-shaped fixture can never make.
+  it('DELETE with an unknown slug -> 404, never 500', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'DELETE', path: `/api/locations/no-such-slug-${RUN}`,
+    })
+    expect(status, `unknown slug → ${JSON.stringify(body)}`).toBe(404)
+    expect(body.error).toBe('Not found')
+  })
+
+  // The DELETE denial arm. authz-matrix.int.test.js runs its locations write axis through PUT (see
+  // the note at its :90), which used to be forced by DELETE's unconditional 200 and is now a
+  // readBack-semantics choice — so the DELETE half of the household predicate is pinned HERE.
+  // Status and row state are separate claims: the 404 proves the response was gated, the read-back
+  // proves the UPDATE never fired. Assert both.
+  it("DELETE another user's location -> 404, row untouched", async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'DELETE', path: `/api/locations/${foreignLocId}`,
+    })
+    expect(status, `foreign DELETE → ${JSON.stringify(body)}`).toBe(404)
+    expect(body.error).toBe('Not found') // collapsed with not-found on purpose: never leak existence
+    const rows = await directSql`SELECT deleted_at FROM locations WHERE id = ${foreignLocId}`
+    expect(rows[0].deleted_at).toBeNull()
   })
 })

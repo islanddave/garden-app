@@ -764,10 +764,16 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        // BUG-PLANTLESSWRITE-001: same EXISTS rewrite as PUT/archive. NOTE (unchanged, flagged not
-        // fixed): this route has always returned {ok:true} regardless of rows affected, so a
-        // not-found / not-owned DELETE reports success. Left as-is to avoid changing the response
-        // contract inside an authz fix — see events-authz-gap-V100-20260804.md §Related.
+        // BUG-PLANTLESSWRITE-001: same EXISTS rewrite as PUT/archive.
+        //
+        // BUG-DELNOOPOK-001 (this change): the route used to return {ok:true} regardless of rows
+        // affected, so a not-found / already-deleted / not-owned DELETE all reported success. It
+        // now observes the soft-delete's own RETURNING and 404s when nothing matched, which is the
+        // shape every sibling verb in this file already has (GET/PUT/archive/seen all 404 on a
+        // foreign or unknown id) and the shape inventory-items and the restore routes ship.
+        // The 404 deliberately COLLAPSES not-found and not-owned into one status — distinguishing
+        // them would leak existence, and `plants.int.test.js` already pins that collapse for the
+        // other four verbs.
         // BUG-CACHEORPHANLEAK-001 — the soft-delete must take the care-cache row with it.
         //
         // scripts/integrity-weekly-check.sh's `entity_memory_orphans` metric counts, as an ORPHAN,
@@ -784,18 +790,29 @@ export const handler = async (event) => {
         // retracted planting should have no care memory at all. Nothing reads it either way —
         // every rollup filters `gp.deleted_at IS NULL` and the by-id GET 404s.
         //
-        // ONE STATEMENT, and that is load-bearing rather than tidy. A separate
+        // ONE STATEMENT, and that is load-bearing rather than tidy — STILL TRUE after
+        // BUG-DELNOOPOK-001. A separate
         // `DELETE FROM entity_memory WHERE plant_id = $1` would carry NO ownership predicate,
         // turning this route into a cross-household write primitive: anyone could erase anyone's
-        // care cache by id, and the DELETE returns {ok:true} regardless of rows affected so it
-        // would not even be observable. Driving the delete off the UPDATE's RETURNING means the
+        // care cache by id. That used to be unobservable too, because the route answered {ok:true}
+        // regardless of rows affected; the 404 gate below removes the silence but NOT the
+        // primitive, so the one-statement property is what still prevents it and must survive any
+        // future edit. Driving the delete off the UPDATE's RETURNING means the
         // cache row can only go when the soft-delete it belongs to actually happened, under the
         // ownership predicate already proven above. garden_node is a simple renaming view
         // (information_schema reports is_updatable = YES), so UPDATE ... RETURNING works here.
         //
+        // The row-count observation is a SECOND data-modifying CTE plus a terminal SELECT, not a
+        // second round trip: `cache` references `gone`, and Postgres runs every data-modifying CTE
+        // exactly once and to completion whether or not the primary query reads its output. So the
+        // soft-delete, the cache delete and the 404 decision are still one statement, one snapshot,
+        // one implicit transaction. Reading the count off the cache DELETE instead would be wrong —
+        // it is legitimately 0 for a planting that has no cache row at all (32 of 33 soft-deleted
+        // prod plantings predate the plant-keyed cache), which would 404 a successful delete.
+        //
         // Loss on undelete is acceptable and self-healing: the cache is derivable from event_log,
         // and the deployed forward writer recreates the row on the next plant-anchored event.
-        await sql`
+        const _delRows = await sql`
           WITH gone AS (
             UPDATE public.garden_node p
             SET deleted_at = NOW()
@@ -813,11 +830,14 @@ export const handler = async (event) => {
               )
               AND p.deleted_at IS NULL
             RETURNING p.id
+          ), cache AS (
+            DELETE FROM public.entity_memory em
+             USING gone
+             WHERE em.plant_id = gone.id
           )
-          DELETE FROM public.entity_memory em
-           USING gone
-           WHERE em.plant_id = gone.id
+          SELECT id FROM gone
         `;
+        if (!_delRows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
 

@@ -310,13 +310,29 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        await sql`
+        // BUG-DELNOOPOK-001: RETURNING-gated. Was an unconditional {ok:true}, so a not-found /
+        // already-deleted / not-owned DELETE reported success; now 404, matching the GET (:220)
+        // and the PUT (:308) on this same path.
+        //
+        // The predicate also gains the slug-or-uuid arm the other two verbs have always had. This
+        // route matcher is `/^\/api\/locations\/([^/]+)$/` and GET/PUT both resolve
+        // `(slug = ${locId} OR id::text = ${locId})`, but DELETE compared a raw text path segment
+        // against the `uuid` column. MEASURED against live Neon rather than assumed: a prepared
+        // `WHERE id = $1` bound with 'raised-bed' raises
+        // `22P02 invalid input syntax for type uuid`, which this file's catch (:415) turns into a
+        // 500 — so a DELETE by slug was never a silent no-op, it was an unhandled error. Nothing
+        // ships a slug here today (Locations.jsx:132 passes loc.id), so this is a latent trap
+        // being closed, not a live bug — but leaving one verb of three on a different key while
+        // that verb also starts returning 404 would make the asymmetry read as a real 404.
+        const rows = await sql`
           UPDATE locations
           SET deleted_at = NOW()
-          WHERE id = ${locId}
+          WHERE (slug = ${locId} OR id::text = ${locId})
             AND deleted_at IS NULL
             AND created_by = ANY(${householdIds})
+          RETURNING id
         `;
+        if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
 

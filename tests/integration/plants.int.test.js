@@ -359,17 +359,27 @@ describe('DELETE /api/plants/:id — soft-delete', () => {
     // GET single now 404 (handler filters deleted_at IS NULL).
     const get = await callHandler(handler, { method: 'GET', path: `/api/plants/${id}` })
     expect(get.status).toBe(404)
+    // BUG-DELNOOPOK-001: re-deleting the row we just deleted is a 404, not a second success —
+    // the UPDATE's `deleted_at IS NULL` guard means it matches nothing the second time.
+    const again = await callHandler(handler, { method: 'DELETE', path: `/api/plants/${id}` })
+    expect(again.status).toBe(404)
   })
 
-  it('DELETE is idempotent: re-delete returns 200 {ok:true} even with no rows updated', async () => {
-    // Handler returns resp(200, { ok: true }) unconditionally — no RETURNING-gate on the UPDATE.
+  // BUG-DELNOOPOK-001 (2026-08-13) REVERSED this test's intent. It previously asserted that a
+  // re-delete returned 200 {ok:true}, describing the handler's unconditional response as
+  // deliberate idempotence. It was not idempotence — it was the absence of a RETURNING-gate, and
+  // it made not-found, already-deleted and NOT-OWNED indistinguishable. The route now gates on the
+  // soft-delete's own RETURNING and 404s, which is the shape every other verb on this path already
+  // had (see 'another user's project-less planting → 404 on GET/PUT/archive/seen' below) and the
+  // shape inventory-items and the restore routes ship. Do not restore the old assertion.
+  it('DELETE is NOT idempotent: re-delete / unknown id -> 404', async () => {
     setTestUserId(USER)
     const fakeUuid = '00000000-0000-4000-8000-000000000001'
     const { status, body } = await callHandler(handler, {
       method: 'DELETE', path: `/api/plants/${fakeUuid}`,
     })
-    expect(status).toBe(200)
-    expect(body.ok).toBe(true)
+    expect(status).toBe(404)
+    expect(body.error).toBe('Not found')
   })
 })
 
@@ -467,20 +477,31 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
 
   // ── the negative half: the widening must not reach anyone else's rows ──────────────────────
   it("DELETE on another user's project-less planting must not delete it", async () => {
-    // DELETE is the ONE route whose response cannot reveal an authz failure — it returns
-    // {ok:true} unconditionally — so it is also the one route where a broken predicate would be
-    // completely silent. Assert the DATABASE, never the echo. (Adversarial review F3.)
+    // (Adversarial review F3.) This test was written when DELETE was the ONE route whose response
+    // could not reveal an authz failure — it returned {ok:true} unconditionally, so a broken
+    // predicate would have been completely silent, and the read-back was the only real assertion.
+    //
+    // BUG-DELNOOPOK-001 retired that: the route is RETURNING-gated and a foreign id now 404s, the
+    // same status the other four verbs return one test below. The status IS now evidence.
+    //
+    // The DATABASE read-back is KEPT ANYWAY, and deliberately so — that is the point of this test,
+    // not an artefact of the old contract. A 404 proves the response was gated; only the row state
+    // proves the UPDATE did not fire. Those are different claims, and a handler that soft-deleted
+    // a foreign row and *then* mis-reported would satisfy the first and fail the second. Assert
+    // both; never delete the read-back in favour of the status.
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
       method: 'DELETE', path: `/api/plants/${foreignPlantlessId}`,
     })
-    expect(status).toBe(200)
-    expect(body.ok).toBe(true) // the misleading part — hence the read-back below
+    expect(status).toBe(404)
+    expect(body.error).toBe('Not found') // collapsed with not-found on purpose: never leak existence
     const rows = await directSql`SELECT deleted_at FROM plants WHERE id = ${foreignPlantlessId}`
     expect(rows[0].deleted_at).toBeNull()
   })
 
-  it("another user's project-less planting → 404 on GET/PUT/archive/seen", async () => {
+  // BUG-DELNOOPOK-001: DELETE now belongs to this set too — it is asserted in the test directly
+  // above rather than in this loop, because that one additionally reads the row back.
+  it("another user's project-less planting → 404 on GET/PUT/archive/seen (and DELETE, above)", async () => {
     setTestUserId(USER)
     for (const req of [
       { method: 'GET', path: `/api/plants/${foreignPlantlessId}` },

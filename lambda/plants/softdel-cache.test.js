@@ -13,10 +13,18 @@
 // THE AUTHORIZATION HAZARD, which is why this file exists rather than just a one-line fix.
 // The obvious repair is a second statement, `DELETE FROM entity_memory WHERE plant_id = $1`. That
 // carries NO ownership predicate and would turn this route into a cross-household write primitive:
-// any authenticated caller could erase any planting's care cache by id. Worse, it would be silent —
-// this route returns `{ok:true}` regardless of rows affected (a pre-existing contract quirk noted in
-// the handler), so nothing would surface it. Driving the delete off the UPDATE's RETURNING binds it
-// to the ownership predicate that was already proven, in one statement.
+// any authenticated caller could erase any planting's care cache by id. Driving the delete off the
+// UPDATE's RETURNING binds it to the ownership predicate that was already proven, in one statement.
+//
+// BUG-DELNOOPOK-001 (2026-08-13) narrowed the blast radius of that hazard WITHOUT retiring it. The
+// route used to answer `{ok:true}` regardless of rows affected, so the cross-household cache wipe
+// would additionally have been SILENT; it now 404s when nothing matched. The 404 removes the
+// silence, not the primitive — the one-statement property is still the only thing preventing it,
+// so it is asserted here (`WITH gone AS (` + no `${plantId}` in the cache DELETE's own predicate)
+// and must survive any future edit. The observation is a second data-modifying CTE plus a terminal
+// `SELECT id FROM gone`, which Postgres runs in the same statement/snapshot; the count must come
+// from `gone`, never from the cache DELETE, which is legitimately 0 for a planting that has no
+// cache row (32 of 33 soft-deleted prod plantings predate the plant-keyed cache).
 //
 // Rehearsed against live prod inside BEGIN/ROLLBACK, both directions:
 //   correct household -> soft-deletes AND `DELETE 1`, cache row gone
@@ -71,6 +79,24 @@ describe('BUG-CACHEORPHANLEAK-001 — the soft-delete drops the cache row', () =
     // the id bind must NOT appear in the DELETE's own predicate
     const del = branch.slice(branch.indexOf('DELETE FROM public.entity_memory'));
     expect(del).not.toMatch(/\$\{plantId\}/);
+  });
+
+  // BUG-DELNOOPOK-001. MUTATION: delete the `if (!_delRows.length) return resp(404 ...)` line, or
+  // drop the terminal `SELECT id FROM gone`, -> RED.
+  it('404s when the soft-delete matched nothing, off `gone` and not off the cache DELETE', () => {
+    expect(branch).toMatch(/\)\s*SELECT id FROM gone/);
+    expect(branch).toMatch(/if \(!_delRows\.length\) return resp\(404, \{ error: 'Not found' \}\)/);
+    // The count must be read from the soft-delete, not from the cache delete: a planting with no
+    // cache row deletes 0 cache rows and would 404 a successful delete.
+    const sel = branch.slice(branch.indexOf('SELECT id FROM gone'));
+    expect(sel).not.toMatch(/FROM cache/);
+  });
+
+  // MUTATION: split the cache delete back out into its own `await sql` -> RED. This is the
+  // one-statement security property; the 404 above made the route observable but did NOT make a
+  // second, unpredicated statement safe.
+  it('the whole DELETE branch is still ONE sql call', () => {
+    expect((branch.match(/await sql`/g) ?? []).length).toBe(1);
   });
 
   // MUTATION: remove either ownership arm from the UPDATE -> RED. The cache delete is only as safe

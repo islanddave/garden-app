@@ -87,7 +87,14 @@ describeAuthzMatrix({
 // ── locations /api/locations/:id — full matrix (Phase-1 sweep; PHOTOLOCAUTHZ arm) ─────────────
 // Locations are household-scoped directly (created_by = ANY(householdScope)); no project fixture.
 // NB: read MUST be GET /:id (single object) — GET /api/locations returns an object, not an array.
-// write MUST be PUT (DELETE returns 200 unconditionally — no RETURNING gate — so it can't signal denial).
+// write is PUT. That used to be FORCED: DELETE returned 200 unconditionally — no RETURNING gate —
+// so it could not signal denial at all. BUG-DELNOOPOK-001 (2026-08-13) retired that constraint;
+// DELETE now 404s on a foreign id like every other verb. PUT nonetheless STAYS the write axis, for
+// a different and still-live reason: this matrix's `readBack` asserts that the attempted mutation
+// did NOT land ('authz-mutated' must not appear), which only a mutating-but-not-destroying verb can
+// express. A DELETE axis would have nothing to read back except a deleted_at that must stay null —
+// a weaker claim on a row the matrix then could not reuse. The locations DELETE denial is pinned
+// directly in locations.int.test.js instead. Do not re-add the old rationale; it is now false.
 describeAuthzMatrix({
   name: 'locations /api/locations/:id',
   handler: locationsHandler,
