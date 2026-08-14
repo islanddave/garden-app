@@ -17,6 +17,7 @@ import CritterSprite from './CritterSprite.jsx'
 import PhotoUpload from './PhotoUpload.jsx'
 import PhotoImg from './PhotoImg.jsx'
 import CaretakerBadge from './CaretakerBadge.jsx'
+import { CRITTERS_QUIET } from '../lib/featureFlags.js'
 
 // No-photo fallback (RES-2): neutral cream 4:3 swatch + a generic seedling SVG (shape, not
 // color-only) + a "tap to add first photo" CTA. Species-agnostic: /api/plants carries no
@@ -81,11 +82,31 @@ export default function PlantingTile({
 
       {/* MVP-Critter sprites -- same contract as PlantingRow. Peek above the tile's top-left,
           clear of the favorite corner (top-right) and the body below the photo. zIndex 5 so they
-          sit above the card chrome but never block the photo link tap target. */}
+          sit above the card chrome but never block the photo link tap target.
+
+          V4-CRITTERQUIET-001: under CRITTERS_QUIET the strip still MOUNTS -- each CritterSprite
+          renders as an invisible viewport sentinel so the per-critter mark-viewed contract
+          (onIntersect -> Garden seenIdsRef -> actually_seen_critter_ids) is unchanged; see the long
+          note in CritterSprite.jsx for why dropping the strip is a data change, not a visual one.
+          What changes here: the strip loses its stacking context (zIndex 5 -> 0) and its
+          pointerEvents, so an invisible 22px band can no longer sit above -- or steal a tap from --
+          the stretched card link underneath it. */}
       {critters.length > 0 && (
-        <div style={{ position: 'absolute', top: 4, left: 8, right: 8, display: 'flex', flexWrap: 'wrap', gap: 2, zIndex: 5, pointerEvents: 'auto' }}>
+        <div style={{
+          position: 'absolute', top: 4, left: 8, right: 8,
+          display: 'flex', flexWrap: 'wrap', gap: 2,
+          zIndex: CRITTERS_QUIET ? 0 : 5,
+          pointerEvents: CRITTERS_QUIET ? 'none' : 'auto',
+        }}>
           {critters.map(c => (
-            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} onIntersect={onSpriteIntersect} spriteSize={22} />
+            <CritterSprite
+              key={c.id}
+              critter={c}
+              onLongPress={CRITTERS_QUIET ? null : onSpriteLongPress}
+              onIntersect={onSpriteIntersect}
+              spriteSize={22}
+              quiet={CRITTERS_QUIET}
+            />
           ))}
         </div>
       )}

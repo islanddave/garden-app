@@ -261,3 +261,29 @@ export const BACKNAV_ENABLED = true
 // Rollback is one const: flip false + redeploy and both buttons return. The flag-OFF path is the
 // lever, not dead code, and both branches are covered by SaveToDevice.flag.test.jsx.
 export const SAVE_TO_DEVICE_HIDDEN = true
+
+// V4-CRITTERQUIET-001 (BD0806-24, Dave 2026-08-06): demote critters VISUALLY on the two work
+// surfaces. TRUE = quiet: the Stage-1 arrival animation (App-level CritterArrivalController) does
+// not mount, and the Stage-2 tile sprites (PlantingTile -> CritterSprite) render as an invisible
+// viewport sentinel instead of a bird over the Garden photo.
+//
+// SCOPE — what this flag does NOT touch, deliberately:
+//   • Accrual. Awarding is server-side only (lambda/events awardCritterServer); no SPA code grants
+//     a critter, so hiding every client render changes nothing about critter_state writes.
+//   • Mark-viewed SEMANTICS. See the sentinel note in CritterSprite.jsx — the per-critter
+//     onIntersect contract is preserved EXACTLY, so `viewed_at` is stamped on the same row set as
+//     before. Simply unmounting the sprite would have silently reverted Garden to the legacy BULK
+//     mark-viewed path (Garden.jsx flushSeen passes null when no sprite intersected), mass-stamping
+//     viewed_at on critters that today would not receive it. That is a data change, not a visual
+//     one, and it is not what this row asked for.
+//   • Collection (/collection). Critters LIVE there — the dex, CritterOfDay and the arrival bloom
+//     are the surface Dave goes to on purpose. Quiet removes the interrupt, not the record.
+//   • BottomNavDot, CritterCoachmark, CritterOptInPrompt. Not named by the row; the dot is the
+//     ambient "go look" signal that still works, and the coachmark copy explains the DOT (not the
+//     tile sprites), so it stays coherent with the sprites hidden.
+//
+// WHY a flag rather than deleting the render sites: this is a taste call on a shipped reward
+// surface, so both arms stay live and covered (the SAVE_TO_DEVICE_HIDDEN idiom above). Flipping it
+// back is a one-line revert + rebuild — it is a compile-time const, NOT a runtime toggle, so it
+// still needs a deploy; what the flag buys is that the loud arm never rots.
+export const CRITTERS_QUIET = true
