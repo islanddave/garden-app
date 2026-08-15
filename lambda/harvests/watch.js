@@ -391,9 +391,16 @@ function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR
   fruitingIntervalDays = FRUITING_TO_PICK_DAYS_FALLBACK) {
   const out = [];
 
-  // Observed — a fruit_set event Dave logged, plus the crop's fruit-set-to-first-pick interval
-  // (populated for melon=42 and watermelon=45 on live prod; NULL elsewhere, and a fruit_set with no
-  // interval predicts nothing, so it produces no anchor).
+  // Observed — a fruit_set event Dave logged, plus the crop's fruit-set-to-first-pick interval.
+  //
+  // COVERAGE NOTE CORRECTED 2026-08-14. This comment used to read "populated for melon=42 and
+  // watermelon=45 on live prod; NULL elsewhere", and that has not been true for some time: prod now
+  // carries the interval for pepper 50, tomato 45, watermelon 45, melon 42, cucamelon 10, cucumber 8
+  // and squash 5 — seven crops, including the two that dominate this garden. Only broccoli and
+  // cabbage log a fruit_set without one. The stale version of this note is load-bearing in the wrong
+  // direction: it is the reason V4-FRUITINGTIER-001 sat blocked as though no fruit interval existed
+  // anywhere. Re-measure before quoting it. The behaviour is unchanged — a fruit_set with no
+  // interval still predicts nothing and still produces no anchor.
   const fruitSet = toYmd(row?.fruit_set_date);
   const setToPick = Number(row?.set_to_first_pick_days);
   if (fruitSet != null && Number.isFinite(setToPick) && setToPick > 0) {
@@ -425,8 +432,18 @@ function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR
   // here — `fruiting` on a cut-and-come-again crop is still Dave saying he saw fruit — but prod has
   // exactly one such sample (basil, 5d), so the household median governs it and nothing special is
   // needed. WATCHED_HABITS still applies upstream.
-  const fruitingOn = toYmd(row?.fruiting_status_date);
+  // SCOPE, and why it is NOT widened to the fruit_set event. Over the 44 live plantings at status
+  // `fruiting` on prod 2026-08-14: 25 carry a status_change event to fruiting, 15 carry ONLY a
+  // fruit_set event (that event AUTO-ADVANCED the status via lambda/events/statusTransitions.js and
+  // wrote no status_change event), 4 carry neither. Feeding those 15 into this tier looks like a
+  // coverage win and is not: they are peppers and tomatoes, and set_to_first_pick_days is populated
+  // for BOTH (50 and 45), so the crop-calibrated observed anchor above already serves them on their
+  // own crop's number. The only plantings a fruit_set arm would actually add are the 3 with a
+  // fruit_set and no interval — broccoli and cabbage — where "fruit set" is not the harvested
+  // product at all and an 18-day median measured on tomato/pepper/tomatillo predicts nothing about
+  // a head. This tier reads the status Dave logged, and nothing else.
   const fruitingDays = Number(fruitingIntervalDays);
+  const fruitingOn = toYmd(row?.fruiting_status_date);
   if (fruitingOn != null && Number.isFinite(fruitingDays) && fruitingDays > 0) {
     const lead = leadDaysFor(fruitingDays);
     out.push({
