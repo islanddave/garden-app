@@ -30,7 +30,10 @@ import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
-import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
+import {
+  FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES,
+  HARVESTED_EVENT_TYPES, HARVESTED_SOURCE_STATUSES,
+} from './statusTransitions.js';
 import { awardCritterServer, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
 import { applyBatchSideEffects } from './batchSideEffects.js';
 import { randomUUID } from 'node:crypto';
@@ -521,6 +524,22 @@ export const handler = async (event) => {
              AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FLOWERING_SOURCE_STATUSES})
+        `,
+        // V4-HARVSTATUS-001 (BD-020) — batch trigger-parity with the single-event UPDATE below.
+        // Forward-only and idempotent via the source-status guard; two-arm ownership scoping so a
+        // container-less planting is not silently skipped (see the single-event copy for why the
+        // two older UPDATEs keep the narrower join). No-RLS caveat unchanged (L-087).
+        sql`
+          UPDATE public.garden_node p
+             SET status = 'harvested', updated_at = NOW()
+           WHERE ${eventType}::text = ANY(${HARVESTED_EVENT_TYPES})
+             AND p.id = ANY(${plantIds})
+             AND p.deleted_at IS NULL
+             AND p.status = ANY(${HARVESTED_SOURCE_STATUSES})
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
         `,
         // CAL-2 germination capture — logging a `germination` event stamps the planting's
         // germinated_at (the event date) the FIRST time only. Batch trigger-parity with the
@@ -2633,6 +2652,30 @@ export const handler = async (event) => {
              AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FLOWERING_SOURCE_STATUSES})
+        `,
+        // V4-HARVSTATUS-001 (BD-020): logging a harvest on a specific planting auto-advances it to
+        // 'harvested' (forward-only), completing the pattern the two UPDATEs above established for
+        // fruit_set and flowering. Idempotent via the source-status guard — a planting already at
+        // 'harvested' or in a terminal state is simply not matched, so re-logging is a no-op.
+        //
+        // OWNERSHIP IS SCOPED WITH THE TWO-ARM PREDICATE, not the container join the two UPDATEs
+        // above use, because a planting may have NO container (prod has 4 live). An inner join drops
+        // those rows silently — the same defect BUG-ANCHORNOPROJ-001 fixed in the watch route this
+        // session. The EXISTS form is the one lambda/plants/index.js already uses at seven sites.
+        // The two older UPDATEs carry the narrower join and are NOT changed here: widening them
+        // changes shipped fruit_set/flowering behaviour and belongs in its own row, filed as
+        // BUG-STATUSADVNOPROJ-001. garden_node still has no RLS (L-087).
+        sql`
+          UPDATE public.garden_node p
+             SET status = 'harvested', updated_at = NOW()
+           WHERE ${eventType}::text = ANY(${HARVESTED_EVENT_TYPES})
+             AND p.id = ${body.plant_id ?? null}
+             AND p.deleted_at IS NULL
+             AND p.status = ANY(${HARVESTED_SOURCE_STATUSES})
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
         `,
         // CAL-2 germination capture — logging a `germination` event on a specific planting stamps
         // germinated_at (the event date) the FIRST time only (set-once via `germinated_at IS NULL`).

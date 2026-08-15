@@ -27,3 +27,34 @@ export const FLOWERING_SOURCE_STATUSES = ['seed', 'rooting', 'seedling', 'vegeta
 export function advancesToFlowering(eventType, status) {
   return eventType === 'flowering' && FLOWERING_SOURCE_STATUSES.includes(status);
 }
+
+// V4-HARVSTATUS-001 (BD-020) — forward-only harvest -> 'harvested' transition guard, the third
+// instance of the pattern above. Which prior statuses may auto-advance when a harvest is logged on
+// a specific planting.
+//
+// DAVE'S RULING (2026-08-14), and the whole of it: "ended + dormant NEVER advance. Sources = seed,
+// rooting, seedling, vegetative, flowering, fruiting." `failed` is absent from his list and stays
+// absent here, matching the two guards above — a planting recorded as failed is a record, and a
+// stray harvest event must not quietly overwrite it.
+//
+// Note this list INCLUDES 'fruiting', unlike the two above: harvested is the state after fruiting,
+// so the whole point is that it advances from there. V4-MERGESTATUS-001 already ranked `harvested`
+// BELOW `fruiting` in resolveStatus, so advancing a planting here cannot reproduce the g6
+// regression that ranking was fixed to prevent.
+//
+// BOTH harvest event types. `first_harvest` is a MILESTONE that carries no quantity and therefore
+// never has a harvest_log row, but it is still Dave recording that he picked something — the same
+// pairing entity_memory.last_harvested_at already uses.
+//
+// Same no-RLS caveat as above: garden_node has no row-level security, so the consuming UPDATE in
+// index.js scopes ownership explicitly (L-087).
+export const HARVESTED_EVENT_TYPES = ['harvest', 'first_harvest'];
+export const HARVESTED_SOURCE_STATUSES = [
+  'seed', 'rooting', 'seedling', 'vegetative', 'flowering', 'fruiting',
+];
+
+// Pure predicate mirror for unit tests + any future JS-side use. The DB UPDATE is the
+// authoritative enforcement; this stays in lockstep with HARVESTED_SOURCE_STATUSES.
+export function advancesToHarvested(eventType, status) {
+  return HARVESTED_EVENT_TYPES.includes(eventType) && HARVESTED_SOURCE_STATUSES.includes(status);
+}

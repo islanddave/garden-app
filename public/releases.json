@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.26.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Logging a harvest now moves the planting to Harvested automatically"
+    ]
+  },
+  {
     "version": "4.25.0",
     "date": "2026-08-14",
     "highlights": [

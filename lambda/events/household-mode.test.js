@@ -29,7 +29,7 @@ describe('events Lambda — Household Mode surgical widening', () => {
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 
-  it('exactly 17 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
+  it('exactly 19 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
     // UPDATE event_log guard + 3 event LIST/GET reads + Unit A bulk Quick Log batch
     // plant-resolution (2026-05-24) + HS-2 planting-scoped LIST read (2026-06-04, V3-NAV-001)
     // + DELETE /:id single-event-undo ownership pre-check (2026-06-10, V3-LOGMANY undo fix).
@@ -62,11 +62,29 @@ describe('events Lambda — Household Mode surgical widening', () => {
     //   this arm's scope identical to its two sibling branches.
     // Each is an event-entity op, so household-widening is correct per the surgical-widening
     // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2, 7 post-undo-fix, 8 post-feed, 9 post-fruit_set, 10 post-flowering (V3-FLOWERING-001), 12 post-batch-flowering+fruit_set (V4-EVENTSEL-002: the two batch-path status UPDATEs), 14 post-germination (CAL-2: single + batch germinated_at set-once writes), 16 post-event-edit (BUG-HARVESTEDIT-001: PUT pre-check + UPDATE), 17 post-events-POST-authz (BUG-EVENTSOWN-001), back to 16 once that gate moved out of this file into ./authz-parents.js (step 3, same day — the predicate did not go away, it stopped being inline; authz-parents-copies-sync.test.js guards it there), 17 post-plant-only-list-arm (BUG-UNSCOPEDPLANTLOG-001) (L-099 drift class).
+    // + harvest->'harvested' planting status-transition WRITE, single + batch paths (2026-08-14,
+    //   V4-HARVSTATUS-001): completes the fruit_set/flowering pattern. TWO sites, and both are
+    //   inside an EXISTS rather than a container join — a planting may have NO container, and the
+    //   join form drops those rows silently (BUG-ANCHORNOPROJ-001, same defect in the watch
+    //   route). The regex matches the predicate wherever it sits, which is why the count moves by
+    //   two and not zero. 19 post-harvest-status.
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(17);
+    expect(matches.length).toBe(19);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
     const localAuthz = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
+  });
+
+  // V4-HARVSTATUS-001. The two harvest UPDATEs are the only status writes in this file that scope
+  // ownership with the two-arm predicate instead of a container join, because a planting may have
+  // NO container and the join form drops those rows silently (BUG-ANCHORNOPROJ-001). A refactor
+  // that "tidied" them into the shape of their two older neighbours would reintroduce exactly that
+  // blind spot, and would do it invisibly — the household count above would not move.
+  it("both harvest->'harvested' UPDATEs keep the container-less arm", () => {
+    const sites = SRC.match(/SET status = 'harvested'/g) ?? [];
+    expect(sites.length).toBe(2);                       // single-event path + batch path
+    const arms = SRC.match(/p\.container_id IS NULL AND p\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
+    expect(arms.length).toBe(2);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {
