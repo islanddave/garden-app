@@ -19,6 +19,7 @@
 
 import {
   WATCH_MODEL_VERSION, NURSERY_OFFSET_DAYS_FALLBACK, DERIVED_ANCHOR_ENABLED,
+  FRUITING_TO_PICK_DAYS_FALLBACK,
   buildWatchList, buildDismissalSnapshot, toYmd,
 } from './watch.js';
 
@@ -139,6 +140,27 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
        WHERE e.event_type = 'fruit_set'
          AND e.deleted_at IS NULL
          AND e.plant_id IS NOT NULL
+         AND (e.event_date AT TIME ZONE ${tz})::date >= b.season_start
+       GROUP BY e.plant_id
+    ),
+    -- V4-FRUITINGTIER-001. The date Dave's own logged status_change first said fruiting.
+    --
+    -- This is an OBSERVATION, not a derivation: a status Dave entered about this planting. Until now
+    -- it was used only to SUPPRESS (watch.js DERIVED_STATUS_SUPPRESSED, condition 4 — a guess must
+    -- not speak over a record), so the app held strictly better evidence than the derived tier and
+    -- did nothing with it. The consult that wrote condition 4 said this tier SHOULD exist and left it
+    -- unbuilt for one reason: nothing answered "how long from fruiting to first pick?" —
+    -- crop_types.set_to_first_pick_days is a FRUIT-SET interval and is populated for melon and
+    -- watermelon only. The fruiting_gap CTE below answers it from Dave's own history instead.
+    --
+    -- Season-scoped like picks/fruit_set: last year's fruiting status must not open this year's watch.
+    fruiting AS (
+      SELECT e.plant_id, MIN((e.event_date AT TIME ZONE ${tz})::date) AS fruiting_on
+        FROM event_log e CROSS JOIN bounds b
+       WHERE e.event_type = 'status_change'
+         AND e.deleted_at IS NULL
+         AND e.plant_id IS NOT NULL
+         AND e.metadata->>'status_to' = 'fruiting'
          AND (e.event_date AT TIME ZONE ${tz})::date >= b.season_start
        GROUP BY e.plant_id
     ),
@@ -284,6 +306,48 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
          AND gn.sown_at IS NOT NULL
          AND gn.transplanted_at IS NOT NULL
          AND gn.transplanted_at >= gn.sown_at
+    ),
+    -- V4-FRUITINGTIER-001, the interval that unblocked the tier. Computed PER HOUSEHOLD from that
+    -- household's own history, exactly as the nursery offset above is, and for the same reason: how
+    -- long a plant takes from "I logged it as fruiting" to "I picked something" is a fact about this
+    -- gardener's eye and this garden, not a catalogue constant. Below FRUITING_MIN_SAMPLE it falls
+    -- back to the documented constant rather than letting one atypical pair set every crop's window.
+    --
+    -- MEASURED on live prod 2026-08-14 (household = Dave; Jen has zero live plantings, so this is
+    -- DAVE'S number, not a household average): n=39, median 18d, p25 12, p75 23. Per crop:
+    -- tomato 18d (n=20, range 1-28), pepper 20d (n=13, range 1-45), tomatillo 21d (n=3). The three
+    -- dominant crops sit within 3 days of each other, which is why ONE household median is used
+    -- rather than a per-crop table — the spread BETWEEN crops is far smaller than the spread within
+    -- any one of them, so per-crop medians would add parameters without adding accuracy.
+    --
+    -- NOT season-scoped, unlike the fruiting CTE: this is the calibration population and wants
+    -- every sample it can get, while the anchor itself must not reach back a year.
+    fruiting_gap AS (
+      SELECT count(*)::int AS n,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY (g.first_pick - g.fruiting_on))::int AS median_days
+        FROM (
+          SELECT fr.plant_id, fr.fruiting_on,
+                 (SELECT MIN((k.event_date AT TIME ZONE ${tz})::date)
+                    FROM event_log k
+                   WHERE k.plant_id = fr.plant_id
+                     AND k.deleted_at IS NULL
+                     AND k.event_type IN ('harvest', 'first_harvest')) AS first_pick
+            FROM (
+              SELECT f.plant_id, MIN((f.event_date AT TIME ZONE ${tz})::date) AS fruiting_on
+                FROM event_log f
+                JOIN garden_node gn ON gn.id = f.plant_id
+                LEFT JOIN plant_projects pj ON pj.id = gn.container_id
+               WHERE f.event_type = 'status_change'
+                 AND f.deleted_at IS NULL
+                 AND f.metadata->>'status_to' = 'fruiting'
+                 AND gn.deleted_at IS NULL
+                 AND ( pj.created_by = ANY(${householdIds})
+                       OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})) )
+               GROUP BY f.plant_id
+            ) fr
+        ) g
+       WHERE g.first_pick IS NOT NULL
+         AND g.first_pick >= g.fruiting_on
     )
     SELECT l.*,
            COALESCE(pk.harvest_count, 0)      AS prior_harvest_count,
@@ -308,11 +372,19 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
            to_char(b.et_today, 'YYYY-MM-DD')  AS et_today,
            to_char(b.season_start, 'YYYY-MM-DD') AS season_start,
            nu.n                               AS nursery_sample_n,
-           nu.median_gap                      AS nursery_median_gap
+           nu.median_gap                      AS nursery_median_gap,
+           -- V4-FRUITINGTIER-001. to_char for the same reason the dismissal and derived dates use it
+           -- (see above): a bare date round-trips through the driver as a Date whose civil day
+           -- depends on the reader's zone, and this one feeds the anchor arithmetic directly.
+           to_char(fg.fruiting_on, 'YYYY-MM-DD') AS fruiting_status_date,
+           fgp.n                              AS fruiting_sample_n,
+           fgp.median_days                    AS fruiting_median_days
       FROM live l
       CROSS JOIN bounds b
       CROSS JOIN nursery nu
+      CROSS JOIN fruiting_gap fgp
       LEFT JOIN picks pk     ON pk.plant_id = l.plant_id
+      LEFT JOIN fruiting fg  ON fg.plant_id = l.plant_id
       LEFT JOIN fruit_set fs ON fs.plant_id = l.plant_id
       LEFT JOIN sibling sb   ON sb.plant_id = l.plant_id
       LEFT JOIN dismissed dm ON dm.plant_id = l.plant_id
@@ -334,6 +406,26 @@ export function resolveNurseryOffset(rows) {
     return { days: gap, source: 'household_median', sample_n: n };
   }
   return { days: NURSERY_OFFSET_DAYS_FALLBACK, source: 'fallback_constant', sample_n: n };
+}
+
+// V4-FRUITINGTIER-001. Same shape and same threshold as resolveNurseryOffset — deliberately, so
+// there is one household-calibration pattern in this file rather than a dialect per tier.
+//
+// `days > 0` rather than `>= 0`: a zero-day median would mean Dave logs `fruiting` and picks on the
+// same day, which makes the status a RECORD of the harvest rather than a predictor of it. That is a
+// real possibility for a gardener who backfills, and an anchor with a zero interval would open every
+// such row immediately and permanently. Falling back to the constant is the safe reading; prod's
+// median is 18, so this guard is dormant today and exists for the household that isn't Dave.
+export const FRUITING_MIN_SAMPLE = 5;
+
+export function resolveFruitingInterval(rows) {
+  const r = rows?.[0];
+  const n = Number(r?.fruiting_sample_n ?? 0);
+  const days = Number(r?.fruiting_median_days);
+  if (n >= FRUITING_MIN_SAMPLE && Number.isFinite(days) && days > 0) {
+    return { days, source: 'household_median', sample_n: n };
+  }
+  return { days: FRUITING_TO_PICK_DAYS_FALLBACK, source: 'fallback_constant', sample_n: n };
 }
 
 // ── Impression log (V4-WATCHIMPRESSION-001) ──────────────────────────────────────────────────────
@@ -458,9 +550,11 @@ export async function handleWatchGet(ctx) {
   const rows = await queryWatchRows(sql, householdIds, userId, tz);
   const etToday = toYmd(rows?.[0]?.et_today) ?? toYmd(ctx.etTodayFallback);
   const nursery = resolveNurseryOffset(rows);
+  const fruiting = resolveFruitingInterval(rows);
 
   const { candidates, excluded, snoozed } = buildWatchList(rows, etToday, {
     nurseryOffsetDays: nursery.days, derivedEnabled: resolveDerivedEnabled(ctx),
+    fruitingIntervalDays: fruiting.days,
   });
 
   // PANEL Q2: persist the resolver's exclusion breakdown, do not merely return it. v1 is one
@@ -533,6 +627,7 @@ export async function handleDismissalPost(ctx) {
   const rows = await queryWatchRows(sql, householdIds, userId, tz);
   const etToday = toYmd(rows?.[0]?.et_today) ?? toYmd(ctx.etTodayFallback);
   const nursery = resolveNurseryOffset(rows);
+  const fruiting = resolveFruitingInterval(rows);
 
   // observed_on defaults to today and may be BACKDATED, following this codebase's event_date
   // convention (Dave reads the list, walks out, comes back, then logs). Future dates are refused —
@@ -552,6 +647,7 @@ export async function handleDismissalPost(ctx) {
   // — the dismissal path must see exactly the queue the user was looking at.
   const { candidates } = buildWatchList(rows, etToday, {
     nurseryOffsetDays: nursery.days, derivedEnabled: resolveDerivedEnabled(ctx),
+    fruitingIntervalDays: fruiting.days,
   });
   const candidate = candidates.find((c) => c.plant_id === plantId);
   if (!candidate) {

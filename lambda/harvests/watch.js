@@ -62,6 +62,23 @@ export const WATCH_LEAD_MAX_FRACTION = 0.25;
 // documented fallback when a household has too little data to compute its own.
 export const NURSERY_OFFSET_DAYS_FALLBACK = 31;
 
+// V4-FRUITINGTIER-001. MEASURED from Dave's own history, live prod 2026-08-14: the interval from the
+// first status_change to `fruiting` to the first harvest event on the same planting is a median of
+// 18 days over 39 plantings (p25 12, p75 23). By crop: tomato 18 (n=20), pepper 20 (n=13),
+// tomatillo 21 (n=3) — the three dominant crops within 3 days of each other.
+//
+// WHY THIS CONSTANT UNBLOCKS A ROW THAT WAS BLOCKED. V4-FRUITINGTIER-001 sat planned with the note
+// "blocked on an interval no column answers": crop_types.set_to_first_pick_days is a FRUIT-SET
+// interval and prod populates it for melon (42) and watermelon (45) only, so the existing observed
+// anchor below can never fire for a tomato. The interval was not missing from the world, only from
+// the schema — Dave's event log had 39 samples of it the whole time. As with the nursery offset, the
+// live route recomputes this per household and passes it in; this is the documented fallback.
+//
+// TIGHTER THAN THE TIER IT REPLACES. The add-date baseline the derived tier rests on has a measured
+// IQR of 20 days (anchorDerive.js ADD_DATE_OFFSET_MEASURED: p25 +2, p75 +22) around a date the
+// system invented. This has an IQR of 11 around a date Dave entered.
+export const FRUITING_TO_PICK_DAYS_FALLBACK = 18;
+
 // JUDGMENT BOUND, panel-decided (harvest-panel-decisions-20260812.md Q3). A "not yet" tap silences
 // a planting for this many days, then the row RETURNS — dismissal is a snooze, not a queue exit.
 // Both bounds were confirmed: season-long suppression yields exactly ONE negative-class label per
@@ -370,7 +387,8 @@ export const TIER_RANK = Object.freeze({ observed: 0, sibling: 1, calendar: 2, d
 // anchor applies and nothing else. When absent it falls back to the derived date's own year, so this
 // function stays callable without a clock.
 function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR_HABITS,
-  derivedEnabled = DERIVED_ANCHOR_ENABLED, etToday = null) {
+  derivedEnabled = DERIVED_ANCHOR_ENABLED, etToday = null,
+  fruitingIntervalDays = FRUITING_TO_PICK_DAYS_FALLBACK) {
   const out = [];
 
   // Observed — a fruit_set event Dave logged, plus the crop's fruit-set-to-first-pick interval
@@ -384,6 +402,38 @@ function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR
       kind: 'observed', anchor_date: fruitSet, basis: 'from-fruit-set', basis_shifted: false,
       basis_field: 'fruit_set_date', expected_days: setToPick, lead_days: lead,
       nursery_offset_applied: 0, check_from: addDays(fruitSet, setToPick - lead), source_plant_id: null,
+    });
+  }
+
+  // Observed — V4-FRUITINGTIER-001. Dave's own logged status_change to `fruiting`, plus the
+  // household's measured fruiting-to-first-pick interval.
+  //
+  // `observed` and not a fourth kind: the anchor date is a date Dave entered about THIS planting,
+  // which is the same class of evidence as the fruit_set anchor above and strictly better than
+  // anything the derived tier can produce. It sits second so fruit_set keeps citation priority when
+  // a planting somehow has both — fruit_set is the narrower, crop-calibrated observation, and a tie
+  // in TIER_RANK is broken by check_from, which is the behaviour resolveWatchAnchor already wants.
+  //
+  // NO FROST GATE, deliberately, unlike the derived tier's condition 3. That gate exists because a
+  // derived row invites Dave to look for a window that cannot happen — the plant will be dead before
+  // the catalogue says it matures. This anchor rests on the plant ALREADY FRUITING: the fruit exists,
+  // and picking it green ahead of frost is a real and useful thing to be reminded of. Suppressing
+  // this row near frost would hide exactly the rows most worth showing in late September.
+  //
+  // NOR a habit gate: condition 5 drops cut_and_come_again from the DERIVED tier because for a crop
+  // picked continuously "the catalogue says day 45" answers nothing. That reasoning does not carry
+  // here — `fruiting` on a cut-and-come-again crop is still Dave saying he saw fruit — but prod has
+  // exactly one such sample (basil, 5d), so the household median governs it and nothing special is
+  // needed. WATCHED_HABITS still applies upstream.
+  const fruitingOn = toYmd(row?.fruiting_status_date);
+  const fruitingDays = Number(fruitingIntervalDays);
+  if (fruitingOn != null && Number.isFinite(fruitingDays) && fruitingDays > 0) {
+    const lead = leadDaysFor(fruitingDays);
+    out.push({
+      kind: 'observed', anchor_date: fruitingOn, basis: 'from-fruiting-status', basis_shifted: false,
+      basis_field: 'fruiting_status_date', expected_days: fruitingDays, lead_days: lead,
+      nursery_offset_applied: 0, check_from: addDays(fruitingOn, fruitingDays - lead),
+      source_plant_id: null,
     });
   }
 
@@ -501,7 +551,8 @@ function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR
 export function resolveWatchAnchor(row, opts = {}) {
   const nurseryOffsetDays = opts.nurseryOffsetDays ?? NURSERY_OFFSET_DAYS_FALLBACK;
   const anchors = availableAnchors(row, nurseryOffsetDays, opts.siblingHabits ?? SIBLING_ANCHOR_HABITS,
-    opts.derivedEnabled ?? DERIVED_ANCHOR_ENABLED, toYmd(opts.etToday));
+    opts.derivedEnabled ?? DERIVED_ANCHOR_ENABLED, toYmd(opts.etToday),
+    opts.fruitingIntervalDays ?? FRUITING_TO_PICK_DAYS_FALLBACK);
   if (anchors.length === 0) return null;
 
   const byDate = [...anchors].sort((a, b) => (
@@ -615,7 +666,15 @@ export function describeBasis(anchor, etToday, row = null) {
     if (off == null || off === 0) return core;
     return `${core} · planted ${Math.abs(off)}d ${off > 0 ? 'earlier' : 'later'}`;
   }
-  if (anchor.kind === 'observed') return `fruit set ${shortDate(anchor.anchor_date)}`;
+  // Two observed anchors now share this kind, and they must NOT share copy. Printing "fruit set" for
+  // a row resting on a status_change would cite an event Dave never logged — the provenance would be
+  // a fabrication even though the date is real, which is the same class of error the derived tier's
+  // `est.` prefix exists to prevent. Branch on the field the anchor actually came from.
+  if (anchor.kind === 'observed') {
+    return anchor.basis_field === 'fruiting_status_date'
+      ? `fruiting ${shortDate(anchor.anchor_date)}`
+      : `fruit set ${shortDate(anchor.anchor_date)}`;
+  }
 
   // V4-ANCHORBASE-001, marking-rule layer 3. A derived anchor's copy leads with `est.` — ALWAYS,
   // before any date or number — because this row rests on a date Dave never entered. The

@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.25.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Plantings you have marked as fruiting now open their own harvest-watch row"
+    ]
+  },
+  {
     "version": "4.24.1",
     "date": "2026-08-14",
     "highlights": [

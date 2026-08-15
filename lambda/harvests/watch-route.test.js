@@ -16,11 +16,12 @@ import { describe, it, expect } from 'vitest';
 import {
   WATCH_PATH, DISMISS_PATH, DISMISSALS_PATH, matchWatchRoute, isUuid, parseLimit,
   DEFAULT_LIMIT, MAX_LIMIT, DISMISSAL_REASONS, CALIBRATION_REASON,
-  resolveNurseryOffset, NURSERY_MIN_SAMPLE,
+  resolveNurseryOffset, NURSERY_MIN_SAMPLE, resolveFruitingInterval, FRUITING_MIN_SAMPLE,
   handleWatchGet, handleDismissToggle, handleDismissalPost, handleDismissalUndo,
 } from './watch-route.js';
 import {
   WATCH_MODEL_VERSION, WATCH_SUPPRESS_DAYS, NURSERY_OFFSET_DAYS_FALLBACK, UI_CONTRACT_FIELDS, addDays,
+  FRUITING_TO_PICK_DAYS_FALLBACK,
 } from './watch.js';
 
 const USER = 'user_dave';
@@ -601,5 +602,101 @@ describe('BUG-ANCHORNOPROJ-001 project-less plantings stay in scope', () => {
     // caller's household would be a cross-household read, not a visibility fix.
     const bound = sql.calls[0].params.filter((p) => p === HOUSEHOLD);
     expect(bound.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ── V4-FRUITINGTIER-001 — the observed-status tier ───────────────────────────────────────────────
+//
+// The row this closes sat `planned` with the note "blocked on an interval no column answers":
+// crop_types.set_to_first_pick_days is a FRUIT-SET interval, populated on prod for melon and
+// watermelon only, so the pre-existing observed anchor could never fire for a tomato. The interval
+// was never missing from the world — only from the schema. Dave's event log holds 39 samples of
+// fruiting-status -> first-pick (median 18d, p25 12, p75 23; tomato 18/n=20, pepper 20/n=13), and
+// fruiting_gap computes it per household exactly as the nursery offset already is.
+//
+// WHY THIS IS THE POINT OF THE FEATURE. watch.js condition 4 suppresses `flowering`/`fruiting` from
+// the DERIVED tier — correctly: a guess must not speak over a record. But the record was then used
+// for nothing, so a planting Dave had personally marked as fruiting produced NO row at all, while a
+// planting he knew nothing about got one from an invented add-date. The last test here pins exactly
+// that inversion being fixed.
+describe('V4-FRUITINGTIER-001 observed-status tier', () => {
+  const FRUITING = '2026-07-25';   // 18 days before TODAY (2026-08-12) -> the watch is open
+  const fruitingRow = (over = {}) => row({
+    plant_id: '44444444-2222-4333-8444-555555555555',
+    planting_name: 'San Marzano rescue', crop_display_name: 'Tomato',
+    variety_name: 'San Marzano', crop_type_slug: 'tomato',
+    status: 'fruiting', harvest_habit: 'repeat', dtm_basis: null,
+    days_to_maturity_min: 78, days_to_maturity_max: null,
+    sown_at: null, transplanted_at: null, planted_out_at: null,
+    set_to_first_pick_days: null, fruit_set_date: null,
+    sibling_plant_id: null, sibling_planting_name: null, sibling_first_pick_date: null,
+    fruiting_status_date: FRUITING, fruiting_sample_n: 39, fruiting_median_days: 18,
+    ...over,
+  });
+
+  it('computes the interval from the household median above the sample floor', () => {
+    const r = resolveFruitingInterval([{ fruiting_sample_n: 39, fruiting_median_days: 18 }]);
+    expect(r).toEqual({ days: 18, source: 'household_median', sample_n: 39 });
+  });
+
+  it('falls back to the constant on a thin sample', () => {
+    const r = resolveFruitingInterval([{ fruiting_sample_n: 4, fruiting_median_days: 3 }]);
+    expect(r.days).toBe(FRUITING_TO_PICK_DAYS_FALLBACK);
+    expect(r.source).toBe('fallback_constant');
+  });
+
+  // A zero median means the status is a RECORD of the pick, not a predictor of it — such an anchor
+  // would open every row of that household immediately and permanently. See resolveFruitingInterval.
+  it('falls back to the constant when the median is zero', () => {
+    const r = resolveFruitingInterval([{ fruiting_sample_n: 40, fruiting_median_days: 0 }]);
+    expect(r.source).toBe('fallback_constant');
+  });
+
+  it('queries the fruiting status date and the household interval', async () => {
+    const sql = makeSql([[fruitingRow()]]);
+    await handleWatchGet(ctx(sql, { query: {} }));
+    const q = sql.calls[0].text;
+    expect(q).toMatch(/status_to.{0,12}=.{0,4}'fruiting'/);
+    expect(q).toContain('AS fruiting_status_date');
+    expect(q).toContain('AS fruiting_sample_n');
+    expect(q).toContain('AS fruiting_median_days');
+    // Season-scoped: last year's fruiting status must not open this year's watch.
+    expect(q).toMatch(/fruiting AS \([\s\S]{0,600}b\.season_start/);
+  });
+
+  it('rests the row on the fruiting status as an observed anchor', async () => {
+    const sql = makeSql([[fruitingRow()]]);
+    const res = await handleWatchGet(ctx(sql, { query: {} }));
+    const c = res.body.candidates.find((x) => x.name === 'San Marzano rescue');
+    expect(c).toBeDefined();
+    expect(c.basis).toBe('fruiting Jul 25');
+    // Copy must NOT say 'fruit set' — Dave logged a status change, not a fruit_set event, and the
+    // two share an anchor kind. Citing the wrong one fabricates provenance from a real date.
+    expect(c.basis).not.toContain('fruit set');
+  });
+
+  // THE INVERSION. Same planting, same data, derived tier ON: condition 4 suppresses the derived
+  // anchor because the status contradicts it, and before this tier existed that left the planting
+  // with nothing. The observed anchor is what puts it back — so this must hold with the derived
+  // tier BOTH on and off, or the row is secretly resting on the derivation after all.
+  it('surfaces a fruiting planting the derived tier is required to suppress', async () => {
+    for (const derivedEnabled of [true, false]) {
+      const sql = makeSql([[fruitingRow({
+        derived_anchor_date: '2026-08-19', derived_anchor_field: 'transplanted_at',
+        derived_anchor_source: 'add_date_baseline', derived_anchor_confidence: 'baseline',
+      })]]);
+      const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled }));
+      const c = res.body.candidates.find((x) => x.name === 'San Marzano rescue');
+      expect(c, `derivedEnabled=${derivedEnabled}`).toBeDefined();
+      expect(c.basis, `derivedEnabled=`).toBe('fruiting Jul 25');
+    }
+  });
+
+  // No fruiting status and no interval -> the tier contributes nothing, and a planting with no other
+  // anchor stays out. Pins that the tier ADDS rows rather than loosening the no-anchor rule.
+  it('contributes nothing without a fruiting status', async () => {
+    const sql = makeSql([[fruitingRow({ fruiting_status_date: null })]]);
+    const res = await handleWatchGet(ctx(sql, { query: {} }));
+    expect(res.body.candidates.find((x) => x.name === 'San Marzano rescue')).toBeUndefined();
   });
 });
