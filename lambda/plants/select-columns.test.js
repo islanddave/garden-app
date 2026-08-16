@@ -172,6 +172,17 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
     expect(hits.length, 'expected default_unit in all 3 variety_ref JSON blocks').toBe(3);
   });
 
+  // V4-MATURITYREPEAT-001: computeMaturity() decides whether to print a CLOSING date off
+  // variety_ref.harvest_habit. Drop this key from a variety_ref block and the client sees undefined,
+  // falls back to the non-continuous wording, and silently re-ships the exact bug — a pepper being
+  // actively picked reading "Harvest window open — through Aug 12". Same write->read symmetry class
+  // and same source-level guard as default_unit above. harvest_habit is crop-scoped only
+  // (plant_varieties has no such column), so it reads straight off ct with no COALESCE.
+  it("every variety_ref block carries 'harvest_habit', ct.harvest_habit (V4-MATURITYREPEAT-001)", () => {
+    const hits = SRC.match(/'harvest_habit',\s*ct\.harvest_habit\b/g) || [];
+    expect(hits.length, 'expected harvest_habit in all 3 variety_ref JSON blocks').toBe(3);
+  });
+
   it('joins crop_types in all 3 reads so ct.default_unit resolves', () => {
     const joins = SRC.match(/LEFT JOIN public\.crop_types ct ON ct\.slug = pv\.crop_type_slug/g) || [];
     expect(joins.length, 'expected the crop_types join in all 3 reads').toBe(3);

@@ -1,6 +1,6 @@
 // V4-PLANTINGUI-001 — CropCard: maturity band + cultivar attrs (projected chips inert w/o tags API).
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
@@ -147,5 +147,38 @@ describe('CropCard — crop-mechanic breadth and derived-cue honesty (V4-RIPECUE
   it('a high-confidence cue renders no caveat line', () => {
     render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'broccoli', name: 'Calabrese' } }} />)
     expect(screen.queryByText(/Derived from/i)).toBeNull()
+  })
+})
+
+// V4-MATURITYREPEAT-001 (BD-024) — the maturity band as it actually paints for the row this item
+// was filed against. computeMaturity() is called with no `today` here, so the clock is pinned:
+// only `Date` is faked, leaving testing-library's own timers alone.
+describe('CropCard — continuous-harvest window (V4-MATURITYREPEAT-001)', () => {
+  // Live prod 2026-08-16: Armageddon F1 pepper, transplanted 2026-05-23, DTM 75-95 from-transplant,
+  // crop_types.pepper harvest_habit=repeat. Its window "closed" on Aug 12 while it was fruiting.
+  const armageddon = (habit) => ({
+    id: 'p', name: 'Armageddon', transplanted_at: '2026-05-23',
+    variety_ref: {
+      name: 'Armageddon F1', crop_type_slug: 'pepper',
+      days_to_maturity_min: 75, days_to_maturity_max: 95,
+      dtm_basis: 'from-transplant', harvest_habit: habit,
+    },
+  })
+
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-08-16T12:00:00')) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('paints an open-ended window on the repeat-habit pepper', () => {
+    render(<CropCard planting={armageddon('repeat')} />)
+    expect(screen.getByText(/Harvest window open — picking from Jul 1, 2026 · site-calibrated/)).toBeTruthy()
+    expect(screen.queryByText(/through Aug 12/)).toBeNull()
+    // the rest of the band is untouched
+    expect(screen.getByText(/^Day 85 since transplanted$/)).toBeTruthy()
+    expect(screen.getByText('(from transplant)')).toBeTruthy()
+  })
+
+  it('still paints the closing date on a single-habit crop', () => {
+    render(<CropCard planting={armageddon('single')} />)
+    expect(screen.getByText(/Harvest window open — through Aug 12, 2026 · site-calibrated/)).toBeTruthy()
   })
 })

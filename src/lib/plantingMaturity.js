@@ -22,10 +22,45 @@
 // uncurated (null) bases are DELIBERATELY untouched — see maturityCalibration.js for why, and for
 // the full derivation and its provenance. All calibration constants live there, not here.
 
+// V4-MATURITYREPEAT-001 (BD-024) — a DTM-derived window no longer CLOSES on a continuous-harvest
+// crop. The math was not wrong (BUG-MATURITYMODELMIX-001 verified it end to end and closed
+// no-change); what the window MEANT was. maturityCalibration.js fitted the site factor against
+// FIRST harvest only ("Observed time-to-first-harvest ~= FACTOR * catalogue DTM"), so the lo..hi
+// pair it returns is an uncertainty band around the FIRST pick — it was never a statement about
+// when production ends. For a `single` crop the two readings coincide closely enough to be
+// harmless: there is one terminal harvest, so "when it's ready" and "when it's done" are the same
+// event. For a crop that keeps fruiting until frost or death they are not the same event at all,
+// and rendering the upper bound as a close told Dave a plant he was actively picking had finished.
+//
+// The motivating row, live prod 2026-08-16: Armageddon F1 pepper (status `fruiting`, one logged
+// pick on 08-05, DTM 75-95 from-transplant, transplanted 2026-05-23). round(.70*95)+14 = day 81 =
+// Aug 12, so the card read "Harvest window open — through Aug 12, 2026" four days AFTER that date,
+// on a pepper with ~6 weeks of season left. See the comment on the label branches below for what
+// it says now and why the alternatives were rejected.
+
 import { calibrateFromTransplant, SITE_FACTOR } from './maturityCalibration.js'
 
 export const DTM_BASIS_SOW = 'from-sow'
 export const DTM_BASIS_TRANSPLANT = 'from-transplant'
+
+// crop_types.harvest_habit values whose harvest is CONTINUOUS: the plant goes on yielding after the
+// first pick, so no catalogue figure can say when it stops. `repeat` = discrete fruits picked over a
+// season (pepper, tomato); `cut_and_come_again` = the plant regrows the harvested tissue (basil,
+// lettuce). Deliberately the SAME two-member set as harvestReadiness.js REPEATING_HABITS — that
+// module already encodes "keeps producing" as exactly these two, and a second, differently-drawn
+// line between them would be a split-brain nobody could reason about.
+//
+// WHY cut_and_come_again IS IN. Its harvest does end — by bolting — but bolting is not a DTM
+// function either, so a catalogue-derived close is exactly as fictional there as it is for a pepper.
+// watch.js makes the same point from the other direction: "for a crop harvested continuously from
+// the moment it has leaves, 'the catalogue says day 45' answers a question nobody asked". Where
+// watch.js DOES separate them (DERIVED_ANCHOR_HABITS drops cut_and_come_again) the reason is anchor
+// quality on a date the system invented — which cannot apply here, because this surface only speaks
+// when Dave entered a real sow or transplant date.
+//
+// `single` and NULL/unknown habits are NOT in this set and take the untouched code path below.
+// NULL is the load-bearing exclusion: on live prod it is 54 live plantings, every one an ornamental.
+export const CONTINUOUS_HARVEST_HABITS = new Set(['repeat', 'cut_and_come_again'])
 
 // Only the two CHECK-constrained values resolve; anything else (null, undefined, a value from a
 // newer server than this bundle) falls back to the legacy from-sow behaviour.
@@ -51,7 +86,7 @@ const DAY_MS = 86400000
 //     dtmMin, dtmMax, maturityMinDate, maturityMaxDate,
 //     harvestWindowLabel, isMature, pctToMaturity,
 //     dtmBasis, basisResolved, dtmAnchorField, dtmAnchorDate, dtmAnchorLabel, awaitingTransplant,
-//     calibrated, calibrationFactor }
+//     calibrated, calibrationFactor, harvestHabit, continuousHarvest }
 // Returns nulls (not throws) for every field that can't be computed.
 export function computeMaturity(planting, today = new Date()) {
   const out = {
@@ -62,8 +97,16 @@ export function computeMaturity(planting, today = new Date()) {
     dtmAnchorField: null, dtmAnchorDate: null, dtmAnchorLabel: null,
     awaitingTransplant: false,
     calibrated: false, calibrationFactor: null,
+    harvestHabit: null, continuousHarvest: false,
   }
   if (!planting) return out
+
+  // V4-MATURITYREPEAT-001. Rides in on variety_ref alongside dtm_basis/default_unit — it is a
+  // crop_types column, and variety_ref is the only channel crop-type attributes have to the client
+  // (there is no crop-types endpoint). An older bundle, or a cultivar with no crop_type_slug, sees
+  // undefined here and gets the pre-V4-MATURITYREPEAT-001 wording unchanged.
+  out.harvestHabit = planting?.variety_ref?.harvest_habit ?? null
+  out.continuousHarvest = CONTINUOUS_HARVEST_HABITS.has(out.harvestHabit)
 
   // Anchor for AGE display: the most advanced lifecycle date present.
   const transplanted = parseDate(planting.transplanted_at)
@@ -131,19 +174,51 @@ export function computeMaturity(planting, today = new Date()) {
     // rule). Plain text in the same ink and type scale as the rest of the label — deliberately not
     // a badge, tint, or confidence gradient (Reward UX V102 bars colour used to encode magnitude).
     const suffix = calib ? ' · site-calibrated' : ''
-    if (out.isMature && calib && b) {
+    // V4-MATURITYREPEAT-001: on a continuous-harvest crop the pair is an estimate of the FIRST pick,
+    // so it is named as one. Same two dates, no numeric change — the range already meant this; the
+    // old wording just implied the harvest was over by `b`.
+    const estLead = out.continuousHarvest ? 'Est. first harvest' : 'Est. harvest'
+    if (out.isMature && out.continuousHarvest && calib && a) {
+      // THE FIX. A continuous crop past its opening estimate gets an OPEN-ENDED label: the opening
+      // date (the end with measured backing — 0.70 factor, 16/18 observed first-harvests in-window)
+      // and no close, because none of the inputs here knows one.
+      //
+      // REJECTED, and why — this is a judgement call, so the alternatives are recorded:
+      //  * A frost-driven close ("through ~Sep 28"). Tempting, and the anchor already exists
+      //    (sowEngine.js FROST_ANCHORS, restated in watch.js). Rejected: first frost is a
+      //    climatological hazard date, not a harvest-window close — it applies to `single` habits
+      //    identically, so scoping it to repeat would be arbitrary; it is flat wrong for the
+      //    cold-hardy half of cut_and_come_again (kale and lettuce outlive 09-28, under cover or
+      //    not); and a container pepper can be carried indoors. It also swaps a measured estimate
+      //    for an unmeasured prediction on the one surface whose sibling module explicitly refuses
+      //    prediction grammar (watch.js §GRAMMAR CONTRACT).
+      //  * Suppressing the window entirely for continuous habits. Rejected: the opening estimate is
+      //    the half of this that has evidence behind it, and dropping it would blank the maturity
+      //    band on 41 of Dave's live plantings to fix a wording defect.
+      //  * Projecting the next pick off crop_types.repeat_interval_days ("~7 days"). Rejected: that
+      //    is harvestReadiness.isReadyToPick's job, it is evidence-only and requires >=1 logged
+      //    pick, and restating it here in prediction grammar is the split-brain watch.js warns of.
+      out.harvestWindowLabel = `Harvest window open — picking from ${a}${suffix}`
+    } else if (out.isMature && calib && b) {
       // A calibrated window that has OPENED must keep its closing date visible. Collapsing it to a
       // bare "Maturity window reached" would throw away the +/-14d uncertainty that is the entire
       // point of calibrating — and would read as more confident than the raw catalogue label it
       // replaced, which is the failure mode Slice D exists to fix. Uncalibrated windows keep the
       // original wording untouched.
+      //
+      // V4-MATURITYREPEAT-001 narrowed this branch to non-continuous habits ONLY. It keeps the
+      // close for `single` (and for an unknown habit, which must behave as it did before), where a
+      // closing date is a real thing: a storage onion, garlic or winter squash has one terminal
+      // harvest and a genuine deadline past which the crop degrades in the ground.
       out.harvestWindowLabel = `Harvest window open — through ${b}${suffix}`
     } else if (out.isMature) {
+      // Uncalibrated + open. Says nothing about a close in any habit, so V4-MATURITYREPEAT-001
+      // leaves it alone rather than widening its own blast radius past the defect it fixes.
       out.harvestWindowLabel = 'Maturity window reached'
     } else if (a && b && a !== b) {
-      out.harvestWindowLabel = `Est. harvest ${a} – ${b}${suffix}`
+      out.harvestWindowLabel = `${estLead} ${a} – ${b}${suffix}`
     } else if (a) {
-      out.harvestWindowLabel = `Est. harvest ~${a}${suffix}`
+      out.harvestWindowLabel = `${estLead} ~${a}${suffix}`
     }
   }
 
