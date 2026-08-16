@@ -1,0 +1,99 @@
+# gates.yml
+# V4-PEPPERREFFIX-001 — retract Capeliente's falsified 5 g catalogue estimate.
+#
+# ONE FILE, ONE DECISION, ONE TRANSACTION.
+#   0a-capeliente-reference.sql  data correction on exactly one row, one jsonb key. `pre` -> `post`.
+#   0r-rollback.sql              restores the 5 g estimate.
+#
+# BOTH ENVIRONMENTS. Per the house rule, apply to staging AND prod before pushing migrations/** —
+# and run the whole gate corpus, not only this directory's.
+#
+# ENV NOTE. Verified live 2026-08-16: staging's catalogue holds 72 varieties and does NOT contain
+# Capeliente at all, so every gate naming that row is marked env: prod. On staging 0a is a clean
+# no-op — the UPDATE matches nothing, the guard's EXISTS finds nothing, and only the schema_version
+# row lands. That is the intended behaviour, not a skipped migration.
+# The two env-agnostic gates (applied/not-yet-applied, and the curated-chile marking invariant, which
+# asserts an ABSENCE and so holds on a partial catalogue) run on both.
+#
+# NO LAMBDA ORDERING CONSTRAINT. This touches a data value inside an existing jsonb column. No
+# signature, no column, no constraint changes, so old and new Lambda code both read it identically.
+
+pre:
+  # The defect, stated as a query: a jalapeno-type carrying a bird-pepper weight, self-flagged as a
+  # low-confidence guess.
+  - name: pre_capeliente_carries_the_5g_estimate
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '7e14c699-9ed1-4566-ac46-c7677cb91da3'
+         AND (unit_weights->>'count')::numeric = 5
+         AND weight_source = 'estimate'
+         AND weight_confidence = 'low'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_not_yet_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.16-pepperreffix-001'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_capeliente_count_key_removed
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '7e14c699-9ed1-4566-ac46-c7677cb91da3'
+         AND NOT (unit_weights ? 'count')
+    expect: rowcount_eq
+    value: 1
+
+  # The cup figure was never in question and must survive untouched — this migration removes one key,
+  # it does not rewrite the column.
+  - name: post_capeliente_cup_weight_intact
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '7e14c699-9ed1-4566-ac46-c7677cb91da3'
+         AND (unit_weights->>'cup')::numeric = 149
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.16-pepperreffix-001'
+    expect: rowcount_eq
+    value: 1
+
+  # Both gates below are permanently true after the apply, so they keep the default continuous: true
+  # and are meant to be caught by --continuous-only sweeps, not just this migration's own run.
+  #
+  # THE POINT OF THE WHOLE MIGRATION: with the bogus override gone, Capeliente resolves against the
+  # generic pepper reference and its measured factor lands inside the ratchet's 5x divergence gate.
+  # If this ever goes red, Capeliente is blocking the ratchet again.
+  - name: capeliente_within_ratchet_divergence_gate
+    env: prod
+    sql: |
+      SELECT 1
+        FROM cultivar_weight_derived d
+        JOIN cultivar c ON c.id = d.cultivar_id
+        LEFT JOIN plant_varieties pv ON pv.id = d.cultivar_id
+        LEFT JOIN crop_types ct ON ct.slug = c.crop_type_slug
+       WHERE d.cultivar_id = '7e14c699-9ed1-4566-ac46-c7677cb91da3'
+         AND d.unit = 'count'
+         AND d.grams_per_unit / coalesce((pv.unit_weights->>d.unit)::numeric,
+                                         (ct.unit_weights->>d.unit)::numeric) BETWEEN 0.2 AND 5
+    expect: rowcount_eq
+    value: 1
+
+  # The curated small chiles are the reason this migration is one row wide and not a sweep. If any of
+  # them lose their catalog/high marking, the premise that weight_source discriminates curated data
+  # from guesses has broken and this correction's reasoning needs revisiting.
+  - name: curated_small_chiles_still_marked_catalog_high
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE crop_type_slug = 'pepper'
+         AND name IN ('Tepin', 'Chiltepin', 'Piquin', 'Tabasco', 'Thai Hot', 'Biquinho')
+         AND (weight_source IS DISTINCT FROM 'catalog' OR weight_confidence IS DISTINCT FROM 'high')
+    expect: rowcount_eq
+    value: 0

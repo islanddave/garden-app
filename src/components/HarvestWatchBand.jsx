@@ -41,8 +41,10 @@
 // Today.
 import React, { useState, useEffect, useCallback, useReducer, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { useOverlayLocation, useOverlayNavigate } from '../context/OverlayContext.jsx'
+import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
+import { useAmbientBandFetch } from '../lib/useAmbientBandFetch.js'
+import AmbientBandNotice from './AmbientBandNotice.jsx'
 import { P } from '../lib/constants.js'
 import {
   rankWatchCandidates, selectWatchDisplay, groupWatchOverflow, revealStep,
@@ -83,39 +85,23 @@ function Chevron({ open }) {
   )
 }
 
+// Module-level so the hook's load callback stays referentially stable across renders.
+const normalize = (d) => (d && Array.isArray(d.candidates) ? d : { candidates: [], snoozed: [] })
+
 export default function HarvestWatchBand() {
   const { fetch } = useApiFetch()
-  const location = useOverlayLocation()
   const overlayNavigate = useOverlayNavigate()
-  const [data, setData] = useState(null)
   // plant_id -> { dismissed?: boolean, busy?: boolean, error?: string, dismissalId, suppressedUntil }
   const [rowUi, setRowUi] = useState({})
   const [revealed, setRevealed] = useState(readReveal)
   const [snoozedOpen, setSnoozedOpen] = useState(false) // defaults collapsed every mount (panel Q4)
   const [, bumpWindow] = useReducer(t => t + 1, 0)
-  const inflight = useRef(false)
 
   const setReveal = useCallback((n) => { writeReveal(n); setRevealed(n) }, [])
 
-  const load = useCallback(() => {
-    if (inflight.current) return
-    inflight.current = true
-    // limit=200: the tail expands in place, so the band needs the whole queue in one response
-    // (panel Q4 contract change — the server's default limit stays 5 for any client that forgets).
-    fetch('/api/harvests/watch?limit=200')
-      .then(d => setData(d && Array.isArray(d.candidates) ? d : { candidates: [], snoozed: [] }))
-      .catch(() => { /* supplementary glance — never surface a fetch error onto Today */ })
-      .finally(() => { inflight.current = false })
-  }, [fetch])
-
-  useEffect(() => { load() }, [load, location.pathname])
-
-  useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible') load() }
-    window.addEventListener('focus', load)
-    document.addEventListener('visibilitychange', onVis)
-    return () => { window.removeEventListener('focus', load); document.removeEventListener('visibilitychange', onVis) }
-  }, [load])
+  // limit=200: the tail expands in place, so the band needs the whole queue in one response
+  // (panel Q4 contract change — the server's default limit stays 5 for any client that forgets).
+  const { data, failed, reload: load } = useAmbientBandFetch('/api/harvests/watch?limit=200', normalize)
 
   // Fire the lazy chunk only when at least one row could actually use it.
   const needsWindows = Array.isArray(data?.candidates) && data.candidates.some(c => c?.variety_ref)
@@ -181,6 +167,10 @@ export default function HarvestWatchBand() {
 
   const all = rankWatchCandidates(data?.candidates)
   const snoozed = Array.isArray(data?.snoozed) ? data.snoozed.filter(s => s && s.plant_id != null) : []
+
+  // BUG-READYBANDFETCH-001 — before the empty check: "could not ask" is not "nothing is coming".
+  if (failed && !data) return <AmbientBandNotice eyebrow="Looking ahead" onRetry={load} />
+
   // Hidden entirely when there is nothing to show (or before the first load resolves). A non-empty
   // snoozed list keeps the band alive: R6 — the list must still be knowably complete while rows are
   // suppressed.

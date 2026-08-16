@@ -25,3 +25,8 @@ coverage/
 
 # CodeGraph local index — machine-local, never committed
 .codegraph/
+
+# harvest-weight-ratchet run report — regenerated on every --dry-run/--apply (and by the weekly
+# workflow). The durable record of an apply is the harvest_log_weight_snapshot_* table plus the
+# ack file's review entries, not this artifact.
+harvest-ratchet-report.json

@@ -1,7 +1,13 @@
 // src/components/HarvestReadyBand.jsx
 // V4-HARVESTSURF-001 — the "ready to pick" ambient card on Today. Mirrors PutUpUseSoonBand's data
-// posture exactly: self-fetching via useApiFetch, refresh on mount / in-app nav / app-foreground, and
-// the fetch error is SWALLOWED (supplementary glance — it must never throw or surface onto Today).
+// posture exactly: self-fetching, refresh on mount / in-app nav / app-foreground, and the fetch error
+// is still SWALLOWED (supplementary glance — it must never throw or surface onto Today).
+//
+// BUG-READYBANDFETCH-001: swallowing is not the same as rendering nothing. A failed fetch used to
+// leave state null, which renders identically to an empty queue — an outage was indistinguishable
+// from "nothing to pick" on the exact surface whose job is to answer that question. The fetch now
+// runs through useAmbientBandFetch, which retries once and then reports `failed`, and this band
+// renders one muted ambient line instead of vanishing. Still no toast, modal, banner or alert colour.
 //
 // Deliberately NOT routed through the daily-plan engine: PLAN_SCHEMA_VERSION is pinned across four
 // files behind a lockstep anti-drift test, the parity golden harness blocks on any added key, and a
@@ -14,12 +20,13 @@
 // The row action NAVIGATES to the prefilled harvest form; it never one-tap POSTs. `harvest` requires
 // quantity + unit (both NOT NULL), so a quantity-less POST would 400, and `harvest` is in
 // BATCH_EXCLUDED_TYPES so no bulk affordance may exist here.
-import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useOverlayLocation, useOverlayNavigate } from '../context/OverlayContext.jsx'
-import { useApiFetch } from '../lib/api.js'
+import React, { useState, useCallback } from 'react'
+import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { P } from '../lib/constants.js'
 import { rankHarvestReady, lastPickedLabel } from '../lib/harvestReadiness.js'
 import { revealStep } from '../lib/harvestWatch.js'
+import { useAmbientBandFetch } from '../lib/useAmbientBandFetch.js'
+import AmbientBandNotice from './AmbientBandNotice.jsx'
 
 const MAX_ROWS = 5
 
@@ -49,36 +56,22 @@ const tailButtonStyle = {
   fontSize: '0.85rem', fontWeight: 700, color: P.green,
 }
 
+// Module-level so the hook's load callback stays referentially stable across renders.
+const normalize = (d) => (d && Array.isArray(d.candidates) ? d : { candidates: [], et_doy: null })
+
 export default function HarvestReadyBand() {
-  const { fetch } = useApiFetch()
-  const location = useOverlayLocation()
   const overlayNavigate = useOverlayNavigate()
-  const [data, setData] = useState(null)
   const [revealed, setRevealed] = useState(readReveal)
-  const inflight = useRef(false)
+  const { data, failed, reload } = useAmbientBandFetch('/api/events/harvest-ready', normalize)
 
   const setReveal = useCallback((n) => { writeReveal(n); setRevealed(n) }, [])
 
-  const load = useCallback(() => {
-    if (inflight.current) return
-    inflight.current = true
-    fetch('/api/events/harvest-ready')
-      .then(d => setData(d && Array.isArray(d.candidates) ? d : { candidates: [], et_doy: null }))
-      .catch(() => { /* supplementary glance — never surface a fetch error */ })
-      .finally(() => { inflight.current = false })
-  }, [fetch])
-
-  useEffect(() => { load() }, [load, location.pathname])
-
-  useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible') load() }
-    window.addEventListener('focus', load)
-    document.addEventListener('visibilitychange', onVis)
-    return () => { window.removeEventListener('focus', load); document.removeEventListener('visibilitychange', onVis) }
-  }, [load])
-
   // The server supplies the reporting-zone day-of-year; the predicate is a pure function of it.
   const ready = data ? rankHarvestReady(data.candidates, data.et_doy) : []
+
+  // BUG-READYBANDFETCH-001 — before the empty check, because "we could not ask" is not "nothing is
+  // ready". Only reachable on a second consecutive failure with no data in hand.
+  if (failed && !data) return <AmbientBandNotice eyebrow="In the garden" onRetry={reload} />
 
   // Hidden entirely when empty (or before the first load resolves).
   if (ready.length === 0) return null

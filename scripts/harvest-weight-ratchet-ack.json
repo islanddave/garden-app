@@ -1,7 +1,8 @@
 {
   "_comment": "V4-HARVRATCHET-001 — cultivars whose sample-derived weight factor diverges sharply from its reference and has been REVIEWED and accepted. Adding an id here tells the ratchet job to propagate that factor. To CORRECT rather than accept a factor, void the offending samples (cultivar_weight_void) instead of listing the cultivar here. Dave's standing direction (2026-08-06): his own weighings ARE the target — the catalogue reference is the fallback, not the authority, and it phases out as more harvests get weighed.",
   "reviewed_cultivar_ids": [
-    "457d4628-1531-4349-8af7-2a114c206599"
+    "457d4628-1531-4349-8af7-2a114c206599",
+    "f21e22d6-0556-4101-a470-0c8da3cb04ae"
   ],
   "reviews": [
     {
@@ -25,6 +26,17 @@
       "decision": "REVOKED — the samples are not Aster's. Id removed from reviewed_cultivar_ids, so the ratchet blocks on this factor again instead of propagating it.",
       "why": "The 2026-08-06 ACCEPT read: 'Two genuinely independent samples on consecutive days, consistent: 12g/18 = 0.67 and 15g/21 = 0.71.' Both facts are true and the conclusion was still wrong. Traced 2026-08-16 (V4-HARVWEIGHTEST-001): both samples were captured from the planting named 'Blackberry', which was still identified as Aster on 2026-08-04/05 and was re-identified to Allegheny Blackberry on 2026-08-06. They are blackberry drupelets — 0.7 g is exactly the Allegheny Blackberry reference. The review compared two agreeing weighings against a catalogue figure, a binary with no way to express 'these came from a different plant'. migrations/v4-harvweightest-001/0b re-files both samples onto Allegheny Blackberry; after it lands Aster has no derived row at all and falls back to its 6 g reference, so there is nothing left here to ack.",
       "caveat": "Do NOT re-ack this id without re-checking that the samples behind the factor still belong to a planting identified as Aster. That check is now a migration gate: v4-harvweightest-001/gates.yml :: post_no_sample_contradicts_its_planting."
+    },
+    {
+      "cultivar_id": "f21e22d6-0556-4101-a470-0c8da3cb04ae",
+      "name": "Cherry",
+      "sample_g_per_count": 20.25,
+      "reference_g": 123,
+      "ratio": 0.165,
+      "reviewed": "2026-08-16",
+      "decision": "ACCEPT — the reference is a generic slicing-tomato figure that cannot describe a cherry tomato, and there is no variety-level figure to correct instead.",
+      "why": "Four weighings across 13 days, 2026-08-03/05/14/16, at 28, 16, 22 and 15 g per fruit — real spread (not the stddev-0 lattice artefact that capped Pineapple Tomatillo's confidence), mean 20.25. Cherry has NO row in plant_varieties.unit_weights, so the 123 g reference is crop_types.tomato falling through. 123 g is a slicing tomato; a cherry tomato at 20 g is what a correct measurement looks like against a fallback aimed at a different fruit.",
+      "caveat": "IDENTITY CHECKED FIRST, per the Aster revocation directly above — that ACCEPT was wrong because two agreeing weighings came from a planting since re-identified. All four Cherry samples trace to source events on planting 'Cherry Rescue 1', whose cultivar_id still equals this id (verified live 2026-08-16). Two of them carry note 're-filed after the source planting was re-identified', i.e. they are the CORRECTED post-v4-harvweightest-001 attribution, not a stale one. Standing weakness: all four are the same planting, so this is four samples of one plant's fruit population rather than four plants. Unlike Capeliente (migrations/v4-pepperreffix-001) this could NOT be fixed by correcting the catalogue — writing a cherry-tomato figure derived from these same samples would make the reference a copy of the measurement it is meant to check."
     }
   ]
 }

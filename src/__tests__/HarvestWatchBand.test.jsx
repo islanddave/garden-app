@@ -11,8 +11,9 @@
 // beefsteak with no red flush), so a fixture change in the data would correctly break this.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { RETRY_DELAY_MS } from '../lib/useAmbientBandFetch.js'
 
 const navigateMock = vi.fn()
 const locationRef = { pathname: '/today' }
@@ -323,11 +324,23 @@ describe('HarvestWatchBand — logging, empty states, and posture', () => {
     expect(container.querySelector('section')).toBeNull()
   })
 
-  it('swallows a fetch error — renders nothing, never throws onto Today', async () => {
+  it('shows nothing while the transient retry is still outstanding — never throws onto Today', async () => {
     fetchMock.mockRejectedValue(new Error('boom'))
     const { container } = render(<HarvestWatchBand />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(WATCH))
+    // Real timers: the RETRY_DELAY_MS gap has not elapsed, so a one-off blip is still invisible.
     expect(container.querySelector('section')).toBeNull()
+  })
+
+  // BUG-READYBANDFETCH-001 — a persistent outage must not look like "nothing is coming".
+  it('a persistent fetch error renders the muted notice, not the empty state', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fetchMock.mockRejectedValue(new Error('boom'))
+      render(<HarvestWatchBand />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS + 50) })
+      expect(screen.getByText(/Couldn’t check just now/i)).toBeTruthy()
+    } finally { vi.useRealTimers() }
   })
 
   it('Reward-UX V102: ambient only — no celebration, no badge, no urgency copy', async () => {

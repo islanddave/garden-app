@@ -3,7 +3,8 @@
 // entirely when empty, and NEVER throws / surfaces an error on a fetch failure (supplementary glance).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
+import { RETRY_DELAY_MS } from '../lib/useAmbientBandFetch.js'
 
 const navigateMock = vi.fn()
 const locationRef = { pathname: '/today' }
@@ -51,10 +52,22 @@ describe('PutUpUseSoonBand — Today "use soon" ambient card (L10)', () => {
     expect(container.querySelector('section')).toBeNull()
   })
 
-  it('swallows a fetch error — renders nothing, never throws', async () => {
+  it('shows nothing while the transient retry is still outstanding — never throws', async () => {
     fetchMock.mockRejectedValue(new Error('boom'))
     const { container } = render(<PutUpUseSoonBand />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/preservation/use-soon'))
+    // Real timers: the RETRY_DELAY_MS gap has not elapsed, so a one-off blip is still invisible.
     expect(container.querySelector('section')).toBeNull()
+  })
+
+  // BUG-READYBANDFETCH-001 — a persistent outage must not look like an empty shelf.
+  it('a persistent fetch error renders the muted notice, not the empty state', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fetchMock.mockRejectedValue(new Error('boom'))
+      render(<PutUpUseSoonBand />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS + 50) })
+      expect(screen.getByText(/Couldn’t check just now/i)).toBeTruthy()
+    } finally { vi.useRealTimers() }
   })
 })

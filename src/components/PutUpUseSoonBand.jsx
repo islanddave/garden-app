@@ -2,17 +2,23 @@
 // V4-HARVESTCENTER-001 (L10) — the "use soon" ambient card on the Today surface. Mirrors TodayBand's
 // data posture: useApiFetch, refresh on mount / in-app nav / app-foreground, and the fetch error is
 // SWALLOWED (supplementary glance — it must never throw or surface an error onto Today).
+// BUG-READYBANDFETCH-001: swallowing still holds, but a failed fetch no longer renders identically to
+// an empty shelf — useAmbientBandFetch retries once, then this renders one muted ambient line.
 //
 // NEUTRAL framing (Reward-UX + Notification rules): "cook these next" / "from your stores" — NO
 // loss-aversion ("don't let it rot"), NO "X days left" countdown (streak-psychology through the back
 // door), NO push. `past_use_by` rows render as a distinct CALM state (a quiet "past date" tag), not an
 // alarm. The whole card is hidden when there is nothing to surface. Reads /api/preservation/use-soon,
 // whose server-side shelf-life window (L6) already decides membership — this component only presents.
-import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useOverlayLocation, useOverlayNavigate } from '../context/OverlayContext.jsx'
-import { useApiFetch } from '../lib/api.js'
+import React from 'react'
+import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { P } from '../lib/constants.js'
 import { PUTUP_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
+import { useAmbientBandFetch } from '../lib/useAmbientBandFetch.js'
+import AmbientBandNotice from './AmbientBandNotice.jsx'
+
+// Module-level so the hook's load callback stays referentially stable across renders.
+const normalize = (d) => (Array.isArray(d?.items) ? d.items : [])
 
 const METHOD_LABELS = {
   roast_freeze: 'roasted & frozen', whole_freeze: 'frozen', blanch_freeze: 'blanched & frozen',
@@ -42,29 +48,11 @@ function itemDetail(it) {
 }
 
 export default function PutUpUseSoonBand() {
-  const { fetch } = useApiFetch()
-  const location = useOverlayLocation()
   const overlayNavigate = useOverlayNavigate()
-  const [items, setItems] = useState(null)
-  const inflight = useRef(false)
+  const { data: items, failed, reload } = useAmbientBandFetch('/api/preservation/use-soon', normalize)
 
-  const load = useCallback(() => {
-    if (inflight.current) return
-    inflight.current = true
-    fetch('/api/preservation/use-soon')
-      .then(d => setItems(Array.isArray(d?.items) ? d.items : []))
-      .catch(() => { /* supplementary glance — never surface a fetch error */ })
-      .finally(() => { inflight.current = false })
-  }, [fetch])
-
-  useEffect(() => { load() }, [load, location.pathname])
-
-  useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible') load() }
-    window.addEventListener('focus', load)
-    document.addEventListener('visibilitychange', onVis)
-    return () => { window.removeEventListener('focus', load); document.removeEventListener('visibilitychange', onVis) }
-  }, [load])
+  // BUG-READYBANDFETCH-001 — "could not ask" is not "nothing to use soon". See useAmbientBandFetch.
+  if (failed && !items) return <AmbientBandNotice eyebrow="Put up" onRetry={reload} />
 
   // Hidden entirely when empty (or before the first load resolves).
   if (!items || items.length === 0) return null

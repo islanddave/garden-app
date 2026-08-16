@@ -2,8 +2,9 @@
 // ratio, navigates (never one-tap POSTs), and Reward-UX V102 ambient-only compliant.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { RETRY_DELAY_MS } from '../lib/useAmbientBandFetch.js'
 
 const navigateMock = vi.fn()
 const locationRef = { pathname: '/today' }
@@ -89,10 +90,24 @@ describe('HarvestReadyBand', () => {
     expect(screen.queryByRole('button', { name: /Long Gone/i })).toBeNull()
   })
 
-  it('swallows a fetch error — renders nothing, never throws', async () => {
+  // BUG-READYBANDFETCH-001 — the error is still swallowed (no throw, no banner, no alert colour),
+  // but it no longer renders IDENTICALLY to an empty queue. Full semantics: AmbientBandFetch.test.jsx.
+  it('a persistent fetch error renders the muted notice, not the empty state', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fetchMock.mockRejectedValue(new Error('boom'))
+      render(<HarvestReadyBand />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS + 50) })
+      expect(screen.getByText(/Couldn’t check just now/i)).toBeTruthy()
+      expect(screen.queryByRole('region', { name: /Due for a pick/i })).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('shows nothing while the transient retry is still outstanding — never throws', async () => {
     fetchMock.mockRejectedValue(new Error('boom'))
     const { container } = render(<HarvestReadyBand />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/events/harvest-ready'))
+    // Real timers: the RETRY_DELAY_MS gap has not elapsed, so a one-off blip is still invisible.
     expect(container.querySelector('section')).toBeNull()
   })
 
