@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import { SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { EVENT_TYPES, EVENT_TYPE_META } from '../lib/eventTypes.js'
@@ -24,6 +24,10 @@ import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
 import PlantingSelect, { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import Button from '../components/forms/Button.jsx'
+// Direct import, NOT via the forms barrel: formsPrimitivesFreeze.test.js pins the barrel's export
+// set exactly, and buttonChrome is shared chrome rather than a frozen primitive. Same idiom, same
+// reason, as ToastContext.jsx's toastStackBottom import.
+import { buttonChrome } from '../components/forms/formStyles.js'
 // V4-PLANTFORMUNIFY-001 (BD-014) ⊇ V4-SNAPVARIETY-001 (BD-015): Snap was the LAST add/edit-planting
 // surface still hand-rolling its own fields (a bare name Input + a read-only <Select> over
 // pre-fetched varieties). Every other create path — Garden add/edit and the Sow sheet via
@@ -55,6 +59,38 @@ const MODES = [
   { id: 'replace',   label: 'Update a photo',    hint: 'Set this as an existing planting’s photo' },
   { id: 'inventory', label: 'Add inventory',     hint: 'Create a supply/equipment item with this photo' },
 ]
+// V4-SNAPTOAST-001 (BD-008 + BD0806-09) — "go to the thing I just saved", per destination.
+//
+// THE ROW'S PREMISE IS INVERTED, and the fix is scoped to the half that survived checking. The row
+// says Snap "lacks Log Event's post-save toaster options". Log Event's toaster (ToastContext
+// showUndo -> UndoToast) offers exactly two controls — Undo and ×-dismiss — on a 5s timer, and NO
+// navigation link at all; its overlay sibling PostSaveFeedback offers Undo plus two static text
+// lines and pins "the strip's zero-link count" as an invariant (PostSaveFeedback.jsx:144). Snap's
+// done card already offered Undo + Save & Next + Done, i.e. MORE actions than the toaster, so
+// "parity with Log Event" would mean DELETING Snap's Save & Next. Not built.
+//
+// What did survive: Dave's 0813 ruling on the row — Snap must offer a link to the newly-CREATED
+// planting after add. That is real and was missing, and it is missing from Log Event too: "View
+// planting" shipped as V4-VIEWPLANT-001, then V4-HARVFEEDBACK-001 S5b dropped it (spec §4.2) and
+// flagged the drop as a real regression FOR DAVE. So this is the ruling being honoured on Snap
+// first, not a Snap-only ornament — the copy is V4-VIEWPLANT-001's phrase verbatim so the two
+// surfaces converge rather than diverge when Log Event gets its link back.
+//
+// NO SECOND TOASTER. Snap keeps its own persistent done card and does NOT adopt ToastContext.
+// V4-LOGCONF-001 earned the finding that the global toast is "a 5s race the user always loses"
+// (PostSaveFeedback.jsx:24); firing one here would both re-run that race and put two confirmations
+// of one save on screen at once — the divergent-second-surface defect this row exists to close.
+//
+// PER-DESTINATION TARGETS — "go to the planting" is meaningless for three of the five, so each
+// destination links the record the photo is actually ABOUT:
+//   planting  -> /plantings/:id   "View planting"  (Dave's ruling, literal)
+//   event     -> /plantings/:id   "View planting"  (the planting logged TO; the event hangs off it)
+//   location  -> /locations/:id   "View location"  (no planting exists — the place IS the subject)
+//   replace   -> /plantings/:id   "View planting"  (confirming a featured-photo swap is precisely
+//                                                   the case where you want to go look)
+//   inventory -> /inventory/:id   "View item"
+// One link per destination, never two. 'event' could also link /events/:eventId, but a second exit
+// in the same row costs a decision on every capture and the planting is the durable end of the pair.
 const todayStr = () => todayLocalISO()
 
 // Mirrors PlantingEditor's EMPTY_FORM key-for-key EXCEPT project_id, which Snap deliberately does
@@ -84,7 +120,9 @@ export default function CaptureFlow() {
   const [mode, setMode]   = useState(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr]     = useState(null)
-  const [result, setResult] = useState(null)     // { kind, id, label, undo }
+  // V4-SNAPTOAST-001 adds `link` — { to, label, name } | null. `name` is the direct object for the
+  // accessible name only; `label` is what renders.
+  const [result, setResult] = useState(null)     // { kind, id, label, link, undo }
   const fileRef = useRef(null)
   // V4-SNAPPICK-001: one hidden input, capture toggled per choice so SNAP offers BOTH
   // take-photo and choose-photo (mirrors EventNew openPhotoPicker / <PhotoUpload mode="both">).
@@ -162,6 +200,12 @@ export default function CaptureFlow() {
     setFile(null); setPreview(null); setMode(null); setResult(null); setErr(null)
     setPlantForm(SNAP_PLANT_FORM); setEvPlant(''); setEvType('watering'); setEvDate(todayStr())
     setRpPlant(''); setInvName(''); setInvType('consumable'); setInvCat('other'); setInvQty('1'); setInvUnit('each')
+    // PRE-EXISTING, surfaced by V4-SNAPTOAST-001: `undone` was never cleared here, so undoing a save
+    // and then tapping Save & Next carried the flag into the NEXT capture — its done card opened
+    // already struck through as "Undone" with Undo withdrawn, describing a save that had in fact
+    // succeeded. The new link is withdrawn on the same flag, so leaving this would have made the
+    // ruling's affordance vanish from every capture after the first undo. One line, same block.
+    setUndone(false)
     setStep('photo')
   }
 
@@ -224,7 +268,11 @@ export default function CaptureFlow() {
           location_id:       f.location_id || null,
         }) })
         await attach({ plant_id: plant.id }, 'plants', plant.id)
+        // V4-SNAPTOAST-001: the `to` id is RESPONSE-sourced (plant.id, the saved row's truth), never
+        // staged client state — the same sourcing rule V4-VIEWPLANT-001 set for the link it built.
+        // The name falls back to the typed name only for the LABEL, which is display-only.
         setResult({ kind: 'planting', id: plant.id, label: `Planting “${plant.name ?? f.name.trim()}” created`,
+          link: { to: `/plantings/${plant.id}`, label: 'View planting', name: plant.name ?? f.name.trim() },
           undo: () => fetch('/api/plants/' + plant.id + '/archive', { method: 'PATCH', body: JSON.stringify({ archived: true }) }) })
       } else if (mode === 'event') {
         const pl = plantings.find(p => p.id === evPlant)
@@ -237,7 +285,11 @@ export default function CaptureFlow() {
         recordCropLog(pl.variety_ref?.crop_type_slug, evDate)
         const eventId = res?.eventId ?? res?.id
         await attach({ event_id: eventId, plant_id: pl.id }, 'events', eventId)
+        // V4-SNAPTOAST-001: the planting, not the event — this is the destination the row's title
+        // names ("go to the planting I just logged to"). pl.id is the picked row's own id, which the
+        // POST echoed back as plant_id, so it is response-consistent rather than merely staged.
         setResult({ kind: 'event', id: eventId, label: `${EVENT_TYPE_META[evType]?.label ?? evType} logged on ${pl.name}`,
+          link: { to: `/plantings/${pl.id}`, label: 'View planting', name: pl.name },
           undo: () => fetch('/api/events/' + eventId, { method: 'DELETE' }) })
       } else if (mode === 'location') {
         // No plant_id and no project_id, deliberately. The events Lambda requires only event_type and
@@ -258,8 +310,11 @@ export default function CaptureFlow() {
         // location_id rides the linkage too: the event is the photo's parent for the CHECK, but the
         // place is what the photo is OF, and the photo surfaces filter on location_id directly.
         await attach({ event_id: eventId, location_id: locPlace }, 'events', eventId)
+        // V4-SNAPTOAST-001: "View planting" is not merely wrong here, it is unbuildable — this event
+        // carries plant_id null by design. The place is the subject, so the link is the place.
         setResult({ kind: 'event', id: eventId,
           label: `${EVENT_TYPE_META[locType]?.label ?? locType} logged on ${place?.full_path ?? 'location'}`,
+          link: { to: `/locations/${locPlace}`, label: 'View location', name: place?.full_path ?? 'location' },
           undo: () => fetch('/api/events/' + eventId, { method: 'DELETE' }) })
       } else if (mode === 'replace') {
         const pl = plantings.find(p => p.id === rpPlant)
@@ -268,6 +323,7 @@ export default function CaptureFlow() {
         const photo = await attach({ plant_id: pl.id }, 'plants', pl.id)
         await fetch('/api/plants/' + pl.id, { method: 'PUT', body: JSON.stringify({ featured_photo_id: photo.id }) })
         setResult({ kind: 'replace', id: pl.id, label: `Photo updated on ${pl.name}`,
+          link: { to: `/plantings/${pl.id}`, label: 'View planting', name: pl.name },
           undo: () => fetch('/api/plants/' + pl.id, { method: 'PUT', body: JSON.stringify({ featured_photo_id: prior }) }) })
       } else if (mode === 'inventory') {
         if (!invName.trim()) throw new Error('Give the item a name')
@@ -277,6 +333,7 @@ export default function CaptureFlow() {
         const item = await fetch('/api/inventory-items', { method: 'POST', body: JSON.stringify(body) })
         await attach({ inventory_item_id: item.id }, 'inventory', item.id)
         setResult({ kind: 'inventory', id: item.id, label: `Inventory “${item.name ?? invName.trim()}” added`,
+          link: { to: `/inventory/${item.id}`, label: 'View item', name: item.name ?? invName.trim() },
           undo: () => fetch('/api/inventory-items/' + item.id, { method: 'DELETE' }) })
       }
       setStep('done')
@@ -528,8 +585,35 @@ export default function CaptureFlow() {
             </span>
             {!undone && <Button data-testid="cap-undo" variant="secondary" disabled={saving} onClick={doUndo} style={{ minHeight: 34, padding: '5px 12px' }}>Undo</Button>}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          {/* V4-SNAPTOAST-001: the link sits in the EXIT row beside Done, not in row 1 beside Undo.
+              Row 1 is the utility zone — it reverses a write and must be reliably noticed
+              (PostSaveFeedback §1); "View planting" is the opposite kind of act, it LEAVES. Grouping
+              it with Done keeps the two exits together and leaves Undo undiluted. Save & Next holds
+              first/primary position unchanged: rapid field capture is the entire reason Snap exists,
+              and the link must not outrank it.
+              flexWrap because three controls (one of them "Save & Next — snap another") do not fit a
+              390px Chrome-Android card on one line; wrapping puts Save & Next on its own row and the
+              two exits together on the next, which is the reading order that was wanted anyway. */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Button data-testid="cap-next" variant="primary" onClick={resetForNext}>Save &amp; Next — snap another</Button>
+            {/* WITHDRAWN once undone, uniformly across destinations — the same posture Undo itself
+                takes above. For 'planting' the undo ARCHIVES the row and for 'inventory' it deletes
+                it, so the target is genuinely gone; for 'event'/'replace' the planting survives and a
+                live link would be defensible. It is still withdrawn: a control that occupies the same
+                slot and is sometimes a dead end is worse than one that consistently disappears when
+                the save is retracted.
+                Accessible name = visible label + direct object (WCAG 2.5.3, PostSaveFeedback §5) —
+                "View planting" alone is indistinguishable between two captures in one session. */}
+            {result.link && !undone && (
+              <Link
+                data-testid="cap-view"
+                to={result.link.to}
+                aria-label={`${result.link.label} — ${result.link.name}`}
+                style={{ ...buttonChrome('secondary'), display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
+              >
+                {result.link.label}
+              </Link>
+            )}
             <Button variant="secondary" onClick={() => navigate('/today')}>Done</Button>
           </div>
         </div>
