@@ -1,0 +1,55 @@
+// V4-HARVWEIGHTSURF-001 — CropWeightLine, now that it is shared between the Harvests Totals tab and
+// the Garden's crop groups rather than living inside one page. Pinned directly because "these two
+// surfaces say the same thing" is only true while this component's branches hold: the ≈ that marks an
+// inferred total, the qualifier that stops a bare number claiming it was all weighed, the ratchet copy
+// for a crop with nothing weighable, and the ABSENT-weight case (an older harvests Lambda), which must
+// render nothing rather than zero.
+import React from 'react'
+import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import CropWeightLine from '../components/CropWeightLine.jsx'
+import { NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+
+const weight = (o = {}) => ({
+  grams: 0, measured_grams: 0, estimated_grams: 0, measured: 0, estimated: 0, unweighed: 0, ...o,
+})
+
+describe('CropWeightLine', () => {
+  it('marks a total containing estimates with ≈, and says how much was inferred', () => {
+    render(<CropWeightLine weight={weight({ grams: 2400, measured_grams: 400, estimated_grams: 2000, measured: 3, estimated: 12 })} />)
+    expect(screen.getByTestId('crop-weight').textContent).toBe('≈ 2.4 kg')
+    expect(screen.getByTestId('crop-weight').getAttribute('aria-label')).toBe('Estimated total harvest weight: 2.4 kg')
+    expect(screen.getByTestId('crop-weight-basis').textContent).toBe('3 weighed · 12 estimated')
+  })
+
+  it('leaves a fully measured total unmarked — the ratchet has to look like it works', () => {
+    render(<CropWeightLine weight={weight({ grams: 900, measured_grams: 900, measured: 2 })} />)
+    expect(screen.getByTestId('crop-weight').textContent).toBe('900 g')
+    expect(screen.getByTestId('crop-weight').getAttribute('aria-label')).toBe('Total harvest weight: 900 g')
+  })
+
+  it('counts the unweighed picks alongside the number rather than dropping them', () => {
+    render(<CropWeightLine weight={weight({ grams: 900, measured_grams: 900, measured: 2, unweighed: 5 })} />)
+    expect(screen.getByTestId('crop-weight-basis').textContent).toBe('2 weighed · 5 with no weight yet')
+  })
+
+  it('says "no weight yet" — never 0 g — for a crop with picks but nothing weighable', () => {
+    render(<CropWeightLine weight={weight({ unweighed: 4 })} />)
+    const none = screen.getByTestId('crop-weight-none')
+    expect(none.textContent).toBe('no weight yet')
+    expect(none.getAttribute('title')).toBe(NO_WEIGHT_COPY)
+    expect(screen.queryByTestId('crop-weight')).toBeNull()
+  })
+
+  it('renders nothing at all when there is neither a weight nor an unweighed pick to report', () => {
+    const { container } = render(<CropWeightLine weight={weight()} />)
+    expect(container.innerHTML).toBe('')
+  })
+
+  // An older harvests Lambda omits `weight` entirely. That response cannot tell "no weight recorded"
+  // apart from "this API doesn't compute weight", and only the first is safe to state.
+  it('renders nothing when the wire carries no weight object', () => {
+    const { container } = render(<CropWeightLine weight={undefined} />)
+    expect(container.innerHTML).toBe('')
+  })
+})

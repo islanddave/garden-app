@@ -9,6 +9,7 @@ import StatTile from '../components/StatTile.jsx'
 import Sparkline from '../components/Sparkline.jsx'
 import HarvestTimeframeChips from '../components/HarvestTimeframeChips.jsx'
 import HarvestExportSheet from '../components/HarvestExportSheet.jsx'
+import CropWeightLine from '../components/CropWeightLine.jsx'
 import { useHarvests } from '../hooks/useHarvests.js'
 import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
@@ -750,39 +751,9 @@ function TotalsWeight({ weight }) {
 }
 
 // The same two lines on a crop row, under its native-unit line — which stays the headline, exactly as
-// on the log: "14 tomatoes" is what was picked, 1.4 kg is what it weighed. Spans, because this
-// renders inside the row's expand button.
-function CropWeightLine({ weight }) {
-  if (!weight) return null
-  const text = formatGrams(weight.grams)
-  if (text == null) {
-    // Nothing weighable under this crop. Row-level, so it borrows the log row's short chip +
-    // title pairing rather than the full sentence, which would repeat once per crop and stop being
-    // read. The counts line goes with it: with no number to qualify, "2 with no weight yet" is the
-    // same fact twice — the same double-negative suppression the log row does.
-    if (weight.unweighed === 0) return null
-    return (
-      <span data-testid="crop-weight-none" title={NO_WEIGHT_COPY} style={{ display: 'block', fontSize: '0.75rem', color: P.light, marginTop: 2 }}>
-        no weight yet
-      </span>
-    )
-  }
-  return (
-    <>
-      <span
-        data-testid="crop-weight"
-        aria-label={`${weight.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${text}`}
-        style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: P.green, marginTop: 2 }}
-      >
-        {weight.estimated > 0 ? `≈ ${text}` : text}
-      </span>
-      <span data-testid="crop-weight-basis" style={{ display: 'block', fontSize: '0.72rem', color: P.light }}>
-        {weightParts(weight).join(' · ')}
-      </span>
-    </>
-  )
-}
-
+// on the log: "14 tomatoes" is what was picked, 1.4 kg is what it weighed. V4-HARVWEIGHTSURF-001
+// (Garden slice) moved it VERBATIM to src/components/CropWeightLine.jsx so the Garden's crop-type
+// groups render the identical thing rather than a lookalike; see the note there.
 
 // ── Shared states ──────────────────────────────────────────────────────────────────────────────────
 function EmptyState({ emoji, title, body }) {
