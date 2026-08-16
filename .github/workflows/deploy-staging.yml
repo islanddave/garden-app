@@ -73,9 +73,14 @@ env:
   STAGING_API_MEMBERS:         https://zhkvqgtlh3jwsdvoeak5hhro4y0ujbxq.lambda-url.us-east-1.on.aws/
   STAGING_API_FINDINGS:        https://xadazkudo5dyzaz67nmud2wsh40mbepo.lambda-url.us-east-1.on.aws/
   STAGING_API_DAILY_PLAN_READ: https://5fblg7acway22fxx5svtqsc4ta0ipgpl.lambda-url.us-east-1.on.aws/
-  # Genuinely absent on staging — no garden-achievements-staging / facebook-share function exists.
   # Declared EMPTY on purpose so the env reference is not an undefined-var silent-empty (the
   # STAGING_API_TAGS lesson) and so the Validate step can WARN on them instead of ignoring them.
+  #   ACHIEVEMENTS — genuinely absent: garden-achievements-staging does not exist and achievements
+  #   is still prod-only in the matrix below.
+  #   FACEBOOK_SHARE — ship-then-wire as of OPS-STAGINGMATRIX-001: facebook-share joined the deploy
+  #   matrix, so the first run of this workflow CREATES garden-facebook-share-staging and its
+  #   Function URL. That URL is not knowable until then; the "Ensure Function URL exists" step
+  #   echoes it — paste it here to light up the /share surface (and its smoke reachability) on staging.
   STAGING_API_ACHIEVEMENTS: ""
   STAGING_API_FACEBOOK_SHARE: ""
   # Staging infra
@@ -90,7 +95,13 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, storage-location, preservation, harvests]
+        # OPS-STAGINGMATRIX-001: facebook-share + photocdn-derivative joined 2026-08-16. Both were
+        # shipping to prod having never run on staging, so the L-108 smoke gate was structurally
+        # blind to them. Four functions in deploy-lambda.yml's 26-wide matrix are STILL prod-only,
+        # deliberately: achievements + tags (no staging Lambda, and their STAGING_API_* URLs are
+        # declared empty above), xp-reconcile + daily-plan (EventBridge-driven writers — whether
+        # staging gets its own cron, and at what DRY_RUN, is an open decision, not an omission).
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, storage-location, preservation, harvests, facebook-share, photocdn-derivative]
       max-parallel: 4
       fail-fast: false
 
@@ -110,15 +121,35 @@ jobs:
           aws-region: us-east-1
 
       - name: Build and zip ${{ matrix.function }}
+        if: matrix.function != 'photocdn-derivative'
         run: |
           cd lambda/${{ matrix.function }}
           npm install --omit=dev
           zip -r ../${{ matrix.function }}.zip .
 
+      # V4-PHOTOCDN-001 (mirrors deploy-lambda.yml): photocdn-derivative is nodejs22.x/arm64 and
+      # depends on `sharp` (native). The runner is x86_64, so a plain `npm install` packages the x64
+      # binary -> module-load 502 on the arm64 Lambda. Install the linux-arm64 binary explicitly and
+      # HARD-ASSERT it is in the zip. This assert is most of the reason the function belongs on
+      # staging at all: it is the one packaging failure that CI's static Lambda tests cannot see.
+      - name: Build and zip photocdn-derivative (arm64 sharp)
+        if: matrix.function == 'photocdn-derivative'
+        run: |
+          node -v && npm -v
+          cd lambda/photocdn-derivative
+          npm install --omit=dev --os=linux --cpu=arm64 --include=optional
+          zip -r ../photocdn-derivative.zip .
+          if ! unzip -l ../photocdn-derivative.zip | grep -q 'sharp-linux-arm64'; then
+            echo "FATAL: linux-arm64 sharp binary missing from zip — refusing to deploy an x64 build to an arm64 Lambda"; exit 1
+          fi
+          unzip -l ../photocdn-derivative.zip | grep -q 'node_modules/blurhash' || { echo "FATAL: blurhash dep missing from zip"; exit 1; }
+          echo "arm64 sharp + blurhash present in photocdn-derivative.zip"
+
       - name: Deploy or create ${{ matrix.function }}-staging
         # First-deploy support per VARIETY-REF Session 2 — mirrors deploy-lambda.yml
         # create-or-update pattern (closes Pending D1 from carry-forward backlog).
         # Existing functions update; missing functions are created with default config.
+        if: matrix.function != 'photocdn-derivative'
         run: |
           FN="garden-${{ matrix.function }}-staging"
           ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
@@ -138,6 +169,38 @@ jobs:
               --timeout 30 \
               --memory-size 256 \
               --environment 'Variables={SECRET_NAME=garden-app/secrets-staging}'
+          fi
+
+      - name: Deploy or create photocdn-derivative-staging (nodejs22.x / arm64)
+        # The prod function is created by infra/photocdn.yaml (CFN), not by a deploy workflow —
+        # deploy-lambda.yml only ever update-function-code's it, so its create branch has never run
+        # for this function and would produce the wrong shape. There is no staging CFN stack, so the
+        # create branch here reproduces the CFN properties by hand: nodejs22.x + arm64 (an x86_64
+        # function module-load-fails on the arm64 sharp zip) and MemorySize 2048.
+        # ORIGINALS_BUCKET is set AT CREATE rather than left to the config step below because
+        # index.mjs defaults it to 'garden-photos-prod' — an unset staging function reads PROD
+        # originals. SECRET_NAME is not passed: this function touches neither Neon nor Clerk.
+        if: matrix.function == 'photocdn-derivative'
+        run: |
+          FN="garden-photocdn-derivative-staging"
+          ZIP_FILE="fileb://lambda/photocdn-derivative.zip"
+          if aws lambda get-function --function-name "$FN" 2>/dev/null; then
+            echo "Updating existing function: $FN"
+            aws lambda update-function-code \
+              --function-name "$FN" \
+              --zip-file "$ZIP_FILE"
+          else
+            echo "Creating new function: $FN"
+            aws lambda create-function \
+              --function-name "$FN" \
+              --runtime nodejs22.x \
+              --architectures arm64 \
+              --handler index.handler \
+              --role arn:aws:iam::769788341849:role/garden-app-lambda-exec \
+              --zip-file "$ZIP_FILE" \
+              --timeout 30 \
+              --memory-size 2048 \
+              --environment 'Variables={ORIGINALS_BUCKET=garden-photos-staging}'
           fi
 
       - name: Wait for ${{ matrix.function }}-staging
@@ -230,9 +293,71 @@ jobs:
           aws lambda wait function-updated --function-name "$FN"
           echo "GARDEN_HOUSEHOLD_IDS ensured on $FN"
 
+      - name: Ensure facebook-share-staging config (household + admin + bucket + secret; read-merge)
+        # Staging mirror of deploy-lambda.yml's "Ensure facebook-share config" step.
+        # READ-MERGE is mandatory: --environment is set-not-merge and a naive set would wipe the
+        # SECRET_NAME written at create.
+        # S3_PHOTOS_BUCKET is not optional — lambda/facebook-share/index.js throws at MODULE LOAD
+        # when it is unset, so without this step every staging invoke 502s on init.
+        # ADMIN_CLERK_SUBS carries the smoke's CLERK_TEST_USER_ID alongside Dave (same convention as
+        # the ux-events-staging step above): the endpoint is admin-gated, so an authed smoke call
+        # from the test user would otherwise 403.
+        # FB_SHARE_ENABLED stays UNSET — kill switch OFF, exactly as in prod. Note the handler checks
+        # auth (401) and admin (403) BEFORE the switch, so an unauthenticated reachability probe still
+        # gets a clean 4xx and never reaches Facebook.
+        # FB_SECRET_NAME points at a STAGING-scoped secret name on purpose: staging must never hold
+        # the token for the real Facebook Page.
+        if: matrix.function == 'facebook-share'
+        continue-on-error: true  # requires lambda:Get/UpdateFunctionConfiguration on staging deploy role
+        run: |
+          FN="garden-facebook-share-staging"
+          HH=$(aws lambda get-function-configuration --function-name garden-events-staging \
+            --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
+          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+            --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          UPDATED=$(echo "$EXISTING" | jq \
+            --arg hh "$HH" \
+            --arg b "garden-photos-staging" \
+            --arg a "user_3D2gM0hIl03gjW3JM2DjtPzm0jI,${{ secrets.CLERK_TEST_USER_ID }}" \
+            --arg s "garden-app/facebook-page-token-staging" \
+            '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)')
+          echo "{\"Variables\": $UPDATED}" > /tmp/env-fbshare-staging.json
+          aws lambda update-function-configuration --function-name "$FN" \
+            --environment file:///tmp/env-fbshare-staging.json --timeout 60 --memory-size 512 >/dev/null
+          aws lambda wait function-updated --function-name "$FN"
+          echo "facebook-share-staging config ensured (household=$HH; admin; bucket; secret; 512MB/60s)"
+
+      - name: Ensure photocdn-derivative-staging config (buckets; read-merge)
+        # ORIGINALS_BUCKET is re-asserted on every deploy, not just at create: index.mjs falls back to
+        # 'garden-photos-prod' when it is unset, so a wiped env would silently point the staging
+        # function at PROD originals.
+        # DERIVATIVES_BUCKET has no staging counterpart — the derivatives bucket, its policy, the
+        # CloudFront distro and the signing key group are all created by infra/photocdn.yaml, which is
+        # a PROD-ONLY stack. It is therefore left unset and warned about: derivative WRITES stay inert
+        # on staging while the arm64 self-test below still proves the package loads.
+        if: matrix.function == 'photocdn-derivative'
+        continue-on-error: true  # requires lambda:Get/UpdateFunctionConfiguration on staging deploy role
+        run: |
+          FN="garden-photocdn-derivative-staging"
+          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+            --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          UPDATED=$(echo "$EXISTING" | jq --arg o "garden-photos-staging" '. + {ORIGINALS_BUCKET:$o}')
+          echo "{\"Variables\": $UPDATED}" > /tmp/env-photocdn-staging.json
+          aws lambda update-function-configuration --function-name "$FN" \
+            --environment file:///tmp/env-photocdn-staging.json >/dev/null
+          aws lambda wait function-updated --function-name "$FN"
+          echo "ORIGINALS_BUCKET=garden-photos-staging ensured on $FN"
+          D=$(echo "$UPDATED" | jq -r '.DERIVATIVES_BUCKET // empty')
+          if [[ -z "$D" ]]; then
+            echo "::warning::$FN has no DERIVATIVES_BUCKET — no staging derivatives bucket exists (infra/photocdn.yaml is prod-only). Derivative writes are inert on staging; the arm64 self-test still runs."
+          fi
+
       - name: Ensure Function URL exists for ${{ matrix.function }}-staging
         # First-deploy support: mirror deploy-lambda.yml Function URL creation step.
         # Existing URLs unchanged; missing URLs created with public access (handler owns CORS).
+        # photocdn-derivative is excluded here and from the CORS step below: it is INTERNAL-INVOKE
+        # ONLY (spec-B2 / infra/photocdn.yaml — no public AuthType-NONE URL), same as in prod.
+        if: matrix.function != 'photocdn-derivative'
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + AddPermission on staging deploy role
         run: |
           FN="garden-${{ matrix.function }}-staging"
@@ -256,8 +381,13 @@ jobs:
               --action lambda:InvokeFunction \
               --principal "*" 2>/dev/null || true
           fi
+          # Ship-then-wire: a net-new staging function's URL is not knowable until this step creates
+          # it. Echo it so it can be pasted into the STAGING_API_* block at the top of this file
+          # (the reason STAGING_API_FACEBOOK_SHARE ships empty on the first run).
+          aws lambda get-function-url-config --function-name "$FN" --query 'FunctionUrl' --output text
 
       - name: Restore staging Lambda CORS
+        if: matrix.function != 'photocdn-derivative'  # no Function URL to configure
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH"],"AllowOrigins":["${{ env.STAGING_CF_ORIGIN }}"],"ExposeHeaders":[],"MaxAge":300}'
           aws lambda update-function-url-config \
@@ -265,6 +395,35 @@ jobs:
             --region us-east-1 \
             --cors "$CORS" \
             --query 'Cors.AllowOrigins[0]' --output text
+
+      - name: Verify photocdn-derivative-staging (arm64 self-test + no public URL)
+        if: matrix.function == 'photocdn-derivative'
+        run: |
+          # (a) The whole point of OPS-STAGINGMATRIX-001 for this function: prove the arm64 package
+          # actually loads on Lambda BEFORE the identical zip goes to prod. The /d/__selftest__ route
+          # touches neither S3 nor the DB, so it works with the generic staging exec role.
+          # A missing lambda:InvokeFunction on the staging deploy role degrades to a warning — an IAM
+          # gap must not red the promote gate — but a self-test that RUNS and fails is a hard stop.
+          if aws lambda invoke --function-name garden-photocdn-derivative-staging \
+               --cli-binary-format raw-in-base64-out \
+               --payload '{"rawPath":"/d/__selftest__"}' /tmp/selftest-staging.json >/dev/null 2>/tmp/selftest-err; then
+            cat /tmp/selftest-staging.json
+            python3 -c "import json,sys; d=json.load(open('/tmp/selftest-staging.json')); b=json.loads(d['body']); assert b.get('sharp_ok') and b.get('blurhash_ok') and b.get('heif_input') and b.get('arch')=='arm64', 'self-test failed: '+str(b); print('self-test OK', b)"
+          elif grep -qiE 'accessdenied|not authorized' /tmp/selftest-err; then
+            cat /tmp/selftest-err
+            echo "::warning::staging deploy role lacks lambda:InvokeFunction on garden-photocdn-derivative-staging — arm64 self-test SKIPPED. Grant it to make this leg meaningful."
+          else
+            cat /tmp/selftest-err
+            echo "::error::garden-photocdn-derivative-staging self-test invoke failed"
+            exit 1
+          fi
+          # (b) spec-B2 mirror: assert no public Function URL exists on staging either. The step above
+          # skips this function; this catches drift from a manual create or an older workflow run.
+          if aws lambda get-function-url-config --function-name garden-photocdn-derivative-staging 2>/dev/null; then
+            echo "::error::photocdn-derivative-staging has a Function URL — spec-B2 forbids a public surface"
+            exit 1
+          fi
+          echo "verified: no Function URL on garden-photocdn-derivative-staging"
 
   # ── Build and deploy staging frontend ────────────────────────────────────
   deploy-frontend:
@@ -520,6 +679,12 @@ jobs:
           STAGING_API_PRESERVATION: ${{ env.STAGING_API_PRESERVATION }}
           STAGING_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
           STAGING_API_HARVESTS: ${{ env.STAGING_API_HARVESTS }}
+          # OPS-STAGINGMATRIX-001: plumbed ahead of its consumer. Empty until the first staging deploy
+          # of facebook-share creates the Function URL and it is pasted into the env block above;
+          # run-smoke.sh has no facebook-share check yet. Its handler answers 401 for an
+          # unauthenticated request (auth is evaluated before the FB_SHARE_ENABLED kill switch), so a
+          # plain check_reachable will pass once both halves land.
+          STAGING_API_FACEBOOK_SHARE: ${{ env.STAGING_API_FACEBOOK_SHARE }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
           # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
           # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)
