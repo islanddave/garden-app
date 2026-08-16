@@ -22,7 +22,10 @@ describe('sw.js image cache (V4-PHOTOCDN-001 P2)', () => {
     expect(SRC).not.toMatch(/'garden-images'/)
   })
   it('image responses are cached only when status 200 AND content-type image/*', () => {
-    expect(SRC).toMatch(/response\.status === 200 && type\.startsWith\('image\/'\)/)
+    // V4-PHOTOSWHARDEN-001 moved this expression out of imageCacheFirst into isImageResponse so the
+    // activate purge can share one predicate. Same invariant, new home — pinned at both ends.
+    expect(SRC).toMatch(/function isImageResponse[\s\S]*?startsWith\('image\/'\)/)
+    expect(SRC).toMatch(/if \(isImageResponse\(response\)\) \{/)
   })
   it('CloudFront signing params are stripped from the image cache key (match AND put)', () => {
     expect(SRC).toMatch(/SIGNING_PARAMS = \['Expires', 'Signature', 'Key-Pair-Id', 'Policy'\]/)

@@ -3,7 +3,11 @@
     "version": "4.30.0",
     "date": "2026-08-16",
     "highlights": [
-      "Ambient bands say when they could not check, instead of looking empty"
+      "Ambient bands now say when they could not check, instead of quietly looking empty. A one-off blip on a waking phone still shows nothing; only a real outage puts a line on Today.",
+      "Harvest-window estimates re-fitted on a full season of your own picks — 35 plantings now, up from 18, with taste-picks and probes filtered out. Windows sit about a week later than before and land right 31 times out of 35.",
+      "A brand-new planting gets its harvest anchor straight away instead of waiting for the next backfill, including plantings that belong to no project.",
+      "Harvest weights: a jalapeno-type pepper was carrying a 5 g catalogue figure against your own 43 g and 56 g weighings. Corrected, and the whole stored weight corpus re-derived from your measurements.",
+      "Quieter fixes: the rain gauge now rejects a physically impossible daily total instead of reading a broken tipping bucket as real rain, and the app can no longer cache an error page in place of a photo or a script."
     ]
   },
   {

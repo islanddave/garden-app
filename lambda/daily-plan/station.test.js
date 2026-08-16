@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import station from './station.js';
 const { deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, remainingHourlyIn, effectiveHour } = station;
 
@@ -494,6 +494,120 @@ describe('mergeStationWeather (B4 conservative floor)', () => {
     const stale = { mac: MAC, fresh: false, tempF: 38, recentPrecipIn: null, coversLookback: false, uncertainty: 'stale' };
     const { merged } = mergeStationWeather({ tonightLow: 42 }, stale);
     expect(merged.tonightLow).toBe(42);
+  });
+});
+
+// ── DRG-GAUGESANITY-001 — upper plausibility bound on dailyrainin ─────────────────────────────────────
+// FRESHNESS_MAX_MIN established only that the gauge was REPORTING, never that the number was POSSIBLE. A
+// phantom-tipping bucket (spider, debris, hail) reads as real rain, and real rain SUPPRESSES watering —
+// outranking both the bagHeatGate and freshTransplant carve-outs — so an over-reading gauge kills plants.
+// The bound is anchored on the MA 24-hour record (18.15", Hurricane Diane 1955), NOT on this site's 94-day
+// distribution (max 2.23", p99 1.31"), so it can never reject a storm that actually happened.
+describe('DRG-GAUGESANITY-001 — an implausible dailyrainin is rejected like a stale reading', () => {
+  const { RAIN_MAX_DAILY_IN } = station;
+  const om = { recent_precip_in: 0.9, today_precip_in: 0.1, today_pop: 40, upcoming_precip_in: 0.3,
+    tomorrow_precip_in: 0.2, tomorrow_pop: 55, yesterday_precip_actual_in: 0.45 };
+  // freshFull with only D0's accumulator swapped — the one knob every case below turns.
+  const withToday = (d0) => ({ mac: MAC, records: [rec('2026-07-06', '02', d0, 62), ...freshFull.records.slice(1)] });
+
+  it('the bound is a PHYSICAL ceiling, comfortably above the regional record', () => {
+    expect(RAIN_MAX_DAILY_IN).toBe(20);
+    expect(RAIN_MAX_DAILY_IN).toBeGreaterThan(18.15);   // MA 24h record: a real event must never be rejected
+  });
+
+  it('plausible readings pass untouched, including ones far above anything this site has seen', () => {
+    for (const v of [0.01, 2.23, 8.0]) {   // 2.23 == the 94-day site max; 8.0 == a tropical remnant, still real
+      const s = deriveStation(withToday(v), { nowMs: NOW });
+      expect(s.todayPrecipIn).toBe(v);
+      expect(s.implausibleDays).toEqual([]);
+      expect(s.uncertainty).toBeNull();
+      expect(mergeStationHydrology(om, s).merged.today_observed_in).toBe(v);
+    }
+  });
+
+  it('the boundary is strictly-greater: exactly the bound is real rain, a hundredth over is not', () => {
+    const at = deriveStation(withToday(RAIN_MAX_DAILY_IN), { nowMs: NOW });
+    expect(at.todayPrecipIn).toBe(RAIN_MAX_DAILY_IN);
+    expect(at.implausibleDays).toEqual([]);
+    const over = deriveStation(withToday(RAIN_MAX_DAILY_IN + 0.01), { nowMs: NOW });
+    expect(over.todayPrecipIn).toBeNull();
+    expect(over.implausibleDays).toEqual(['2026-07-06']);
+  });
+
+  it('a rejected day is DROPPED — never clamped to the bound, never zeroed into a fake dry day', () => {
+    const s = deriveStation(withToday(64.0), { nowMs: NOW });    // stuck bucket
+    expect(s.todayPrecipIn).toBeNull();                          // not 0, and not 20
+    expect(s.buckets['2026-07-06']).toBeUndefined();
+    expect(s.uncertainty).toBe('implausible');
+    const { merged, prov } = mergeStationHydrology(om, s);
+    expect(merged.today_observed_in).toBeUndefined();
+    expect(merged.today_precip_in).toBe(0.1);                    // Open-Meteo retained verbatim
+    expect(prov.today_source).toBe('forecast');
+    expect(prov.station_rejected_days).toEqual(['2026-07-06']);
+  });
+
+  it('an all-day fault yields the IDENTICAL merged hydrology a stale station does — no new failure mode', () => {
+    const bad = deriveStation({ mac: MAC, records: freshFull.records.map((r) => ({ ...r, dailyrainin: 99.9 })) }, { nowMs: NOW });
+    const stale = deriveStation(freshFull, { nowMs: NOW + 6 * 3600 * 1000 });
+    expect(bad.fresh).toBe(true);      // freshness is untouched: the feed is current, one number in it was not
+    expect(stale.fresh).toBe(false);
+    expect(mergeStationHydrology(om, bad).merged).toEqual(mergeStationHydrology(om, stale).merged);
+    expect(mergeStationHydrology(om, bad).prov.station_uncertainty).toBe('implausible');
+    expect(mergeStationHydrology(om, stale).prov.station_uncertainty).toBe('stale');
+  });
+
+  it('a fault on ONE day keeps the others, and is still labelled where nothing else would show it', () => {
+    const s = deriveStation(withToday(41.0), { nowMs: NOW });
+    expect(s.recentPrecipIn).toBe(0.5);                          // D-1 + D-2 survive intact
+    expect(s.yesterdayPrecipIn).toBe(0.3);
+    const { merged, prov } = mergeStationHydrology(om, s);
+    expect(merged.recent_precip_in).toBe(0.5);
+    expect(prov.recent_source).toBe('station');                  // the station_uncertainty branch never runs...
+    expect(prov.station_uncertainty).toBeUndefined();
+    expect(prov.station_rejected_days).toEqual(['2026-07-06']);  // ...so this is what keeps the drop visible
+    expect(merged.yesterday_precip_actual_in).toBe(0.3);
+  });
+
+  it('"implausible" outranks "warmup" — the rejection IS what broke coverage, so it names the cause', () => {
+    const s = deriveStation({ mac: MAC, records: [
+      rec('2026-07-06', '02', 0.01, 62), rec('2026-07-05', '18', 77.0, 70),
+      rec('2026-07-04', '18', 0.20, 72), rec('2026-07-03', '18', 0.0, 65),
+    ] }, { nowMs: NOW });
+    expect(s.implausibleDays).toEqual(['2026-07-05']);
+    expect(s.coversLookback).toBe(false);
+    expect(s.recentPrecipIn).toBeNull();                         // not 0.20, and not 0
+    expect(s.uncertainty).toBe('implausible');                   // NOT 'warmup'
+  });
+
+  it('"stale" still outranks it — an old feed is the larger problem', () => {
+    expect(deriveStation(withToday(99.0), { nowMs: NOW + 6 * 3600 * 1000 }).uncertainty).toBe('stale');
+  });
+
+  it('a rain-gauge fault must NOT disarm the frost path (this is why fresh is left alone)', () => {
+    const s = deriveStation({ mac: MAC, records: [rec('2026-07-06', '02', 88.0, 38), ...freshFull.records.slice(1)] }, { nowMs: NOW });
+    expect(s.uncertainty).toBe('implausible');
+    const { merged, prov } = mergeStationWeather({ tonightLow: 42 }, s);
+    expect(merged.tonightLow).toBe(38);                          // the station still floors the low
+    expect(prov.low_source).toBe('station_floor');
+  });
+
+  it('AWN_RAIN_MAX_DAILY_IN overrides the bound; a garbage override falls back to 20, never to NaN', async () => {
+    const prev = process.env.AWN_RAIN_MAX_DAILY_IN;
+    try {
+      for (const [env, expected] of [['3', 3], ['not-a-number', 20], ['', 20]]) {
+        process.env.AWN_RAIN_MAX_DAILY_IN = env;
+        vi.resetModules();
+        const ns = await import('./station.js');
+        const m = ns.default || ns;
+        expect(m.RAIN_MAX_DAILY_IN).toBe(expected);
+        // 8" is real rain under the default bound and a fault under a 3" one: proves the value is live-wired,
+        // and that a NaN bound (which would compare false forever, silently disabling the gate) cannot happen.
+        expect(m.deriveStation(withToday(8.0), { nowMs: NOW }).todayPrecipIn).toBe(expected === 3 ? null : 8);
+      }
+    } finally {
+      if (prev === undefined) delete process.env.AWN_RAIN_MAX_DAILY_IN; else process.env.AWN_RAIN_MAX_DAILY_IN = prev;
+      vi.resetModules();
+    }
   });
 });
 

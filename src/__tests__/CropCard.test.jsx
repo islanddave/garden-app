@@ -155,7 +155,9 @@ describe('CropCard — crop-mechanic breadth and derived-cue honesty (V4-RIPECUE
 // only `Date` is faked, leaving testing-library's own timers alone.
 describe('CropCard — continuous-harvest window (V4-MATURITYREPEAT-001)', () => {
   // Live prod 2026-08-16: Armageddon F1 pepper, transplanted 2026-05-23, DTM 75-95 from-transplant,
-  // crop_types.pepper harvest_habit=repeat. Its window "closed" on Aug 12 while it was fruiting.
+  // crop_types.pepper harvest_habit=repeat. Its window "closed" while it was fruiting — on Aug 12
+  // at the 0.70 factor the defect was filed under, on Aug 16 after the V4-DROPCALIB-001 re-fit to
+  // 0.75 the same day. Dates below track the shipped factor; the defect is the same either way.
   const armageddon = (habit) => ({
     id: 'p', name: 'Armageddon', transplanted_at: '2026-05-23',
     variety_ref: {
@@ -170,8 +172,8 @@ describe('CropCard — continuous-harvest window (V4-MATURITYREPEAT-001)', () =>
 
   it('paints an open-ended window on the repeat-habit pepper', () => {
     render(<CropCard planting={armageddon('repeat')} />)
-    expect(screen.getByText(/Harvest window open — picking from Jul 1, 2026 · site-calibrated/)).toBeTruthy()
-    expect(screen.queryByText(/through Aug 12/)).toBeNull()
+    expect(screen.getByText(/Harvest window open — picking from Jul 4, 2026 · site-calibrated/)).toBeTruthy()
+    expect(screen.queryByText(/through Aug 16/)).toBeNull()
     // the rest of the band is untouched
     expect(screen.getByText(/^Day 85 since transplanted$/)).toBeTruthy()
     expect(screen.getByText('(from transplant)')).toBeTruthy()
@@ -179,6 +181,6 @@ describe('CropCard — continuous-harvest window (V4-MATURITYREPEAT-001)', () =>
 
   it('still paints the closing date on a single-habit crop', () => {
     render(<CropCard planting={armageddon('single')} />)
-    expect(screen.getByText(/Harvest window open — through Aug 12, 2026 · site-calibrated/)).toBeTruthy()
+    expect(screen.getByText(/Harvest window open — through Aug 16, 2026 · site-calibrated/)).toBeTruthy()
   })
 })

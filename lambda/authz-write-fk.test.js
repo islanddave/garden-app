@@ -282,6 +282,15 @@ const NOT_IN_SITES = [
   'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',
   'projects::workspace_id', 'shared-state::workspace_id', 'storage-location::user_id',
   'tags::owner_id', 'varieties::owner_id',
+  // plants::user_id — plant_anchor_derivation.user_id, written by the V4-ANCHORBASE-001 create-path
+  // derive (plants/anchorCreate.js). Not body-settable and not settable at all: the statement takes
+  // NOTHING from the request except the planting id, and that id is the row the POST it follows just
+  // inserted with created_by = the JWT subject. The value is COALESCE(container.created_by,
+  // garden_node.created_by) read back off the database — the project arm can only be a project the
+  // POST already cleared through loadOwnedProject, and the fallback arm IS the JWT subject. Same
+  // class as harvests::user_id, one step further removed: that one is the subject directly, this one
+  // is a column the same request wrote from it.
+  'plants::user_id',
   // ── Gated inline by a predicate this file's SITES regex cannot express. Each is pinned by its
   //    own named assertion in the third describe block — NOT pre-absolved here. ──
   'projects::parent_id',        // POST create: inline container.created_by SELECT (asserted below)

@@ -20,6 +20,7 @@ import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 import { validateClear, approxOrNull } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
+import { deriveAnchorOnCreate } from './anchorCreate.js';
 
 
 // V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
@@ -1319,6 +1320,35 @@ export const handler = async (event) => {
         RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, kind, workspace_id, last_seen_at, attr_override, version
       `;
       const newPlant = inserted[0];
+
+      // V4-ANCHORBASE-001 — THE DERIVATION MAINTAINER, create-path half.
+      //
+      // The backfill (migrations/v4-anchorbase-001/0b-backfill.sql) ran once, on 2026-08-12, and
+      // nothing has derived an anchor since — so a planting created after that date and carrying no
+      // sown_at / transplanted_at / planted_out_at got no derived row at all and stayed invisible to
+      // the harvest watch band. Verified read-only against live prod 2026-08-16: two of the three
+      // anchorless plantings created since the backfill hold no derivation, and both are
+      // PROJECT-LESS, which 0b's INNER JOIN to plant_projects would not have rescued either.
+      // ./anchorCreate.js carries the tier reasoning, the ownership divergence and the clamp note.
+      //
+      // AFTER the INSERT and OUTSIDE any transaction, in a try/catch that logs and continues —
+      // exactly the posture of the PUT path's weight-sample re-attribution hook below. This is a
+      // satellite table holding an INFERRED value; losing a derivation costs one planting its place
+      // in a watch band until a re-derivation pass, whereas failing the POST loses Dave the planting
+      // he just entered. The nightly sweep in lambda/daily-plan is the backstop, so the failure is
+      // recoverable by construction. NOTE the asymmetry with the PUT's retire, which IS in-transaction
+      // and must be: a retire that fails leaves a guess standing beside a real date (the marking-rule
+      // violation gates.yml asserts continuously), while a derive that fails leaves nothing at all.
+      //
+      // Placed before the succession self-reference UPDATE below rather than after it because that
+      // UPDATE has its own early return, and only touches succession_group_id — a column this
+      // derivation neither reads nor depends on. Sitting here it runs on exactly one path instead of
+      // being duplicated across two.
+      try {
+        await deriveAnchorOnCreate(sql, newPlant.id);
+      } catch (e) {
+        console.warn('[anchorbase] create-path anchor derivation failed (planting saved):', e?.message);
+      }
 
       // V1.2a-4 S1 (P3 / V102 §4.1 head-of-chain convention LOCKED): if caller
       // did not supply succession_group_id AND no parent_plant_id is set, this is

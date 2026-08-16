@@ -101,15 +101,16 @@ describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
   // SLICE D UPDATE: this test asserted the RAW catalogue window (2026-09-01 .. 09-11). Slice D
   // calibrates from-transplant windows by the measured site factor, because the raw catalogue
   // window was measured to contain the actual first harvest 0 times out of 21. The window now sits
-  // BETWEEN the two old extremes, which is the whole point:
+  // BETWEEN the two old extremes, which is the whole point. Dates re-stated for the 2026-08-16
+  // re-fit (V4-DROPCALIB-001, factor 0.70 -> 0.75); the raw-catalogue rate re-measured to 0/35:
   //   sow-anchored (the original bug)   2026-06-29   far too early
-  //   calibrated   (Slice D)            2026-07-28   <- 16/18 of observed harvests land in-window
-  //   raw catalogue from transplant     2026-09-01   0/21 — too late, told Dave to wait 3 weeks
+  //   calibrated   (re-fit)             2026-08-01   <- 31/35 of observed harvests land in-window
+  //   raw catalogue from transplant     2026-09-01   0/35 — too late, told Dave to wait 4 weeks
   it("'from-transplant' calibrates the window between the sow-anchored and raw-catalogue extremes", () => {
     const m = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: 'from-transplant' } }, TODAY)
-    // anchor 2026-06-23; lo = round(0.70*70)-14 = 35d, hi = round(0.70*80)+14 = 70d
-    expect(ymd(m.maturityMinDate)).toBe('2026-07-28')
-    expect(ymd(m.maturityMaxDate)).toBe('2026-09-01')
+    // anchor 2026-06-23; lo = round(0.75*70)-14 = 39d, hi = round(0.75*80)+14 = 74d
+    expect(ymd(m.maturityMinDate)).toBe('2026-08-01')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-09-05')
     expect(m.dtmAnchorField).toBe('transplanted_at')
     expect(m.dtmAnchorLabel).toBe('transplant')
     expect(m.calibrated).toBe(true)
@@ -117,7 +118,7 @@ describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
     const nul = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: null } }, TODAY)
     // Still strictly later than the sow-anchored window this whole change exists to push back...
     expect(m.maturityMinDate > nul.maturityMinDate).toBe(true)
-    expect((m.maturityMinDate - nul.maturityMinDate) / 86400000).toBe(29)
+    expect((m.maturityMinDate - nul.maturityMinDate) / 86400000).toBe(33)
     // ...and the calibrated window is strictly wider than the 10-day catalogue span it replaces.
     const span = (m.maturityMaxDate - m.maturityMinDate) / 86400000
     expect(span).toBe(35)
@@ -129,8 +130,8 @@ describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
       TODAY,
     )
     expect(m.dtmAnchorField).toBe('planted_out_at')
-    // Slice D: calibrated off the planted_out_at anchor (2026-06-23 + 35d), not the raw 70d.
-    expect(ymd(m.maturityMinDate)).toBe('2026-07-28')
+    // Slice D: calibrated off the planted_out_at anchor (2026-06-23 + 39d), not the raw 70d.
+    expect(ymd(m.maturityMinDate)).toBe('2026-08-01')
     expect(m.calibrated).toBe(true)
   })
 
@@ -180,9 +181,9 @@ describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
       { ...caseA, variety_ref: { days_to_maturity_min: 70, dtm_basis: 'from-transplant' } },
       TODAY,
     )
-    // both ends scale off the one populated value: 2026-06-23 + 35d .. + 63d
-    expect(ymd(m.maturityMinDate)).toBe('2026-07-28')
-    expect(ymd(m.maturityMaxDate)).toBe('2026-08-25')
+    // both ends scale off the one populated value: 2026-06-23 + 39d .. + 67d
+    expect(ymd(m.maturityMinDate)).toBe('2026-08-01')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-08-29')
     expect(m.calibrated).toBe(true)
   })
 })
@@ -205,14 +206,17 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
       dtm_basis: 'from-transplant', harvest_habit: 'repeat',
     },
   }
-  // The day the row was filed: four days PAST the close the old label printed.
+  // The day the row was filed. At the 0.70 factor in force that day the close printed Aug 12, four
+  // days in the past; V4-DROPCALIB-001 re-fitted to 0.75 the same day, moving the close to Aug 16 —
+  // exactly the filing date. The defect is identical either way (a pepper with ~6 weeks of season
+  // left is told it has finished); the re-fit only shrank the margin the row was noticed by.
   const TODAY = new Date('2026-08-16T00:00:00')
 
   it('reproduces the filed numbers exactly (premise check, not just a fixture)', () => {
     const m = computeMaturity(ARMAGEDDON, TODAY)
-    // lo = max(1, round(.70*75) - 14) = 53 - 14 = 39d;  hi = round(.70*95) + 14 = 67 + 14 = 81d
-    expect(ymd(m.maturityMinDate)).toBe('2026-07-01')
-    expect(ymd(m.maturityMaxDate)).toBe('2026-08-12') // "day 81 of a 95-day catalogue max"
+    // lo = max(1, round(.75*75) - 14) = 56 - 14 = 42d;  hi = round(.75*95) + 14 = 71 + 14 = 85d
+    expect(ymd(m.maturityMinDate)).toBe('2026-07-04')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-08-16') // "day 85 of a 95-day catalogue max"
     expect(m.calibrated).toBe(true)
     expect(m.isMature).toBe(true)
     expect(m.continuousHarvest).toBe(true)
@@ -220,18 +224,18 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
 
   it('no longer tells Dave a pepper he is picking has finished', () => {
     const m = computeMaturity(ARMAGEDDON, TODAY)
-    // BEFORE: 'Harvest window open — through Aug 12, 2026 · site-calibrated'
-    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 1, 2026 · site-calibrated')
+    // BEFORE: 'Harvest window open — through Aug 16, 2026 · site-calibrated'
+    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 4, 2026 · site-calibrated')
     // The close is gone as a CLAIM, not merely reworded around: no closing date may appear at all.
     expect(m.harvestWindowLabel).not.toMatch(/through/)
-    expect(m.harvestWindowLabel).not.toContain('Aug 12')
+    expect(m.harvestWindowLabel).not.toContain('Aug 16')
   })
 
   it('names the pre-open range as a FIRST-harvest estimate, with the dates untouched', () => {
-    const before = new Date('2026-06-01T00:00:00') // still short of the 2026-07-01 opening
+    const before = new Date('2026-06-01T00:00:00') // still short of the 2026-07-04 opening
     const m = computeMaturity(ARMAGEDDON, before)
     expect(m.isMature).toBe(false)
-    expect(m.harvestWindowLabel).toBe('Est. first harvest Jul 1, 2026 – Aug 12, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Est. first harvest Jul 4, 2026 – Aug 16, 2026 · site-calibrated')
     // identical arithmetic to the `single` reading of the same row — only the wording differs
     const asSingle = computeMaturity(
       { ...ARMAGEDDON, variety_ref: { ...ARMAGEDDON.variety_ref, harvest_habit: 'single' } },
@@ -247,7 +251,7 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
       TODAY,
     )
     expect(m.continuousHarvest).toBe(true)
-    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 1, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 4, 2026 · site-calibrated')
   })
 
   it('the habit set is exactly the two continuous habits', () => {
@@ -262,7 +266,7 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
       TODAY,
     )
     expect(m.continuousHarvest).toBe(false)
-    expect(m.harvestWindowLabel).toBe('Harvest window open — through Aug 12, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Harvest window open — through Aug 16, 2026 · site-calibrated')
   })
 
   it("'single' keeps the plain 'Est. harvest' lead before the window opens", () => {
@@ -270,7 +274,7 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
       { ...ARMAGEDDON, variety_ref: { ...ARMAGEDDON.variety_ref, harvest_habit: 'single' } },
       new Date('2026-06-01T00:00:00'),
     )
-    expect(m.harvestWindowLabel).toBe('Est. harvest Jul 1, 2026 – Aug 12, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Est. harvest Jul 4, 2026 – Aug 16, 2026 · site-calibrated')
   })
 
   // The NULL/absent habit is 54 live plantings, every one an ornamental. It must be byte-identical
@@ -294,16 +298,16 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
   // BOUNDARY the design introduces: the open-ended label replaces the closed one exactly at
   // maturityMinDate, because that is where isMature flips. One day either side.
   it('switches wording on the opening date, not on the (now absent) closing date', () => {
-    const dayBefore = computeMaturity(ARMAGEDDON, new Date('2026-06-30T12:00:00'))
-    const openingDay = computeMaturity(ARMAGEDDON, new Date('2026-07-01T00:00:00'))
+    const dayBefore = computeMaturity(ARMAGEDDON, new Date('2026-07-03T12:00:00'))
+    const openingDay = computeMaturity(ARMAGEDDON, new Date('2026-07-04T00:00:00'))
     expect(dayBefore.isMature).toBe(false)
     expect(dayBefore.harvestWindowLabel).toMatch(/^Est\. first harvest /)
     expect(openingDay.isMature).toBe(true)
     expect(openingDay.harvestWindowLabel).toMatch(/^Harvest window open — picking from /)
     // and it does NOT change again when the old close date passes — that date no longer means
     // anything to a continuous crop, which is the entire point.
-    expect(computeMaturity(ARMAGEDDON, new Date('2026-08-11T00:00:00')).harvestWindowLabel)
-      .toBe(computeMaturity(ARMAGEDDON, new Date('2026-08-13T00:00:00')).harvestWindowLabel)
+    expect(computeMaturity(ARMAGEDDON, new Date('2026-08-15T00:00:00')).harvestWindowLabel)
+      .toBe(computeMaturity(ARMAGEDDON, new Date('2026-08-17T00:00:00')).harvestWindowLabel)
   })
 
   // The uncalibrated (from-sow / null-basis) open branch says nothing about a close in any habit,

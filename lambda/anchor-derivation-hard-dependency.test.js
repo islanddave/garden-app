@@ -161,11 +161,16 @@ describe('OPS-DERIVEDCTEDEP-001 — a missing relation fails loudly, by decision
 //
 // Counted as SQL statements naming the relation, per Lambda source file (tests, migrations and
 // one-off scripts excluded — a script failing is a person's problem, a request failing is Dave's).
-// Seven of the eight are unguarded, which is the fact the ledger row records: this relation cannot be
+// Seven of the ten are unguarded, which is the fact the ledger row records: this relation cannot be
 // dropped, renamed or left unapplied in ANY environment the app runs against without breaking a
 // shipped surface, and the watch band is only the most visible of them.
 //
-// Note for whoever adds the ninth: adding a dependent is not the problem this list guards against —
+// The ninth and tenth arrived together (V4-ANCHORBASE-001 create path, 2026-08-16) and are the first
+// addition since this list was written. They do NOT move the unguarded count: both live in
+// plants/anchorCreate.js, whose single call site wraps it in a try/catch, because a derivation that
+// fails leaves nothing — unlike a retire that fails, which leaves a guess standing beside a real date.
+//
+// Note for whoever adds the eleventh: adding a dependent is not the problem this list guards against —
 // believing there are still five is.
 const DEPENDENTS = {
   'harvests/watch-route.js': {
@@ -175,6 +180,11 @@ const DEPENDENTS = {
   'plants/index.js': {
     statements: 1, guarded: false,
     note: 'V4-ANCHORSUPERSEDE-001 retire, in the PUT transaction — every client anchor write.',
+  },
+  'plants/anchorCreate.js': {
+    statements: 2, guarded: true,
+    note: 'V4-ANCHORBASE-001 create-path derive: the INSERT plus its NOT EXISTS re-run guard. '
+      + 'Guarded at its POST call site, so a missing relation costs a derivation, not the planting.',
   },
   'plants/merge.js': {
     statements: 3, guarded: false,
@@ -221,10 +231,10 @@ describe('OPS-DERIVEDCTEDEP-001 — the runtime dependents of plant_anchor_deriv
   })
 
   // The unguarded majority is the load-bearing claim, so it is asserted rather than left as prose.
-  it('seven of the eight statements are unguarded — the dependency is not optional anywhere', () => {
+  it('seven of the ten statements are unguarded — the dependency is not optional anywhere', () => {
     const total = Object.values(DEPENDENTS).reduce((n, s) => n + s.statements, 0)
     const guarded = Object.values(DEPENDENTS).reduce((n, s) => n + (s.guarded ? s.statements : 0), 0)
-    expect(total).toBe(8)
+    expect(total).toBe(10)
     expect(total - guarded).toBe(7)
   })
 
@@ -238,6 +248,17 @@ describe('OPS-DERIVEDCTEDEP-001 — the runtime dependents of plant_anchor_deriv
     expect(stmt).toBeGreaterThan(0)
     expect(body.slice(0, stmt)).toMatch(/try\s*\{/)
     expect(body.slice(stmt)).toMatch(/catch\s*\(/)
+  })
+
+  // The other guarded site, and the one whose `guarded: true` is claimed for a statement that lives
+  // in a DIFFERENT file from its try/catch: anchorCreate.js holds the INSERT, the POST branch of
+  // plants/index.js holds the wrapper. That census entry is only honest while the call site wraps it.
+  it('the create-path derive is wrapped at its call site', () => {
+    const src = read('plants', 'index.js')
+    const call = src.indexOf('await deriveAnchorOnCreate(')
+    expect(call).toBeGreaterThan(0)
+    expect(src.slice(call - 40, call + 200))
+      .toMatch(/try\s*\{[\s\S]*deriveAnchorOnCreate[\s\S]*?\}\s*catch\s*\(/)
   })
 
   // The drop site. 0r-rollback.sql part 2 is the file someone opens to remove this table, so it is

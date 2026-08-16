@@ -71,7 +71,10 @@ self.addEventListener('install', (event) => {
   )
 })
 
-// ---- Activate — purge old caches ----
+// ---- Activate — purge old caches, then sweep poison out of the one we keep ----
+// V4-PHOTOSWHARDEN-001: the two passes are complementary, not redundant. The name filter is
+// all-or-nothing and only fires when CACHE_VERSION actually moved; purgePoisonedImages is the
+// per-entry one and is the only thing that cleans a client activating under an UNCHANGED name.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -80,7 +83,7 @@ self.addEventListener('activate', (event) => {
           .filter(k => k !== STATIC_CACHE && k !== API_CACHE && k !== IMAGE_CACHE) // old garden-images + prior images-* caches purge here too
           .map(k => caches.delete(k))
       )
-    }).then(() => self.clients.claim())
+    }).then(() => purgePoisonedImages()).then(() => self.clients.claim())
   )
 })
 
@@ -171,6 +174,9 @@ function normalizeImageUrl(url) {
 // Image variant of cacheFirst: normalized cache key + content-type guard. Only status-200
 // image/* responses are cached — S3/CloudFront 403s (application/xml), SPA index.html
 // poison (text/html), and opaque responses never enter the cache. (Closes V4-PHOTOSWHARDEN-001.)
+// The guarded response is still RETURNED to the page unmodified: refusing to cache a bad answer
+// must not turn it into a different bad answer, and PhotoImg's own 403 heal needs to see the real
+// status. Poison is denied a home here, not hidden.
 async function imageCacheFirst(request) {
   const key = normalizeImageUrl(request.url)
   const cache = await caches.open(IMAGE_CACHE)
@@ -178,8 +184,7 @@ async function imageCacheFirst(request) {
   if (cached) return cached
   try {
     const response = await fetch(request)
-    const type = response.headers.get('content-type') ?? ''
-    if (response.status === 200 && type.startsWith('image/')) {
+    if (isImageResponse(response)) {
       await cache.put(key, response.clone())
       trimCache(IMAGE_CACHE, MAX_IMAGE_ENTRIES).catch(() => {})
     }
@@ -189,12 +194,48 @@ async function imageCacheFirst(request) {
   }
 }
 
+// V4-PHOTOSWHARDEN-001 part (b). The guard above stops NEW poison; this evicts poison that an
+// EARLIER sw.js already wrote into the cache this SW is about to go on using. Never
+// caches.delete(IMAGE_CACHE) — discarding every good photo to evict a handful of bad entries is
+// the offline story traded away for a bug a per-entry predicate handles exactly.
+//
+// SCOPE, deliberately narrower than the write guard: delete only entries we can PROVE are wrong —
+// a stored content-type that is present and is not image/*. An entry with an absent or empty
+// content-type is LEFT ALONE. It is not provably poison (an older sw.js could have stored an opaque
+// or header-less but perfectly good image) and deleting it costs a real offline photo, whereas
+// poison always identifies itself: an interception/login page is text/html, an S3 403 is
+// application/xml, a stray error body is text/plain. Idempotent — a second pass finds nothing left
+// matching, and it never writes, so re-running it is free.
+async function purgePoisonedImages() {
+  try {
+    const names = await caches.keys()
+    if (!names.includes(IMAGE_CACHE)) return   // don't materialize an empty cache on a first activate
+    const cache = await caches.open(IMAGE_CACHE)
+    const keys = await cache.keys()
+    await Promise.all(keys.map(async (key) => {
+      const stored = await cache.match(key)
+      if (!stored) return
+      const type = (stored.headers.get('content-type') ?? '').toLowerCase()
+      if (type && !type.startsWith('image/')) await cache.delete(key)
+    }))
+  } catch { /* a failed sweep must never block activation; the write guard still holds */ }
+}
+
+// V4-PHOTOSWHARDEN-001: same poisoning class, different cache. This path is only ever reached for
+// isStaticAsset() URLs (js/css/fonts), and a captive portal, an auth redirect or S3's 200-index.html
+// SPA fallback answers a missing hashed chunk with HTML — cached here it is served cache-first for
+// the life of the cache name, so the app boots broken for that client with no network involved.
+// Denylist (reject text/html) rather than the image path's allowlist: legitimate assets arrive under
+// half a dozen content-types (application/javascript, text/javascript, font/woff2,
+// application/octet-stream, …) and an allowlist would silently stop caching real ones, while
+// text/html is never a correct answer for a script, stylesheet or font. navigationFallback does its
+// own put and does not route through here, so the precached HTML app shell is unaffected.
 async function cacheFirst(request, cacheName, maxEntries) {
   const cached = await caches.match(request)
   if (cached) return cached
   try {
     const response = await fetch(request)
-    if (response.ok) {
+    if (response.ok && !isHtmlResponse(response)) {
       const cache = await caches.open(cacheName)
       await cache.put(request, response.clone())
       if (maxEntries) trimCache(cacheName, maxEntries).catch(() => {})
@@ -282,6 +323,28 @@ async function networkFirst(request, cacheName) {
 
 function isImage(url) {
   return /\.(png|jpg|jpeg|gif|svg|ico|webp|avif)(\?.*)?$/.test(url.pathname)
+}
+
+// V4-PHOTOSWHARDEN-001. isImage() asks what the URL LOOKS like; isImageResponse() asks what the
+// server actually SENT — the gap between the two is the whole poisoning bug. A URL ending .jpg
+// proves nothing: a captive portal, a Clerk login redirect and an S3 403 all answer it with a 200
+// and a body, and once one is cached it is served cache-first forever and the photo is permanently
+// broken for that client. Allowlist, so anything not positively an image is refused.
+//
+// OPAQUE RESPONSES ARE REFUSED, DELIBERATELY. A cross-origin <img> issues a no-cors request and the
+// SW's fetch() mirrors that mode, so the response comes back opaque: status 0, headers stripped,
+// content-type unreadable. There is no way to tell an image from a login page inside one, so caching
+// it is caching an unverifiable body — precisely the class this closes. `status !== 200` already
+// excluded them (opaque is status 0); the type test is spelled out so a later refactor that relaxes
+// the status check cannot silently reopen the hole. Cost: cross-origin presigned photos are not
+// offline-cached — they already were not, and their presigns die in 900s regardless.
+function isImageResponse(response) {
+  if (response.type === 'opaque' || response.status !== 200) return false
+  return (response.headers.get('content-type') ?? '').toLowerCase().startsWith('image/')
+}
+
+function isHtmlResponse(response) {
+  return (response.headers.get('content-type') ?? '').toLowerCase().startsWith('text/html')
 }
 
 function isStaticAsset(url) {

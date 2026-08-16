@@ -17,10 +17,12 @@
 //
 // V4-MATURITYBASIS-001 (Slice D) — from-transplant windows are now SITE-CALIBRATED.
 // Slice A exposed that from-transplant crops land inside the catalogue window 0 times out of 21.
-// Slice D scales those windows by the measured site factor (~0.70) and presents them as a widened
-// range (+/-14d), which puts 16 of 18 observed first-harvests inside the window. from-sow and
-// uncurated (null) bases are DELIBERATELY untouched — see maturityCalibration.js for why, and for
-// the full derivation and its provenance. All calibration constants live there, not here.
+// Slice D scales those windows by the measured site factor and presents them as a widened range
+// (+/-14d). V4-DROPCALIB-001 re-fitted that factor on 2026-08-16 (~0.70 -> ~0.75, n 18 -> 35, first
+// harvest redefined as the first non-probe pick), which puts 31 of 35 observed first-harvests inside
+// the window. from-sow and uncurated (null) bases are DELIBERATELY untouched — see
+// maturityCalibration.js for why, and for the full derivation and its provenance. All calibration
+// constants live there, not here.
 
 // V4-MATURITYREPEAT-001 (BD-024) — a DTM-derived window no longer CLOSES on a continuous-harvest
 // crop. The math was not wrong (BUG-MATURITYMODELMIX-001 verified it end to end and closed
@@ -35,7 +37,10 @@
 // The motivating row, live prod 2026-08-16: Armageddon F1 pepper (status `fruiting`, one logged
 // pick on 08-05, DTM 75-95 from-transplant, transplanted 2026-05-23). round(.70*95)+14 = day 81 =
 // Aug 12, so the card read "Harvest window open — through Aug 12, 2026" four days AFTER that date,
-// on a pepper with ~6 weeks of season left. See the comment on the label branches below for what
+// on a pepper with ~6 weeks of season left. The .70 there is the factor in force when the defect
+// was found, kept because this is the record of what the card actually showed; V4-DROPCALIB-001
+// re-fitted it to .75 the same day, which would have moved the false close to Aug 16 — later, and
+// no less false. See the comment on the label branches below for what
 // it says now and why the alternatives were rejected.
 
 import { calibrateFromTransplant, SITE_FACTOR } from './maturityCalibration.js'
@@ -180,7 +185,7 @@ export function computeMaturity(planting, today = new Date()) {
     const estLead = out.continuousHarvest ? 'Est. first harvest' : 'Est. harvest'
     if (out.isMature && out.continuousHarvest && calib && a) {
       // THE FIX. A continuous crop past its opening estimate gets an OPEN-ENDED label: the opening
-      // date (the end with measured backing — 0.70 factor, 16/18 observed first-harvests in-window)
+      // date (the end with measured backing — 0.75 factor, 31/35 observed first-harvests in-window)
       // and no close, because none of the inputs here knows one.
       //
       // REJECTED, and why — this is a judgement call, so the alternatives are recorded:

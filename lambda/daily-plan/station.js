@@ -19,6 +19,26 @@ function stationConfig() {
 const FRESHNESS_MAX_MIN = Number(process.env.AWN_FRESHNESS_MAX_MIN || 90); // B7: newest reading older than this => treat offline
 const COORD_TOL = 0.02; // ~1.5km: bind a station to a Space by matching stored coords
 
+// DRG-GAUGESANITY-001 — upper plausibility bound on the daily accumulator. FRESHNESS_MAX_MIN only ever
+// established that the gauge is REPORTING; nothing established that the number was POSSIBLE. A tipping bucket
+// that phantom-tips (spider in the funnel, debris, a hail strike on the cone) reports an unbounded total, and
+// the engine reads that as real rain — which SUPPRESSES watering, and the measured-rain soak basis outranks
+// both the bagHeatGate and freshTransplant carve-outs. The failure mode's cost is dead plants.
+//
+// Anchored on the PHYSICAL ceiling for this location, deliberately NOT on this site's recent weather. The
+// Massachusetts 24-hour rainfall record is 18.15" (Westfield, 1955-08-18/19, Hurricane Diane); 20" clears it
+// with headroom, so no locally possible event can ever be rejected. For scale on the other side: the 94 days
+// of weather_daily for this Space (2026-05-14..2026-08-15, 42.5089/-72.6466) top out at 2.23" with p99 1.31",
+// mean 0.16", and exactly ONE day above 2" — a fault has to read ~9x anything the site has actually seen to
+// trip this. A tighter, distribution-fitted bound (say 4-5") was rejected: it would throw away a genuine
+// tropical remnant — Irene put 5-10" on western MA in 2011 — and discarding real rain during a flood is the
+// same wrong watering signal from the other direction.
+//
+// `Number(...) || 20` rather than the FRESHNESS_MAX_MIN `Number(x || 90)` shape on purpose: a garbage override
+// must fall back to the default, not to NaN, because every `> NaN` compares false and would silently disable
+// the bound entirely.
+const RAIN_MAX_DAILY_IN = Number(process.env.AWN_RAIN_MAX_DAILY_IN) || 20;
+
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // Civil-day label (YYYY-MM-DD) for an epoch-ms instant in a named tz. dailyrainin resets at station-LOCAL
@@ -45,7 +65,8 @@ function dayBefore(dayStr) {
 // records: newest-first array of AWN data points (dateutc epoch-ms, dailyrainin accumulator, tempf, ...).
 // Returns null when there is no usable data. recentPrecipIn is populated ONLY when the lookback is fully
 // covered (warm-up gate, V200 §3) AND the numbers are finite; otherwise null => caller falls back to
-// Open-Meteo + uncertainty. Never coerces an absent field to 0.0 (V200 B7).
+// Open-Meteo + uncertainty. Never coerces an absent field to 0.0 (V200 B7). A day whose accumulator exceeds
+// RAIN_MAX_DAILY_IN is dropped outright (DRG-GAUGESANITY-001) and surfaces as implausibleDays[].
 function deriveStation(raw, { nowMs }) {
   if (!raw || !Array.isArray(raw.records) || !raw.records.length) return null;
   const cfg = stationConfig().find((s) => s.mac === raw.mac) || stationConfig()[0];
@@ -66,6 +87,19 @@ function deriveStation(raw, { nowMs }) {
     const d = civilDay(r.dateutc, tz);
     buckets[d] = Math.max(buckets[d] ?? 0, r.dailyrainin);
   }
+  // DRG-GAUGESANITY-001 — drop any day whose total is physically impossible (see RAIN_MAX_DAILY_IN). Checking
+  // the finished bucket rather than each record is exactly equivalent — a bucket IS the max of its records, so
+  // `bucket > bound` holds iff some record for that day was impossible — and it costs one pass, not a branch
+  // in the hot loop. The day is DELETED, never clamped and never zeroed: a clamped total is a fabricated
+  // observation, and a zeroed one fabricates "no rain", which is itself a wrong watering signal. Deleting
+  // routes each affected field down the SAME already-tested absent-bucket path a stale station takes — the
+  // labelled Open-Meteo fallback — instead of inventing a second failure mode.
+  const implausibleDays = [];
+  for (const d of Object.keys(buckets)) {
+    if (buckets[d] > RAIN_MAX_DAILY_IN) { implausibleDays.push(d); delete buckets[d]; }
+  }
+  implausibleDays.sort();
+
   const D0 = civilDay(nowMs, tz), D1 = dayBefore(D0), D2 = dayBefore(D1);
   const daysPresent = Object.keys(buckets).sort();
   const earliest = daysPresent[0];
@@ -73,7 +107,11 @@ function deriveStation(raw, { nowMs }) {
   // both prior-day buckets present. String compare is valid for YYYY-MM-DD.
   const coversLookback = !!earliest && earliest < D2 && (D1 in buckets) && (D2 in buckets);
   const recentPrecipIn = coversLookback ? round2((buckets[D1] || 0) + (buckets[D2] || 0)) : null;
-  const uncertainty = !fresh ? 'stale' : (!coversLookback ? 'warmup' : null);
+  // 'implausible' sits ABOVE 'warmup' because a rejected bucket is frequently what BROKE coverage, and calling
+  // that a warm-up names the wrong cause on the one signal an operator would read. It deliberately does NOT
+  // touch `fresh`: the feed is current, one number inside it was not. Forcing fresh=false would also strip the
+  // temperature floor in mergeStationWeather — a rain-gauge fault must never be able to disarm frost warning.
+  const uncertainty = !fresh ? 'stale' : (implausibleDays.length ? 'implausible' : (!coversLookback ? 'warmup' : null));
 
   // BUG-RAINACTUAL-001 H1 — expose the D0 / D-1 buckets that were already being computed and thrown away.
   // todayPrecipIn needs NO coverage gate: dailyrainin is the STATION's own since-local-midnight accumulator,
@@ -84,7 +122,7 @@ function deriveStation(raw, { nowMs }) {
   const yesterdayPrecipIn = Number.isFinite(buckets[D1]) ? round2(buckets[D1]) : null;
 
   return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, recentPrecipIn, coversLookback, buckets, uncertainty,
-    day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn };
+    day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays };
 }
 
 // Gauge totals addressed by CIVIL-DAY LABEL rather than by the fetch instant. deriveStation's D0/D1/D2 are
@@ -260,7 +298,11 @@ function mergeStationHydrology(hy, st, opts) {
     prov.yesterday_actual_source = fYest != null ? 'forecast' : 'unavailable';
   }
 
-  if (st) { prov.station_age_min = st.dataAgeMin; prov.station_fresh = st.fresh; prov.station_mac = st.mac; }
+  if (st) { prov.station_age_min = st.dataAgeMin; prov.station_fresh = st.fresh; prov.station_mac = st.mac;
+    // DRG-GAUGESANITY-001. Recorded UNCONDITIONALLY, unlike station_uncertainty above, which is only written
+    // on the recent-fallback branch: a rejection confined to D0 leaves recent and yesterday gauge-sourced, so
+    // that branch never runs and the drop would otherwise be invisible. A discarded reading is never silent.
+    if (st.implausibleDays && st.implausibleDays.length) prov.station_rejected_days = st.implausibleDays; }
   return { merged, prov };
 }
 
@@ -283,4 +325,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, COORD_TOL };
+module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, COORD_TOL };
