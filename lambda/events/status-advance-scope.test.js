@@ -42,9 +42,15 @@ const TRANSITIONS = [
 
 describe('planting status-advance UPDATEs — container-less ownership scope', () => {
   it('finds every garden_node UPDATE statement in the file', () => {
-    // 6 status advances + 2 germinated_at set-once writes (single + batch). If this drifts, the
-    // per-statement assertions below may be inspecting the wrong slices.
-    expect(STATEMENTS.length).toBe(8);
+    // 6 status advances + 2 germinated_at set-once writes (single + batch) + 2 transplanted_at
+    // set-once writes (single + batch, V4-TRANSPLANTANCHOR-001). If this drifts, the per-statement
+    // assertions below may be inspecting the wrong slices.
+    //
+    // The two anchor-supersede statements V4-TRANSPLANTANCHOR-001 adds alongside the transplant
+    // writes are NOT in this census and must not be: they target public.plant_anchor_derivation,
+    // not garden_node. They read garden_node through an EXISTS aliased `gp`, which the anchor in
+    // this regex (`UPDATE public.garden_node p`) correctly declines to match.
+    expect(STATEMENTS.length).toBe(10);
   });
 
   for (const [status, count, guard] of TRANSITIONS) {

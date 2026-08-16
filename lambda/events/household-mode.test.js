@@ -29,7 +29,7 @@ describe('events Lambda — Household Mode surgical widening', () => {
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 
-  it('exactly 19 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
+  it('exactly 21 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
     // UPDATE event_log guard + 3 event LIST/GET reads + Unit A bulk Quick Log batch
     // plant-resolution (2026-05-24) + HS-2 planting-scoped LIST read (2026-06-04, V3-NAV-001)
     // + DELETE /:id single-event-undo ownership pre-check (2026-06-10, V3-LOGMANY undo fix).
@@ -74,8 +74,16 @@ describe('events Lambda — Household Mode surgical widening', () => {
     //   predicate before (in the join's WHERE) and has exactly ONE after (inside the EXISTS), so
     //   the move is 1:1 and this regex is blind to it. What DID move is the container-less arm
     //   count in the test below, 2 -> 6, which is the assertion that actually pins this fix.
+    // + transplant->transplanted_at lifecycle-date WRITE, single + batch paths (2026-08-16,
+    //   V4-TRANSPLANTANCHOR-001): TWO sites, 19 -> 21. Same class as the germination write above —
+    //   a household member logging a transplant on a shared planting may stamp its transplanted_at
+    //   (set-once) — but scoped with the two-arm predicate rather than germination's container
+    //   join, so each site contributes exactly one pp.created_by predicate from inside its EXISTS.
+    //   The count moves by two and not zero because these UPDATEs are NEW statements, not a
+    //   predicate migrating within an existing one (contrast BUG-STATUSADVNOPROJ-001 directly
+    //   above, which is why the two entries look inconsistent and are not).
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(19);
+    expect(matches.length).toBe(21);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
     const localAuthz = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
@@ -89,15 +97,24 @@ describe('events Lambda — Household Mode surgical widening', () => {
   // reintroduce exactly that blind spot, and would do it invisibly: the household count above does
   // NOT move when the predicate migrates between a join WHERE and an EXISTS, so this test is the
   // only thing standing between that refactor and prod.
-  it("all six planting status-advance UPDATEs keep the container-less arm", () => {
+  // V4-TRANSPLANTANCHOR-001 extends the population this guards beyond status advances. The arm count
+  // is now 6 status-advance + 2 transplant-anchor writes, and the two groups are asserted separately
+  // on purpose: a bare total of 8 would be satisfied by, say, seven status arms and one transplant
+  // arm, which is precisely the "right number of predicates on the wrong statements" failure the
+  // sibling status-advance-scope.test.js header calls out. germinated_at is deliberately NOT in this
+  // census — those two writes still carry the narrower container join (recorded, not fixed here), so
+  // counting them would assert a property the file does not have.
+  it("all eight ownership-scoped garden_node writes keep the container-less arm", () => {
     const harvested = SRC.match(/SET status = 'harvested'/g) ?? [];
     const fruiting  = SRC.match(/SET status = 'fruiting'/g) ?? [];
     const flowering = SRC.match(/SET status = 'flowering'/g) ?? [];
+    const transplanted = SRC.match(/SET transplanted_at = /g) ?? [];
     expect(harvested.length).toBe(2);                   // single-event path + batch path
     expect(fruiting.length).toBe(2);                    // V3-FRUITSET-001 + V4-EVENTSEL-002 batch
     expect(flowering.length).toBe(2);                   // V3-FLOWERING-001 + V4-EVENTSEL-002 batch
+    expect(transplanted.length).toBe(2);                // V4-TRANSPLANTANCHOR-001 single + batch
     const arms = SRC.match(/p\.container_id IS NULL AND p\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(arms.length).toBe(6);
+    expect(arms.length).toBe(8);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {

@@ -565,6 +565,48 @@ export const handler = async (event) => {
              AND p.deleted_at IS NULL
              AND p.germinated_at IS NULL
         `,
+        // V4-TRANSPLANTANCHOR-001 (BD-023) — logging a `transplant` event stamps the planting's
+        // transplanted_at (the EVENT date) the FIRST time only. Batch trigger-parity with the
+        // single-event path below, which carries the full rationale for the set-once choice, the
+        // event_date-not-created_at binding and the anchor-supersede statement that follows.
+        // `transplant` IS in BATCH_EVENT_TYPES, so this path really can be the one that establishes
+        // an anchor — it is not a theoretical parity.
+        //
+        // Two-arm ownership, unlike the germination write above: a planting may have NO container
+        // and the inner-join form drops those rows silently (BUG-STATUSADVNOPROJ-001).
+        sql`
+          UPDATE public.garden_node p
+             SET transplanted_at = ${eventDate}::timestamptz,
+                 transplanted_at_approx = false,
+                 updated_at = NOW()
+           WHERE ${eventType}::text = 'transplant'
+             AND p.id = ANY(${plantIds})
+             AND p.deleted_at IS NULL
+             AND p.transplanted_at IS NULL
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+        `,
+        // V4-TRANSPLANTANCHOR-001 — anchor supersede, batch half. Same statement and same reasons as
+        // the single-event copy below; see there for why an observed anchor arriving by THIS new
+        // route has to retire a live derivation exactly as the plants PUT does. Ordered AFTER the
+        // UPDATE above so it reads the row this transaction just wrote.
+        sql`
+          UPDATE public.plant_anchor_derivation d
+             SET superseded_at = now(),
+                 superseded_by = 'observed_anchor',
+                 updated_at    = now()
+           WHERE ${eventType}::text = 'transplant'
+             AND d.plant_id = ANY(${plantIds})
+             AND d.superseded_at IS NULL
+             AND EXISTS (
+                   SELECT 1 FROM public.garden_node gp
+                    WHERE gp.id = d.plant_id
+                      AND (gp.sown_at IS NOT NULL
+                           OR gp.transplanted_at IS NOT NULL
+                           OR gp.planted_out_at IS NOT NULL))
+        `,
       ]);
       // ── Post-transaction side effects (BUG-BATCHSIDEEFFECTS-001) ─────────────────────────────
       // This block used to be the critter hook and NOTHING ELSE, which is the whole defect: the
@@ -2710,6 +2752,110 @@ export const handler = async (event) => {
              AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.germinated_at IS NULL
+        `,
+        // V4-TRANSPLANTANCHOR-001 (BD-023) — logging a `transplant` event on a specific planting
+        // stamps transplanted_at (the event date), completing for the transplant anchor what CAL-2
+        // did for germinated_at.
+        //
+        // THE DEFECT IS AN ABSENT LINK, NOT A WRONG VALUE. Before this, transplanted_at had exactly
+        // ONE mutating writer in lambda/** — the plants PUT — reached from the opt-in
+        // TransplantDatePrompt nudge on CropCard. Live prod (read-only, 2026-08-16) agrees anyway:
+        // 107 live plantings carry a transplant event, ZERO of them have a NULL transplanted_at, and
+        // 104 hold exactly their FIRST transplant event's date. That 100% coverage is Dave's LOGGING
+        // HABIT, not an invariant — dismiss the nudge once and a planting keeps a transplant event
+        // and no anchor, which costs it the from-transplant maturity window (src/lib/
+        // plantingMaturity.js: a from-transplant crop with neither transplanted_at nor planted_out_at
+        // has an UNKNOWABLE window) and demotes it to a derived guess in the harvest watch list.
+        //
+        // EVENT_DATE, NEVER created_at. Prod says why: 37 of the 128 transplant events (28.9%) were
+        // logged on a LATER calendar day than they happened, the worst by 31 days. created_at would
+        // put those anchors up to a month past the real transplant and quietly shift every maturity
+        // estimate derived from them. Timezone handling is deliberately IDENTICAL to the germination
+        // write above — the bare ${eventDate}::timestamptz relies on the assignment cast into this
+        // DATE column, which is safe because normalizeEventDate anchors a calendar-day event at NOON
+        // UTC: the cast runs in the LAMBDA's session timezone (UTC), and the anchor holds the same
+        // calendar day for any offset strictly inside +/-12h anyway. Measured, not assumed — the
+        // boundary is pinned in transplant-anchor.test.js, which caught the first draft of that claim
+        // overreaching to "every timezone" (UTC+12 does roll over). Two sibling lifecycle columns
+        // deriving their date two different ways would be worse than the implicit cast.
+        //
+        // SET-ONCE (transplanted_at IS NULL), matching germinated_at rather than always-latest. Three
+        // reasons, in order of weight:
+        //   1. It can never overwrite a value a HUMAN entered. transplanted_at is user-editable and
+        //      the TransplantDatePrompt exists precisely to let Dave answer it; an automatic writer
+        //      that outranks that answer is the laundering hazard anchorDerive.js's marking rule
+        //      warns about. All 3 prod rows that disagree with their first event date are plantings
+        //      where Dave named a LATER transplant — under always-latest this write would have
+        //      silently re-decided 14 of the 16 two-event plantings for him.
+        //   2. Late logging makes last-write-wins actively wrong. With 28.9% of events backfilled,
+        //      a transplant logged today for June would clobber a correct July anchor. Set-once is
+        //      insensitive to arrival order for the only case that exists in the data.
+        //   3. The ledger row scopes this as a GUARD, not a re-definition. Which of several
+        //      transplants the anchor should mean is a real open question (catalogue "days from
+        //      transplant" arguably means the final setting-out) but it is a semantic change to a
+        //      populated field, not this row's job. Recorded for Dave rather than decided here.
+        // Consequence, stated plainly: a SECOND transplant event on the same planting is a NO-OP
+        // here. The plants PUT remains the only way to change or advance the date.
+        //
+        // transplanted_at_approx=false mirrors germinated_at_approx: an event-logged date is a real
+        // captured date, not an estimate, and it also satisfies the plants-PUT invariant that the
+        // flag is never set beside a NULL date.
+        //
+        // Two-arm ownership rather than the germination write's container join, because a planting
+        // may have NO container (4 live in prod, 0 of them currently transplant-logged, so this is
+        // prophylactic) and the join form drops those rows with no error at all —
+        // BUG-STATUSADVNOPROJ-001 / BUG-ANCHORNOPROJ-001. garden_node still has no RLS (L-087), so
+        // ownership is scoped explicitly; both arms bind the same householdIds.
+        sql`
+          UPDATE public.garden_node p
+             SET transplanted_at = ${eventDate}::timestamptz,
+                 transplanted_at_approx = false,
+                 updated_at = NOW()
+           WHERE ${eventType}::text = 'transplant'
+             AND p.id = ${body.plant_id ?? null}
+             AND p.deleted_at IS NULL
+             AND p.transplanted_at IS NULL
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+        `,
+        // V4-TRANSPLANTANCHOR-001 — THE SUPERSEDE, extended to this new route.
+        //
+        // V4-ANCHORSUPERSEDE-001's rule: a derived anchor (public.plant_anchor_derivation, 60 live
+        // rows in prod) and an observed one may never coexist, because lambda/harvests/watch-route.js
+        // would keep citing a guess the data has already disproved. That maintainer was installed on
+        // the two routes by which an observed date could then arrive — the plants PUT and the merge
+        // cutover — plus a nightly sweep in lambda/daily-plan as the backstop.
+        //
+        // The UPDATE above OPENS A THIRD ROUTE: an observed anchor can now arrive by logging an
+        // event, which reaches neither of those write paths. Without this statement a transplant
+        // logged on an anchorless planting would leave a live, contradicted derivation citable until
+        // the nightly sweep healed it — reddening gates.yml's post_no_derived_beside_observed in the
+        // interim. Retiring it in the SAME transaction closes the window to zero, exactly as the
+        // plants PUT does; the sweep stays the backstop for non-Lambda writers.
+        //
+        // Gated on the transplant event type so the other ~99% of event writes do not pay the probe,
+        // but note that the eventType gate is a COST control, not the correctness one: the EXISTS
+        // below tests the row state this transaction just produced, so the statement can only retire
+        // a derivation that a real observed date now stands beside. Retire, never delete — the
+        // (guess, later truth) pair is the accuracy measurement the baseline tier exists to produce,
+        // and superseded_at IS NULL is what makes a re-run a no-op. Alias gp, not p, for the same
+        // reason the plants PUT uses it: a p here would enter select-column censuses as a read block.
+        sql`
+          UPDATE public.plant_anchor_derivation d
+             SET superseded_at = now(),
+                 superseded_by = 'observed_anchor',
+                 updated_at    = now()
+           WHERE ${eventType}::text = 'transplant'
+             AND d.plant_id = ${body.plant_id ?? null}::uuid
+             AND d.superseded_at IS NULL
+             AND EXISTS (
+                   SELECT 1 FROM public.garden_node gp
+                    WHERE gp.id = d.plant_id
+                      AND (gp.sown_at IS NOT NULL
+                           OR gp.transplanted_at IS NOT NULL
+                           OR gp.planted_out_at IS NOT NULL))
         `,
       ]);
 
