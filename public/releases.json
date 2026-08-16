@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.28.0",
+    "date": "2026-08-16",
+    "highlights": [
+      "Harvest windows stay open on repeat crops, transplant events set the anchor, and weight samples follow a planting's identity"
+    ]
+  },
+  {
     "version": "4.27.0",
     "date": "2026-08-16",
     "highlights": [
