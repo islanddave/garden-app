@@ -1,8 +1,7 @@
 {
   "_comment": "V4-HARVRATCHET-001 — cultivars whose sample-derived weight factor diverges sharply from its reference and has been REVIEWED and accepted. Adding an id here tells the ratchet job to propagate that factor. To CORRECT rather than accept a factor, void the offending samples (cultivar_weight_void) instead of listing the cultivar here. Dave's standing direction (2026-08-06): his own weighings ARE the target — the catalogue reference is the fallback, not the authority, and it phases out as more harvests get weighed.",
   "reviewed_cultivar_ids": [
-    "457d4628-1531-4349-8af7-2a114c206599",
-    "d15d22fc-a0ca-4312-b2fb-e9b3a8c602d1"
+    "457d4628-1531-4349-8af7-2a114c206599"
   ],
   "reviews": [
     {
@@ -22,9 +21,10 @@
       "sample_g_per_count": 0.69,
       "reference_g": 6,
       "ratio": 0.115,
-      "reviewed": "2026-08-06",
-      "decision": "ACCEPT — Dave's measurement is the target.",
-      "why": "Two genuinely independent samples on consecutive days, consistent: 12g/18 = 0.67 and 15g/21 = 0.71. No duplicate-unit contamination in this pair."
+      "reviewed": "2026-08-16",
+      "decision": "REVOKED — the samples are not Aster's. Id removed from reviewed_cultivar_ids, so the ratchet blocks on this factor again instead of propagating it.",
+      "why": "The 2026-08-06 ACCEPT read: 'Two genuinely independent samples on consecutive days, consistent: 12g/18 = 0.67 and 15g/21 = 0.71.' Both facts are true and the conclusion was still wrong. Traced 2026-08-16 (V4-HARVWEIGHTEST-001): both samples were captured from the planting named 'Blackberry', which was still identified as Aster on 2026-08-04/05 and was re-identified to Allegheny Blackberry on 2026-08-06. They are blackberry drupelets — 0.7 g is exactly the Allegheny Blackberry reference. The review compared two agreeing weighings against a catalogue figure, a binary with no way to express 'these came from a different plant'. migrations/v4-harvweightest-001/0b re-files both samples onto Allegheny Blackberry; after it lands Aster has no derived row at all and falls back to its 6 g reference, so there is nothing left here to ack.",
+      "caveat": "Do NOT re-ack this id without re-checking that the samples behind the factor still belong to a planting identified as Aster. That check is now a migration gate: v4-harvweightest-001/gates.yml :: post_no_sample_contradicts_its_planting."
     }
   ]
 }

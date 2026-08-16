@@ -841,6 +841,29 @@ export const handler = async (event) => {
         const _txr = await sql.transaction(_stmts);
         const rows = _txr[1];
         if (!rows.length) return resp(404, { error: 'Not found' });
+
+        // V4-HARVWEIGHTEST-001 — re-identifying a planting must re-file the calibration samples
+        // captured from it. cultivar_weight_sample.cultivar_id is a COPY of the planting's cultivar
+        // taken at capture time, so without this a weighing keeps describing whatever the planting
+        // used to be called: "Cherry Rescue 1" (formerly Beefsteak) had two cherry tomatoes, 28 g
+        // and 16 g, standing as the corpus's only evidence about a 350 g beefsteak.
+        //
+        // AFTER the transaction, not inside it: this is a correction to a satellite table, and a
+        // failure here must not roll back the planting edit the user asked for. Same posture, and
+        // the same try/catch, as the events Lambda's auto-capture hook.
+        //
+        // Gated on hasVariety rather than on an observed old->new transition. The function's own
+        // mismatch predicate IS the change detector — it is a no-op when the corpus already agrees
+        // — and that is deliberately stronger: both live re-identifications left NO audit row
+        // (audit_events covers plant_varieties only), so a transition-based hook would have missed
+        // both. This heals a variety changed by any writer, including psql, on the next save.
+        if (hasVariety) {
+          try {
+            await sql`SELECT public.reattribute_plant_weight_samples(${plantId}::uuid, ${userId})`;
+          } catch (e) {
+            console.warn('[cal1] weight-sample re-attribution failed (planting saved):', e?.message);
+          }
+        }
         return resp(200, rows[0]);
       }
 

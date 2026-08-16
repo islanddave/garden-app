@@ -1,0 +1,141 @@
+# gates.yml
+# V4-HARVWEIGHTEST-001 — a calibration sample follows the planting's identity.
+#
+# TWO FILES, TWO DECISIONS, TWO TRANSACTIONS.
+#   0a-reattribution.sql        mechanism. Function bodies only, no row touched. `pre` -> `sweep`.
+#   0b-backfill-reattribute.sql data correction. Moves 4 live samples. NEEDS DAVE'S APPROVAL.
+#                               `sweep` -> `post`.
+# 0a is safe to apply alone and is a no-op on a database with no misattributed samples. 0b refuses
+# to run without 0a (guard block in its header).
+#
+# BOTH ENVIRONMENTS. Per the house rule, apply to staging AND prod before pushing migrations/** —
+# and run the whole gate corpus, not only this directory's.
+#
+# NO LAMBDA ORDERING CONSTRAINT IN THE 0a DIRECTION. record_harvest_weight_sample keeps its exact
+# signature and return type, so CREATE OR REPLACE is atomic and a Lambda mid-call cannot observe a
+# missing function. The plants-PUT hook added in this ledger row calls
+# reattribute_plant_weight_samples inside a try/catch that logs and continues, so the OLD Lambda
+# against the NEW schema is fine (it simply never calls it) and the NEW Lambda against the OLD
+# schema degrades to a warning line rather than a failed save. Schema first is still preferred.
+
+pre:
+  - name: pre_autocapture_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.20.3-cal1-slicec-autocapture-001'
+    expect: rowcount_eq
+    value: 1
+
+  # The defect, stated as a query. The unchanged-re-save guard tests unit + grams + count and NOT
+  # the cultivar, so a re-save after a re-identification returns early and never corrects the row.
+  - name: pre_guard_does_not_compare_the_cultivar
+    sql: |
+      SELECT 1 FROM pg_proc p
+       WHERE p.pronamespace = 'public'::regnamespace
+         AND p.proname = 'record_harvest_weight_sample'
+         AND p.prosrc NOT LIKE '%s.cultivar_id = v_cultivar%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_reattribute_function_absent
+    sql: |
+      SELECT 1 FROM pg_proc p
+       WHERE p.pronamespace = 'public'::regnamespace
+         AND p.proname = 'reattribute_plant_weight_samples'
+    expect: rowcount_eq
+    value: 0
+
+  # cultivar_weight_sample must still be a BASE TABLE carrying its immutability trigger. Both
+  # functions are INSERT-only precisely because it is; if this ever became a view or lost the
+  # trigger, "void, never edit" would have stopped being enforced and the design needs rereading.
+  - name: pre_sample_table_is_append_only
+    sql: |
+      SELECT 1 FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid AND c.relkind = 'r'
+       WHERE c.relname = 'cultivar_weight_sample' AND t.tgname = 'trg_cws_immutable'
+         AND NOT t.tgisinternal
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # ── run AFTER 0a, BEFORE 0b. These authorise the data correction. ───────────────────────────────
+  - name: mid_guard_now_compares_the_cultivar
+    sql: |
+      SELECT 1 FROM pg_proc p
+       WHERE p.pronamespace = 'public'::regnamespace
+         AND p.proname = 'record_harvest_weight_sample'
+         AND p.prosrc LIKE '%s.cultivar_id = v_cultivar%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: mid_reattribute_function_present_with_the_expected_signature
+    sql: |
+      SELECT 1 FROM pg_proc p
+       WHERE p.pronamespace = 'public'::regnamespace
+         AND p.proname = 'reattribute_plant_weight_samples'
+         AND pg_get_function_arguments(p.oid) = 'p_plant_id uuid, p_user text'
+         AND pg_get_function_result(p.oid) = 'integer'
+    expect: rowcount_eq
+    value: 1
+
+  # 0a must be INERT to the data. If a row moved, the mechanism file did something it does not claim.
+  - name: mid_no_sample_was_voided_by_the_mechanism_file
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_void
+       WHERE reason LIKE 'planting re-identified:%'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── THE INVARIANT. Run after 0b. ────────────────────────────────────────────────────────────────
+  #
+  # No live sample may contradict the planting it came from. This is the property the whole ledger
+  # row is about, and it is stated rather than approximated: no plausibility band, no per-crop
+  # threshold, nothing to tune. A future re-identification that this migration's hook fails to catch
+  # shows up here as a non-zero count.
+  #
+  # Scoped to samples that HAVE a source planting. The 9 seeded samples carry source_event_id NULL
+  # (they predate 0f-autocapture and were loaded from src/data/harvest-weights-v2.json), so there is
+  # no planting whose identity they could contradict; including them would make the gate fail
+  # permanently on a condition it is not testing.
+  - name: post_no_sample_contradicts_its_planting
+    sql: |
+      SELECT 1
+        FROM public.cultivar_weight_sample s
+        JOIN public.event_log e ON e.id = s.source_event_id AND e.deleted_at IS NULL
+        JOIN public.plants pl ON pl.id = e.plant_id AND pl.deleted_at IS NULL
+        JOIN public.plant_varieties cv ON cv.id = pl.variety_id AND cv.deleted_at IS NULL
+       WHERE s.cultivar_id <> cv.id
+         AND NOT EXISTS (SELECT 1 FROM public.cultivar_weight_void z WHERE z.sample_id = s.id)
+    expect: rowcount_eq
+    value: 0
+
+  # Void-and-re-append, not edit-in-place: every re-filed sample must leave its original behind,
+  # voided, so the correction is auditable. A count of re-filed rows that exceeds the count of
+  # voided ones means something appended without retiring what it replaced.
+  - name: post_every_refiled_sample_has_a_voided_predecessor
+    sql: |
+      SELECT 1
+        FROM public.cultivar_weight_sample s
+       WHERE s.note LIKE 're-filed after the source planting was re-identified;%'
+         AND NOT EXISTS (
+               SELECT 1 FROM public.cultivar_weight_void z
+                WHERE z.sample_id = split_part(s.note, 'supersedes sample ', 2)::uuid)
+    expect: rowcount_eq
+    value: 0
+
+  # Nothing was destroyed. cultivar_weight_sample is append-only; the correction may only ever grow
+  # it. Written as a rowcount over a comparison rather than scalar_eq on a literal, because prod
+  # gains samples between authoring and applying — a pinned total would fail on a harvest Dave
+  # weighed in the meantime, which is not the condition being tested. 325 is the pre-0b count
+  # measured on prod 2026-08-16.
+  - name: post_no_sample_row_disappeared
+    sql: |
+      SELECT 1 WHERE (SELECT count(*) FROM public.cultivar_weight_sample) >= 325
+    expect: rowcount_eq
+    value: 1
+
+  # harvest_log is explicitly OUT of this migration's remit — the stored estimates belong to
+  # scripts/harvest-weight-ratchet.sh, which has the total-move guard. There is no post-hoc DB query
+  # that distinguishes "0b touched harvest_log" from "Dave edited a harvest that afternoon", so the
+  # property is gated at the SOURCE instead: src/__tests__/harvestWeightReattribution.test.js
+  # asserts neither file writes harvest_log at all. Recorded here so the absence is deliberate.
