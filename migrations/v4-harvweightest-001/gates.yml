@@ -79,6 +79,14 @@ sweep:
 
   # 0a must be INERT to the data. If a row moved, the mechanism file did something it does not claim.
   - name: mid_no_sample_was_voided_by_the_mechanism_file
+    # WINDOW-SCOPED, and it has to be. This asserts that applying 0a ALONE voided nothing — the
+    # whole claim that the mechanism file is safe to land without the data correction. It is true
+    # only between 0a and 0b, and 0b then makes it false ON PURPOSE by voiding the 4 misattributed
+    # samples it re-files. Left continuous it reports a permanent red for the migration having
+    # worked, which is the failure mode `continuous: false` exists for (L-369, and the same reason
+    # v4-anchorbase-001 window-scoped its marking-rule gate until a maintainer existed).
+    # Caught on the prod corpus sweep, 2026-08-16, when it went red immediately after 0b.
+    continuous: false
     sql: |
       SELECT 1 FROM public.cultivar_weight_void
        WHERE reason LIKE 'planting re-identified:%'
@@ -112,11 +120,18 @@ post:
   # Void-and-re-append, not edit-in-place: every re-filed sample must leave its original behind,
   # voided, so the correction is auditable. A count of re-filed rows that exceeds the count of
   # voided ones means something appended without retiring what it replaced.
+  #
+  # THE LIKE PATTERN DELIBERATELY STOPS BEFORE THE SEMICOLON. 0a writes the note as
+  # '...was re-identified; supersedes sample ' || m.id, but gate_runner.py splits a gate's sql on
+  # the semicolon to enforce one-statement-per-gate and does not exclude semicolons inside string
+  # literals — spelling it here made the runner read TWO statements and refuse to load this ENTIRE
+  # file, taking every other gate in it down with the one that was malformed. Truncating the prefix
+  # matches exactly the same rows, since the trailing % covers the rest.
   - name: post_every_refiled_sample_has_a_voided_predecessor
     sql: |
       SELECT 1
         FROM public.cultivar_weight_sample s
-       WHERE s.note LIKE 're-filed after the source planting was re-identified;%'
+       WHERE s.note LIKE 're-filed after the source planting was re-identified%'
          AND NOT EXISTS (
                SELECT 1 FROM public.cultivar_weight_void z
                 WHERE z.sample_id = split_part(s.note, 'supersedes sample ', 2)::uuid)
@@ -129,6 +144,12 @@ post:
   # weighed in the meantime, which is not the condition being tested. 325 is the pre-0b count
   # measured on prod 2026-08-16.
   - name: post_no_sample_row_disappeared
+    # PROD-ONLY, and the `env:` key is the point rather than a convenience. 325 is a measurement of
+    # PROD's corpus on 2026-08-16; staging holds 2 rows, so running this there asserts a fact about
+    # a different database and fails for a reason that has nothing to do with the migration. That
+    # is exactly the class `env:` exists to make machine-readable instead of leaving as a comment no
+    # runner can honour. Caught on the staging apply, 2026-08-16.
+    env: prod
     sql: |
       SELECT 1 WHERE (SELECT count(*) FROM public.cultivar_weight_sample) >= 325
     expect: rowcount_eq
