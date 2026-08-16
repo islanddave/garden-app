@@ -31,6 +31,24 @@ COMMIT;
 -- 0a2) and nothing references it, so the drop cannot cascade into user data. UNCOMMENT to run —
 -- this is intentionally not executable as-is.
 --
+-- ⚠️ THE DROP IS NOT SAFE AT RUNTIME, whatever it is to the data (OPS-DERIVEDCTEDEP-001). "Nothing
+-- references it" above is a statement about FOREIGN KEYS ONLY, and it was written when it was also
+-- true of the code. It is not true of the code now: eight statements in five deployed Lambdas name
+-- this relation, SEVEN of them unguarded, so running part 2 against an environment whose Lambdas are
+-- still deployed 500s live request paths rather than degrading them —
+--   lambda/harvests/watch-route.js  the `derived` CTE. Runs on EVERY watch request regardless of
+--                                  DERIVED_ANCHOR_ENABLED, and carries no try/catch on purpose:
+--                                  the Today band must break visibly, not quietly revert to its
+--                                  pre-derivation queue. No flag stands this one down.
+--   lambda/plants/index.js          the PUT's supersede, inside the transaction — so EVERY planting
+--                                  edit that reaches an anchor column fails, not just anchor work.
+--   lambda/plants/merge.js          the cutover's snapshot read plus both retires.
+--   lambda/events/index.js          V4-TRANSPLANTANCHOR-001, batch and single — every transplant log.
+--   lambda/daily-plan/handler.js    the nightly sweep. The ONE fail-open site (try/catch, warns).
+-- Sequencing if the drop is genuinely wanted: revert the code first, deploy it, THEN drop. The
+-- census is pinned by lambda/anchor-derivation-hard-dependency.test.js, which reads THIS comment —
+-- it goes red if the site list here stops naming what the code actually does.
+--
 -- BEGIN;
 -- DROP INDEX IF EXISTS public.idx_plant_anchor_derivation_model_source;
 -- DROP INDEX IF EXISTS public.idx_plant_anchor_derivation_user_live;

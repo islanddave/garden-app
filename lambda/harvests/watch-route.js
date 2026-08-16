@@ -33,9 +33,15 @@ import {
 //
 // THIS IS NOT THE FLIP AND DOES NOT WEAKEN IT. `ctx` is a closed object literal built in
 // index.js — no request field, header or query parameter reaches it — so in every deployed
-// environment this resolves to DERIVED_ANCHOR_ENABLED, which is `false` and stays false until
-// condition 9 (Dave's call). The override exists for tests exactly as `siblingHabits` does in
-// watch.js, and for the same reason: a measured effect nobody can reproduce is an unverified one.
+// environment this resolves to DERIVED_ANCHOR_ENABLED. The override exists for tests exactly as
+// `siblingHabits` does in watch.js, and for the same reason: a measured effect nobody can reproduce
+// is an unverified one. (The constant FLIPPED TRUE 2026-08-14, condition 9; this paragraph used to
+// say it was false and stayed false until then.)
+//
+// WHAT THIS FLAG DOES NOT CONTROL (OPS-DERIVEDCTEDEP-001): the JOIN. It governs whether a derived
+// anchor may open a watch row — the tier — while the `derived` CTE below runs on every request
+// either way, so setting this false is a tier kill switch and NOT a way to stand the
+// plant_anchor_derivation dependency down. See that CTE's header for why it stays that way.
 export function resolveDerivedEnabled(ctx) {
   return typeof ctx?.derivedEnabled === 'boolean' ? ctx.derivedEnabled : DERIVED_ANCHOR_ENABLED;
 }
@@ -278,6 +284,24 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
     -- and CI's integration job branches off staging. Unlike the impression writer this join is NOT
     -- wrapped in a try/catch — it is in the request's critical path, so a missing relation must fail
     -- loudly rather than silently degrade the queue to its pre-derivation shape.
+    --
+    -- OPS-DERIVEDCTEDEP-001 (2026-08-16), the standing consequence of that, recorded because it was
+    -- implicit: this CTE is UNCONDITIONAL. It does not read DERIVED_ANCHOR_ENABLED and never has —
+    -- the flag governs the tier, not the join — so public.plant_anchor_derivation is a HARD RUNTIME
+    -- DEPENDENCY of the shipped watch band. Dropping, renaming or failing to apply it 500s the band
+    -- outright; it does not merely retire the derived tier.
+    --
+    -- FLAG-GATING THE JOIN WAS CONSIDERED AND REJECTED, on evidence that postdates the decision above
+    -- rather than on taste. Gating it would remove one of the eight statements that now name this
+    -- relation across five deployed Lambdas: V4-ANCHORSUPERSEDE-001 and V4-TRANSPLANTANCHOR-001 put
+    -- the other seven on WRITE paths (plants PUT, merge cutover, both halves of the transplant event
+    -- write, plus the nightly sweep), and every one of those except the sweep is unguarded and reads
+    -- no flag at all. So a gate here would advertise a rollback that does not exist, turning a known
+    -- dependency into a believed-absent one. It also strengthens the no-try/catch call: with the
+    -- write paths failing anyway, a fail-open read buys a half-working app, not a degraded-consistent
+    -- one. Enforced by lambda/anchor-derivation-hard-dependency.test.js, which reds if this join is
+    -- gated, wrapped, or if the census of dependents drifts from the code; the drop-side warning
+    -- lives in migrations/v4-anchorbase-001/0r-rollback.sql part 2.
     derived AS (
       SELECT d.plant_id,
              d.anchor_date  AS derived_anchor_date,

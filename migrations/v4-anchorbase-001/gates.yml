@@ -24,6 +24,18 @@
 # order relative to deploy.yml / deploy-lambda.yml. That changes the moment the flag flips: at that
 # point the Lambda must go FIRST, same as V4-HARVSURFACE-001.
 #
+# ⚠️ THE PARAGRAPH ABOVE IS AS-AUTHORED AND IS NOW FALSE (OPS-DERIVEDCTEDEP-001, 2026-08-16). It is
+# kept rather than rewritten because it records what was believed when 0a shipped, and that belief is
+# the reason nothing downstream ever treated this relation as load-bearing. Two things broke it:
+# watch-route.js's `derived` CTE joins the table on EVERY watch request no matter how the flag is set
+# (the flag governs the tier, not the join — and it flipped true on 2026-08-14 anyway), and
+# V4-ANCHORSUPERSEDE-001 / V4-TRANSPLANTANCHOR-001 then put unguarded retiring UPDATEs on the plants
+# PUT, the merge cutover and both halves of the transplant event write. So the relation is now a HARD
+# runtime dependency of five deployed Lambdas, eight statements, seven of them with no try/catch: it
+# must exist in every environment the app runs against, the Lambda-first ordering is unconditional,
+# and 0r part 2 is a code-revert-first operation. Full site list and the sequencing note live in
+# 0r-rollback.sql part 2; both are pinned by lambda/anchor-derivation-hard-dependency.test.js.
+#
 # WHY THIS BACKFILL DOES NOT NEED THE APP PATH. Direct DB writes normally bypass the Lambda's side
 # effects, which is why data entry goes through the app. This relation is different in kind: it is a
 # new standalone table that no Lambda writes, no trigger watches and no existing surface reads. The
