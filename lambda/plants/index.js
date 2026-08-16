@@ -795,6 +795,49 @@ export const handler = async (event) => {
               updated_at = NOW()
           `);
         }
+        // V4-ANCHORSUPERSEDE-001 — THE SUPERSEDE MAINTAINER, write-path half.
+        //
+        // public.plant_anchor_derivation holds an INVENTED anchor for a planting that had no real
+        // date (migrations/v4-anchorbase-001). The marking rule says a derived anchor and an
+        // observed one may never coexist: the instant Dave enters a real date the guess has been
+        // contradicted, and lambda/harvests/watch-route.js would otherwise keep citing it. The
+        // retiring UPDATE existed only in 0b-backfill.sql's second transaction, which ran once on
+        // 2026-08-12 and is not on any schedule, so nothing maintained the invariant at all.
+        //
+        // HERE, on the write path, rather than only in the nightly sweep: this is the single place
+        // every client's anchor write converges (PlantingEditor, PlantForm, CaptureFlow and
+        // TransplantDatePrompt all reach the columns through this PUT), so retiring in the SAME
+        // transaction closes the window entirely for app writes instead of leaving a contradicted
+        // guess citable until the next nightly run. The nightly sweep in lambda/daily-plan is kept
+        // as the backstop for writers that never touch a Lambda (imports, one-off SQL, migrations)
+        // and to heal rows that went stale before this shipped.
+        //
+        // EMITTED UNCONDITIONALLY, not behind a JS test of the body. The post-update anchor state
+        // could be mirrored in JS from body + clear + cur, but a mirrored predicate is one edit to
+        // the SET-list away from silently disagreeing with it, and the failure mode of that
+        // disagreement is a live derivation nobody retires. The predicate lives in SQL, evaluated
+        // against the row this transaction just wrote; the cost of always sending it is one probe
+        // of uq_plant_anchor_derivation_live, which matches at most one row.
+        //
+        // Retire, never delete: the (guess, later truth) pair is the only accuracy measurement the
+        // add-date baseline tier will ever produce. superseded_at IS NULL is what makes a re-run a
+        // no-op. The EXISTS subquery is aliased gp rather than p on purpose — select-columns.test.js
+        // extracts SELECT blocks by matching FROM public.garden_node p, and a p here would enter
+        // that census as a fifth read block.
+        _stmts.push(sql`
+          UPDATE public.plant_anchor_derivation d
+             SET superseded_at = now(),
+                 superseded_by = 'observed_anchor',
+                 updated_at    = now()
+           WHERE d.plant_id = ${plantId}
+             AND d.superseded_at IS NULL
+             AND EXISTS (
+                   SELECT 1 FROM public.garden_node gp
+                    WHERE gp.id = d.plant_id
+                      AND (gp.sown_at IS NOT NULL
+                           OR gp.transplanted_at IS NOT NULL
+                           OR gp.planted_out_at IS NOT NULL))
+        `);
         const _txr = await sql.transaction(_stmts);
         const rows = _txr[1];
         if (!rows.length) return resp(404, { error: 'Not found' });

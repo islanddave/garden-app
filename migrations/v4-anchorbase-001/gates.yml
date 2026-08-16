@@ -110,12 +110,19 @@ post:
   # anchor coexisting with an observed one is the exact failure this whole item exists to prevent.
   - name: post_no_derived_beside_observed
     note: >
-      The MARKING-RULE invariant — but NOTHING maintains it continuously yet: the supersede UPDATE
-      lives only in 0b's second transaction and no scheduled job or app path runs it. Dave logs
-      ~20 transplant events/30d onto exactly the plantings 0b derives for, so as observed dates
-      arrive this WILL go red within roughly a week of the backfill. Window-scoped per L-369 until
-      a supersede maintainer exists (ledgered as V4-ANCHORSUPERSEDE-001); re-run 0b (idempotent —
-      its supersede transaction retires the contradicted rows) to clear it manually meanwhile.
+      The MARKING-RULE invariant. RE-ARMED CONTINUOUS 2026-08-15 (V4-ANCHORSUPERSEDE-001): the
+      maintainer this gate was waiting for now exists in two halves, and it takes both to make a
+      continuous assertion honest. WRITE PATH (lambda/plants/index.js PUT + lambda/plants/merge.js
+      winner cutover) retires in the same transaction that writes the observed date, so Dave's own
+      data entry — the ~20 transplant events/30d that landed on derived-for plantings and are why
+      this gate was window-scoped — can no longer redden it even momentarily. NIGHTLY SWEEP
+      (lambda/daily-plan/handler.js sweepSupersededAnchors, live runs only) heals rows that went
+      stale before the write-path fix shipped and anything written outside a Lambda.
+      ORDERING, and it is load-bearing for this gate's colour: the deploy of those two Lambdas must
+      land, and ONE live nightly run must have happened, before this gate can be expected green on
+      an environment that was backfilled on 2026-08-12 — the write path only fires on the NEXT write
+      to each planting. Re-running 0b (idempotent; its second transaction is the same UPDATE) clears
+      the backlog immediately if the sweep has not run yet.
     sql: |
       SELECT 1 FROM public.plant_anchor_derivation d
         JOIN public.plants p ON p.id = d.plant_id
@@ -124,8 +131,8 @@ post:
               OR p.planted_out_at IS NOT NULL)
     expect: rowcount_eq
     value: 0
-    continuous: false   # window-scoped 2026-08-12 (consult, data seat C2): invariant without a
-                        # maintainer — a continuous sweep would red on Dave's own data entry.
+    continuous: true    # re-armed 2026-08-15 (V4-ANCHORSUPERSEDE-001): write-path retire + nightly
+                        # sweep maintain the invariant, so a red here is now a real defect.
 
   - name: post_fk_is_on_delete_cascade
     note: >

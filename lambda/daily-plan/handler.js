@@ -246,6 +246,59 @@ async function readWeatherDaily(pg, spaceId, fromDate, toDate) {
   }
 }
 
+// ── V4-ANCHORSUPERSEDE-001 — the supersede maintainer, nightly half ──────────────────────────────
+// Canon for the rule: migrations/v4-anchorbase-001/0b-backfill.sql's second transaction, whose
+// header calls it "run on every subsequent execution" — and which nothing ran after the one-shot
+// backfill of 2026-08-12. public.plant_anchor_derivation holds an INVENTED anchor for a planting
+// that had no real date; the moment a real one arrives the guess has been contradicted and must be
+// retired, or lambda/harvests/watch-route.js keeps citing it (its `derived` CTE selects exactly the
+// rows this statement retires).
+//
+// WHY BOTH HERE AND ON THE WRITE PATH. The plants PUT and the merge cutover retire synchronously,
+// which is what makes the window zero for anything a user does in the app. This sweep is not
+// redundant with them, for two reasons neither of them can cover:
+//   1. It is the ONLY thing that heals rows that went stale BEFORE the write-path fix shipped. A
+//      write-path retire fires on the next write to that planting; a planting that gained its date
+//      last week and is never edited again would hold a live contradicted derivation forever.
+//   2. Writers that never touch a Lambda — the rescue-intake style imports, a one-off UPDATE, a
+//      migration — bypass every app path by construction.
+// Together they are what makes gates.yml's post_no_derived_beside_observed safe to run continuous:
+// the write path stops Dave's own data entry from ever reddening it, and this heals everything else
+// within a night.
+//
+// SAME WRITE DISCIPLINE AS writeWeatherDaily, for the same reasons: !dryRun only (a dry replay must
+// read and never write — scripts/rerun-daily-plan.sh depends on it), and NON-FATAL always. Losing a
+// night of the sweep costs a day of a stale marker; taking the nightly plan down costs Dave his
+// Today. No user_id scoping: the marking rule is an invariant of the table, not of a household, and
+// this runs as one indexed statement rather than per planting.
+//
+// RETIRE, NEVER DELETE. The (guess, later truth) pair is the only accuracy measurement the add-date
+// baseline tier will ever produce; deleting it throws away the measurement the backfill exists to
+// create. `superseded_at is null` is both the idempotence guard (a second run matches nothing) and
+// the reason a re-run cannot rewrite an earlier retirement's timestamp.
+async function sweepSupersededAnchors(pg) {
+  try {
+    const res = await pg.query(
+      `update public.plant_anchor_derivation d
+          set superseded_at = now(),
+              superseded_by = 'observed_anchor',
+              updated_at    = now()
+         from public.plants p
+        where p.id = d.plant_id
+          and d.superseded_at is null
+          and (p.sown_at is not null or p.transplanted_at is not null
+               or p.planted_out_at is not null)`);
+    const rows = res && Number.isFinite(res.rowCount) ? res.rowCount : 0;
+    console.log(JSON.stringify({ msg: 'anchor-supersede-sweep', rows }));
+    return rows;
+  } catch (e) {
+    // Same posture as the weather_daily writer: a missing relation (0a not applied in some
+    // environment) or any other failure warns and leaves the nightly plan completely unaffected.
+    console.warn(JSON.stringify({ msg: 'anchor-supersede sweep failed — plan unaffected', error: e?.message }));
+    return 0;
+  }
+}
+
 // How far back the ledger fold looks. Design Part 2 anchors on the latest watering/rain event within
 // 30 days, so the weather window must cover the same span or the earliest days of the fold would
 // accrue demand 1.0 against real events.
@@ -442,6 +495,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       and (pj.status is null or pj.status <> 'planning')
       and pj.archived_at is null`);
   console.log(JSON.stringify({ msg: 'db-ready', ms: Date.now() - t0, rows: plantings.length })); // first pool.query done — includes any Neon cold-resume stall
+  // V4-ANCHORSUPERSEDE-001. Here rather than at the end of the run: it is one indexed statement, it
+  // depends on nothing the run computes, and running it early means a fetch hang later in the night
+  // cannot cost the invariant a day. Never throws (see sweepSupersededAnchors).
+  if (!dryRun) await sweepSupersededAnchors(pg);
   // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
   // Real System/bot account = user_3D7u…; the prior default here (user_3E2x…) is actually Jen in the live
   // Clerk instance and wrongly nulled her assignments. Env override supports a comma-separated list. (DRG-ASSIGN-FIX)
@@ -742,4 +799,4 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
 
 module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX,
   writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS,
-  readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS };
+  readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS, sweepSupersededAnchors };

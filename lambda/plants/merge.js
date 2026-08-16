@@ -423,8 +423,17 @@ export async function mergeCore(sql, {
     await sql`SELECT id, plant_id AS old_value FROM harvest_watch_dismissal WHERE plant_id = ANY(${loserIds})`)
 
   const memoryRows  = await sql`SELECT * FROM entity_memory WHERE plant_id = ANY(${loserIds})`
+  // V4-ANCHORSUPERSEDE-001: the winner is a supersede target too, not just the losers. The
+  // phenology reconciliation below can hand the winner a real sown/transplanted/planted-out date it
+  // did not have, which contradicts any derivation it is still holding. `resolved` is computed
+  // before the transaction, so whether that happens is known here — and the snapshot has to record
+  // the winner's retired row or a restore would put the merge back without it.
+  const winnerGainsAnchor = resolved.sown_at != null
+    || resolved.transplanted_at != null
+    || resolved.planted_out_at != null
+  const anchorTargets = winnerGainsAnchor ? [...loserIds, winnerId] : loserIds
   const liveAnchors = await sql`
-    SELECT id FROM plant_anchor_derivation WHERE plant_id = ANY(${loserIds}) AND superseded_at IS NULL
+    SELECT id FROM plant_anchor_derivation WHERE plant_id = ANY(${anchorTargets}) AND superseded_at IS NULL
   `
 
   const snapshot = {
@@ -526,6 +535,26 @@ export async function mergeCore(sql, {
       version = version + 1,
       updated_at = now()
     WHERE id = ${winnerId}
+  `)
+
+  // V4-ANCHORSUPERSEDE-001 — the winner's own derivation, retired the moment the merge gives it a
+  // real date. Placed AFTER the winner UPDATE above so the EXISTS reads the reconciled row inside
+  // this transaction, and kept as a predicated statement rather than a JS-side `if` so the same
+  // rule the nightly sweep and the plants PUT apply is the one evaluated here.
+  // Retire, never delete — the (guess, later truth) pair is the baseline tier's only ground truth.
+  stmts.push(sql`
+    UPDATE plant_anchor_derivation d
+       SET superseded_at = now(),
+           superseded_by = 'observed_anchor',
+           updated_at    = now()
+     WHERE d.plant_id = ${winnerId}
+       AND d.superseded_at IS NULL
+       AND EXISTS (
+             SELECT 1 FROM plants wp
+              WHERE wp.id = d.plant_id
+                AND (wp.sown_at IS NOT NULL
+                     OR wp.transplanted_at IS NOT NULL
+                     OR wp.planted_out_at IS NOT NULL))
   `)
 
   // Losers last — fires plants_entity_softdel, retiring their entity rows.
