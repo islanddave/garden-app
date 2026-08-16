@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.27.0",
+    "date": "2026-08-16",
+    "highlights": [
+      "Harvest weight by crop on the Garden, and derived anchors retire when a real date arrives"
+    ]
+  },
+  {
     "version": "4.26.0",
     "date": "2026-08-14",
     "highlights": [
