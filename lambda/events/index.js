@@ -503,32 +503,36 @@ export const handler = async (event) => {
         // past the target status is simply not matched). Scoped to the already-resolved
         // owner-scoped plantIds + explicit household ownership (garden_node has no RLS, L-087).
         // No-op for every other event_type via the ${eventType} gate.
+        // BUG-STATUSADVNOPROJ-001 — both UPDATEs now use the two-arm ownership predicate instead of
+        // the container join they shipped with; see the single-event copies below for the defect.
         sql`
           UPDATE public.garden_node p
              SET status = 'fruiting', updated_at = NOW()
-            FROM public.container pp
            WHERE ${eventType}::text = 'fruit_set'
              AND p.id = ANY(${plantIds})
-             AND p.container_id = pp.id
-             AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FRUITING_SOURCE_STATUSES})
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
         `,
         sql`
           UPDATE public.garden_node p
              SET status = 'flowering', updated_at = NOW()
-            FROM public.container pp
            WHERE ${eventType}::text = 'flowering'
              AND p.id = ANY(${plantIds})
-             AND p.container_id = pp.id
-             AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FLOWERING_SOURCE_STATUSES})
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
         `,
         // V4-HARVSTATUS-001 (BD-020) — batch trigger-parity with the single-event UPDATE below.
         // Forward-only and idempotent via the source-status guard; two-arm ownership scoping so a
-        // container-less planting is not silently skipped (see the single-event copy for why the
-        // two older UPDATEs keep the narrower join). No-RLS caveat unchanged (L-087).
+        // container-less planting is not silently skipped — the same predicate the two status
+        // UPDATEs above now carry (BUG-STATUSADVNOPROJ-001). No-RLS caveat unchanged (L-087).
         sql`
           UPDATE public.garden_node p
              SET status = 'harvested', updated_at = NOW()
@@ -2623,48 +2627,58 @@ export const handler = async (event) => {
         `,
         // V3-FRUITSET-001: logging a `fruit_set` event on a specific planting auto-advances
         // it to 'fruiting' (forward-only). garden_node has no RLS, so ownership is scoped
-        // explicitly via container.created_by = ANY(householdIds) (L-087). No-op on every
-        // non-fruit_set event (the ${eventType} gate) and when plant_id is null / status is
-        // terminal / already fruiting. Status-change-as-event row is V3-EVENT-003, not here.
+        // explicitly (L-087). No-op on every non-fruit_set event (the ${eventType} gate) and
+        // when plant_id is null / status is terminal / already fruiting. Status-change-as-event
+        // row is V3-EVENT-003, not here.
+        //
+        // BUG-STATUSADVNOPROJ-001: this UPDATE shipped with an INNER join on container, which made
+        // the whole transition unreachable for a planting with container_id IS NULL (prod has 4
+        // live) — the row never matched, so the status never advanced and nothing reported an
+        // error. Ownership now uses the two-arm predicate lambda/plants/index.js uses at seven
+        // sites and the harvest UPDATE below already used: the container's owner when there IS a
+        // container, the planting's own created_by when there is not. Both arms bind the SAME
+        // householdIds, so this widens VISIBILITY of the transition, never ownership.
         sql`
           UPDATE public.garden_node p
              SET status = 'fruiting', updated_at = NOW()
-            FROM public.container pp
            WHERE ${eventType}::text = 'fruit_set'
              AND p.id = ${body.plant_id ?? null}
-             AND p.container_id = pp.id
-             AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FRUITING_SOURCE_STATUSES})
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
         `,
         // V3-FLOWERING-001: logging a `flowering` event on a specific planting auto-advances
-        // it to 'flowering' (forward-only). Same explicit household ownership scope + no-RLS
-        // caveat as the fruit_set UPDATE above (L-087). No-op on every non-flowering event
-        // (the ${eventType} gate) and when plant_id is null / status is already flowering-or-later
-        // / terminal. Status-change-as-event row is V3-EVENT-003, not here.
+        // it to 'flowering' (forward-only). Same two-arm ownership scope + no-RLS caveat as the
+        // fruit_set UPDATE above (L-087, BUG-STATUSADVNOPROJ-001). No-op on every non-flowering
+        // event (the ${eventType} gate) and when plant_id is null / status is already
+        // flowering-or-later / terminal. Status-change-as-event row is V3-EVENT-003, not here.
         sql`
           UPDATE public.garden_node p
              SET status = 'flowering', updated_at = NOW()
-            FROM public.container pp
            WHERE ${eventType}::text = 'flowering'
              AND p.id = ${body.plant_id ?? null}
-             AND p.container_id = pp.id
-             AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FLOWERING_SOURCE_STATUSES})
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
         `,
         // V4-HARVSTATUS-001 (BD-020): logging a harvest on a specific planting auto-advances it to
         // 'harvested' (forward-only), completing the pattern the two UPDATEs above established for
         // fruit_set and flowering. Idempotent via the source-status guard — a planting already at
         // 'harvested' or in a terminal state is simply not matched, so re-logging is a no-op.
         //
-        // OWNERSHIP IS SCOPED WITH THE TWO-ARM PREDICATE, not the container join the two UPDATEs
-        // above use, because a planting may have NO container (prod has 4 live). An inner join drops
-        // those rows silently — the same defect BUG-ANCHORNOPROJ-001 fixed in the watch route this
-        // session. The EXISTS form is the one lambda/plants/index.js already uses at seven sites.
-        // The two older UPDATEs carry the narrower join and are NOT changed here: widening them
-        // changes shipped fruit_set/flowering behaviour and belongs in its own row, filed as
-        // BUG-STATUSADVNOPROJ-001. garden_node still has no RLS (L-087).
+        // OWNERSHIP IS SCOPED WITH THE TWO-ARM PREDICATE, because a planting may have NO container
+        // (prod has 4 live). An inner join drops those rows silently — the same defect
+        // BUG-ANCHORNOPROJ-001 fixed in the watch route. The EXISTS form is the one
+        // lambda/plants/index.js already uses at seven sites. The two older status UPDATEs above
+        // shipped with the narrower join and were converted to this same predicate by
+        // BUG-STATUSADVNOPROJ-001, so all three status transitions now scope identically.
+        // garden_node still has no RLS (L-087).
         sql`
           UPDATE public.garden_node p
              SET status = 'harvested', updated_at = NOW()
@@ -2679,8 +2693,10 @@ export const handler = async (event) => {
         `,
         // CAL-2 germination capture — logging a `germination` event on a specific planting stamps
         // germinated_at (the event date) the FIRST time only (set-once via `germinated_at IS NULL`).
-        // Same explicit household ownership scope + no-RLS caveat as the flowering/fruit_set
-        // UPDATEs above (L-087). No-op on every non-germination event (the ${eventType} gate) and
+        // Same no-RLS caveat as the status UPDATEs above (L-087), but this one still carries the
+        // narrower container join: it is a lifecycle-date write, not a status transition, and was
+        // out of BUG-STATUSADVNOPROJ-001's scope. A container-less planting therefore does not get
+        // its germinated_at stamped. No-op on every non-germination event (the ${eventType} gate) and
         // when plant_id is null / the planting is already germinated. germinated_at_approx=false.
         sql`
           UPDATE public.garden_node p

@@ -68,6 +68,12 @@ describe('events Lambda — Household Mode surgical widening', () => {
     //   join form drops those rows silently (BUG-ANCHORNOPROJ-001, same defect in the watch
     //   route). The regex matches the predicate wherever it sits, which is why the count moves by
     //   two and not zero. 19 post-harvest-status.
+    // + BUG-STATUSADVNOPROJ-001 (2026-08-15): the four fruit_set/flowering status UPDATEs (single +
+    //   batch) converted from the container JOIN to the same two-arm predicate. The count STAYS 19
+    //   — deliberately, not by omission. Each of those sites had exactly ONE pp.created_by
+    //   predicate before (in the join's WHERE) and has exactly ONE after (inside the EXISTS), so
+    //   the move is 1:1 and this regex is blind to it. What DID move is the container-less arm
+    //   count in the test below, 2 -> 6, which is the assertion that actually pins this fix.
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
     expect(matches.length).toBe(19);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
@@ -75,16 +81,23 @@ describe('events Lambda — Household Mode surgical widening', () => {
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
   });
 
-  // V4-HARVSTATUS-001. The two harvest UPDATEs are the only status writes in this file that scope
-  // ownership with the two-arm predicate instead of a container join, because a planting may have
-  // NO container and the join form drops those rows silently (BUG-ANCHORNOPROJ-001). A refactor
-  // that "tidied" them into the shape of their two older neighbours would reintroduce exactly that
-  // blind spot, and would do it invisibly — the household count above would not move.
-  it("both harvest->'harvested' UPDATEs keep the container-less arm", () => {
-    const sites = SRC.match(/SET status = 'harvested'/g) ?? [];
-    expect(sites.length).toBe(2);                       // single-event path + batch path
+  // V4-HARVSTATUS-001, extended by BUG-STATUSADVNOPROJ-001. Every planting status-advance UPDATE in
+  // this file scopes ownership with the two-arm predicate instead of a container join, because a
+  // planting may have NO container (prod has 4 live) and the join form drops those rows silently —
+  // the transition simply never fires and nothing errors (BUG-ANCHORNOPROJ-001, same defect in the
+  // watch route). A refactor that "tidied" any of the six back into a container join would
+  // reintroduce exactly that blind spot, and would do it invisibly: the household count above does
+  // NOT move when the predicate migrates between a join WHERE and an EXISTS, so this test is the
+  // only thing standing between that refactor and prod.
+  it("all six planting status-advance UPDATEs keep the container-less arm", () => {
+    const harvested = SRC.match(/SET status = 'harvested'/g) ?? [];
+    const fruiting  = SRC.match(/SET status = 'fruiting'/g) ?? [];
+    const flowering = SRC.match(/SET status = 'flowering'/g) ?? [];
+    expect(harvested.length).toBe(2);                   // single-event path + batch path
+    expect(fruiting.length).toBe(2);                    // V3-FRUITSET-001 + V4-EVENTSEL-002 batch
+    expect(flowering.length).toBe(2);                   // V3-FLOWERING-001 + V4-EVENTSEL-002 batch
     const arms = SRC.match(/p\.container_id IS NULL AND p\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(arms.length).toBe(2);
+    expect(arms.length).toBe(6);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {
