@@ -116,7 +116,7 @@ beforeEach(() => {
   localStorage.clear()
   fetchMock.mockReset()
   fetchMock.mockImplementation((url) =>
-    Promise.resolve(url === '/api/projects' ? PROJECTS : url === '/api/plants' ? PLANTS : []))
+    Promise.resolve(url === '/api/projects' ? PROJECTS : url === '/api/plants?view=grid' ? PLANTS : []))
 })
 
 describe('Garden group-by — V4-FACETSLUG-001 ordering (PROJECTS_HIDDEN)', () => {

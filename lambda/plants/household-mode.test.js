@@ -36,7 +36,10 @@ describe('plants Lambda — Household Mode scope widening', () => {
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
     expect(matches.length,
       'plants/index.js container-ownership site count changed — a DROP is a cross-tenant read/write')
-      .toBe(11); // 8 at d9afab95; 11 after V4-RESTORESURFACE-001 added the /deleted list, the
+      // 11 -> 12: V4-PLANTSPAYLOAD-001's ?view=grid projection is a twelfth container-reaching
+      // read, and it carries the same widened `pp.created_by = ANY(householdIds)` arm as the list
+      // it projects from.
+      .toBe(12); // 8 at d9afab95; 11 after V4-RESTORESURFACE-001 added the /deleted list, the
                  // restore preflight and the restore UPDATE — three new container-ownership
                  // sites, each carrying the F4 `pp.deleted_at IS NULL` gate. Deliberate bump.
   });

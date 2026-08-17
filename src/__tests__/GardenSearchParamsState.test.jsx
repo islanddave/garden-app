@@ -40,7 +40,7 @@ beforeEach(() => {
   searchParamsRef.current = new URLSearchParams('add=1')
   fetchSpy.mockImplementation((url) => {
     if (url === '/api/projects') return Promise.resolve([{ id: 'proj-1', name: 'Spring', status: 'active', parent_project_id: null }])
-    if (url === '/api/plants') return Promise.resolve([])
+    if (url === '/api/plants?view=grid') return Promise.resolve([])
     return Promise.resolve([])
   })
 })

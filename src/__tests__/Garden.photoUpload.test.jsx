@@ -74,7 +74,7 @@ beforeEach(() => {
   fetchMock.mockReset()
   fetchMock.mockImplementation((url, opts = {}) => {
     if (url === '/api/projects') return Promise.resolve(PROJECTS)
-    if (url === '/api/plants')   return Promise.resolve(PLANTS)
+    if (url === '/api/plants?view=grid')   return Promise.resolve(PLANTS)
     if (url.startsWith('/api/photos/upload-url')) return Promise.resolve({ upload_url: 'https://s3.test/put' })
     if (url === '/api/photos' && opts.method === 'POST') return Promise.resolve({ id: 'ph1' })
     return Promise.resolve([])
@@ -149,7 +149,7 @@ describe('Garden — per-planting photo uploader (V3-IA restore)', () => {
 
     // onUploadComplete: refetch /api/plants so featured_photo_view_url flows into the tree.
     await waitFor(() => {
-      const plantFetches = fetchMock.mock.calls.filter(([u]) => u === '/api/plants')
+      const plantFetches = fetchMock.mock.calls.filter(([u]) => u === '/api/plants?view=grid')
       expect(plantFetches.length).toBeGreaterThanOrEqual(2)
     })
   })

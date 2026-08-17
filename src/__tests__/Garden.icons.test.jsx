@@ -43,7 +43,7 @@ const PLANTS = [
 
 function mockData(projects, plants) {
   fetchMock.mockImplementation((url) =>
-    Promise.resolve(url === '/api/projects' ? projects : url === '/api/plants' ? plants : []))
+    Promise.resolve(url === '/api/projects' ? projects : url === '/api/plants?view=grid' ? plants : []))
 }
 
 beforeEach(() => {

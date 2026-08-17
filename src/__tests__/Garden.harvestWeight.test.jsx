@@ -58,7 +58,7 @@ const weight = (o = {}) => ({
 function mockFetch(crops) {
   fetchMock.mockImplementation((url) => {
     if (url === '/api/projects') return Promise.resolve(PROJECTS)
-    if (url === '/api/plants') return Promise.resolve(PLANTS)
+    if (url === '/api/plants?view=grid') return Promise.resolve(PLANTS)
     if (String(url).startsWith('/api/harvests')) return Promise.resolve({ aggregates: { crops } })
     return Promise.resolve([])
   })

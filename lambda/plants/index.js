@@ -1032,7 +1032,104 @@ export const handler = async (event) => {
       // V1.2a-4 S1.A-hotfix: list SELECTs extended to include the 21 PROJ-RESCOPE
       // columns landed by proj-rescope-s1-0a-additive.sql (V102 §4.1) — matches
       // by-id GET above. Pairs with POST/PATCH write paths shipped in S1.
-      const rows = projectId
+      // V4-PLANTSPAYLOAD-001 — opt-in `?view=grid` field projection.
+      //
+      // The default (no `view`) shape is UNTOUCHED and stays byte-identical: ten client call sites
+      // read the wide list and only Garden.jsx opts in, so an additive param is the only shape that
+      // bounds the blast radius. plants-grid-view.test.js pins both halves.
+      //
+      // What it drops and why: the Garden grid (Garden.jsx + projectTree.js + PlantingTile.jsx,
+      // property-access scan) reads 10 top-level keys and exactly 2 of variety_ref's 21 subfields
+      // (`name`, `crop_type_slug`). Measured against prod, variety_ref alone is 43.4% of the DB body
+      // and its six prose fields (care_notes/soil_notes/common_diseases/expected_yield_notes/
+      // growth_habit/source_url) are 25.1% — none of it reachable from a tile.
+      //
+      // What it KEEPS and why: both presigned photo URLs. They are the single largest term in the
+      // wire body, but the tile renders the thumb and degrades onto the original for the 6-of-230
+      // heroes that have none, so dropping either is a blank tile, not a saving.
+      //
+      // Aliased `gp`, not `p`, deliberately — select-columns.test.js and softdel-container.test.js
+      // census the WIDE client-facing reads by their `p`-aliased garden_node source, and a
+      // projection is by definition not one of them (same reason the anchor-supersede EXISTS above
+      // uses gp). It stays swept for the gate that actually matters: softdel-container's
+      // alias-agnostic pass counts EVERY container-reaching template and requires each alias it
+      // reaches container through to be liveness-checked, and this branch is inside that count.
+      // Its field set is guarded by its own exact-shape test, which is the stronger assertion here.
+      // Do not spell the p-aliased FROM clause literally anywhere in this comment: that guard
+      // splits RAW source, so the words alone would fabricate a branch it then cannot find.
+      //
+      // ORDER BY gp.created_at without selecting it: the client never reads created_at, and sorting
+      // on an unselected column is free.
+      const view = event.queryStringParameters?.view ?? null;
+      const rows = view === 'grid'
+        ? await sql`
+            SELECT gp.id, gp.display_name AS name, gp.quantity,
+                   gp.status, gp.container_id AS project_id,
+                   gp.location_id, gp.assignee_user_id,
+                   COALESCE(fp.id, fb.id) AS featured_photo_id,
+                   -- The ONE key here with no Garden reader. It is carried because
+                   -- hero-read-derivation.test.js holds EVERY hero-resolving read in the fleet to
+                   -- the same contract, and "this surface has no set-featured control today" is not
+                   -- a property a static guard can check — so an exemption would rot where a boolean
+                   -- costs ~1.5% of the projected body. Keeping the invariant uniform is the cheaper
+                   -- side of that trade.
+                   (fp.id IS NOT NULL) AS featured_is_explicit,
+                   COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path,
+                   CASE WHEN pv.id IS NOT NULL THEN
+                     jsonb_build_object('name', pv.display_name, 'crop_type_slug', pv.crop_type_slug)
+                   ELSE NULL END AS variety_ref
+            FROM public.garden_node gp
+            LEFT JOIN public.container pp ON pp.id = gp.container_id
+            LEFT JOIN public.cultivar pv ON pv.id = gp.cultivar_id AND pv.deleted_at IS NULL
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                     LEFT JOIN public.event_log e ON e.id = ph.event_id
+                    WHERE ph.id = gp.featured_photo_id
+                      AND ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                      AND (ph.plant_id = gp.id OR e.plant_id = gp.id)
+                    LIMIT 1
+                 ) fp ON TRUE
+            -- BUG-HEROLISTPERF-001 split+gated fallback, copied intact from the list read below.
+            -- Both arms and the fp.storage_path gate are load-bearing; the rationale there governs.
+            LEFT JOIN LATERAL (
+                   SELECT x.id, x.storage_path
+                     FROM (
+                            ( SELECT ph.id, ph.storage_path, ph.created_at
+                                FROM photos ph
+                               WHERE fp.storage_path IS NULL
+                                 AND ph.plant_id = gp.id
+                                 AND ph.deleted_at IS NULL
+                                 AND ph.created_by = ANY(${householdIds})
+                               ORDER BY ph.created_at DESC, ph.id DESC
+                               LIMIT 1 )
+                            UNION ALL
+                            ( SELECT ph.id, ph.storage_path, ph.created_at
+                                FROM photos ph
+                                JOIN public.event_log e ON e.id = ph.event_id
+                               WHERE fp.storage_path IS NULL
+                                 AND e.plant_id = gp.id
+                                 AND ph.deleted_at IS NULL
+                                 AND ph.created_by = ANY(${householdIds})
+                               ORDER BY ph.created_at DESC, ph.id DESC
+                               LIMIT 1 )
+                          ) x
+                    ORDER BY x.created_at DESC, x.id DESC
+                    LIMIT 1
+                 ) fb ON TRUE
+            WHERE (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
+                   OR (gp.container_id IS NULL AND gp.created_by = ANY(${householdIds})))
+              AND gp.deleted_at IS NULL
+              AND gp.archived_at IS NULL
+              -- project_id stays honoured under ?view=grid rather than silently ignored. The ::uuid
+              -- casts are required, not decorative: an untyped NULL parameter is what Postgres
+              -- answers "could not determine data type of parameter" to.
+              AND (${projectId}::uuid IS NULL OR gp.container_id = ${projectId}::uuid)
+            ORDER BY gp.created_at DESC
+            LIMIT 5000
+          `
+        : projectId
         ? await sql`
             SELECT p.id, p.display_name AS name, p.quantity,
                    p.status, p.notes, p.container_id AS project_id,

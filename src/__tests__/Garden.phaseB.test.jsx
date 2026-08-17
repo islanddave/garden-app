@@ -73,7 +73,7 @@ beforeEach(() => {
   recordCoachmarkDismissedMock.mockReset()
   recordOptInDismissedMock.mockReset()
   fetchMock.mockImplementation((url) =>
-    Promise.resolve(url === '/api/projects' ? PROJECTS : url === '/api/plants' ? PLANTS : []))
+    Promise.resolve(url === '/api/projects' ? PROJECTS : url === '/api/plants?view=grid' ? PLANTS : []))
 })
 
 afterEach(() => { cleanup() })

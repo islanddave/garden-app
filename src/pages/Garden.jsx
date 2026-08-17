@@ -232,7 +232,13 @@ export default function Garden() {
     let on = true
     Promise.all([
       fetch('/api/projects'),
-      fetch('/api/plants'),
+      // V4-PLANTSPAYLOAD-001 — the grid projection, not the wide list. This screen reads 10
+      // top-level keys and 2 of variety_ref's 21 subfields; the wide shape measured 1,241,902 B /
+      // 5.19 s on Dave's live prod session. Opt-in per call site: the other ten /api/plants
+      // consumers still get the full shape, and only the two places this page fetches the list are
+      // flipped. The one row that genuinely needs the wide shape — the ?edit= target — fetches
+      // itself by id below rather than being picked out of this array.
+      fetch('/api/plants?view=grid'),
       // Location grouping is a nicety — never let it fail the whole Garden load.
       fetch('/api/locations').catch(() => []),
     ])
@@ -366,20 +372,35 @@ export default function Garden() {
 
   // V3-EDIT-001: ?edit=<plantingId> (PlantingDetail Edit button) opens that planting's
   // edit form, then strips the param (replace) so a repeat deep-link re-triggers.
+  //
+  // V4-PLANTSPAYLOAD-001: the target is fetched BY ID rather than found in `plants`. The list is
+  // now the grid projection and the edit form reads seventeen planting fields off this row (notes,
+  // sown_at, qty_initial, source_*, lineage_note, parent_plant_id, container_*, project_name, and
+  // the whole variety_ref including its id), so a projected row would render the form with those
+  // boxes blank — a planting that HAS notes reading as one that does not. The COALESCE PUT and the
+  // clear:[] channel both no-op on an absent field, so nothing would have been NULLED; the damage
+  // would be purely what Dave sees, which is worse, not better, because it is silent.
+  //
+  // `full.id` is checked, not truthiness: the unknown-id case must still strip the param and open
+  // nothing, and an empty array is truthy.
   useEffect(() => {
     const editId = searchParams.get('edit')
     if (!editId || loading) return
     const next = new URLSearchParams(searchParams)
     next.delete('edit')
     setSearchParams(next, { replace: true, state: location.state })
-    const target = plants.find(p => String(p.id) === String(editId))
-    if (target) {
-      setEditor({ mode: 'edit', plant: target })
-      setTimeout(() => {
-        document.getElementById('planting-editor')?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-      }, 60)
-    }
-  }, [searchParams, loading, plants, setSearchParams])
+    let on = true
+    fetch('/api/plants/' + editId)
+      .then(full => {
+        if (!on || !full?.id) return
+        setEditor({ mode: 'edit', plant: full })
+        setTimeout(() => {
+          document.getElementById('planting-editor')?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+        }, 60)
+      })
+      .catch(() => { /* 404 / offline — strip the param, open nothing (prior behaviour) */ })
+    return () => { on = false }
+  }, [searchParams, loading, fetch, setSearchParams])
 
   const closeEditor = useCallback(() => {
     setEditor(null)
@@ -399,7 +420,7 @@ export default function Garden() {
   // Same contract as the retired Plants.jsx.
   const refetchPlants = useCallback(async () => {
     try {
-      const fresh = await fetch('/api/plants')
+      const fresh = await fetch('/api/plants?view=grid')
       setPlants(fresh ?? [])
     } catch {
       /* non-fatal — stale row heals on next mount */

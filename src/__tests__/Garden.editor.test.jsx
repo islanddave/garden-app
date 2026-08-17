@@ -56,7 +56,11 @@ const VARIETY = { id: 'var-1', name: 'Black Krim', species: 'Solanum lycopersicu
 function primeFetch({ plants = [PLANT] } = {}) {
   fetchSpy.mockImplementation((url, opts = {}) => {
     if (url === '/api/projects') return Promise.resolve(PROJECTS)
-    if (url === '/api/plants' && !opts.method) return Promise.resolve(plants)
+    if (url === '/api/plants?view=grid' && !opts.method) return Promise.resolve(plants)
+    // V4-PLANTSPAYLOAD-001: the list is the grid projection now, so ?edit= resolves its target with
+    // a by-id GET. The wide shape lives HERE, which is the point — the projected list row could not
+    // prefill this form.
+    if (url === '/api/plants/plant-2' && !opts.method) return Promise.resolve(PLANT)
     if (url === '/api/inventory-items/item-seed-1') return Promise.resolve(PACKET)
     if (url === '/api/varieties/var-1') return Promise.resolve(VARIETY)
     if (url === '/api/plants' && opts.method === 'POST') return Promise.resolve({ id: 'plant-new', name: 'X', project_id: 'proj-1' })
@@ -131,7 +135,7 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
       fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
     })
     await waitFor(() => {
-      const plantGets = fetchSpy.mock.calls.filter(([u, o = {}]) => u === '/api/plants' && !o.method)
+      const plantGets = fetchSpy.mock.calls.filter(([u, o = {}]) => u === '/api/plants?view=grid' && !o.method)
       expect(plantGets.length).toBeGreaterThanOrEqual(2)
     })
   })
@@ -267,7 +271,8 @@ describe('Garden — the planting editor can actually clear a field', () => {
   function primeFilled() {
     fetchSpy.mockImplementation((url, opts = {}) => {
       if (url === '/api/projects') return Promise.resolve(PROJECTS)
-      if (url === '/api/plants' && !opts.method) return Promise.resolve([PLANT_FILLED])
+      if (url === '/api/plants?view=grid' && !opts.method) return Promise.resolve([PLANT_FILLED])
+      if (url === '/api/plants/plant-2' && !opts.method) return Promise.resolve(PLANT_FILLED)
       if (url.startsWith('/api/plants/') && opts.method === 'PUT') return Promise.resolve(PLANT_FILLED)
       return Promise.resolve([])
     })

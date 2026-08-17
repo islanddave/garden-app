@@ -47,6 +47,16 @@ function sqlTemplates(src) {
 // which look superficially similar but take the candidate id from the request body.
 const HERO_JOIN_RE = /(?:ON|WHERE)\s+(?:fp|ph)\.id\s*=\s*([a-z_]+)\.featured_photo_id/;
 
+// The PARENT-row alias a hero read resolves through, taken from the join above rather than assumed.
+// Alias spellings differ deliberately across the fleet and even within one file — the plants grid
+// projection uses `gp` so it stays outside the p-anchored branch censuses in lambda/plants/ — so
+// every predicate written in terms of the parent row is built from this, never hardcoded.
+const nodeAliasOf = (sql) => {
+  const m = sql.match(HERO_JOIN_RE);
+  expect(m, `no hero join found — this read should not be in the set:\n${sql}`).toBeTruthy();
+  return m[1];
+};
+
 // Predicates below are matched against the PHOTO-ROW ALIASES specifically, never as bare
 // /deleted_at IS NULL/ or /created_by = ANY\(/. Every one of these queries already carries both of
 // those on UNRELATED tables — the parent row, its container, its cultivar — so the loose forms were
@@ -79,14 +89,14 @@ for (const rel of FILES) {
 
 describe('W-HERO — every hero-resolving read DERIVES the effective hero', () => {
   // A guard that enumerates its own inputs can go green by covering NOTHING — break the regex and
-  // every assertion below runs over an empty list and passes. Pin the floor. 7 as of this commit:
-  // plants x3 (by-id GET, project-scoped list, unscoped list), projects, locations,
-  // inventory-items, photos/fetchSpaceHero.
+  // every assertion below runs over an empty list and passes. Pin the floor. 8 as of this commit:
+  // plants x4 (by-id GET, project-scoped list, unscoped list, and V4-PLANTSPAYLOAD-001's ?view=grid
+  // projection), projects, locations, inventory-items, photos/fetchSpaceHero.
   it('finds the known hero reads (anti-vacuity floor)', () => {
-    expect(heroReads.length).toBeGreaterThanOrEqual(7);
+    expect(heroReads.length).toBeGreaterThanOrEqual(8);
     const byFile = heroReads.reduce((a, r) => ({ ...a, [r.file]: (a[r.file] ?? 0) + 1 }), {});
     expect(byFile).toMatchObject({
-      'plants/index.js': 3,
+      'plants/index.js': 4,
       'projects/index.js': 1,
       'locations/index.js': 1,
       'inventory-items/index.js': 1,
@@ -166,12 +176,20 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
   // silent-revert loop (write accepts the photo, read demotes it, forever).
   it('plants membership is EVENT-INCLUSIVE (123 live heroes depend on it)', () => {
     const reads = heroReads.filter((r) => r.file === 'plants/index.js');
-    expect(reads).toHaveLength(3);
+    // 3 -> 4: V4-PLANTSPAYLOAD-001's ?view=grid projection resolves a hero too, so it is held to
+    // the same event-inclusive membership.
+    expect(reads).toHaveLength(4);
     for (const { sql } of reads) {
       expect(sql, `plants hero read does not join event_log:\n${sql}`)
         .toMatch(/LEFT JOIN public\.event_log e ON e\.id = ph\.event_id/);
+      // Alias-derived rather than hardcoded `p`. The grid projection aliases its node `gp` (it is
+      // deliberately outside the p-anchored branch censuses in lambda/plants/), and a literal `p\.id`
+      // does NOT match `gp.id` here — the `=` anchor forbids skipping the g — so a hardcoded form
+      // would have failed on a query that satisfies the invariant perfectly. Same reasoning that
+      // made softdel-container.test.js alias-agnostic: pin the predicate, not the spelling.
+      const node = nodeAliasOf(sql);
       expect(sql, `plants hero read is plant_id-only — this demotes 123 live heroes:\n${sql}`)
-        .toMatch(/\(\s*ph\.plant_id\s*=\s*p\.id\s+OR\s+e\.plant_id\s*=\s*p\.id\s*\)/);
+        .toMatch(new RegExp(`\\(\\s*ph\\.plant_id\\s*=\\s*${node}\\.id\\s+OR\\s+e\\.plant_id\\s*=\\s*${node}\\.id\\s*\\)`));
     }
   });
 
@@ -196,18 +214,21 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
     const lists = plants.filter((r) => /LIMIT\s+5000/i.test(r.sql));
     const byId = plants.filter((r) => !/LIMIT\s+5000/i.test(r.sql));
 
-    it('finds 2 list reads and 1 by-id read (anti-vacuity floor)', () => {
-      expect(lists).toHaveLength(2);
+    it('finds 3 list reads and 1 by-id read (anti-vacuity floor)', () => {
+      // 2 -> 3: the ?view=grid projection is a LIST read and copies this fallback verbatim, so it
+      // inherits the 187x regression guard rather than being a place the old shape can creep back.
+      expect(lists).toHaveLength(3);
       expect(byId).toHaveLength(1);
       for (const r of plants) expect(fallbackOf(r.sql)).not.toBe('');
     });
 
-    it.each([0, 1])('list read %i: fallback has no cross-relation OR', (i) => {
+    it.each([0, 1, 2])('list read %i: fallback has no cross-relation OR', (i) => {
       const fb = fallbackOf(lists[i].sql);
+      const node = nodeAliasOf(lists[i].sql); // see the EVENT-INCLUSIVE clause for why not `p`
       // THE regression. This disjunction spans photos and event_log, so the planner cannot use
       // idx_photos_plant and re-scans every photo per planting (loops=324527 measured live).
       expect(fb, 'list fallback reintroduced the cross-relation OR — this is the 187x regression')
-        .not.toMatch(/ph\.plant_id\s*=\s*p\.id\s+OR\s+e\.plant_id\s*=\s*p\.id/);
+        .not.toMatch(new RegExp(`ph\\.plant_id\\s*=\\s*${node}\\.id\\s+OR\\s+e\\.plant_id\\s*=\\s*${node}\\.id`));
       // Replaced by two separately-indexable arms...
       expect(fb, 'list fallback is not split into UNION ALL arms').toMatch(/UNION ALL/);
       // ...gated so it runs only for plantings with no explicit hero (One-Time Filter, 19 of 259).
@@ -215,8 +236,8 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
       // And event-inclusive membership SURVIVES the split — the 123-live-heroes clause above is
       // satisfied by the explicit arm alone, so without this the fallback could quietly go
       // plant_id-only and every assertion in this file would still pass.
-      expect(fb, 'list fallback dropped its event_log arm').toMatch(/e\.plant_id\s*=\s*p\.id/);
-      expect(fb, 'list fallback dropped its plant_id arm').toMatch(/ph\.plant_id\s*=\s*p\.id/);
+      expect(fb, 'list fallback dropped its event_log arm').toMatch(new RegExp(`e\\.plant_id\\s*=\\s*${node}\\.id`));
+      expect(fb, 'list fallback dropped its plant_id arm').toMatch(new RegExp(`ph\\.plant_id\\s*=\\s*${node}\\.id`));
     });
 
     it('by-id read KEEPS the plain disjunction (single row — the split would be churn)', () => {

@@ -67,7 +67,10 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
     // appear with no audit at all; an ADD is a deliberate change, so bump this in the same commit.
     expect(joined.length,
       'plants container-reaching query count changed. An ADD needs this number bumped deliberately; ' +
-      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(11);
+      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(12);
+    // 11 -> 12: V4-PLANTSPAYLOAD-001's ?view=grid projection. It is aliased gp rather than p, so it
+    // is deliberately outside the p-anchored branch census below — this alias-agnostic pass is the
+    // one that keeps it swept, and it is the reason that pass was written alias-agnostic.
     // 8 -> 11: V4-RESTORESURFACE-001 added the GET /deleted list, the restore preflight and the
     // restore UPDATE. All three reach container for ownership and all three carry the F4 gate — an
     // earlier draft of the /deleted list deliberately OMITTED it so that plantings under a deleted
