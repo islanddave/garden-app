@@ -17,6 +17,7 @@ import { mergeCore } from './merge.js';
 // entityExists. See lambda/authz-parents.js for why they live in a separate file.
 import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
+import { jsonResponder } from './http-response.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 import { validateClear, approxOrNull } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
@@ -92,16 +93,14 @@ async function getSecrets() {
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
-function resp(statusCode, body) {
-  return {
-    statusCode,
-    headers: { 'Content-Type': 'application/json', ...CORS },
-    body: JSON.stringify(body),
-  };
-}
-
-
 export const handler = async (event) => {
+  // V4-APIGZIP-001 — resp is now bound PER INVOCATION because the response encoding is negotiated
+  // from this request's Accept-Encoding. This list is the largest body the app fetches: 591,905 B of
+  // real prod rows, 113,259 B gzipped (5.23x). Every call site below is unchanged — jsonResponder
+  // returns the same resp(statusCode, body) it always had, and sub-1 KB bodies (i.e. every error
+  // path here) still take the byte-identical identity branch. See lambda/http-response.js.
+  const resp = jsonResponder(event, CORS);
+
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
   }

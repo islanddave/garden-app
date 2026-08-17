@@ -136,6 +136,36 @@ describe('sw.js networkFirst — offline cache fallback is marked (SW-STALEAPI-0
     expect(res.headers.get('X-From-Cache')).toBeNull()
   })
 
+  // V4-APIGZIP-001 — /api/plants now negotiates gzip, so a cached API entry can carry the transport
+  // headers the network layer put on it. The Cache API stores the DECODED body, so those headers
+  // describe bytes that are no longer there and must not survive the rebuild.
+  it('an OFFLINE replay drops Content-Encoding/Content-Length from a gzip-negotiated entry', async () => {
+    const n = net()
+    const sw = loadSW(n.impl)
+    // What Chrome hands the SW for a gzipped response: decoded body, encoding headers intact,
+    // Content-Length still describing the COMPRESSED bytes.
+    n.impl.mockImplementationOnce(async () => new Response(JSON.stringify(PAYLOAD), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip',
+        'Content-Length': '97',
+        Vary: 'Accept-Encoding, Origin',
+      },
+    }))
+    await warmCache(sw, n)
+
+    n.state.mode = 'offline'
+    const res = await sw.networkFirst(new Request(API_URL), sw.API_CACHE)
+
+    expect(res.headers.get('X-From-Cache')).toBe('1')
+    expect(res.headers.get('Content-Encoding')).toBeNull()
+    expect(res.headers.get('Content-Length')).toBeNull()
+    // Vary is NOT transport — it must survive, and the body must still parse.
+    expect(res.headers.get('Vary')).toBe('Accept-Encoding, Origin')
+    expect(await res.json()).toEqual(PAYLOAD)
+  })
+
   it('a TIMEOUT still refuses the cache and returns 504, even with a warm entry (WS-A6 preserved)', async () => {
     const n = net()
     const sw = loadSW(n.impl)
