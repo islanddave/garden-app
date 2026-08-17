@@ -43,12 +43,27 @@ pre:
     value: 0
 
   # Non-vacuity: if all four already exist and are live, this migration writes nothing and the post
-  # gate would pass without the apply having done anything. Fail here instead of passing hollowly.
+  # gates would pass without the apply having done anything. Fail here instead of passing hollowly.
+  #
+  # `continuous: false` is REQUIRED and is not a formality: this gate is true only in the apply
+  # window. The moment 0a lands, all four slugs exist and the gate is permanently false — leaving it
+  # continuous (the default, gate_runner.py:215) would fail every nightly sweep from here on. This
+  # is the apply-window-receipt class that `--continuous-only` exists to skip.
+  #
+  # Expect kind: `rowcount_gte`, NOT `scalar_gte` — the latter does not exist. The valid set is
+  # exactly {rowcount_eq, rowcount_gte, scalar_eq} (gate_runner.py:96), enforced by
+  # scripts/test_gate_runner.py::test_every_tracked_corpus_gate_file_is_schema_valid, which
+  # schema-checks the whole corpus in the pytest job. Hence the query returns ONE ROW PER ABSENT
+  # SLUG rather than a count — same semantics, expressible in the real vocabulary.
   - name: pre_at_least_one_target_absent
+    continuous: false
     sql: |
-      SELECT 4 - count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND slug IN ('mache', 'claytonia', 'tatsoi', 'mizuna')
-    expect: scalar_gte
+      SELECT s.slug
+        FROM (VALUES ('mache'), ('claytonia'), ('tatsoi'), ('mizuna')) AS s(slug)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM public.crop_types ct
+          WHERE ct.slug = s.slug AND ct.deleted_at IS NULL)
+    expect: rowcount_gte
     value: 1
 
 post:
