@@ -3,7 +3,7 @@
     "version": "4.32.0",
     "date": "2026-08-17",
     "highlights": [
-      "Harvest and Snap now live in the top bar, on every screen. Logging a harvest went from two taps to one, and Snap looks the same everywhere instead of a plain icon on Garden and a green pill on Today.",
+      "Harvest and Snap now live in the top bar, on every screen, as big easy-to-hit targets. Logging a harvest went from two taps to one, and Snap looks the same everywhere instead of a plain icon on Garden and a green pill on Today.",
       "The Log harvest row left the + menu, since the new header button reaches the same form from anywhere. The menu is back to four items and 'Log an event' mentions harvests again.",
       "Snap leads with Choose photo now. Photos taken inside the app can't be saved to your camera roll — that's a limitation of what a web app is allowed to do, not a bug — so the app no longer nudges you toward the option that quietly loses the picture everywhere else.",
       "Skipping a care item now sticks. It used to be forgotten as soon as the tab closed, so you would skip watering something, come back a few minutes later, and find it asking again. Skips now also follow you between your phone and your laptop.",
@@ -11,7 +11,18 @@
       "The What's New dot clears everywhere once you've read the notes, instead of following you to your other device.",
       "The app opens faster: about 48 KB less to download before anything appears, by loading the critter facts only when you actually open one.",
       "Four cold-hardy salad greens are now proper crop types you can plant: Mache (Corn Salad), Claytonia (Miner's Lettuce), Tatsoi and Mizuna — each with its own harvest style, so the app knows Mache is picked once and Claytonia keeps regrowing.",
-      "Estimated harvest windows no longer carry the · site-calibrated tag. The maths behind the dates is unchanged; the label was advertising a precision you weren't asking for."
+      "Estimated harvest windows no longer carry the · site-calibrated tag. The maths behind the dates is unchanged; the label was advertising a precision you weren't asking for.",
+      "The \"Last 7 days\" harvest number was wrong, and badly — it read 50 when you had actually picked 163. It was counting only the newest page of records, which covered about three and a half days, and the top-crop line beside it came from that same short slice. Both now count the whole week.",
+      "Harvest weights now break down by variety and by individual planting, not just by crop. The lists are also ordered by how much you actually grew instead of alphabetically — Cherry Falls was sitting above Moskvich Heirloom on the one screen whose question is which produced, on 763 g against 8,233 g.",
+      "The season total now tells you how much of the poundage is estimated rather than weighed — 52% right now. The old \"313 weighed · 367 estimated\" read as mostly-weighed, because the picks you weigh tend to be the small ones.",
+      "Treating a pest now checks the task off. \"Doctored\" has quietly become the thing you actually log — 239 in the last 30 days, against none for the older \"pest treatment\" — but the care list only recognised the old one, so a treated plant kept asking to be treated.",
+      "Today's care list now opens on the group with the most work in it, rather than the one holding the single most-overdue row. It had been opening on a 4-item group while 116 items — 60% of the list — sat folded away behind collapsed headers.",
+      "When watering records have gone stale across the board, the app now says so instead of presenting a 200-item backlog as though every one were genuinely due. Long water lists also cap at 20 per group behind a \"Show more\", which never affects the bulk action.",
+      "Each planting shows when it was last watered, right beside its due state. Opening Details from the photo also stops bouncing you back to the Basics tab, so the Care tab finally stays where you put it.",
+      "Fall sowing windows now work off real crop hardiness instead of matching words in the variety name. Spinach, every lettuce, Vates and Redbor kale, mustard, arugula, chard and leek were all missing the cold-hardy grace period they had earned — and Lacinato and Vates kale, the same species and equally hardy, disagreed by 12 days purely on how someone had worded the name. Six crops came off the \"too late\" list.",
+      "The sow-next-year section no longer describes itself as flowers. It is a timing section — overwintered kale belongs in it just as much as the hollyhocks do.",
+      "Aloe, calibrachoa and lantana are now recorded as things you do not harvest, so they read as a decision already made rather than as missing data.",
+      "The app asks the browser to hold on to your offline data from the moment it opens, instead of only if you had visited field mode. Chrome on Android discards best-effort storage wholesale when the phone runs short on space."
     ]
   },
   {
