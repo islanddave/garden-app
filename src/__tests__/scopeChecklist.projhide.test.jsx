@@ -15,6 +15,10 @@ vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: true,
 }))
+// V4-LOGMANY-001: ScopeChecklist now reads getToken (via useApiFetch, the documented Clerk seam at
+// api.js:160) to sync the per-user default selection. Without this mock the real useApiFetch pulls
+// in @clerk/react and every case here fails on "useAuth can only be used within <ClerkProvider />".
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(), getToken: vi.fn(async () => null) }) }))
 
 import ScopeChecklist from '../components/forms/ScopeChecklist.jsx'
 

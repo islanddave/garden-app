@@ -13,6 +13,7 @@ import {
   buildCareNeeded, groupRows, bedWaitActive,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ALL_THRESHOLD, splitContainersBeds,
 } from '../../lib/careNeeded.js'
+import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
 
 // CareNeeded — Slice 7 (V4-THEME-001) Care-Needed-Today. REPLACES the care-type PlanBuckets:
 // location-grouped (default) need rows with ONE-TAP inline logging, per-need bulk, undo, and a
@@ -38,16 +39,25 @@ function todayLocalISO() {
   return local.toISOString().slice(0, 10)
 }
 
-// Per-day suppress set (suppress-for-today, client-only — build-plan lock-blocker #1). sessionStorage
-// keyed by date so it survives a PWA reload within the day and self-empties on a new date. Cross-device
-// sync is deferred (V4-TODAYLOC-001 sibling) — needs a server suppress endpoint.
+// Per-day suppress set (suppress-for-today). V4-TODAYLOC-002 / V4-USERPREFS-001 closed the two
+// halves this comment used to defer.
+//
+// localStorage, NOT sessionStorage. The row was filed as a CROSS-DEVICE gap, but sessionStorage
+// made it a same-device one too: the set died with the tab, so skipping a watering row in the
+// garden and coming back minutes later showed it again. That is the failure Dave actually
+// reported. localStorage is the offline-durable local layer; the server sync below is the
+// cross-device one. Still keyed by date, so it self-empties on a new day exactly as before.
+//
+// LOCAL IS AUTHORITATIVE ON WRITE, ALWAYS. Every skip lands here first and synchronously — the
+// server call is fire-and-forget after the fact. A skip made standing in a dead spot in the garden
+// must behave identically to one made on wifi.
 function skipKeyName() { return 'today-skipped:' + todayLocalISO() }
 function readSkipped() {
-  try { return new Set(JSON.parse(sessionStorage.getItem(skipKeyName()) || '[]')) }
+  try { return new Set(JSON.parse(localStorage.getItem(skipKeyName()) || '[]')) }
   catch { return new Set() }
 }
 function writeSkipped(set) {
-  try { sessionStorage.setItem(skipKeyName(), JSON.stringify([...set])) } catch { return }
+  try { localStorage.setItem(skipKeyName(), JSON.stringify([...set])) } catch { return }
 }
 
 function eventBody(row) {
@@ -161,12 +171,47 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode }) 
 }
 
 export default function CareNeeded({ plan }) {
-  const { fetch } = useApiFetch()
+  // getToken comes off useApiFetch rather than useAuth directly — that is the documented seam
+  // (api.js:160): every component test already mocks useApiFetch, so routing token acquisition
+  // through it keeps the Clerk/AuthProvider dependency out of this component's tests. Importing
+  // useAuth here instead reds all 14 CareNeeded cases with "must be used inside <AuthProvider>".
+  const { fetch, getToken } = useApiFetch()
   const toast = useOptionalToast()
   const [mode, setMode] = useState('location')
   const [logged, setLogged] = useState(() => new Set())   // optimistic local drop (V3-TODAYDONE parity)
   const [pendingKeys, setPendingKeys] = useState(() => new Set())
   const [skipped, setSkipped] = useState(readSkipped)
+
+  // V4-TODAYLOC-002 — pull the other device's skips in once on mount, UNIONED into the local set.
+  //
+  // UNION, NOT REPLACE, and the direction matters. Replacing local with server would erase a skip
+  // made moments ago offline on this phone the instant a stale server value arrived. Union is also
+  // the correct merge for what this set actually is: within a single day it only ever grows, and
+  // the two devices are both appending to it. The cost of union is that an un-skip cannot
+  // propagate — there is no un-skip affordance, so that cost is currently zero, and this comment
+  // is here so that whoever adds one knows to revisit the merge rather than discover it.
+  //
+  // Writes the merged set back to localStorage so the union survives the next cold start even if
+  // the network is gone by then. Best-effort throughout: fetchNotificationPrefs never throws and
+  // returns null on env-unset/unauth/failure, in which case the local set simply stands.
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const prefs = await fetchNotificationPrefs({ getToken })
+      if (!alive || !prefs) return
+      const remote = readTodaySkipped(prefs, todayLocalISO())
+      if (remote.length === 0) return
+      setSkipped(prev => {
+        const merged = new Set(prev)
+        let added = false
+        for (const k of remote) if (!merged.has(k)) { merged.add(k); added = true }
+        if (!added) return prev            // identity-stable: no needless re-render or re-write
+        writeSkipped(merged)
+        return merged
+      })
+    })()
+    return () => { alive = false }
+  }, [getToken])
   const [overrides, setOverrides] = useState(() => ({}))  // explicit per-group expand/collapse
   const [bulkType, setBulkType] = useState(null)          // event_type whose bulk fly-up is open
   const [bulkChecked, setBulkChecked] = useState(() => new Set())
@@ -269,9 +314,19 @@ export default function CareNeeded({ plan }) {
   }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
 
   const skipRow = useCallback((row) => {
-    setSkipped(prev => { const n = new Set(prev).add(row.key); writeSkipped(n); return n })
+    setSkipped(prev => {
+      const n = new Set(prev).add(row.key)
+      writeSkipped(n)
+      // V4-TODAYLOC-002 — fire-and-forget cross-device sync, AFTER the local write. Deliberately
+      // not awaited and deliberately not error-handled here: saveTodaySkipped never throws and the
+      // skip is already applied locally, so a dead network costs nothing but the sync. Sends the
+      // WHOLE set rather than a delta — the column is a snapshot, the set is small, and a
+      // last-write-wins snapshot cannot half-apply the way an append protocol can drop one entry.
+      saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
+      return n
+    })
     announce('Skipped ' + row.name + ' for today')
-  }, [announce])
+  }, [announce, getToken])
 
   // Bulk: the candidate set for an event_type = visible rows of that type, MINUS in-ground beds when
   // bed-wait is active (watering only). Client-side fan-out of single POSTs (the batch endpoint is

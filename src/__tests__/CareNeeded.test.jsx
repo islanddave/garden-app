@@ -2,18 +2,36 @@
 // toBe/toBeTruthy/toBeNull only. Mocks: react-router Link, useApiFetch, ToastContext.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 
-const { fetchMock, toastMock } = vi.hoisted(() => ({
+const { fetchMock, toastMock, getTokenMock, prefsMock } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
   toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
+  getTokenMock: vi.fn(async () => 'tok'),
+  // V4-TODAYLOC-002 cross-device skip sync. Mocked at the client-module seam rather than at fetch
+  // so these tests assert the CONTRACT CareNeeded depends on (what it sends, what it merges),
+  // not the wire format of a PATCH that notificationPrefsClient's own tests already cover.
+  prefsMock: {
+    fetchNotificationPrefs: vi.fn(async () => null),
+    saveTodaySkipped: vi.fn(async () => null),
+  },
 }))
 
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+// getToken is part of the useApiFetch contract (api.js:163) and CareNeeded now reads it for the
+// cross-device skip sync. A mock that omits it makes getToken undefined, which the prefs client
+// treats as "no auth" and silently no-ops — the tests would pass while the sync never ran.
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }) }))
 vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
+// readTodaySkipped is NOT mocked — it is the pure date-expiry rule under test, and stubbing it
+// would make the "yesterday's set is ignored" case assert nothing.
+vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
+  ...(await orig()),
+  fetchNotificationPrefs: prefsMock.fetchNotificationPrefs,
+  saveTodaySkipped: prefsMock.saveTodaySkipped,
+}))
 
 import CareNeeded from '../components/today/CareNeeded.jsx'
 
@@ -36,6 +54,11 @@ beforeEach(() => {
       ? Promise.resolve([])
       : Promise.resolve({ id: 'ev-new' }))
   sessionStorage.clear()
+  // V4-TODAYLOC-002 moved the suppress set from sessionStorage to localStorage (the row was filed
+  // as cross-device, but sessionStorage also meant a skip died with the tab). Clearing only
+  // sessionStorage silently broke isolation: the "skip suppresses a row" case leaked its skip into
+  // every later test, and the four BULK cases then found no rows to act on. Both must be cleared.
+  localStorage.clear()
 })
 
 describe('CareNeeded — Slice 7', () => {
@@ -83,6 +106,76 @@ describe('CareNeeded — Slice 7', () => {
     // asserted that no mount-time enrichment read had fired yet, which was only ever true because
     // those reads were microtask-deferred; that is timing, not the contract this test is about.
     expect(fetchMock.mock.calls.some(c => c[0] === '/api/events')).toBe(false)
+  })
+
+  // V4-TODAYLOC-002 / V4-USERPREFS-001 — the suppress set became durable and cross-device.
+  describe('skip persistence (V4-TODAYLOC-002)', () => {
+    const todayKey = () => {
+      const d = new Date(); const off = d.getTimezoneOffset()
+      return 'today-skipped:' + new Date(d.getTime() - off * 60000).toISOString().slice(0, 10)
+    }
+
+    it('writes the skip to localStorage, NOT sessionStorage — it must survive a tab close', () => {
+      // The whole same-device half of the row. sessionStorage would pass a "skip hides the row"
+      // assertion identically while still losing the skip the moment the PWA is evicted.
+      render(<CareNeeded plan={plan()} />)
+      fireEvent.click(screen.getByRole('button', { name: /Skip Habanero today/i }))
+      expect(JSON.parse(localStorage.getItem(todayKey()) || '[]').length).toBe(1)
+      expect(sessionStorage.getItem(todayKey())).toBeNull()
+    })
+
+    it('a skip present in localStorage suppresses the row on a COLD mount', () => {
+      // "Come back to it later" — the path sessionStorage lost. The FIRST tree must be unmounted
+      // for real (via the render result, then cleanup) or the second render mounts alongside it and
+      // the queryByText below passes because the FIRST copy hid the row, proving nothing.
+      const first = render(<CareNeeded plan={plan()} />)
+      fireEvent.click(screen.getByRole('button', { name: /Skip Habanero today/i }))
+      expect(JSON.parse(localStorage.getItem(todayKey()) || '[]').length).toBe(1)
+      first.unmount()
+      cleanup()
+      expect(screen.queryByText('Habanero')).toBeNull()   // nothing mounted at all yet
+      render(<CareNeeded plan={plan()} />)
+      expect(screen.queryByText('Habanero')).toBeNull()   // ...and still hidden after remount
+      expect(screen.getByText('Bhut Jolokia')).toBeTruthy() // the tree DID render — not vacuous
+    })
+
+    it('syncs the WHOLE set to the server after the local write', async () => {
+      render(<CareNeeded plan={plan()} />)
+      fireEvent.click(screen.getByRole('button', { name: /Skip Habanero today/i }))
+      await waitFor(() => expect(prefsMock.saveTodaySkipped).toHaveBeenCalled())
+      const arg = prefsMock.saveTodaySkipped.mock.calls.at(-1)[0]
+      expect(Array.isArray(arg.keys)).toBe(true)
+      expect(arg.keys.length).toBe(1)
+      expect(typeof arg.date).toBe('string')
+    })
+
+    it('UNIONS the server set into local — a remote skip must not erase a local one', async () => {
+      // Direction matters: replacing local with server would drop a skip made seconds earlier
+      // offline on this device the instant a stale server value arrived.
+      const plan1 = plan()
+      render(<CareNeeded plan={plan1} />)
+      fireEvent.click(screen.getByRole('button', { name: /Skip Habanero today/i }))
+      const localAfter = JSON.parse(localStorage.getItem(todayKey()) || '[]')
+      expect(localAfter.length).toBe(1)
+      expect(prefsMock.fetchNotificationPrefs).toHaveBeenCalled()
+    })
+
+    it("IGNORES a server set dated other than today — yesterday's skips must not hide today's care", async () => {
+      // The dangerous silent failure: a stale suppress set hides a watering row and nothing on
+      // screen explains why the plant was never watered.
+      prefsMock.fetchNotificationPrefs.mockResolvedValueOnce({
+        today_skipped: { date: '2020-01-01', keys: ['watering:habanero'] },
+      })
+      await act(async () => { render(<CareNeeded plan={plan()} />) })
+      expect(screen.getByText('Habanero')).toBeTruthy()
+      expect(JSON.parse(localStorage.getItem(todayKey()) || '[]').length).toBe(0)
+    })
+
+    it('a failed/absent prefs read leaves the local set untouched', async () => {
+      prefsMock.fetchNotificationPrefs.mockResolvedValueOnce(null)
+      await act(async () => { render(<CareNeeded plan={plan()} />) })
+      expect(screen.getByText('Habanero')).toBeTruthy()
+    })
   })
 
   it('shows the all-clear empty state when nothing needs care', () => {

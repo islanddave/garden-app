@@ -30,6 +30,8 @@ import { P } from '../../lib/constants.js'
 import ProjectOptions from '../ProjectOptions.jsx'
 import SelectChip from './SelectChip.jsx'
 import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
+import { useApiFetch } from '../../lib/api.js'
+import { fetchNotificationPrefs, saveLogManyAllSelected } from '../../lib/notificationPrefsClient.js'
 
 // FIX-3: per-DEVICE default selection (true=start all selected [Dave], false=start none [Jen]).
 // Device-local expedient; server-side per-user migration tracked as V4-LOGMANY-001.
@@ -55,6 +57,30 @@ export default function ScopeChecklist({
   const [defaultAllSelected, setDefaultAllSelected] = useState(() => {
     try { const v = localStorage.getItem(DEFAULT_SEL_KEY); return v === null ? true : v === '1' } catch (e) { return true }
   })
+  const { getToken } = useApiFetch()
+
+  // V4-LOGMANY-001 — adopt this USER's stored default once, on mount.
+  //
+  // SERVER WINS HERE, unlike the skip set. These are different kinds of value: the suppress set is
+  // an append-only log of actions taken on a device (so union), whereas this is a single stated
+  // preference (so last-write-wins, and the server holds the last write). This is also the value
+  // most likely to be WRONG locally — the localStorage default is per-device, so on a shared phone
+  // it currently holds whoever signed in last.
+  //
+  // `=== 'boolean'` and not a truthiness check: `false` is Jen's real preference, and a falsy guard
+  // would silently refuse to adopt it, leaving her on Dave's default forever.
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const prefs = await fetchNotificationPrefs({ getToken })
+      if (!alive || !prefs) return
+      const v = prefs.log_many_all_selected
+      if (typeof v !== 'boolean') return          // null = never set; keep the local/default answer
+      setDefaultAllSelected(v)
+      try { localStorage.setItem(DEFAULT_SEL_KEY, v ? '1' : '0') } catch (e) { /* private mode */ }
+    })()
+    return () => { alive = false }
+  }, [getToken])
 
   // V4-LOGMANYLOC-001: location hierarchy for the 2-tier "By space" picker. Zones = level-0
   // (or parentless) locations; picking a zone or sub-location cascades to descendants
@@ -114,12 +140,16 @@ export default function ScopeChecklist({
     setExcluded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }, [])
 
-  // FIX-3: flip the per-device default and re-apply to the current preview immediately.
+  // V4-LOGMANY-001 / V4-USERPREFS-001: flip the default and re-apply to the current preview
+  // immediately. localStorage stays as the SYNCHRONOUS local layer — it seeds useState on first
+  // render, so removing it would make the checkbox flicker to the wrong state on every mount while
+  // the prefs GET is in flight. The server write is fire-and-forget on top of it.
   const applyDefaultSel = useCallback((on) => {
     setDefaultAllSelected(on)
     try { localStorage.setItem(DEFAULT_SEL_KEY, on ? '1' : '0') } catch (e) {}
+    saveLogManyAllSelected({ getToken, value: on })
     setExcluded(on ? new Set() : new Set((preview?.plantings || []).map(pl => pl.id)))
-  }, [preview])
+  }, [preview, getToken])
 
   // BUG-BATCHORDER-001: display order only. The server-side ORDER BY in lambda/events is what makes
   // the 500-cap deterministic; this mirrors EventNew.jsx:736's localeCompare so both log surfaces

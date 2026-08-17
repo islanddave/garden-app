@@ -256,3 +256,92 @@ export async function recordOptInDismissed({ getToken } = {}) {
     return null
   }
 }
+
+// V4-USERPREFS-001 (V4-TODAYLOC-002) — the Care-Needed suppress-for-today set, cross-device.
+//
+// Wire shape is {date, keys}, with the date INSIDE the object so the pair can never be written
+// apart: a write that advanced the keys but not the date would suppress today's care rows using
+// yesterday's set. Self-expiring — readTodaySkipped ignores a non-today date, so nothing has to
+// clean this up.
+//
+// Fire-and-forget, NEVER throws, silent no-op when env unset / unauth — same contract as
+// saveGardenGroupBy above. This is the correct posture here specifically: the caller has ALREADY
+// applied the skip locally by the time this runs, so a failed sync must cost the user nothing.
+// keepalive survives the route-change unmount that follows a skip-then-navigate.
+export async function saveTodaySkipped({ getToken, date, keys } = {}) {
+  if (!CRITTER_BASE) return null
+  if (typeof date !== 'string' || !Array.isArray(keys)) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ today_skipped: { date, keys } }),
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    return await res.json().catch(() => null)
+  } catch {
+    return null
+  }
+}
+
+// Reads the stored set, returning [] for anything that is not TODAY's. The date check is the whole
+// expiry mechanism: yesterday's suppressions must not hide today's watering rows, which is a
+// silent and dangerous failure (a plant goes unwatered and nothing on screen says why).
+export function readTodaySkipped(prefs, todayISO) {
+  const ts = prefs?.today_skipped
+  if (!ts || typeof ts !== 'object') return []
+  if (ts.date !== todayISO) return []
+  return Array.isArray(ts.keys) ? ts.keys.filter(k => typeof k === 'string') : []
+}
+
+// V4-USERPREFS-001 (V4-LOGMANY-001) — Log-Many default selection, per USER.
+//
+// This is the clearest case in the set for per-identity keying. ScopeChecklist's own comment reads
+// "true=start all selected [Dave], false=start none [Jen]": the two users want OPPOSITE defaults,
+// and the value was per-DEVICE, so whoever signed in second on a shared phone got the other
+// person's answer. Keyed on the Clerk sub, they can finally disagree.
+//
+// `value` is passed through a strict boolean check rather than a truthiness coercion because FALSE
+// IS A REAL CHOICE here (it is Jen's), and `if (!value) return` would silently refuse to save it.
+export async function saveLogManyAllSelected({ getToken, value } = {}) {
+  if (!CRITTER_BASE) return null
+  if (typeof value !== 'boolean') return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ log_many_all_selected: value }),
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    return await res.json().catch(() => null)
+  } catch {
+    return null
+  }
+}
+
+// V4-USERPREFS-001 (V4-WHATSNEW-002) — last-seen release version, per user.
+// whatsNew.js's header said cross-device sync was "deferred to V4-WHATSNEW-002"; this is it.
+export async function saveWhatsNewSeen({ getToken, version } = {}) {
+  if (!CRITTER_BASE) return null
+  if (typeof version !== 'string' || version === '') return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ whats_new_last_seen: version }),
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    return await res.json().catch(() => null)
+  } catch {
+    return null
+  }
+}

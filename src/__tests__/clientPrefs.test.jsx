@@ -95,10 +95,35 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     }
   })
 
-  it('the enumerated list is exactly the three keys plus the one prefix', () => {
+  it('the enumerated list is exactly the five keys plus the two prefixes', () => {
     // Pins the SCOPE, not the behaviour: widening this set is a deliberate decision, not a drive-by.
-    expect(CLIENT_PREF_KEYS).toEqual(['croprank.v1', 'logone.lastPlant', 'lastHarvestUnit'])
-    expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:'])
+    // Widened by V4-USERPREFS-001 (2026-08-17), deliberately: the three keys added there are
+    // per-device CACHES of per-user server state, read synchronously to seed first render. That
+    // read is the window in which the second person to sign in sees the first person's answer, so
+    // they belong here for the same reason the original three did.
+    expect(CLIENT_PREF_KEYS).toEqual([
+      'croprank.v1', 'logone.lastPlant', 'lastHarvestUnit',
+      'quicklog.defaultAllSelected', 'garden.releasesSeenVersion',
+    ])
+    expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:'])
+  })
+
+  // V4-USERPREFS-001 — behavioural, not just enumerative. The list above could be right while the
+  // prefix walk silently missed the new entry (it snapshots keys before removing, and a second
+  // prefix is the first time that loop handles more than one).
+  it('actually clears the V4-USERPREFS-001 caches, including EVERY dated skip key', () => {
+    localStorage.setItem('quicklog.defaultAllSelected', '0')
+    localStorage.setItem('garden.releasesSeenVersion', '4.31.0')
+    localStorage.setItem('today-skipped:2026-08-17', '["a"]')
+    localStorage.setItem('today-skipped:2026-08-16', '["b"]')
+    localStorage.setItem('unrelated.key', 'keep me')
+    clearClientPrefs()
+    expect(localStorage.getItem('quicklog.defaultAllSelected')).toBeNull()
+    expect(localStorage.getItem('garden.releasesSeenVersion')).toBeNull()
+    expect(localStorage.getItem('today-skipped:2026-08-17')).toBeNull()
+    expect(localStorage.getItem('today-skipped:2026-08-16')).toBeNull()
+    // The blast-radius half: a blanket localStorage.clear() would pass every line above.
+    expect(localStorage.getItem('unrelated.key')).toBe('keep me')
   })
 })
 

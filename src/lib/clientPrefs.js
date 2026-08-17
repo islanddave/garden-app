@@ -22,10 +22,24 @@ export const CLIENT_PREF_KEYS = [
   'croprank.v1',        // cropLogLedger.js — crop-chip band ordering
   'logone.lastPlant',   // EventNew.jsx — last single-log planting
   'lastHarvestUnit',    // EventNew.jsx — legacy global harvest-unit memory
+  // V4-USERPREFS-001 — these three are now CACHES of per-user server state
+  // (user_notification_prefs), not the source of truth. They are still per-DEVICE on disk, and
+  // they are read SYNCHRONOUSLY to seed first render before the prefs GET lands — which is
+  // precisely the window in which the second person to sign in would see the first person's
+  // answer. Scrubbing them at sign-out closes that window. Note the failure they cause is not
+  // merely cosmetic: quicklog.defaultAllSelected inverts Jen's Log-Many selection (her stated
+  // preference is the opposite of Dave's), so a stale cache pre-selects every planting for her.
+  'quicklog.defaultAllSelected',  // ScopeChecklist.jsx — Log-Many default selection
+  'garden.releasesSeenVersion',   // whatsNew.js — last-seen release version
 ]
 
 export const CLIENT_PREF_KEY_PREFIXES = [
   'lastHarvestUnit:',   // EventNew.jsx — per-crop harvest-unit memory, one key per crop_type_slug
+  // V4-TODAYLOC-002 — CareNeeded suppress-for-today, one key per date ('today-skipped:YYYY-MM-DD').
+  // A prefix rather than an exact key because the date is in the name and old days accumulate.
+  // Carrying one person's skips into the other's session would HIDE care rows from them, which is
+  // the most consequential of the three — a plant goes unwatered and nothing on screen says why.
+  'today-skipped:',
 ]
 
 // try/catch per the house convention (cropLogLedger.readStore, EventNew.readLastHarvestUnit): an
