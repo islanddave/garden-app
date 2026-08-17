@@ -113,7 +113,10 @@ export function toPhoto(raw, { receivedAt = Date.now() } = {}) {
 // `guaranteed` is the field that carries the real information.
 function buildSources(raw) {
   const out = {}
-  const thumb = raw.thumb_url ?? null
+  // featured_photo_thumb_url is the featured-photo spelling of thumb_url — /api/plants derives the
+  // same `thumbs/<storage_path>` key by the same convention (V4-PERFTHEMEA-001, lambda/plants
+  // featuredPhotoUrls). Same hint semantics, so it degrades through the same chain.
+  const thumb = raw.thumb_url ?? raw.featured_photo_thumb_url ?? null
   // featured_photo_view_url is the same presigned original under a different name, used by the
   // plants/projects/spaces list endpoints. It is a FULL source, never a thumb.
   const full = raw.view_url ?? raw.featured_photo_view_url ?? null

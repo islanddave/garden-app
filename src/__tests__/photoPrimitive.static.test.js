@@ -64,10 +64,11 @@ const PHOTOIMG_ALLOWED = new Set([
   'components/Lightbox.jsx',               // full-tier by definition; gallery slides carry pre-picked srcs
   'components/FacebookShareSheet.jsx',     // full-tier: shares the original, a thumb would be wrong
   // components/PlantingTile.jsx — MIGRATED (V4-PHOTOUI-001). It never needed the id-only arm:
-  // /api/plants presigns, and photoModel already reads featured_photo_view_url as a FULL source, so
-  // <PhotoView tier=FULL> is the same one-entry chain the raw <PhotoImg> rendered by hand — zero
-  // extra network on a windowed 24-tile grid. The call-site adapter remaps the PHOTO id off the
-  // planting row; conflating it with the plant id would 404 every self-heal.
+  // /api/plants presigns, so the chain is in hand — zero extra network on a windowed 24-tile grid.
+  // The call-site adapter remaps the PHOTO id off the planting row; conflating it with the plant id
+  // would 404 every self-heal. V4-PERFTHEMEA-001 then made it tier=THUMB once /api/plants started
+  // signing the thumbs/ companion — being ON the primitive is exactly what made that a prop change
+  // rather than a hand-rolled `thumb_url ||` this clause would have to flag.
   // components/PutUpPhotoThumb.jsx — MIGRATED (V4-PHOTOIDARM-001). It was here because the primitive
   // could not express an id-only photo; <PhotoView resolveById> now can, over the SAME mount-mint.
   'components/SpaceAttachPicker.jsx',      // see clause 1

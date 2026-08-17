@@ -99,7 +99,13 @@ export function peek(key) { const e = _store.get(key); return e ? _snap(e) : nul
 // The last fetcher registered for a key (updated per mount) — used by revalidate/invalidate.
 export function register(key, fetcher) { _entry(key).fetcher = fetcher }
 
-const URL_FIELDS = ['view_url', 'thumb_url', 'featured_photo_view_url']
+// EVERY presigned-URL field an API row can carry must be listed here. A URL field that is MISSING
+// from this list churns on every revalidate (fresh signature, same object), so the row compares
+// unequal, the whole list gets a new identity, and the visible screenful re-renders and
+// re-downloads — turning a background refresh into the exact cost this guard exists to avoid.
+// featured_photo_thumb_url joined at V4-PERFTHEMEA-001, when /api/plants started signing the
+// thumbs/ companion alongside featured_photo_view_url.
+const URL_FIELDS = ['view_url', 'thumb_url', 'featured_photo_view_url', 'featured_photo_thumb_url']
 // True when prev and next are the same list except for presigned-URL churn (same ids, same order,
 // same non-URL fields). Lets a plain revalidate keep the prior `data` ref (URL freshness → PhotoImg).
 function _sameExceptUrls(prev, next) {

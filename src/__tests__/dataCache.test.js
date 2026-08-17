@@ -51,6 +51,28 @@ describe('dataCache — merge-by-id URL preservation (no re-download churn)', ()
     expect(cache.getSnapshot(K).data).toBe(d1)                 // Object.is-equal → no re-render/re-download
   })
 
+  // V4-PERFTHEMEA-001. /api/plants gained a SECOND presigned field (featured_photo_thumb_url), and a
+  // URL field absent from URL_FIELDS is the single most direct way to turn a photo-weight fix into a
+  // perf REGRESSION: it churns on every revalidate, so the list takes a new identity and the whole
+  // visible screenful re-renders and re-downloads on every background refresh.
+  it('a plants row whose BOTH presigned fields churn keeps the prior data ref', async () => {
+    const K = 'u1|/api/plants'
+    let n = 0
+    cache.register(K, () => {
+      n++
+      return Promise.resolve([{
+        id: 'pl9', name: 'Bhut Jolokia', featured_photo_id: 'ph9',
+        featured_photo_view_url: `https://s3.invalid/plants/a.jpg?sig=full${n}`,
+        featured_photo_thumb_url: `https://s3.invalid/thumbs/plants/a.jpg?sig=thumb${n}`,
+      }])
+    })
+    cache.revalidate(K); await flush()
+    const d1 = cache.getSnapshot(K).data
+    cache.revalidate(K); await flush()
+    expect(n).toBe(2)                                          // the revalidate really ran
+    expect(cache.getSnapshot(K).data).toBe(d1)                 // …and produced NO new data identity
+  })
+
   it('a real membership change adopts the fresh list', async () => {
     const K = 'u1|/api/photos'
     const lists = [[{ id: 'a', view_url: 'u' }], [{ id: 'a', view_url: 'u2' }, { id: 'b', view_url: 'u3' }]]
