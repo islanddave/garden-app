@@ -11,6 +11,7 @@ import {
   mergeCore, planDedup, resolveStatus, resolvePhenology, sumQty, diffFingerprint,
   SURFACES, REPOINT_SURFACES, SNAPSHOT_VERSION,
 } from './merge.js'
+import { PLANT_MEMORY_COLUMNS } from './plantMemoryRepoint.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -21,6 +22,11 @@ const decomment = (s) => s.split('\n')
   .join('\n')
 const RAW = readFileSync(resolve(__dirname, 'merge.js'), 'utf8')
 const SRC = decomment(RAW)
+// BUG-ENTITYMEMSTALE-001: the event_log repoint now lives in plantMemoryRepoint.js, paired with the
+// cache rebuild it owes. The surface guards below assert "the policy map has an implementation",
+// which is still true — just one module away — so they scan the union. Every other guard stays on
+// merge.js alone, where a positive match must not be satisfiable by the helper.
+const REPOINT_SRC = SRC + '\n' + decomment(readFileSync(resolve(__dirname, 'plantMemoryRepoint.js'), 'utf8'))
 
 // ── mock sql ─────────────────────────────────────────────────────────────────────────────────
 // Tagged-template recorder. Queries are matched by substring against a script of canned responses;
@@ -415,6 +421,63 @@ describe('mergeCore', () => {
     expect(softDelete).toBeGreaterThan(repoint)
   })
 
+  // ── BUG-ENTITYMEMSTALE-001 ─────────────────────────────────────────────────────────────────
+  // The repoint moves the losers' history onto the winner without inserting anything, so every
+  // forward GREATEST(...) writer is bypassed and the winner's cache is left describing only its
+  // own events. Five prod winners from the 2026-08-14 run sat permanently BEHIND their event log.
+
+  const findRecompute = (tx) => tx.findIndex((t) =>
+    t.includes('INSERT INTO entity_memory') && t.includes('ON CONFLICT (plant_id)'))
+
+  it('rebuilds the WINNER entity_memory row after repointing events onto it', async () => {
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
+    const tx = sql.lastTransaction()
+    const rebuild = findRecompute(tx)
+    expect(rebuild, 'no winner cache rebuild in the merge transaction').toBeGreaterThanOrEqual(0)
+    // Keyed on the WINNER, and rebuilt from event_log rather than carried over from the losers.
+    expect(tx[rebuild]).toMatch(/FROM event_log e WHERE e\.plant_id = \$\d+ AND e\.deleted_at IS NULL/)
+  })
+
+  it('rebuilds all seven recency columns, not just the one an event type would touch', async () => {
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const sql = mockSql(baseResponses(plants))
+    await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const stmt = sql.lastTransaction()[findRecompute(sql.lastTransaction())]
+    for (const col of PLANT_MEMORY_COLUMNS) {
+      expect(stmt, `rebuild omits ${col}`).toMatch(new RegExp(`${col}\\s+= EXCLUDED\\.${col}`))
+    }
+    // The three prod rows with last_harvested_at NULL were merge winners whose only harvests came
+    // from a loser: first_harvest must be in the mapping or they stay NULL after a heal.
+    expect(stmt).toMatch(/event_type IN \('harvest','first_harvest'\)/)
+    expect(stmt).toMatch(/flagged_as_issue = true/)
+  })
+
+  it('rebuilds AFTER the repoint and AFTER the drop-set archive, never before', async () => {
+    // Ordering is the whole contract: earlier than archive_events_subset and the cache caches a
+    // dropped event, trading this bug for post_no_cache_ahead_of_event_log.
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const dupes = [
+      { id: 'e1', event_type: 'watering', event_date: '2026-08-01T08:00:00Z',
+        created_at: '2026-08-01T08:00:00Z', metadata: { batch_id: 'B1' } },
+      { id: 'e2', event_type: 'watering', event_date: '2026-08-01T08:00:00Z',
+        created_at: '2026-08-01T08:00:01Z', metadata: { batch_id: 'B1' } },
+    ]
+    const sql = mockSql(baseResponses(plants, dupes))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.body.events_dropped).toBeGreaterThan(0)
+    const tx = sql.lastTransaction()
+    const repoint = tx.findIndex((t) => t.includes('UPDATE event_log'))
+    const archive = tx.findIndex((t) => t.includes('archive_events_subset'))
+    const rebuild = findRecompute(tx)
+    expect(repoint).toBeGreaterThanOrEqual(0)
+    expect(archive).toBeGreaterThan(repoint)
+    expect(rebuild, 'rebuild must follow the repoint').toBeGreaterThan(repoint)
+    expect(rebuild, 'rebuild must follow the drop-set archive').toBeGreaterThan(archive)
+  })
+
   it('performs the whole cutover in ONE transaction', async () => {
     const plants = [plantRow(WINNER), plantRow(LOSER1)]
     const sql = mockSql(baseResponses(plants))
@@ -447,7 +510,7 @@ describe('source guards', () => {
     // wiring it fails here rather than silently no-op'ing against prod.
     for (const s of REPOINT_SURFACES) {
       const re = new RegExp(`UPDATE ${s.table}\\s+SET ${s.column} =`)
-      expect(SRC, `missing repoint statement for ${s.table}.${s.column}`).toMatch(re)
+      expect(REPOINT_SRC, `missing repoint statement for ${s.table}.${s.column}`).toMatch(re)
     }
   })
 
@@ -461,7 +524,7 @@ describe('source guards', () => {
   it('never repoints a surface marked leave', () => {
     for (const s of SURFACES.filter((x) => x.action === 'leave')) {
       const re = new RegExp(`UPDATE ${s.table}\\s+SET ${s.column} =`)
-      expect(SRC, `${s.table}.${s.column} is marked leave but has a repoint`).not.toMatch(re)
+      expect(REPOINT_SRC, `${s.table}.${s.column} is marked leave but has a repoint`).not.toMatch(re)
     }
   })
 

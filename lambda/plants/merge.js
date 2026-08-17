@@ -38,6 +38,8 @@
 // a surface added to the spec without an implementation fails the build rather than silently
 // no-op'ing at runtime.
 
+import { buildPlantEventRepoint } from './plantMemoryRepoint.js'
+
 export const SNAPSHOT_VERSION = 1
 
 // Every surface holding a reference to a planting, with its disposition.
@@ -70,7 +72,9 @@ export const SURFACES = Object.freeze([
   // entity_memory is 1-row-per-plant (entity_memory_plant_id_key) and its columns are scalar
   // timestamps/smallints/jsonb — "concatenating" them is type-invalid. It has NO deleted_at, so
   // leaving the loser's row alive strands a live next_water_at on an invisible planting.
-  // Deleted here; the inference job recomputes the winner's.
+  // Deleted here. The WINNER's row is REBUILT in the same transaction (buildPlantEventRepoint) —
+  // this comment used to say "the inference job recomputes the winner's", which was false: no job
+  // has ever touched the recency columns, and BUG-ENTITYMEMSTALE-001 is what that cost.
   { table: 'entity_memory',           column: 'plant_id',       action: 'delete' },
 
   // ── leave — touching these destroys what they exist to record ──────────────────────────────
@@ -458,6 +462,11 @@ export async function mergeCore(sql, {
   //    a loser row that would collide with an existing winner row is DELETED rather than moved.
   //    All four are derived impression/dismissal/favourite state — a duplicate carries nothing the
   //    winner's own row does not already have — and the snapshot holds the row for restore.
+  // BUG-ENTITYMEMSTALE-001: the event_log repoint and the winner's cache rebuild are one unit,
+  // built together and destructured here so neither can be added without the other. `recompute` is
+  // pushed LAST (see below) because it reads the surviving event set.
+  const memory = buildPlantEventRepoint(sql, { fromPlantIds: loserIds, toPlantId: winnerId })
+
   const stmts = [
     sql`DELETE FROM favorites l
          WHERE l.entity_id = ANY(${loserIds})
@@ -482,7 +491,7 @@ export async function mergeCore(sql, {
                          AND w.entity_id IS NOT DISTINCT FROM l.entity_id
                          AND w.finding_type = l.finding_type)`,
 
-    sql`UPDATE event_log        SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
+    memory.repoint,
     sql`UPDATE photos           SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE preservation_log SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE critter_state    SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
@@ -562,6 +571,14 @@ export async function mergeCore(sql, {
     UPDATE plants SET deleted_at = now(), updated_at = now()
     WHERE id = ANY(${loserIds}) AND deleted_at IS NULL
   `)
+
+  // BUG-ENTITYMEMSTALE-001 — the rebuild the repoint owes, positioned LAST on purpose. Everything
+  // that can still change which of the winner's events survive has run by here: the repoint moved
+  // the losers' history in, archive_events_subset dropped the batch-duplicate collapse set, and the
+  // losers' soft-delete cannot reach events that no longer point at them. Recomputing any earlier
+  // would cache a dropped event's date and fail the sibling gate (post_no_cache_ahead_of_event_log)
+  // instead of this one.
+  stmts.push(memory.recompute)
 
   stmts.push(sql`
     INSERT INTO merge_event
