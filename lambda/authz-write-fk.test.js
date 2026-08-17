@@ -277,6 +277,15 @@ const NOT_IN_SITES = [
   // never off caller input. There is no request through which a caller could name another
   // household's space, so there is no cross-household write to gate.
   'daily-plan::space_id',
+  // daily-plan::plant_id — plant_anchor_derivation's FK, added by V4-ANCHORRESWEEP-001's
+  // re-derivation INSERT. Same argument as space_id above and stronger: the value is never a
+  // parameter of any kind. The statement is issued as pg.query(sql) with NO binds at all, and the
+  // id comes from its own `target` CTE, which selects live, non-archived, still-anchorless rows out
+  // of public.plants. A cron Lambda that reads no request body cannot be handed another household's
+  // planting. Ownership on the written row is COALESCE(plant_projects.created_by, plants.created_by)
+  // read back off the database — the same two-arm shape plants/anchorCreate.js records, and the same
+  // class as harvests::user_id.
+  'daily-plan::plant_id',
   'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::owner_id', 'dashboard::user_id',
   'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
   'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',
