@@ -48,6 +48,15 @@ const REPEATING_HABITS = new Set(['repeat', 'cut_and_come_again'])
 // is not constructible here — which is exactly why the server-side gate is the load-bearing one.
 export const MAX_OVERDUE_RATIO = 3
 
+// V4-READYTRAYIMPRESSION-001 — the partition key stamped on every impression this model produces
+// (public.ready_impression.model_version). It lives HERE, beside the predicate, because this model
+// runs CLIENT-side: unlike the watch band the server cannot reconstruct what was ranked, so the
+// browser build that made the claim is the honest provenance. BUMP IT whenever isReadyToPick,
+// rankHarvestReady or MAX_OVERDUE_RATIO changes behaviour — an impression joined across a
+// definition change is a rate computed over two different models. Mirrored (fallback only) in
+// lambda/harvests/ready-impression.js, pinned in lockstep by ready-impression.test.js.
+export const READY_MODEL_VERSION = 'ready-v1'
+
 export function isReadyToPick(c, etDoy) {
   if (!c) return false
   const interval = c.repeat_interval_days
