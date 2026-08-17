@@ -51,16 +51,56 @@ describe('params lockstep (mirrored constants cannot drift)', () => {
     expect(LP.RAIN_DAY.ia).toEqual(engine.RAIN_TIER_IA);
     expect(LP.RAIN_DAY.hold).toEqual(engine.RAIN_TIER_HOLD);
   });
-  it('rainDepthTierFor mirrors rainTierFor on every KNOWN vessel, and diverges ONLY on unknown', () => {
+  it('rainDepthTierFor mirrors rainTierFor except on the TWO declared divergences', () => {
     // Two resolvers exist because the two tables disagree on which row is strictest. They must stay
-    // identical everywhere else, and rainTierFor's unknown answer must NOT drift: it keys the live
-    // flag-OFF IA/hold path, where 'small_fast' is still the correct fail-safe.
+    // identical everywhere the divergence is not declared, and rainTierFor's answers must NOT drift
+    // at all: it keys the live flag-OFF IA/hold path, where 'small_fast' is still the correct
+    // fail-safe AND the only row a fabric_bag can legally key.
+    const declared = Object.keys(engine.RAIN_DEPTH_TIER_OVERRIDE);
     for (const ct of Object.keys(engine.RAIN_VESSEL_TIER)) {
-      expect(engine.rainDepthTierFor(ct), ct).toBe(engine.rainTierFor(ct));
+      if (declared.includes(ct)) continue;
+      expect(engine.rainDepthTierFor(ct, 10), ct).toBe(engine.rainTierFor(ct));
+      expect(engine.rainDepthTierFor(ct, null), `${ct} unsized`).toBe(engine.rainTierFor(ct));
     }
     for (const ct of [null, undefined, '', 'mystery_pot']) {
       expect(engine.rainTierFor(ct), `${ct} (live)`).toBe('small_fast');
       expect(engine.rainDepthTierFor(ct), `${ct} (F2)`).toBe('unknown');
+    }
+    // Divergence 2: the legacy resolver must NOT learn the new tier name — 'fabric_ground' is not a
+    // key of RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS and would read as undefined on the live path.
+    expect(engine.rainTierFor('fabric_bag')).toBe('small_fast');
+    expect(engine.RAIN_TIER_IA.fabric_ground).toBeUndefined();
+    expect(engine.RAIN_TIER_HOLD.fabric_ground).toBeUndefined();
+    expect(engine.RAIN_MAX_DAYS.fabric_ground).toBeUndefined();
+  });
+  // D1 RESCOPE GUARD (crucible 2026-08-17). The morning edit merged these two rows; the panel found
+  // it applied a fabric-bag field observation to 87 plantings that are rigid pots, tray cells,
+  // hanging baskets and solo cups. This pins them APART so a future "tidy-up" cannot silently
+  // re-merge them, and pins the direction (a rigid pot needs MORE rain, never less).
+  it('INVARIANT: fabric_ground and small_fast are DISTINCT rows, and small_fast is the stricter one', () => {
+    expect(LP.RAIN_DEPTH.fabric_ground).not.toEqual(LP.RAIN_DEPTH.small_fast);
+    expect(LP.RAIN_DEPTH.fabric_ground).toEqual({ light: 0.10, normal: 0.25, deep: 0.60 });
+    expect(LP.RAIN_DEPTH.small_fast).toEqual({ light: 0.15, normal: 0.40, deep: 0.90 });
+    for (const cls of LP.RAIN_DEPTH_CLASSES) {
+      expect(LP.RAIN_DEPTH.small_fast[cls], cls).toBeGreaterThan(LP.RAIN_DEPTH.fabric_ground[cls]);
+    }
+    // and they must be separately REACHABLE from a real container_type, not just distinct in the table
+    expect(engine.rainDepthTierFor('fabric_bag', 5)).toBe('fabric_ground');
+    expect(engine.rainDepthTierFor('plastic_pot', 5)).toBe('small_fast');
+    // behavioural face: 0.30" is a rewet for a 5-gal bag and a sprinkle for a 5-gal plastic pot
+    expect(rainDepthClass(engine.rainDepthTierFor('fabric_bag', 5), 0.30)).toBe('normal');
+    expect(rainDepthClass(engine.rainDepthTierFor('plastic_pot', 5), 0.30)).toBe('light');
+  });
+  it('bed-equivalence is size-gated: a small or unsized fabric_bag stays on the strict row', () => {
+    // One live fabric_bag is recorded as "3 in" -> 0.06 gal. Fabric alone is not the mechanism;
+    // fabric + soil contact + mulch + volume is, and only the volume is machine-readable.
+    expect(parseContainerGal('3 in')).toBeLessThan(engine.FABRIC_GROUND_MIN_GAL);
+    expect(engine.rainDepthTierFor('fabric_bag', parseContainerGal('3 in'))).toBe('small_fast');
+    expect(engine.rainDepthTierFor('fabric_bag', null)).toBe('small_fast');       // unparseable size
+    expect(engine.rainDepthTierFor('fabric_bag')).toBe('small_fast');             // caller passed none
+    expect(engine.rainDepthTierFor('fabric_bag', engine.FABRIC_GROUND_MIN_GAL)).toBe('fabric_ground');
+    for (const sz of ['5 gal', '7 gal', '10 gal', '20 gal']) {                    // the live vocabulary
+      expect(engine.rainDepthTierFor('fabric_bag', parseContainerGal(sz)), sz).toBe('fabric_ground');
     }
   });
   it('transplant carve-out mirrors engine; fold window mirrors handler', () => {
@@ -247,23 +287,46 @@ describe('fold ops', () => {
 
 describe('rainDepthClass — measured precip -> depth class (DRG-RAINDEPTH-001)', () => {
   it('reads thresholds as LOWER BOUNDS, strongest class wins', () => {
-    const t = LP.RAIN_DEPTH.intermediate;                 // light .10 / normal .30 / deep .75
-    expect(rainDepthClass('intermediate', t.deep)).toBe('deep');
-    expect(rainDepthClass('intermediate', t.deep - 0.001)).toBe('normal');
-    expect(rainDepthClass('intermediate', t.normal)).toBe('normal');
-    expect(rainDepthClass('intermediate', t.normal - 0.001)).toBe('light');
-    expect(rainDepthClass('intermediate', t.light)).toBe('light');
-    expect(rainDepthClass('intermediate', t.light - 0.001)).toBe(null);
+    const t = LP.RAIN_DEPTH.small_fast;                   // light .15 / normal .40 / deep .90
+    expect(rainDepthClass('small_fast', t.deep)).toBe('deep');
+    expect(rainDepthClass('small_fast', t.deep - 0.001)).toBe('normal');
+    expect(rainDepthClass('small_fast', t.normal)).toBe('normal');
+    expect(rainDepthClass('small_fast', t.normal - 0.001)).toBe('light');
+    expect(rainDepthClass('small_fast', t.light)).toBe('light');
+    expect(rainDepthClass('small_fast', t.light - 0.001)).toBe(null);
   });
-  it('small_fast mirrors in_ground exactly; intermediate still needs at least as much', () => {
-    // 2026-08-17 field revision (Dave's own observation, overriding the estimate): his fabric bags
-    // sit ON SOIL, mulched and clustered, so they retain like a bed — not like a shedding container.
-    // Pinned as EQUALITY plus literals, so drifting EITHER row (or both together) fails here.
-    expect(LP.RAIN_DEPTH.small_fast).toEqual({ light: 0.10, normal: 0.25, deep: 0.60 });
-    for (const cls of ['light', 'normal', 'deep']) {
-      expect(LP.RAIN_DEPTH.small_fast[cls], cls).toBe(LP.RAIN_DEPTH.in_ground[cls]);
-      // intermediate = rigid troughs/large pots: no ground wicking, so still >= the bed row
-      expect(LP.RAIN_DEPTH.intermediate[cls], cls).toBeGreaterThanOrEqual(LP.RAIN_DEPTH.in_ground[cls]);
+  it('the bed-equivalent rows mirror in_ground exactly; small_fast is the only stricter one', () => {
+    // 2026-08-17 crucible D1 RESCOPE. Dave's field observation (bags on soil, mulched, clustered ->
+    // they retain like a bed) is real but SCOPED to fabric bags; it was applied to all of small_fast
+    // for part of a day. Bed-equivalence now belongs to fabric_ground, and to intermediate — raised
+    // beds, troughs, whiskey barrels and window boxes are the highest-buffer vessels in the table
+    // and had ended up needing MORE rain than a solo cup, which is backwards on both arms.
+    // Pinned as literals PLUS equality, so drifting any row (or several together) fails here.
+    expect(LP.RAIN_DEPTH.in_ground).toEqual({ light: 0.10, normal: 0.25, deep: 0.60 });
+    for (const tier of ['intermediate', 'fabric_ground']) {
+      for (const cls of LP.RAIN_DEPTH_CLASSES) {
+        expect(LP.RAIN_DEPTH[tier][cls], `${tier}.${cls}`).toBe(LP.RAIN_DEPTH.in_ground[cls]);
+      }
+    }
+    // small_fast = rigid pots / trays / hanging baskets: no wicking contact, no mulch, tablespoons
+    // of buffer. STRICTLY more rain than the bed row at every class.
+    for (const cls of LP.RAIN_DEPTH_CLASSES) {
+      expect(LP.RAIN_DEPTH.small_fast[cls], cls).toBeGreaterThan(LP.RAIN_DEPTH.in_ground[cls]);
+    }
+  });
+  // MONOTONICITY. The crucible found the table non-monotone: intermediate {0.10/0.30/0.75} demanded
+  // more rain than small_fast {0.10/0.25/0.60}, i.e. the app under-credited the vessels that hold
+  // water best and over-credited the ones that hold it worst, in the same table. Nothing failed,
+  // because every guard asserted rows against themselves. This asserts the ORDERING across rows.
+  it('INVARIANT: buffer order holds across rows — bed-equivalent <= small_fast <= unknown', () => {
+    const bedEquivalent = ['in_ground', 'intermediate', 'fabric_ground'];
+    for (const cls of LP.RAIN_DEPTH_CLASSES) {
+      for (const tier of bedEquivalent) {
+        expect(LP.RAIN_DEPTH[tier][cls], `${tier}.${cls} vs small_fast`)
+          .toBeLessThanOrEqual(LP.RAIN_DEPTH.small_fast[cls]);
+      }
+      expect(LP.RAIN_DEPTH.small_fast[cls], `small_fast.${cls} vs unknown`)
+        .toBeLessThanOrEqual(LP.RAIN_DEPTH.unknown[cls]);
     }
   });
   it('every tier table is strictly ordered light < normal < deep', () => {
@@ -274,34 +337,75 @@ describe('rainDepthClass — measured precip -> depth class (DRG-RAINDEPTH-001)'
   });
   // THE INVARIANT, not the value. The unknown row was an alias of small_fast until 2026-08-17; that
   // alias was silently falsified the moment small_fast was retuned down, and nothing failed, because
-  // every guard pinned the NAME rather than the property. This asserts the property directly, so any
-  // future threshold edit that inverts the fail-safe fails here regardless of which row wins.
-  it('INVARIANT: the unknown-vessel row demands AT LEAST as much rain as every named tier', () => {
+  // every guard pinned the NAME rather than the property. Asserting the property alone was still not
+  // enough: the >= leg ran against rows that ALL shared light: 0.10, so it passed on equality and
+  // could not fail at the light class — a guard that cannot fail is not a guard (crucible D1).
+  // Three legs now: exact values, >= every named tier, and STRICTLY > the most-credited tier.
+  it('INVARIANT: the unknown-vessel row demands STRICTLY more rain than the most-credited tier', () => {
+    expect(LP.RAIN_DEPTH.unknown).toEqual({ light: 0.15, normal: 0.40, deep: 0.90 });
     for (const [tier, t] of Object.entries(LP.RAIN_DEPTH_TIERS)) {
-      for (const cls of ['light', 'normal', 'deep']) {
+      for (const cls of LP.RAIN_DEPTH_CLASSES) {
         expect(LP.RAIN_DEPTH.unknown[cls], `${tier}.${cls}`).toBeGreaterThanOrEqual(t[cls]);
       }
+    }
+    // NON-VACUITY: it is not enough to tie the loosest row — an unknown vessel must be discriminated
+    // against at EVERY class. in_ground is the most-credited tier by construction of the row above.
+    for (const cls of LP.RAIN_DEPTH_CLASSES) {
+      expect(LP.RAIN_DEPTH.unknown[cls], `unknown.${cls} vs in_ground`)
+        .toBeGreaterThan(LP.RAIN_DEPTH.in_ground[cls]);
     }
     // and it must be reachable: a real unknown/NULL container_type has to resolve to that row
     expect(LP.RAIN_DEPTH[engine.rainDepthTierFor(null)]).toBe(LP.RAIN_DEPTH.unknown);
     expect(LP.RAIN_DEPTH[engine.rainDepthTierFor('mystery_pot')]).toBe(LP.RAIN_DEPTH.unknown);
+    // ...and it must NOT be an alias of any named row, whatever today's values happen to be
+    for (const tier of Object.keys(LP.RAIN_DEPTH_TIERS)) {
+      expect(LP.RAIN_DEPTH.unknown, tier).not.toBe(LP.RAIN_DEPTH[tier]);
+    }
   });
   it('an unknown vessel gets STRICTLY less credit than a bag at the same rain (err toward watering)', () => {
     // The behavioural face of the invariant, and the case that was broken: 0.27" measured. A NULL
     // container_type must not quietly ride the bed-equivalent bag row into a Normal rewet.
     expect(rainDepthClass(engine.rainDepthTierFor(null), 0.27)).toBe('light');
-    expect(rainDepthClass(engine.rainDepthTierFor('fabric_bag'), 0.27)).toBe('normal');
+    expect(rainDepthClass(engine.rainDepthTierFor('fabric_bag', 5), 0.27)).toBe('normal');
+    // 0.12" is the light-floor face of the same thing: a bed-equivalent vessel earns a Light credit,
+    // an unknown vessel earns NOTHING. Under the pre-rescope derived-max row both were Light.
+    expect(rainDepthClass(engine.rainDepthTierFor(null), 0.12)).toBe(null);
+    expect(rainDepthClass(engine.rainDepthTierFor('fabric_bag', 5), 0.12)).toBe('light');
   });
   it('unknown tier falls back to the unknown row; zero/negative/NaN earn nothing', () => {
     // an unrecognized tier NAME (not just an unrecognized vessel) must also land on the strict row
     expect(rainDepthClass('bogus', 0.27)).toBe(rainDepthClass('unknown', 0.27));
-    expect(rainDepthClass('bogus', 0.27)).not.toBe(rainDepthClass('small_fast', 0.27));
+    // discriminated against the MOST-credited row, not against whichever row currently shares the
+    // unknown values — small_fast and unknown are equal today and this leg was vacuous at 0.27".
+    expect(rainDepthClass('bogus', 0.27)).not.toBe(rainDepthClass('in_ground', 0.27));
     expect(rainDepthClass('in_ground', 0.3)).toBe('normal');
     for (const bad of [0, -1, NaN, null, undefined]) expect(rainDepthClass('in_ground', bad)).toBe(null);
   });
 });
 
 describe('gauge-rain day-credits', () => {
+  // THE D1 RESCOPE, AT THE FOLD (crucible 2026-08-17). The golden corpus exercises a bag at 0.21"
+  // only, which is Light under every version of this table and is therefore structurally blind to a
+  // threshold edit — a full silent revert of the rescope leaves parity 30/30 green. This test is the
+  // one that is not blind. 0.30" is chosen because it straddles the two rows: Normal for a bag
+  // (fabric_ground normal 0.25), Light for a rigid pot (small_fast normal 0.40).
+  it('0.30" rewets a 5-gal fabric bag but only sprinkles a 5-gal plastic pot', () => {
+    const bag = vesselProfile('fabric_bag', '5 gal');
+    const pot = vesselProfile('plastic_pot', '5 gal');
+    const bagTier = engine.rainDepthTierFor('fabric_bag', bag.sizeGal);
+    const potTier = engine.rainDepthTierFor('plastic_pot', pot.sizeGal);
+    expect([bagTier, potTier]).toEqual(['fabric_ground', 'small_fast']);
+    const wet = flatWeather({ precipOn: { '2026-08-09': 0.30 } });     // tmax 75: heat ramp is 0
+    const run = (vessel, rainTier, weather) => mk({ vessel, rainTier, weather, events: [PRIMER] });
+    const bagDry = run(bag, bagTier, flatWeather()), bagWet = run(bag, bagTier, wet);
+    const potDry = run(pot, potTier, flatWeather()), potWet = run(pot, potTier, wet);
+    // ISOLATION: at tmax 75 the fabric ramp contributes 0, so both vessels carry vf 1.1 x size 1.0.
+    // Identical demand means the rain tier is the ONLY thing that can move D between these two.
+    expect(bagDry.d).toBeCloseTo(potDry.d, 9);
+    expect(potDry.d - potWet.d).toBeCloseTo(LP.LIGHT_CREDIT_WI * 4, 6);      // Light: subtractive
+    expect(bagDry.d - bagWet.d).toBeGreaterThan(LP.LIGHT_CREDIT_WI * 4);     // Normal: rewets
+    expect(bagWet.d).toBeLessThan(potWet.d);
+  });
   it('a Light-class day credits exactly LIGHT_CREDIT_WI x wi at 23:59 ET — once, not per re-test', () => {
     // 0.15" on intermediate (light 0.10, normal 0.30) -> Light. Light is SUBTRACTIVE, so a second
     // application would show as a 4-day delta: this is what pins once-per-day idempotency.
@@ -326,7 +430,8 @@ describe('gauge-rain day-credits', () => {
     for (const [tier, vessel] of [
       ['in_ground', vesselProfile('in_ground', null)],
       ['intermediate', vesselProfile('trough', '5 gal')],
-      ['small_fast', vesselProfile('fabric_bag', '5 gal')],
+      ['fabric_ground', vesselProfile('fabric_bag', '5 gal')],
+      ['small_fast', vesselProfile('plastic_pot', '2 gal')],
     ]) {
       expect(rainDepthClass(tier, 0.21)).toBe('light');
       const bare = mk({ events: [PRIMER], rainTier: tier, vessel });
@@ -336,14 +441,19 @@ describe('gauge-rain day-credits', () => {
     }
   });
   it('2026-08-17 revision: 0.30" now earns a BAG the full Normal rewet, not a Light nudge', () => {
-    // Dave's field observation moved small_fast normal 0.40 -> 0.25. 0.30" measured used to land as
-    // Light on a bag (a subtractive nudge) and now lands as Normal — the same class the in-ground
-    // row has always given it. This is the under-crediting he reported as driving over-watering.
-    // Pinned against a MANUAL Normal watering at the same instant: rain folds through the same depth
-    // arithmetic, and Normal carries no bank, so the two must land identically.
-    const bag = { vessel: vesselProfile('fabric_bag', '5 gal'), rainTier: 'small_fast' };
-    expect(rainDepthClass('small_fast', 0.30)).toBe('normal');
-    expect(rainDepthClass('small_fast', 0.30)).toBe(rainDepthClass('in_ground', 0.30));
+    // Dave's field observation moved the BAG's normal threshold 0.40 -> 0.25. 0.30" measured used to
+    // land as Light on a bag (a subtractive nudge) and now lands as Normal — the same class the
+    // in-ground row has always given it. This is the under-crediting he reported as driving
+    // over-watering. Pinned against a MANUAL Normal watering at the same instant: rain folds through
+    // the same depth arithmetic, and Normal carries no bank, so the two must land identically.
+    // RESCOPED 2026-08-17 pm: the row is fabric_ground, not small_fast. This test originally read
+    // rainTier 'small_fast' — the tier a rigid nursery pot keys — which is precisely the over-application
+    // the crucible found. It now resolves the tier the way the engine does, from type AND size.
+    const bagVessel = vesselProfile('fabric_bag', '5 gal');
+    const bag = { vessel: bagVessel, rainTier: engine.rainDepthTierFor('fabric_bag', bagVessel.sizeGal) };
+    expect(bag.rainTier).toBe('fabric_ground');
+    expect(rainDepthClass(bag.rainTier, 0.30)).toBe('normal');
+    expect(rainDepthClass(bag.rainTier, 0.30)).toBe(rainDepthClass('in_ground', 0.30));
     const t2359 = etMidnightMs('2026-08-09') + 24 * H - 60000;
     const light = mk({ ...bag, events: [PRIMER],
       weather: flatWeather({ precipOn: { '2026-08-09': 0.21 } }) });

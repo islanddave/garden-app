@@ -95,11 +95,31 @@ const LIGHT_CREDIT_WI = 0.5;                 // Light: D := max(0, D - this x wi
 const RAIN_DAY = {
   ia: { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 },
   hold: { in_ground: 3, intermediate: 2, small_fast: 1 },
-  // Bag >=85F credit denial SOFTENED (canon legacy-term table: demand now carries the heat physics;
-  // full denial + 1.25x demand was a double penalty). Keyed to weather_daily.tmax_f of the
-  // qualifying day, not today's forecast high. Under RAIN_DEPTH this is a ONE-CLASS DEMOTION
-  // (deep->normal->light->nothing) rather than a 0.5x scalar — the scalar had no meaning once the
-  // credit stopped being a number of days. bagHeatSoftenFactor is retained for the legacy mirror.
+  // Bag >=85F credit demotion. Keyed to weather_daily.tmax_f of the qualifying day, not today's
+  // forecast high. Under RAIN_DEPTH this is a ONE-CLASS DEMOTION (deep->normal->light->nothing)
+  // rather than a 0.5x scalar — the scalar had no meaning once the credit stopped being a number of
+  // days. bagHeatSoftenFactor is retained for the legacy mirror.
+  //
+  // CORRECTION 2026-08-17 (crucible D2, 8 seats): this block previously called the rule "SOFTENED".
+  // The live record says otherwise. All 7 hot (tmax>=85F) crediting days in the 90-day prod
+  // weather_daily window classify as LIGHT, and demoteDepth('light') returns null — so 7 of 7
+  // observed firings are TOTAL credit denial, not a one-class softening. "Softened" describes the
+  // intent, not the behaviour. Second mismatch worth stating: the rationale is about MULCH
+  // interception while the code keys on VESSEL fabric, so a strawed bed gets no demotion and an
+  // unmulched bag does. Behaviourally identical today (Dave mulches every bag); recorded because
+  // that mismatch is how a correct rule gets deleted later by someone who notices it.
+  //
+  // DEFERRED REPLACEMENT (crucible verdict C5 — apply at the CARE_WATER_LEDGER_ENABLED flip, NOT
+  // now): replace the class step with a depth subtraction, `P_eff = max(0, P - 0.08")` when
+  // tmax >= bagHeatSoftenF, then classify P_eff. Rationale: tmax is a gridded model output with
+  // +-2-3F error, so a hard class step keyed to a 85F threshold is a discontinuity on noise — a 0.1F
+  // move erases ~1.5 cadence-days. The 0.08" form preserves all 7 observed outcomes byte-identically
+  // while removing the cliff, and it stays temperature-GATED (an unconditional subtraction would push
+  // a 0.10" rain to 0.04" and silently delete the whole Light class for bags year-round).
+  // WHY DEFERRED: the whole ledger path is inert behind the flag, the replacement is a second
+  // unmeasured tuning stacked on the D1 rescope, and the panel converged on one cheap instrument
+  // (weigh a bag / finger-test a mulched vs bare bag after a >=0.2" rain) that has not been run yet.
+  // Sequence is measurement -> ET denominator -> rain thresholds -> flip. Do not land this early.
   bagHeatSoftenF: 85, bagHeatSoftenFactor: 0.5,
 };
 // DRG-RAINDEPTH-001 (2026-08-17, Dave directive) — measured daily precip -> Light/Normal/Deep class,
@@ -112,31 +132,51 @@ const RAIN_DAY = {
 // Provenance: agronomy estimate for the Conway MA site (cool-humid, clay-ish native soil), NOT
 // measured. These are the #1 soak-tune target — same posture as RAIN_DAY.ia was (err toward
 // watering: raise the thresholds, never lower them, on an unproven shadow-soak).
-// small_fast REVISED to the in_ground row 2026-08-17 on Dave's direct field observation, which
-// overrides the estimate it replaces. The original row (0.15/0.40/0.90) encoded a
-// coarse-vessel-sheds-faster premise: a bag needs MORE rain than a bed for the same class. That
-// premise describes an isolated container on pavement, NOT this site — Dave's bags are fabric, sat
-// ON SOIL (wicking contact with the ground), mulched or strawed on top (suppressed evaporation),
-// and clustered adjacent to each other on a slope (mutual shading). He reports they hold moisture
-// like a bed and that he over-waters against generic container advice. Under-crediting rain was
-// driving exactly that. Retention is bed-equivalent here; heat is a SEPARATE mechanism and stays
-// with RAIN_DAY.bagHeatSoftenF's one-class demotion below.
+// TIER HISTORY — read this before retuning any row.
+// 2026-08-17 (morning): small_fast was flattened to the in_ground row on Dave's field observation.
+// 2026-08-17 (afternoon, crucible D1 REVISE, 8 seats): that edit was RESCOPED, not reverted. Dave's
+// report is specifically about 5-10 gal FABRIC BAGS: fabric walls sat ON SOIL (wicking contact),
+// mulched or strawed on top (suppressed evaporation), clustered adjacent on a slope (mutual
+// shading). Those three properties are what make retention bed-equivalent, and they are properties
+// of THAT vessel, not of the small_fast tier. small_fast also carried 87 live plantings that have
+// none of them — 61 rigid plastic pots (mostly 2-6in nursery), 15 tray cells, 4 hanging baskets, 3
+// solo cups, 2 ceramic, 1 terracotta, 1 soil block. A 4in pot holds ~0.9in of plant-available water
+// against a 5-gal bag's ~2.5in, and the compensating heat demotion (RAIN_DAY.bagHeatSoftenF) is
+// gated on vessel.isFabric — so those 87 took the full loosening with NO offsetting penalty at any
+// temperature. That is the one arm of this model with a plant-death pathway rather than a
+// water-waste pathway. Hence:
+//   fabric_ground  NEW row, fabric_bag ONLY — bed-equivalent, where the evidence actually applies.
+//   small_fast     RESTORED to 0.15/0.40/0.90 — the coarse-vessel-sheds-faster estimate, correct for
+//                  a rigid pot even though it was wrong for a strawed bag on soil.
+//   intermediate   lowered to the in_ground row. It had ended up STRICTER than small_fast, i.e. a
+//                  raised bed / trough / whiskey barrel — the highest-buffer vessels in the table —
+//                  needed MORE rain to earn credit than a solo cup. Backwards on both arms.
+// The bed-equivalent rows are gated on size at the resolver, not here: engine.rainDepthTierFor only
+// hands a fabric_bag the fabric_ground row at vesselProfile().sizeGal >= FABRIC_GROUND_MIN_GAL. This
+// table has no size dimension while the demand side is fully size-bucketed, and one live fabric_bag
+// is recorded as "3 in" (0.06 gal). Cross-row ordering is pinned by test, not by comment.
 const RAIN_DEPTH_TIERS = {
-  in_ground:    { light: 0.10, normal: 0.25, deep: 0.60 },
-  intermediate: { light: 0.10, normal: 0.30, deep: 0.75 },
-  small_fast:   { light: 0.10, normal: 0.25, deep: 0.60 },
+  in_ground:     { light: 0.10, normal: 0.25, deep: 0.60 },
+  intermediate:  { light: 0.10, normal: 0.25, deep: 0.60 },
+  fabric_ground: { light: 0.10, normal: 0.25, deep: 0.60 },
+  small_fast:    { light: 0.15, normal: 0.40, deep: 0.90 },
 };
 // Unrecognized/NULL container_type (engine rainDepthTierFor -> 'unknown'). The invariant is
 // "err toward watering": an unknown vessel gets the LEAST credit, i.e. must clear the HIGHEST bar at
-// every class. DERIVED as the per-class max, deliberately not an alias of a named tier — until
-// 2026-08-17 this fell back to small_fast, which WAS the strictest row and silently stopped being one
-// the moment small_fast was revised down to the in_ground values. A named alias encodes today's
-// ordering; the max survives any future threshold edit. Pinned by an invariant test, not a value test.
+// every class. EXPLICIT row as of the 2026-08-17 rescope, replacing a per-class max derived from the
+// tier table. Two reasons the derived form had to go: (1) it silently tracked whatever the loosest
+// tuning of the day happened to be — after the morning edit it evaluated to {0.10, 0.30, 0.75},
+// looser at EVERY class than the fallback it replaced, quietly loosening 23 NULL-container
+// plantings; (2) a derived max cannot be under-cut by a retune, so the guard test written against it
+// could only ever compare a row to itself. An explicit row states the fail-safe as a decision and
+// lets the invariant test discriminate. It is pinned three ways in ledger.test.js: exact values,
+// >= every named tier at every class, and STRICTLY > the most-credited tier at every class (the
+// non-vacuity leg — the previous guard used toBeGreaterThanOrEqual against rows that all shared
+// light: 0.10, so it passed on equality and could not fail).
 const RAIN_DEPTH_CLASSES = ['light', 'normal', 'deep'];
 const RAIN_DEPTH = {
   ...RAIN_DEPTH_TIERS,
-  unknown: Object.fromEntries(RAIN_DEPTH_CLASSES.map((cls) =>
-    [cls, Math.max(...Object.values(RAIN_DEPTH_TIERS).map((t) => t[cls]))])),
+  unknown: { light: 0.15, normal: 0.40, deep: 0.90 },
 };
 const TRANSPLANT_CARVEOUT_DAYS = 21;         // mirrors engine.TRANSPLANT_CARVEOUT_DAYS (pinned by test)
 
@@ -158,7 +198,7 @@ const WINDOW_DAYS = 30;      // fold lookback; MUST equal handler.WEATHER_DAILY_
 module.exports = {
   ET0_REF_MONTHLY, WINTER_REF_MIN, DEMAND_CLAMP, GLOBAL_NORMALIZATION,
   VESSEL_CLASS_FACTOR, VESSEL_UNKNOWN_FACTOR, FABRIC_BAG, TRAY_TYPES, TRAY_WI_CAP_DAYS, SIZE_BUCKETS,
-  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, RAIN_DEPTH_TIERS,
+  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, RAIN_DEPTH_TIERS, RAIN_DEPTH_CLASSES,
   TRANSPLANT_CARVEOUT_DAYS,
   SNOOZE, CONFIDENCE, WINDOW_DAYS,
 };

@@ -191,9 +191,12 @@ const RAIN_TIER_HOLD = { in_ground: 3,    intermediate: 2,    small_fast: 1    }
 // no longer agree on which row satisfies it:
 //   RAIN_TIER_IA/HOLD + RAIN_MAX_DAYS (this file, live flag-OFF) -> small_fast is still strictest (highest IA 0.35,
 //     lowest hold 1, tightest ceiling), so rainTierFor's 'small_fast' fallback remains CORRECT. Do not "fix" it.
-//   RAIN_DEPTH (ledgerParams, F2) -> small_fast was revised to the in_ground values 2026-08-17, so it is NO LONGER
-//     strictest there and that same fallback would hand unknown vessels bed-equivalent rain credit — the exact
-//     inversion of this invariant. rainDepthTierFor exists for that table; see RAIN_DEPTH.unknown (derived max).
+//   RAIN_DEPTH (ledgerParams, F2) -> has its OWN explicit 'unknown' row, strictly stricter than every named tier.
+//     rainDepthTierFor exists for that table and resolves unrecognized/NULL to 'unknown', never to a named tier.
+//     (History: for a few hours on 2026-08-17 small_fast was flattened to the in_ground values there, which made
+//     the shared 'small_fast' fallback hand unknown vessels bed-equivalent credit — the exact inversion of this
+//     invariant. small_fast has since been restored; the separate resolver and the explicit unknown row stay,
+//     because the failure was a NAMED ALIAS encoding one day's ordering, not the particular values.)
 // Re-check this comment against BOTH tables whenever either is retuned.
 const RAIN_VESSEL_TIER = {
   in_ground: 'in_ground',
@@ -203,11 +206,29 @@ const RAIN_VESSEL_TIER = {
   pot: 'small_fast', other: 'small_fast',
 };
 function rainTierFor(container_type){ return RAIN_VESSEL_TIER[(container_type||'').toLowerCase()] || 'small_fast'; }
-// F2/RAIN_DEPTH sibling of rainTierFor: IDENTICAL mapping, but an unrecognized/NULL container_type resolves to
-// 'unknown' instead of collapsing into 'small_fast'. Kept separate rather than changing rainTierFor because that
-// tier name also keys RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS above, where small_fast IS still the strictest row — editing
-// it would loosen LIVE flag-OFF verdicts for every NULL-container planting (~22 in prod: IA 0.35->0.25, hold 1->2).
-function rainDepthTierFor(container_type){ return RAIN_VESSEL_TIER[(container_type||'').toLowerCase()] || 'unknown'; }
+// F2/RAIN_DEPTH sibling of rainTierFor. Kept separate rather than changing rainTierFor because these tier names
+// also key RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS above, which are LIVE on the flag-OFF path: any name this returns that
+// those tables do not carry would read as undefined there. Two documented divergences, both RAIN_DEPTH-only:
+//   1. unrecognized/NULL container_type -> 'unknown' instead of collapsing into 'small_fast' (small_fast IS still
+//      the strictest IA/hold row, so rainTierFor's fallback stays correct; editing it would loosen live verdicts
+//      for every NULL-container planting — ~22 in prod: IA 0.35->0.25, hold 1->2).
+//   2. fabric_bag -> 'fabric_ground' (RAIN_DEPTH_TIER_OVERRIDE), the bed-equivalent row, but ONLY at
+//      sizeGal >= FABRIC_GROUND_MIN_GAL. The evidence for bed-equivalent retention is Dave's 5-10 gal bags:
+//      fabric on soil, mulched, clustered. A small bag has the fabric but not the buffer — one live fabric_bag is
+//      recorded as "3 in" (parses to 0.06 gal) — and an UNPARSEABLE size is treated the same as a small one,
+//      which is the same err-toward-watering direction vesselProfile.smallVessel already takes on a null size.
+// sizeGal is vesselProfile().sizeGal (parsed gallons, or null). Callers on the flag-OFF path pass nothing and get
+// the strict row, which is the safe default rather than an accident.
+const RAIN_DEPTH_TIER_OVERRIDE = { fabric_bag: 'fabric_ground' };
+const FABRIC_GROUND_MIN_GAL = 3;
+function rainDepthTierFor(container_type, sizeGal){
+  const ct = (container_type || '').toLowerCase();
+  const base = RAIN_VESSEL_TIER[ct];
+  if (!base) return 'unknown';
+  const override = RAIN_DEPTH_TIER_OVERRIDE[ct];
+  if (!override) return base;
+  return (Number.isFinite(sizeGal) && sizeGal >= FABRIC_GROUND_MIN_GAL) ? override : base;
+}
 // Max-days ceiling: clamps the watering interval before the due-check so a rain-credited planting still re-surfaces
 // for a moisture check (anti suppression-inversion). tier x stage; +1 for drought-tolerant Mediterranean herbs,
 // -1 for steady-moisture leafy/Solanaceae at flowering/fruiting (bolt / split / blossom-end-rot on swings), floor 1.
@@ -447,7 +468,8 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
     todayStr: today, effNowMs: lo.effNowMs,
     todayEt0: hydrology ? (hydrology.today_et0_in ?? null) : null,
     todayTmax: hydrology ? (hydrology.today_tmax_f ?? null) : null,
-    exposure, vessel: vp, rainTier: rainDepthTierFor(p.container_type),   // RAIN_DEPTH key, not the IA/hold one
+    // RAIN_DEPTH key, not the IA/hold one. sizeGal gates the bed-equivalent fabric_ground row.
+    exposure, vessel: vp, rainTier: rainDepthTierFor(p.container_type, vp.sizeGal),
     transplantAt: p.transplant_at || null,
   });
   const via = c._via || 'default';
@@ -725,4 +747,5 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
 module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
-  RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};
+  RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
+  FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};

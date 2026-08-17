@@ -165,8 +165,10 @@ function computeConfidence({ via, vesselKnown, weatherOk, snoozeCount, trayUnpro
 //   todayEt0, todayTmax,              live D0 forecast values (hydrology.today_et0_in / today_tmax_f)
 //   exposure,                         'outdoor' | 'covered' | 'indoor'
 //   vessel,                           vesselProfile() result
-//   rainTier,                         engine rainDepthTierFor(container_type) — RAIN_DEPTH key. NOT
-//                                     rainTierFor: unknown must resolve 'unknown', not 'small_fast'
+//   rainTier,                         engine rainDepthTierFor(container_type, vessel.sizeGal) —
+//                                     RAIN_DEPTH key. NOT rainTierFor: unknown must resolve
+//                                     'unknown' (not 'small_fast'), and a >=3-gal fabric_bag must
+//                                     resolve 'fabric_ground' (not 'small_fast')
 //   transplantAt,                     'YYYY-MM-DD' | null
 // }
 const PRIO = { watering: 0, rain: 0, moisture_check: 1, day_credit: 2 };
@@ -184,7 +186,12 @@ function rainDepthClass(tier, precipIn) {
   if (precipIn >= t.light) return 'light';
   return null;                                                     // trace: below the light floor
 }
-// One-class demotion (the bag-heat soften). 'light' demotes to null, not to a zero-value class.
+// One-class demotion (the bag-heat rule). 'light' demotes to null, not to a zero-value class —
+// which, on the live record, is the ONLY branch that has ever executed: all 7 hot (tmax>=85F)
+// crediting days in the 90-day prod window are Light, so 7 of 7 observed firings were total credit
+// denial. KEPT AS-IS by crucible verdict D2/C5; the flip-time replacement (P_eff = max(0, P - 0.08")
+// when tmax >= bagHeatSoftenF) and the reasoning for deferring it are recorded on RAIN_DAY in
+// ledgerParams.js. Do not change this function's behaviour without reading that block.
 function demoteDepth(depth) {
   const i = DEPTH_ORDER.indexOf(depth);
   return i <= 0 ? null : DEPTH_ORDER[i - 1];
