@@ -1,5 +1,18 @@
 [
   {
+    "version": "4.32.0",
+    "date": "2026-08-17",
+    "highlights": [
+      "Harvest and Snap now live in the top bar, on every screen. Logging a harvest went from two taps to one, and Snap looks the same everywhere instead of a plain icon on Garden and a green pill on Today.",
+      "The Log harvest row left the + menu, since the new header button reaches the same form from anywhere. The menu is back to four items and 'Log an event' mentions harvests again.",
+      "Snap leads with Choose photo now. Photos taken inside the app can't be saved to your camera roll — that's a limitation of what a web app is allowed to do, not a bug — so the app no longer nudges you toward the option that quietly loses the picture everywhere else.",
+      "Skipping a care item now sticks. It used to be forgotten as soon as the tab closed, so you would skip watering something, come back a few minutes later, and find it asking again. Skips now also follow you between your phone and your laptop.",
+      "Log Many remembers whether you like everything pre-selected — per person, not per device. Dave and Jen can finally disagree about it on the same phone.",
+      "The What's New dot clears everywhere once you've read the notes, instead of following you to your other device.",
+      "The app opens faster: about 48 KB less to download before anything appears, by loading the critter facts only when you actually open one."
+    ]
+  },
+  {
     "version": "4.31.0",
     "date": "2026-08-17",
     "highlights": [
