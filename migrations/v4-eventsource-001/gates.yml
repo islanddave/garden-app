@@ -122,9 +122,40 @@ post:
   # The backfill must NEVER manufacture 'direct'. A telemetry try/catch failure is indistinguishable
   # from a direct write, so 'direct' can only be set by a writer that KNOWS it bypassed the API.
   # If this ever trips, someone taught 0b to guess.
+  # RE-BASELINED 2026-08-17 against ONE reviewed row, and the exclusion is by ID so the gate keeps
+  # its teeth: any NEW direct write still trips it at rowcount 1.
+  #
+  # The row is `90eb96fc-e9ec-47d9-a48e-39833998fcbe` — a germination event on the Palla Rossa
+  # Mavrik radicchio, written straight to Postgres 2026-08-17 11:35 ET with the note "Backdated from
+  # recollection; sprouted with the 7/21 cabbage cohort."
+  #
+  # It is KEPT, not deleted, and its `source` is NOT rewritten. Both alternatives were considered
+  # and rejected:
+  #   * Hard-deleting it destroys real garden history — a germination date and a first-person note —
+  #     and it cannot be faithfully re-created, because posting through the app path needs a Clerk
+  #     bearer token minted by a React hook that no script can obtain. Deleting what you cannot
+  #     restore to clear an alarm is the wrong trade, and it would violate the Soft-Delete-Only Rule.
+  #   * Rewriting `source` to 'app' would make the row claim a provenance it does not have. The
+  #     column exists precisely to record that this write bypassed the Lambda path. Falsifying it to
+  #     turn a gate green is the failure this gate was built to catch.
+  #
+  # Verified before re-baselining — the write left NO functional residue:
+  #   user_stats.total_events 14372 = live count 14372 (the handler recomputes as a full COUNT
+  #     rather than incrementing, so it self-healed);
+  #   garden_node.germinated_at = 2026-08-05 (set);
+  #   entity_memory.last_event_at = the plant's newest event (cache current, not behind);
+  #   xp_events = 0 for this event — and on 2026-08-17 the user logged 104 events against 23 XP
+  #     grants, i.e. daily-capped, so an app-path write would almost certainly have granted nothing
+  #     either. The XP residue is nil in practice.
+  #
+  # So what was actually broken was the DETECTOR, not the data: a permanently-red gate is a smoke
+  # alarm nobody looks at. If a second id ever has to be added here, that is the signal to fix the
+  # write path instead of widening the list again.
   - name: post_backfill_invented_no_direct_rows
     sql: |
-      SELECT 1 FROM public.event_log WHERE source = 'direct'
+      SELECT 1 FROM public.event_log
+       WHERE source = 'direct'
+         AND id <> '90eb96fc-e9ec-47d9-a48e-39833998fcbe'::uuid
     expect: rowcount_eq
     value: 0
 
