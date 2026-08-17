@@ -19,12 +19,19 @@ import PlantingEditor from '../components/PlantingEditor.jsx'
 // `sow_next_year` sits below every this-season section but above the non-actionable ones. It is
 // DEMOTED (muted heading) but never collapsed: it is actionable and deadline-bearing, and hiding it
 // behind a disclosure is exactly how a window closes unseen.
+//
+// The sow_next_year subtitle read 'Sow these this summer; they flower next spring.' until
+// 2026-08-17. It was written when the bucket held four ornamentals (hollyhock, blackberry lily, two
+// money plants) and it framed a HORIZON partition as a flower section: the bucket takes anything
+// sowGoal() calls establishment, which already includes biennial vegetables and will include hardy
+// greens sown for a spring cut. The copy now names both payoffs instead of only the floral one, and
+// says plainly what the section is for — that nothing in it feeds you this season.
 const BUCKET_META = [
   ['window_closing',     'Window closing'],
   ['start_indoors_now',  'Start indoors now'],
   ['direct_sow_now',     'Direct sow now'],
   ['sow_inside_anytime', 'Sow inside anytime'],
-  ['sow_next_year',      'For next year — sow now', 'Sow these this summer; they flower next spring.'],
+  ['sow_next_year',      'For next year — sow now', 'Sow now, bloom or harvest next spring — nothing here pays off this season.'],
   ['hold',               'Hold for later'],
   ['needs_profile',      'Needs a sow profile'],
   ['too_late',           'Too late this year'],

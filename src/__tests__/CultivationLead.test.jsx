@@ -12,12 +12,20 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getTok
 
 import CultivationLead, { cultivationLines, CULTIVATION_LEAD_CAP } from '../components/today/CultivationLead.jsx'
 
-// 2026 anchors: FF = 09-28. cool + annual => close = FF + (14 - dtm). dtm 55 -> Aug 18 (6 days
-// from the fixed TODAY, inside the 10-day closing window); dtm 58 -> Aug 15; dtm 60 -> Aug 13.
+// 2026 anchors: FF = 09-28. Lettuce is fall-hardy (V4-HARDYSET-001), so a cool + annual DIRECT sow
+// closes at FF + (28 - dtm): dtm 69 -> Aug 18 (6 days from the fixed TODAY, inside the 10-day
+// closing window); dtm 72 -> Aug 15; dtm 74 -> Aug 13. The fall INDOOR pass is a different clamp
+// and did not move — FF + (28 - dtm - FALL_SLOWDOWN 14), so the indoor fixture keeps dtm 55 for the
+// same Aug 18.
+//
+// The dtm figures were raised by 14 to hold these dates when lettuce gained the hardy grace. Every
+// EXPECTED string below is unchanged, deliberately: the contract under test is the lead line's
+// wording, cap and ordering, and none of that moved — only the shared clamp that decides which
+// packets are closing. Retuning the input rather than the assertions keeps that visible.
 const TODAY = '2026-08-12'
 const lettuce = (over = {}) => ({
   variety_name: 'Winter Density', item_name: 'Lettuce packet', crop_type_slug: 'lettuce',
-  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 55, days_to_maturity_min: null,
+  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 69, days_to_maturity_min: null,
   direct_sow_timing: 'as soon as the soil can be worked', start_method: null,
   ...over,
 })
@@ -31,7 +39,7 @@ describe('cultivationLines (pure, real engine)', () => {
 
   it('uses the indoor verb when the closing window is an indoor start', () => {
     const basil = lettuce({
-      variety_name: 'Genovese Basil', direct_sow_timing: null,
+      variety_name: 'Genovese Basil', direct_sow_timing: null, days_to_maturity_max: 55,
       start_method: 'start_indoors', start_indoor_weeks_min: 4, start_indoor_weeks_max: 4,
     })
     expect(cultivationLines([basil], TODAY)).toEqual(['Start Genovese Basil indoors by Aug 18.'])
@@ -40,15 +48,15 @@ describe('cultivationLines (pure, real engine)', () => {
   it('caps at 2, most urgent first — never a third orient decision', () => {
     expect(CULTIVATION_LEAD_CAP).toBe(2)
     const lines = cultivationLines([
-      lettuce({ variety_name: 'A', days_to_maturity_max: 55 }), // Aug 18
-      lettuce({ variety_name: 'B', days_to_maturity_max: 60 }), // Aug 13
-      lettuce({ variety_name: 'C', days_to_maturity_max: 58 }), // Aug 15
+      lettuce({ variety_name: 'A', days_to_maturity_max: 69 }), // Aug 18
+      lettuce({ variety_name: 'B', days_to_maturity_max: 74 }), // Aug 13
+      lettuce({ variety_name: 'C', days_to_maturity_max: 72 }), // Aug 15
     ], TODAY)
     expect(lines).toEqual(['Sow B by Aug 13.', 'Sow C by Aug 15.'])
   })
 
   it('yields nothing when no window is closing — an open-but-not-closing window is /sow business', () => {
-    // dtm 30 -> close Sep 12, 31 days out: open, not closing.
+    // dtm 30 -> close Sep 26, 45 days out: open, not closing.
     expect(cultivationLines([lettuce({ days_to_maturity_max: 30 })], TODAY)).toEqual([])
   })
 

@@ -19,10 +19,14 @@ import {
   isSpringEstablishmentAllium,
   sowGoal,
   isArchivedForSeason,
+  FALL_HARDY_CROPS,
 } from '../lib/sowEngine.js';
 // Imported ONLY to pin the engine's local bunching predicate against the canonical derivation, so
 // the two cannot silently diverge. The engine itself never imports from lambda/.
 import { alliumType } from '../../lambda/varieties/crop-derive.js';
+// Same reason, for V4-HARDYSET-001: frostClass.js's `hardy` band is the canonical "shrugs off frost"
+// vocabulary and FALL_HARDY_CROPS must stay a subset of it.
+import fc from '../../lambda/daily-plan/frostClass.js';
 
 // Real packets from /tmp/seed-load-dataset-V1.json (garden.seed_load_dataset.v1),
 // embedded verbatim so CI needs no dataset file.
@@ -427,18 +431,26 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
 
   // PANEL GOLDEN DEVIATION: panel expected hold(reopen ~Aug 20). The panel's
   // own class-D rule ("succession -> open until latest_safe") keeps the
-  // spring window open through latest_safe = FF+14-dtm = Aug 13, so Jul 10 is
-  // an open direct window. Rules win per build direction.
+  // spring window open through latest_safe, so Jul 10 is an open direct window.
+  // Rules win per build direction.
+  //
+  // REBASELINED BY V4-HARDYSET-001, and this is the defect landing, not a golden moved to match new
+  // output. Spinach is one of the crops the prose test MISSED: its packet says "spinach tolerates
+  // light frost", which HARDY_RE does not match, so it took the 14d grace (Aug 13) while radish took
+  // 28d on the strength of a different copywriter. Spinach is hardier than radish. It now takes the
+  // hardy grace by crop type: FF + 28 - 60 = Aug 27.
   it('Spinach Oceanside -> direct_sow_now via class D (rules) [golden said hold ~Aug 20]', () => {
     const { bucket, entry } = locate(golden(), 'Oceanside');
     expect(bucket).toBe('direct_sow_now');
-    expect(entry.daysLeft).toBe(34); // open until Aug 13
+    expect(entry.daysLeft).toBe(48); // open until Aug 27 = FF + (28 - 60)
   });
 
-  it('Lettuce Black Seeded Simpson -> direct_sow_now (class D through Aug 23)', () => {
+  // REBASELINED BY V4-HARDYSET-001, same cause as spinach above: lettuce carries no frost prose at
+  // all and lost 14 days to that. FF + 28 - 50 = Sep 6 (was Aug 23).
+  it('Lettuce Black Seeded Simpson -> direct_sow_now (class D through Sep 6)', () => {
     const { bucket, entry } = locate(golden(), 'Black Seeded Simpson');
     expect(bucket).toBe('direct_sow_now');
-    expect(entry.daysLeft).toBe(44);
+    expect(entry.daysLeft).toBe(58);
     expect(entry.action).toBe('direct_sow');
   });
 
@@ -761,7 +773,9 @@ describe('next-year horizon — sow_next_year bucket', () => {
     expect(bucket).toBe('sow_next_year');
     expect(entry.action).toBe('direct_sow');
     expect(entry.daysLeft).toBe(22); // through Aug 15
-    expect(entry.windowLabel).toContain('next year');
+    // V4-SOWOWCOPY-001: was 'next year'. The card no longer claims a flower — the bucket takes
+    // biennial vegetables and overwintered greens too — so it names the horizon instead.
+    expect(entry.windowLabel).toContain('pays off next spring');
   });
 
   // Horizon partition happens BEFORE the close/daysLeft math: an open this-season clause outranks a
@@ -1279,5 +1293,105 @@ describe('V4-SOWARCHIVE-001 archive-for-the-season', () => {
     expect(buckets.archived).toHaveLength(1);
     expect(buckets.window_closing).toHaveLength(1);
     expect(buckets.start_indoors_now).toHaveLength(1);
+  });
+});
+
+// ── V4-HARDYSET-001 — fall hardiness by crop type, not by packet prose ────────────
+// The +14d fall grace used to be decided by `HARDY_RE` against sow_notes. Zero false positives (the
+// branch is season-gated and every pepper is warm), but 54 false negatives out of 64 live cool
+// candidates — it caught radish and missed spinach, lettuce, Vates kale, mustard, arugula, chard and
+// leek. Measured on live v_sow_candidates 2026-08-17.
+//
+// PROBE. latestSafeMs is not exported and should not be — the clamp is only meaningful through a
+// window. A class-C clause ("as soon as the soil can be worked") opens at LF-42 and closes at
+// EXACTLY latestSafe, so the card's own label is a direct readout of it. PROBE_DAY sits after every
+// open and before every close under test, so the window is always live and the label always dated.
+const PROBE_DAY = '2026-06-01';
+function latestSafe(over = {}) {
+  const { entry } = one(viewRow({
+    variety_name: 'Clamp probe',
+    start_method: 'direct_sow',
+    direct_sow_timing: 'as soon as the soil can be worked',
+    days_to_maturity_max: 60,
+    ...over,
+  }), PROBE_DAY);
+  const m = /through ([A-Z][a-z]{2} \d+)/.exec(entry?.windowLabel ?? '');
+  return m ? m[1] : (entry?.windowLabel ?? null);
+}
+
+describe('V4-HARDYSET-001 fall hardiness set', () => {
+  it('is the edible subset of frostClass\'s hardy band — one vocabulary, not two', () => {
+    // The anti-drift guard. frostClass.js already answers "does this crop shrug off frost" for the
+    // alert channel; this set must never become a second, disagreeing answer to the same question.
+    // A slug added here without a frost band would also silently start emitting 40°F frost alerts.
+    const band = new Set(fc.SLUGS_BY_BAND.hardy);
+    const strays = [...FALL_HARDY_CROPS].filter((s) => !band.has(s)).sort();
+    expect(
+      strays,
+      `not banded hardy in lambda/daily-plan/frostClass.js — band it there first: ${strays.join(', ')}`,
+    ).toEqual([]);
+    // Non-vacuity: an emptied set passes the diff above while silently restoring the 14d clamp for
+    // everything. 27 slugs today; the floor is the panel's stated bar.
+    expect(FALL_HARDY_CROPS.size).toBeGreaterThanOrEqual(25);
+  });
+
+  it('covers every crop the prose test missed', () => {
+    for (const slug of ['spinach', 'lettuce', 'kale', 'mustard', 'arugula', 'chard', 'leek']) {
+      expect(FALL_HARDY_CROPS.has(slug), slug).toBe(true);
+    }
+  });
+
+  it('sow_notes no longer moves the answer, in either direction', () => {
+    // The mutation proof that the regex is gone rather than merely supplemented. Prose that DID
+    // match and prose that did NOT now give the same date for the same crop, and the prose that
+    // used to buy 14 days buys nothing on a crop that does not stand frost.
+    const HARDY_PROSE = 'Frost tolerant. Improves in flavor after a light frost.';
+    expect(latestSafe({ crop_type_slug: 'spinach', sow_notes: '' })).toBe('Aug 27');
+    expect(latestSafe({ crop_type_slug: 'spinach', sow_notes: HARDY_PROSE })).toBe('Aug 27');
+    expect(latestSafe({ crop_type_slug: 'poppy', sow_notes: HARDY_PROSE })).toBe('Aug 13');
+  });
+
+  it('two packets of the same species agree — the prose lottery is gone', () => {
+    // The reported symptom: live 2026-08-17, Lacinato kale read "Direct sow through Aug 25" and
+    // Vates kale read "Sowing window passed", on nothing but a copywriter's phrasing. Same slug and
+    // same dtm must now give the same date; the residual 2-day gap in prod is their real dtm gap
+    // (62 vs 60), which is a difference the engine is entitled to have an opinion about.
+    const lacinato = { crop_type_slug: 'kale', sow_notes: 'Frost tolerant.' };
+    const vates = { crop_type_slug: 'kale', sow_notes: 'OR direct sow in midsummer for fall crop.' };
+    expect(latestSafe(vates)).toBe(latestSafe(lacinato));
+    expect(latestSafe(vates)).toBe('Aug 27');
+    expect(latestSafe({ ...lacinato, days_to_maturity_max: 62 })).toBe('Aug 25');
+  });
+
+  it('the grace stays cool-season only — a hardy slug in a warm packet gains nothing', () => {
+    // The old branch was already season-gated, which is why it had zero false positives. Widening
+    // the predicate must not widen the gate: 82 live pepper candidates sit behind it.
+    expect(latestSafe({ crop_type_slug: 'kale', sow_season: 'warm' })).toBe('Jul 16');      // FF-(60+14)
+    expect(latestSafe({ crop_type_slug: 'kale', sow_season: 'cool_warm' })).toBe('Jul 23'); // FF-(60+7)
+    expect(latestSafe({ crop_type_slug: 'pepper', sow_season: 'warm' })).toBe('Jul 16');
+  });
+
+  it('an establishment sowing keeps its own clamp — hardiness never overrides it', () => {
+    // The hardy branch used to run FIRST, above the establishment check. On an establishment crop
+    // dtm is days-to-BLOOM, so a grace computed from it is arithmetic on the wrong number — and it
+    // runs the wrong way, TIGHTENING the window (FF+28-300 lands in the previous year). Nothing live
+    // crossed that ordering while the predicate was prose; a crop-type set is wide enough to.
+    const establishmentClamp = 'Aug 24'; // FF - 35
+    expect(latestSafe({
+      crop_type_slug: 'kale', lifecycle: 'biennial', grown_as: 'biennial', first_year_harvest: false,
+    })).toBe(establishmentClamp);
+    expect(latestSafe({
+      crop_type_slug: 'kale', lifecycle: 'perennial', grown_as: 'perennial', days_to_maturity_max: 300,
+    })).toBe(establishmentClamp);
+  });
+
+  it('a hardy slug with no days-to-maturity is still UNKNOWN, not fabricated', () => {
+    // NULL must not become a date in either direction. The clause is dropped and the packet asks
+    // for a profile rather than claiming a window it cannot compute.
+    const { bucket } = one(viewRow({
+      variety_name: 'No DTM', crop_type_slug: 'spinach', start_method: 'direct_sow',
+      direct_sow_timing: 'as soon as the soil can be worked', days_to_maturity_max: null,
+    }), PROBE_DAY);
+    expect(bucket).toBe('needs_profile');
   });
 });

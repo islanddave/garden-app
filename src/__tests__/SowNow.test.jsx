@@ -310,7 +310,12 @@ describe('SowNow — allium gate + next-year section', () => {
     await renderSowNow()
 
     await screen.findByText('For next year — sow now')
-    expect(screen.getByText('Sow these this summer; they flower next spring.')).toBeDefined()
+    // Copy rewritten 2026-08-17 (V4-SOWOWCOPY-001): the old subtitle promised flowers, but the
+    // bucket is a horizon partition and takes food crops too. Pinned verbatim because the point of
+    // the change is the wording, not the presence of a subtitle.
+    expect(screen.getByText(
+      'Sow now, bloom or harvest next spring — nothing here pays off this season.',
+    )).toBeDefined()
     // Card content is present with no click — not behind a ▸ toggle.
     expect(screen.getByText('Sweet William')).toBeDefined()
     expect(screen.getByText('36 days left')).toBeDefined()

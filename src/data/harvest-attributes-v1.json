@@ -428,9 +428,10 @@
     }
   },
   "not_harvest_tracked": {
-    "note": "Deliberately left NULL in the DB. These are ornamentals, houseplants, succulents, or (avocado) a plant that will not fruit in this zone. NULL here is a decision, not a gap — but it is indistinguishable from 'unseeded' at the column level, which is why this list is recorded.",
+    "note": "Deliberately left NULL in the DB. These are ornamentals, houseplants, succulents, or (avocado) a plant that will not fruit in this zone. NULL here is a decision, not a gap — but it is indistinguishable from 'unseeded' at the column level, which is why this list is recorded. 2026-08-17: aloe, calibrachoa and lantana added — each has one live planting, zero picks, and had drifted into reading as an unexplained NULL. Version stays 1.0.0 because this list is not part of the JSON->0b-data.sql projection the sync gate re-confirms; by_crop_type is unchanged.",
     "slugs": [
-      "geranium", "coleus", "fittonia", "petunia", "tradescantia", "sedum", "echeveria",
+      "geranium", "coleus", "fittonia", "petunia", "calibrachoa", "lantana", "tradescantia",
+      "sedum", "echeveria", "aloe",
       "succulent", "cactus", "christmas_cactus", "sempervivum", "haworthia", "jade",
       "japanese_maple", "spider_plant", "pothos", "dracaena", "lithops",
       "flower_mix", "marigold", "rose", "hibiscus", "hosta", "begonia", "chrysanthemum",

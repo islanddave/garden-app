@@ -149,6 +149,29 @@ describe('harvest-attributes JSON is in sync with the generated 0b-data.sql seed
     }
   })
 
+  // The two deliberate-NULL lists are the only record that a NULL harvest_habit was DECIDED rather
+  // than missed — the column itself cannot tell the two apart, which is the whole reason they exist.
+  // Nothing bound them before, so a slug could drift off one and start reading as an unfilled gap.
+  it('no slug is both seeded and recorded as a deliberate NULL', () => {
+    // A slug on both sides is a contradiction the DB cannot express: 0b-data.sql would write a value
+    // into a column the exclusion list says is deliberately NULL. This is the failure mode of adding
+    // to either list without checking the other.
+    const decided = [...doc.not_harvest_tracked.slugs, ...doc.unseeded_vocabulary.slugs]
+    const both = decided.filter(s => s in authored).sort()
+    expect(both, 'seeded in by_crop_type AND listed as a deliberate NULL').toEqual([])
+    expect(new Set(decided).size, 'a slug is listed twice across the two NULL lists').toBe(decided.length)
+  })
+
+  it('the ornamental/succulent NULLs added 2026-08-17 are recorded', () => {
+    // aloe, calibrachoa and lantana each carry one live planting and zero picks and had drifted out
+    // of the list, so their NULL habit read as a coverage gap. ginger is deliberately NOT here: it
+    // is edible, and whether Dave harvests it is his call, not an authoring decision. (bee_balm is
+    // already listed, with its own `contested` note.)
+    const listed = new Set(doc.not_harvest_tracked.slugs)
+    for (const slug of ['aloe', 'calibrachoa', 'lantana']) expect(listed.has(slug), slug).toBe(true)
+    expect(listed.has('ginger'), 'ginger is an open question, not a recorded decision').toBe(false)
+  })
+
   it('DOY windows are set only where being outside the window is actively harmful', () => {
     // The window is a SUPPRESSOR, not a trigger. Asparagus (cutting after ~Jun 15 damages the crown)
     // and garlic (lift outside the window and the bulb will not store) are the only two crops that

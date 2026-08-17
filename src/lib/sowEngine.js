@@ -123,7 +123,52 @@ function num(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-const HARDY_RE = /frost.?tolerant|improves?\s+(?:in\s+flavor\s+)?after\s+(?:light\s+)?frost/i;
+// ── Fall hardiness (V4-HARDYSET-001) ─────────────────────────────────────────────
+// Which cool-season crops earn the +14d fall grace (latest-safe FF+28-dtm instead of FF+14-dtm),
+// decided by crop_type_slug instead of by packet prose.
+//
+// REPLACES `HARDY_RE = /frost.?tolerant|improves? (in flavor )?after (light )?frost/i` tested against
+// sow_notes. That regex had ZERO false positives — the branch requires sow_season='cool' and all 82
+// pepper candidates are 'warm' or NULL, so a warm packet could never reach it — but it was a lottery
+// on the seedsman's copywriter. Measured against live v_sow_candidates 2026-08-17: 10 of 64 cool
+// candidates matched, catching radish (24d, moderately hardy) while missing spinach, every lettuce,
+// Vates and Redbor kale, mustard, arugula, chard and leek, several of which stand harder frost than
+// anything it caught. Two packets of the SAME SPECIES disagreed — Lacinato kale read "through Aug 25"
+// while Vates kale read too_late (Aug 13), on prose alone.
+//
+// THE RULE THE SET ENCODES: the harvested organ (leaf, root, stem, bud) keeps standing — or improves
+// — through repeated fall frost, so growth past the frost anchor is still a harvest. That is the same
+// question lambda/daily-plan/frostClass.js's `hardy` band already answers ("unharmed or improved by
+// frost, NEVER alerted"), so this is its edible subset rather than a second hardiness vocabulary;
+// sowEngine.test.js pins the subset relation so the two cannot drift. Deliberately COPIED, not
+// imported: src/lib stays free of lambda/ (the rule BUNCHING_HABIT_RE follows above), and the band is
+// wider than this anyway — it also covers roses, hostas and fruit trees, which have no sow window.
+//
+// Removed from that band on purpose, by class:
+//   onion, shallot        — bulbers, already held for spring by isSpringEstablishmentAllium. A fall
+//                           grace on a crop that must not be fall-sown is a contradiction.
+//   pea                   — the vine takes frost, the PODS do not, and the pods are the harvest. The
+//                           packets say "10-12 wks before first fall frost" (~Jul 15) themselves.
+//   rat_tail_radish       — warm-season, and its harvest is the seed pod, not the root.
+//   sage/thyme/oregano/   — perennial crowns. A fall sowing of these is establishment, and sowGoal
+//   mint/tarragon/          routes them to the establishment clamp before the cool branch is reached.
+//   asparagus/strawberry/
+//   the woody fruit
+//
+// mache, claytonia, tatsoi and mizuna belong here the day those crop_types exist (they do not yet —
+// DATA-WINTERGREENS-001). Band them in frostClass first, or the subset guard will say so.
+export const FALL_HARDY_CROPS = new Set([
+  'arugula', 'beet', 'bok_choy', 'broccoli', 'brussels_sprouts', 'bunching_onion', 'cabbage',
+  'carrot', 'celery', 'chard', 'chervil', 'chives', 'cilantro', 'collard', 'endive', 'garlic',
+  'kale', 'kohlrabi', 'leek', 'lettuce', 'mustard', 'parsley', 'parsnip', 'radicchio', 'radish',
+  'spinach', 'turnip',
+]);
+
+// Days past the fall frost anchor a cool-season DIRECT sowing may still be aimed at. Numerically
+// equal to FALL_GRACE_DAYS above, but a different quantity — that one is the fall INDOOR pass's
+// grace and is keyed by sow_season, not by hardiness. Do not collapse the two.
+const FALL_GRACE_HARDY = 28;
+const FALL_GRACE_COOL = 14;
 
 /** Split direct_sow_timing into clauses on ';' and ' or ' (case-insensitive). */
 export function splitClauses(timing) {
@@ -289,19 +334,24 @@ export function sowGoal(candidate, dtm) {
  * takes marshmallow and blackberry lily with it.
  */
 function latestSafeMs(candidate, dtm, ctx) {
-  const season = candidate.sow_season;
-  const notes = candidate.sow_notes || '';
-  // Guards dtm: this branch dereferences it and previously sat above any null check.
-  if (season === 'cool' && dtm != null && HARDY_RE.test(notes)) return ctx.FF + (28 - dtm) * DAY_MS;
   // Establishment does not consult dtm, so this must sit ABOVE the null guard or a null-dtm
-  // perennial keeps its missing clamp.
+  // perennial keeps its missing clamp. V4-HARDYSET-001 also moved it ABOVE the hardy branch, which
+  // used to run first: on an establishment crop dtm is a days-to-BLOOM figure, so a grace computed
+  // from it is a date derived from a number that is not a maturity (a hypothetical cool biennial
+  // radicchio would have closed Jun 25 instead of Aug 24 — tighter, and for a nonsense reason).
+  // Nothing live crossed that ordering under the prose test; a crop-type set is wider, so the order
+  // is now load-bearing rather than incidental.
   if (sowGoal(candidate, dtm) === 'establishment') {
     return ctx.FF + (FALL_GROWTH_TAIL - ESTABLISH_DAYS - FALL_SLOWDOWN_DAYS) * DAY_MS;
   }
   if (dtm == null) return null; // genuinely unknown — must NOT be fabricated into a date
+  const season = candidate.sow_season;
   if (season === 'warm') return ctx.FF - (dtm + 14) * DAY_MS;
   if (season === 'cool_warm') return ctx.FF - (dtm + 7) * DAY_MS;
-  if (season === 'cool') return ctx.FF + (14 - dtm) * DAY_MS;
+  if (season === 'cool') {
+    const grace = FALL_HARDY_CROPS.has(candidate.crop_type_slug) ? FALL_GRACE_HARDY : FALL_GRACE_COOL;
+    return ctx.FF + (grace - dtm) * DAY_MS;
+  }
   return null;
 }
 
@@ -555,7 +605,13 @@ function bucketOne(candidate, ctx) {
         candidate,
         action: 'direct_sow',
         daysLeft,
-        windowLabel: `Direct sow through ${labelDate(close)} · flowers next year`,
+        // "· flowers next year" until 2026-08-17. The bucket is a HORIZON partition, not a flower
+        // section — its members are whatever sowGoal() calls establishment, and that already covers
+        // biennial vegetables and (once an overwintering goal exists) hardy greens carried under
+        // cover for a spring cut. sowGoal cannot tell a hollyhock from an overwintered kale, so the
+        // phrase must be true of both rather than derived: what they share is WHEN the sowing pays
+        // off, which is the one thing this bucket actually knows.
+        windowLabel: `Direct sow through ${labelDate(close)} · pays off next spring`,
       },
     };
   }
