@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.34.0",
+    "date": "2026-08-17",
+    "highlights": [
+      "Groundwork for overwintering. The app can now treat a planting you're overwintering as its own care state — checked on a reduced schedule rather than either watered normally or ignored entirely, because a dry freeze kills more overwintered plants than the cold does. Nothing changes on screen yet: there is still no way to mark a planting as overwintering, so no planting is in that state. That part comes next.",
+      "Overwintering deliberately does NOT use the planting Status field. An overwintered kale is still vegetative and still growing — recording 'overwintering' in Status would have erased that, and Status has no automatic way back, so anything put into it tends to stay there."
+    ]
+  },
+  {
     "version": "4.33.0",
     "date": "2026-08-17",
     "highlights": [
