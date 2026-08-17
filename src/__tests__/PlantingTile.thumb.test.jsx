@@ -32,7 +32,7 @@ vi.mock('../components/PlantStatusBadge.jsx', () => ({ default: ({ status }) => 
 vi.mock('../components/CaretakerBadge.jsx', () => ({ default: ({ caretaker }) => <span>badge:{caretaker?.initial}</span> }))
 
 import PlantingTile from '../components/PlantingTile.jsx'
-import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+import PhotoImg, { __resetPhotoImgCache, __seedPhotoImgUrl, PRESIGN_TTL_MS } from '../components/PhotoImg.jsx'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -56,6 +56,13 @@ const noThumbField = (n = 9) => {
 
 const src = (c) => c.querySelector('img')?.getAttribute('src') ?? null
 const viewUrlCalls = () => fetchSpy.mock.calls.filter(c => String(c[0]).includes('/api/photos/view-url/'))
+// jsdom's default rect is 0×0, which reads as off-screen and closes PhotoImg's P5 viewport gate.
+// Stub a visible box so what is under test is the heal, not the gate. (Same helper as PhotoImg.test.)
+const onScreen = (el) => { if (el) el.getBoundingClientRect = () => ({ top: 10, left: 10, bottom: 110, right: 110, width: 100, height: 100, x: 10, y: 10, toJSON() {} }) }
+const foreground = () => {
+  Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+  act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+}
 
 describe('the tile prefers the thumbnail', () => {
   it('paints featured_photo_thumb_url, not the 3 MB original', () => {
@@ -84,7 +91,10 @@ describe('a missing thumb degrades to the in-hand original (6 of 230 live heroes
     expect(fetchSpy).not.toHaveBeenCalled()   // the degrade target came down in the same list response
   })
 
-  it('only the FINAL source hands the photo id over, and it mints the PHOTO id not the plant id', async () => {
+  // Only the FINAL source may spend a MINT on an error — every earlier one has a cheaper swap in
+  // hand. This says nothing about whether PhotoImg holds the photo id: it does, at every step, and
+  // gating the id itself on "final source" is what silently disabled the proactive heal below.
+  it('a mid-chain failure degrades with no mint; the final one heals the PHOTO id, not the plant id', async () => {
     fetchSpy.mockResolvedValue({ view_url: MINTED })
     const { container } = render(<PlantingTile planting={withThumb()} />)
     fireEvent.error(container.querySelector('img'))                 // thumb 404 → degrade, no mint
@@ -114,5 +124,51 @@ describe('a missing thumb degrades to the in-hand original (6 of 230 live heroes
     const { container, getByText } = render(<PlantingTile planting={bare} />)
     expect(container.querySelector('img')).toBeNull()
     expect(getByText('Tap to add first photo')).toBeTruthy()
+  })
+})
+
+// The tier=THUMB chain has TWO entries, so the tile spends its whole life at a NON-final step. Any
+// behaviour keyed on "is this the last source" therefore silently switched off when the tile moved to
+// the thumb — including PhotoImg's proactive re-mint, which opens `if (!photoId) return`. A Garden
+// page resumed past the 900s presign TTL then stopped re-minting before render: it 403'd on the
+// thumb, degraded to the ~2.97 MB ORIGINAL and healed reactively, so the resumed case both failed
+// requests and landed on the payload this lane exists to avoid. Garden's plants effect is deps-[fetch]
+// (mount-only) and dataCache's URL-preservation deliberately keeps the PRIOR URLs on a revalidate, so
+// nothing else refreshes these presigns — the heal is the only thing standing between a resumed tile
+// and a blank.
+describe('a tile resumed past the presign TTL heals BEFORE it renders', () => {
+  it('a past-TTL foreground re-mints at the THUMB step (not only at the end of the chain)', async () => {
+    fetchSpy.mockResolvedValue({ view_url: MINTED })
+    __seedPhotoImgUrl('ph9', `${THUMB}&i=9`, Date.now() - PRESIGN_TTL_MS - 1)   // aged → elapsed gate open
+    const { container } = render(<PlantingTile planting={withThumb()} />)
+    expect(src(container)).toBe(`${THUMB}&i=9`)                     // still on the thumb: step 0, not final
+    onScreen(container.querySelector('img'))
+    foreground()
+    await waitFor(() => expect(viewUrlCalls()).toHaveLength(1))
+    expect(String(viewUrlCalls()[0][0])).toBe('/api/photos/view-url/ph9')
+    await waitFor(() => expect(src(container)).toBe(MINTED))        // healed with ZERO failed requests
+  })
+
+  it('an off-screen tile is still skipped — the fix does not reopen the P5 grid storm', async () => {
+    fetchSpy.mockResolvedValue({ view_url: MINTED })
+    __seedPhotoImgUrl('ph9', `${THUMB}&i=9`, Date.now() - PRESIGN_TTL_MS - 1)
+    render(<PlantingTile planting={withThumb()} />)                 // no onScreen() → 0×0 rect = off-screen
+    foreground()
+    await act(async () => {})
+    expect(viewUrlCalls()).toHaveLength(0)                          // heals reactively on scroll-in instead
+  })
+
+  // Handing the id over at every step also hands the tile's URL to PhotoImg's module-level per-photoId
+  // cache, which is shared with every other instance of that photo. The mount-fetch path is its only
+  // reader and its callers include the full-screen Lightbox (EventDetail's id-only rows open it at
+  // 94vw), so publishing a 163 KB thumb there would trade a 900s blank for a 900s blur.
+  it('the tile does NOT publish its thumb URL as the shared answer for that photo id', async () => {
+    fetchSpy.mockResolvedValue({ view_url: MINTED })
+    render(<PlantingTile planting={withThumb()} />)
+    await act(async () => {})
+    expect(viewUrlCalls()).toHaveLength(0)                          // the tile itself still costs nothing
+    const idOnly = render(<PhotoImg photoId="ph9" alt="full size" />)
+    await waitFor(() => expect(src(idOnly.container)).toBe(MINTED))  // minted its own, did not inherit
+    expect(viewUrlCalls()).toHaveLength(1)
   })
 })
