@@ -46,6 +46,7 @@ import { recordCropLog } from '../lib/cropLogLedger.js'
 // V4-HARVSESSION-002: chip-queue ranking — the same order the Today ready band shows, so the tray
 // and the band never disagree about what "next" means.
 import { rankHarvestReady } from '../lib/harvestReadiness.js'
+import { selectTrayChips, harvestTrayScrollport } from '../lib/harvestTray.js'
 // V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
 // for the metadata contract with the events Lambda and why it is NOT quantity_numeric.
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
@@ -169,6 +170,8 @@ const DRAFT_FORM_FIELDS = ['event_type', 'notes', 'private_notes', 'quantity', '
 // `visualViewport` entirely.
 const HARVEST_SECTION_ID = 'harvest-section'
 const PLANTING_SECTION_ID = 'planting-section'
+// V4-HARVTRAYVIEWPORT-001: aria-controls target for the weigh-in tray's Show more/fewer disclosure.
+const HARVEST_TRAY_ID = 'harvest-session-tray'
 
 // `block:'start'` puts the section HEADER at the viewport top, which is what makes the rest of the
 // panel (chips, quantity, weight, error banner, Save) fall into the space the keyboard leaves.
@@ -476,6 +479,12 @@ export default function EventNew() {
   // guard (BUG-LOGTARGETREQ-001) is untouched because every attribution here is an explicit tap.
   const [readyChips, setReadyChips] = useState([])
   const [sessionQueue, setSessionQueue] = useState([])
+  // V4-HARVTRAYVIEWPORT-001: collapsed by cap, not by default — the tray always renders, and the
+  // top-ranked chips plus everything the user has queued are always on screen. Sticky once the
+  // user expands it: tapping a chip QUEUES it, so a FilterChipRow-style collapse-on-select would
+  // shut the tray between every pick of a multi-planting queue. Nothing keyed to keyboard state
+  // touches this flag, so it cannot thrash as focus moves between fields.
+  const [trayExpanded, setTrayExpanded] = useState(false)
   const [focusQtyNonce, setFocusQtyNonce] = useState(0)
   useEffect(() => {
     if (!inHarvestSession) return
@@ -2156,10 +2165,30 @@ export default function EventNew() {
                   below remains the full path for anything not on the list. */}
               {inHarvestSession && readyChips.length > 0 && (() => {
                 const donePlantIds = new Set(sessionRows.filter(r => !r.undone && r.plantId).map(r => r.plantId))
+                // V4-HARVTRAYVIEWPORT-001. Two bounds, both needed — see src/lib/harvestTray.js for
+                // the measured geometry. The label is one line at 390px now (the old copy wrapped to
+                // two, ~15px of the very space this row is reclaiming).
+                const shownChips = selectTrayChips({
+                  chips: readyChips,
+                  expanded: trayExpanded,
+                  currentPlantId: form.plant_id,
+                  queuedPlantIds: sessionQueue.map(q => q.plant_id),
+                  donePlantIds,
+                })
+                const hiddenCount = readyChips.length - shownChips.length
                 return (
-                  <Section label="Weigh-in queue — tap what's on the counter, in order">
-                    <div data-testid="harvest-session-tray" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      {readyChips.map(chip => {
+                  <Section label="Weigh-in queue — tap in weighing order">
+                    <div
+                      id={HARVEST_TRAY_ID}
+                      data-testid="harvest-session-tray"
+                      role="group"
+                      aria-label="Weigh-in queue"
+                      // The scrollport clips the TRAY only. plantingBlock is a later sibling, not a
+                      // descendant, so this overflow context cannot clip the picker's listbox the way
+                      // BUG-PICKERCLIP-001 did.
+                      style={{ display: 'flex', flexWrap: 'wrap', gap: 8, ...harvestTrayScrollport }}
+                    >
+                      {shownChips.map(chip => {
                         const isCurrent = chip.plant_id === form.plant_id
                         const queuePos = sessionQueue.findIndex(q => q.plant_id === chip.plant_id)
                         const isDone = donePlantIds.has(chip.plant_id)
@@ -2180,6 +2209,23 @@ export default function EventNew() {
                         )
                       })}
                     </div>
+                    {(hiddenCount > 0 || trayExpanded) && (
+                      // OUTSIDE the scrollport deliberately: a "Show fewer" that scrolls out of
+                      // view with the chips is a trap. Same disclosure grammar as the "Photo, notes
+                      // & date" toggle below, so the two read as one language — but with a touch
+                      // height, because this one is tapped with produce in hand.
+                      <button
+                        type="button"
+                        onClick={() => setTrayExpanded(x => !x)}
+                        aria-expanded={trayExpanded}
+                        aria-controls={HARVEST_TRAY_ID}
+                        data-testid="harvest-tray-toggle"
+                        style={{ marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: '8px 0', minHeight: 44, display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit' }}
+                      >
+                        <span aria-hidden="true">{trayExpanded ? '▾' : '▸'}</span>
+                        <span>{trayExpanded ? 'Show fewer' : `Show ${hiddenCount} more`}</span>
+                      </button>
+                    )}
                   </Section>
                 )
               })()}
