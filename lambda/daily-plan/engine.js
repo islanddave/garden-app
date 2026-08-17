@@ -183,9 +183,18 @@ function rainCreditDays(cls, wi, hy){
 // (spec §6/§8 — err toward watering: raise IA, shorten hold, tighten ceiling; in_ground IA is the #1 tune target).
 const RAIN_TIER_IA   = { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 }; // inches (initial abstraction per tier)
 const RAIN_TIER_HOLD = { in_ground: 3,    intermediate: 2,    small_fast: 1    }; // max credit days per tier; never raise small_fast
-// Vessel -> tier. NULL/unknown/'other' fails safe to small_fast (least credit -> water it). Covers the full DB
-// container_type CHECK vocab (14 values, verified prod 2026-07-08) + the generic 'pot' used in fixtures. Rigid pots
-// (plastic/terracotta/ceramic/'pot') are small_fast: generic unknown-size pots dry fast; large rigid pots re-tag to trough.
+// Vessel -> tier. Covers the full DB container_type CHECK vocab (14 values, verified prod 2026-07-08) + the generic
+// 'pot' used in fixtures. Rigid pots (plastic/terracotta/ceramic/'pot') are small_fast: generic unknown-size pots dry
+// fast; large rigid pots re-tag to trough.
+// FAIL-SAFE INVARIANT (both resolvers below): an unrecognized/NULL container_type must get the LEAST credit of any
+// row in the table being keyed -> water it. That is a property of the TABLE, not of a tier name, and the two tables
+// no longer agree on which row satisfies it:
+//   RAIN_TIER_IA/HOLD + RAIN_MAX_DAYS (this file, live flag-OFF) -> small_fast is still strictest (highest IA 0.35,
+//     lowest hold 1, tightest ceiling), so rainTierFor's 'small_fast' fallback remains CORRECT. Do not "fix" it.
+//   RAIN_DEPTH (ledgerParams, F2) -> small_fast was revised to the in_ground values 2026-08-17, so it is NO LONGER
+//     strictest there and that same fallback would hand unknown vessels bed-equivalent rain credit — the exact
+//     inversion of this invariant. rainDepthTierFor exists for that table; see RAIN_DEPTH.unknown (derived max).
+// Re-check this comment against BOTH tables whenever either is retuned.
 const RAIN_VESSEL_TIER = {
   in_ground: 'in_ground',
   raised_bed: 'intermediate', trough: 'intermediate', whiskey_barrel: 'intermediate', window_box: 'intermediate',
@@ -194,6 +203,11 @@ const RAIN_VESSEL_TIER = {
   pot: 'small_fast', other: 'small_fast',
 };
 function rainTierFor(container_type){ return RAIN_VESSEL_TIER[(container_type||'').toLowerCase()] || 'small_fast'; }
+// F2/RAIN_DEPTH sibling of rainTierFor: IDENTICAL mapping, but an unrecognized/NULL container_type resolves to
+// 'unknown' instead of collapsing into 'small_fast'. Kept separate rather than changing rainTierFor because that
+// tier name also keys RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS above, where small_fast IS still the strictest row — editing
+// it would loosen LIVE flag-OFF verdicts for every NULL-container planting (~22 in prod: IA 0.35->0.25, hold 1->2).
+function rainDepthTierFor(container_type){ return RAIN_VESSEL_TIER[(container_type||'').toLowerCase()] || 'unknown'; }
 // Max-days ceiling: clamps the watering interval before the due-check so a rain-credited planting still re-surfaces
 // for a moisture check (anti suppression-inversion). tier x stage; +1 for drought-tolerant Mediterranean herbs,
 // -1 for steady-moisture leafy/Solanaceae at flowering/fruiting (bolt / split / blossom-end-rot on swings), floor 1.
@@ -433,7 +447,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
     todayStr: today, effNowMs: lo.effNowMs,
     todayEt0: hydrology ? (hydrology.today_et0_in ?? null) : null,
     todayTmax: hydrology ? (hydrology.today_tmax_f ?? null) : null,
-    exposure, vessel: vp, rainTier: rainTierFor(p.container_type),
+    exposure, vessel: vp, rainTier: rainDepthTierFor(p.container_type),   // RAIN_DEPTH key, not the IA/hold one
     transplantAt: p.transplant_at || null,
   });
   const via = c._via || 'default';
@@ -711,4 +725,4 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
 module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
-  RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};
+  RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};

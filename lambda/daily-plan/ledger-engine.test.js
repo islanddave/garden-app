@@ -171,6 +171,33 @@ describe('payload contract (canon Decision 10 — the ::int crash class)', () =>
   });
 });
 
+// ── (2b) container_type -> RAIN_DEPTH wiring ─────────────────────────────────────────────────────
+// Guards engine.js's ledger ctx `rainTier: rainDepthTierFor(...)`. ledger.test.js cannot see this:
+// it calls foldLedger with an explicit rainTier, so reverting the call site to rainTierFor left the
+// whole suite green while handing every NULL-container planting bed-equivalent rain credit (~22 live
+// rows). Built inline rather than as a lf.scenario so it does not move ledger-goldens.json.
+describe('NULL container_type reaches the STRICT RAIN_DEPTH row, not the bag row', () => {
+  // 0.27" is the discriminating amount: Light on the unknown row (light .10, normal .30), Normal on
+  // the bag row (normal .25). Same cadence, same size, same history — only container_type differs.
+  const base = {
+    today: lf.TODAY, nowMs: lf.NOW, weather: lf.WX, hydrology: lf.HY, ownerFallback: 'dave',
+    weatherDaily: lf.weatherDaily({ precipOn: { [lf.ago(3)]: 0.27 } }),
+    eventsByPlant: { unk: [lf.w(lf.ago(6), 12, null, 'e1')], bag: [lf.w(lf.ago(6), 12, null, 'e2')] },
+    plantings: [
+      lf.P({ id: 'unk', container_type: null, container_size: '5 gal', last_water: lf.ago(6) }),
+      lf.P({ id: 'bag', container_type: 'fabric_bag', container_size: '5 gal', last_water: lf.ago(6) }),
+    ],
+  };
+  const plan = generatePlan({ ...base, cadence, fertModel, ...LIVE, waterLedgerEnabled: true });
+  const dOf = (id) => (due(plan, id) || skipped(plan, id) || never(plan, id)).ledger.d;
+  it('the unknown vessel ends the fold DRIER than the bag (less credit from the same rain)', () => {
+    expect(dOf('unk')).toBeGreaterThan(dOf('bag'));
+  });
+  it('and the gap is exactly the Light-vs-Normal split, not a rounding wobble', () => {
+    expect(dOf('unk') - dOf('bag')).toBeGreaterThan(0.5);
+  });
+});
+
 // ── (3) committed shadow goldens — the flip gate's expected-delta artifact ────────────────────────
 describe('shadow goldens (ledger-goldens.json)', () => {
   const GOLDEN_PATH = here('./ledger-goldens.json');

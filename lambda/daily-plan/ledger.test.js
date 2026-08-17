@@ -51,6 +51,18 @@ describe('params lockstep (mirrored constants cannot drift)', () => {
     expect(LP.RAIN_DAY.ia).toEqual(engine.RAIN_TIER_IA);
     expect(LP.RAIN_DAY.hold).toEqual(engine.RAIN_TIER_HOLD);
   });
+  it('rainDepthTierFor mirrors rainTierFor on every KNOWN vessel, and diverges ONLY on unknown', () => {
+    // Two resolvers exist because the two tables disagree on which row is strictest. They must stay
+    // identical everywhere else, and rainTierFor's unknown answer must NOT drift: it keys the live
+    // flag-OFF IA/hold path, where 'small_fast' is still the correct fail-safe.
+    for (const ct of Object.keys(engine.RAIN_VESSEL_TIER)) {
+      expect(engine.rainDepthTierFor(ct), ct).toBe(engine.rainTierFor(ct));
+    }
+    for (const ct of [null, undefined, '', 'mystery_pot']) {
+      expect(engine.rainTierFor(ct), `${ct} (live)`).toBe('small_fast');
+      expect(engine.rainDepthTierFor(ct), `${ct} (F2)`).toBe('unknown');
+    }
+  });
   it('transplant carve-out mirrors engine; fold window mirrors handler', () => {
     expect(LP.TRANSPLANT_CARVEOUT_DAYS).toBe(engine.TRANSPLANT_CARVEOUT_DAYS);
     expect(LP.WINDOW_DAYS).toBe(handler.WEATHER_DAILY_WINDOW_DAYS);
@@ -260,16 +272,30 @@ describe('rainDepthClass — measured precip -> depth class (DRG-RAINDEPTH-001)'
       expect(t.normal, tier).toBeLessThan(t.deep);
     }
   });
-  it('unknown tier falls back to the small_fast row; zero/negative/NaN earn nothing', () => {
-    // small_fast now mirrors in_ground, so intermediate is the discriminating tier: 0.27" is Normal
-    // on small_fast but only Light on intermediate. Fallback must land on the small_fast row
-    // specifically — not on intermediate, and not on a hardcoded default.
-    // NOTE: small_fast is no longer the LEAST-credit row (intermediate is), so the unknown-container
-    // fallback no longer errs toward watering. Flagged for Dave; unchanged here by scope.
-    expect(rainDepthClass('intermediate', 0.27)).toBe('light');
-    expect(rainDepthClass('bogus', 0.27)).toBe('normal');
-    expect(rainDepthClass('bogus', 0.27)).toBe(rainDepthClass('small_fast', 0.27));
-    expect(rainDepthClass('bogus', 0.27)).not.toBe(rainDepthClass('intermediate', 0.27));
+  // THE INVARIANT, not the value. The unknown row was an alias of small_fast until 2026-08-17; that
+  // alias was silently falsified the moment small_fast was retuned down, and nothing failed, because
+  // every guard pinned the NAME rather than the property. This asserts the property directly, so any
+  // future threshold edit that inverts the fail-safe fails here regardless of which row wins.
+  it('INVARIANT: the unknown-vessel row demands AT LEAST as much rain as every named tier', () => {
+    for (const [tier, t] of Object.entries(LP.RAIN_DEPTH_TIERS)) {
+      for (const cls of ['light', 'normal', 'deep']) {
+        expect(LP.RAIN_DEPTH.unknown[cls], `${tier}.${cls}`).toBeGreaterThanOrEqual(t[cls]);
+      }
+    }
+    // and it must be reachable: a real unknown/NULL container_type has to resolve to that row
+    expect(LP.RAIN_DEPTH[engine.rainDepthTierFor(null)]).toBe(LP.RAIN_DEPTH.unknown);
+    expect(LP.RAIN_DEPTH[engine.rainDepthTierFor('mystery_pot')]).toBe(LP.RAIN_DEPTH.unknown);
+  });
+  it('an unknown vessel gets STRICTLY less credit than a bag at the same rain (err toward watering)', () => {
+    // The behavioural face of the invariant, and the case that was broken: 0.27" measured. A NULL
+    // container_type must not quietly ride the bed-equivalent bag row into a Normal rewet.
+    expect(rainDepthClass(engine.rainDepthTierFor(null), 0.27)).toBe('light');
+    expect(rainDepthClass(engine.rainDepthTierFor('fabric_bag'), 0.27)).toBe('normal');
+  });
+  it('unknown tier falls back to the unknown row; zero/negative/NaN earn nothing', () => {
+    // an unrecognized tier NAME (not just an unrecognized vessel) must also land on the strict row
+    expect(rainDepthClass('bogus', 0.27)).toBe(rainDepthClass('unknown', 0.27));
+    expect(rainDepthClass('bogus', 0.27)).not.toBe(rainDepthClass('small_fast', 0.27));
     expect(rainDepthClass('in_ground', 0.3)).toBe('normal');
     for (const bad of [0, -1, NaN, null, undefined]) expect(rainDepthClass('in_ground', bad)).toBe(null);
   });

@@ -40,8 +40,9 @@ const GLOBAL_NORMALIZATION = 1.0;
 // tier taxonomy: raised_bed rides with in_ground here (thermal mass/soil coupling) while it is
 // 'intermediate' for rain IA/hold. fabric_bag is handled by the continuous heat ramp below, and the
 // tray class is handled by the wi hard cap, so neither appears in this map.
-// Unknown/NULL container_type fails toward prompting (small_fast-ish 1.1), same direction as
-// rainTierFor's unknown->small_fast convention.
+// Unknown/NULL container_type fails toward prompting (small_fast-ish 1.1), same DIRECTION as the rain
+// resolvers' unknown fail-safe (most demand / least credit -> water it). Note the rain side no longer
+// spells that direction 'small_fast' on both tables — see engine RAIN_VESSEL_TIER and RAIN_DEPTH.unknown.
 const VESSEL_CLASS_FACTOR = {
   in_ground: 0.85, raised_bed: 0.85,
   trough: 1.0, whiskey_barrel: 1.0, window_box: 1.0,
@@ -120,10 +121,22 @@ const RAIN_DAY = {
 // like a bed and that he over-waters against generic container advice. Under-crediting rain was
 // driving exactly that. Retention is bed-equivalent here; heat is a SEPARATE mechanism and stays
 // with RAIN_DAY.bagHeatSoftenF's one-class demotion below.
-const RAIN_DEPTH = {
+const RAIN_DEPTH_TIERS = {
   in_ground:    { light: 0.10, normal: 0.25, deep: 0.60 },
   intermediate: { light: 0.10, normal: 0.30, deep: 0.75 },
   small_fast:   { light: 0.10, normal: 0.25, deep: 0.60 },
+};
+// Unrecognized/NULL container_type (engine rainDepthTierFor -> 'unknown'). The invariant is
+// "err toward watering": an unknown vessel gets the LEAST credit, i.e. must clear the HIGHEST bar at
+// every class. DERIVED as the per-class max, deliberately not an alias of a named tier — until
+// 2026-08-17 this fell back to small_fast, which WAS the strictest row and silently stopped being one
+// the moment small_fast was revised down to the in_ground values. A named alias encodes today's
+// ordering; the max survives any future threshold edit. Pinned by an invariant test, not a value test.
+const RAIN_DEPTH_CLASSES = ['light', 'normal', 'deep'];
+const RAIN_DEPTH = {
+  ...RAIN_DEPTH_TIERS,
+  unknown: Object.fromEntries(RAIN_DEPTH_CLASSES.map((cls) =>
+    [cls, Math.max(...Object.values(RAIN_DEPTH_TIERS).map((t) => t[cls]))])),
 };
 const TRANSPLANT_CARVEOUT_DAYS = 21;         // mirrors engine.TRANSPLANT_CARVEOUT_DAYS (pinned by test)
 
@@ -145,6 +158,7 @@ const WINDOW_DAYS = 30;      // fold lookback; MUST equal handler.WEATHER_DAILY_
 module.exports = {
   ET0_REF_MONTHLY, WINTER_REF_MIN, DEMAND_CLAMP, GLOBAL_NORMALIZATION,
   VESSEL_CLASS_FACTOR, VESSEL_UNKNOWN_FACTOR, FABRIC_BAG, TRAY_TYPES, TRAY_WI_CAP_DAYS, SIZE_BUCKETS,
-  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, TRANSPLANT_CARVEOUT_DAYS,
+  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, RAIN_DEPTH_TIERS,
+  TRANSPLANT_CARVEOUT_DAYS,
   SNOOZE, CONFIDENCE, WINDOW_DAYS,
 };

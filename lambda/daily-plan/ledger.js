@@ -165,7 +165,8 @@ function computeConfidence({ via, vesselKnown, weatherOk, snoozeCount, trayUnpro
 //   todayEt0, todayTmax,              live D0 forecast values (hydrology.today_et0_in / today_tmax_f)
 //   exposure,                         'outdoor' | 'covered' | 'indoor'
 //   vessel,                           vesselProfile() result
-//   rainTier,                         engine rainTierFor(container_type) — IA/hold key
+//   rainTier,                         engine rainDepthTierFor(container_type) — RAIN_DEPTH key. NOT
+//                                     rainTierFor: unknown must resolve 'unknown', not 'small_fast'
 //   transplantAt,                     'YYYY-MM-DD' | null
 // }
 const PRIO = { watering: 0, rain: 0, moisture_check: 1, day_credit: 2 };
@@ -176,7 +177,7 @@ const DEPTH_ORDER = ['light', 'normal', 'deep'];
 // Measured daily precip -> depth class for one substrate tier. Lower bounds, strongest wins.
 // Non-positive/non-finite precip earns nothing (a null row is filtered by the caller).
 function rainDepthClass(tier, precipIn) {
-  const t = P.RAIN_DEPTH[tier] ?? P.RAIN_DEPTH.small_fast;
+  const t = P.RAIN_DEPTH[tier] ?? P.RAIN_DEPTH.unknown;   // strictest row: err toward watering
   if (!Number.isFinite(precipIn) || precipIn <= 0) return null;
   if (precipIn >= t.deep) return 'deep';
   if (precipIn >= t.normal) return 'normal';
