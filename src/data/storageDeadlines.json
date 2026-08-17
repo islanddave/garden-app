@@ -1,12 +1,13 @@
 {
   "schema": "garden.storage_deadlines.v1",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "authored": "2026-08-12",
-  "item": "V4-STORAGEDEADLINE-001",
+  "revised": "2026-08-17",
+  "item": "V4-STORAGEDEADLINE-001; revised by BUG-SWEETPOTATODEADLINE-001",
   "zone": "5b western Massachusetts, ~518ft",
   "note": "Per-CROP-TYPE seasonal LIFT deadlines for 'single'-habit storage crops — the crops isReadyToPick() structurally cannot surface (harvestReadiness.js requires harvest_habit IN ('repeat','cut_and_come_again') AND >=1 prior harvest, so every once-per-season crop is invisible to the ready band). Keyed by crop_types.slug, same key space as harvest-attributes-v1.json. THIS FILE IS DELIBERATELY ALMOST EMPTY. A date with no citable source is not a date; the disconfirmations in `no_calendar_deadline` are as load-bearing as the one record in `by_crop_type` and exist so the next session does not re-derive the falsified premise from scratch.",
   "provenance_rule": "Every entry in by_crop_type carries source + source_url + confidence, and its `true_trigger` names the physical signal the calendar date is only a PROXY for. Where the trigger is an observed plant state the app does not record, the crop belongs in no_calendar_deadline, NOT in by_crop_type with an invented date. Precedent for the harm: harvestWindows.json shipped at 11.8% cultivar calibration with 22-day median error.",
-  "frost_anchor_warning": "Do NOT anchor these deadlines to FROST_ANCHORS.firstFallFrost (src/lib/sowEngine.js, '09-28'). The one sourced deadline here is ~17 days LATER than the frost anchor, because the operative variable is SOIL temperature, not air frost. Anchoring to first frost would fire two and a half weeks early on every planting. storageDeadlines.test.js asserts this gap so a future 'simplification' cannot quietly collapse the two.",
+  "frost_anchor_warning": "These deadlines are RELATED to FROST_ANCHORS.firstFallFrost (src/lib/sowEngine.js, '09-28') but are not derived from it, and the relation is per-crop. For sweet potato the binding constraint is VINE KILL, not soil temperature: once frost blackens the vines the roots begin degrading in the ground regardless of how warm the soil still is, so the lift must land BEFORE the frost anchor, not after it. That is a reversal of this file's original 1.0.0 reasoning, which anchored on soil temperature and put the deadline 17 days LATER than first frost — 17 days after the crop was already lost (Dave, 2026-08-17, BUG-SWEETPOTATODEADLINE-001). storageDeadlines.test.js pins the new ordering; do NOT reintroduce a deadline later than the frost anchor for a frost-sensitive crop, and do NOT blanket-derive every crop from the anchor either — the frost-tolerant roots in no_calendar_deadline correctly have no frost deadline at all.",
   "field_contract": {
     "deadline_kind": "regional_calendar_proxy = a calendar date a regional extension source states as the practical cutoff, standing in for a physical trigger the app cannot measure. No other kind is defined yet; do not invent one.",
     "deadline_month_day": "MM-DD. Resolved against the year of the caller-supplied today, never against an internal clock.",
@@ -20,16 +21,16 @@
     "sweet_potato": {
       "display_name": "Sweet potato",
       "deadline_kind": "regional_calendar_proxy",
-      "deadline_month_day": "10-15",
-      "check_from_month_day": "10-01",
-      "true_trigger": "Soil temperature, not air frost. Root growth stops below 65F; below 55F chilling injury begins and is irreversible and cumulative. Vines tolerate a light frost, so a frosted vine is not itself the signal to dig.",
-      "loss": "The whole stored crop, invisible at harvest. Chilled roots show shrivelled, sunken, dark areas and blacken when cut; 'hardcore' roots stay hard after cooking. The damage is permanent and only shows up in storage.",
-      "check_copy": "Start checking sweet potatoes for lifting — they want to be out of the ground before the soil cools, usually by mid-October.",
+      "deadline_month_day": "09-25",
+      "check_from_month_day": "09-11",
+      "true_trigger": "Vine kill, not soil temperature. Frost blackens the vines well before the soil cools, and once the vines are dead the roots begin degrading in the ground — decay enters through the crown and the roots will not store, however warm the soil still is. The published soil thresholds (growth stops below 65F, chilling injury below 55F) are real but they are not what closes the window first in 5b.",
+      "loss": "The whole stored crop, invisible at harvest. Roots left in after vine kill rot from the crown; chilled roots show shrivelled, sunken, dark areas and blacken when cut, and 'hardcore' roots stay hard after cooking. The damage is permanent and only shows up in storage.",
+      "check_copy": "Start checking sweet potatoes for lifting — frost kills the vines and the roots start going the moment it does, so they want to be out of the ground before the first frost, usually by late September.",
       "past_copy": "Sweet potato lifting window has passed — worth checking whether any are still in the ground.",
-      "source": "UMass Extension — Sweet Potato Harvest and Storage",
+      "source": "UMass Extension — Sweet Potato Harvest and Storage, plus Dave's zone-5b vine-kill call (2026-08-17, BUG-SWEETPOTATODEADLINE-001)",
       "source_url": "https://www.umass.edu/agriculture-food-environment/vegetable/fact-sheets/sweet-potato-harvest-storage",
       "confidence": "medium",
-      "notes": "UMass is the regionally-correct authority for zone 5b western MA. It states roots 'should come out before a hard freeze sets in, usually before mid-October'. 10-15 is that phrase encoded; it is a typical case, not a measured threshold, hence medium. Dave has 2 live sweet potato plantings (verified live prod 2026-08-12), both status 'vegetative'."
+      "notes": "SUPERSEDES the 1.0.0 date of 10-15. That date encoded UMass's 'usually before mid-October' phrase, which reads as a soil-temperature cutoff and lands 17 days AFTER FROST_ANCHORS.firstFallFrost ('09-28') — i.e. two and a half weeks after frost has already killed the vines and started the roots degrading. Dave's ruling 2026-08-17: in zone 5b the binding constraint is vine kill, so lift within 24-48h of the vines blackening and set the calendar proxy just ahead of the frost anchor. 09-25 is firstFallFrost - 3d, giving a margin for a frost that arrives early; the check window keeps the same 14-day lead the 1.0.0 record used. Still `medium` — it is a regional typical case standing in for an observed vine state the app does not record, not a measured threshold. Dave has 2 live sweet potato plantings (verified live prod 2026-08-12), both status 'vegetative'."
     }
   },
   "no_calendar_deadline": {

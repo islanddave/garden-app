@@ -58,7 +58,7 @@ const watchCand = {
 }
 
 // V4-STORAGEDEADLINE-001 — a live sweet potato planting. The dataset's only sourced deadline opens
-// 10-01, so this fixture is what makes "silent on 08-12" a real silence rather than an empty garden.
+// 09-11, so this fixture is what makes "silent on 08-12" a real silence rather than an empty garden.
 const sweetPotato = {
   id: 'p-sp1', name: 'Beauregard', status: 'vegetative',
   variety_ref: { id: 'v-sp', name: 'Beauregard', crop_type_slug: 'sweet_potato' },
@@ -156,7 +156,7 @@ describe('Today composition — storage-deadline operational alert (V4-STORAGEDE
   })
 
   it('speaks once the check window opens, ABOVE the cultivation lead line', async () => {
-    vi.setSystemTime(new Date(2026, 9, 2, 9, 0, 0)) // 2026-10-02, inside the 10-01..10-15 window
+    vi.setSystemTime(new Date(2026, 8, 12, 9, 0, 0)) // 2026-09-12, inside the 09-11..09-25 window
     engineState.closing = [{ candidate: { variety_name: 'Winter Density' }, action: 'direct_sow', daysLeft: 5 }]
     wire({ plants: [sweetPotato], sowItems: [{ variety_name: 'Winter Density' }] })
     render(<Today />)

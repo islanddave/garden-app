@@ -2,7 +2,8 @@
 //
 // These tests execute the resolver's behaviour. The three that guard the ITEM rather than the code are
 // worth naming, because they are the ones that would let a wrong deadline ship if deleted:
-//   1. the frost-anchor gap — the sourced deadline must stay strictly LATER than FROST_ANCHORS,
+//   1. the frost-anchor ordering — the sourced deadline must stay strictly BEFORE FROST_ANCHORS
+//      (inverted by BUG-SWEETPOTATODEADLINE-001; see the block at the foot of this file for why),
 //   2. the provenance invariant — no dated record without source + url + confidence,
 //   3. the check-form copy rule — no copy may assert readiness.
 
@@ -78,32 +79,32 @@ describe('storageDeadlineStatus — phases', () => {
     expect(s.copy).toBeNull()
   })
   it('is `upcoming` on the day BEFORE the check window opens (boundary)', () => {
-    expect(storageDeadlineStatus(rec(), '2026-09-30').phase).toBe(PHASE_UPCOMING)
+    expect(storageDeadlineStatus(rec(), '2026-09-10').phase).toBe(PHASE_UPCOMING)
   })
   it('turns `check` exactly ON the check-from date (boundary) and speaks', () => {
-    const s = storageDeadlineStatus(rec(), '2026-10-01')
+    const s = storageDeadlineStatus(rec(), '2026-09-11')
     expect(s.phase).toBe(PHASE_CHECK)
     expect(s.copy).toBe(rec().check_copy)
   })
   it('is still `check` ON the deadline itself — there is time left that day', () => {
-    expect(storageDeadlineStatus(rec(), '2026-10-15').phase).toBe(PHASE_CHECK)
+    expect(storageDeadlineStatus(rec(), '2026-09-25').phase).toBe(PHASE_CHECK)
   })
   it('turns `past` the day AFTER the deadline (boundary) with the past copy', () => {
-    const s = storageDeadlineStatus(rec(), '2026-10-16')
+    const s = storageDeadlineStatus(rec(), '2026-09-26')
     expect(s.phase).toBe(PHASE_PAST)
     expect(s.copy).toBe(rec().past_copy)
   })
   it('resolves the deadline against the CALLER year, not a hardcoded one', () => {
-    expect(storageDeadlineStatus(rec(), '2031-10-02').deadlineISO).toBe('2031-10-15')
-    expect(storageDeadlineStatus(rec(), '2031-10-02').phase).toBe(PHASE_CHECK)
+    expect(storageDeadlineStatus(rec(), '2031-09-12').deadlineISO).toBe('2031-09-25')
+    expect(storageDeadlineStatus(rec(), '2031-09-12').phase).toBe(PHASE_CHECK)
   })
   it('counts days until the deadline, signed past it', () => {
-    expect(storageDeadlineStatus(rec(), '2026-10-01').daysUntil).toBe(14)
-    expect(storageDeadlineStatus(rec(), '2026-10-15').daysUntil).toBe(0)
-    expect(storageDeadlineStatus(rec(), '2026-10-16').daysUntil).toBe(-1)
+    expect(storageDeadlineStatus(rec(), '2026-09-11').daysUntil).toBe(14)
+    expect(storageDeadlineStatus(rec(), '2026-09-25').daysUntil).toBe(0)
+    expect(storageDeadlineStatus(rec(), '2026-09-26').daysUntil).toBe(-1)
   })
   it('surfaces provenance alongside the phase so a caller can render it', () => {
-    const s = storageDeadlineStatus(rec(), '2026-10-02')
+    const s = storageDeadlineStatus(rec(), '2026-09-12')
     expect(s.source).toBe(rec().source)
     expect(s.sourceUrl).toBe(rec().source_url)
     expect(s.confidence).toBe(rec().confidence)
@@ -183,22 +184,47 @@ describe('dataset invariants', () => {
   })
 })
 
-// THE REGRESSION GUARD THAT MATTERS MOST. The obvious "simplification" of this module is to derive
-// every deadline from the frost anchor the app already has. That is wrong: sweet potato's limit is a
-// SOIL temperature, and UMass puts the practical cutoff at mid-October — 17 days after the 09-28 air
-// frost anchor. Collapsing the two would fire two and a half weeks early on every planting.
-describe('frost-anchor independence', () => {
-  it('the sourced deadline is strictly LATER than the first-fall-frost anchor', () => {
+// THE REGRESSION GUARD THAT MATTERS MOST — and it used to pin the WRONG invariant.
+//
+// Until BUG-SWEETPOTATODEADLINE-001 this block asserted the sweet potato deadline must be strictly
+// LATER than the frost anchor, on the reading that the crop's limit is SOIL temperature and UMass's
+// "usually before mid-October" was therefore the operative cutoff. Dave's ruling 2026-08-17: in zone
+// 5b the binding constraint is VINE KILL. Frost blackens the vines while the soil is still warm, and
+// the roots start degrading from that moment, so a deadline 17 days after the anchor fired 17 days
+// after the crop was already lost. The polarity is now inverted: a frost-sensitive storage crop's
+// deadline must land BEFORE the anchor.
+//
+// The independence half still holds and is still worth guarding. Do NOT collapse these into
+// `deadline = FROST_ANCHORS.firstFallFrost`: the anchor is one regional average, the margin ahead of
+// it is per-crop, and most of `no_calendar_deadline` is frost-TOLERANT and correctly has no frost
+// deadline at all. Related but not derived.
+describe('frost-anchor ordering', () => {
+  it('every sourced deadline lands strictly BEFORE the first-fall-frost anchor', () => {
     for (const [slug, rec] of Object.entries(DEADLINES_BY_CROP_TYPE)) {
-      expect(rec.deadline_month_day.localeCompare(FROST_ANCHORS.firstFallFrost), slug).toBeGreaterThan(0)
+      expect(rec.deadline_month_day.localeCompare(FROST_ANCHORS.firstFallFrost), slug).toBeLessThan(0)
     }
   })
-  it('sweet potato specifically sits 17 days after the frost anchor', () => {
+  it('sweet potato specifically sits 3 days AHEAD of the frost anchor', () => {
     expect(FROST_ANCHORS.firstFallFrost).toBe('09-28')
     const anchor = Date.UTC(2026, 8, 28)
-    const deadline = Date.UTC(2026, 9, 15)
-    expect((deadline - anchor) / 86400000).toBe(17)
-    expect(sweetPotato().deadline_month_day).toBe('10-15')
+    const deadline = Date.UTC(2026, 8, 25)
+    expect((anchor - deadline) / 86400000).toBe(3)
+    expect(sweetPotato().deadline_month_day).toBe('09-25')
+  })
+  // The exact defect BUG-SWEETPOTATODEADLINE-001 fixed, pinned by value so a revert is a red test
+  // rather than a silent regression to a date that fires after the crop is gone.
+  it('is not the superseded 10-15, which fell 17 days past the anchor', () => {
+    expect(sweetPotato().deadline_month_day).not.toBe('10-15')
+    expect(sweetPotato().check_from_month_day).toBe('09-11')
+  })
+  // No deadline may sit inside the vine-kill blind spot: at or after the anchor there is nothing left
+  // to save, so the alert would be furniture. Guards future crops, not just this one.
+  it('no dated crop is left with a deadline in the post-frost blind spot', () => {
+    for (const [slug, rec] of Object.entries(DEADLINES_BY_CROP_TYPE)) {
+      const s = storageDeadlineStatus(rec, `2026-${FROST_ANCHORS.firstFallFrost}`)
+      expect(s, slug).not.toBeNull()
+      expect(s.phase, slug).toBe(PHASE_PAST)
+    }
   })
 })
 
@@ -208,7 +234,7 @@ describe('plantingsWithOpenDeadline', () => {
   it('keeps only crops with a sourced deadline that is currently open', () => {
     const rows = plantingsWithOpenDeadline(
       [p('Sweet Potato', 'sweet_potato'), p('Danvers 126', 'carrot'), p('Yukon Gold', 'potato')],
-      '2026-10-02')
+      '2026-09-12')
     expect(rows.map(r => r.planting.name)).toEqual(['Sweet Potato'])
     expect(rows[0].status.phase).toBe(PHASE_CHECK)
   })
@@ -218,7 +244,7 @@ describe('plantingsWithOpenDeadline', () => {
   it('sorts soonest deadline first, then by name for determinism', () => {
     const rows = plantingsWithOpenDeadline(
       [p('Sweet Potatoes', 'sweet_potato'), p('Sweet Potato', 'sweet_potato')],
-      '2026-10-02')
+      '2026-09-12')
     expect(rows.map(r => r.planting.name)).toEqual(['Sweet Potato', 'Sweet Potatoes'])
   })
   it('returns [] for non-array input rather than throwing', () => {

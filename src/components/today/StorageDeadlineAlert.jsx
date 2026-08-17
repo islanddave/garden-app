@@ -13,7 +13,7 @@
 // NOT reward surfaces.
 //
 // THE SHAPE IS THE FEATURE: it renders NOTHING unless a sourced deadline is actually near. On
-// 2026-08-14 that means it renders nothing at all, and will keep rendering nothing until Oct 1.
+// 2026-08-14 that means it renders nothing at all, and will keep rendering nothing until Sep 11.
 // The absence is what makes the presence mean something. Do not "fix" the silence by widening the
 // criteria — the moment this shows a row that is merely plausible, it is the ready band again.
 //
@@ -40,7 +40,7 @@
 // COPY IS THE DATASET'S, VERBATIM. `src/data/storageDeadlines.json` owns the words and carries the
 // provenance rule; this file renders `check_copy`/`past_copy` and adds no claim of its own. Copy is
 // check-form ("start checking X"), never assertion-form ("X is ready") — the one date in the
-// dataset is a regional proxy for a soil temperature nobody is measuring.
+// dataset is a regional proxy for vine kill, an observed plant state nobody is recording.
 //
 // Ambient posture matches its neighbours on Today: self-fetching, error swallowed, hidden when
 // empty, and pure date math with `todayISO` injectable so nothing depends on the test clock.

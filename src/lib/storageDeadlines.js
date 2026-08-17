@@ -33,8 +33,14 @@
 // and the reporting zone is the Lambda's, not the browser's.
 //
 // COPY IS CHECK-FORM, NEVER ASSERTION-FORM. "Start checking sweet potatoes", never "sweet potatoes are
-// ready". The one date in here is a regional typical case standing in for a soil temperature nobody is
-// measuring; copy that asserts readiness would overclaim it.
+// ready". The one date in here is a regional typical case standing in for VINE KILL — an observed plant
+// state nobody is recording; copy that asserts readiness would overclaim it.
+//
+// THE ONE DATE MOVED (BUG-SWEETPOTATODEADLINE-001, Dave 2026-08-17). Sweet potato was 10-15, derived
+// from a soil-temperature reading of the UMass guidance, which put it 17 days AFTER the first-fall-frost
+// anchor — after frost has killed the vines and the roots have started degrading. The binding constraint
+// in 5b is vine kill, so the deadline is now 09-25, three days AHEAD of the anchor. The dataset's
+// `frost_anchor_warning` carries the full reasoning; the ordering is pinned in storageDeadlines.test.js.
 
 import DATA from '../data/storageDeadlines.json'
 
