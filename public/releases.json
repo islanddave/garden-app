@@ -4,7 +4,12 @@
     "date": "2026-08-17",
     "highlights": [
       "You can now create a new crop type from the variety edit screen. Before this, minting a type was only possible while creating a brand-new variety — so a plant already in the app, like the Kousa Dogwood, could be edited forever and never get a type.",
-      "The crop-type chooser now has a search box, and \"+ New crop type\" sits at the top instead of below all 141 existing types. Finding a type, or discovering you can add one, no longer means scrolling a list the length of a phone book."
+      "The crop-type chooser now has a search box, and \"+ New crop type\" sits at the top instead of below all 141 existing types. Finding a type, or discovering you can add one, no longer means scrolling a list the length of a phone book.",
+      "Harvest totals can be sorted by name, weight or number of picks, in either direction — and name is the default again. Ranking by weight answers \"what produced?\"; sorting by name answers \"where is my chard?\", and the list now does both instead of only the first.",
+      "The same sort applies inside a crop, so the varieties under Tomato reorder with it.",
+      "Rain is now credited by how much actually fell — a light shower and a downpour no longer count the same toward watering.",
+      "Grow bags get rain credit the same way beds do.",
+      "Sweet potato's storage deadline moved earlier, to vine kill rather than mid-October."
     ]
   },
   {
