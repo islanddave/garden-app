@@ -192,6 +192,60 @@ describe('jsonResponder — per-invocation binding', () => {
     expect(resp(400, { error: 'nope' }).headers['X-Trace']).toBe('abc');
   });
 
+  // OPS-GZIPHEADERPROOF-001 — the log line IS the verification mechanism, so it needs the same
+  // rigor as the thing it verifies. An observable nobody asserts on is how the original gap
+  // happened: the negotiation was correct-by-construction and unobservable, which is precisely
+  // the shape that can deploy inert and look right.
+  describe('CloudWatch negotiation log', () => {
+    let logged;
+    const withCapturedLog = (fn) => {
+      const orig = console.log;
+      logged = [];
+      console.log = (...a) => logged.push(a.join(' '));
+      try { fn(); } finally { console.log = orig; }
+    };
+
+    it('records gzip:true and the raw Accept-Encoding when the gzip branch is taken', () => {
+      withCapturedLog(() => jsonResponder({ headers: { 'accept-encoding': 'gzip, deflate, br' } }, {})(200, bigBody));
+      const line = logged.map(JSON.parse).find(l => l.tag === 'api-gzip');
+      expect(line).toBeTruthy();
+      expect(line.gzip).toBe(true);
+      expect(line.ae).toBe('gzip, deflate, br');
+    });
+
+    // The whole point: a MISSING accept-encoding must be distinguishable in the logs from a
+    // present one. This is the exact reading that answers "did the header reach event.headers?"
+    it('records gzip:false and an EMPTY ae when the header never arrived', () => {
+      withCapturedLog(() => jsonResponder({ headers: {} }, {})(200, bigBody));
+      const line = logged.map(JSON.parse).find(l => l.tag === 'api-gzip');
+      expect(line.gzip).toBe(false);
+      expect(line.ae).toBe('');
+    });
+
+    // Distinguishes "header absent" from "header present but body under the floor" — two very
+    // different diagnoses that would otherwise both read as gzip:false.
+    it('records gzip:false with a POPULATED ae for a sub-floor body', () => {
+      withCapturedLog(() => jsonResponder({ headers: { 'accept-encoding': 'gzip' } }, {})(401, { error: 'unauthorized' }));
+      const line = logged.map(JSON.parse).find(l => l.tag === 'api-gzip');
+      expect(line.gzip).toBe(false);
+      expect(line.ae).toBe('gzip');
+    });
+
+    it('truncates a hostile Accept-Encoding so log spend cannot be inflated', () => {
+      withCapturedLog(() => jsonResponder({ headers: { 'accept-encoding': 'gzip' + ','.repeat(5000) } }, {})(200, bigBody));
+      const line = logged.map(JSON.parse).find(l => l.tag === 'api-gzip');
+      expect(line.ae.length).toBe(64);
+    });
+
+    it('a throwing console.log cannot fail the response', () => {
+      const orig = console.log;
+      console.log = () => { throw new Error('log sink down'); };
+      try {
+        expect(jsonResponder({ headers: { 'accept-encoding': 'gzip' } }, {})(200, bigBody).isBase64Encoded).toBe(true);
+      } finally { console.log = orig; }
+    });
+  });
+
   it('two invocations of the same module do not leak encoding state into each other', () => {
     // The reason resp is a per-invocation closure rather than module-scope mutable state.
     const a = jsonResponder({ headers: { 'accept-encoding': 'gzip' } }, {});

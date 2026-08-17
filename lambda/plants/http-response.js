@@ -104,9 +104,43 @@ export function jsonResponse(statusCode, body, { acceptEncoding = '', headers = 
   };
 }
 
+// OPS-GZIPHEADERPROOF-001 — the negotiation outcome, as ONE structured CloudWatch line per
+// invocation. This exists because the effectiveness of V4-APIGZIP-001 turned out to be
+// unverifiable by every other route, which a session on 2026-08-17 established the hard way:
+//   - An UNAUTHENTICATED probe cannot show it: the 401 body is 24 B, far under MIN_GZIP_BYTES, so
+//     it takes the identity branch by design. (It does prove the responder is live — the real prod
+//     401 returns `vary: Accept-Encoding, Origin`.)
+//   - The BROWSER cannot show it: garden-app is a PWA and its Service Worker intercepts every
+//     request, so PerformanceResourceTiming reports transferSize 0 and encodedBodySize mirroring
+//     decodedBodySize. Measured against a control whose answer is known — the CloudFront bundle,
+//     which is served brotli at ~428 kB — the API reads a 1.00 ratio too. The instrument is blind
+//     here, so a 1.00 from it is NOT evidence of an uncompressed response.
+//   - That left "one authenticated curl", which is a manual act nobody repeats, and the design
+//     FAILS SAFE, so an inert deploy and a working one look identical from outside.
+// A log line converts a one-off manual check into a standing observable that answers the question
+// for every future adopting Lambda for free. `ae` is the raw Accept-Encoding, which is a transport
+// preference and carries nothing user-identifying; it is truncated because a long junk header
+// should not be able to inflate log spend.
+function logNegotiation(acceptEncoding, encoded) {
+  try {
+    console.log(JSON.stringify({
+      tag: 'api-gzip',
+      gzip: encoded,
+      ae: String(acceptEncoding).slice(0, 64),
+    }));
+  } catch { /* logging must never be able to fail a response */ }
+}
+
 // Per-invocation binding of the request's Accept-Encoding, so a handler keeps its existing
 // resp(statusCode, body) call sites unchanged and no module-scope mutable state is introduced.
 export function jsonResponder(event, headers = {}) {
   const acceptEncoding = readAcceptEncoding(event);
-  return (statusCode, body) => jsonResponse(statusCode, body, { acceptEncoding, headers });
+  return (statusCode, body) => {
+    const res = jsonResponse(statusCode, body, { acceptEncoding, headers });
+    // Read the OUTCOME off the response rather than re-deriving it: re-running acceptsGzip here
+    // would log what the negotiation SHOULD have done, which is exactly the class of claim this
+    // line exists to stop trusting. isBase64Encoded is set only on the gzip branch.
+    logNegotiation(acceptEncoding, res.isBase64Encoded === true);
+    return res;
+  };
 }
