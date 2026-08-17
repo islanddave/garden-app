@@ -10,7 +10,8 @@
       "Harvest anchors are re-derived nightly, so a planting whose sowing or potting-up date arrives later gets an updated estimate instead of keeping the one guessed on the day it was added.",
       "Today was asking the server for your full planting list two or three times over on a single screen, once per block that needed it. It now asks once and shares the answer.",
       "Your planting list was being sent uncompressed — about 580 KB of text per request. It now compresses, which is roughly a fifth of the size over the wire. Most noticeable on mobile data.",
-      "Plantings can now be marked as having arrived already grown — a nursery plant or a set, rather than something started here. Nothing shows this in the app yet; it currently keeps those plants from skewing the harvest-window estimates for everything else."
+      "Plantings can now be marked as having arrived already grown — a nursery plant or a set, rather than something started here. Nothing shows this in the app yet; it currently keeps those plants from skewing the harvest-window estimates for everything else.",
+      "Fixed: merging two plantings moved the events across but left the surviving plant's \"last watered / last harvested\" summary frozen at its old dates. Five plants were showing stale dates — Cilantro since July 31 — and have been corrected. Merging now rebuilds the summary."
     ]
   },
   {
