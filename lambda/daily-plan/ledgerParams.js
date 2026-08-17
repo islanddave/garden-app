@@ -163,20 +163,34 @@ const RAIN_DEPTH_TIERS = {
 };
 // Unrecognized/NULL container_type (engine rainDepthTierFor -> 'unknown'). The invariant is
 // "err toward watering": an unknown vessel gets the LEAST credit, i.e. must clear the HIGHEST bar at
-// every class. EXPLICIT row as of the 2026-08-17 rescope, replacing a per-class max derived from the
-// tier table. Two reasons the derived form had to go: (1) it silently tracked whatever the loosest
-// tuning of the day happened to be — after the morning edit it evaluated to {0.10, 0.30, 0.75},
-// looser at EVERY class than the fallback it replaced, quietly loosening 23 NULL-container
-// plantings; (2) a derived max cannot be under-cut by a retune, so the guard test written against it
-// could only ever compare a row to itself. An explicit row states the fail-safe as a decision and
-// lets the invariant test discriminate. It is pinned three ways in ledger.test.js: exact values,
-// >= every named tier at every class, and STRICTLY > the most-credited tier at every class (the
-// non-vacuity leg — the previous guard used toBeGreaterThanOrEqual against rows that all shared
-// light: 0.10, so it passed on equality and could not fail).
+// every class. DERIVED as the per-class max, deliberately not an alias of a named tier and
+// deliberately NOT A LITERAL — until 2026-08-17 this fell back to small_fast, which WAS the
+// strictest row and silently stopped being one the moment small_fast was revised down to the
+// in_ground values. A named alias encodes today's ordering; so does a hardcoded row. The max
+// survives any future threshold edit, because it is recomputed from whatever the tiers say.
+//
+// KEEP THE DERIVATION. It was briefly replaced with the literal {0.15, 0.40, 0.90} during the D1
+// rescope on the grounds that a derived max makes its own guard tautological. Both halves of that
+// are true and the conclusion still does not follow:
+//   - The values are identical either way. Post-rescope the max IS {0.15, 0.40, 0.90}; the earlier
+//     objection that it evaluated to {0.10, 0.30, 0.75} was an artifact of small_fast having been
+//     flattened, i.e. of the very defect this file's rescope fixes. Deriving costs nothing today.
+//   - A literal is correct today and silently stops being correct on the next retune — the SAME
+//     failure mode, one turn later. The rescope above moved `intermediate` down to the bed row,
+//     which is exactly the class of edit that falsified the last hardcoded fail-safe.
+//   - The tautology is real but it is a property of the TEST, not of the value. Handled test-side:
+//     ledger.test.js pins (a) what the derivation evaluates to today, as a canary that fires when a
+//     retune moves it, (b) unknown >= every named tier at every class — vacuous against the derived
+//     form by construction, and deliberately so: it is a CONTRACT test whose job is to go red the
+//     moment someone swaps the derivation back out for a literal that has gone stale (mutation-proven
+//     in that exact configuration), and (c) unknown STRICTLY > the most-credited tier at every class,
+//     which is NOT vacuous even under derivation — it fails if the tiers are ever flattened together,
+//     which is the failure this whole file exists to undo.
 const RAIN_DEPTH_CLASSES = ['light', 'normal', 'deep'];
 const RAIN_DEPTH = {
   ...RAIN_DEPTH_TIERS,
-  unknown: { light: 0.15, normal: 0.40, deep: 0.90 },
+  unknown: Object.fromEntries(RAIN_DEPTH_CLASSES.map((cls) =>
+    [cls, Math.max(...Object.values(RAIN_DEPTH_TIERS).map((t) => t[cls]))])),
 };
 const TRANSPLANT_CARVEOUT_DAYS = 21;         // mirrors engine.TRANSPLANT_CARVEOUT_DAYS (pinned by test)
 

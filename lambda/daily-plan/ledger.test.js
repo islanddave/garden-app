@@ -337,27 +337,36 @@ describe('rainDepthClass — measured precip -> depth class (DRG-RAINDEPTH-001)'
   });
   // THE INVARIANT, not the value. The unknown row was an alias of small_fast until 2026-08-17; that
   // alias was silently falsified the moment small_fast was retuned down, and nothing failed, because
-  // every guard pinned the NAME rather than the property. Asserting the property alone was still not
-  // enough: the >= leg ran against rows that ALL shared light: 0.10, so it passed on equality and
-  // could not fail at the light class — a guard that cannot fail is not a guard (crucible D1).
-  // Three legs now: exact values, >= every named tier, and STRICTLY > the most-credited tier.
-  it('INVARIANT: the unknown-vessel row demands STRICTLY more rain than the most-credited tier', () => {
+  // every guard pinned the NAME rather than the property. A hardcoded row is the same bug wearing a
+  // different hat, so ledgerParams keeps unknown DERIVED as the per-class max. Four legs, and they
+  // do NOT all do the same amount of work — read the notes before "simplifying" any of them.
+  it('INVARIANT: the unknown-vessel row demands the MOST rain of any row, by construction', () => {
+    // (a) CANARY on the derived value. Not the invariant — just a tripwire so a retune that moves
+    // the fail-safe cannot do it unnoticed. If a legitimate retune moves it, update this line.
     expect(LP.RAIN_DEPTH.unknown).toEqual({ light: 0.15, normal: 0.40, deep: 0.90 });
+    // (b) CONTRACT leg: >= every named tier at every class. Against the derived form this is
+    // tautological — max(xs) >= x is true by construction and this leg cannot fail today. That is
+    // intentional and it is not the same thing as vacuous: its job is to go RED the moment someone
+    // replaces the derivation with a literal that has stopped being the strictest row. Proven in
+    // exactly that configuration (unknown pinned to a literal + one tier raised above it), which is
+    // the only mutation that can violate it. Do not delete it for "always passing".
     for (const [tier, t] of Object.entries(LP.RAIN_DEPTH_TIERS)) {
       for (const cls of LP.RAIN_DEPTH_CLASSES) {
         expect(LP.RAIN_DEPTH.unknown[cls], `${tier}.${cls}`).toBeGreaterThanOrEqual(t[cls]);
       }
     }
-    // NON-VACUITY: it is not enough to tie the loosest row — an unknown vessel must be discriminated
-    // against at EVERY class. in_ground is the most-credited tier by construction of the row above.
+    // (c) NON-VACUITY leg, and the one that still bites under derivation: it is not enough for the
+    // unknown row to TIE the loosest tier — an unknown vessel must be discriminated against at every
+    // class. This fails if the tiers are ever flattened into each other, which is the D1 defect.
+    // (The pre-rescope version of this guard used toBeGreaterThanOrEqual against rows that all
+    // shared light: 0.10, so it passed on equality and could not fail at the light class.)
     for (const cls of LP.RAIN_DEPTH_CLASSES) {
       expect(LP.RAIN_DEPTH.unknown[cls], `unknown.${cls} vs in_ground`)
         .toBeGreaterThan(LP.RAIN_DEPTH.in_ground[cls]);
     }
-    // and it must be reachable: a real unknown/NULL container_type has to resolve to that row
+    // (d) reachable, and not an alias: a real unknown/NULL container_type has to resolve to that row
     expect(LP.RAIN_DEPTH[engine.rainDepthTierFor(null)]).toBe(LP.RAIN_DEPTH.unknown);
     expect(LP.RAIN_DEPTH[engine.rainDepthTierFor('mystery_pot')]).toBe(LP.RAIN_DEPTH.unknown);
-    // ...and it must NOT be an alias of any named row, whatever today's values happen to be
     for (const tier of Object.keys(LP.RAIN_DEPTH_TIERS)) {
       expect(LP.RAIN_DEPTH.unknown, tier).not.toBe(LP.RAIN_DEPTH[tier]);
     }
