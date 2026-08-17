@@ -1,0 +1,167 @@
+# gates.yml
+# V4-ACQMATURE-001 — acquired_mature flag on plantings + garden_node view widen.
+#
+# STATUS AT AUTHORING (2026-08-17): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
+# prod. No DDL and no backfill has been executed anywhere by the authoring lane.
+#
+# ⚠️ 0a AND 0b ARE SEPARATE DECISIONS. 0a is inert schema and can land whenever convenient. 0b
+# writes an assertion about two real plantings and bumps their updated_at/version via the existing
+# BEFORE UPDATE triggers; it is small but it is a data claim, and its evidence is in its own header.
+#
+# ⚠️ SEQUENCING IS NOT OPTIONAL — THE MIGRATION GOES FIRST, BOTH ENVIRONMENTS.
+#   staging 0a -> staging 0c -> staging 0b (no-op there; neither target id exists)
+#   -> prod 0a -> prod 0c -> [Dave] prod 0b
+#   -> dev push of the plants Lambda -> deploy-lambda -> SPA.
+# The plants Lambda names acquired_mature UNCONDITIONALLY in its INSERT, PUT SET-list and all four
+# GET SELECT blocks. Landing that code against a database without the column is the L-081 incident
+# verbatim (every plants endpoint 500s), and the schema-audit workflow will say so on the dev push.
+# A schema-audit waiver is NOT available here: waivers are only legitimate for a ref that is
+# unreachable in prod because it sits behind an OFF feature flag, and this one is on the hot path.
+# CI's integration job also branches off STAGING WITHOUT applying migrations, so a staging apply
+# that is skipped surfaces as an infra flake and gets retried instead of fixed.
+#
+# Pre:  the new columns do not exist yet.
+# Sweep: no acquired_mature_source value out of the 2-value vocabulary, and no provenance tag
+#        stranded on a row with no verdict. Runner re-runs the sweep between 0a and 0c.
+# Post: columns present on base plants AND on the garden_node view (the widen is the half that
+#       silently gets forgotten), CHECK validated, schema_version recorded, backfill count.
+
+pre:
+  - name: pre_acquired_mature_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='acquired_mature'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_plants_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_garden_node_view_present
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='public' AND c.relname='garden_node' AND c.relkind='v'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: sweep_acquired_mature_source_valid
+    sql: |
+      SELECT id FROM public.plants
+       WHERE acquired_mature_source IS NOT NULL
+         AND acquired_mature_source NOT IN ('user','backfill')
+    expect: rowcount_eq
+    value: 0
+
+  # A provenance tag on a row with no verdict is a half-written record: something claimed to know
+  # WHERE the answer came from without storing the answer. Cheap to assert, and it is the shape a
+  # buggy future writer would produce.
+  - name: sweep_no_orphan_acquired_mature_source
+    sql: |
+      SELECT id FROM public.plants
+       WHERE acquired_mature IS NULL AND acquired_mature_source IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_acquired_mature_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='acquired_mature'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_acquired_mature_source_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='acquired_mature_source'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_acquired_mature_set_at_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='acquired_mature_set_at'
+    expect: rowcount_eq
+    value: 1
+
+  # THE GATE THIS MIGRATION EXISTS TO PASS. A column on base plants that never reaches the view is
+  # invisible to the whole app: every read and the create INSERT bind public.garden_node.
+  - name: post_view_exposes_acquired_mature
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='garden_node' AND column_name='acquired_mature'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_view_exposes_all_three
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='garden_node'
+         AND column_name IN ('acquired_mature','acquired_mature_source','acquired_mature_set_at')
+    expect: rowcount_eq
+    value: 3
+
+  # The widen must have ADDED columns, not rewritten the projection. 50 -> 53 on both prod and
+  # staging (both measured byte-identical at 50 on 2026-08-17). continuous: false because the next
+  # view widen legitimately invalidates a frozen column count — the same call every other
+  # view-column-count gate in this repo makes.
+  - name: post_view_column_count_53
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='garden_node'
+    expect: scalar_eq
+    value: 53
+
+  # NULL-means-never-asked is the whole design (0a header). A DEFAULT appearing later would fabricate
+  # a verdict for every existing planting, so the absence of one is asserted, not assumed. Phrased as
+  # rowcount_eq 0 rather than scalar_eq null: scalar_eq treats zero rows as a FAILURE by design, so
+  # the null form would be answering a different question than it looks like it is asking.
+  - name: post_no_default_on_acquired_mature
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants'
+         AND column_name='acquired_mature' AND column_default IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_source_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plants_acquired_mature_source'
+    expect: scalar_eq
+    value: true
+
+  # PROD ONLY, and env-scoped rather than prose: the two backfill targets exist on prod and do not
+  # exist on staging (staging holds 12 plantings, neither id — verified 2026-08-17). Asserting "2"
+  # everywhere would red staging forever for a correct no-op.
+  - name: post_backfill_flagged_two_rows
+    env: prod
+    sql: |
+      SELECT id FROM public.plants
+       WHERE acquired_mature IS TRUE AND acquired_mature_source = 'backfill'
+    expect: rowcount_eq
+    value: 2
+
+  # The other half of the backfill decision, and the one worth guarding continuously: NOTHING was
+  # bulk-inferred. If this ever exceeds 2, someone inferred the flag from source_type or a missing
+  # sow date — both measured as non-predictive — and the calibration cohort is now contaminated by
+  # a guess wearing a column's authority.
+  - name: post_backfill_did_not_bulk_infer
+    env: prod
+    sql: |
+      SELECT count(*) FROM public.plants WHERE acquired_mature_source = 'backfill'
+    expect: scalar_eq
+    value: 2
+
+  # An apply-time receipt, not a standing invariant (cf. drg-wxwater-001 / v4-cachemissingrow-001).
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.31.0-acqmature-001'
+    expect: rowcount_eq
+    value: 1

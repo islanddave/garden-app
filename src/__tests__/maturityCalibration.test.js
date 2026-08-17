@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   calibrateFromTransplant, SITE_FACTOR, HALF_WIDTH_DAYS, CALIBRATION_BASIS,
-  CALIBRATION_SAMPLE, STRUCTURAL_OUTLIERS,
+  CALIBRATION_SAMPLE, ACQUIRED_MATURE_FIELD, isAcquiredMature,
+  CALIBRATION_COHORT_EXCLUSION_SQL,
 } from '../lib/maturityCalibration.js'
+import * as calibration from '../lib/maturityCalibration.js'
 import { computeMaturity } from '../lib/plantingMaturity.js'
 
 describe('calibrateFromTransplant', () => {
@@ -125,11 +127,70 @@ describe('site factor re-fit (V4-DROPCALIB-001)', () => {
     expect(misses.filter(m => m.under > 2).map(m => m.name)).toEqual(['Yellow Onions'])
   })
 
-  it('keeps the hand-maintained structural-outlier list, now 2 rows', () => {
-    // Beefsteak Rescue 1 is gone because its cultivar lost its DTM, not because it was re-admitted.
-    expect(STRUCTURAL_OUTLIERS.map(o => o.name)).toEqual(['Ghost', 'Shallots'])
-    // Both are still far below the cohort they were excluded from (next-lowest survivor is 0.430).
-    for (const o of STRUCTURAL_OUTLIERS) expect(o.observedDays / o.dtm).toBeLessThan(0.2)
+})
+
+// V4-ACQMATURE-001 — the exclusion mechanism, now a predicate over plants.acquired_mature instead
+// of a hand-maintained array of display names. These tests assert the PREDICATE, not the names:
+// pinning ['Ghost','Shallots'] was the old test's actual defect, because it went green whether or
+// not the mechanism could ever catch a THIRD such planting, and it stayed green through a rename
+// that had already stopped the list matching one of its own entries.
+describe('acquired-mature exclusion (V4-ACQMATURE-001)', () => {
+  it('the hand-maintained STRUCTURAL_OUTLIERS list is gone, not merely unused', () => {
+    expect(calibration.STRUCTURAL_OUTLIERS).toBeUndefined()
+    expect(Object.keys(calibration)).not.toContain('STRUCTURAL_OUTLIERS')
+  })
+
+  it('excludes only an explicit true — NULL and undefined are "never asked", not "no"', () => {
+    expect(isAcquiredMature({ acquired_mature: true })).toBe(true)
+    expect(isAcquiredMature({ acquired_mature: false })).toBe(false)
+    expect(isAcquiredMature({ acquired_mature: null })).toBe(false)
+    // A planting object fetched before the column existed carries neither key nor value. It must
+    // stay IN the cohort, exactly as it was under the name list.
+    expect(isAcquiredMature({})).toBe(false)
+    expect(isAcquiredMature(undefined)).toBe(false)
+    expect(isAcquiredMature(null)).toBe(false)
+  })
+
+  it('does not coerce — a truthy look-alike is not a verdict', () => {
+    for (const v of ['true', 1, 'yes', {}, []]) {
+      expect(isAcquiredMature({ acquired_mature: v }), `${JSON.stringify(v)} must not exclude`).toBe(false)
+    }
+  })
+
+  it('names the column the migration actually ships', () => {
+    expect(ACQUIRED_MATURE_FIELD).toBe('acquired_mature')
+    // IS NOT TRUE, so an un-asked planting stays in the cohort. `= false` would silently shrink the
+    // cohort to only the plantings Dave has explicitly cleared — 2 of 261 today.
+    expect(CALIBRATION_COHORT_EXCLUSION_SQL).toBe('gn.acquired_mature IS NOT TRUE')
+    expect(CALIBRATION_COHORT_EXCLUSION_SQL).not.toMatch(/=\s*false/)
+  })
+
+  // THE REGRESSION THIS WHOLE CHANGE HAS TO SURVIVE: swapping the mechanism must not move the
+  // number. Measured against live prod 2026-08-17 on the same cohort query, only the exclusion
+  // changed: by name n=35 factor 0.7504 sd 0.1453; by flag n=35 factor 0.7504 sd 0.1453; with no
+  // structural exclusion at all n=37 factor 0.7158. The two rows the flag is backfilled onto are
+  // the two the list named, so the fit is byte-identical on day one.
+  it('the shipped factor still sits inside one SE of the fitted centre after the swap', () => {
+    expect(SITE_FACTOR).toBe(0.75)
+    expect(CALIBRATION_SAMPLE.n).toBe(35)
+    expect(Math.abs(SITE_FACTOR - 0.7504)).toBeLessThan(CALIBRATION_SAMPLE.factorSe)
+  })
+
+  // The excluded pair applied to the predicate: both are far below the cohort they were removed
+  // from (next-lowest survivor 0.430), so this is a different population, not a tail. Expressed as
+  // planting-shaped records because that is what the predicate consumes now.
+  it('the two backfilled rows are excluded, and the cohort floor is not', () => {
+    const ghost = { name: 'Ghost', acquired_mature: true, observedDays: 10, dtm: 100 }
+    const shallots = { name: 'Shallots', acquired_mature: true, observedDays: 11, dtm: 90 }
+    const onions = { name: 'Yellow Onions', acquired_mature: null, observedDays: 43, dtm: 100 }
+    for (const r of [ghost, shallots]) {
+      expect(isAcquiredMature(r)).toBe(true)
+      expect(r.observedDays / r.dtm).toBeLessThan(0.2)
+    }
+    // Yellow Onions is the largest surviving residual and is deliberately NOT this class — a bulb
+    // crop pulled young, sown on site. Flagging it would be fitting the exclusion to the answer,
+    // and the describe above still counts it as one of the 35 and as the one miss over 2 days.
+    expect(isAcquiredMature(onions)).toBe(false)
   })
 })
 

@@ -104,6 +104,21 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
     });
   }
 
+  // V4-ACQMATURE-001 (2026-08-17): the acquired-mature flag is the calibration cohort's exclusion
+  // predicate. It is written by the create INSERT and the PUT, so if a read drops it the client
+  // cannot show or re-edit an answer Dave already gave — the same write->read asymmetry class as
+  // BUG-PLANTREAD-001 above, and the reason that one shipped blank for 8 prod rows. Guarded across
+  // all 4 reads, all three columns: a verdict with no visible provenance is only half readable.
+  const ACQUIRED_MATURE_COLUMNS = ['acquired_mature', 'acquired_mature_source', 'acquired_mature_set_at'];
+  for (const col of ACQUIRED_MATURE_COLUMNS) {
+    it(`every SELECT block includes p.${col} (V4-ACQMATURE-001)`, () => {
+      for (const [idx, block] of selectBlocks.entries()) {
+        const present = new RegExp(`\\bp\\.${col}\\b`).test(block);
+        expect(present, `SELECT block #${idx} missing p.${col}`).toBe(true);
+      }
+    });
+  }
+
   // Lambda 2.0.5 cleanup — VARIETY-REF S3 prep.
   // The 3 legacy text columns are removed from every SELECT clause in 2.0.5;
   // the subsequent VARIETY-REF S3 destructive DDL drops them from the table
