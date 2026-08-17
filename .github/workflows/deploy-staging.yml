@@ -699,7 +699,12 @@ jobs:
   # Phase 2: Authenticated CRUD (requires CLERK_SECRET_KEY_STAGING + CLERK_TEST_USER_ID secrets).
   smoke-tests:
     runs-on: ubuntu-24.04
-    needs: db-schema-check
+    # OPS-STAGINGSMOKESHA-001: deploy-frontend is listed for its OUTPUTS, not for ordering — it is
+    # already a transitive ancestor (deploy-frontend -> db-schema-check -> here), so this edge adds
+    # no wait and no new skip path, but WITHOUT it `needs.deploy-frontend` is not in this job's
+    # needs context and COMMIT_SHA below silently resolved to "". Same pattern promote-gate.yml
+    # uses at its `deploy` job, which lists resolve+promote purely to read their outputs.
+    needs: [db-schema-check, deploy-frontend]
     timeout-minutes: 10
 
     steps:
@@ -839,14 +844,22 @@ jobs:
   # browser tests. continue-on-error: true = never blocks the gate.
   e2e-advisory:
     runs-on: ubuntu-24.04
-    needs: smoke-tests
+    # OPS-STAGINGSMOKESHA-001: deploy-frontend added for its outputs only — transitive ancestor
+    # via smoke-tests -> db-schema-check, so ordering and skip semantics are unchanged.
+    needs: [smoke-tests, deploy-frontend]
     continue-on-error: true
 
     steps:
       - name: Advisory placeholder
         run: |
           echo "E2E advisory layer — no browser tests in current gate config"
-          echo "Smoke tests green for commit: ${{ needs.deploy-frontend.outputs.commit-sha || github.sha }}"
+          # OPS-STAGINGSMOKESHA-001: the fallback was `|| github.sha`, which is NOT this run's built
+          # SHA — on a promote-gate dispatch github.sha is dev's HEAD at dispatch time while the code
+          # under test is inputs.dev_sha (see the run-name comment at the top of this file, and the
+          # 2026-08-03 incident it records). With the needs edge above the first operand is always
+          # set, so this fallback is unreachable; it says "unknown" rather than a confidently wrong
+          # SHA if the edge is ever dropped again. Same convention as run-smoke.sh's own banner.
+          echo "Smoke tests green for commit: ${{ needs.deploy-frontend.outputs.commit-sha || 'unknown' }}"
           echo "Staging regression suite: PASSED ✅"
           echo "To add Playwright: create tests/e2e/ and invoke from this job with continue-on-error: true"
 
