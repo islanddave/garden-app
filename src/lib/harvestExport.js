@@ -52,7 +52,33 @@ function weightLine(weight) {
   if (parts.length === 0) return null
   const text = formatGrams(weight.grams)
   const value = text == null ? 'none derivable yet' : `${weight.estimated > 0 ? '≈ ' : ''}${text}`
-  return `Total weight: ${value} (${parts.join(' · ')})`
+  // V4-HARVGRAIN-001 (B4): the same share the Totals card prints. The clause above counts ROWS,
+  // which on live prod reads "313 weighed · 367 estimated" and scans as mostly-weighed while 52% of
+  // the POUNDAGE is modelled — the weighed rows skew small. A number pasted into a spreadsheet loses
+  // every surrounding cue the page had, so if either surface carries the caveat this one must.
+  // Silent when estimated_grams is 0 or absent (an all-measured total, or a Lambda predating the
+  // split) — inventing "0% estimated" would manufacture a doubt.
+  const modelled = weight.grams > 0 && weight.estimated_grams > 0
+    ? ` — ${Math.round((weight.estimated_grams / weight.grams) * 100)}% estimated, not weighed`
+    : ''
+  return `Total weight: ${value} (${parts.join(' · ')})${modelled}`
+}
+
+// V4-HARVGRAIN-001 — one variety's grams, appended to its own sub-line.
+//
+// It rides the export because the export now RANKS: the server orders varieties by weight, and this
+// file prints them in wire order, so without the number the reordering is an unexplained shuffle of
+// a list that used to be alphabetical. And the ranking's own basis has to travel with it — estimated
+// grams are a flat per-variety constant, so an all-≈ ordering is the count column rescaled and
+// nothing more. Parenthesised qualifier, matching `Total weight:` above rather than inventing a
+// second phrasing for the same fact. Empty string (not a placeholder) when there is nothing
+// derivable, and equally when the row predates the variety grain — an older Lambda's crops[] rows
+// simply have no `weight` key, and "this API cannot compute it" must not print as "0 g".
+function varietyWeight(weight) {
+  const text = formatGrams(weight?.grams)
+  if (text == null) return ''
+  const parts = weightParts(weight)
+  return ` · ${weight.estimated > 0 ? '≈ ' : ''}${text}${parts.length > 0 ? ` (${parts.join(' · ')})` : ''}`
 }
 
 /**
@@ -85,7 +111,7 @@ export function buildTotalsExport({ aggregates, timeframe = '', cropNames = [], 
     if (showVarieties) {
       for (const v of varieties) {
         const vl = unitsLine(v.units, c.crop_name) || (v.unquantified > 0 ? `+${v.unquantified} unrecorded` : '')
-        lines.push(`  ${v.variety_name || 'Unspecified'} — ${vl || 'no amount recorded'}`)
+        lines.push(`  ${v.variety_name || 'Unspecified'} — ${vl || 'no amount recorded'}${varietyWeight(v.weight)}`)
       }
     }
     for (const f of firstPick.filter((p) => p.crop_type_slug === c.crop_type_slug)) {
@@ -208,6 +234,10 @@ export function narratedHeader({ mode, aggregates, entries = [], timeframe = '' 
   }
   const crops = aggregates?.crops ?? []
   if (crops.length === 0) return `My garden, ${scope}:`
+  // V4-HARVGRAIN-001 moved the server's crop ordering from alphabetical to weight-descending, so
+  // crops[0] is now the season's biggest producer rather than whatever sorted first. That is the
+  // better lead for a shared header and needs no code change here — noted because this line reads
+  // as arbitrary otherwise, and because a future re-sort silently changes what the post opens with.
   const phrase = seasonTotalPhrase(crops[0])
   const more = crops.length - 1
   const tail = more > 0 ? ` and ${more} more crop${more === 1 ? '' : 's'}` : ''

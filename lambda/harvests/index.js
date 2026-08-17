@@ -28,7 +28,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { householdScope } from './household.js';
 // Pure, DB-free helpers live in ./aggregate.js so they unit-test without this file's runtime deps
 // (neon/clerk/aws — absent from root package.json under CI `npm ci`). See lambda/preservation/attribution.js.
-import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates } from './aggregate.js';
+import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates, applyWeights } from './aggregate.js';
 // V4-HARVSURFACE-001 — Today watch list + "not yet" dismissal. Same DB-free-pure / DB-touching split:
 // watch.js holds the candidate logic, watch-route.js the SQL and request contract.
 import {
@@ -37,7 +37,7 @@ import {
 // V4-READYTRAYIMPRESSION-001 — the weigh-in tray's impression beacon. Same prefix trick, same
 // pure/DB split; separate module because it serves a different surface with a different model.
 import { matchReadyImpressionRoute, handleReadyImpressionPost } from './ready-impression.js';
-export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates } from './aggregate.js';
+export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates, shapeWeightRow, applyWeights } from './aggregate.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -68,25 +68,11 @@ function resp(statusCode, body) {
 // held. A SELECT with no matching projection is invisible: nothing 500s, nothing logs, the page
 // just quietly says the wrong thing. The fix belongs in projectEntry itself — see the comment there
 // for why a wrapper at this call site would have widened the same gap instead of closing it.
-
-// Shape one GROUPING-SETS row into the wire weight object. Vocabulary is deliberately IDENTICAL to
-// sumHarvestWeights() in src/lib/harvestWeight.js (grams / measured / estimated / unweighed) so the
-// per-planting client total and the server's season total cannot drift apart in naming or meaning.
-// measured_grams and estimated_grams are carried SEPARATELY on purpose: `grams` is the honest sum
-// (an estimate IS the best available value for its row), but a surface that prints it without
-// saying how much of it was inferred is claiming a precision the number does not have.
-function shapeWeightRow(r) {
-  const measuredGrams = Number(r?.measured_grams ?? 0);
-  const estimatedGrams = Number(r?.estimated_grams ?? 0);
-  return {
-    grams: measuredGrams + estimatedGrams,
-    measured_grams: measuredGrams,
-    estimated_grams: estimatedGrams,
-    measured: Number(r?.measured_count ?? 0),
-    estimated: Number(r?.estimated_count ?? 0),
-    unweighed: Number(r?.unweighed_count ?? 0),
-  };
-}
+//
+// V4-HARVGRAIN-001: shapeWeightRow() and the weight merge moved to aggregate.js. This file cannot be
+// imported under the root vitest run (neon/clerk/aws), so anything living here can only ever be
+// guarded by a regex over its own source text — and the merge's failure mode is a Map key, which no
+// regex can check. See the applyWeights header there.
 
 // ── Handler ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -367,13 +353,29 @@ export const handler = async (event) => {
       //   * measured = weight_estimated IS FALSE. Anything else (true, or a NULL that should not
       //     exist by construction) counts as estimated: labelling a real weighing as an estimate
       //     understates harmlessly, the reverse launders a guess into a fact.
-      // GROUPING SETS gets the overall total and the per-crop totals in ONE pass. GROUPING() is
-      // required to read the result: the unattributed bucket (crop_type_slug IS NULL) and the grand
-      // total both come back with a NULL crop_slug, and only the GROUPING bit tells them apart.
+      // GROUPING SETS gets all FOUR grains in ONE pass — grand total, per crop, per variety, per
+      // planting. GROUPING() is required to read the result: the unattributed bucket
+      // (crop_type_slug IS NULL) and the grand total both come back with a NULL crop_slug, and only
+      // the bits tell them apart.
+      //
+      // V4-HARVGRAIN-001 added the variety and planting members. THE COST WAS NOT THE CLAUSE — it
+      // was the merge, which keyed on crop alone and would have let each variety row overwrite its
+      // crop total (see applyWeights in aggregate.js). No new join was needed: gn is already
+      // LEFT JOINed for the archive anti-join, so gn.cultivar_id and gn.id were already in scope,
+      // and gn.cultivar_id is the SAME column the aggregates SELECT aliases to variety_id — so the
+      // two rowsets agree on the merge key by construction rather than by convention.
+      //
+      // ONE bit per NULL-bearing dimension, all three carried on every row. `is_total` alone cannot
+      // do it: a (crop, cultivar) row also has is_total = 0 and a non-null crop_slug, so it is
+      // structurally indistinguishable from a (crop) row at `Number(r.is_total) === 1`.
       const weightRows = await sql`
         SELECT
           cv.crop_type_slug AS crop_slug,
+          gn.cultivar_id AS variety_id,
+          gn.id AS gn_id,
           GROUPING(cv.crop_type_slug)::int AS is_total,
+          GROUPING(gn.cultivar_id)::int AS varieties_rolled_up,
+          GROUPING(gn.id)::int AS plantings_rolled_up,
           COALESCE(SUM(h.weight_grams) FILTER (
             WHERE h.weight_grams > 0 AND h.weight_estimated IS FALSE), 0)::float8 AS measured_grams,
           COALESCE(SUM(h.weight_grams) FILTER (
@@ -411,21 +413,18 @@ export const handler = async (event) => {
                 SELECT 1 FROM public.garden_node gna
                 WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
               ))
-        GROUP BY GROUPING SETS ((), (cv.crop_type_slug))
+        GROUP BY GROUPING SETS (
+          (),
+          (cv.crop_type_slug),
+          (cv.crop_type_slug, gn.cultivar_id),
+          (cv.crop_type_slug, gn.cultivar_id, gn.id)
+        )
       `;
-      // Merge onto the shape computeAggregates already returns. Every crop row gets a weight object
-      // even when nothing under it is weighable: an ABSENT key would make a surface branch on
-      // undefined and print nothing, where a zeroed object with unweighed>0 says the true thing.
-      const weightByCrop = new Map();
-      let weightTotal = null;
-      for (const r of weightRows) {
-        if (Number(r.is_total) === 1) weightTotal = shapeWeightRow(r);
-        else if (r.crop_slug != null) weightByCrop.set(r.crop_slug, shapeWeightRow(r));
-      }
-      out.aggregates.weight = weightTotal ?? shapeWeightRow(null);
-      for (const c of out.aggregates.crops) {
-        c.weight = weightByCrop.get(c.crop_type_slug) ?? shapeWeightRow(null);
-      }
+      // Merge + re-order, in the pure helper so it is testable by calling it. ADDITIVE keys only —
+      // varieties[].weight and first_pick[].weight are new fields on shapes that already shipped, so
+      // an older client ignores them, and the crop/grand-total numbers it does read are unchanged
+      // (GROUPING SETS computes each set independently: adding members cannot move an existing one).
+      applyWeights(out.aggregates, weightRows);
     }
 
     return resp(200, out);

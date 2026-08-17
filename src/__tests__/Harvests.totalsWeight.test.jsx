@@ -33,12 +33,22 @@ const CROP = {
 
 // Render and switch to the Totals tab. `weight` keys are omitted entirely when passed undefined,
 // which is exactly the pre-slice-2 Lambda's response shape.
+//
+// The snapshot strip's rolling-7-day request (timeframe=7d, BUG-HARVSNAPSHOT7D-001) is answered
+// EMPTY rather than with this fixture. Not a convenience: the two windows are different queries and
+// returning the season's crop row for both would put the same "14 tomatoes" in the tile and in the
+// crop row, which is not a shape the server can produce and would make every assertion here
+// ambiguous about which surface it matched.
 async function renderTotals({ weight, cropWeight } = {}) {
   const crop = { ...CROP }
   if (cropWeight !== undefined) crop.weight = cropWeight
   const aggregates = { crops: [crop], other: [], first_pick: [] }
   if (weight !== undefined) aggregates.weight = weight
-  fetchSpy.mockResolvedValue({ entries: [], aggregates, cursor: null })
+  fetchSpy.mockImplementation((url) => Promise.resolve(
+    String(url).includes('timeframe=7d')
+      ? { aggregates: { crops: [], other: [] } }
+      : { entries: [], aggregates, cursor: null },
+  ))
   render(<Harvests />)
   await waitFor(() => expect(screen.getByText('Totals')).toBeTruthy())
   fireEvent.click(screen.getByText('Totals'))

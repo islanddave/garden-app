@@ -678,10 +678,23 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
         <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${P.border}` }}>
           {showVarieties && (
             <div style={{ marginTop: 8 }}>
+              {/* V4-HARVGRAIN-001 (B3): the sub-rows now arrive ordered by grams, not by name, and a
+                  re-ordered list with no stated key reads as alphabetical-that-went-wrong. Naming it
+                  here also names the marker, because the ranking is only as good as its inputs:
+                  every estimated gram is a flat per-variety constant (Cherry Falls resolves to
+                  6.04 g/unit on all 36 of its rows, min = max), so an all-≈ ordering is the pick
+                  count rescaled and nothing more. Suppressed when nothing under the crop has a
+                  weight — then the order IS the name order and saying otherwise would be false. */}
+              {varieties.some((v) => v.weight?.grams > 0) && (
+                <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 4 }}>By weight · ≈ estimated</div>
+              )}
               {varieties.map((v) => (
                 <div key={v.variety_id ?? '__novar__'} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.83rem', color: P.mid, padding: '3px 0' }}>
                   <span>{v.variety_name || 'Unspecified'}</span>
-                  <span style={{ fontWeight: 600 }}>{unitsLine(v.units, c.crop_name) || (v.unquantified > 0 ? `+${v.unquantified} unrecorded` : '')}</span>
+                  <span style={{ textAlign: 'right', minWidth: 0 }}>
+                    <span style={{ display: 'block', fontWeight: 600 }}>{unitsLine(v.units, c.crop_name) || (v.unquantified > 0 ? `+${v.unquantified} unrecorded` : '')}</span>
+                    <VarietyWeightLine weight={v.weight} />
+                  </span>
                 </div>
               ))}
             </div>
@@ -691,6 +704,14 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
               {firstPicks.map((f) => (
                 <div key={f.plant_id} style={{ fontSize: '0.8rem', color: P.mid }}>
                   First pick {fmtFirstPick(f.first_pick_date, new Date().getFullYear())}{f.planting_name ? ` · ${f.planting_name}` : ''}
+                  {/* V4-HARVGRAIN-001: per-planting grams, from the (crop, cultivar, planting)
+                      grouping set. This line already identifies the planting, so the weight rides
+                      it rather than minting a second per-planting list beside it. */}
+                  {f.weight?.grams > 0 && (
+                    <span data-testid="planting-weight" style={{ color: P.light }}>
+                      {' · '}{f.weight.estimated > 0 ? `≈ ${formatGrams(f.weight.grams)}` : formatGrams(f.weight.grams)}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -726,11 +747,22 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
 // `weight` is undefined against a harvests Lambda older than this feature — the frontend can and
 // does deploy ahead of it. That renders NOTHING: the old response cannot distinguish "no weight
 // recorded" from "this API doesn't compute weight", and only the first is safe to tell Dave.
+//
+// V4-HARVGRAIN-001 (B4) adds the SHARE beneath the counts, and it is a different fact from them.
+// weightParts counts ROWS — live prod reads "313 weighed · 367 estimated", which scans as "mostly
+// weighed" — while 52% of the actual POUNDAGE is modelled, because the weighed rows skew small.
+// The number Dave is being asked to trust is grams, so the qualifier has to be denominated in grams
+// too. It is a render of `estimated_grams`, which the wire has carried since slice 2; nothing new is
+// captured or computed. Suppressed at 0 estimated grams — an all-measured total needs no caveat, and
+// printing "0% estimated" would invent a doubt where there is none.
 function TotalsWeight({ weight }) {
   if (!weight) return null
   const parts = weightParts(weight)
   if (parts.length === 0) return null
   const text = formatGrams(weight.grams)
+  const modelledPct = weight.grams > 0 && weight.estimated_grams > 0
+    ? Math.round((weight.estimated_grams / weight.grams) * 100)
+    : null
   return (
     <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 14px' }}>
       <div style={{ fontSize: '0.75rem', fontWeight: 700, color: P.light, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total weight</div>
@@ -746,6 +778,11 @@ function TotalsWeight({ weight }) {
         <div data-testid="totals-weight-none" style={{ fontSize: '0.85rem', color: P.light, marginTop: 2 }}>{NO_WEIGHT_COPY}</div>
       )}
       <div data-testid="totals-weight-basis" style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>{parts.join(' · ')}</div>
+      {modelledPct != null && (
+        <div data-testid="totals-weight-modelled" style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>
+          {modelledPct}% of this weight is estimated, not weighed
+        </div>
+      )}
     </div>
   )
 }
@@ -754,6 +791,31 @@ function TotalsWeight({ weight }) {
 // on the log: "14 tomatoes" is what was picked, 1.4 kg is what it weighed. V4-HARVWEIGHTSURF-001
 // (Garden slice) moved it VERBATIM to src/components/CropWeightLine.jsx so the Garden's crop-type
 // groups render the identical thing rather than a lookalike; see the note there.
+
+// V4-HARVGRAIN-001 — the same fact one level down, on a variety sub-row.
+//
+// DELIBERATELY NOT CropWeightLine. That component is shaped for the crop row it was lifted from —
+// 0.85rem block spans, its own "no weight yet" chip, rendered inside the row's expand <button> — and
+// reusing it here would either restyle it for a second caller with different needs or make the
+// sub-rows shout louder than the crop they sit under. What must not fork is the VOCABULARY, and it
+// does not: same formatGrams, same weightParts clauses, same ≈ rule.
+//
+// The provenance counts are not optional here, and less so than anywhere else on the page, because
+// THE ROWS ARE NOW ORDERED BY THIS NUMBER. "≈ 763 g · 36 estimated" and "8.23 kg · 26 weighed" are
+// the same axis with very different standing, and a rank that renders them identically presents a
+// modelled ordering as a measured finding. Silent on rows with nothing derivable: the crop row above
+// already carries the ratchet copy once, and repeating it per variety is the same fact N times.
+function VarietyWeightLine({ weight }) {
+  if (!weight) return null
+  const text = formatGrams(weight.grams)
+  if (text == null) return null
+  const parts = weightParts(weight)
+  return (
+    <span data-testid="variety-weight" style={{ display: 'block', fontSize: '0.75rem', color: P.light, fontWeight: 500 }}>
+      {weight.estimated > 0 ? `≈ ${text}` : text}{parts.length > 0 ? ` · ${parts.join(' · ')}` : ''}
+    </span>
+  )
+}
 
 // ── Shared states ──────────────────────────────────────────────────────────────────────────────────
 function EmptyState({ emoji, title, body }) {

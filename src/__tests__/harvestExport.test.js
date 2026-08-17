@@ -87,6 +87,45 @@ describe('buildTotalsExport', () => {
     expect(out).not.toContain('Total weight')
   })
 
+  // V4-HARVGRAIN-001. The Lambda now returns grams at variety grain AND orders the rows by them, so
+  // the export ranks too — which means the export must show the key it ranked on, and how much of
+  // that key was weighed. Fixture is the live tomato shape: Moskvich mostly weighed and ahead of
+  // Cherry Falls, which has twice the picks and a tenth of the grams, all of it modelled.
+  it('is byte-exact with variety grams and the modelled share of the total', () => {
+    const agg = {
+      crops: [{
+        crop_type_slug: 'tomato', crop_name: 'Tomato', unquantified: 0,
+        units: [{ unit: 'count', unit_key: 'count', total: 193, count: 63 }],
+        varieties: [
+          { variety_id: 'v1', variety_name: 'Moskvich Heirloom', unquantified: 0, units: [{ unit: 'count', total: 65 }], weight: { grams: 8233, measured_grams: 8200, estimated_grams: 33, measured: 26, estimated: 1, unweighed: 0 } },
+          { variety_id: 'v2', variety_name: 'Cherry Falls', unquantified: 0, units: [{ unit: 'count', total: 128 }], weight: { grams: 763, measured_grams: 0, estimated_grams: 763, measured: 0, estimated: 36, unweighed: 0 } },
+        ],
+      }],
+      other: [], first_pick: [],
+      weight: { grams: 93301, measured_grams: 44856, estimated_grams: 48445, measured: 313, estimated: 367, unweighed: 1 },
+    }
+    const out = buildTotalsExport({ aggregates: agg, timeframe: 'season:2026', generatedOn: '2026-08-17', currentYear: 2026 })
+    expect(out).toBe([
+      'Garden harvests — Totals',
+      '2026 season · All crops',
+      'Generated 2026-08-17',
+      '',
+      'Tomato — 193 Tomatoes',
+      '  Moskvich Heirloom — 65 Tomatoes · ≈ 8.23 kg (26 weighed · 1 estimated)',
+      '  Cherry Falls — 128 Tomatoes · ≈ 763 g (36 estimated)',
+      '',
+      'Total weight: ≈ 93 kg (313 weighed · 367 estimated · 1 with no weight yet) — 52% estimated, not weighed',
+    ].join('\n'))
+  })
+
+  it('a variety row from an older Lambda (no weight key) prints its units and nothing invented', () => {
+    // The SPA and the harvests Lambda deploy on separate legs. AGG's variety rows predate the
+    // variety grain, so the byte-exact fixture above is also the rollback case.
+    const out = buildTotalsExport({ aggregates: AGG, timeframe: '', generatedOn: '2026-08-12' })
+    expect(out).toContain('  Sungold — 100 Cherry Tomatoes\n')
+    expect(out).not.toMatch(/Sungold.*(g\)|kg)/)
+  })
+
   it('a single UNNAMED variety gets no sub-line — it would just repeat the crop total', () => {
     const out = buildTotalsExport({ aggregates: AGG, timeframe: '', generatedOn: '2026-08-12' })
     expect(out).toContain('Basil — 3 bunches')

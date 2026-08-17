@@ -13,7 +13,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { projectEntry } from './aggregate.js';
+import { projectEntry, shapeWeightRow, applyWeights } from './aggregate.js';
 
 // A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
 // `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
@@ -100,29 +100,46 @@ describe('weight totals are summed in SQL, split by provenance', () => {
     expect(WEIGHT_QUERY).toMatch(/WHERE h\.weight_grams IS NULL OR h\.weight_grams <= 0\)::int AS unweighed_count/);
   });
 
-  it('the grand total is distinguished from the unattributed bucket by GROUPING()', () => {
-    // Both come back with a NULL crop_slug. Without the GROUPING bit the merge below would either
-    // overwrite the season total with the no-crop bucket or vice versa.
+  it('every NULL-bearing grain carries its own GROUPING() discriminator', () => {
+    // The grand total and the unattributed bucket both come back with a NULL crop_slug; a
+    // (crop, cultivar) row shares is_total = 0 with the (crop) row. V4-HARVGRAIN-001: one bit per
+    // dimension, or the merge lands two different grains on the same Map key.
     expect(WEIGHT_QUERY).toMatch(/GROUPING\(cv\.crop_type_slug\)::int AS is_total/);
-    expect(WEIGHT_QUERY).toMatch(/GROUP BY GROUPING SETS \(\(\), \(cv\.crop_type_slug\)\)/);
-    expect(SRC).toMatch(/Number\(r\.is_total\) === 1/);
+    expect(WEIGHT_QUERY).toMatch(/GROUPING\(gn\.cultivar_id\)::int AS varieties_rolled_up/);
+    expect(WEIGHT_QUERY).toMatch(/GROUPING\(gn\.id\)::int AS plantings_rolled_up/);
+    expect(WEIGHT_QUERY).toMatch(/GROUP BY GROUPING SETS \(\s*\(\),\s*\(cv\.crop_type_slug\),\s*\(cv\.crop_type_slug, gn\.cultivar_id\),\s*\(cv\.crop_type_slug, gn\.cultivar_id, gn\.id\)\s*\)/);
+  });
+
+  it('the variety key is gn.cultivar_id in EVERY query — one expression, not three lookalikes', () => {
+    // The weight rowset is merged onto the aggregates rowset on this value. If either query ever
+    // resolved the variety through a different path (cultivar.id, plant_varieties, a second join)
+    // the keys could agree today and drift on the next schema change, and a drifted key does not
+    // error — it just yields a variety row with no weight.
+    expect(WEIGHT_QUERY).toMatch(/gn\.cultivar_id AS variety_id/);
+    expect((SRC.match(/gn\.cultivar_id AS variety_id/g) ?? []).length).toBe(3);
   });
 
   it('grams is the SUM of the two halves, never one of them', () => {
-    const fn = SRC.match(/function shapeWeightRow\(r\)\s*\{[\s\S]*?\n\}/);
-    expect(fn, 'shapeWeightRow is not defined').not.toBeNull();
-    expect(fn[0]).toMatch(/grams:\s*measuredGrams \+ estimatedGrams/);
+    // Behavioural now that shapeWeightRow lives in the pure module: it is called, not regexed.
+    const w = shapeWeightRow({ measured_grams: '300', estimated_grams: '700', measured_count: 3, estimated_count: 7, unweighed_count: 2 });
+    expect(w.grams).toBe(1000);
     // The split and the counts travel WITH the total — a caller cannot receive the number alone.
-    for (const k of ['measured_grams', 'estimated_grams', 'measured:', 'estimated:', 'unweighed:']) {
-      expect(fn[0]).toContain(k);
-    }
+    expect(w).toEqual({ grams: 1000, measured_grams: 300, estimated_grams: 700, measured: 3, estimated: 7, unweighed: 2 });
   });
 
   it('every crop row gets a weight object, zeroed rather than absent', () => {
     // An absent key makes a surface branch on undefined and print nothing; a zeroed object with
     // unweighed > 0 says the true thing ("nothing here is weighed yet").
-    expect(SRC).toMatch(/out\.aggregates\.weight\s*=\s*weightTotal \?\? shapeWeightRow\(null\)/);
-    expect(SRC).toMatch(/c\.weight\s*=\s*weightByCrop\.get\(c\.crop_type_slug\) \?\? shapeWeightRow\(null\)/);
+    const agg = { crops: [{ crop_type_slug: 'kale', crop_name: 'Kale', varieties: [] }], first_pick: [] };
+    applyWeights(agg, []);
+    expect(agg.crops[0].weight).toEqual({ grams: 0, measured_grams: 0, estimated_grams: 0, measured: 0, estimated: 0, unweighed: 0 });
+    expect(agg.weight).toEqual(agg.crops[0].weight);
+  });
+
+  it('the merge is applied to the aggregates the handler returns', () => {
+    // Pairs with the behavioural coverage in harvest-weight-grain.test.js: those prove applyWeights
+    // is correct, this proves the handler actually calls it on the object it ships.
+    expect(SRC).toMatch(/applyWeights\(out\.aggregates, weightRows\)/);
   });
 });
 

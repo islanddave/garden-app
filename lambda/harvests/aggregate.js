@@ -172,6 +172,10 @@ export function computeAggregates(rows) {
     }
   }
 
+  // Name order here is the BASE ordering only. applyWeights() re-sorts crops and varieties by grams
+  // once the weight rowset is merged — it cannot happen at this point because weight is a separate
+  // SQL pass and these rows carry no total yet. Keeping a deterministic name order rather than Map
+  // insertion order matters anyway: it is the tie-break every weightless row falls back to.
   return {
     crops: [...crops.values()].map((c) => ({
       crop_type_slug: c.crop_type_slug,
@@ -191,4 +195,102 @@ export function computeAggregates(rows) {
     crop_list: [...cropList.entries()].map(([crop_type_slug, display_name]) => ({ crop_type_slug, display_name })).sort((a, b) => a.display_name.localeCompare(b.display_name)),
     unquantified_total: unquantifiedTotal,
   };
+}
+
+// ── Weight, merged onto the aggregate shape (V4-HARVGRAIN-001) ──────────────────────────────────────
+//
+// Both functions below started life in index.js and moved here, which is the point rather than a
+// tidy-up: index.js imports neon/clerk/aws at module load and CANNOT be imported by the root vitest
+// run at all, so every guard on the merge was necessarily a source-shape regex over the file's text.
+// The merge is exactly the part that fails silently — see the Map-key note on applyWeights — and no
+// regex can prove a Map key. Pure and exported, it is tested by calling it with a rowset.
+
+// Shape one GROUPING-SETS row into the wire weight object. Vocabulary is deliberately IDENTICAL to
+// sumHarvestWeights() in src/lib/harvestWeight.js (grams / measured / estimated / unweighed) so the
+// per-planting client total and the server's season total cannot drift apart in naming or meaning.
+// measured_grams and estimated_grams are carried SEPARATELY on purpose: `grams` is the honest sum
+// (an estimate IS the best available value for its row), but a surface that prints it without
+// saying how much of it was inferred is claiming a precision the number does not have.
+export function shapeWeightRow(r) {
+  const measuredGrams = Number(r?.measured_grams ?? 0);
+  const estimatedGrams = Number(r?.estimated_grams ?? 0);
+  return {
+    grams: measuredGrams + estimatedGrams,
+    measured_grams: measuredGrams,
+    estimated_grams: estimatedGrams,
+    measured: Number(r?.measured_count ?? 0),
+    estimated: Number(r?.estimated_count ?? 0),
+    unweighed: Number(r?.unweighed_count ?? 0),
+  };
+}
+
+// computeAggregates keys a cultivar-less variety bucket with this sentinel; the merge key must use
+// the SAME one or those rows silently miss their weight.
+const NO_VARIETY = '__novar__';
+const varietyKey = (cropSlug, varietyId) => `${cropSlug}|${varietyId ?? NO_VARIETY}`;
+
+// ORDER BY YIELD, name as the tie-break. computeAggregates cannot do this (no weight yet), and
+// alphabetical was actively misleading on the one screen whose question is "which of these
+// produced": live prod ranks Cherry Falls (128 fruit, 763 g, a currant type) above Moskvich
+// Heirloom (65 fruit, 8,233 g). Name order survives as the tie-break so the rows with no derivable
+// weight — which all compare equal at 0 — keep a stable, deterministic order rather than whatever
+// order the Map happened to yield.
+const byWeightThenName = (name) => (a, b) => (
+  (b.weight?.grams ?? 0) - (a.weight?.grams ?? 0)
+  || String(name(a) ?? '').localeCompare(String(name(b) ?? ''))
+);
+
+// Merge the four-level weight rowset onto what computeAggregates() returned, then re-order by it.
+//
+// THE MAP KEY IS THE WHOLE BUG. The two-level predecessor merged with
+// `weightByCrop.set(r.crop_slug, ...)` — keyed on crop ALONE. Adding a (crop, cultivar) member to
+// the GROUPING SETS without changing that key makes every variety row re-set() the crop entry, so
+// the LAST variety's grams overwrite the crop total: tomato would render Cherry Falls' 763 g in
+// place of 27,712 g, destroying the one number this surface already got right. Three levels of
+// grain need three Maps and three discriminators, not one Map and one bit.
+//
+// GROUPING(x) is 1 when x was rolled up in that row's grouping set, so the bits read as a level
+// ladder: (1,1,1) grand total · (0,1,1) crop · (0,0,1) variety · (0,0,0) planting. Reading only
+// `is_total` is not enough — a (crop, NULL-cultivar) row is byte-identical to the (crop) row (same
+// crop_slug, same NULL variety_id) and would land on whichever key was written last.
+//
+// Mutates `aggregates` in place, as the caller's own local: it is a fresh object off
+// computeAggregates and the weight fields are additive keys on it, so copying would only buy a
+// second shape to keep in step.
+export function applyWeights(aggregates, weightRows) {
+  const byCrop = new Map();
+  const byVariety = new Map();
+  const byPlanting = new Map();
+  let total = null;
+  for (const r of weightRows ?? []) {
+    if (Number(r.is_total) === 1) { total = shapeWeightRow(r); continue; }
+    // Crop-less rows at every level are the unattributed bucket (no cultivar -> no crop_slug).
+    // aggregates.other holds those picks and deliberately carries no weight, so they are dropped
+    // here rather than folded into a crop that did not produce them.
+    if (r.crop_slug == null) continue;
+    if (Number(r.varieties_rolled_up) === 1) { byCrop.set(r.crop_slug, shapeWeightRow(r)); continue; }
+    if (Number(r.plantings_rolled_up) === 1) { byVariety.set(varietyKey(r.crop_slug, r.variety_id), shapeWeightRow(r)); continue; }
+    if (r.gn_id != null) byPlanting.set(r.gn_id, shapeWeightRow(r));
+  }
+
+  // Every row gets a weight object even when nothing under it is weighable: an ABSENT key makes a
+  // surface branch on undefined and print nothing, where a zeroed object with unweighed > 0 says
+  // the true thing ("nothing here is weighed yet").
+  aggregates.weight = total ?? shapeWeightRow(null);
+  for (const c of aggregates.crops ?? []) {
+    c.weight = byCrop.get(c.crop_type_slug) ?? shapeWeightRow(null);
+    for (const v of c.varieties ?? []) {
+      v.weight = byVariety.get(varietyKey(c.crop_type_slug, v.variety_id)) ?? shapeWeightRow(null);
+    }
+    c.varieties?.sort(byWeightThenName((v) => v.variety_name));
+  }
+  // Per-planting weight rides first_pick[] rather than a new plantings[] array: that array is
+  // ALREADY the planting-grain row set (one row per plant_id, with its display name) and the
+  // Totals expansion already renders it, so a parallel array would duplicate plant_id and
+  // planting_name to carry one extra field.
+  for (const f of aggregates.first_pick ?? []) {
+    f.weight = byPlanting.get(f.plant_id) ?? shapeWeightRow(null);
+  }
+  aggregates.crops?.sort(byWeightThenName((c) => c.crop_name));
+  return aggregates;
 }
