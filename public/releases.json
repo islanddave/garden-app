@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.31.0",
+    "date": "2026-08-17",
+    "highlights": [
+      "Garden tiles were downloading full-size camera originals — about 71 MB for one screen of 24 plantings. They now use the small versions that already existed, around 5 MB for the same screen. Same picture, thirteen times less to load.",
+      "The plantings picker opens ready to type, instead of making you tap the field first. The old browse-without-the-keyboard mode is still there behind the keyboard button, which now toggles both ways.",
+      "The ready-to-pick tray in a harvest session no longer swallows the screen. With the keyboard open it could take the whole viewport and push the weigh-in form out of sight; it now holds to about half, and long planting names can't push it past that.",
+      "The rain gauge now also rejects a negative daily total. It already refused impossible highs; a day of negative readings was quietly collapsing to a truthful-looking 'no rain'.",
+      "Harvest anchors are re-derived nightly, so a planting whose sowing or potting-up date arrives later gets an updated estimate instead of keeping the one guessed on the day it was added."
+    ]
+  },
+  {
     "version": "4.30.0",
     "date": "2026-08-16",
     "highlights": [
