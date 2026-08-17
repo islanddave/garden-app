@@ -368,7 +368,10 @@ export default function PlantingSelect({
   // waiting to be discovered — which is what makes the 5-tap claim honest. Deliberately LATCHED to
   // the first eligible render rather than tracked live: a prop that re-opened whenever it was
   // truthy would re-open the panel the instant the user dismissed it. Focus is NOT forced — on
-  // Android that would summon the keyboard over the list the user came here to read.
+  // Android that would summon the keyboard over the list the user came here to read. That last
+  // clause SURVIVES V4-PICKERKBDEF-001: this path opens the panel with NO user gesture behind it,
+  // so forcing focus here is focus theft on top of an unrequested keyboard. The new default means
+  // "the tap that opens the picker raises the keyboard", and this open involves no tap.
   autoOpen = false,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
@@ -416,15 +419,33 @@ export default function PlantingSelect({
   // exactly the signal EventNew's sticky Save uses. Feeds chrome-inset zeroing in placement.
   const inOverlay = useInOverlaySurface()
 
-  // V4-PICKERKB-002 + V4-PICKERVOICE-001 — the shared input-mode cluster (keyboard-less open,
-  // ⌨ opt-in, 🎤 voice). Mechanism + rationale live in lib/comboboxInput.js; VarietyPicker is
-  // the device-validated reference consumer.
-  const { kbMode, enableKeyboard, isDeliberateBlur, voiceSupported, voiceState, toggleVoice } =
-    useComboboxInput({
-      open,
-      inputRef,
-      onVoiceText: (t) => { setQuery(t); setOpen(true) },
-    })
+  // V4-PICKERKB-002 + V4-PICKERVOICE-001 — the shared input-mode cluster (⌨ swap, 🎤 voice).
+  // Mechanism + rationale live in lib/comboboxInput.js; VarietyPicker is the other consumer.
+  //
+  // V4-PICKERKBDEF-001 (Dave, 2026-08-16): "I want to now default our plantings picker to have the
+  // keyboard open. The earlier issue with that has been cleared up with other work, and I find I
+  // use it more often than not." defaultMode 'text' is the WHOLE mechanism on Chrome Android —
+  // inputMode="none" was the only thing suppressing the keyboard, so removing it hands the field
+  // back to the browser and the user's own tap raises the keyboard natively. Deliberately NOT
+  // autoFocus: Chrome Android only opens the keyboard for a focus carrying user activation, so
+  // autoFocus would be both ignored on the path that matters and a focus thief on the ones that
+  // don't (autoOpen below, and any host that mounts this mid-flow).
+  //
+  // The "earlier issue" is V4-PICKERKB-001 (Dave, device pass 2026-08-02: keyboard-open left "about
+  // three rows" of list and the sticky Save painted over them). Both halves shipped since:
+  // V4-PICKERUX-001 (onOpenChange suppresses the competing control) and V4-KBVIEWPORT-001
+  // (interactive-widget=resizes-content + the chrome-aware computePlacement above + V4-KBCHROME-001
+  // hiding nav/band while the keyboard is up). The picker now measures the keyboard-shrunk visual
+  // viewport and flips up rather than being clipped by it.
+  const {
+    kbMode, enableKeyboard, disableKeyboard, isDeliberateBlur,
+    voiceSupported, voiceState, toggleVoice,
+  } = useComboboxInput({
+    open,
+    inputRef,
+    defaultMode: 'text',
+    onVoiceText: (t) => { setQuery(t); setOpen(true) },
+  })
 
   const controlled = plants != null
   const rows = controlled ? plants : fetched
@@ -828,9 +849,15 @@ export default function PlantingSelect({
     ? disabledHint
     : (placeholder ?? EMPTY_PLACEHOLDER[emptyMeaning] ?? EMPTY_PLACEHOLDER.unset)
 
-  // V4-PICKERKB-002: ⌨ while the list is open and the keyboard is still suppressed; 🎤 whenever
-  // speech is available and the list is open (independent of kbMode). Mirrors VarietyPicker.
-  const showKbBtn = open && !disabled && kbMode === 'none'
+  // V4-PICKERKB-002: the ⌨ slot while the list is open; 🎤 whenever speech is available and the
+  // list is open (independent of kbMode).
+  // V4-PICKERKBDEF-001: now a TWO-WAY toggle rather than a one-shot opt-in. Flipping the default to
+  // keyboard-open would otherwise have made the old `kbMode === 'none'` condition permanently
+  // false, silently deleting the keyboard-free browse mode V4-PICKERKB-001 was built to give Dave.
+  // "Default" means the other mode still exists — so the same slot now offers whichever direction
+  // is available. `aria-pressed` carries the state (mirrors the 🎤 button's own pattern below).
+  const kbRaised = kbMode === 'text'
+  const showKbBtn = open && !disabled
   const showMicBtn = open && !disabled && voiceSupported
   const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn })
 
@@ -953,18 +980,26 @@ export default function PlantingSelect({
         }}
         autoComplete="off"
       />
-      {/* V4-PICKERKB-002 — "I do want to type". onMouseDown preventDefault keeps input focus so
-          the 150ms blur-close never races the refocus (listbox-row trick). */}
+      {/* V4-PICKERKB-002 / V4-PICKERKBDEF-001 — "I do want to type" and its inverse, "let me see
+          the whole list". onMouseDown preventDefault keeps input focus so the 150ms blur-close
+          never races the refocus (listbox-row trick).
+          APG deviation, deliberate: APG says a toggle button should keep a STABLE label when it
+          carries aria-pressed. This one changes the label AND sets aria-pressed, because the 🎤
+          button eight lines below already ships exactly that shape (device-validated) and two
+          controls sharing one slot cluster that announce themselves differently is worse for a
+          TalkBack user than one mild deviation. The NAME states the action the tap performs; the
+          pressed state states the mode it is in. */}
       {showKbBtn && (
         <button
           type="button"
           onMouseDown={e => e.preventDefault()}
-          onClick={enableKeyboard}
-          aria-label="Type to search plantings"
-          title="Type to search"
+          onClick={kbRaised ? disableKeyboard : enableKeyboard}
+          aria-label={kbRaised ? 'Hide the keyboard and browse plantings' : 'Type to search plantings'}
+          aria-pressed={kbRaised}
+          title={kbRaised ? 'Hide the keyboard' : 'Type to search'}
           style={kbToggleBtnStyle}
         >
-          <span aria-hidden="true">⌨</span>
+          <span aria-hidden="true">{kbRaised ? '⌄' : '⌨'}</span>
         </button>
       )}
       {/* V4-PICKERVOICE-001 — speak the value. Denied mic = quiet disabled state, no modal/toast. */}
