@@ -46,6 +46,32 @@ describe('CareStatus — active band', () => {
     expect(region.getAttribute('aria-label')).toBe('Watering 2 days overdue')
   })
 
+  // C5 — "when did I last water this" had two render sites in all of src/, both behind a menu or a
+  // closed Sheet on a non-default tab. The value ships in the same planting payload as next_water_at.
+  it('renders the last-watered date beside the due state when one is passed', () => {
+    const { container } = render(
+      <CareStatus nextWaterAt={ISO(-2 * DAY - 5000)} lastWateredAt="2026-08-13" locationType={null} />,
+    )
+    expect(container.textContent).toContain('Last watered')
+    expect(container.textContent).toContain('Aug 13')
+    expect(container.textContent).toContain('2 days overdue')   // still the band it was
+  })
+
+  it('omits the last-watered line entirely when there is no date (never watered / not loaded)', () => {
+    for (const v of [null, undefined, '', 'not-a-date']) {
+      const { container } = render(<CareStatus nextWaterAt={ISO(-2 * DAY)} lastWateredAt={v} locationType={null} />)
+      expect(container.textContent).not.toContain('Last watered')
+    }
+  })
+
+  it('does NOT resurrect the band on a calm day — the locked Slice 5a design still holds', () => {
+    // A last-watered date is a fact to ADD to an existing band, never a reason to render a new one.
+    const { container } = render(<CareStatus nextWaterAt={null} lastWateredAt="2026-08-13" locationType={null} />)
+    expect(container.firstChild).toBeNull()
+    const future = render(<CareStatus nextWaterAt={ISO(2 * DAY)} lastWateredAt="2026-08-13" locationType={null} />)
+    expect(future.container.firstChild).toBeNull()
+  })
+
   it("indoor_seedling overdue >= 1 day → terra-bold tier, color sourced from SEVERITY_STYLES (no clone)", () => {
     const { getByRole } = render(
       <CareStatus nextWaterAt={ISO(-1.5 * DAY)} locationType="indoor_seedling" />,

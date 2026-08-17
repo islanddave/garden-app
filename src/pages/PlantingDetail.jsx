@@ -551,14 +551,19 @@ export default function PlantingDetail() {
         ]}
       />
 
-      {/* V200 Slice 5b — full-bleed photo hero (carries the page <h1>, status, key-fact + Details pill). */}
+      {/* V200 Slice 5b — full-bleed photo hero (carries the page <h1>, status, key-fact + Details pill).
+          onOpenDetails no longer does setTab('basics'): forcing the tab on every open meant the Care
+          tab could never become sticky, so no repeat-visit accelerator to the care facts was even
+          representable. The tab now persists for the life of the page, which is the whole point of
+          it being a tab. Cross-mount persistence is deliberately NOT added — that is a stored
+          preference, not a fix for a reset that should never have been here. */}
       <HeroPhoto
         planting={pl}
         src={pl.featured_photo_view_url}
         photoId={pl.featured_photo_id}
         alt={`${name} photo`}
         onOpenLightbox={(i) => openLb(i ?? 0)}
-        onOpenDetails={() => { setTab('basics'); setDetailsOpen(true) }}
+        onOpenDetails={() => setDetailsOpen(true)}
         onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
       />
 
@@ -654,8 +659,10 @@ export default function PlantingDetail() {
         </Link>
       </div>
 
-      {/* Slice 5a — live care band: renders only when this planting needs water (calm → null). */}
-      <CareStatus nextWaterAt={pl.next_water_at} locationType={pl.location_type} />
+      {/* Slice 5a — live care band: renders only when this planting needs water (calm → null).
+          last_watered_at rides in the same record load, so surfacing it here is free and lifts
+          "when did I last water this" out of the Details fly-up's non-default Care tab. */}
+      <CareStatus nextWaterAt={pl.next_water_at} lastWateredAt={pl.last_watered_at} locationType={pl.location_type} />
 
       {/* V4-PLANTINGUI-001 — primary quick-actions: water / photo. (V4-STATUSTAP-001: status
           moved to the hero StatusPicker.) */}

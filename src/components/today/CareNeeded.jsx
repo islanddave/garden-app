@@ -10,8 +10,8 @@ import Sheet from '../forms/Sheet.jsx'
 import Icon from '../Icon.jsx'
 import PhotoImg from '../PhotoImg.jsx'
 import {
-  buildCareNeeded, groupRows, bedWaitActive,
-  NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ALL_THRESHOLD, splitContainersBeds,
+  buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
+  NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
 } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
 
@@ -134,14 +134,15 @@ function SubHeader({ label }) {
   )
 }
 
-function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode }) {
+function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode, onShowAll }) {
   const panelId = 'care-group-' + group.key
   return (
     <div style={{ border: '1px solid ' + P.border, borderRadius: 12, background: P.white, overflow: 'hidden' }}>
       <button type="button" onClick={onToggle} aria-expanded={expanded} aria-controls={panelId}
         style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '12px 14px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.dark, minHeight: 52 }}>
         <span style={{ flex: 1, fontSize: '0.98rem', fontWeight: 700 }}>{group.label}</span>
-        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: P.green, background: P.greenPale, borderRadius: 999, padding: '2px 9px' }}>{group.rows.length}</span>
+        {/* TRUE count, never the capped one — the staleness cap changes what renders, not what exists. */}
+        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: P.green, background: P.greenPale, borderRadius: 999, padding: '2px 9px' }}>{group.count}</span>
         <span aria-hidden="true" style={{ color: P.light, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>▾</span>
       </button>
       {expanded && (
@@ -164,6 +165,12 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode }) 
             }
             return group.rows.map(R)
           })()}
+          {group.hidden > 0 && (
+            <button type="button" onClick={onShowAll}
+              style={{ display: 'block', width: '100%', minHeight: 44, borderTop: '1px solid ' + P.border, border: 'none', background: 'none', color: P.green, fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
+              Show {group.hidden} more
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -266,10 +273,31 @@ export default function CareNeeded({ plan }) {
     () => rows.map(r => { const e = enrichById[r.plantingId]; return e ? { ...r, ...e } : r }),
     [rows, enrichById],
   )
-  const groups = useMemo(() => groupRows(enrichedRows, mode), [enrichedRows, mode])
+  // Staleness state (skeptic seat): when half the water list rests on a record >= WATER_STALE_DAYS
+  // old, the honest claim is "no recent record", not "N plantings are thirsty" — so the note below
+  // says so and each group renders at most WATER_STALE_CAP water rows until Dave asks for the rest.
+  //
+  // The cap is applied PER GROUP, after grouping. Capping the flat row list globally (most-overdue
+  // first) would undo the group-severity fix in the same breath: on live 2026-08-17 the 20
+  // most-overdue rows are 4 from a 4-row outlier group and 14 from the 116-row one, so the outlier
+  // group would win the severity sort again inside the capped set. Per-group keeps the ordering
+  // honest and puts the cap exactly where the wall is.
+  //
+  // The cap does NOT touch the bulk candidate set below. "Log all watering (194)" is Dave asserting
+  // what HE did — an input, not a claim this surface is making — and 92% of his watering goes
+  // through that one action, so taxing it to make a display point would be the wrong trade.
+  const staleness = useMemo(() => waterStaleness(plan), [plan])
+  const [showCapped, setShowCapped] = useState(false)
+  const capping = staleness.stale && !showCapped
+  const groups = useMemo(() => {
+    const gs = groupRows(enrichedRows, mode)
+    return gs.map(g => {
+      const c = capping ? capStaleRows(g.rows, WATER_STALE_CAP) : { rows: g.rows, hidden: 0 }
+      return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length }
+    })
+  }, [enrichedRows, mode, capping])
   const total = rows.length
-  const expandAll = total <= EXPAND_ALL_THRESHOLD
-  const autoExpandKey = groups.length ? groups[0].key : null  // most-overdue group (groupRows sorts it first)
+  const autoKeys = useMemo(() => autoExpandKeys(groups, EXPAND_ROW_BUDGET), [groups])
 
   const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
 
@@ -392,7 +420,7 @@ export default function CareNeeded({ plan }) {
     })
   }, [fetch, toast, candidatesFor, announce])
 
-  const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : (expandAll || g.key === autoExpandKey)
+  const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : autoKeys.has(g.key)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -412,6 +440,13 @@ export default function CareNeeded({ plan }) {
             </h2>
             <GroupByControl options={GROUP_OPTS} value={mode} onChange={setMode} />
           </div>
+
+          {staleness.stale && (
+            <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, padding: '0 2px' }}>
+              No recent watering record — half of these rest on a check {staleness.daysSince}+ days old.
+              {capping && ' Showing the longest-waiting ' + WATER_STALE_CAP + ' per group.'}
+            </div>
+          )}
 
           {presentTypes.length > 0 && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -438,8 +473,9 @@ export default function CareNeeded({ plan }) {
 
           {groups.map(g => (
             <Group key={g.key} group={g} expanded={isExpanded(g)}
-              onToggle={() => setOverrides(prev => ({ ...prev, [g.key]: !((g.key in prev) ? prev[g.key] : (expandAll || g.key === autoExpandKey)) }))}
-              pendingKeys={pendingKeys} onLog={logRow} onSkip={skipRow} mode={mode} />
+              onToggle={() => setOverrides(prev => ({ ...prev, [g.key]: !((g.key in prev) ? prev[g.key] : autoKeys.has(g.key)) }))}
+              pendingKeys={pendingKeys} onLog={logRow} onSkip={skipRow} mode={mode}
+              onShowAll={() => setShowCapped(true)} />
           ))}
 
           <RainNote plan={plan} />

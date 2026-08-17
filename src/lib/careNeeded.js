@@ -107,14 +107,32 @@ export function buildCareNeeded(plan) {
   return rows
 }
 
-// Group-severity score: water-overdue dominates so the "most overdue" group sorts first and is the
-// auto-expand target on a long list. Non-water needs score ~0 (present but not on an overdue clock).
+// The two buckets that ride the watering clock. water_due is an INFERENCE from elapsed time;
+// no_history is a FACT ("never watered"). They score the same for ordering but are treated
+// differently by the staleness cap below, which only ever withholds inferences.
+const WATER_NEEDS = new Set(['water_due', 'no_history'])
+
+// Per-row severity. A water row is worth its presence (1) plus its overdue days; anything else is
+// present but not on an overdue clock, so it scores a fraction of one row.
+function rowSeverity(r) {
+  if (!WATER_NEEDS.has(r.need)) return 0.5
+  return 1 + (typeof r.overdueBy === 'number' && r.overdueBy > 0 ? r.overdueBy : 0)
+}
+
+// Group-severity score = the SUM of row severities, i.e. the group's total overdue-day backlog with
+// each row's presence counted once.
+//
+// Was max(overdue_by), which cannot see mass and inverted the screen on live data: on 2026-08-17
+// "Legacy Pasture In-Ground" (4 rows, one 19-day outlier) scored 19 and "Bag Area" (116 rows = 60%
+// of the list, max overdue 3) scored 3, so the list opened auto-expanded on 4 of 206 items behind 12
+// collapsed headers. Sum makes that 70 vs 400 — the biggest real backlog leads. A single outlier can
+// still win, but only against a group it genuinely outweighs.
+//
+// REJECTED: mean overdue (max's twin — a 1-row group at 19 beats 116 rows at 3, same defect);
+// max × log(count) (tunable, unexplainable, and no more correct than the thing it replaces).
 export function groupSeverity(rows) {
-  let s = -1
-  for (const r of rows) {
-    const v = r.need === 'water_due' ? (typeof r.overdueBy === 'number' ? r.overdueBy : 0) : -0.5
-    if (v > s) s = v
-  }
+  let s = 0
+  for (const r of rows) s += rowSeverity(r)
   return s
 }
 
@@ -139,9 +157,91 @@ export function groupRows(rows, mode) {
   return groups
 }
 
-// ADHD chunking: <= this many total needs => all groups expanded; more => collapse all but the
-// most-overdue group (expand-all defeats chunking — build-plan Slice 7).
-export const EXPAND_ALL_THRESHOLD = 8
+// ADHD chunking, as a cumulative ROW budget across groups rather than an all-or-nothing gate on the
+// total. Same tuned chunk size as the old EXPAND_ALL_THRESHOLD (8 — expand-all defeats chunking,
+// build-plan Slice 7); what changed is that "8 total needs => expand everything, 9 => expand exactly
+// one group" had a cliff in it. A budget degrades: a 9-need day opens as many groups as fit in 8
+// rows instead of collapsing all but one. Renamed because the semantics moved — a constant that
+// still read THRESHOLD would be silently reinterpreted by the next reader.
+export const EXPAND_ROW_BUDGET = 8
+
+// Which groups open on load. Walks groups in their sorted order (groupRows put the heaviest first)
+// and opens them while the running row count fits the budget. The LEAD group always opens even when
+// it alone blows the budget — an opening screen with every group collapsed shows nothing, which is
+// the failure this whole path exists to avoid. Pure: the component holds only the user's overrides.
+export function autoExpandKeys(groups, budget = EXPAND_ROW_BUDGET) {
+  const keys = new Set()
+  if (!Array.isArray(groups) || groups.length === 0) return keys
+  let used = 0
+  for (const g of groups) {
+    const n = Array.isArray(g.rows) ? g.rows.length : 0
+    if (keys.size === 0) { keys.add(g.key); used = n; continue }
+    if (used + n > budget) break
+    keys.add(g.key); used += n
+  }
+  return keys
+}
+
+// ── Watering staleness (V4-WATERMATH-001 / skeptic seat) ────────────────────────────────────────
+// The wall this exists for is a PHASE-LOCKING artifact, not a cadence defect: Dave waters the whole
+// garden in one batch action, so every planting's due-clock locks into one cohort and the due count
+// jumps 42 -> 237 in a single day, then self-resolves the moment he logs. Live: it sat at 232-258
+// for eight straight days in late July. Re-tuning intervals or the guessed-cadence rate cannot fix
+// that. What CAN be fixed is the claim: the surface asserts "194 plantings are thirsty" when what it
+// actually knows is "194 plantings have no recent record."
+//
+// N = 3 DAYS, from two independent anchors. (a) The engine's own naked fallback interval is 3 days,
+// so by day 3 of silence every planting in the garden has crossed its clock on elapsed time alone —
+// before that a long list still carries information (the wi=1 cohort really is due). (b) It
+// discriminates on 30 days of live stored plans: it fires on every wall day (08-17 median 4, 08-16
+// median 3, 07-30 median 3, 07-24 median 3 — all 153-194 due) and stays silent on every big list
+// whose record is fresh (08-15 134 due at median 2, 07-26 154 at 2, 08-08 109 at 1).
+export const WATER_STALE_DAYS = 3
+
+// Rows a group renders while stale. ~One phone screen of 48px rows; the rest is one tap away and the
+// group header still carries the TRUE count, so nothing disappears from the mental model.
+export const WATER_STALE_CAP = 20
+
+// Is today's water list resting on absence-of-record? Reads `days_since` — the engine already emits
+// it on every water_due row (engine.js:604) — so this costs ZERO new requests and no plan-shape
+// change. MEDIAN, deliberately: min() is defeated by the wi=1 cohort (it read 1 or 2 on all 30 live
+// days including the 194-item one, so a min-based flag could never fire) and max() is defeated by a
+// single 19-day straggler (it would fire every day). The median says what we actually want to claim
+// — that more than half of these rows rest on a record at least N days old. Lower median on even
+// counts, so the flag never overstates. Absent/unparseable days_since => not stale: we only ever
+// suppress an assertion when we can positively show the record is old.
+export function waterStaleness(plan, staleDays = WATER_STALE_DAYS) {
+  const items = Array.isArray(plan && plan.water_due) ? plan.water_due : []
+  const ds = []
+  for (const it of items) {
+    if (it && !it.done && typeof it.days_since === 'number' && isFinite(it.days_since)) ds.push(it.days_since)
+  }
+  if (ds.length === 0) return { stale: false, daysSince: null, sampled: 0 }
+  ds.sort((a, b) => a - b)
+  const median = ds[(ds.length - 1) >> 1]
+  return { stale: median >= staleDays, daysSince: median, sampled: ds.length }
+}
+
+// Withhold water_due rows past `limit`, keeping every other row. Rows arrive most-overdue-first
+// (engine order, preserved by buildCareNeeded), so the kept ones are the longest-waiting.
+//
+// water_due ONLY. no_history means "this planting has never been watered" — a fact, not an inference
+// from elapsed time — so a stale record is no reason to hide it, and pest/feed/cold needs are not on
+// the watering clock at all. Same reasoning that keeps moisture_check out of the no_history done-set.
+//
+// Returns the input array by identity when nothing is withheld, so a non-stale day re-renders
+// exactly as before.
+export function capStaleRows(rows, limit = WATER_STALE_CAP) {
+  const src = rows || []
+  if (!(typeof limit === 'number' && limit >= 0)) return { rows: src, hidden: 0 }
+  let kept = 0, hidden = 0
+  const out = []
+  for (const r of src) {
+    if (r.need !== 'water_due') { out.push(r); continue }
+    if (kept < limit) { out.push(r); kept++ } else hidden++
+  }
+  return hidden ? { rows: out, hidden } : { rows: src, hidden: 0 }
+}
 
 // V4-TODAYLOC-001 — within a location group, split rows into in-ground beds vs containers/pots.
 // A row is a BED if it's in_ground or its container_type is a ground bed; everything else is a

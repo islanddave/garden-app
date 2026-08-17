@@ -65,6 +65,36 @@ describe('V4-WATERMATH-001 F0 — moisture_check is scoped to Water only', () =>
   });
 });
 
+describe('pest — `doctored` is the live treatment vocabulary', () => {
+  // The regression this locks: DONE_EVENTS.pest was written before `doctored` shipped (2026-06-08)
+  // and never followed it. `doctored` then completely displaced `pest_treatment` (510 events / 239
+  // in 30 days vs 405 lifetime and zero since 2026-07-17), so the only treatment type still in use
+  // could not check off the task it satisfies.
+  it('a doctored event marks its pest item done', () => {
+    expect(applyDone(plan(), sat('p3|doctored')).pest[0].done).toBe(true);
+  });
+
+  it('observation and pest_treatment still satisfy pest (both retained, nothing displaced)', () => {
+    expect(applyDone(plan(), sat('p3|observation')).pest[0].done).toBe(true);
+    expect(applyDone(plan(), sat('p3|pest_treatment')).pest[0].done).toBe(true);
+    expect(DONE_EVENTS.pest).toEqual(['observation', 'pest_treatment', 'doctored']);
+  });
+
+  // Scoping, in the same shape as the moisture_check guard above: a treatment is a pest answer and
+  // nothing else. Doctoring a plant establishes no watering history and is not a feeding.
+  it('doctored satisfies pest ONLY', () => {
+    const out = applyDone(plan(), sat('p1|doctored', 'p2|doctored', 'p4|doctored', 'p5|doctored'));
+    expect(out.water_due[0].done).toBe(false);
+    expect(out.no_history[0].done).toBe(false);
+    expect(out.fertilize[0].done).toBe(false);
+    expect(out.cold[0].done).toBe(false);
+    const buckets = Object.entries(DONE_EVENTS)
+      .filter(([, types]) => types.includes('doctored'))
+      .map(([k]) => k);
+    expect(buckets).toEqual(['pest']);
+  });
+});
+
 describe('applyDone / planItemIds — fold mechanics', () => {
   it('collects ids across every actionable bucket and skips id-less items', () => {
     const ids = planItemIds(plan({ water_due: [{ id: 'p1' }, { name: 'no id' }, null] }));

@@ -4,8 +4,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildCareNeeded, groupRows, needReason, needTier, bedWaitActive, groupSeverity,
-  splitContainersBeds, isBedRow,
-  NEED_EVENT_TYPE, EXPAND_ALL_THRESHOLD,
+  splitContainersBeds, isBedRow, autoExpandKeys, waterStaleness, capStaleRows,
+  NEED_EVENT_TYPE, EXPAND_ROW_BUDGET, WATER_STALE_DAYS, WATER_STALE_CAP,
 } from '../lib/careNeeded.js'
 
 // Golden plan exercising every bucket + the hard cases: a planting in two buckets (dedup→two rows),
@@ -80,17 +80,17 @@ describe('grouping + bed-wait + expansion', () => {
     const g = groupRows(buildCareNeeded(GOLDEN), 'type')
     expect(g.map(x => x.key)).toEqual(['water_due', 'no_history', 'fertilize', 'pest', 'cold'])
   })
-  it('By location sorts the most-overdue group first (auto-expand target)', () => {
+  it('By location sorts the heaviest group first (auto-expand target)', () => {
     const g = groupRows(buildCareNeeded(GOLDEN), 'location')
-    expect(g[0].key).toBe('prP')           // Peppers holds the 4d-overdue water need
-    expect(groupSeverity(g[0].rows)).toBe(4)
+    expect(g[0].key).toBe('prP')           // Peppers: two water rows (4d + 2d) plus a feed
+    expect(groupSeverity(g[0].rows)).toBe(8.5)   // (1+4) + (1+2) + 0.5
   })
   it('bedWaitActive fires on the engine rain-callout gate', () => {
     expect(bedWaitActive(GOLDEN)).toBe(true)
     expect(bedWaitActive({ hydrology: { tomorrow_precip_in: 0.1, tomorrow_pop: 90 } })).toBe(false)
   })
-  it('EXPAND_ALL_THRESHOLD is a small ADHD-friendly chunk', () => {
-    expect(EXPAND_ALL_THRESHOLD).toBe(8)
+  it('EXPAND_ROW_BUDGET is a small ADHD-friendly chunk', () => {
+    expect(EXPAND_ROW_BUDGET).toBe(8)
   })
 
   it('V4-TODAYLOC-001: By location keys on real locationId/name when rows are enriched', () => {
@@ -115,5 +115,137 @@ describe('grouping + bed-wait + expansion', () => {
     expect(containers.map(r => r.key)).toEqual(['c1', 'c2'])
     expect(isBedRow({ inGround: true })).toBe(true)
     expect(isBedRow({ containerType: 'plastic_pot' })).toBe(false)
+  })
+})
+
+// ── Group severity must see MASS, not just the worst row ────────────────────────────────────────
+// Shapes taken from live prod, daily_plan 2026-08-17: "Bag Area" 116 water rows at overdue<=3 vs
+// "Legacy Pasture In-Ground" 4 rows carrying a 19-day outlier. Under the old max(overdue_by) the
+// 4-row group scored 19 to Bag Area's 3 and the screen opened on 4 of 206 items.
+describe('groupSeverity — mass-weighted (C4)', () => {
+  const water = (key, loc, overdueBy) => ({ key, need: 'water_due', overdueBy, locationId: loc, locationName: loc })
+  const BAG = Array.from({ length: 116 }, (_, i) => water('bag' + i, 'Bag Area', i < 14 ? 3 : 2))
+  const PASTURE = [19, 19, 16, 12].map((o, i) => water('pas' + i, 'Legacy Pasture In-Ground', o))
+
+  it('the 116-row group outranks the 4-row group holding a 19-day outlier', () => {
+    const g = groupRows([...PASTURE, ...BAG], 'location')
+    expect(g[0].label).toBe('Bag Area')
+    expect(g[0].severity).toBeGreaterThan(g[1].severity)
+  })
+
+  it('MUTATION GUARD: max(overdue_by) would invert this — the outlier group must NOT lead', () => {
+    // If groupSeverity regresses to any max/mean aggregate this flips, because Pasture wins both.
+    const g = groupRows([...PASTURE, ...BAG], 'location')
+    const maxOverdue = (rows) => Math.max(...rows.map(r => r.overdueBy))
+    expect(maxOverdue(g[1].rows)).toBeGreaterThan(maxOverdue(g[0].rows))
+  })
+
+  it('a single row still scores its presence plus its overdue days; non-water rows score a fraction', () => {
+    expect(groupSeverity([water('x', 'L', 4)])).toBe(5)
+    expect(groupSeverity([water('x', 'L', 0)])).toBe(1)
+    expect(groupSeverity([{ key: 'p', need: 'pest' }])).toBe(0.5)
+    // Two due-today rows outweigh one due-today row: presence is what mass is made of.
+    expect(groupSeverity([water('a', 'L', 0), water('b', 'L', 0)])).toBe(2)
+  })
+
+  it('never_watered rows ride the water clock too (no_history is not a "fraction" need)', () => {
+    expect(groupSeverity([{ key: 'n', need: 'no_history', overdueBy: null }])).toBe(1)
+  })
+})
+
+describe('autoExpandKeys — cumulative row budget', () => {
+  const g = (key, n) => ({ key, rows: Array.from({ length: n }, (_, i) => ({ key: key + i })) })
+
+  it('opens every group when they all fit the budget (the old expand-all case)', () => {
+    expect([...autoExpandKeys([g('a', 3), g('b', 3), g('c', 2)], 8)]).toEqual(['a', 'b', 'c'])
+  })
+
+  it('stops at the budget instead of collapsing everything but one', () => {
+    // The cliff the old total<=8 gate had: 9 total needs used to collapse all but the lead group.
+    expect([...autoExpandKeys([g('a', 5), g('b', 3), g('c', 1)], 8)]).toEqual(['a', 'b'])
+  })
+
+  it('always opens the lead group even when it alone blows the budget', () => {
+    // An opening screen with everything collapsed shows nothing — the C4 failure itself.
+    expect([...autoExpandKeys([g('a', 116), g('b', 4)], 8)]).toEqual(['a'])
+  })
+
+  it('returns an empty set for no groups', () => {
+    expect(autoExpandKeys([], 8).size).toBe(0)
+    expect(autoExpandKeys(null, 8).size).toBe(0)
+  })
+})
+
+// ── Watering staleness (C1) ─────────────────────────────────────────────────────────────────────
+describe('waterStaleness — median days_since, not min or max', () => {
+  const due = (...daysSince) => ({ water_due: daysSince.map((d, i) => ({ id: 'p' + i, days_since: d })) })
+
+  it('fires when half the list rests on a record >= WATER_STALE_DAYS old', () => {
+    // Live 2026-08-17 shape: 194 due, median days_since 4, 93% at >= 4.
+    const s = waterStaleness(due(2, 4, 4, 4, 4))
+    expect(s.stale).toBe(true)
+    expect(s.daysSince).toBe(4)
+    expect(s.sampled).toBe(5)
+  })
+
+  it('stays silent on a big list whose record is fresh', () => {
+    // Live 2026-08-15: 134 due at median 2 — Dave logged two days ago, the wi=1 cohort really is due.
+    expect(waterStaleness(due(1, 2, 2, 2, 3)).stale).toBe(false)
+  })
+
+  it('MUTATION GUARD: min() could never fire and max() would fire every day', () => {
+    // Both defeated on the SAME live-shaped input: one fresh wi=1 row and one long straggler.
+    const plan = due(1, 4, 4, 4, 19)
+    expect(Math.min(...plan.water_due.map(x => x.days_since))).toBe(1)   // min => never stale
+    expect(Math.max(...plan.water_due.map(x => x.days_since))).toBe(19)  // max => always stale
+    expect(waterStaleness(plan).daysSince).toBe(4)
+    expect(waterStaleness(plan).stale).toBe(true)
+    // ...and the same straggler must NOT drag a fresh list over the line.
+    expect(waterStaleness(due(1, 1, 2, 19)).stale).toBe(false)
+  })
+
+  it('takes the LOWER median on an even count, so the flag never overstates', () => {
+    expect(waterStaleness(due(2, 4)).daysSince).toBe(2)
+    expect(waterStaleness(due(2, 4)).stale).toBe(false)
+  })
+
+  it('is not stale when there is nothing to measure (absent/null/checked-off days_since)', () => {
+    expect(waterStaleness(null)).toEqual({ stale: false, daysSince: null, sampled: 0 })
+    expect(waterStaleness({ water_due: [] }).stale).toBe(false)
+    expect(waterStaleness({ water_due: [{ id: 'a' }, { id: 'b', days_since: null }] }).stale).toBe(false)
+    expect(waterStaleness({ water_due: [{ id: 'a', days_since: 9, done: true }] }).sampled).toBe(0)
+  })
+
+  it('pins the threshold at the engine naked-fallback interval', () => {
+    expect(WATER_STALE_DAYS).toBe(3)
+  })
+})
+
+describe('capStaleRows — withholds inferences, never facts', () => {
+  const w = (i) => ({ key: 'w' + i, need: 'water_due' })
+
+  it('keeps the first `limit` water_due rows (engine order = longest-waiting first)', () => {
+    const { rows, hidden } = capStaleRows(Array.from({ length: 30 }, (_, i) => w(i)), 20)
+    expect(rows.length).toBe(20)
+    expect(hidden).toBe(10)
+    expect(rows[0].key).toBe('w0')
+  })
+
+  it('never withholds no_history / pest / feed / cold rows', () => {
+    const rows = [w(0), w(1), { key: 'n', need: 'no_history' }, { key: 'p', need: 'pest' }, { key: 'c', need: 'cold' }]
+    const out = capStaleRows(rows, 1)
+    expect(out.rows.map(r => r.key)).toEqual(['w0', 'n', 'p', 'c'])
+    expect(out.hidden).toBe(1)
+  })
+
+  it('returns the input array by identity when nothing is withheld', () => {
+    const rows = [w(0), w(1)]
+    const out = capStaleRows(rows, 20)
+    expect(out.rows).toBe(rows)
+    expect(out.hidden).toBe(0)
+  })
+
+  it('caps at about one phone screen of rows', () => {
+    expect(WATER_STALE_CAP).toBe(20)
   })
 })

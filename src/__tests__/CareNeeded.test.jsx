@@ -247,6 +247,67 @@ describe('CareNeeded — Slice 7', () => {
     await waitFor(() => expect(screen.getByText('Bhut Jolokia')).toBeTruthy())
   })
 
+  // ── C1/C4: the staleness state and the group-severity/expand rules, at the component seam ──
+  // Shapes are the live 2026-08-17 plan: "Bag Area" 116 rows at overdue<=3, "Legacy Pasture
+  // In-Ground" 4 rows carrying a 19-day outlier, median days_since 4 across the list.
+  describe('stale plan + long list', () => {
+    const bigPlan = ({ daysSince = 4 } = {}) => ({
+      hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10 },
+      rain_skipped: [],
+      water_due: [
+        ...[19, 19, 16, 12].map((o, i) => ({
+          id: 'pas' + i, name: 'Pasture ' + i, project: 'Legacy Pasture In-Ground',
+          project_id: 'prPasture', overdue_by: o, days_since: 19, in_ground: true,
+        })),
+        ...Array.from({ length: 116 }, (_, i) => ({
+          id: 'bag' + i, name: 'Bag ' + i, project: 'Bag Area',
+          project_id: 'prBag', overdue_by: i < 14 ? 3 : 2, days_since: daysSince, in_ground: false,
+        })),
+      ],
+      no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
+    })
+
+    it('opens on the group holding the mass, not the 4-row group with the worst outlier', () => {
+      render(<CareNeeded plan={bigPlan()} />)
+      // The 116-row group is expanded (its rows are in the DOM); the 4-row outlier group is not.
+      expect(screen.getByText('Bag 0')).toBeTruthy()
+      expect(screen.queryByText('Pasture 0')).toBeNull()
+    })
+
+    it('says "no recent watering record" instead of asserting 120 thirsty plantings', () => {
+      render(<CareNeeded plan={bigPlan()} />)
+      expect(screen.getByText(/No recent watering record/i)).toBeTruthy()
+    })
+
+    it('caps the expanded group at WATER_STALE_CAP rows while the header keeps the TRUE count', () => {
+      render(<CareNeeded plan={bigPlan()} />)
+      expect(screen.getByText('Bag 19')).toBeTruthy()
+      expect(screen.queryByText('Bag 20')).toBeNull()
+      expect(screen.getByText('116')).toBeTruthy()          // group badge, uncapped
+      expect(screen.getByRole('button', { name: /Show 96 more/i })).toBeTruthy()
+    })
+
+    it('"Show N more" restores the full list', () => {
+      render(<CareNeeded plan={bigPlan()} />)
+      fireEvent.click(screen.getByRole('button', { name: /Show 96 more/i }))
+      expect(screen.getByText('Bag 115')).toBeTruthy()
+      expect(screen.queryByText(/Showing the longest-waiting/i)).toBeNull()
+    })
+
+    it('the cap never shrinks the bulk action — 92% of watering goes through that one tap', () => {
+      render(<CareNeeded plan={bigPlan()} />)
+      expect(screen.getByRole('button', { name: /^Log all watering \(120\)$/i })).toBeTruthy()
+    })
+
+    it('a fresh record leaves the list uncapped and unannotated, however long it is', () => {
+      // Live 2026-08-15: 134 due at median days_since 2 — the wi=1 cohort really is due.
+      render(<CareNeeded plan={bigPlan({ daysSince: 2 })} />)
+      expect(screen.queryByText(/No recent watering record/i)).toBeNull()
+      expect(screen.getByText('Bag 115')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: /Show \d+ more/i })).toBeNull()
+    })
+  })
+
   it('bulk undo failure keeps rows hidden + error toast', async () => {
     let n = 0
     fetchMock.mockImplementation((path, opts) => {

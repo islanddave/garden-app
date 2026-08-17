@@ -20,13 +20,32 @@
 // A11y (SC 1.4.1 — color is never the sole channel): the ACTIVE band carries THREE channels —
 // (a) a care.drop Icon in the band's text color, (b) a text headline + overdue label, and
 // (c) the bg/border/text color. role=status + aria-live=polite announce the state on change.
+//
+// `lastWateredAt` (additive) answers "when did I last water this" IN PLACE. It had exactly two
+// render sites in all of src/ — the Dashboard More-menu and the PlantingDetail Care tab, which sits
+// inside a Sheet that opens closed on a non-default tab: five taps, and until the tab reset at
+// PlantingDetail's HeroPhoto was removed the Care tab could not even become sticky, so the route
+// was unlearnable. The value already rides in the same planting payload as next_water_at, so this
+// costs no request. Rendered as an ABSOLUTE date, not "N days ago": the band's own overdue label is
+// already a days count measured from next_water_at, and two adjacent day-counts that legitimately
+// differ by the watering interval would read as a contradiction.
+//
+// The CALM states above still render nothing — that is the locked Slice 5a design (on calm days the
+// hero leads), and this is a fact ADDED to an existing band, not a reason to introduce a new one.
 import React from 'react'
 import { severityTier, SEVERITY_STYLES, overdueLabel } from '../lib/waterDue.js'
 import Icon from './Icon.jsx'
 
 const SIZE_PX = { sm: 16, md: 20, lg: 24 }
 
-export default function CareStatus({ nextWaterAt, locationType, size = 'md', variant = 'band' }) {
+function fmtShortDate(value) {
+  if (!value) return null
+  const d = new Date(typeof value === 'string' && value.length === 10 ? value + 'T00:00:00' : value)
+  if (isNaN(d.getTime())) return null
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+export default function CareStatus({ nextWaterAt, lastWateredAt, locationType, size = 'md', variant = 'band' }) {
   // CALM — no schedule at all.
   if (nextWaterAt == null) return null
 
@@ -41,6 +60,7 @@ export default function CareStatus({ nextWaterAt, locationType, size = 'md', var
   const style = SEVERITY_STYLES[tier]
   const headline = label === 'due today' ? 'Due today' : 'Overdue'
   const iconPx = SIZE_PX[size] ?? SIZE_PX.md
+  const lastWatered = fmtShortDate(lastWateredAt)
 
   if (variant !== 'band') return null
 
@@ -63,11 +83,18 @@ export default function CareStatus({ nextWaterAt, locationType, size = 'md', var
     >
       {/* Channel (a): mono icon rendered in the band's text color (currentColor tracks style.text). */}
       <Icon name="care.drop" size={iconPx} decorative style={{ color: style.text, flexShrink: 0 }} />
-      {/* Channel (b): text headline + (for overdue) the precise label. */}
+      {/* Channel (b): text headline + (for overdue) the precise label, then the last-watered fact. */}
       <span style={{ minWidth: 0 }}>
-        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{headline}</span>
-        {label !== 'due today' && (
-          <span style={{ fontWeight: 400, fontSize: '0.9rem' }}> · {label}</span>
+        <span style={{ display: 'block' }}>
+          <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{headline}</span>
+          {label !== 'due today' && (
+            <span style={{ fontWeight: 400, fontSize: '0.9rem' }}> · {label}</span>
+          )}
+        </span>
+        {lastWatered && (
+          <span style={{ display: 'block', fontWeight: 400, fontSize: '0.78rem', opacity: 0.85 }}>
+            Last watered {lastWatered}
+          </span>
         )}
       </span>
     </div>

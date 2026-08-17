@@ -24,11 +24,21 @@
 // index.js and canon watering-cadence-math-design-V100 §"Pre-F2 interim snooze semantics". Without
 // the rolling window a 09:00 snooze re-nags at the next morning's run ~21h later, which is the
 // extinction pattern the design exists to avoid. Superseded by the engine fold at F2.
+//
+// `doctored` joins pest because it DISPLACED `pest_treatment` in practice, not alongside it: on live
+// prod `doctored` carries 510 events (239 in the last 30 days) while `pest_treatment` stopped dead at
+// 2026-07-17 with 405 lifetime and ZERO in 30 days. The set was written against the vocabulary that
+// existed before `doctored` shipped (2026-06-08) and never followed it, so the treatment event Dave
+// actually logs could not retire the task it satisfies. Measured present damage is 1 item only
+// because he pairs an `observation` with most `doctored` rows and `observation` already satisfies —
+// this is a forward risk that the masking hides, not a live incident. REJECTED: dropping
+// `pest_treatment`. 405 historical rows still exist, nothing forbids the type, and removing a
+// satisfying type can only ever un-check a task that used to check off.
 export const DONE_EVENTS = {
   water_due:  ['watering', 'rain', 'moisture_check'],
   no_history: ['watering', 'rain'],
   fertilize:  ['fertilizing'],
-  pest:       ['observation', 'pest_treatment'],
+  pest:       ['observation', 'pest_treatment', 'doctored'],
   cold:       ['brought_inside', 'cover'],
 };
 
