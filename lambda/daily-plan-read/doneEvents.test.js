@@ -57,11 +57,25 @@ describe('V4-WATERMATH-001 F0 — moisture_check is scoped to Water only', () =>
     expect(DONE_EVENTS.no_history).not.toContain('moisture_check');
   });
 
-  it('water_due is the ONLY bucket moisture_check satisfies', () => {
+  // V4-OVERWINTER-001 widened this from "water_due ONLY" to "the two watering-clock buckets ONLY".
+  // The overwintering row IS a soil check — moisture_check is its PRIMARY satisfying event, not a
+  // borrowed one — so the guard's real content was never the single name, it was that the type stays
+  // out of pest and out of no_history. Both of those remain asserted, above and here, and the
+  // allow-list is exact: add moisture_check to any third bucket and this goes red.
+  it('only the watering-clock buckets are satisfied by moisture_check', () => {
     const buckets = Object.entries(DONE_EVENTS)
       .filter(([, types]) => types.includes('moisture_check'))
       .map(([k]) => k);
-    expect(buckets).toEqual(['water_due']);
+    expect(buckets).toEqual(['water_due', 'overwintering']);
+  });
+
+  // The overwintering card must be retirable by the honest winter answer ("felt it, still damp").
+  // Without this the reduced-cadence check re-cards every night once the interval passes.
+  it('a moisture_check retires an overwintering item', () => {
+    const p = { ...plan(), overwintering: [{ id: 'p8', name: 'Winterbor Kale' }] };
+    expect(applyDone(p, sat('p8|moisture_check')).overwintering[0].done).toBe(true);
+    expect(applyDone(p, sat('p8|watering')).overwintering[0].done).toBe(true);
+    expect(applyDone(p, sat('p8|observation')).overwintering[0].done).toBe(false);
   });
 });
 

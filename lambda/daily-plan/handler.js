@@ -752,6 +752,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- matches the engine's own UTC date math (new Date(iso.slice(0,10)+'T00:00:00Z')). Soft-deleted events excluded.
            to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type in ('watering','rain') and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_water,
            to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='fertilizing' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_fert,
+           -- V4-OVERWINTER-001: the overwintering soil check is satisfied by a moisture_check, not only by
+           -- a watering — "I felt it, it is still damp" is the CORRECT answer to a winter check, and
+           -- last_water above counts only watering/rain. Without this column the reduced-cadence check
+           -- re-cards every night once the interval passes and can never be cleared by the honest answer,
+           -- which is the nightly-nag extinction pattern V4-TROPICALCOLD-001 solved for the cold card with
+           -- last_brought_inside. Same to_char/UTC shape; engine.overwinter.lastTouch takes the later of
+           -- the two as plain 'YYYY-MM-DD' strings.
+           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='moisture_check' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_moisture_check,
            -- V4-TROPICALCOLD-001: the indoors/outdoors toggle engine.coldFor reads to keep the
            -- bring-indoors card a ONE-TIME task instead of a nightly nag. doneEvents retires a cold
            -- task for the calendar day only, so a plant already on the windowsill would otherwise be

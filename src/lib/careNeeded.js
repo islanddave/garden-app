@@ -15,6 +15,10 @@ export const NEED_EVENT_TYPE = {
   fertilize: 'fertilizing',
   pest: 'observation',
   cold: 'brought_inside',
+  // V4-OVERWINTER-001: a winter soil check logs a moisture_check, NOT a watering. The whole point of
+  // the reduced cadence is that the answer is usually "still damp" — logging a watering for that would
+  // falsify last_water and, in the two quiescent regimes, teach the model to keep a cold pot wet.
+  overwintering: 'moisture_check',
 }
 
 // Bucket -> short care verb (the "By type" group label + chip label). Text channel, never color-only.
@@ -24,10 +28,13 @@ export const NEED_LABEL = {
   fertilize: 'Feed',
   pest: 'Check',
   cold: 'Protect',
+  overwintering: 'Check',
 }
 
 // Render/auto-expand order. Water needs lead (most time-sensitive), then never-watered, feed, pest, cold.
-export const NEED_ORDER = ['water_due', 'no_history', 'fertilize', 'pest', 'cold']
+// V4-OVERWINTER-001 sits LAST: a fortnightly-to-monthly winter check is the least time-sensitive row on
+// the list, and it must never push a same-day freeze protection down the page.
+export const NEED_ORDER = ['water_due', 'no_history', 'fertilize', 'pest', 'cold', 'overwintering']
 
 // One-clause primary reason. Mirrors the engine's per-bucket reason strings (single clause; any
 // supporting detail is the row's secondary/expand content, not here).
@@ -45,6 +52,10 @@ export function needReason(need, it) {
       return it.label || 'Scout for pests'
     case 'cold':
       return it.text || 'Protect tonight'
+    case 'overwintering':
+      // The engine writes the full clause (soil-check-due / never-checked / window-ended); it is the
+      // only place that knows the regime and the elapsed days, so this mirrors rather than re-derives.
+      return it.reason || (it.exit_due ? 'Overwintering window ended' : 'Winter soil check due')
     default:
       return it.project || ''
   }

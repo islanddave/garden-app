@@ -40,6 +40,13 @@ export const DONE_EVENTS = {
   fertilize:  ['fertilizing'],
   pest:       ['observation', 'pest_treatment', 'doctored'],
   cold:       ['brought_inside', 'cover'],
+  // V4-OVERWINTER-001 — the reduced-cadence winter soil check. `moisture_check` is FIRST because it is
+  // the expected answer: in January the honest outcome of feeling the medium is usually "still damp",
+  // and that must retire the card. `watering` and `rain` satisfy it too — if the medium was dry enough
+  // to water, it has plainly been checked. Deliberately NOT `observation`: an observation is the pest
+  // vocabulary, and letting it satisfy here would make one pest tap silently clear a watering-adjacent
+  // task, which is the exact cross-bucket leak moisture_check was minted as its own type to avoid.
+  overwintering: ['moisture_check', 'watering', 'rain'],
 };
 
 // Every plant id referenced by an actionable bucket, for the done-derivation query's = ANY($1).

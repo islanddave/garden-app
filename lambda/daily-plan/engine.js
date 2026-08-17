@@ -12,6 +12,10 @@ const ledger = require('./ledger');
 const LP = require('./ledgerParams');
 // V4-TROPICALCOLD-001 — crop-type cold profiles (the bring-indoors fallback beneath the variety table).
 const fc = require('./frostClass');
+// V4-OVERWINTER-001 — overwintering as a care_profile ATTRIBUTE (never a plants.status value). Holds a
+// planting out of the summer water/feed cadence and gives it a REDUCED-cadence moisture check instead;
+// the window is a pure function of the date, so the exit needs no writer. See overwinter.js header.
+const ow = require('./overwinter');
 // DRG-WXPROB-001 — display gate for the nightly rain-AMOUNT callout (mirrors the Today widget). Presentation only.
 const RAIN_POP_DISPLAY_THRESHOLD = 30; // percent
 // DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
@@ -517,7 +521,8 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 // event-window read degrades the whole run to flag-OFF, per the canon fail-to-today's-model rule).
 function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
-  const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[];
+  const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[];
+  let overwinterHeld=0;
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
   const hotForBag=high!=null&&high>=BAG_HEAT_GATE_F;   // DRG-WATERCREDIT-004 fabric-bag heat-gate signal
@@ -536,12 +541,44 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // tasks.dormancy_suppressed (+ counts.dormancy_suppressed) with the rule + guidance, and still flow
     // through fert/pest/cold below (the signal governs watering only).
     const _wsup=waterSuppression(p,c);
+    // V4-OVERWINTER-001. Evaluated here, in the same shared pre-branch path as the suppression gate and
+    // for the same reason: a guard written inside one flag fork is silently deleted when the flag flips.
+    //
+    // PRECEDENCE IS ENFORCED BY THE BRANCH ORDER BELOW, not by this line — waterSuppression WINS. A
+    // no_calendar_water profile is the Lithops class, where an interval-driven prompt is what killed the
+    // plant; overwintering's reduced check would re-introduce exactly that prompt at a longer period.
+    // The `_wsup ?` here is a short-circuit only (skip the date maths we would discard anyway); deleting
+    // it changes no behaviour, which is why the precedence guard in overwinter-engine.test.js mutates
+    // the BRANCH ORDER rather than this expression.
+    const _ow = _wsup ? null : ow.overwinterState(p, c, today);
     if(_wsup){
       waterSuppressed.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,rule:_wsup,
         moisture:(p.db_cadence&&p.db_cadence.soil_moisture_target)||c.soil_moisture_target||null,
         reason:_wsup==='no_calendar_water'
           ? 'Watering suppressed — profile: NO calendar watering; water only on plant signals, never by interval'
           : 'Watering suppressed — profile: growth-gated; water only during active growth, never by interval'});
+    } else if(_ow && _ow.active){
+      // HELD OUT of water_due / no_history / rain_skipped, and given a reduced-cadence MOISTURE CHECK —
+      // NOT a skip. A cover sheds the rain that would have reached the bed and indoor heat dries a pot
+      // faster than July does, so inheriting dormant's "skip routine care" is how an overwintered crop
+      // dies of a dry freeze. The item asks Dave to feel the soil, never to water unconditionally.
+      overwinterHeld++;
+      const _wiOw = ow.checkIntervalFor(_ow, (likelyInGround(p,c) ? c.water_interval_days_inground : c.water_interval_days_container) ?? c.water_interval_days_container ?? cad.default.water_interval_days_container);
+      const _touch = ow.lastTouch(p);
+      const _dOw = daysBetween(today,_touch);
+      // dW==null (never watered, never checked) is DUE: an untouched pot through a winter is the case
+      // most worth surfacing, and "no history" is not evidence of a damp medium.
+      const _dueOw = _dOw==null || _dOw>=_wiOw;
+      if(_dueOw){
+        overwintering.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,
+          regime:_ow.regime,interval:_wiOw,days_since:_dOw,overdue_by:_dOw==null?null:_dOw-_wiOw,
+          never:_dOw==null,exit_due:false,harvestable:_ow.harvestable,window_until:_ow.until,
+          moisture:(p.db_cadence&&p.db_cadence.soil_moisture_target)||c.soil_moisture_target||null,
+          note:_ow.guidance,
+          reason:_dOw==null
+            ? 'Overwintering — never checked; feel the soil, water only if dry below the top inch'
+            : `Overwintering — soil check due (${_dOw}d since last water/check); water only if dry below the top inch`});
+      }
     } else {
     // CARE-PROFILES-001: select inground or container cadence based on container_type.
     const inGround=likelyInGround(p,c);
@@ -664,7 +701,23 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     }
     else if(dW==null) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:null,interval:wi,overdue_by:null,method:c.water_method,moisture:c.soil_moisture_target,never:true});
     } // end DRG-NOCALWATER-001 watering guard (fert/pest/cold below run for suppressed plantings too)
-    const fr=fertilizeRec(p,c,fm,today); if(fr) fertilize.push(fr);
+    // V4-OVERWINTER-001 EXIT NOTICE. Bounded to EXIT_NOTICE_DAYS after the window closes and emitted
+    // only for the two regimes where Dave physically moves the plant. Normal care has ALREADY resumed
+    // by the time this fires (the window closing IS the exit), so this is a reminder to move the pot,
+    // not a hold — and it goes quiet by itself, because an unbounded reminder is the one-way trap in
+    // different clothing.
+    if(_ow && _ow.exitDue){
+      overwintering.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,
+        regime:_ow.regime,interval:null,days_since:null,overdue_by:null,never:false,exit_due:true,
+        harvestable:_ow.harvestable,window_until:_ow.until,moisture:null,note:_ow.guidance,
+        reason:'Overwintering window has ended — move it back out and resume normal care, or extend the window'});
+    }
+    // V4-OVERWINTER-001: feeding is OFF for every overwintering regime. A quiescent root system cannot
+    // take up what is applied, so it stays in the medium as salt; and a tunnel crop coasting at 9 hours
+    // of daylight has no growth to feed. Uniform across the four regimes on purpose — one boolean, not
+    // a fifth per-regime knob to get wrong. Pest and cold still run below: scale and spider mites are
+    // the classic indoor-overwintering losses, and a protected plant still needs its cold card.
+    const fr=(_ow && _ow.active) ? null : fertilizeRec(p,c,fm,today); if(fr) fertilize.push(fr);
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
     if(pw&&pw.active){ const txt=((p.name||'')+' '+(p.variety||'')+' '+(c.crop||'')).toLowerCase();
       if((p.genus&&pw.genera.includes(p.genus))||pw.name_keywords.some(k=>txt.includes(k))) pest.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:likelyInGround(p,c),label:pw.label}); }
@@ -685,8 +738,24 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
   // arrays keep their shape, so PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers select named keys;
   // same precedent as BUG-TODAYWATER-001's additive keys). A zero count is itself information: it says the
   // suppression gate RAN and found nothing, distinguishing "no suppressed plantings" from "gate missing".
-  return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length,dormancy_suppressed:waterSuppressed.length},
-    substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant,rain_skipped:rainSkipped,dormancy_suppressed:waterSuppressed}};
+  // V4-OVERWINTER-001: `overwintering` (actionable rows: due soil checks + bounded exit notices) and
+  // `overwinter_held` (the POPULATION inside an open window) are additive — named-key readers, so
+  // PLAN_SCHEMA_VERSION is deliberately NOT bumped. Two numbers rather than one because they answer
+  // different questions: a zero `overwintering` alongside a non-zero `overwinter_held` means "held out of
+  // summer cadence, nothing due today", which is the normal winter state.
+  //
+  // SPREAD CONDITIONALLY, unlike dormancy_suppressed's unconditional zero. The keys are absent — not
+  // present-and-zero — when nothing in the run overwinters, so the plan payload for today's garden is
+  // BYTE-IDENTICAL to the pre-change engine and tests/parity stays green with no regenerated goldens.
+  // That matters more here than the "a zero proves the gate ran" argument: a regenerated golden can hide
+  // a silent revert of the very feature it is supposed to lock, and inertness-until-used is a stronger,
+  // directly-testable property (overwinter-engine.test.js "is completely inert"). The same conditional
+  // shape is already used for hydrology.today_observed_in a few lines below, for the same reason.
+  const _owOn = overwinterHeld>0 || overwintering.length>0;
+  return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length,dormancy_suppressed:waterSuppressed.length,
+      ...(_owOn?{overwintering:overwintering.length,overwinter_held:overwinterHeld}:{})},
+    substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant,rain_skipped:rainSkipped,dormancy_suppressed:waterSuppressed,
+      ...(_owOn?{overwintering}:{})}};
 }
 
 // Compute the single weather callout (action only) from temp + hydrology. Priority order; null = no callout (no filler).
@@ -771,4 +840,5 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
 }
 module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
-  FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};
+  FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered,
+  overwinter: ow};
