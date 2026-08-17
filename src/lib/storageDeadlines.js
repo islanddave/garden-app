@@ -33,14 +33,23 @@
 // and the reporting zone is the Lambda's, not the browser's.
 //
 // COPY IS CHECK-FORM, NEVER ASSERTION-FORM. "Start checking sweet potatoes", never "sweet potatoes are
-// ready". The one date in here is a regional typical case standing in for VINE KILL — an observed plant
+// ready". The one date in here is a measured site BACKSTOP standing in for VINE KILL — an observed plant
 // state nobody is recording; copy that asserts readiness would overclaim it.
 //
-// THE ONE DATE MOVED (BUG-SWEETPOTATODEADLINE-001, Dave 2026-08-17). Sweet potato was 10-15, derived
-// from a soil-temperature reading of the UMass guidance, which put it 17 days AFTER the first-fall-frost
-// anchor — after frost has killed the vines and the roots have started degrading. The binding constraint
-// in 5b is vine kill, so the deadline is now 09-25, three days AHEAD of the anchor. The dataset's
-// `frost_anchor_warning` carries the full reasoning; the ordering is pinned in storageDeadlines.test.js.
+// THE ONE DATE HAS MOVED TWICE, AND ONLY THE SECOND MOVE WAS MEASURED. Read this before touching it.
+//  • 1.0.0 shipped 10-15, read off UMass's "usually before mid-October" as a SOIL-temperature cutoff.
+//  • 1.1.0 (BUG-SWEETPOTATODEADLINE-001, 2026-08-17) replaced the mechanism with VINE KILL — correct,
+//    and it still stands — but derived the new date from FROST_ANCHORS.firstFallFrost, landing on
+//    09-25 (anchor - 3d).
+//  • 1.2.0 (same day, 8-seat crucible) reverted the DATE to 10-10 and kept the mechanism. The anchor is
+//    a conservative SOWING-safety margin, not an observed frost date: 11 years of 2m minima at this
+//    exact site put the first <=32F night between 10-10 and 11-08, median 10-29, with zero September
+//    nights below 38.2F. 09-25 therefore fired 15-44 days before frost had ever occurred here, trading
+//    a certain annual loss of the fastest bulking weeks against a hazard with no September tail.
+// THE STANDING RULE: no deadline in this file may be derived from FROST_ANCHORS, in either direction.
+// Two sessions did it, on opposite readings, and both were wrong. The dataset's `frost_anchor_warning`
+// carries the argument and every dated record now carries a reproducible `measured_basis`;
+// storageDeadlines.test.js pins the date to that measurement rather than to the anchor.
 
 import DATA from '../data/storageDeadlines.json'
 

@@ -2,7 +2,7 @@
 //
 // These tests run against the REAL `src/data/storageDeadlines.json`, on FIXED dates. That matters
 // twice over:
-//  1. The live dataset contains exactly one record (sweet_potato, check 09-11, deadline 09-25) and
+//  1. The live dataset contains exactly one record (sweet_potato, check 09-28, deadline 10-10) and
 //     the emptiness is the finding, not a TODO — so the only honest way to prove the surface works
 //     is synthetic PLANTINGS against the real dataset, never invented dates.
 //  2. The surface renders NOTHING on 2026-08-14, and that is correct, not a bug. There is an
@@ -21,8 +21,11 @@ import StorageDeadlineAlert, {
   PAST_GRACE_DAYS,
 } from '../components/today/StorageDeadlineAlert.jsx'
 
-// The real dataset's sweet_potato record: check window opens 09-11, deadline 09-25
-// (BUG-SWEETPOTATODEADLINE-001 moved both off the superseded 10-01 / 10-15).
+// The real dataset's sweet_potato record: check window opens 09-28, deadline 10-10. Both have moved
+// twice in one day — 1.0.0 shipped 10-01 / 10-15 on soil-temperature reasoning, 1.1.0 moved them to
+// 09-11 / 09-25 on vine-kill reasoning derived from FROST_ANCHORS, and 1.2.0 kept the vine-kill
+// mechanism but re-derived the DATE from 11 years of measured first-frost dates at the site. If these
+// need editing again, read storageDeadlines.json's `frost_anchor_warning` first.
 const sweet = (over = {}) => ({
   id: 'p-sp1', name: 'Beauregard', status: 'vegetative',
   variety_ref: { id: 'v1', name: 'Beauregard', crop_type_slug: 'sweet_potato' },
@@ -45,36 +48,37 @@ describe('storageDeadlineGroups — the time bounds are the feature', () => {
   })
 
   it('is silent right up to the day before the check window opens', () => {
-    expect(storageDeadlineGroups([sweet()], '2026-09-10')).toEqual([])
+    expect(storageDeadlineGroups([sweet()], '2026-09-27')).toEqual([])
   })
 
   it('speaks on the day the check window opens, in CHECK form', () => {
-    const g = storageDeadlineGroups([sweet()], '2026-09-11')
+    const g = storageDeadlineGroups([sweet()], '2026-09-28')
     expect(g).toHaveLength(1)
     expect(g[0].slug).toBe('sweet_potato')
     expect(g[0].phase).toBe('check')
     expect(g[0].copy).toMatch(/^Start checking sweet potatoes for lifting/)
-    // Never assertion-form: the date is a regional proxy for a soil temperature nobody measures.
+    // Never assertion-form: the date is a measured backstop standing in for vine kill, an observed
+    // plant state nobody records. It says when to start looking, never that anything is ready.
     expect(g[0].copy).not.toMatch(/are ready|is ready/i)
   })
 
   it('still speaks on the deadline day itself', () => {
-    expect(storageDeadlineGroups([sweet()], '2026-09-25')[0].phase).toBe('check')
+    expect(storageDeadlineGroups([sweet()], '2026-10-10')[0].phase).toBe('check')
   })
 
   it('switches to past copy the day after the deadline', () => {
-    const g = storageDeadlineGroups([sweet()], '2026-09-26')
+    const g = storageDeadlineGroups([sweet()], '2026-10-11')
     expect(g[0].phase).toBe('past')
     expect(g[0].copy).toMatch(/window has passed/i)
   })
 
   it('keeps saying so through the grace window, then goes SILENT', () => {
     expect(PAST_GRACE_DAYS).toBe(14)
-    // 09-25 + 14 = 10-09, the last day inside the grace window.
-    expect(storageDeadlineGroups([sweet()], '2026-10-09')).toHaveLength(1)
+    // 10-10 + 14 = 10-24, the last day inside the grace window.
+    expect(storageDeadlineGroups([sweet()], '2026-10-24')).toHaveLength(1)
     // One day later it stops. Without this bound the lib's `past` phase would keep a "window has
     // passed" line standing on Today until Dec 31 — a standing list with extra steps.
-    expect(storageDeadlineGroups([sweet()], '2026-10-10')).toEqual([])
+    expect(storageDeadlineGroups([sweet()], '2026-10-25')).toEqual([])
   })
 
   it('resets across the year boundary rather than carrying a stale past line', () => {
@@ -86,38 +90,38 @@ describe('storageDeadlineGroups — what it will and will not speak about', () =
   it('groups two plantings of the same crop into ONE alert, naming both', () => {
     const g = storageDeadlineGroups(
       [sweet(), sweet({ id: 'p-sp2', name: 'Georgia Jet' })],
-      '2026-09-12',
+      '2026-10-01',
     )
     expect(g).toHaveLength(1)
     expect(g[0].names).toEqual(['Beauregard', 'Georgia Jet'])
   })
 
   it('drops ended/failed plantings — never tell him to lift something he closed out', () => {
-    expect(storageDeadlineGroups([sweet({ status: 'ended' })], '2026-09-12')).toEqual([])
-    expect(storageDeadlineGroups([sweet({ status: 'failed' })], '2026-09-12')).toEqual([])
+    expect(storageDeadlineGroups([sweet({ status: 'ended' })], '2026-10-01')).toEqual([])
+    expect(storageDeadlineGroups([sweet({ status: 'failed' })], '2026-10-01')).toEqual([])
   })
 
   it("does NOT drop status 'harvested' — that DB value is labelled 'Harvesting' (in progress)", () => {
-    expect(storageDeadlineGroups([sweet({ status: 'harvested' })], '2026-09-12')).toHaveLength(1)
+    expect(storageDeadlineGroups([sweet({ status: 'harvested' })], '2026-10-01')).toHaveLength(1)
   })
 
   it('says nothing about a crop deliberately given no deadline (carrot)', () => {
-    expect(storageDeadlineGroups([carrot()], '2026-09-12')).toEqual([])
+    expect(storageDeadlineGroups([carrot()], '2026-10-01')).toEqual([])
     expect(storageDeadlineGroups([carrot()], '2026-11-15')).toEqual([])
   })
 
   it('says nothing about a planting with no variety or no crop type', () => {
-    expect(storageDeadlineGroups([{ id: 'x', name: 'Mystery', variety_ref: null }], '2026-09-12')).toEqual([])
-    expect(storageDeadlineGroups([{ id: 'x', name: 'M', variety_ref: { crop_type_slug: null } }], '2026-09-12')).toEqual([])
+    expect(storageDeadlineGroups([{ id: 'x', name: 'Mystery', variety_ref: null }], '2026-10-01')).toEqual([])
+    expect(storageDeadlineGroups([{ id: 'x', name: 'M', variety_ref: { crop_type_slug: null } }], '2026-10-01')).toEqual([])
   })
 
   it('caps the group count and never throws on junk input', () => {
     expect(STORAGE_DEADLINE_CAP).toBe(2)
-    expect(storageDeadlineGroups([sweet()], '2026-09-12', 0)).toEqual([])
-    expect(storageDeadlineGroups([], '2026-09-12')).toEqual([])
-    expect(storageDeadlineGroups(null, '2026-09-12')).toEqual([])
-    expect(storageDeadlineGroups(undefined, '2026-09-12')).toEqual([])
-    expect(storageDeadlineGroups([null, undefined, 7], '2026-09-12')).toEqual([])
+    expect(storageDeadlineGroups([sweet()], '2026-10-01', 0)).toEqual([])
+    expect(storageDeadlineGroups([], '2026-10-01')).toEqual([])
+    expect(storageDeadlineGroups(null, '2026-10-01')).toEqual([])
+    expect(storageDeadlineGroups(undefined, '2026-10-01')).toEqual([])
+    expect(storageDeadlineGroups([null, undefined, 7], '2026-10-01')).toEqual([])
     expect(storageDeadlineGroups([sweet()], 'not-a-date')).toEqual([])
   })
 })
@@ -132,7 +136,7 @@ describe('StorageDeadlineAlert component', () => {
 
   it('renders the sourced copy and the planting names once the window is open', async () => {
     fetchMock.mockResolvedValue([sweet(), sweet({ id: 'p-sp2', name: 'Georgia Jet' }), carrot()])
-    render(<StorageDeadlineAlert todayISO="2026-09-12" />)
+    render(<StorageDeadlineAlert todayISO="2026-10-01" />)
     const el = await screen.findByTestId('storage-deadline-alert')
     expect(el.textContent).toMatch(/Start checking sweet potatoes for lifting/)
     expect(el.textContent).toMatch(/Beauregard · Georgia Jet/)
@@ -143,7 +147,7 @@ describe('StorageDeadlineAlert component', () => {
   it('is an ambient in-flow note: no heading, no dialog/alert role, no count', async () => {
     fetchMock.mockResolvedValue([sweet()])
     const el = await (async () => {
-      render(<StorageDeadlineAlert todayISO="2026-09-12" />)
+      render(<StorageDeadlineAlert todayISO="2026-10-01" />)
       return screen.findByTestId('storage-deadline-alert')
     })()
     expect(el.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull()
@@ -157,7 +161,7 @@ describe('StorageDeadlineAlert component', () => {
     globalThis.Notification = { requestPermission: req, permission: 'default' }
     try {
       fetchMock.mockResolvedValue([sweet()])
-      render(<StorageDeadlineAlert todayISO="2026-09-12" />)
+      render(<StorageDeadlineAlert todayISO="2026-10-01" />)
       await screen.findByTestId('storage-deadline-alert')
       expect(req).not.toHaveBeenCalled()
     } finally {
@@ -168,26 +172,26 @@ describe('StorageDeadlineAlert component', () => {
 
   it('swallows a fetch error — renders nothing, never throws onto Today', async () => {
     fetchMock.mockRejectedValue(new Error('boom'))
-    const { container } = render(<StorageDeadlineAlert todayISO="2026-09-12" />)
+    const { container } = render(<StorageDeadlineAlert todayISO="2026-10-01" />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
   })
 
   it('renders nothing before the first load resolves, and nothing on an empty garden', async () => {
     fetchMock.mockResolvedValue([sweet()])
-    const { container } = render(<StorageDeadlineAlert todayISO="2026-09-12" />)
+    const { container } = render(<StorageDeadlineAlert todayISO="2026-10-01" />)
     expect(container.firstChild).toBeNull()
     await screen.findByTestId('storage-deadline-alert')
 
     fetchMock.mockResolvedValue([])
-    const second = render(<StorageDeadlineAlert todayISO="2026-09-12" />)
+    const second = render(<StorageDeadlineAlert todayISO="2026-10-01" />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(second.container.firstChild).toBeNull()
   })
 
   it('tolerates a non-array payload without rendering or throwing', async () => {
     fetchMock.mockResolvedValue({ error: 'nope' })
-    const { container } = render(<StorageDeadlineAlert todayISO="2026-09-12" />)
+    const { container } = render(<StorageDeadlineAlert todayISO="2026-10-01" />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
   })

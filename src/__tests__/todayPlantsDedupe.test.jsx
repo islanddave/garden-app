@@ -74,7 +74,7 @@ describe('Today — /api/plants is fetched once per paint, not once per componen
   it('StorageDeadlineAlert + CareNeeded mounting together issue ONE /api/plants request', async () => {
     render(
       <>
-        <StorageDeadlineAlert todayISO="2026-09-11" />
+        <StorageDeadlineAlert todayISO="2026-10-01" />
         <CareNeeded plan={plan()} />
       </>,
     )
@@ -91,7 +91,7 @@ describe('Today — /api/plants is fetched once per paint, not once per componen
     // pair, so it collapses all of them.
     render(
       <>
-        <StorageDeadlineAlert todayISO="2026-09-11" />
+        <StorageDeadlineAlert todayISO="2026-10-01" />
         <CareNeeded plan={plan()} />
         <CareNeeded plan={plan()} />
       </>,
@@ -106,7 +106,7 @@ describe('Today — /api/plants is fetched once per paint, not once per componen
   it('both consumers render the SAME shared response correctly — no projection mismatch', async () => {
     render(
       <>
-        <StorageDeadlineAlert todayISO="2026-09-11" />
+        <StorageDeadlineAlert todayISO="2026-10-01" />
         <CareNeeded plan={plan()} />
       </>,
     )
@@ -121,14 +121,14 @@ describe('Today — /api/plants is fetched once per paint, not once per componen
   })
 
   it('a revisit paints from cache and revalidates once, without re-rendering a changed list', async () => {
-    const first = render(<><StorageDeadlineAlert todayISO="2026-09-11" /><CareNeeded plan={plan()} /></>)
+    const first = render(<><StorageDeadlineAlert todayISO="2026-10-01" /><CareNeeded plan={plan()} /></>)
     await waitFor(() => expect(screen.getByText('Back Garden › Bed 3')).toBeTruthy())
     expect(callsTo('/api/plants')).toBe(1)
     first.unmount()
 
     // Remount: the cached list paints immediately, and exactly ONE background revalidate fires for
     // the pair (not one per component).
-    render(<><StorageDeadlineAlert todayISO="2026-09-11" /><CareNeeded plan={plan()} /></>)
+    render(<><StorageDeadlineAlert todayISO="2026-10-01" /><CareNeeded plan={plan()} /></>)
     expect(screen.getByTestId('storage-deadline-sweet_potato')).toBeTruthy()   // no loading gap
     await waitFor(() => expect(callsTo('/api/plants')).toBe(2))
     await waitFor(() => expect(screen.getByText('Back Garden › Bed 3')).toBeTruthy())
@@ -138,7 +138,7 @@ describe('Today — /api/plants is fetched once per paint, not once per componen
 describe('Today — the shared cache cannot mislead a write', () => {
   it('one-tap log takes its ids from the plan, never from the cached plants list', async () => {
     const { fireEvent } = await import('@testing-library/react')
-    render(<><StorageDeadlineAlert todayISO="2026-09-11" /><CareNeeded plan={plan()} /></>)
+    render(<><StorageDeadlineAlert todayISO="2026-10-01" /><CareNeeded plan={plan()} /></>)
     await waitFor(() => expect(screen.getByText('Back Garden › Bed 3')).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i }))
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(1))
