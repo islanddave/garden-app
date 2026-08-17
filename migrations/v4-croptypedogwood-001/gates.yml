@@ -1,0 +1,75 @@
+# V4-CROPTYPEDOGWOOD-001 — Dogwood was untypeable (0 of 141 crop_types), and the cultivar `Kousa`
+# that Dave created on 2026-08-17 sat with crop_type_slug NULL.
+#
+# Standing invariants are keyed on this migration's OWN schema_version row so they self-arm at apply
+# and are not red from the moment the directory reaches the branch (gate_runner has no
+# skip-if-unapplied logic). Apply-time receipts are continuous:false.
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.33.0-croptypedogwood-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_tree_category_exists
+    note: >
+      The row is modelled on japanese_maple, the only existing `tree`. If that category ever
+      disappeared, the chosen category/lifecycle would no longer have a sibling to be consistent
+      with, and `tree` would be minting a category rather than joining one.
+    sql: |
+      SELECT 1 FROM public.crop_types WHERE category = 'tree' AND deleted_at IS NULL
+    expect: rowcount_gte
+    value: 1
+
+  - name: pre_dogwood_slug_is_free
+    note: >
+      Mirrors resolveCropTypeName's exact-collision branch. slug is the PK and the FK target of
+      plant_varieties + preservation_log, so a collision here is an abort, not a merge.
+    sql: |
+      SELECT 1 FROM public.crop_types WHERE slug = 'dogwood'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_dogwood_crop_type_exists
+    sql: |
+      SELECT 1 FROM public.crop_types ct
+      WHERE ct.slug = 'dogwood' AND ct.category = 'tree'
+        AND ct.default_lifecycle = 'perennial' AND ct.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.33.0-croptypedogwood-001')
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_no_cultivar_dangles_off_dogwood
+    note: >
+      A cultivar whose crop_type_slug points at nothing is worse than an untyped one — it types the
+      planting to a phantom and every crop-level grouping silently drops it.
+    sql: |
+      SELECT 1 FROM public.plant_varieties v
+      WHERE v.crop_type_slug = 'dogwood' AND v.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM public.crop_types ct
+                        WHERE ct.slug = v.crop_type_slug AND ct.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_exactly_one_dogwood_crop_type
+    note: Guards a re-run, or a later in-app mint, producing a second live row the chooser shows twice.
+    sql: |
+      SELECT 1 FROM public.crop_types
+      WHERE slug = 'dogwood' AND deleted_at IS NULL
+      HAVING count(*) > 1
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_kousa_is_typed
+    note: >
+      Apply-time receipt, NOT continuous, and prod-only — the Kousa cultivar exists only in prod, and
+      Dave may retype or remove it at will without reddening a standing gate.
+    continuous: false
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+      WHERE id = '0189f4cd-aa30-47b7-81cc-f467ab767f6b'::uuid
+        AND crop_type_slug = 'dogwood' AND lifecycle = 'perennial'
+    expect: rowcount_eq
+    value: 1
