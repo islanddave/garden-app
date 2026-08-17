@@ -50,6 +50,15 @@ const SQL = walk(__dirname).map((f) => sqlOf(readFileSync(f, 'utf8'))).join('\n'
 
 // L-081 declared contract (Phase 1): the prod relation every `*_COLUMNS` array here must exist in.
 // ONE table, deliberately — the auditor cross-products every array against every declared table.
+//
+// KNOWN GAP, recorded rather than papered over (V4-USERPREFS-001, 2026-08-17). This Lambda also
+// SELECTs from user_notification_prefs, and that table is NOT audited here. It cannot simply be
+// added: dev-main-schema-audit.py collects every `*_COLUMNS` array and cross-products it against
+// every entry in AUDIT_TABLES, so a second table would require species_id/earned_at/faded_at to
+// exist on user_notification_prefs too and would fail on its first run. Auditing both needs a
+// per-table column mapping in the auditor, which is OPS-L081COLS-001's scope, not a migration
+// lane's. Until then: a column added to the user_notification_prefs SELECT list is unaudited by
+// Phase 1, and this file's green result is NOT evidence about that table.
 const AUDIT_TABLES = ['critter_state'];
 
 const AUDITED_COLUMNS = [

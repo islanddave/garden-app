@@ -90,6 +90,7 @@ async function readUserPrefs(sql, clerkSub) {
            coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at,
            garden_group_by, garden_sort_order, garden_expanded,
            garden_bloom_seen, garden_helper_rung1_seen,
+           today_skipped, log_many_all_selected, whats_new_last_seen,
            created_at, updated_at
       FROM public.user_notification_prefs
      WHERE created_by = ${clerkSub}
@@ -108,6 +109,13 @@ async function readUserPrefs(sql, clerkSub) {
     garden_expanded: null,
     garden_bloom_seen: null,
     garden_helper_rung1_seen: null,
+    // V4-USERPREFS-001. NULL is the honest default for all three: it means "this user has not set
+    // it", which is what every client-side fallback already assumes. Do NOT substitute a concrete
+    // default here — that would make "unset" indistinguishable from a real choice, the same trap
+    // V4-ACQMATURE-001's nullable-no-default column exists to avoid.
+    today_skipped: null,
+    log_many_all_selected: null,
+    whats_new_last_seen: null,
     created_at: null, updated_at: null,
   }
 }
@@ -370,8 +378,17 @@ export const handler = async (event) => {
       const gbsArr = body.garden_bloom_seen ?? null
       const gbs = gbsArr == null ? null : JSON.stringify(gbsArr)
       const ghr = body.garden_helper_rung1_seen ?? null
+      // V4-USERPREFS-001. today_skipped is jsonb, so it is stringified here and cast at every
+      // binding site below — EVERY site, including the INSERT VALUES and both COALESCE arms. A
+      // bare NULL parameter has no inferable type to Postgres and fails with "could not determine
+      // data type of parameter" rather than with anything that names the column; the cast is what
+      // makes the null arm legal, not a stylistic flourish.
+      const tsObj = body.today_skipped ?? null
+      const ts = tsObj == null ? null : JSON.stringify(tsObj)
+      const lma = body.log_many_all_selected ?? null
+      const wnls = body.whats_new_last_seen ?? null
       const rows = await sql`
-        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen)
+        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, today_skipped, log_many_all_selected, whats_new_last_seen)
         VALUES (
           ${userId},
           COALESCE(${cv}, 'in_app_only'),
@@ -381,7 +398,10 @@ export const handler = async (event) => {
           ${gso},
           ${ge},
           ${gbs},
-          ${ghr}
+          ${ghr},
+          ${ts}::jsonb,
+          ${lma}::boolean,
+          ${wnls}::text
         )
         ON CONFLICT (created_by) DO UPDATE SET
           critter_visit      = COALESCE(${cv}, public.user_notification_prefs.critter_visit),
@@ -392,9 +412,12 @@ export const handler = async (event) => {
           garden_expanded    = COALESCE(${ge}, public.user_notification_prefs.garden_expanded),
           garden_bloom_seen  = COALESCE(${gbs}, public.user_notification_prefs.garden_bloom_seen),
           garden_helper_rung1_seen = COALESCE(${ghr}, public.user_notification_prefs.garden_helper_rung1_seen),
+          today_skipped        = COALESCE(${ts}::jsonb, public.user_notification_prefs.today_skipped),
+          log_many_all_selected = COALESCE(${lma}::boolean, public.user_notification_prefs.log_many_all_selected),
+          whats_new_last_seen  = COALESCE(${wnls}::text, public.user_notification_prefs.whats_new_last_seen),
           updated_at         = now()
         RETURNING critter_visit, quiet_hours_start, quiet_hours_end,
-                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, updated_at
+                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, today_skipped, log_many_all_selected, whats_new_last_seen, updated_at
       `
       return resp(200, rows[0])
     }

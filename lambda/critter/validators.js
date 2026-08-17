@@ -22,6 +22,10 @@ export const GARDEN_GROUP_BY_VALUES = new Set(['none', 'type', 'lifecycle', 'hea
 export const GARDEN_SORT_ORDER_VALUES = new Set(['alpha', 'recency'])
 export const GARDEN_EXPANDED_MAX = 2000
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
+// V4-USERPREFS-001 — today_skipped.date. Format-only, matching the DB CHECK's own strictness:
+// calendar validity is not asserted because the client writes todayLocalISO() and a wrong-but-
+// well-formed date self-heals on the next day boundary (the set is ignored when date != today).
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export function validatePrefsPatchBody(body) {
   if (!body || typeof body !== 'object') return { status: 400, error: 'body required' }
@@ -59,8 +63,43 @@ export function validatePrefsPatchBody(body) {
   if (body.garden_helper_rung1_seen != null && typeof body.garden_helper_rung1_seen !== 'boolean') {
     return { status: 400, error: 'garden_helper_rung1_seen must be a boolean' }
   }
+  // V4-USERPREFS-001 — the three per-device UI states that became per-user server state
+  // (V4-TODAYLOC-002, V4-LOGMANY-001, V4-WHATSNEW-002).
+  //
+  // today_skipped is validated to the SAME object contract as the DB CHECK
+  // (chk_unp_today_skipped_shape). Two enforcement points on one contract is deliberate: the DB
+  // guard is the one that cannot be bypassed, and this one is what turns a malformed write into a
+  // 400 the client can act on rather than a 500 from a constraint violation.
+  if (body.today_skipped != null) {
+    const ts = body.today_skipped
+    if (typeof ts !== 'object' || Array.isArray(ts)) {
+      return { status: 400, error: 'today_skipped must be an object' }
+    }
+    if (typeof ts.date !== 'string' || !DATE_RE.test(ts.date)) {
+      return { status: 400, error: 'today_skipped.date must be YYYY-MM-DD' }
+    }
+    if (!Array.isArray(ts.keys) || ts.keys.some(x => typeof x !== 'string')) {
+      return { status: 400, error: 'today_skipped.keys must be an array of strings' }
+    }
+    // Same bound as the other collection columns. The suppress set is one entry per care row on a
+    // single day, so a body anywhere near this ceiling is a bug or an attack, not a big garden.
+    if (ts.keys.length > GARDEN_EXPANDED_MAX) {
+      return { status: 400, error: 'today_skipped.keys exceeds max size' }
+    }
+  }
+  if (body.log_many_all_selected != null && typeof body.log_many_all_selected !== 'boolean') {
+    return { status: 400, error: 'log_many_all_selected must be a boolean' }
+  }
+  // Deliberately NOT semver-validated. The client compares this against its own build version and
+  // treats anything it cannot parse as "show the dot" — a strict format check here would reject a
+  // legitimate future version scheme and permanently wedge the dot instead.
+  if (body.whats_new_last_seen != null) {
+    if (typeof body.whats_new_last_seen !== 'string' || body.whats_new_last_seen.length > 32) {
+      return { status: 400, error: 'whats_new_last_seen must be a string of at most 32 chars' }
+    }
+  }
   // At least one updatable field must be present
-  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen']
+  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen', 'today_skipped', 'log_many_all_selected', 'whats_new_last_seen']
     .some(k => body[k] != null)
   if (!HAS_UPDATABLE) return { status: 400, error: 'no updatable fields present' }
   return null

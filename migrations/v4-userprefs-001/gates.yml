@@ -1,0 +1,132 @@
+# gates.yml
+# V4-USERPREFS-001 — three per-device UI states become per-user server state on
+# user_notification_prefs. Closes V4-TODAYLOC-002, V4-LOGMANY-001, V4-WHATSNEW-002.
+#
+# STATUS AT AUTHORING (2026-08-17): AUTHORED. Staging applied. Prod NOT applied — held for Dave.
+#
+# NO 0b. There is no prior server-side value to migrate: the previous values live in browser
+# storage this migration cannot reach. A NULL column means "this user has not set it", which is
+# byte-identical to the pre-existing behavior, so the DDL is inert until the client code lands.
+#
+# SEQUENCING — the migration goes first, BOTH environments, before the dev push:
+#   staging 0a -> staging 0c  ->  prod 0a -> prod 0c  ->  dev push (Lambda + SPA) -> deploy.
+# The critter Lambda's PATCH allowlist names these three columns, so landing that code against a
+# database without them is the L-081 incident verbatim. Note this migration is LESS exposed than
+# V4-ACQMATURE-001 was: the prefs GET applies stateless defaults and the three columns are optional
+# in the PATCH body, so a partial apply degrades to "preference does not persist" rather than to a
+# 500 on the hot path. That is a reason to sequence it correctly, not a reason to relax.
+#
+# NO VIEW WIDEN REQUIRED — checked, not assumed. user_notification_prefs is a plain table
+# (pg_class.relkind='r', verified live 2026-08-17), not a view, so the garden_node failure mode that
+# V4-ACQMATURE-001 nearly shipped — a column added to the base table and invisible to the app
+# because an explicit column-list view was never widened — cannot occur here. The pre gate below
+# pins that it stays a table, so a future refactor to a view cannot silently reintroduce it.
+#
+# Pre:  the three columns do not exist yet; the table exists and is a TABLE.
+# Sweep: no row violates the today_skipped object contract (runner re-runs between 0a and 0c).
+# Post: three columns present, the shape CHECK exists AND is validated.
+
+pre:
+  - name: pre_userprefs_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+    expect: rowcount_eq
+    value: 1
+
+  # Guards the "is it a view?" question this migration explicitly checked rather than assumed.
+  - name: pre_userprefs_is_a_table_not_a_view
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='public' AND c.relname='user_notification_prefs' AND c.relkind='r'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_today_skipped_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='today_skipped'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_log_many_all_selected_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='log_many_all_selected'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_whats_new_last_seen_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='whats_new_last_seen'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+sweep:
+  # The object contract, asserted independently of the CHECK so a dropped/never-validated
+  # constraint cannot make this pass vacuously. Written to return the OFFENDING rows.
+  - name: sweep_today_skipped_shape_valid
+    sql: |
+      SELECT created_by FROM public.user_notification_prefs
+       WHERE today_skipped IS NOT NULL
+         AND NOT (
+           jsonb_typeof(today_skipped) = 'object'
+           AND jsonb_typeof(today_skipped -> 'date') = 'string'
+           AND jsonb_typeof(today_skipped -> 'keys') = 'array'
+         )
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_today_skipped_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='today_skipped' AND data_type='jsonb'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_log_many_all_selected_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='log_many_all_selected' AND data_type='boolean'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_whats_new_last_seen_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='whats_new_last_seen' AND data_type='text'
+    expect: rowcount_eq
+    value: 1
+
+  # Presence AND validation are separate assertions on purpose: a constraint left NOT VALID looks
+  # identical to a validated one in pg_constraint unless convalidated is read, and it does not
+  # guarantee existing rows conform. 0c is the half that gets forgotten.
+  - name: post_today_skipped_check_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_unp_today_skipped_shape' AND convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # All three columns must remain NULLABLE with NO DEFAULT. A later "helpful" DEFAULT false on
+  # log_many_all_selected would write an assertion nobody made onto every existing row and destroy
+  # the client's ability to tell "unset" from "chosen" — the V4-ACQMATURE-001 lesson, pinned.
+  - name: post_userprefs_columns_nullable_no_default
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name IN ('today_skipped','log_many_all_selected','whats_new_last_seen')
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
