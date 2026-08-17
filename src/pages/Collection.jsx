@@ -5,7 +5,7 @@ import { useCritterCollection } from '../hooks/useCritterCollection.js'
 import { useApiFetch } from '../lib/api.js'
 import { fetchNotificationPrefs, saveGardenBloomSeen } from '../lib/notificationPrefsClient.js'
 import GardenArrival from '../components/GardenArrival.jsx'
-import critterFacts from '../data/critter-facts.json'
+import { loadCritterFacts, peekCritterFacts } from '../lib/critterFactsLoader.js'
 import CritterFactsPopover from '../components/CritterFactsPopover.jsx'
 import CritterOfDay from '../components/CritterOfDay.jsx'
 import { animatedArtUrl } from '../lib/critterArt.js'
@@ -362,6 +362,17 @@ export default function Collection() {
 
   // FIX-5: which critter's Facts popover is open (null = none).
   const [factsCritter, setFactsCritter] = useState(null)
+  // V4-COLLECTIONSPLIT-001: the facts dataset is fetched only once the popover is actually opened.
+  // peek() seeds from the module cache so a second open renders the text on the FIRST frame rather
+  // than flashing the no-facts state. A failed load leaves this null, which is the same branch a
+  // critter with no facts entry already takes.
+  const [facts, setFacts] = useState(() => peekCritterFacts())
+  useEffect(() => {
+    if (!factsCritter || facts) return
+    let alive = true
+    loadCritterFacts().then((m) => { if (alive && m) setFacts(m) })
+    return () => { alive = false }
+  }, [factsCritter, facts])
 
   return (
     <div style={{
@@ -524,7 +535,7 @@ export default function Collection() {
         <CritterFactsPopover
           critter={factsCritter}
           theme={getTheme(factsCritter)}
-          content={critterFacts.facts[factsCritter.slug] || null}
+          content={facts?.facts?.[factsCritter.slug] || null}
           onClose={() => setFactsCritter(null)}
         />
       )}

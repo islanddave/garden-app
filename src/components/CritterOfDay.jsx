@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAuth } from '@clerk/react'
 import roster from '../data/critters-roster.json'
-import critterFacts from '../data/critter-facts.json'
+import { loadCritterFacts, peekCritterFacts } from '../lib/critterFactsLoader.js'
 import { P } from '../lib/constants.js'
 import { pickCritterOfDay, todayUTCDate } from '../lib/critterOfDay.js'
 import { getFeaturedOfDay, putFeaturedOfDay } from '../lib/sharedStateClient.js'
@@ -26,8 +26,12 @@ function resolveStored(featured) {
   return null
 }
 
-function firstFact(slug) {
-  const f = critterFacts?.facts?.[slug]
+// V4-COLLECTIONSPLIT-001: `facts` is now passed in rather than read from a static import — the
+// dataset arrives asynchronously, so this must stay a pure function of what has actually loaded.
+// A null `facts` (still loading, or an offline cold miss) returns null, which is the SAME value
+// this already returned for a critter with no entry, so the caller's existing branch covers it.
+function firstFact(facts, slug) {
+  const f = facts?.facts?.[slug]
   if (!f) return null
   if (typeof f === 'string') return f
   if (Array.isArray(f)) return typeof f[0] === 'string' ? f[0] : (f[0]?.text ?? null)
@@ -65,9 +69,22 @@ export default function CritterOfDay({ collected }) {
     return () => { alive = false }
   }, [getToken, date])
 
+  // V4-COLLECTIONSPLIT-001 — the facts dataset loads out-of-band. Seeded from the module cache so a
+  // remount (or arriving after Collection's popover already pulled it) paints the fact on the first
+  // frame. Ambient-only per Reward UX V102: while it is loading, or if it never arrives offline,
+  // the spotlight renders WITHOUT the fact line rather than showing a spinner or a skeleton — an
+  // absent ornament is the correct degradation for a surface that must never demand attention.
+  const [facts, setFacts] = useState(() => peekCritterFacts())
+  useEffect(() => {
+    if (facts) return
+    let alive = true
+    loadCritterFacts().then((m) => { if (alive && m) setFacts(m) })
+    return () => { alive = false }
+  }, [facts])
+
   if (!critter) return null
   const got = collected instanceof Map ? collected.has(critter.id) : false
-  const fact = firstFact(critter.slug)
+  const fact = firstFact(facts, critter.slug)
 
   return (
     <section aria-label="Critter of the day" style={{
