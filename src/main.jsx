@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ClerkProvider } from '@clerk/react'
 import App from './App.jsx'
 import { registerServiceWorker } from './lib/registerSW.js'
+import { requestPersistence } from './lib/durableStorage.js'
 import { iconCssVars } from './lib/tokens.js'
 
 const globalStyle = document.createElement('style')
@@ -22,6 +23,15 @@ globalStyle.textContent = `
 document.head.appendChild(globalStyle)
 
 registerServiceWorker()
+
+// V4-STORAGEPERSIST-001 — request persistent storage at BOOT, not from a route. The only other call
+// site is FieldCapture (/field), reachable solely via the field-mode mic button, so an origin whose
+// owner has never opened that route stays BEST-EFFORT — and Chrome Android evicts a best-effort
+// origin WHOLESALE under disk pressure, taking the capture queue and every cached tile with it.
+// Chrome Android grants this without a prompt for an installed PWA, so boot costs nothing.
+// Deliberately ADDITIVE: requestPersistence() short-circuits on an already-persistent origin
+// (durableStorage.js), so FieldCapture's call stays where it is rather than being moved.
+requestPersistence().catch(() => {})
 
 // beforeinstallprompt is intentionally NOT captured: no install UI consumes a
 // deferred prompt, and calling preventDefault() suppressed Chrome's native

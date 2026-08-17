@@ -19,6 +19,14 @@
 // parking updates in `waiting` — clients then silently run a stale bundle indefinitely).
 // event.detail.apply() posts SKIP_WAITING to the waiting worker; the existing guarded
 // controllerchange→reload-once completes the swap.
+//
+// OPS-SWRELOADGUARD-001 addition: the reload is GATED on src/lib/reloadGate.js. At ~4.4 deploys per
+// active day the reload lands mid-form regularly — and lands hardest off the visibility re-check
+// above, which fires the moment Dave pulls the phone out at a plant. A held gate DEFERS the reload
+// (it never cancels it, or we are back in BUG-STALECLIENT-001): it fires the instant the last hold
+// clears, or on the next resume with nothing held.
+
+import { isReloadBlocked, onReloadUnblocked } from './reloadGate.js'
 
 export const UPDATE_WAITING_EVENT = 'garden:sw-update-waiting'
 
@@ -41,9 +49,36 @@ export function registerServiceWorker(opts = {}) {
   const hadController = !!sw.controller
   let refreshing = false
   let registration = null
+  let pendingReload = false
+  let unwatchGate = null
+
+  const stopWatchingGate = () => {
+    if (!unwatchGate) return
+    try { unwatchGate() } catch { /* noop */ }
+    unwatchGate = null
+  }
+
+  // Fire a reload that was deferred by the gate. Re-checks the gate every time: the unblock
+  // notification and a resume can race a surface going dirty again, and a reload that beats the
+  // guard is the exact loss this whole path exists to prevent.
+  const applyPendingReload = () => {
+    if (!pendingReload || refreshing || isReloadBlocked()) return
+    pendingReload = false
+    stopWatchingGate()
+    refreshing = true
+    reload()
+  }
 
   const onControllerChange = () => {
     if (!hadController || refreshing) return
+    if (isReloadBlocked()) {
+      // The new worker has ALREADY claimed the page, so the shell is mismatched from here on —
+      // we are only refusing to reload it out from under a half-typed harvest. Deferred, not
+      // dropped: subscribe once and take the next safe opportunity.
+      pendingReload = true
+      if (!unwatchGate) unwatchGate = onReloadUnblocked(applyPendingReload)
+      return
+    }
     refreshing = true
     reload()
   }
@@ -54,8 +89,12 @@ export function registerServiceWorker(opts = {}) {
     Promise.resolve().then(() => registration.update()).catch(noop)
   }
 
-  const onVisibility = () => { if (!doc || doc.visibilityState === 'visible') checkForUpdate() }
-  const onPageShow = () => checkForUpdate()
+  // Resume is the second chance for a deferred reload — the gate may have cleared while the page
+  // was hidden (form submitted, overlay dismissed) with no listener notification reaching us.
+  const onVisibility = () => {
+    if (!doc || doc.visibilityState === 'visible') { applyPendingReload(); checkForUpdate() }
+  }
+  const onPageShow = () => { applyPendingReload(); checkForUpdate() }
 
   // Announce a waiting SW to the UI. Only meaningful on an UPDATE (page already controlled);
   // a first install's waiting state resolves on its own and must not prompt a refresh.
@@ -109,5 +148,6 @@ export function registerServiceWorker(opts = {}) {
     try { sw.removeEventListener('controllerchange', onControllerChange) } catch { /* noop */ }
     if (doc) doc.removeEventListener('visibilitychange', onVisibility)
     if (win) win.removeEventListener('pageshow', onPageShow)
+    stopWatchingGate()
   }
 }
