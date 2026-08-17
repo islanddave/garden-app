@@ -72,9 +72,20 @@ function Basket({ size = 18 }) {
 // One shared shape for every circular header action (search, snap, harvest) — the search circle's
 // style was already a literal in the detail header; a second and third copy is where the three
 // silently drift apart, which is the exact divergence BD-027 exists to kill.
+// 44x44, raised from 36 on 2026-08-17. These two circles carry the app's #1 and #2 HUMAN ACTIONS —
+// harvest 664 and photo 601 over 90 days, 1,265 combined — measured as actions, not as event rows.
+// That distinction is the whole reason this changed: denominated in event_log rows, harvest looks
+// like 4.9% of activity and this header looks over-provisioned; denominated in taps (watering
+// arrives ~18 events per batch, harvest is 1:1) harvest is ~32% of everything Dave does. So the two
+// highest-frequency actions in the product were sitting on the two smallest, least-reachable
+// targets in the product, at the top edge of a 390px one-handed screen. 44 is the platform floor.
+//
+// NOT fixed here, and the bigger half of the problem: they are still in the TOP corner, which is
+// the worst thumb-reach zone one-handed. Moving harvest capture into the thumb zone is the real
+// Fitts's-law fix and is a layout decision, not a constant.
 const ACTION_CIRCLE = {
   position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-  width: 36, height: 36, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.75)',
+  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.75)',
   textDecoration: 'none', flexShrink: 0, ...FROST,
 }
 
