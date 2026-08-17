@@ -611,6 +611,123 @@ describe('DRG-GAUGESANITY-001 — an implausible dailyrainin is rejected like a 
   });
 });
 
+// ── DRG-GAUGENEG-001 — lower plausibility bound on dailyrainin ────────────────────────────────────────
+// The other half of the same rule. dailyrainin is a since-midnight TIP COUNTER, so a negative is never
+// weather — but it was not merely believed, it was LAUNDERED: `Math.max(bucket ?? 0, v)` floors every bucket
+// at 0, so an all-negative day published a confident 0.00" "no rain". That is the same fabricated dry day
+// GAUGESANITY closed from the top, arriving as the modal value of today_observed_in (80 of 82 stored plans),
+// and a dry day is what RELEASES watering suppression.
+describe('DRG-GAUGENEG-001 — a negative dailyrainin is dropped, never laundered into a dry day', () => {
+  const { RAIN_MIN_DAILY_IN } = station;
+  const om = { recent_precip_in: 0.9, today_precip_in: 0.1, today_pop: 40, upcoming_precip_in: 0.3,
+    tomorrow_precip_in: 0.2, tomorrow_pop: 55, yesterday_precip_actual_in: 0.45 };
+  const withToday = (d0) => ({ mac: MAC, records: [rec('2026-07-06', '02', d0, 62), ...freshFull.records.slice(1)] });
+
+  it('the floor is the instrument\'s own, not a weather judgement: exactly 0', () => {
+    expect(RAIN_MIN_DAILY_IN).toBe(0);
+  });
+
+  it('a day with only negative records is ABSENT, not 0 — the fabricated dry day is the whole defect', () => {
+    const s = deriveStation(withToday(-0.02), { nowMs: NOW });   // a hair under zero is already impossible
+    expect(s.todayPrecipIn).toBeNull();                          // pre-fix this was 0, published as "no rain"
+    expect(s.buckets['2026-07-06']).toBeUndefined();
+    expect(s.negativeDays).toEqual(['2026-07-06']);
+    expect(s.implausibleDays).toEqual(['2026-07-06']);           // no bucket left => rejected, same as too-high
+    expect(s.uncertainty).toBe('implausible');
+    const { merged, prov } = mergeStationHydrology(om, s);
+    expect(merged.today_observed_in).toBeUndefined();
+    expect(merged.today_precip_in).toBe(0.1);                    // Open-Meteo retained verbatim
+    expect(prov.today_source).toBe('forecast');
+  });
+
+  it('zero rain is LEGITIMATE and stays distinguishable from a rejected day', () => {
+    const dry = deriveStation(withToday(0), { nowMs: NOW });
+    expect(dry.todayPrecipIn).toBe(0);                           // a real dry day still reports 0
+    expect(dry.negativeDays).toEqual([]);
+    expect(dry.implausibleDays).toEqual([]);
+    expect(dry.uncertainty).toBeNull();
+    expect(mergeStationHydrology(om, dry).merged.today_observed_in).toBe(0);
+    // ...and the boundary is strictly-below, matching the upper bound's strictly-above.
+    expect(deriveStation(withToday(-0.01), { nowMs: NOW }).todayPrecipIn).toBeNull();
+  });
+
+  it('a mixed day drops the bad SAMPLES and keeps the day — a good record is not lost to a bad one', () => {
+    // Newest record is the corrupt one, which is the adversarial order: it also supplies tempF.
+    const s = deriveStation({ mac: MAC, records: [
+      rec('2026-07-06', '02', -9999, 62), rec('2026-07-06', '01', 0.42, 61), ...freshFull.records.slice(1),
+    ] }, { nowMs: NOW });
+    expect(s.todayPrecipIn).toBe(0.42);                          // the real total, from the records that were fine
+    expect(s.negativeDays).toEqual(['2026-07-06']);
+    expect(s.implausibleDays).toEqual([]);                       // the day survived, so nothing was rejected
+    expect(s.uncertainty).toBeNull();                            // and its coverage is intact, so not 'implausible'
+    expect(s.recentPrecipIn).toBe(0.5);
+    expect(mergeStationHydrology(om, s).merged.today_observed_in).toBe(0.42);
+  });
+
+  it('an all-negative D-1 breaks coverage and says so, instead of summing a phantom 0 into recent', () => {
+    const s = deriveStation({ mac: MAC, records: [
+      rec('2026-07-06', '02', 0.01, 62), rec('2026-07-05', '18', -0.5, 70),
+      rec('2026-07-04', '18', 0.20, 72), rec('2026-07-03', '18', 0.0, 65),
+    ] }, { nowMs: NOW });
+    expect(s.negativeDays).toEqual(['2026-07-05']);
+    expect(s.coversLookback).toBe(false);
+    expect(s.recentPrecipIn).toBeNull();                         // not 0.20, and not 0
+    expect(s.yesterdayPrecipIn).toBeNull();
+    expect(s.uncertainty).toBe('implausible');                   // NOT 'warmup' — the drop is what broke coverage
+  });
+
+  it('an all-negative station yields the IDENTICAL merged hydrology a stale one does — no new failure mode', () => {
+    const bad = deriveStation({ mac: MAC, records: freshFull.records.map((r) => ({ ...r, dailyrainin: -1 })) }, { nowMs: NOW });
+    const stale = deriveStation(freshFull, { nowMs: NOW + 6 * 3600 * 1000 });
+    expect(bad.fresh).toBe(true);      // freshness untouched: the feed is current, the numbers in it were not
+    expect(mergeStationHydrology(om, bad).merged).toEqual(mergeStationHydrology(om, stale).merged);
+    expect(mergeStationHydrology(om, bad).prov.station_uncertainty).toBe('implausible');
+  });
+
+  it('provenance tells the two bounds apart, and a day that trips both is listed once', () => {
+    // negative only -> the day survived; the sample loss is still never silent.
+    const mixed = deriveStation({ mac: MAC, records: [
+      rec('2026-07-06', '02', -3, 62), rec('2026-07-06', '01', 0.42, 61), ...freshFull.records.slice(1),
+    ] }, { nowMs: NOW });
+    const mp = mergeStationHydrology(om, mixed).prov;
+    expect(mp.station_negative_days).toEqual(['2026-07-06']);
+    expect(mp.station_rejected_days).toBeUndefined();
+    // over the ceiling only -> rejected, and not misreported as a negative.
+    const high = mergeStationHydrology(om, deriveStation(withToday(64.0), { nowMs: NOW })).prov;
+    expect(high.station_rejected_days).toEqual(['2026-07-06']);
+    expect(high.station_negative_days).toBeUndefined();
+    // both on one day -> rejected AND flagged, with no duplicate entry.
+    const both = deriveStation({ mac: MAC, records: [
+      rec('2026-07-06', '02', 64.0, 62), rec('2026-07-06', '01', -3, 61), ...freshFull.records.slice(1),
+    ] }, { nowMs: NOW });
+    expect(both.implausibleDays).toEqual(['2026-07-06']);
+    expect(both.negativeDays).toEqual(['2026-07-06']);
+  });
+
+  it('a negative gauge reading must NOT disarm the frost path (fresh is left alone, as with the upper bound)', () => {
+    const s = deriveStation({ mac: MAC, records: [rec('2026-07-06', '02', -9999, 38), ...freshFull.records.slice(1)] }, { nowMs: NOW });
+    expect(s.uncertainty).toBe('implausible');
+    const { merged, prov } = mergeStationWeather({ tonightLow: 42 }, s);
+    expect(merged.tonightLow).toBe(38);
+    expect(prov.low_source).toBe('station_floor');
+  });
+
+  it('the floor is NOT env-tunable — an override could only ever re-open the hole', async () => {
+    const prev = process.env.AWN_RAIN_MIN_DAILY_IN;
+    try {
+      process.env.AWN_RAIN_MIN_DAILY_IN = '-100';
+      vi.resetModules();
+      const ns = await import('./station.js');
+      const m = ns.default || ns;
+      expect(m.RAIN_MIN_DAILY_IN).toBe(0);
+      expect(m.deriveStation(withToday(-0.5), { nowMs: NOW }).todayPrecipIn).toBeNull();
+    } finally {
+      if (prev === undefined) delete process.env.AWN_RAIN_MIN_DAILY_IN; else process.env.AWN_RAIN_MIN_DAILY_IN = prev;
+      vi.resetModules();
+    }
+  });
+});
+
 describe('bindStationToSpace', () => {
   const s = { mac: MAC, lat: 42.5089, lng: -72.6466 };
   it('matches a Space whose stored coords are within tolerance', () => {

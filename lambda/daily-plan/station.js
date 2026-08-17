@@ -39,6 +39,22 @@ const COORD_TOL = 0.02; // ~1.5km: bind a station to a Space by matching stored 
 // the bound entirely.
 const RAIN_MAX_DAILY_IN = Number(process.env.AWN_RAIN_MAX_DAILY_IN) || 20;
 
+// DRG-GAUGENEG-001 — the LOWER half of the same plausibility rule. dailyrainin is a since-local-midnight TIP
+// COUNTER, so 0 is its floor by construction: no physical state of the instrument yields a negative total. A
+// negative is therefore never weather, it is a corrupt sample (out-of-range sentinel, sign wrap, unit-
+// conversion bug), and index.js:fetchStation hands the AWN payload through with zero value validation.
+//
+// Unlike an over-reading it was not merely believed, it was LAUNDERED: the bucket loop's `Math.max(b ?? 0, v)`
+// seed floors every bucket at 0, so a day whose records were ALL negative published a confident 0.00" — the
+// same fabricated dry day GAUGESANITY closed from the top, and a dry day is the input that RELEASES watering
+// suppression. It also arrives camouflaged: `today_observed_in: 0` is the modal value of that field in prod
+// (80 of the 82 stored gauge-sourced plans), so a fabricated one is invisible after the fact.
+//
+// Deliberately NOT env-overridable, unlike RAIN_MAX_DAILY_IN. That bound is a judgement about weather and can
+// reasonably be tuned per site; this one is the instrument's physical floor, and an override on it could only
+// ever re-open the hole.
+const RAIN_MIN_DAILY_IN = 0;
+
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // Civil-day label (YYYY-MM-DD) for an epoch-ms instant in a named tz. dailyrainin resets at station-LOCAL
@@ -66,7 +82,9 @@ function dayBefore(dayStr) {
 // Returns null when there is no usable data. recentPrecipIn is populated ONLY when the lookback is fully
 // covered (warm-up gate, V200 §3) AND the numbers are finite; otherwise null => caller falls back to
 // Open-Meteo + uncertainty. Never coerces an absent field to 0.0 (V200 B7). A day whose accumulator exceeds
-// RAIN_MAX_DAILY_IN is dropped outright (DRG-GAUGESANITY-001) and surfaces as implausibleDays[].
+// RAIN_MAX_DAILY_IN is dropped outright (DRG-GAUGESANITY-001) and surfaces as implausibleDays[]; a record
+// below RAIN_MIN_DAILY_IN is dropped individually (DRG-GAUGENEG-001) and surfaces as negativeDays[], which
+// costs the whole day only when nothing plausible is left to bucket.
 function deriveStation(raw, { nowMs }) {
   if (!raw || !Array.isArray(raw.records) || !raw.records.length) return null;
   const cfg = stationConfig().find((s) => s.mac === raw.mac) || stationConfig()[0];
@@ -82,9 +100,18 @@ function deriveStation(raw, { nowMs }) {
   // Max dailyrainin per civil day == that day's total (accumulator peak before the midnight reset). Records
   // with a non-finite dailyrainin are skipped (not treated as 0) so a malformed point can't poison a bucket.
   const buckets = {};
+  const negSeen = new Set();
   for (const r of recs) {
     if (!Number.isFinite(r.dailyrainin)) continue;
     const d = civilDay(r.dateutc, tz);
+    // DRG-GAUGENEG-001 — the lower bound acts per RECORD where the upper one acts per bucket, and the levels
+    // are forced, not a style choice. A bucket is a MAX, so `bucket > RAIN_MAX_DAILY_IN` is a faithful test of
+    // "some record was impossible", but `bucket < RAIN_MIN_DAILY_IN` can never be true at all — the `?? 0`
+    // seed below floors it — so the same check written at bucket level would be dead code that silently never
+    // fires. Per-record is also the right ACTION here: an over-reading accumulator is monotonic and stays high
+    // to midnight, so the day really is lost, whereas a negative cannot be an accumulator state at all and is
+    // a transient bad sample — drop it and the day keeps its real total from the records that were fine.
+    if (r.dailyrainin < RAIN_MIN_DAILY_IN) { negSeen.add(d); continue; }
     buckets[d] = Math.max(buckets[d] ?? 0, r.dailyrainin);
   }
   // DRG-GAUGESANITY-001 — drop any day whose total is physically impossible (see RAIN_MAX_DAILY_IN). Checking
@@ -98,7 +125,15 @@ function deriveStation(raw, { nowMs }) {
   for (const d of Object.keys(buckets)) {
     if (buckets[d] > RAIN_MAX_DAILY_IN) { implausibleDays.push(d); delete buckets[d]; }
   }
+  // DRG-GAUGENEG-001 — a day whose every record was negative leaves no bucket behind, which is REJECTED by the
+  // same definition the line above uses: the gauge's total for that day is gone. So it joins implausibleDays
+  // and inherits the whole already-tested rejection path (uncertainty, provenance, the absent-bucket fallback)
+  // rather than growing a parallel one. A day that also had a plausible record keeps its bucket and is NOT
+  // rejected — it stays only in negativeDays. Those three states are what station_negative_days exists to tell
+  // apart. Guarded against a day the upper bound already deleted, which would otherwise be listed twice.
+  for (const d of negSeen) if (!(d in buckets) && !implausibleDays.includes(d)) implausibleDays.push(d);
   implausibleDays.sort();
+  const negativeDays = [...negSeen].sort();
 
   const D0 = civilDay(nowMs, tz), D1 = dayBefore(D0), D2 = dayBefore(D1);
   const daysPresent = Object.keys(buckets).sort();
@@ -111,6 +146,9 @@ function deriveStation(raw, { nowMs }) {
   // that a warm-up names the wrong cause on the one signal an operator would read. It deliberately does NOT
   // touch `fresh`: the feed is current, one number inside it was not. Forcing fresh=false would also strip the
   // temperature floor in mergeStationWeather — a rain-gauge fault must never be able to disarm frost warning.
+  // A negative-only day reaches this through implausibleDays and reads 'implausible' like any other rejection.
+  // A day that merely HAD a negative sample and survived it does not: its total is still real and its coverage
+  // still intact, so raising 'implausible' would outrank — and misname — a warmup that has a different cause.
   const uncertainty = !fresh ? 'stale' : (implausibleDays.length ? 'implausible' : (!coversLookback ? 'warmup' : null));
 
   // BUG-RAINACTUAL-001 H1 — expose the D0 / D-1 buckets that were already being computed and thrown away.
@@ -122,7 +160,7 @@ function deriveStation(raw, { nowMs }) {
   const yesterdayPrecipIn = Number.isFinite(buckets[D1]) ? round2(buckets[D1]) : null;
 
   return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, recentPrecipIn, coversLookback, buckets, uncertainty,
-    day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays };
+    day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays, negativeDays };
 }
 
 // Gauge totals addressed by CIVIL-DAY LABEL rather than by the fetch instant. deriveStation's D0/D1/D2 are
@@ -302,7 +340,13 @@ function mergeStationHydrology(hy, st, opts) {
     // DRG-GAUGESANITY-001. Recorded UNCONDITIONALLY, unlike station_uncertainty above, which is only written
     // on the recent-fallback branch: a rejection confined to D0 leaves recent and yesterday gauge-sourced, so
     // that branch never runs and the drop would otherwise be invisible. A discarded reading is never silent.
-    if (st.implausibleDays && st.implausibleDays.length) prov.station_rejected_days = st.implausibleDays; }
+    if (st.implausibleDays && st.implausibleDays.length) prov.station_rejected_days = st.implausibleDays;
+    // DRG-GAUGENEG-001 — kept as its OWN key rather than folded into station_rejected_days, because the two
+    // bounds fail for different physical reasons and the reader has to be able to tell which fired: rejected
+    // only => the total was over the ceiling; both => the day was lost to negative samples; negative only =>
+    // bad samples were dropped and the day's published total is still real. Folding them would have made every
+    // rejection look like a stuck bucket. Unconditional, for the same reason the line above is.
+    if (st.negativeDays && st.negativeDays.length) prov.station_negative_days = st.negativeDays; }
   return { merged, prov };
 }
 
@@ -325,4 +369,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, COORD_TOL };
+module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL };
