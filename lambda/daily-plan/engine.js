@@ -10,6 +10,8 @@ const HOT_F = 88;
 // and pinned equal by ledger.test.js.
 const ledger = require('./ledger');
 const LP = require('./ledgerParams');
+// V4-TROPICALCOLD-001 — crop-type cold profiles (the bring-indoors fallback beneath the variety table).
+const fc = require('./frostClass');
 // DRG-WXPROB-001 — display gate for the nightly rain-AMOUNT callout (mirrors the Today widget). Presentation only.
 const RAIN_POP_DISPLAY_THRESHOLD = 30; // percent
 // DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
@@ -421,9 +423,30 @@ function coldFor(p, cad, low){
     return null;
   }
   if(/houseplant|succulent|cactus/i.test(c.crop||'')) return null;
-  const pb=c.cold && c.cold.tender ? c.cold.protect_below_F : null;
+  // V4-TROPICALCOLD-001 — already indoors? Then there is nothing to carry in, at any temperature.
+  // `done` (doneEvents.js) only retires a task for the CALENDAR DAY, so without this the card returns
+  // every night the low is under the threshold, all winter, for a plant already on the windowsill —
+  // the nightly nag the 2026-08-07 band decision rejected. brought_inside/brought_outside are existing
+  // logged event types and are a true toggle: the plant is indoors iff the LATER of the two is
+  // brought_inside. Unknown (neither ever logged) means outdoors, which is the fail-safe direction —
+  // it warns about a plant that is already in rather than staying silent about one that is out.
+  if(broughtInside(p)) return null;
+  // Cold-profile resolution, most specific first. Variety/genus/DB (`c.cold`) stays authoritative;
+  // the crop-type table is the FALLBACK beneath it, never an override. Ginger, and every other
+  // tropical with no hand-authored variety row, reaches a profile only via this second tier.
+  const ct=c.cold ? null : fc.coldProfileForSlug(p.crop_type_slug);
+  const prof=(c.cold && c.cold.tender) ? c.cold : (ct && ct.tender ? ct : null);
+  const pb=prof ? prof.protect_below_F : null;
   if(pb!=null && low<=pb) return {level:'protect', text:`tender tropical — bring in tonight (low ${low}°F ≤ ${pb}°F)`};
   return null;
+}
+
+// True when the planting's most recent move event says it is indoors. Dates are 'YYYY-MM-DD' strings
+// from the handler, so a lexicographic compare IS a chronological one.
+function broughtInside(p){
+  const in_=p && p.last_brought_inside, out=p && p.last_brought_outside;
+  if(!in_) return false;
+  return !out || in_>=out;
 }
 
 // ── DRG-NOCALWATER-001 — dormancy/growth-cycle watering suppression ──

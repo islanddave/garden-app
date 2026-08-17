@@ -100,6 +100,16 @@ const SLUGS_BY_BAND = Object.freeze({
     'jade', 'echeveria', 'haworthia', 'lithops', 'christmas_cactus', 'crown_of_thorns',
     // true tropicals grown in pots here
     'avocado', 'pineapple', 'lemongrass', 'lemon_verbena',
+    // V4-TROPICALCOLD-001 (2026-08-17). All three entered the live crop_type domain AFTER the
+    // 2026-08-04 provenance pull, so they were in NO static surface and fell through to UNKNOWN_BAND.
+    // Banding them moves NO alert threshold — tropical is held to the tender baseline, which is
+    // byte-identical to UNKNOWN_BAND — but it is what makes them VISIBLE to the coverage guards, and
+    // it is the declaration the cold-profile requirement is derived from (COLD_BY_CROP_TYPE below).
+    //   ginger  — Zingiber officinale; chilling injury in the low 50s, cumulatively and irreversibly,
+    //             long before any frost. The reason this item exists.
+    //   aloe    — tender succulent; same overwinter-indoors handling as jade/echeveria.
+    //   lantana — tender tropical shrub, overwintered indoors here rather than replaced.
+    'ginger', 'aloe', 'lantana',
   ],
   chill_sensitive: [
     'basil',
@@ -117,6 +127,10 @@ const SLUGS_BY_BAND = Object.freeze({
     'pepper', 'tomato', 'tomatillo', 'eggplant',
     // killed outright by the first frost
     'bean', 'nasturtium', 'four_o_clock', 'morning_glory', 'tweedia', 'helichrysum',
+    // calibrachoa — V4-TROPICALCOLD-001: tender bedding annual in a hanging basket, frost-killed and
+    // replaced yearly rather than overwintered, so it is `tender`, not `tropical`. It gets NO cold
+    // profile below for that reason: there is nothing to save by carrying it indoors.
+    'calibrachoa',
     // potato: the TUBERS survive, the FOLIAGE does not — a frost ends the planting's growth.
     // Kept at the tender baseline rather than light_frost_tolerant: foliage blackens around 31°F, so 38
     // is an early warning rather than a wrong one, and over-alerting a potato is cheap.
@@ -148,6 +162,24 @@ const SLUGS_BY_BAND = Object.freeze({
     // woody fruit + trees (first frost is not the risk; spring bloom frost is a separate concern)
     'blueberry', 'blackberry', 'black_raspberry', 'red_raspberry', 'wineberry', 'strawberry', 'peach',
     'japanese_maple',
+    // dogwood — V4-TROPICALCOLD-001: Kousa (Cornus kousa), a fully hardy zone-5 landscape tree in the
+    // ground. First frost is not a risk to it; banded to stop it counting as tender.
+    'dogwood',
+    // V4-TROPICALCOLD-001 (2026-08-17) — the rest of the crop_types vocabulary. Re-pinning the guard's
+    // universe from `crop_types` (142 slugs) instead of `plant_varieties.crop_type_slug` (125) exposed
+    // 16 slugs that had never been banded and were therefore counting as tender. All 16 are hardy and
+    // all have ZERO live plantings, so nothing any current planting does changes — this is forward
+    // coverage bought before the planting exists, which is the only time it is free.
+    // Hardy tree fruit + fruiting woody: first frost is not the risk (spring bloom frost is, and is a
+    // separate concern), same rationale as the existing peach/blueberry entries.
+    'apple', 'apricot', 'cherry', 'sour_cherry', 'nectarine', 'pear', 'plum', 'grape', 'elderberry',
+    'cranberry', 'raspberry',
+    // Hardy perennial crown.
+    'rhubarb',
+    // The overwintering greens — the crops that are SUPPOSED to be out in a frost. Alerting these at
+    // 38F would be the clearest possible false positive: surviving hard frost is the entire reason
+    // they are sown in August here.
+    'claytonia', 'mache', 'mizuna', 'tatsoi',
   ],
 });
 
@@ -168,6 +200,71 @@ const UNCERTAIN_SLUGS = ['sedum', 'cactus', 'succulent', 'hibiscus', 'bay', 'ros
 const BAND_BY_SLUG = Object.freeze(Object.fromEntries(
   BAND_ORDER.flatMap((band) => SLUGS_BY_BAND[band].map((s) => [s, band])),
 ));
+
+// ── V4-TROPICALCOLD-001 — crop-type cold profiles (the BRING-IT-INDOORS channel) ──────────────────
+//
+// THIS IS A DIFFERENT CHANNEL FROM THE BANDS ABOVE, and the distinction is the whole item. The bands
+// drive frostEval's coalesced frost ALERT (one SMS per frost event) and are deliberately held to the
+// tender baseline for alert fatigue. `protect_below_F` here drives engine.coldFor -> tasks.cold: a
+// per-planting card in the in-app Today/CareNeeded list with a one-tap `brought_inside`. It does not
+// page anyone. That is why a low-50s number is affordable here and is not affordable in a band.
+//
+// It is also the mitigation the band decision explicitly named and left unbuilt — see the 2026-08-07
+// comment above, verbatim: "The mitigation is a one-time 'bring the tropicals in / cut the basil'
+// task by mid-September, not a nightly page." ONE-TIME is load-bearing and is not free: coldFor is
+// evaluated nightly, so without the brought_inside/brought_outside suppression in engine.coldFor
+// these become exactly the nightly nag the band decision rejected. The suppression is not a polish
+// pass on this feature, it is a precondition of it being correct.
+//
+// WHY CROP-TYPE-KEYED. cadence-data-v2.json carries cold profiles keyed by VARIETY (171 entries).
+// That key space only ever covers a plant somebody already hand-authored a row for, which is why
+// ginger — a gift plant with no variety row — could not produce a cold task at ANY temperature: no
+// by_variety entry, no `cold` key on any of the 52 by_genus_fallback genera, none on `default`.
+// crop_type_slug is the coarsest key that still carries the trait, so ONE entry covers every present
+// and future planting of that crop. Variety-level stays authoritative where it exists; this is the
+// fallback beneath it, never an override of it.
+//
+// SCOPED TO THE `tropical` BAND ON PURPOSE. `chill_sensitive` (basil, cucurbits) is genuinely chill-
+// injured in the 40s, but it is field-planted and there is nothing to carry indoors — a "bring it in
+// tonight" card against an in-ground squash is an instruction that cannot be followed. Verified on
+// prod 2026-08-17: all 18 live tropical-band plantings are potted, ZERO in ground.
+const COLD_BY_CROP_TYPE = Object.freeze({
+  // True tropicals — chilling injury in the low 50s, well above any frost.
+  ginger:        Object.freeze({ tender: true, protect_below_F: 55 }),
+  pineapple:     Object.freeze({ tender: true, protect_below_F: 55 }),
+  lemongrass:    Object.freeze({ tender: true, protect_below_F: 50 }),
+  lemon_verbena: Object.freeze({ tender: true, protect_below_F: 50 }),
+  avocado:       Object.freeze({ tender: true, protect_below_F: 50 }),
+  lantana:       Object.freeze({ tender: true, protect_below_F: 50 }),
+  // Foliage houseplants — damaged in the mid-40s, and all of them live outdoors only for the summer.
+  pothos:        Object.freeze({ tender: true, protect_below_F: 50 }),
+  spider_plant:  Object.freeze({ tender: true, protect_below_F: 45 }),
+  dracaena:      Object.freeze({ tender: true, protect_below_F: 50 }),
+  tradescantia:  Object.freeze({ tender: true, protect_below_F: 45 }),
+  fittonia:      Object.freeze({ tender: true, protect_below_F: 55 }),
+  // Soft succulents. Cold-tolerant relative to the tropicals and harmed far more by wet-and-cold than
+  // by cool alone, so these sit at the bottom of the range rather than with the true tropicals.
+  jade:            Object.freeze({ tender: true, protect_below_F: 45 }),
+  echeveria:       Object.freeze({ tender: true, protect_below_F: 40 }),
+  haworthia:       Object.freeze({ tender: true, protect_below_F: 40 }),
+  aloe:            Object.freeze({ tender: true, protect_below_F: 45 }),
+  lithops:         Object.freeze({ tender: true, protect_below_F: 40 }),
+  christmas_cactus:Object.freeze({ tender: true, protect_below_F: 45 }),
+  crown_of_thorns: Object.freeze({ tender: true, protect_below_F: 50 }),
+});
+
+// The bands whose members MUST carry a cold profile. Exported so the coverage guard derives the
+// requirement from the same declaration the runtime reads, instead of a second hand-kept list that
+// can silently disagree with it (the failure mode that hid ginger).
+const COLD_PROFILE_REQUIRED_BANDS = Object.freeze(['tropical']);
+
+// The cold profile for a crop_type_slug, or null. Null means "no decision recorded" — callers must
+// treat it as UNKNOWN and must not substitute a default; silently inheriting the tender baseline is
+// precisely how a 55°F plant ended up with a 38°F answer.
+function coldProfileForSlug(slug) {
+  const s = normalizeSlug(slug);
+  return (s && COLD_BY_CROP_TYPE[s]) || null;
+}
 
 // Back-compat with the pre-D6 3-class map: tender/chill_sensitive/tropical/light_frost_tolerant all read
 // as class 'tender'; hardy reads as 'hardy'. Kept because the class is what the §3-4 copy counts.
@@ -387,7 +484,8 @@ function summarize(plantings, opts = {}) {
 
 module.exports = {
   frostClassForSlug, summarize, isContainer, isCoveredDefault, cropLabel,
-  resolveBandThresholds,
+  resolveBandThresholds, coldProfileForSlug,
   BAND_THRESHOLDS, BAND_BY_SLUG, SLUGS_BY_BAND, BAND_ORDER, UNKNOWN_BAND, TRIP_KEYS,
   CLASS_BY_SLUG, CLASS_BY_BAND, TENDER_SLUGS, HARDY_SLUGS, UNCERTAIN_SLUGS, CROP_LABELS,
+  COLD_BY_CROP_TYPE, COLD_PROFILE_REQUIRED_BANDS,
 };

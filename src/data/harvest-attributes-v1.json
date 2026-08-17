@@ -453,5 +453,18 @@
       "mustard", "parsnip", "radish", "spinach", "perilla", "borage", "althaea",
       "vietnamese_coriander"
     ]
+  },
+  "establishing_not_yet_harvestable": {
+    "note": "V4-TROPICALCOLD-001 (2026-08-17). A THIRD reason a habit is deliberately NULL, added because neither existing list could state this one truthfully. Edible, intended to be eaten, WITH a live planting — but not yet harvestable, so no readiness predicate may fire on it yet. not_harvest_tracked is scoped to ornamentals/houseplants/plants that will not fruit in this zone and would assert a decision Dave did not make; unseeded_vocabulary is scoped to slugs with NO live planting. The `harvest_habit` vocabulary itself (single | repeat | cut_and_come_again) describes HOW a crop is picked and has no way to say WHEN it becomes pickable at all, so the honest record is a NULL habit plus the intent and the release condition, held here. `intended_harvest_habit` is documentation of Dave's intent, NOT a seeded value: it is deliberately outside by_crop_type so nothing reads it as readiness. Promote a slug into by_crop_type when its release_condition is met and observed. Version stays 1.0.0 — like not_harvest_tracked this list is not part of the JSON->0b-data.sql projection the sync gate re-confirms, and by_crop_type is unchanged.",
+    "entries": {
+      "ginger": {
+        "intended_harvest_habit": "single",
+        "reason": "Dave intends to harvest it eventually, but NOT this year. Recorded as fact, not inference: a gift plant with no second source, planted this season. Ginger needs roughly 8-10 months from rhizome to a worthwhile lift, and that clock has no start event here because it arrived as an established gift rather than a planting.",
+        "harvest_this_season": false,
+        "release_condition": ">= 6-8 vigorous pseudostems AND rhizome visibly shouldering at the soil surface, recorded as an observation. Used instead of the 8-10 month rule because there is no start event to count from.",
+        "technique_note": "When it is time, do NOT take from the outer edge — on a ginger clump the outer edge IS the growth front, so cutting there removes the newest rhizome and a quarter to half the leaf area. This corrects advice previously given.",
+        "confidence": "high"
+      }
+    }
   }
 }

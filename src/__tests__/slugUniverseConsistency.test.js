@@ -27,14 +27,47 @@ import { CROP_TYPE_SLUGS, CROP_GUESS_SYNONYMS } from '../lib/parseSowProfile.js'
 import { CUES_BY_CROP_TYPE } from '../lib/ripenessCues.js'
 import fc from '../../lambda/daily-plan/frostClass.js'
 
-// Every slug the app names in static config, from all three surfaces. Union, not intersection:
+// V4-TROPICALCOLD-001 (2026-08-17) — THE UNIVERSE WAS THE BUG, not the invariant.
+//
+// The three static surfaces below have one property in common: a crop only appears in them once
+// somebody edits a file. A crop_type that exists ONLY in the live DB is invisible to every one of
+// them, so this guard's universe silently excluded exactly the crops most likely to be unmapped —
+// the new ones. Measured this run against prod: 125 live crop_type_slug values, of which `aloe`,
+// `calibrachoa`, `dogwood`, `ginger` and `lantana` appeared in NO static surface at all. Ginger, a
+// tropical needing to come indoors at 55F, was therefore unbanded, uncold-profiled, and unseen by a
+// guard whose entire stated job is to catch unbanded slugs. It was invisible, not tolerated.
+//
+// LIVE_DOMAIN closes that. It is a pinned snapshot of `select slug from crop_types` (prod,
+// 2026-08-17, 142 values). Note the TABLE: frostClass.js and frostClass.test.js both pin
+// `plant_varieties.crop_type_slug` (125 values), which is NARROWER and is the wrong universe for a
+// coverage guard — a crop_type with no variety row yet is precisely the crop nobody has mapped.
+// Re-pinning from crop_types exposed 16 further unbanded slugs (the tree fruit, rhubarb, and the
+// claytonia/mache/mizuna/tatsoi overwintering greens), all with zero live plantings, i.e. bought
+// before the planting existed. `chard` is the standing proof the two tables differ: it is a
+// crop_type with zero varieties, and it is why the drift check below runs against THIS list.
+const LIVE_DOMAIN = ('aloe althaea apple apricot artichoke arugula asparagus avocado basil bay bean bee_balm beet '
+  + 'begonia bitter_melon black_raspberry blackberry blackberry_lily blueberry bok_choy borage broccoli '
+  + 'brussels_sprouts bunching_onion cabbage cactus calibrachoa carnation carrot celery chard cherry chervil chives '
+  + 'christmas_cactus chrysanthemum cilantro claytonia cobaea coleus collard columbine cranberry crown_of_thorns '
+  + 'cucamelon cucumber culantro delphinium dill dogwood dracaena echeveria edelweiss eggplant elderberry endive '
+  + 'fittonia flower_mix four_o_clock foxglove garlic geranium ginger grape haworthia helichrysum hibiscus hollyhock '
+  + 'hosta jade japanese_maple kale kohlrabi lantana leek lemon_verbena lemongrass lettuce lithops luffa mache '
+  + 'marigold melon milkweed mint mizuna money_plant morning_glory mustard nasturtium nectarine okra onion oregano '
+  + 'parsley parsnip pea peach pear pepper perilla petunia pineapple plum poppy potato pothos radicchio radish '
+  + 'raspberry rat_tail_radish red_raspberry rhubarb rose rosemary sage sedum sempervivum shallot sour_cherry '
+  + 'spider_plant spinach squash stock strawberry succulent sunflower sweet_potato tarragon tatsoi thunbergia thyme '
+  + 'tomatillo tomato torenia tradescantia tweedia vietnamese_coriander viola watermelon wineberry winter_squash')
+  .split(' ')
+
+// Every slug the app names in static config, PLUS the live crop-type domain. Union, not intersection:
 // a slug is "known" if ANY surface mentions it, because any one of them can put it in front of the
-// frost engine.
+// frost engine — and the DB can do so without any file being edited at all.
 const MENTIONED = Object.freeze([
   ...new Set([
     ...CROP_TYPE_SLUGS,
     ...Object.keys(CUES_BY_CROP_TYPE),
     ...Object.values(CROP_GUESS_SYNONYMS),
+    ...LIVE_DOMAIN,
   ]),
 ].sort())
 
@@ -72,7 +105,74 @@ describe('V4-SLUGCONSIST-001 — crop-guess synonym targets', () => {
   })
 })
 
+describe('V4-TROPICALCOLD-001 — cold-profile coverage', () => {
+  // THE DEFECT CLASS THIS EXISTS FOR: a chill-sensitive crop with no cold profile produces NO
+  // bring-indoors task at ANY temperature, silently. engine.coldFor reads a profile keyed first by
+  // variety (cadence-data-v2.json, 171 entries) and now by crop_type (frostClass.COLD_BY_CROP_TYPE);
+  // when neither has an entry it returns null. Null is indistinguishable from "this plant is fine in
+  // the cold", so the failure renders as silence rather than as an error — the same shape as the
+  // unmapped-band failure above, one hop further down, and it cost a real plant its only warning.
+  //
+  // The requirement is DERIVED, not hand-listed: membership of a band in
+  // COLD_PROFILE_REQUIRED_BANDS is the declaration, so adding a slug to the tropical band is by
+  // itself enough to make this guard demand a profile for it. A second hand-kept list is exactly how
+  // the two surfaces disagreed in the first place.
+  it('every crop in a cold-profile-required band HAS a cold profile', () => {
+    const required = fc.COLD_PROFILE_REQUIRED_BANDS.flatMap((b) => fc.SLUGS_BY_BAND[b])
+    const missing = required.filter((s) => !fc.coldProfileForSlug(s)).sort()
+    expect(
+      missing,
+      `Crop(s) are banded cold-sensitive but have NO cold profile, so engine.coldFor returns null for ` +
+        `them at every temperature and they can never produce a "bring in tonight" task. Add each to ` +
+        `COLD_BY_CROP_TYPE in lambda/daily-plan/frostClass.js: ${missing.join(', ')}`
+    ).toEqual([])
+  })
+
+  it('ginger specifically can produce a bring-indoors signal in the low 50s', () => {
+    // The plant this item exists for. Pinned by name, not just by the coverage rule above, because
+    // the coverage rule would still pass if ginger were quietly moved out of the tropical band.
+    const prof = fc.coldProfileForSlug('ginger')
+    expect(prof, 'ginger must have a cold profile').toBeTruthy()
+    expect(prof.tender).toBe(true)
+    expect(prof.protect_below_F).toBeGreaterThanOrEqual(50)
+    expect(fc.BAND_BY_SLUG.ginger).toBe('tropical')
+  })
+
+  it('a cold profile is never the muted tender baseline for a true tropical', () => {
+    // The trap the panel walked into: the tropical BAND is deliberately held to 40/38/33, so a fix
+    // that only banded the crop would produce a first warning in mid-October, about six weeks after
+    // ginger needed to move. A profile at or below the band's advisory point would be that same
+    // non-fix wearing a different hat.
+    const advisory = fc.BAND_THRESHOLDS.tender.ADVISORY_LOW_F
+    for (const slug of ['ginger', 'pineapple', 'fittonia']) {
+      expect(fc.coldProfileForSlug(slug).protect_below_F, `${slug} must warn above the tender band`)
+        .toBeGreaterThan(advisory)
+    }
+  })
+
+  it('no cold profile exists for a crop that is not cold-sensitive', () => {
+    // The inverse error: a profile on a hardy crop emits a nightly "bring in tonight" card for a
+    // plant that is fine outdoors, which is how the channel gets muted by its owner.
+    const stray = Object.keys(fc.COLD_BY_CROP_TYPE)
+      .filter((s) => !fc.COLD_PROFILE_REQUIRED_BANDS.includes(fc.BAND_BY_SLUG[s]))
+      .sort()
+    expect(stray, `cold profile on a crop that is not in a cold-sensitive band: ${stray.join(', ')}`).toEqual([])
+  })
+})
+
 describe('V4-SLUGCONSIST-001 — the guard itself', () => {
+  it('the pinned live domain has not drifted behind the static surfaces', () => {
+    // LIVE_DOMAIN is a snapshot and will go stale — that is not preventable in a unit test with no
+    // DB. What IS preventable is stale-and-unnoticed. Any slug the static config knows about must
+    // also be in the snapshot; when that fails, the snapshot is provably behind and needs re-pulling
+    // with the query in its header comment. This is a weaker signal than a live query and is chosen
+    // deliberately over adding a DB dependency to the unit suite.
+    const snapshot = new Set(LIVE_DOMAIN)
+    const behind = [...new Set([...CROP_TYPE_SLUGS, ...Object.keys(CUES_BY_CROP_TYPE)])]
+      .filter((s) => !snapshot.has(s)).sort()
+    expect(behind, `LIVE_DOMAIN is behind the static surfaces; re-pull it: ${behind.join(', ')}`).toEqual([])
+  })
+
   it('is actually looking at a populated universe', () => {
     // Without this, an import that silently resolved to an empty object would make every assertion
     // above pass vacuously — a green test asserting nothing, which is the exact failure class this

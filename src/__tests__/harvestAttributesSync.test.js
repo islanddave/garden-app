@@ -156,7 +156,14 @@ describe('harvest-attributes JSON is in sync with the generated 0b-data.sql seed
     // A slug on both sides is a contradiction the DB cannot express: 0b-data.sql would write a value
     // into a column the exclusion list says is deliberately NULL. This is the failure mode of adding
     // to either list without checking the other.
-    const decided = [...doc.not_harvest_tracked.slugs, ...doc.unseeded_vocabulary.slugs]
+    // Three lists now, not two: establishing_not_yet_harvestable joined them on 2026-08-17. It is in
+    // this union for the same reason the other two are — it records a deliberate NULL — and leaving
+    // it out would let a slug be both "not yet harvestable" and seeded with a live habit.
+    const decided = [
+      ...doc.not_harvest_tracked.slugs,
+      ...doc.unseeded_vocabulary.slugs,
+      ...Object.keys(doc.establishing_not_yet_harvestable.entries),
+    ]
     const both = decided.filter(s => s in authored).sort()
     expect(both, 'seeded in by_crop_type AND listed as a deliberate NULL').toEqual([])
     expect(new Set(decided).size, 'a slug is listed twice across the two NULL lists').toBe(decided.length)
@@ -170,6 +177,21 @@ describe('harvest-attributes JSON is in sync with the generated 0b-data.sql seed
     const listed = new Set(doc.not_harvest_tracked.slugs)
     for (const slug of ['aloe', 'calibrachoa', 'lantana']) expect(listed.has(slug), slug).toBe(true)
     expect(listed.has('ginger'), 'ginger is an open question, not a recorded decision').toBe(false)
+  })
+
+  it("ginger's habit is recorded as ESTABLISHING, and never as not_harvest_tracked", () => {
+    // V4-TROPICALCOLD-001. Ginger stopped being "an open question" on 2026-08-17 — the answer is
+    // known (Dave will harvest it, but not this year) and is now written down. What must NOT happen
+    // is it landing in not_harvest_tracked: that list means ornamental / will-not-fruit-here, and
+    // recording it there would assert a decision Dave never made about an edible plant he intends to
+    // eat. The habit stays NULL so no readiness predicate fires this season.
+    const g = doc.establishing_not_yet_harvestable.entries.ginger
+    expect(g, 'ginger must carry an explicit establishing record').toBeTruthy()
+    expect(g.harvest_this_season, 'no harvest this season').toBe(false)
+    expect(g.intended_harvest_habit, 'the eventual habit, documented not seeded').toBe('single')
+    expect(g.release_condition && g.release_condition.length, 'a release condition is required').toBeGreaterThan(20)
+    expect(new Set(doc.not_harvest_tracked.slugs).has('ginger')).toBe(false)
+    expect('ginger' in authored, 'seeding it would let a readiness predicate fire').toBe(false)
   })
 
   it('DOY windows are set only where being outside the window is actively harmful', () => {

@@ -354,3 +354,62 @@ describe('DRG-CADENCE-001: the 11 live plantings that fell to the naked 3-day de
     }
   });
 });
+
+describe('V4-TROPICALCOLD-001 — the bring-indoors channel reaches crops with no variety row', () => {
+  // The plant that forced this item: a gifted ginger with no by_variety entry, no `cold` key on any
+  // of the 52 by_genus_fallback genera, and none on `default`. coldFor therefore returned null at
+  // EVERY temperature — the app could not have warned about it on a 34F night, let alone the 55F one
+  // that actually injures it. Measured at this site, the first <=55F night falls 09-01 to 09-12 in
+  // all 11 years on record, so this is the difference between a warning and no warning.
+  const planFor = (ps, weather) => generatePlan({
+    plantings: ps.map((p, i) => ({
+      id: 'tc-' + i, project: 'Tropicals', project_id: 'pt', status: 'vegetative',
+      substrate_start: '2026-05-01', last_water: '2026-09-01', last_fert: null, db_cadence: null,
+      container_type: 'plastic_pot', ...p,
+    })),
+    cadence: cad, fertModel: fm, today: '2026-09-01', weather: { unit: 'F', ...weather }, ownerFallback: 'dave',
+  });
+  const coldRows = (plan) => Object.values(plan.users).flatMap(u => u.tasks.cold);
+  const GINGER = { name: 'Ginger', variety: 'Ginger', genus: null, crop_type_slug: 'ginger' };
+
+  it('ginger produces a bring-indoors task on a 54F night (it produced NONE before)', () => {
+    const rows = coldRows(planFor([GINGER], { tonightLow: 54, highToday: 72 }));
+    expect(rows.map(r => r.name)).toContain('Ginger');
+    expect(rows.find(r => r.name === 'Ginger').text).toMatch(/bring in tonight/);
+  });
+
+  it('the signal arrives BEFORE 2026-09-01, not at the muted 38F band', () => {
+    // The panel's proposed fix (band ginger tropical) would first speak at 38F, in mid-October.
+    // 56F is above the trip point and must stay quiet; 55F is the trip point and must fire. Pinning
+    // both sides makes this a threshold assertion rather than a "something fired" assertion.
+    expect(coldRows(planFor([GINGER], { tonightLow: 56, highToday: 72 })).map(r => r.name)).not.toContain('Ginger');
+    expect(coldRows(planFor([GINGER], { tonightLow: 55, highToday: 72 })).map(r => r.name)).toContain('Ginger');
+  });
+
+  it('a variety-level cold profile still WINS over the crop-type fallback', () => {
+    // Precedence, not replacement. Avocado carries by_variety cold {tender:true, protect_below_F:50}
+    // while the crop-type table also lists avocado; at 52F the variety row must keep it quiet.
+    const av = { name: 'Avocado', variety: 'Avocado', genus: 'Persea', crop_type_slug: 'avocado' };
+    expect(coldRows(planFor([av], { tonightLow: 52, highToday: 72 })).map(r => r.name)).not.toContain('Avocado');
+    expect(coldRows(planFor([av], { tonightLow: 49, highToday: 72 })).map(r => r.name)).toContain('Avocado');
+  });
+
+  it('SUPPRESSION: a plant already indoors is not re-carded every night', () => {
+    // Without this the card returns nightly, all winter, for a plant already on the windowsill —
+    // `done` retires a cold task for the calendar day only. That is the nightly nag the 2026-08-07
+    // band decision explicitly rejected, so this guard is load-bearing for the feature being correct
+    // rather than merely present.
+    const inside = { ...GINGER, last_brought_inside: '2026-08-30' };
+    expect(coldRows(planFor([inside], { tonightLow: 44, highToday: 60 })).map(r => r.name)).not.toContain('Ginger');
+  });
+
+  it('SUPPRESSION lifts when the plant goes back out in spring', () => {
+    const backOut = { ...GINGER, last_brought_inside: '2026-08-30', last_brought_outside: '2027-05-20' };
+    expect(coldRows(planFor([backOut], { tonightLow: 44, highToday: 60 })).map(r => r.name)).toContain('Ginger');
+  });
+
+  it('a hardy crop never enters the cold bucket via the crop-type table', () => {
+    const kale = { name: 'Kale', variety: 'Kale', genus: null, crop_type_slug: 'kale' };
+    expect(coldRows(planFor([kale], { tonightLow: 30, highToday: 45 })).map(r => r.name)).not.toContain('Kale');
+  });
+});

@@ -752,6 +752,13 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- matches the engine's own UTC date math (new Date(iso.slice(0,10)+'T00:00:00Z')). Soft-deleted events excluded.
            to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type in ('watering','rain') and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_water,
            to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='fertilizing' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_fert,
+           -- V4-TROPICALCOLD-001: the indoors/outdoors toggle engine.coldFor reads to keep the
+           -- bring-indoors card a ONE-TIME task instead of a nightly nag. `done` retires a cold task
+           -- for the calendar day only, so a plant already on the windowsill would otherwise be
+           -- re-carded every night under 55F until spring. Same to_char/UTC shape as last_water above,
+           -- because the engine compares these two as plain 'YYYY-MM-DD' strings.
+           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='brought_inside' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_brought_inside,
+           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='brought_outside' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_brought_outside,
            -- substrate_start = when the current MG-amended substrate began (the feed-phase clock). NOT a column; derived from the
            -- latest potting_up event, else transplant/plant/created date. engine reads p.substrate_start for feedPhase; without it
            -- every plant -> phase 'unknown' -> zero fert recs (silent dead feature). Validated on prod: 168 active, 28 via potting_up, 0 null.
