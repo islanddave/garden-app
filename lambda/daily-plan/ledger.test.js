@@ -243,10 +243,15 @@ describe('rainDepthClass — measured precip -> depth class (DRG-RAINDEPTH-001)'
     expect(rainDepthClass('intermediate', t.light)).toBe('light');
     expect(rainDepthClass('intermediate', t.light - 0.001)).toBe(null);
   });
-  it('coarser vessels need MORE rain for the same class (bag sheds, bed absorbs)', () => {
+  it('small_fast mirrors in_ground exactly; intermediate still needs at least as much', () => {
+    // 2026-08-17 field revision (Dave's own observation, overriding the estimate): his fabric bags
+    // sit ON SOIL, mulched and clustered, so they retain like a bed — not like a shedding container.
+    // Pinned as EQUALITY plus literals, so drifting EITHER row (or both together) fails here.
+    expect(LP.RAIN_DEPTH.small_fast).toEqual({ light: 0.10, normal: 0.25, deep: 0.60 });
     for (const cls of ['light', 'normal', 'deep']) {
-      expect(LP.RAIN_DEPTH.small_fast[cls]).toBeGreaterThanOrEqual(LP.RAIN_DEPTH.intermediate[cls]);
-      expect(LP.RAIN_DEPTH.intermediate[cls]).toBeGreaterThanOrEqual(LP.RAIN_DEPTH.in_ground[cls]);
+      expect(LP.RAIN_DEPTH.small_fast[cls], cls).toBe(LP.RAIN_DEPTH.in_ground[cls]);
+      // intermediate = rigid troughs/large pots: no ground wicking, so still >= the bed row
+      expect(LP.RAIN_DEPTH.intermediate[cls], cls).toBeGreaterThanOrEqual(LP.RAIN_DEPTH.in_ground[cls]);
     }
   });
   it('every tier table is strictly ordered light < normal < deep', () => {
@@ -255,11 +260,17 @@ describe('rainDepthClass — measured precip -> depth class (DRG-RAINDEPTH-001)'
       expect(t.normal, tier).toBeLessThan(t.deep);
     }
   });
-  it('unknown tier fails safe to small_fast (least credit); zero/negative/NaN earn nothing', () => {
-    // 0.3" is Normal on in_ground but only Light on small_fast — an unknown tier must get the latter.
+  it('unknown tier falls back to the small_fast row; zero/negative/NaN earn nothing', () => {
+    // small_fast now mirrors in_ground, so intermediate is the discriminating tier: 0.27" is Normal
+    // on small_fast but only Light on intermediate. Fallback must land on the small_fast row
+    // specifically — not on intermediate, and not on a hardcoded default.
+    // NOTE: small_fast is no longer the LEAST-credit row (intermediate is), so the unknown-container
+    // fallback no longer errs toward watering. Flagged for Dave; unchanged here by scope.
+    expect(rainDepthClass('intermediate', 0.27)).toBe('light');
+    expect(rainDepthClass('bogus', 0.27)).toBe('normal');
+    expect(rainDepthClass('bogus', 0.27)).toBe(rainDepthClass('small_fast', 0.27));
+    expect(rainDepthClass('bogus', 0.27)).not.toBe(rainDepthClass('intermediate', 0.27));
     expect(rainDepthClass('in_ground', 0.3)).toBe('normal');
-    expect(rainDepthClass('bogus', 0.3)).toBe('light');
-    expect(rainDepthClass('bogus', 0.3)).toBe(rainDepthClass('small_fast', 0.3));
     for (const bad of [0, -1, NaN, null, undefined]) expect(rainDepthClass('in_ground', bad)).toBe(null);
   });
 });
@@ -297,6 +308,25 @@ describe('gauge-rain day-credits', () => {
         weather: flatWeather({ precipOn: { '2026-08-09': 0.21 } }) });
       expect(bare.d - wet.d).toBeCloseTo(LP.LIGHT_CREDIT_WI * 4, 6);
     }
+  });
+  it('2026-08-17 revision: 0.30" now earns a BAG the full Normal rewet, not a Light nudge', () => {
+    // Dave's field observation moved small_fast normal 0.40 -> 0.25. 0.30" measured used to land as
+    // Light on a bag (a subtractive nudge) and now lands as Normal — the same class the in-ground
+    // row has always given it. This is the under-crediting he reported as driving over-watering.
+    // Pinned against a MANUAL Normal watering at the same instant: rain folds through the same depth
+    // arithmetic, and Normal carries no bank, so the two must land identically.
+    const bag = { vessel: vesselProfile('fabric_bag', '5 gal'), rainTier: 'small_fast' };
+    expect(rainDepthClass('small_fast', 0.30)).toBe('normal');
+    expect(rainDepthClass('small_fast', 0.30)).toBe(rainDepthClass('in_ground', 0.30));
+    const t2359 = etMidnightMs('2026-08-09') + 24 * H - 60000;
+    const light = mk({ ...bag, events: [PRIMER],
+      weather: flatWeather({ precipOn: { '2026-08-09': 0.21 } }) });
+    const normalRain = mk({ ...bag, events: [PRIMER],
+      weather: flatWeather({ precipOn: { '2026-08-09': 0.30 } }) });
+    const normalWater = mk({ ...bag,
+      events: [PRIMER, { id: 'n1', t: t2359, type: 'watering', depth: 'normal' }] });
+    expect(normalRain.d).toBeLessThan(light.d);                 // Normal beats Light: strictly more credit
+    expect(normalRain.d).toBeCloseTo(normalWater.d, 6);
   });
   it('deep RAIN resets flat to 0 but NEVER banks, where a manual Deep on the same vessel does', () => {
     // The one deliberate asymmetry in applyDepth. in_ground banks; both ops land at 23:59 ET of the
@@ -336,7 +366,7 @@ describe('gauge-rain day-credits', () => {
       weather: flatWeather({ precipOn: { '2026-08-09': 1.0, '2026-08-09_tmax': 84.9 } }) });
     const hot = mk({ ...bag, events: [PRIMER],
       weather: flatWeather({ precipOn: { '2026-08-09': 1.0, '2026-08-09_tmax': 85 } }) });
-    // 1.0" > small_fast deep 0.90. Cool: Deep -> 0 (a 7-gal bag does not bank). Hot: demoted to
+    // 1.0" > small_fast deep 0.60. Cool: Deep -> 0 (a 7-gal bag does not bank). Hot: demoted to
     // Normal -> the container hedge, 0.25 x wi = 1.0. The 0.1F demand-ramp delta is noise here.
     expect(hot.d - cool.d).toBeCloseTo(LP.HEDGE.containerResetWi * 4, 1);
   });

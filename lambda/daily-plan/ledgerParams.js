@@ -107,15 +107,23 @@ const RAIN_DAY = {
 // from either. Rain now folds through the SAME depth arithmetic as a manual watering, so a sprinkle
 // no longer resets a cadence and a real soak is no longer discarded.
 // Values are inches of gauge-measured daily precip, read as lower bounds: >=deep is Deep, >=normal
-// is Normal, >=light is Light, below light is a trace and earns nothing. Coarser vessels need MORE
-// rain for the same class — a bag sheds and dries where a bed absorbs and holds.
+// is Normal, >=light is Light, below light is a trace and earns nothing.
 // Provenance: agronomy estimate for the Conway MA site (cool-humid, clay-ish native soil), NOT
 // measured. These are the #1 soak-tune target — same posture as RAIN_DAY.ia was (err toward
 // watering: raise the thresholds, never lower them, on an unproven shadow-soak).
+// small_fast REVISED to the in_ground row 2026-08-17 on Dave's direct field observation, which
+// overrides the estimate it replaces. The original row (0.15/0.40/0.90) encoded a
+// coarse-vessel-sheds-faster premise: a bag needs MORE rain than a bed for the same class. That
+// premise describes an isolated container on pavement, NOT this site — Dave's bags are fabric, sat
+// ON SOIL (wicking contact with the ground), mulched or strawed on top (suppressed evaporation),
+// and clustered adjacent to each other on a slope (mutual shading). He reports they hold moisture
+// like a bed and that he over-waters against generic container advice. Under-crediting rain was
+// driving exactly that. Retention is bed-equivalent here; heat is a SEPARATE mechanism and stays
+// with RAIN_DAY.bagHeatSoftenF's one-class demotion below.
 const RAIN_DEPTH = {
   in_ground:    { light: 0.10, normal: 0.25, deep: 0.60 },
   intermediate: { light: 0.10, normal: 0.30, deep: 0.75 },
-  small_fast:   { light: 0.15, normal: 0.40, deep: 0.90 },
+  small_fast:   { light: 0.10, normal: 0.25, deep: 0.60 },
 };
 const TRANSPLANT_CARVEOUT_DAYS = 21;         // mirrors engine.TRANSPLANT_CARVEOUT_DAYS (pinned by test)
 
