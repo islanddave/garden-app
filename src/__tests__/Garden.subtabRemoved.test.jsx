@@ -70,7 +70,9 @@ describe('Garden — Plants|Photos sub-tab removed (V4-GARDENSEGCTRL-001)', () =
     expect(screen.getByText('Tomato')).toBeTruthy()
     expect(screen.getByText('Pepper')).toBeTruthy()
     expect(screen.getByText(/Log many/)).toBeTruthy()
-    expect(screen.getByText(/Snap/)).toBeTruthy()
+    // V4-TOPCHROMEACTIONS-001 removed the Snap slug from this row (it is a TopChrome action now,
+    // and TopChrome is not rendered by this test's isolated <Garden /> mount). Log many + Favorites
+    // still carry the "the action row paints unconditionally" property this case is about.
     expect(screen.getByText(/Favorites/)).toBeTruthy()
   })
 })

@@ -212,13 +212,16 @@ describe('ACCEPTANCE 3 — the second sheet (+LOG create) gets identical treatme
     expect(atFloor()).toBe(true)
   })
 
-  it('an OVERLAY row (Log harvest) keeps its background state through the replace', async () => {
+  it('an OVERLAY row (Log an event) keeps its background state through the replace', async () => {
     // The consume path routes overlay rows through useOverlayNavigate — losing `background` here
     // would silently turn the flyover into a full-page render (the V4-HARVFAB-001 trap).
+    // V4-HARVFABREMOVE-001: this case used to drive "Log harvest", which no longer exists in the
+    // sheet. "Log an event" is the same /log overlay target and exercises the identical consume
+    // path, so the property under test is unchanged — only the row that reaches it.
     renderNav()
     openCreate()
     await settle()
-    fireEvent.click(screen.getByText('Log harvest'))
+    fireEvent.click(screen.getByText('Log an event'))
     await settle()
     expect(path()).toBe('/log')
     expect(screen.getByTestId('path').getAttribute('data-bg')).toBe('/today')

@@ -116,6 +116,60 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
   })
 })
 
+// V4-SNAPCAPTURE-001 (BD0806-06) — Dave decided 2026-08-17: demote "Take a Photo" so Snap is one
+// tap into the picker. The pre-existing V4-SNAPPICK-001 case above CANNOT see this change — it
+// asserts textContent contains "Take photo", which "Take photo instead" still satisfies — so the
+// demote is pinned here or by nothing. Both arms must stay REACHABLE; only the hierarchy moves.
+describe('V4-SNAPCAPTURE-001 — Choose is primary, Take is demoted', () => {
+  it('Choose photo is the single primary action: full-width and solid, not a 50/50 dashed pair', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    const choose = await screen.findByTestId('cap-choose')
+    expect(choose.style.width).toBe('100%')
+    // Solid + filled is the primary treatment; the demoted pair were both dashed outlines.
+    expect(choose.style.borderStyle).toBe('solid')
+    expect(choose.style.backgroundColor).not.toBe('')
+    // The old pair were siblings in one flex row, each flex:1. Neither is any more.
+    // (`flex:'none'` serializes to the longhand '0 0 auto'.)
+    expect(choose.style.flex).toBe('0 0 auto')
+  })
+
+  it('Take photo is a secondary control — no picker-button chrome, and it says "instead"', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    const take = await screen.findByTestId('cap-take')
+    expect(take.textContent).toBe('Take photo instead')
+    // Not the dashed picker-button treatment, and not filled — the two things that would put it
+    // back on equal footing with Choose. (jsdom does not round-trip the `border` shorthand set to
+    // 'none', so borderStyle is the reliable read here.)
+    expect(take.style.borderStyle).not.toBe('dashed')
+    expect(take.style.backgroundColor).toBe('')
+    expect(take.style.textDecoration).toContain('underline')
+  })
+
+  it('states WHY the camera arm is demoted — the gallery-write limit is the whole reason', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    await screen.findByTestId('cap-choose')
+    expect(screen.getByText(/aren.t saved to your camera roll/i)).toBeTruthy()
+  })
+
+  it('BOTH arms still fire the picker — demote must not become removal', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    const input = await screen.findByTestId('capture-input')
+    const clicked = []
+    input.click = () => clicked.push(input.getAttribute('capture'))
+    fireEvent.click(screen.getByTestId('cap-choose'))
+    fireEvent.click(screen.getByTestId('cap-take'))
+    // choose -> no capture attr (library); take -> capture set (live camera). Order is the proof
+    // that the two controls remain wired to DIFFERENT modes, not collapsed onto one.
+    expect(clicked).toHaveLength(2)
+    expect(clicked[0]).toBeNull()
+    expect(clicked[1]).toBe('environment')
+  })
+})
+
 // BUG-SNAPRETAKE-001 — "Retake / choose photo" was dead once a photo had been selected.
 // The control lives in step 'mode', which is only reachable AFTER onPick() advances the step —
 // and the file input used to render only in step 'photo', so by the time the button existed its

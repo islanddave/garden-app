@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
@@ -50,10 +49,11 @@ export default function Today() {
 
   return (
     <div style={{ padding: 16, paddingBottom: 32, maxWidth: 640, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>Today</h1>
-        <Link to="/capture" data-testid="snap-entry-today" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: P.green, color: P.white, border: 'none', borderRadius: 20, padding: '7px 14px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}><Icon name="media.camera" size={15} decorative surface="inverse" /><span>Snap</span></Link>
-      </div>
+      {/* V4-TOPCHROMEACTIONS-001 (BD-027): the green labelled Snap pill that sat here is gone —
+          Snap is now a header action on every surface. It and Garden.jsx's ghost-icon slug pointed
+          at the same /capture route in two different visual languages; the header is the single
+          treatment. The h1 no longer needs the flex row it shared with the pill. */}
+      <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>Today</h1>
       <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
         {formatDate(data?.plan_date) || 'Your garden, at a glance'}
       </p>

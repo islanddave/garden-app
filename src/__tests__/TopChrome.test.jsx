@@ -76,3 +76,62 @@ describe('TopChrome — capture: immersive bar', () => {
     expect(screen.queryByLabelText('Search your garden')).toBe(null)
   })
 })
+
+// V4-TOPCHROMEACTIONS-001 (BD-027) — Snap + Harvest as header actions on every content surface.
+describe('TopChrome (V4-TOPCHROMEACTIONS-001) — Snap + Harvest header actions', () => {
+  for (const path of ['/today', '/garden', '/dashboard']) {
+    it(`root ${path}: Snap -> /capture and Harvest -> the harvest form`, () => {
+      renderAt(path)
+      expect(screen.getByTestId('topchrome-snap').getAttribute('href')).toBe('/capture')
+      expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?event_type=harvest')
+    })
+  }
+  it('detail (/projects/abc): both actions present alongside the search icon', () => {
+    renderAt('/projects/abc')
+    expect(screen.getByTestId('topchrome-snap').getAttribute('href')).toBe('/capture')
+    expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?event_type=harvest')
+    expect(screen.getByTestId('topchrome-search').getAttribute('href')).toBe('/search')
+  })
+  // The exact-string match in BottomNav's OVERLAYABLE_CREATE is what made the FAB harvest row open
+  // as an overlay; the header target must stay byte-identical or the same silent full-page fallback
+  // V4-HARVFAB-001 nearly shipped comes back through this door instead.
+  it('the Harvest href is byte-identical to the retired FAB row target', () => {
+    renderAt('/today')
+    expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?event_type=harvest')
+  })
+  it('both actions are icon-only with accessible names (no visible text label)', () => {
+    renderAt('/today')
+    const snap = screen.getByTestId('topchrome-snap')
+    const harvest = screen.getByTestId('topchrome-harvest')
+    expect(snap.getAttribute('aria-label')).toBe('Snap a photo')
+    expect(harvest.getAttribute('aria-label')).toBe('Log a harvest')
+    expect(snap.textContent).toBe('')
+    expect(harvest.textContent).toBe('')
+    expect(snap.querySelector('svg')).toBeTruthy()
+    expect(harvest.querySelector('svg')).toBeTruthy()
+  })
+  // V4-ICON-001: the header must not regress to platform emoji. The registry has no harvest anchor
+  // (event.harvest resolves to the emoji basket), which is exactly why these are inline SVG.
+  it('neither action renders a platform emoji', () => {
+    renderAt('/today')
+    const EMOJI = /\p{Extended_Pictographic}/u
+    expect(EMOJI.test(screen.getByTestId('topchrome-snap').textContent)).toBe(false)
+    expect(EMOJI.test(screen.getByTestId('topchrome-harvest').textContent)).toBe(false)
+  })
+  it('root keeps the full-width search launcher — actions do NOT displace search-first', () => {
+    renderAt('/today')
+    expect(screen.getByLabelText('Search your garden').getAttribute('href')).toBe('/search')
+    expect(screen.getByText('Search your garden')).toBeTruthy()
+  })
+  it('unauth (/login) shows NEITHER action — targets are Protected pre-auth', () => {
+    mockUser = null
+    renderAt('/login')
+    expect(screen.queryByTestId('topchrome-snap')).toBe(null)
+    expect(screen.queryByTestId('topchrome-harvest')).toBe(null)
+  })
+  it('capture (/capture) shows NEITHER action — the immersive bar stays immersive', () => {
+    renderAt('/capture')
+    expect(screen.queryByTestId('topchrome-snap')).toBe(null)
+    expect(screen.queryByTestId('topchrome-harvest')).toBe(null)
+  })
+})

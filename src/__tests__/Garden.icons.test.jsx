@@ -58,12 +58,14 @@ async function renderGarden() {
 }
 
 describe('Garden — emoji->Icon finish (V4-ICON-001 Garden slice)', () => {
-  it('the Snap toolbar button renders an Icon SVG (not the camera emoji)', async () => {
+  // V4-TOPCHROMEACTIONS-001 (BD-027) replaced the "Snap renders an Icon SVG" case: the Garden
+  // toolbar no longer has a Snap entry at all. Asserting its ABSENCE is what keeps the row closed —
+  // a page-local Snap reappearing beside the header action is the regression, and without this the
+  // deletion is pinned by nothing.
+  it('the Garden toolbar carries NO Snap entry — Snap lives in TopChrome now', async () => {
     await renderGarden()
-    const snap = screen.getByTestId('snap-entry-garden')
-    expect(snap.querySelector('svg')).not.toBeNull()
-    expect(snap.textContent).toMatch(/Snap/)
-    expect(snap.textContent).not.toMatch(EMOJI)
+    expect(screen.queryByTestId('snap-entry-garden')).toBeNull()
+    expect(screen.queryByText(/^Snap$/)).toBeNull()
   })
 
   it('the Log many + Favorites toolbar controls render Icon SVGs with their text labels', async () => {

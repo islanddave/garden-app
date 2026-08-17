@@ -277,11 +277,11 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('clicking +LOG opens the sheet with the five create options', () => {
+  it('clicking +LOG opens the sheet with the four create options', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    // V4-HARVFAB-001: Log harvest is the 5th action and the FIRST row (budget 4 -> 5, hard cap).
-    expect(screen.getByText('Log harvest')).toBeDefined()
+    // V4-HARVFABREMOVE-001 (BD-028): Log harvest is GONE from the sheet — it lives in TopChrome now.
+    expect(screen.queryByText('Log harvest')).toBeNull()
     expect(screen.getByText('Log an event')).toBeDefined()
     expect(screen.getByText('Log many')).toBeDefined()
     expect(screen.getByText('Add a planting')).toBeDefined()
@@ -300,53 +300,66 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
   // 6th, or 20th row all passed. (The recon for this slice claimed the opposite; the crucible's qa
   // and regression seats independently inverted it, and the pre-change suite confirmed it by
   // staying green after Log harvest landed.) Counting EVERY row by testid is the form that fails.
-  it('renders exactly five create actions — 5 is a hard cap, not a starting point', () => {
+  it('renders exactly four create actions — 4 is a hard cap, not a starting point', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    expect(screen.getAllByTestId('create-action')).toHaveLength(5)
+    expect(screen.getAllByTestId('create-action')).toHaveLength(4)
   })
 
-  it('puts Log harvest FIRST — slot 1 encodes annual frequency, not this month\'s', () => {
+  // V4-HARVFABREMOVE-001: the row is gone, so the guard inverts — absence is now the contract, and
+  // a "helpful" re-add beside the header action is the regression this catches. Asserted by testid
+  // count AND by href, because a re-add under a different label would slip a text-only check.
+  it('has NO harvest row — the harvest action lives in TopChrome (BD-028)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.queryByText('Log harvest')).toBeNull()
+    const hrefs = screen.getAllByTestId('create-action').map(a => a.getAttribute('href'))
+    expect(hrefs.some(h => h && h.includes('event_type=harvest'))).toBe(false)
+  })
+
+  it('puts Log an event FIRST now that harvest has vacated slot 1', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     const labels = screen.getAllByTestId('create-action').map(row => row.textContent)
-    expect(labels[0]).toContain('Log harvest')
-    expect(labels[1]).toContain('Log an event')
-    expect(labels[2]).toContain('Log many')
+    expect(labels[0]).toContain('Log an event')
+    expect(labels[1]).toContain('Log many')
   })
 
   it('each create option points to the correct route', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    expect(screen.getByText('Log harvest').closest('a').getAttribute('href')).toBe('/log?event_type=harvest')
     expect(screen.getByText('Log an event').closest('a').getAttribute('href')).toBe('/log')
     expect(screen.getByText('Log many').closest('a').getAttribute('href')).toBe('/log/many')
     expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/garden?add=1')
     expect(screen.getByText('Sow from seed').closest('a').getAttribute('href')).toBe('/sow')
   })
 
-  it('opens Log harvest as an OVERLAY, like /log — not as a full-page navigation', () => {
+  it('opens the log rows as OVERLAYS — not as full-page navigations', () => {
     // OVERLAYABLE_CREATE matches action.to by EXACT STRING, so a query-string route that is not
     // listed verbatim degrades silently: same link, same href, same test result, different UX.
-    // The background-state attribute is the only thing that tells the two apart.
+    // The background-state attribute is the only thing that tells the two apart. (The harvest row
+    // that used to anchor this case is gone — TopChrome.test.jsx now pins the same property for
+    // the header action that replaced it.)
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    expect(screen.getByText('Log harvest').closest('a').getAttribute('data-overlay-bg')).toBe('/dashboard')
     expect(screen.getByText('Log an event').closest('a').getAttribute('data-overlay-bg')).toBe('/dashboard')
+    expect(screen.getByText('Log many').closest('a').getAttribute('data-overlay-bg')).toBe('/dashboard')
     // The control reading — /garden?add=1 is a PAGE by design (Slice 3), so it carries no
     // background. Without this half, an OverlayLink-everywhere mutation would pass.
     expect(screen.getByText('Add a planting').closest('a').getAttribute('data-overlay-bg')).toBeNull()
     expect(screen.getByText('Sow from seed').closest('a').getAttribute('data-overlay-bg')).toBeNull()
   })
 
-  it('leaves only one harvest-scented row in the sheet', () => {
-    // Two rows both promising harvest is a worse sheet than either alone: the "Log an event"
-    // sub-copy drops the word in the same change that adds the dedicated row.
+  it('Log an event reclaims "harvest" in its sub-copy now that the dedicated row is gone', () => {
+    // The inverse of the V4-HARVFAB-001 assertion this replaces. That change stripped "harvest"
+    // from this sub-copy because two harvest-scented rows in one sheet is a worse sheet than
+    // either alone; with the dedicated row removed, the reason is gone and the sheet must not be
+    // left silently claiming you cannot log a harvest from "Log an event" — you can.
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     expect(screen.getByText('Log an event').closest('[data-testid="create-action"]').textContent)
-      .not.toMatch(/harvest/i)
-    expect(screen.getByText('Watering, a note…')).toBeDefined()
+      .toMatch(/harvest/i)
+    expect(screen.getByText('A harvest, watering, a note…')).toBeDefined()
   })
 
   it('selecting an option closes the sheet', () => {

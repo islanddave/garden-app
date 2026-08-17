@@ -412,17 +412,34 @@ export default function CaptureFlow() {
         </div>
       )}
 
+      {/* V4-SNAPCAPTURE-001 (BD0806-06) — "Take photo" is DEMOTED, not removed. Dave's report was
+          that in-app capture "does not appear to save to the device gallery"; the finding is that
+          it CANNOT — a PWA has no gallery write, only the share sheet (V4-SNAPDEST-001 hid the
+          "Save to device" affordance app-wide for the same reason). So a 50/50 pair of equal
+          dashed buttons was actively steering him toward the arm that silently loses the photo
+          everywhere except this app. Choose is now the single primary action — Snap is one tap
+          into the picker — and Take stays reachable underneath with the reason stated, because
+          for a photo he does NOT want in his camera roll it is still the faster path.
+          NOT auto-opening the picker on mount: the file input needs transient activation, and the
+          navigation gesture that got here is already spent, so Android Chrome would block it and
+          the step would render as a dead end. */}
       {step === 'photo' && (
         <div style={{ ...card, textAlign: 'center' }}>
-          <p style={{ color: P.mid, marginTop: 0 }}>Take or choose a photo to begin.</p>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button data-testid="cap-take" type="button" onClick={() => openPicker(true)} style={pickBtn}>
-              <span style={{ fontSize: '1.3rem' }}>📷</span><span>Take photo</span>
-            </button>
-            <button data-testid="cap-choose" type="button" onClick={() => openPicker(false)} style={pickBtn}>
-              <span style={{ fontSize: '1.3rem' }}>🖼️</span><span>Choose photo</span>
-            </button>
-          </div>
+          <p style={{ color: P.mid, marginTop: 0 }}>Choose a photo to begin.</p>
+          {/* flex is explicitly cleared, not merely overridden: pickBtn carries flex:1 for the
+              50/50 row that no longer exists, and a stray flex:1 on a lone block child is the kind
+              of leftover that only surfaces when someone later re-wraps this in a flex parent. */}
+          <button data-testid="cap-choose" type="button" onClick={() => openPicker(false)}
+            style={{ ...pickBtn, flex: 'none', width: '100%', borderStyle: 'solid', borderColor: P.green, backgroundColor: P.green, color: P.white }}>
+            <span style={{ fontSize: '1.3rem' }}>🖼️</span><span>Choose photo</span>
+          </button>
+          <button data-testid="cap-take" type="button" onClick={() => openPicker(true)}
+            style={{ marginTop: 10, background: 'none', border: 'none', color: P.mid, fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}>
+            Take photo instead
+          </button>
+          <p style={{ color: P.light, fontSize: '0.75rem', marginTop: 6, marginBottom: 0 }}>
+            Photos taken here aren’t saved to your camera roll.
+          </p>
         </div>
       )}
 

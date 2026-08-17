@@ -614,9 +614,11 @@ export default function Garden() {
           {facetOptions.length > 1 && (
             <GroupBySlugSelect options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
           )}
-          <Link to="/capture" data-testid="snap-entry-garden" style={btnGhostIcon}>
-            <Icon name="media.camera" size={16} decorative style={{ color: P.green }} />Snap
-          </Link>
+          {/* V4-TOPCHROMEACTIONS-001 (BD-027): the Snap entry moved to TopChrome, which renders on
+              every surface. It lived here as a ghost-icon slug while Today.jsx had a green labelled
+              pill for the same /capture target — one action, two treatments, neither discoverable
+              from the third page. Keeping a page-local copy alongside the header button is what the
+              row exists to remove, so it is deleted rather than restyled. */}
           <OverlayLink to="/log/many" style={btnGhostIcon}>
             <Icon name="action.logmany" size={16} decorative style={{ color: P.green }} />Log many
           </OverlayLink>

@@ -50,25 +50,23 @@ const TABS = [
 // are the same verb from different starting points (existing plant vs seed packet), and /sow was
 // previously reachable only by URL.
 //
-// V4-HARVFAB-001 (design harvest-logging-ux-design-V100-20260812 §1c, BD-002) — THE BUDGET IS NOW
-// 5, AND 5 IS A HARD CAP. Harvest takes the FIRST slot: it is the highest-frequency event in the
-// app by an order of magnitude and cost SEVEN taps to reach through "Log an event". Read this
-// before touching the list:
-//   - Any SIXTH action requires DISPLACEMENT, not expansion. The sheet is a glance surface; the
-//     budget existed before this change and survives it.
-//   - Slot 1 encodes ANNUAL frequency, not today's season. A winter session looking at a quiet
-//     harvest month must not "fix" the ordering — it will be wrong again by June.
-//   - Displacement was considered and rejected here: "Log many" is Dave-protected first-class
-//     (2026-07-01 directive) and Add a planting / Sow from seed have active seasonal
-//     constituencies.
-//   - Expect a few days of muscle-memory mistaps from "Log an event" regulars. Recovery is one
-//     in-form tap — the type picker renders below the harvest panel — so there is no back-out and
-//     no lost input.
-// "Log an event"'s sub-copy drops "harvest" in the same change: two harvest-scented rows in one
-// sheet is a worse sheet than either row alone.
+// V4-HARVFABREMOVE-001 (BD-028) — THE BUDGET IS BACK TO 4, AND 4 IS THE CAP. The "Log harvest"
+// row is GONE: V4-TOPCHROMEACTIONS-001 put a Harvest action in TopChrome, which renders on every
+// content surface, so the sheet row became the second way to reach one form (Dave ruled it
+// redundant once the header action exists). This REVERSES V4-HARVFAB-001 (shipped prod a4c8c2b
+// off a 9-seat crucible) — and reverses only its PLACEMENT, not its finding: harvest is still the
+// highest-frequency event in the app by an order of magnitude, which is exactly why it earned
+// permanent chrome instead of a slot in a menu you have to open first. Taps went 7 -> 2 (FAB, row)
+// -> 1 (header). What survives from that crucible and still binds:
+//   - Any FIFTH action requires DISPLACEMENT, not expansion. The sheet is a glance surface.
+//   - Ordering encodes ANNUAL frequency, not today's season.
+//   - "Log many" is Dave-protected first-class (2026-07-01 directive).
+// ORDERING WAS LOAD-BEARING: this row could only be pulled AFTER the header action existed, or
+// there is a window with no fast harvest path at all. Both land in the same release.
+// "Log an event" reclaims "harvest" in its sub-copy in the same change — the reason it was dropped
+// (two harvest-scented rows in one sheet) is gone with the row.
 const CREATE_ACTIONS = [
-  { to: '/log?event_type=harvest', glyph: '🍅',                label: 'Log harvest',    sub: 'Straight to the harvest form' },
-  { to: '/log',          iconName: 'event.other',      label: 'Log an event',   sub: 'Watering, a note…' },
+  { to: '/log',          iconName: 'event.other',      label: 'Log an event',   sub: 'A harvest, watering, a note…' },
   { to: '/log/many',     iconName: 'action.logmany',   label: 'Log many',        sub: 'One event across many plants' },
   // V4-PROJHIDE-001: project-neutral sub-label when "project" is not a user-facing concept. Flag OFF
   // keeps the original copy — module-const evaluated once at load, so behavior is byte-identical.
@@ -82,7 +80,12 @@ const CREATE_ACTIONS = [
 // is precisely the bug V4-HARVFAB-001 would have shipped. Exact-string is deliberate over
 // pathname-matching: stripping the query would also opt in every future `/log?…` route, and
 // `/garden?add=1` stays a page on purpose (Slice 3). One consumer, below.
-const OVERLAYABLE_CREATE = new Set(['/log', '/log/many', '/log?event_type=harvest'])
+// V4-HARVFABREMOVE-001: '/log?event_type=harvest' dropped with its row — it is matched against
+// action.to and no action carries it now, so leaving it would be a dead entry that reads as though
+// a harvest row still exists here. The header's Harvest action does not consult this Set at all;
+// it uses OverlayLink directly (TopChrome.jsx HeaderActions), and TopChrome.test.jsx pins that its
+// href stays byte-identical to the string that used to live here.
+const OVERLAYABLE_CREATE = new Set(['/log', '/log/many'])
 
 // Shared menu-row style. `border:'none'` first so buttons drop their default border, then
 // `borderTop` as the row separator (later longhand wins over the shorthand).
