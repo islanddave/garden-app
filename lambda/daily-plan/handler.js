@@ -299,6 +299,299 @@ async function sweepSupersededAnchors(pg) {
   }
 }
 
+// ── V4-ANCHORRESWEEP-001 — the nightly RE-derivation sweep ───────────────────────────────────────
+// Canon for the derivation itself: migrations/v4-anchorbase-001/0b-backfill.sql (the tier ladder and
+// every written value) as corrected by lambda/plants/anchorCreate.js (two-arm ownership,
+// rescue_suspect-only plausibility). This is the THIRD copy of that statement and it is deliberate
+// for the reason the other two state: each Lambda is zipped from its own directory
+// (deploy-lambda.yml: cd lambda/<fn> && zip -r), so a shared module is not packaged and the handler
+// 502s at module load. anchor-rederive.test.js is the drift guard.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// THE TWO DEFECTS THIS CLOSES, both recorded in anchorCreate.js's header as known and deferred
+//
+//   1. THE CLAMP FREEZES. mark() clamps a future anchor to today. At CREATE time add_date IS today,
+//      so add_date + 7 is always ahead of it and the clamp ALWAYS binds — every create-path row
+//      lands at add_date with clamped_to_today = true, i.e. 7 days earlier than the same planting
+//      derives once a week has passed. Nothing ever revisits it.
+//   2. LATER EVIDENCE DOES NOT UPGRADE. A transplant is self-healing (events/index.js writes
+//      transplanted_at and retires the derivation in one transaction), but a sowing / seed_soak /
+//      potting_up logged AFTER the create leaves a tier-3 guess live where tier 1 or 2.5 evidence
+//      now exists.
+//
+// Both are the same shape — the row is a snapshot of what was knowable at t=0 — so both are fixed by
+// re-running the derivation against the accrued state, which is what a nightly sweep is for.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// TWO STATEMENTS, AND THE SECOND ONE IS THE RECOVERY MECHANISM FOR THE FIRST
+//
+// uq_plant_anchor_derivation_live is UNIQUE(plant_id) WHERE superseded_at IS NULL, so a re-derivation
+// is retire-then-insert and cannot be one statement: folding the retire into a data-modifying CTE
+// puts both sub-statements on the SAME command id, the unique check still sees the old tuple as live,
+// and the INSERT raises 23505. So they are issued separately, on the pool, each its own transaction.
+//
+// That makes the boundary honest to state: THERE IS NO ROLLBACK ACROSS THE PAIR. What there is
+// instead is a second statement whose predicate — "a live anchorless planting with NO live
+// derivation" — is EXACTLY the state a crash between them would leave. A partial failure therefore
+// degrades to a planting temporarily missing its derived anchor (it drops out of the watch band's
+// derived tier for a night, no wrong value is ever written) and the NEXT run repairs it without
+// knowing anything went wrong. Ordering the pair the other way round would not merely fail to
+// self-heal, it would 23505 on the first row.
+//
+// Statement 2 also earns its place standing alone: it is the backstop anchorCreate.js's call-site
+// try/catch already claims exists ("a failed derive leaves nothing at all, and the nightly sweep is
+// the backstop") and which, until now, did not. It covers a failed create hook, a planting created
+// before that hook shipped, and any writer that never touches a Lambda.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// THE ELIGIBILITY PREDICATE — the highest-risk decision here, so every clause is a deliberate NO
+//
+// Re-deriving the wrong row is data loss wearing a fix's clothing, so the retire is narrow by
+// construction and each clause below removes a distinct way of being wrong:
+//
+//   * plausibility IS NULL. 0a2's marks (rescue_suspect / post_frost_impossible) are rows the
+//     backfill itself flagged as not believable, and watch-route.js's `derived` CTE drops them —
+//     22 of the 60 live rows on prod today. Re-deriving one means recomputing its plausibility HERE,
+//     with a narrower rule than 0b's (this Lambda has no first-frost anchor and no catalogue DTM, so
+//     it cannot reproduce post_frost_impossible), which would silently UN-SUPPRESS rows a human
+//     decision put out of the band. Excluded outright: the sweep can only ever touch rows that are
+//     already feeding the band.
+//   * model_version matches. A row written by a future model is not this model's to rewrite; an
+//     unrecognised source likewise falls out through the NULL arm of the rank CASE below.
+//   * the fresh derivation is NOT CLAMPED. This is the convergence guard, not a taste filter. A
+//     clamped anchor equals et_today, so it MOVES EVERY NIGHT — re-deriving one would retire and
+//     re-insert the same planting nightly for the whole first week after it was added, seven rows of
+//     churn in the relation that exists to hold the tier's accuracy record. Refusing to write a
+//     clamped value makes the output a pure function of (add_date, events, offset) with no
+//     dependence on today at all, which is what makes a second run in the same day a provable no-op.
+//     The cost is stated rather than hidden: for the ~7 days a row is still clamped it keeps the
+//     EARLIER anchor the create path wrote. That error opens a watch window early; it never hides
+//     one, and it self-corrects on the day the clamp releases.
+//   * NEVER A TIER DOWNGRADE (c.tier_rank <= the stored row's rank). If a sowing event is
+//     soft-deleted, the fresh derivation falls back to the add-date guess — and replacing recorded
+//     evidence with a guess is the one direction this table must never move. It also bounds the
+//     blast radius of a bug in the evidence join: a join that transiently returned nothing would
+//     otherwise downgrade every event-tier row in the household in one night.
+//   * SOMETHING MUST ACTUALLY CHANGE (different anchor_date, or a strictly better tier). This is
+//     what makes the steady state zero writes rather than 60 rewrites a night.
+//
+// Not in the list, because it is structural: a planting that has since gained a real date is absent
+// from `target` (all three observed columns must be NULL), so the marking rule cannot be violated
+// here even if sweepSupersededAnchors above failed on the same run.
+//
+// SAME WRITE DISCIPLINE AS THE OTHER SWEEPS: !dryRun only, and NON-FATAL always — losing a night of
+// re-derivation costs a stale marker, taking the nightly plan down costs Dave his Today.
+const ANCHOR_MODEL_VERSION = 'anchor-derive-v1';
+// Distinct from 'observed_anchor' on purpose. That reason means "a real date contradicted the guess",
+// and the (guess, later truth) pair it creates is the ONLY accuracy measurement the add-date tier
+// will ever produce. A row retired here was contradicted by nothing — it was replaced by a better
+// derivation — so a calibration extract filtering on 'observed_anchor' must not pick it up.
+const REDERIVE_REASON = 'rederived';
+// Cap on the per-row detail carried in the summary log line. Named rather than counted, the way
+// station.js reports station_rejected_days, because "which plantings moved" is the question an
+// operator actually has; capped because a runaway sweep must not also blow up the log line.
+const REDERIVE_LOG_MAX = 20;
+
+// The derivation, once. Both statements below embed this identical CTE chain, so the retire's
+// judgement and the insert's values can never be computed by two different ladders. Contains no
+// parameters and no caller input of any kind — every literal in it is a constant from this module.
+const REDERIVE_CTE = `
+  prm AS (
+    SELECT 'America/New_York'::text AS tz,
+           '${ANCHOR_MODEL_VERSION}'::text AS model_version,
+           7::int AS off_days,
+           'stated_baseline'::text AS off_src
+  ),
+  -- 0b's target CTE, with anchorCreate.js's two-arm ownership in place of 0b's INNER JOIN to
+  -- plant_projects. That join silently excluded every project-less planting, which is the
+  -- BUG-ANCHORNOPROJ-001 shape and is exactly what left two live prod rows uncovered.
+  target AS (
+    SELECT p.id                                     AS plant_id,
+           coalesce(pj.created_by, p.created_by)    AS user_id,
+           (p.created_at AT TIME ZONE prm.tz)::date AS add_date,
+           (now()        AT TIME ZONE prm.tz)::date AS et_today,
+           prm.model_version,
+           -- rescue_suspect ONLY, per anchorCreate.js: post_frost_impossible needs a first-fall-frost
+           -- anchor and a catalogue DTM, and inventing a frost date here would be a second, drifting
+           -- copy of one (0b's is the literal 2026-09-28, which a NIGHTLY statement would carry into
+           -- 2027). watch.js condition 3 already suppresses that class at READ time.
+           CASE WHEN p.name ILIKE '%rescue%' OR p.status IN ('flowering', 'fruiting')
+                THEN 'rescue_suspect' ELSE NULL END AS plausibility
+      FROM public.plants p
+      LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+      CROSS JOIN prm
+     WHERE p.deleted_at IS NULL
+       AND p.archived_at IS NULL
+       AND (pj.id IS NULL OR (pj.deleted_at IS NULL AND pj.archived_at IS NULL))
+       AND (p.status IS NULL OR p.status NOT IN ('failed', 'ended', 'dormant'))
+       AND p.sown_at IS NULL
+       AND p.transplanted_at IS NULL
+       AND p.planted_out_at IS NULL
+  ),
+  evidence AS (
+    SELECT t.plant_id,
+           min((e.event_date AT TIME ZONE prm.tz)::date) FILTER (WHERE e.event_type IN ('sowing', 'seed_soak'))     AS sow_date,
+           min((e.event_date AT TIME ZONE prm.tz)::date) FILTER (WHERE e.event_type = 'transplant')                 AS transplant_date,
+           min((e.event_date AT TIME ZONE prm.tz)::date) FILTER (
+             WHERE e.event_type IN ('potting_up', 'hardening_off', 'brought_outside'))                              AS proxy_date
+      FROM target t
+      CROSS JOIN prm
+      LEFT JOIN public.event_log e ON e.plant_id = t.plant_id AND e.deleted_at IS NULL
+     GROUP BY t.plant_id
+  ),
+  -- 0b's CASE ladder, evaluated ONCE in a LATERAL so source / confidence / anchor_field / rank /
+  -- evidence_date / offset_days cannot disagree with each other. tier_rank is the same precedence
+  -- expressed as a number so the retire can compare tiers instead of enumerating pairs.
+  computed AS (
+    SELECT t.plant_id, t.user_id, t.et_today, t.model_version, t.plausibility,
+           tier.source, tier.confidence, tier.anchor_field, tier.tier_rank,
+           tier.evidence_date, tier.offset_days,
+           least(tier.evidence_date + tier.offset_days, t.et_today) AS anchor_date,
+           (tier.evidence_date + tier.offset_days) > t.et_today     AS clamped,
+           CASE WHEN tier.offset_days > 0 THEN prm.off_src ELSE NULL END AS offset_source,
+           -- Provenance only: how much dual-dated data the household held. 0b's offsets CTE
+           -- shape. NULL off the baseline tier, which plant_anchor_derivation_offset_chk expects.
+           CASE WHEN tier.offset_days > 0 THEN (
+                  SELECT count(*)::int
+                    FROM public.plants dp
+                    JOIN public.plant_projects dj ON dj.id = dp.project_id
+                   WHERE dj.created_by = t.user_id
+                     AND dp.deleted_at IS NULL
+                     AND dj.deleted_at IS NULL
+                     AND dp.transplanted_at IS NOT NULL)
+                ELSE NULL END AS offset_sample_n
+      FROM target t
+      CROSS JOIN prm
+      JOIN evidence ev ON ev.plant_id = t.plant_id
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN ev.sow_date        IS NOT NULL THEN 'sow_event'
+                    WHEN ev.transplant_date IS NOT NULL THEN 'transplant_event'
+                    WHEN ev.proxy_date      IS NOT NULL THEN 'nursery_proxy_event'
+                    ELSE 'add_date_baseline' END AS source,
+               CASE WHEN ev.sow_date IS NOT NULL OR ev.transplant_date IS NOT NULL THEN 'event'
+                    WHEN ev.proxy_date IS NOT NULL THEN 'proxy'
+                    ELSE 'baseline' END AS confidence,
+               CASE WHEN ev.sow_date IS NOT NULL THEN 'sown_at'
+                    ELSE 'transplanted_at' END AS anchor_field,
+               CASE WHEN ev.sow_date        IS NOT NULL THEN 1
+                    WHEN ev.transplant_date IS NOT NULL THEN 2
+                    WHEN ev.proxy_date      IS NOT NULL THEN 3
+                    ELSE 4 END AS tier_rank,
+               coalesce(ev.sow_date, ev.transplant_date, ev.proxy_date, t.add_date) AS evidence_date,
+               CASE WHEN coalesce(ev.sow_date, ev.transplant_date, ev.proxy_date) IS NULL
+                    THEN prm.off_days ELSE 0 END AS offset_days
+      ) tier
+  )`;
+
+// The stored row's tier, as a number, for comparison against computed.tier_rank. An unrecognised
+// source yields NULL, which makes every comparison below NULL and drops the row — fail-closed on a
+// value this model does not own.
+const STORED_TIER_RANK = `CASE stale.source
+                            WHEN 'sow_event'           THEN 1
+                            WHEN 'transplant_event'    THEN 2
+                            WHEN 'nursery_proxy_event' THEN 3
+                            WHEN 'add_date_baseline'   THEN 4 END`;
+
+// Aliased stale, NOT d. anchor-supersede-parity.test.js slices the OBSERVED-ANCHOR retire out
+// of each site by searching for "UPDATE [public.]plant_anchor_derivation d", then asserts that block
+// gates on all three observed columns and records superseded_by = 'observed_anchor'. This statement
+// implements a DIFFERENT rule — it fires precisely when NONE of those columns is set — so matching
+// that guard would mean lying to it. The alias keeps the two rules distinguishable by shape rather
+// than by which one happens to appear first in the file.
+const REDERIVE_RETIRE_SQL = `
+WITH ${REDERIVE_CTE}
+UPDATE public.plant_anchor_derivation stale
+   SET superseded_at = now(),
+       superseded_by = '${REDERIVE_REASON}',
+       updated_at    = now()
+  FROM computed c
+ WHERE stale.plant_id = c.plant_id
+   AND stale.superseded_at IS NULL
+   AND stale.model_version = c.model_version
+   AND stale.plausibility IS NULL
+   AND c.clamped = false
+   AND c.tier_rank <= ${STORED_TIER_RANK}
+   AND (c.anchor_date <> stale.anchor_date OR c.tier_rank < ${STORED_TIER_RANK})
+RETURNING stale.plant_id,
+          stale.source                             AS was_source,
+          to_char(stale.anchor_date, 'YYYY-MM-DD') AS was_anchor_date,
+          c.source                                 AS now_source,
+          to_char(c.anchor_date, 'YYYY-MM-DD')     AS now_anchor_date,
+          c.plausibility                           AS now_plausibility`;
+
+// 0b's INSERT, unchanged in intent: one fresh derivation for every live anchorless planting that
+// holds none. The NOT EXISTS is both the re-run guard and — because it matches a planting whose row
+// was retired a moment ago — the whole of the recovery path described in the header.
+//
+// Deliberately NOT gated on `clamped`: unlike the retire, a first derivation for a planting added
+// today SHOULD be written clamped, because that is byte-for-byte what the create path writes and
+// withholding it would leave a brand-new planting with no anchor for a week.
+const REDERIVE_INSERT_SQL = `
+WITH ${REDERIVE_CTE}
+INSERT INTO public.plant_anchor_derivation
+  (user_id, plant_id, anchor_date, anchor_field, source, confidence, model_version,
+   evidence_date, offset_days, offset_source, offset_sample_n, clamped_to_today, derived_on,
+   plausibility)
+SELECT c.user_id, c.plant_id, c.anchor_date, c.anchor_field, c.source, c.confidence, c.model_version,
+       c.evidence_date, c.offset_days, c.offset_source, c.offset_sample_n, c.clamped, c.et_today,
+       c.plausibility
+  FROM computed c
+ WHERE NOT EXISTS (
+         SELECT 1 FROM public.plant_anchor_derivation x
+          WHERE x.plant_id = c.plant_id
+            AND x.superseded_at IS NULL)
+RETURNING plant_id, source, to_char(anchor_date, 'YYYY-MM-DD') AS anchor_date,
+          clamped_to_today, plausibility`;
+
+// Re-derive, then fill. Never throws; returns what it did so run() and the tests read a real result
+// shape rather than a stub that happens to be truthy.
+//
+// The two steps carry SEPARATE guards on purpose. A failed retire must not suppress the insert: the
+// insert is safe to issue in that state (every row the retire would have touched still holds a live
+// derivation, so NOT EXISTS excludes it) and it is the half that heals plantings holding no
+// derivation at all, which is the older and more visible defect of the two.
+async function sweepRederiveAnchors(pg) {
+  let retired = [];
+  let inserted = [];
+  try {
+    const res = await pg.query(REDERIVE_RETIRE_SQL);
+    retired = (res && Array.isArray(res.rows)) ? res.rows : [];
+  } catch (e) {
+    // Same posture and same named failure class as the sweep above: a missing relation (0a not
+    // applied in some environment) or any other failure warns and leaves the nightly plan alone.
+    console.warn(JSON.stringify({ msg: 'anchor-rederive retire failed — plan unaffected', error: e?.message }));
+  }
+  try {
+    const res = await pg.query(REDERIVE_INSERT_SQL);
+    inserted = (res && Array.isArray(res.rows)) ? res.rows : [];
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'anchor-rederive insert failed — plan unaffected', error: e?.message }));
+  }
+  // One structured line per run, emitted even when nothing moved: a sweep that has silently stopped
+  // matching anything looks identical to a healthy steady state unless the zero is stated. `changed`
+  // names the plantings and both endpoints, because "which ones moved, and from what to what" is the
+  // question an operator has and a count cannot answer.
+  console.log(JSON.stringify({
+    msg: 'anchor-rederive-sweep',
+    retired: retired.length,
+    inserted: inserted.length,
+    changed: retired.slice(0, REDERIVE_LOG_MAX).map((r) => ({
+      plant: r.plant_id,
+      why: r.was_source === r.now_source ? 'clamp_released' : 'tier_upgrade',
+      from: `${r.was_source} ${r.was_anchor_date}`,
+      to: `${r.now_source} ${r.now_anchor_date}`,
+    })),
+    // The only user-visible effects, split out so neither hides in a total. A plausibility stamp
+    // REMOVES a planting from the watch band (watch-route.js's derived CTE requires it NULL), so a
+    // sweep that started suppressing rows must be legible without reading the table.
+    healed: inserted.filter((r) => !r.plausibility).length,
+    suppressed: inserted.filter((r) => r.plausibility).length
+      + retired.filter((r) => r.now_plausibility).length,
+    truncated: Math.max(0, retired.length - REDERIVE_LOG_MAX),
+  }));
+  return { retired: retired.length, inserted: inserted.length };
+}
+
 // How far back the ledger fold looks. Design Part 2 anchors on the latest watering/rain event within
 // 30 days, so the weather window must cover the same span or the earliest days of the fold would
 // accrue demand 1.0 against real events.
@@ -499,6 +792,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // depends on nothing the run computes, and running it early means a fetch hang later in the night
   // cannot cost the invariant a day. Never throws (see sweepSupersededAnchors).
   if (!dryRun) await sweepSupersededAnchors(pg);
+  // V4-ANCHORRESWEEP-001, immediately after and never before: sweepSupersededAnchors retires the
+  // derivations a real date has contradicted, so by this line every remaining live derivation belongs
+  // to a planting that is still anchorless — which is the population the re-derivation is defined
+  // over. The dependency is an ordering nicety rather than a correctness one (the re-derive's own
+  // target CTE re-tests all three observed columns, so it stays correct even on a run where the
+  // sweep above threw), and it is here for the same reason that one is: it depends on nothing the
+  // run computes, so a fetch hang later in the night cannot cost it a day. Never throws.
+  if (!dryRun) await sweepRederiveAnchors(pg);
   // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
   // Real System/bot account = user_3D7u…; the prior default here (user_3E2x…) is actually Jen in the live
   // Clerk instance and wrongly nulled her assignments. Env override supports a comma-separated list. (DRG-ASSIGN-FIX)
@@ -799,4 +1100,6 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
 
 module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX,
   writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS,
-  readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS, sweepSupersededAnchors };
+  readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS, sweepSupersededAnchors,
+  sweepRederiveAnchors, REDERIVE_RETIRE_SQL, REDERIVE_INSERT_SQL, REDERIVE_REASON,
+  ANCHOR_MODEL_VERSION, REDERIVE_LOG_MAX };

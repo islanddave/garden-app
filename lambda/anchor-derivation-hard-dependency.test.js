@@ -170,8 +170,13 @@ describe('OPS-DERIVEDCTEDEP-001 — a missing relation fails loudly, by decision
 // plants/anchorCreate.js, whose single call site wraps it in a try/catch, because a derivation that
 // fails leaves nothing — unlike a retire that fails, which leaves a guess standing beside a real date.
 //
-// Note for whoever adds the eleventh: adding a dependent is not the problem this list guards against —
-// believing there are still five is.
+// The eleventh through thirteenth arrived the same day (V4-ANCHORRESWEEP-001, the nightly
+// re-derivation sweep): a retire, an insert, and the insert's NOT EXISTS re-run guard, all in
+// daily-plan/handler.js. They likewise do NOT move the unguarded count — each statement carries its
+// own try/catch inside sweepRederiveAnchors, for the reason the pre-existing sweep entry gives.
+//
+// Note for whoever adds the fourteenth: adding a dependent is not the problem this list guards
+// against — believing there are still five is.
 const DEPENDENTS = {
   'harvests/watch-route.js': {
     statements: 1, guarded: false,
@@ -195,8 +200,10 @@ const DEPENDENTS = {
     note: 'V4-TRANSPLANTANCHOR-001 retire, batch and single halves of the transplant write.',
   },
   'daily-plan/handler.js': {
-    statements: 1, guarded: true,
-    note: 'the nightly sweep — the ONLY fail-open site; losing a night costs a stale marker.',
+    statements: 4, guarded: true,
+    note: 'the nightly sweeps — the ONLY fail-open site; losing a night costs a stale marker. '
+      + 'V4-ANCHORSUPERSEDE-001 observed-anchor retire, plus V4-ANCHORRESWEEP-001 re-derivation '
+      + '(retire + insert + the insert NOT EXISTS guard), each separately try/caught.',
   },
 }
 
@@ -231,10 +238,10 @@ describe('OPS-DERIVEDCTEDEP-001 — the runtime dependents of plant_anchor_deriv
   })
 
   // The unguarded majority is the load-bearing claim, so it is asserted rather than left as prose.
-  it('seven of the ten statements are unguarded — the dependency is not optional anywhere', () => {
+  it('seven of the thirteen statements are unguarded — the dependency is not optional anywhere', () => {
     const total = Object.values(DEPENDENTS).reduce((n, s) => n + s.statements, 0)
     const guarded = Object.values(DEPENDENTS).reduce((n, s) => n + (s.guarded ? s.statements : 0), 0)
-    expect(total).toBe(10)
+    expect(total).toBe(13)
     expect(total - guarded).toBe(7)
   })
 
@@ -248,6 +255,21 @@ describe('OPS-DERIVEDCTEDEP-001 — the runtime dependents of plant_anchor_deriv
     expect(stmt).toBeGreaterThan(0)
     expect(body.slice(0, stmt)).toMatch(/try\s*\{/)
     expect(body.slice(stmt)).toMatch(/catch\s*\(/)
+  })
+
+  // V4-ANCHORRESWEEP-001's two statements are declared at module scope and issued from
+  // sweepRederiveAnchors, so the census's `guarded: true` is a claim about the FUNCTION, not about
+  // the text around the SQL — the shape the check above assumes does not apply. Assert it directly:
+  // each await sits inside its own try, and each catch warns rather than rethrowing.
+  it('the re-derivation sweep guards each statement separately and rethrows neither', () => {
+    const src = read('daily-plan', 'handler.js')
+    const body = src.slice(src.indexOf('async function sweepRederiveAnchors'),
+      src.indexOf('// How far back the ledger fold looks'))
+    expect(body).toBeTruthy()
+    expect(body.match(/try\s*\{/g) ?? []).toHaveLength(2)
+    expect(body.match(/catch\s*\(/g) ?? []).toHaveLength(2)
+    expect(body.match(/await pg\.query\(REDERIVE_(RETIRE|INSERT)_SQL\)/g) ?? []).toHaveLength(2)
+    expect(body).not.toMatch(/throw\b/)
   })
 
   // The other guarded site, and the one whose `guarded: true` is claimed for a statement that lives

@@ -57,7 +57,12 @@ function recordingPg({ throwOnSweep = false, sweepRowCount = 3 } = {}) {
   return pg;
 }
 
-const sweeps = (pg) => pg.calls.filter((c) => /plant_anchor_derivation/.test(c.sql));
+// Scoped to the OBSERVED-ANCHOR retire specifically, not to every statement naming the relation.
+// V4-ANCHORRESWEEP-001 added a second sweep to the same run (retire + insert, both against this
+// table), so a bare /plant_anchor_derivation/ filter now counts three statements and would make
+// "sweeps exactly once" fail for a reason that has nothing to do with this file's subject. The
+// re-derivation sweep has its own reachability and survival tests in anchor-rederive.test.js.
+const sweeps = (pg) => pg.calls.filter((c) => /superseded_by = 'observed_anchor'/.test(c.sql));
 
 async function drive(opts = {}) {
   const pg = opts.pg || recordingPg(opts.pgOpts);
