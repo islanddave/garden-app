@@ -919,6 +919,50 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   else console.log(JSON.stringify({ msg: 'cadence-scopes', rows: plantings.length,
     arrays: plantings.filter((p) => Array.isArray(p.cadence_scopes)).length,
     bearing: plantings.filter((p) => Array.isArray(p.cadence_scopes) && p.cadence_scopes.length > 0).length }));
+  // ── DRG-CADENCEOBS-001 — cadence-floor observability. MEASUREMENT ONLY ──────────────────────────
+  // Reads nothing back, writes nothing, mutates nothing, and contributes nothing to the plan payload.
+  // The engine already computes _via at four call sites and DISCARDS it at all four; this is the one
+  // place that keeps the number. engine.js:81 (the `_via:'default'` fallthrough) hands a planting the
+  // house 3-day container cadence with no log, no counter and no flag — 20 of 229 active plantings on
+  // prod 2026-08-17, all 20 Dave's, producing 18 of his 194 water_due tasks. Nobody could see that.
+  //
+  // Zero-behaviour-change BY CONSTRUCTION, not by care: it runs OUTSIDE generatePlan (the plan object
+  // is built from explicitly named keys at engine.js:703-711), resolveCadence is pure (every arm
+  // returns a fresh spread), and it runs AFTER line 916 so it observes exactly the array generatePlan
+  // will receive — this can never disagree with the cadence the run actually applied. The counters are
+  // built into local objects; nothing is stamped onto p, because the SAME array is handed to
+  // generatePlan AND to frostClass.summarize and a stamped field would travel into both.
+  //
+  // by_owner mirrors engine.ownerFor (assignee, else the fallback sub; System subs are already nulled
+  // at line 809). Pooled-only would go blind to Jen: her 16 rows sit inside Dave's 213, and her 0 %
+  // naked-default is a small-sample zero, not a property.
+  //
+  // no_interval_key counts the SECOND, less obvious entry to the bare 3 (engine.js:489-491): a profile
+  // adopted at ANY arm that carries neither *_container nor *_inground falls to cad.default anyway.
+  // Zero on prod today; it costs nothing to count and it is the failure mode that would otherwise
+  // reappear invisibly (the live system care row expresses its interval under the UNREAD key
+  // `water_interval_days`).
+  //
+  // Not flag-gated, deliberately — the cadence-scopes log above is not either, and a kill switch on a
+  // console.log inside a try/catch is ceremony. The try/catch is NOT ceremony: a throw here would empty
+  // the nightly plan for both users, which is a failure this file has already suffered once (line 746).
+  try {
+    const via = {}, nakedIds = [], byOwner = {};
+    let noIntervalKey = 0;
+    for (const p of plantings) {
+      const c = resolveCadence(p, cadence);
+      const arm = c && c._via ? String(c._via).split(':')[0] : 'unknown';   // db | variety | genus | default
+      const own = (p && p.assignee_user_id) || owner;
+      via[arm] = (via[arm] || 0) + 1;
+      (byOwner[own] ||= {})[arm] = ((byOwner[own] ||= {})[arm] || 0) + 1;
+      if (arm === 'default') nakedIds.push(p.id);
+      if (c && c.water_interval_days_container == null && c.water_interval_days_inground == null) noIntervalKey++;
+    }
+    console.log(JSON.stringify({ msg: 'cadence-fallback', rows: plantings.length, via, by_owner: byOwner,
+      naked_default: nakedIds.length, no_interval_key: noIntervalKey, naked_default_ids: nakedIds.slice(0, 50) }));
+  } catch (err) {
+    console.log(JSON.stringify({ msg: 'cadence-fallback-failed', error: String((err && err.message) || err) }));
+  }
   // ── V4-FROST-001 F3 — frost alert channel (design §3, decisions D1–D6) ──────────────────────────
   // F6 kill switch, default OFF. Flag OFF still EVALUATES and LOGS (§3-8 wants the 2026 corpus started
   // before anything reads it) but never publishes and never writes alerts_sent — so the stored plan is
