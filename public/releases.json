@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.33.0",
+    "date": "2026-08-17",
+    "highlights": [
+      "You can now create a new crop type from the variety edit screen. Before this, minting a type was only possible while creating a brand-new variety — so a plant already in the app, like the Kousa Dogwood, could be edited forever and never get a type.",
+      "The crop-type chooser now has a search box, and \"+ New crop type\" sits at the top instead of below all 141 existing types. Finding a type, or discovering you can add one, no longer means scrolling a list the length of a phone book."
+    ]
+  },
+  {
     "version": "4.32.0",
     "date": "2026-08-17",
     "highlights": [

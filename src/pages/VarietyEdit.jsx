@@ -18,7 +18,7 @@ export default function VarietyEdit() {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
   const { updateVariety } = useVarieties()
-  const { cropTypes } = useCropTypes()
+  const { cropTypes, createCropType } = useCropTypes()
   const auth = useAuthOptional()
   const { show } = useOptionalToast()
 
@@ -60,6 +60,7 @@ export default function VarietyEdit() {
         <VarietyEditor
           variety={variety}
           cropTypes={cropTypes}
+          onCreateCropType={createCropType}
           currentUserId={auth?.user?.id ?? null}
           onSave={handleSave}
           onSaved={(updated) => {

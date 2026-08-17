@@ -295,3 +295,75 @@ describe('VarietyEditor — save gating', () => {
     expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(false)
   })
 })
+
+// ── V4-CROPTYPEREACH-001: minting a crop type from the EDIT surface ─────────
+// V4-CROPTYPE-001 put "＋ New crop type" in exactly one place — VarietyPicker's stage 2, which only
+// runs while creating a BRAND-NEW variety. So a variety that already existed could be edited forever
+// and still never get a type: this Select was a closed list. That is how "Kousa Dogwood" was still
+// untyped on 2026-08-17 after its variety row had been created. These cover the second surface.
+describe('VarietyEditor — inline crop-type mint (CROPTYPEREACH)', () => {
+  const DOGWOOD = { slug: 'dogwood', display_name: 'Dogwood', default_lifecycle: 'perennial', category: 'ornamental' }
+
+  it('offers the mint affordance when the page supplies onCreateCropType', () => {
+    renderEditor({}, { onCreateCropType: vi.fn() })
+    expect(screen.getByText(/New crop type/)).toBeDefined()
+  })
+
+  it('omits it when no creator is wired, rather than rendering a dead control', () => {
+    renderEditor()
+    expect(screen.queryByText(/New crop type/)).toBeNull()
+  })
+
+  it('hides it for a row this user cannot edit — a mint there would be a save that 404s', () => {
+    renderEditor({ created_by: 'user_someone_else' }, { onCreateCropType: vi.fn() })
+    expect(screen.queryByText(/New crop type/)).toBeNull()
+  })
+
+  it('minting selects the new type AND carries it onto the PUT body', async () => {
+    const onCreateCropType = vi.fn(async () => ({ cropType: DOGWOOD }))
+    // Start from a variety with NO type — the Kousa case exactly.
+    const { onSave, container } = renderEditor({ crop_type_slug: null }, { onCreateCropType })
+
+    fireEvent.click(screen.getByText(/New crop type/))
+    fireEvent.change(screen.getByPlaceholderText('e.g. Dogwood'), { target: { value: 'Dogwood' } })
+    fireEvent.click(screen.getByText('Create crop type'))
+
+    await waitFor(() => expect(onCreateCropType).toHaveBeenCalled())
+    expect(onCreateCropType.mock.calls[0][0].display_name).toBe('Dogwood')
+
+    // The mint closes and the new slug is SELECTED — not left for the user to hunt in a 141-row list.
+    await waitFor(() => expect(screen.getByLabelText(/Crop type/).value).toBe('dogwood'))
+
+    fireEvent.submit(container.querySelector('form'))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][1].crop_type_slug).toBe('dogwood')
+  })
+
+  it('the mint button does not submit the variety form (it lives inside it)', async () => {
+    const onCreateCropType = vi.fn(async () => ({ cropType: DOGWOOD }))
+    const { onSave, container } = renderEditor({ crop_type_slug: null }, { onCreateCropType })
+    fireEvent.click(screen.getByText(/New crop type/))
+    fireEvent.change(screen.getByPlaceholderText('e.g. Dogwood'), { target: { value: 'Dogwood' } })
+    fireEvent.click(screen.getByText('Create crop type'))
+    await waitFor(() => expect(onCreateCropType).toHaveBeenCalled())
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('a server steer to an existing type offers adopting it, and adopting selects that slug', async () => {
+    // "Chili" is another word for the existing "Pepper" type; a duplicate would silently lose the
+    // derived facets, so the server 409s with `existing` and the UI must offer the adopt.
+    const onCreateCropType = vi.fn(async () => ({
+      error: '"Chili" is another name for the existing "Pepper" crop type',
+      existing: { slug: 'pepper', display_name: 'Pepper' },
+    }))
+    renderEditor({ crop_type_slug: null }, { onCreateCropType })
+
+    fireEvent.click(screen.getByText(/New crop type/))
+    fireEvent.change(screen.getByPlaceholderText('e.g. Dogwood'), { target: { value: 'Chili' } })
+    fireEvent.click(screen.getByText('Create crop type'))
+
+    await waitFor(() => screen.getByRole('alert'))
+    fireEvent.click(screen.getByText(/Use "Pepper"/))
+    await waitFor(() => expect(screen.getByLabelText(/Crop type/).value).toBe('pepper'))
+  })
+})

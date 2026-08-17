@@ -163,9 +163,142 @@ export function isEmptyPatch(patch) {
   return Object.keys(patch).length === 0
 }
 
+// V4-CROPTYPEREACH-001 — the crop-type field, now with an inline mint.
+//
+// Until this, `＋ New crop type` existed in exactly ONE place in the app: VarietyPicker's stage 2,
+// which only runs while creating a BRAND-NEW variety. So once a variety existed there was no path
+// to a new crop type anywhere — an untyped variety could be edited forever and still never get a
+// type, which is precisely how Kousa Dogwood sat untyped on 2026-08-17. This is the second surface,
+// and the one that closes the reachability gap for rows that already exist.
+//
+// Modelled on PutUp's StorageField (the house pattern for inline-create beside a Select) rather
+// than on VarietyPicker's panel: this is a form, so it uses the form primitives.
+function CropTypeField({ idPrefix, value, onChange, cropTypes, onCreateCropType, disabled }) {
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [category, setCategory] = useState('')
+  const [lifecycle, setLifecycle] = useState('')
+  const [busy, setBusy] = useState(false)
+  // Types minted in THIS session, merged into the options below. `cropTypes` is a prop owned by the
+  // page's useCropTypes hook, so it can lag the mint by a render — and a <select> whose value is not
+  // among its options renders BLANK. Without this the user mints "Dogwood", watches the field go
+  // empty, and concludes it failed: the same "my type didn't take" outcome this item exists to end.
+  const [minted, setMinted] = useState([])
+  // null | { message, existing } — `existing` present means the server steered us to a type that
+  // already covers this name (plural, or a synonym of a crop the derive engine special-cases).
+  // Adopting it is the CORRECT outcome, so it gets a button rather than a dead error string.
+  const [err, setErr] = useState(null)
+
+  const options = useMemo(
+    () => [...cropTypes, ...minted.filter(m => !cropTypes.some(c => c.slug === m.slug))],
+    [cropTypes, minted],
+  )
+
+  // Derived from the live vocabulary, never hardcoded: the picker can then only offer a category
+  // the server already accepts. Same contract as VarietyPicker's categoryOptions.
+  const categoryOptions = useMemo(
+    () => [...new Set(cropTypes.map(c => c.category).filter(Boolean))].sort(),
+    [cropTypes],
+  )
+
+  const reset = () => { setAdding(false); setName(''); setCategory(''); setLifecycle(''); setErr(null) }
+
+  async function create() {
+    const display_name = name.trim()
+    if (!display_name || busy) return
+    setBusy(true); setErr(null)
+    const res = await onCreateCropType({
+      display_name,
+      category: category || null,
+      default_lifecycle: lifecycle || null,
+    })
+    setBusy(false)
+    if (res?.error) { setErr({ message: res.error, existing: res.existing ?? null }); return }
+    // Select what was just minted — stopping at "type created" would leave the user to hunt for it
+    // in a 141-row select, which is the failure this item exists to remove.
+    setMinted(m => [...m, res.cropType])
+    onChange(res.cropType.slug)
+    reset()
+  }
+
+  // The mint is a SIBLING of Field, not a second child: Field renders only its first focusable
+  // child by contract (Field.jsx) and would silently drop anything after the Select. Same shape as
+  // PutUp's StorageField.
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <Field label="Crop type" htmlFor={`${idPrefix}-crop_type_slug`} optional
+        help="Filing this wrong drops the variety out of every type-grouped view.">
+        <Select
+          id={`${idPrefix}-crop_type_slug`}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          disabled={disabled}
+          placeholder="— none —"
+        >
+          {options.map(c => <option key={c.slug} value={c.slug}>{c.display_name}</option>)}
+        </Select>
+      </Field>
+
+      {onCreateCropType && !disabled && (adding ? (
+        <div style={mintPanelStyle}>
+          <Field label="New crop type name" htmlFor={`${idPrefix}-nc-name`} required style={{ marginBottom: 10 }}>
+            <Input
+              id={`${idPrefix}-nc-name`}
+              type="text"
+              value={name}
+              onChange={e => { setName(e.target.value); setErr(null) }}
+              placeholder="e.g. Dogwood"
+              autoComplete="off"
+            />
+          </Field>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Field label="Category" htmlFor={`${idPrefix}-nc-cat`} optional style={{ flex: 1, marginBottom: 0 }}>
+              <Select id={`${idPrefix}-nc-cat`} value={category} onChange={e => setCategory(e.target.value)} placeholder="— none —">
+                {categoryOptions.map(c => (
+                  <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Lifecycle" htmlFor={`${idPrefix}-nc-lc`} optional style={{ flex: 1, marginBottom: 0 }}>
+              <Select id={`${idPrefix}-nc-lc`} value={lifecycle} onChange={e => setLifecycle(e.target.value)} placeholder="— none —">
+                {LIFECYCLE.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </Select>
+            </Field>
+          </div>
+          {err && (
+            <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginTop: 10 }}>
+              <div>{err.message}</div>
+              {err.existing && (
+                <Button type="button" variant="secondary" style={{ marginTop: 8 }}
+                  onClick={() => { onChange(err.existing.slug); reset() }}>
+                  Use "{err.existing.display_name}"
+                </Button>
+              )}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+            {/* type="button" is load-bearing: this sits INSIDE the editor's <form>, so a default
+                submit button would save the variety instead of minting the type. */}
+            <Button type="button" variant="primary" loading={busy} loadingLabel="Creating…"
+              disabled={!name.trim()} onClick={create}>
+              Create crop type
+            </Button>
+            <Button type="button" variant="secondary" onClick={reset}>Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setAdding(true)} style={mintLinkStyle}>
+          ＋ New crop type
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function VarietyEditor({
   variety,
   cropTypes = [],
+  onCreateCropType = null,   // (payload) => { cropType } | { error, existing } — omit to hide the mint
   currentUserId = null,
   onSave,                  // (id, payload) => { variety } | { error }
   onSaved,
@@ -247,18 +380,14 @@ export default function VarietyEditor({
         />
       </Field>
 
-      <Field label="Crop type" htmlFor={`${idPrefix}-crop_type_slug`} optional style={{ marginBottom: 14 }}
-        help="Filing this wrong drops the variety out of every type-grouped view.">
-        <Select
-          id={`${idPrefix}-crop_type_slug`}
-          value={form.crop_type_slug}
-          onChange={set('crop_type_slug')}
-          disabled={!canEdit}
-          placeholder="— none —"
-        >
-          {cropTypes.map(c => <option key={c.slug} value={c.slug}>{c.display_name}</option>)}
-        </Select>
-      </Field>
+      <CropTypeField
+        idPrefix={idPrefix}
+        value={form.crop_type_slug}
+        onChange={slug => setForm(f => ({ ...f, crop_type_slug: slug }))}
+        cropTypes={cropTypes}
+        onCreateCropType={onCreateCropType}
+        disabled={!canEdit}
+      />
 
       {FIELDS.filter(f => f.section === 'identity').map(renderField)}
 
@@ -287,6 +416,18 @@ export default function VarietyEditor({
 const summaryStyle = {
   cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
   padding: '8px 0', minHeight: 44, display: 'flex', alignItems: 'center', color: P.dark,
+}
+
+// V4-CROPTYPEREACH-001 — inline mint affordance. Matches PutUp's StorageField "＋ New location"
+// link (PutUp.jsx:760-766) so the two inline-create surfaces read identically.
+const mintLinkStyle = {
+  background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: '0.82rem',
+  fontWeight: 600, padding: '8px 0 0', textDecoration: 'underline', minHeight: 44,
+}
+
+const mintPanelStyle = {
+  marginTop: 12, border: `1px solid ${P.border}`, borderRadius: 8,
+  padding: '12px 14px', backgroundColor: P.cream,
 }
 
 // overflowWrap: a Clerk sub is a 32-char unbroken token and this renders one inline — without it

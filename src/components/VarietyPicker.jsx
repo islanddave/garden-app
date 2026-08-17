@@ -49,6 +49,12 @@ const LIFECYCLE_OPTIONS = [
 // truncation is now VISIBLE (footer below) so a capped list can never again read as "that's all".
 const MAX_RESULTS = 200
 
+// V4-CROPTYPEREACH-001 — crop-chooser row indices. Module scope, not component scope, because the
+// highlight-reset effect below reads them and runs before the component body's own consts would be
+// in scope. Row 0 is the MINT row (see the chooser render for why it moved to the top).
+const NEW_CROP_ROW = 0
+const NO_CROP_ROW = 1
+
 export default function VarietyPicker({
   value = null,
   onChange,
@@ -84,6 +90,11 @@ export default function VarietyPicker({
   const [newCropCategory, setNewCropCategory] = useState('')
   const [newCropLifecycle, setNewCropLifecycle] = useState('')
   const [creatingCrop, setCreatingCrop] = useState(false)
+  // V4-CROPTYPEREACH-001 — type-ahead over the crop-type chooser. The vocabulary reached 141 live
+  // rows, rendered unfiltered in a 280px box, which made the chooser a blind scroll and the mint row
+  // (then LAST) effectively unreachable: Kousa Dogwood was added 2026-08-17 with crop_type_slug NULL
+  // through exactly this stage. Filters display_name / category / slug.
+  const [cropFilter, setCropFilter] = useState('')
   // null | { message, existing }. `existing` present = the server steered us to a type that
   // already covers this name; the UI offers adopting it rather than treating it as an error.
   const [cropErr, setCropErr] = useState(null)
@@ -92,6 +103,10 @@ export default function VarietyPicker({
   const [conflict, setConflict] = useState(null)
 
   const inputRef = useRef(null)
+  // Wraps the whole picker so the deferred blur-close can ask "did focus stay inside me?" — the
+  // crop-stage filter input takes real focus (it must, to be typed into), which blurs the combobox.
+  const rootRef = useRef(null)
+  const cropFilterRef = useRef(null)
   // Mirrors createStage for the deferred blur-close, which runs 150ms later and would otherwise
   // read a stale captured value. See onBlur.
   const createStageRef = useRef(null)
@@ -130,8 +145,13 @@ export default function VarietyPicker({
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [query, open, search])
 
-  // Reset highlight whenever results change or we switch create stage
-  useEffect(() => { setHighlight(0) }, [varieties, query, createStage])
+  // Reset highlight whenever results change or we switch create stage.
+  // V4-CROPTYPEREACH-001: the crop stage lands on "No crop type", NOT on row 0 — row 0 is now the
+  // MINT row, and a blanket reset to 0 would arm a stray Enter to start creating a crop type the
+  // user never asked for. This effect is the authority; it runs after beginCreate's own setHighlight.
+  useEffect(() => {
+    setHighlight(createStage === 'crop' ? NO_CROP_ROW : 0)
+  }, [varieties, query, createStage])
 
   // ── V4-PICKERVOICE-001 QA-G3 — voice-transcript server rescue ─────────────
   // The server ?q= is a strict LIKE, so a spaced transcript ("brandy wine") returns an EMPTY
@@ -188,9 +208,20 @@ export default function VarietyPicker({
 
   // total focusable items = filtered.length + (1 if create footer)
   const itemCount = filtered.length + (showCreateFooter ? 1 : 0)
-  // In the crop stage: row 0 = "No crop type", rows 1..N = crop types, row N+1 = "New crop type…".
-  const cropItemCount = cropTypes.length + 2
-  const newCropRowIndex = cropTypes.length + 1
+
+  // V4-CROPTYPEREACH-001 — chooser rows REORDERED. Was: "No crop type", the N types, then the mint
+  // row LAST (index N+1) — at N=141 that put the only way to create a type below a 141-row blind
+  // scroll. Now: row 0 = "New crop type…", row 1 = "No crop type", rows 2..N+1 = the FILTERED types.
+  // The mint is the top row precisely because it is the row you cannot reach any other way; the
+  // types below it are reachable by typing.
+  const filteredCropTypes = useMemo(() => {
+    const q = cropFilter.trim()
+    if (!q) return cropTypes
+    return cropTypes.filter(c =>
+      looseIncludes(c.display_name, q) || looseIncludes(c.category, q) || looseIncludes(c.slug, q)
+    )
+  }, [cropTypes, cropFilter])
+  const cropItemCount = filteredCropTypes.length + 2
 
   // ── Selection handlers ────────────────────────────────────────────────────
   const selectVariety = useCallback((v) => {
@@ -237,8 +268,10 @@ export default function VarietyPicker({
   }, [query, speciesFilter, createVariety, selectVariety])
 
   // Commit to creating a new variety: enter the crop-type chooser, or (no vocab) create directly.
+  // Highlight starts on NO_CROP_ROW, not on the mint row: the mint is placed first for REACHABILITY,
+  // and defaulting the highlight onto it would turn a stray Enter into an accidental crop type.
   const beginCreate = useCallback(() => {
-    if (cropTypes.length > 0) { setCreateStage('crop'); setHighlight(0) }
+    if (cropTypes.length > 0) { setCropFilter(''); setCreateStage('crop'); setHighlight(NO_CROP_ROW) }
     else submitCreate(false)
   }, [cropTypes.length, submitCreate])
 
@@ -284,6 +317,24 @@ export default function VarietyPicker({
     submitCreate(false, ex.slug, ex.default_lifecycle ?? null)
   }, [cropErr, submitCreate])
 
+  // Crop-stage keys. Shared by the combobox input and the crop-stage filter input, because focus
+  // legitimately sits on EITHER: the filter takes focus once tapped, but a keyboard user arriving
+  // via Enter on the create footer never leaves the combobox.
+  const onCropStageKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => Math.min(cropItemCount - 1, h + 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight(h => Math.max(0, h - 1)) }
+    else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (highlight === NEW_CROP_ROW) beginNewCropType()
+      else if (highlight === NO_CROP_ROW) submitCreate(false, null, null)
+      else { const ct = filteredCropTypes[highlight - 2]; if (ct) submitCreate(false, ct.slug, ct.default_lifecycle ?? null) }
+    } else if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation()
+      setCropFilter(''); setCreateStage(null)
+      inputRef.current?.focus()
+    }
+  }
+
   // ── Keyboard nav ──────────────────────────────────────────────────────────
   const onKeyDown = (e) => {
     if (disabled) return
@@ -296,17 +347,7 @@ export default function VarietyPicker({
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCropErr(null); setCreateStage('crop'); setHighlight(0) }
       return
     }
-    if (createStage === 'crop') {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => Math.min(cropItemCount - 1, h + 1)) }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight(h => Math.max(0, h - 1)) }
-      else if (e.key === 'Enter') {
-        e.preventDefault()
-        if (highlight === 0) submitCreate(false, null, null)
-        else if (highlight === newCropRowIndex) beginNewCropType()
-        else { const ct = cropTypes[highlight - 1]; if (ct) submitCreate(false, ct.slug, ct.default_lifecycle ?? null) }
-      } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCreateStage(null) }
-      return
-    }
+    if (createStage === 'crop') { onCropStageKeyDown(e); return }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (!open) setOpen(true)
@@ -365,10 +406,15 @@ export default function VarietyPicker({
     })
 
   const onFocus = () => { if (!disabled) setOpen(true) }
-  const onBlur = () => {
+  const onBlur = (e) => {
     // A blur we caused ourselves to swap inputMode — leave `open` alone. Checked synchronously
     // rather than inside the timer below, because the flag is cleared long before 150ms elapses.
     if (isDeliberateBlur()) return
+    // V4-CROPTYPEREACH-001 — focus moved to another control INSIDE this picker (the crop-stage
+    // filter input, which must take real focus to be typed into). Read from relatedTarget, which is
+    // resolved synchronously at blur time; document.activeElement inside the timer would also catch
+    // the case where focus never moved at all, and would wedge the dropdown permanently open.
+    if (e?.relatedTarget && rootRef.current?.contains(e.relatedTarget)) { setTouched(true); return }
     // Delay close so a click on the listbox (which preventDefaults mousedown to keep input
     // focus) lands first. A real blur — e.g. tabbing away — still closes the dropdown.
     setTimeout(() => {
@@ -436,7 +482,7 @@ export default function VarietyPicker({
   const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn })
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={rootRef} style={{ position: 'relative' }}>
       <input
         ref={inputRef}
         id={id}
@@ -599,59 +645,98 @@ export default function VarietyPicker({
         </div>
       )}
 
-      {open && !disabled && createStage !== 'newcrop' && (
+      {/* V4-CROPTYPEREACH-001 — the crop chooser is its own anchored PANEL rather than a bare
+          listbox, because it now carries a filter input above the rows and an <input> may not live
+          inside role="listbox". The <ul> becomes a static child, so the panel owns the anchoring
+          and the list keeps its own bounded scrollport. */}
+      {open && !disabled && createStage === 'crop' && (
+        <div style={cropPanelStyle}>
+          <div style={cropHeaderRow} aria-hidden="true">
+            Crop type for <strong>"{query.trim()}"</strong>
+          </div>
+          <div style={cropFilterRow}>
+            <input
+              ref={cropFilterRef}
+              type="text"
+              value={cropFilter}
+              onChange={e => { setCropFilter(e.target.value); setHighlight(NO_CROP_ROW) }}
+              onKeyDown={onCropStageKeyDown}
+              aria-label="Filter crop types"
+              aria-controls={listboxId}
+              placeholder={`Filter ${cropTypes.length} crop types…`}
+              style={inputStyle(false, false)}
+              autoComplete="off"
+              /* Deliberately NOT autoFocus: V4-PICKERKB-001 (Dave, 2026-08-02) — a picker must not
+                 raise the soft keyboard on open. Tapping the field is the opt-in; arrow keys work
+                 from the combobox without ever coming here. */
+            />
+          </div>
+          <ul
+            id={listboxId}
+            role="listbox"
+            style={cropListStyle}
+            onMouseDown={e => e.preventDefault() /* keep focus where it is */}
+          >
+            {/* The mint row is FIRST. It is the only row that cannot be reached any other way —
+                the types below it are reachable by typing in the filter — and at 141 rows it was
+                previously below a blind scroll, which is how Kousa Dogwood landed untyped. */}
+            <li
+              role="option"
+              aria-selected={highlight === NEW_CROP_ROW}
+              onClick={beginNewCropType}
+              onMouseEnter={() => setHighlight(NEW_CROP_ROW)}
+              style={createRowStyle(highlight === NEW_CROP_ROW, false)}
+            >
+              ＋ New crop type…
+            </li>
+            <li
+              role="option"
+              aria-selected={highlight === NO_CROP_ROW}
+              onClick={() => submitCreate(false, null, null)}
+              onMouseEnter={() => setHighlight(NO_CROP_ROW)}
+              style={rowStyle(highlight === NO_CROP_ROW)}
+            >
+              <span style={{ color: P.light, fontStyle: 'italic', fontSize: '0.88rem' }}>
+                — No crop type —
+              </span>
+            </li>
+            {filteredCropTypes.map((ct, i) => (
+              <li
+                key={ct.slug}
+                role="option"
+                aria-selected={highlight === i + 2}
+                onClick={() => submitCreate(false, ct.slug, ct.default_lifecycle ?? null)}
+                onMouseEnter={() => setHighlight(i + 2)}
+                style={rowStyle(highlight === i + 2)}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{ct.display_name}</span>
+                  {ct.category && (
+                    <span style={{ fontSize: '0.7rem', color: P.light, textTransform: 'capitalize' }}>{ct.category}</span>
+                  )}
+                </div>
+              </li>
+            ))}
+            {/* An empty filter result must never read as "the vocabulary is empty" — it is the
+                exact moment the user should mint, so it says so and points back up. */}
+            {filteredCropTypes.length === 0 && (
+              <li style={primerRow}>
+                No crop type matches "{cropFilter.trim()}" — use ＋ New crop type… above.
+              </li>
+            )}
+            {creating && <li style={primerRow}>Creating "{query.trim()}"…</li>}
+          </ul>
+        </div>
+      )}
+
+      {open && !disabled && createStage === null && (
         <ul
           id={listboxId}
           role="listbox"
           style={listStyle}
           onMouseDown={e => e.preventDefault() /* keep focus on input */}
         >
-          {createStage === 'crop' ? (
-            <>
-              <li style={cropHeaderRow} aria-hidden="true">
-                Crop type for <strong>"{query.trim()}"</strong>
-              </li>
-              <li
-                role="option"
-                aria-selected={highlight === 0}
-                onClick={() => submitCreate(false, null, null)}
-                onMouseEnter={() => setHighlight(0)}
-                style={rowStyle(highlight === 0)}
-              >
-                <span style={{ color: P.light, fontStyle: 'italic', fontSize: '0.88rem' }}>
-                  — No crop type —
-                </span>
-              </li>
-              {cropTypes.map((ct, i) => (
-                <li
-                  key={ct.slug}
-                  role="option"
-                  aria-selected={highlight === i + 1}
-                  onClick={() => submitCreate(false, ct.slug, ct.default_lifecycle ?? null)}
-                  onMouseEnter={() => setHighlight(i + 1)}
-                  style={rowStyle(highlight === i + 1)}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                    <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{ct.display_name}</span>
-                    {ct.category && (
-                      <span style={{ fontSize: '0.7rem', color: P.light, textTransform: 'capitalize' }}>{ct.category}</span>
-                    )}
-                  </div>
-                </li>
-              ))}
-              <li
-                role="option"
-                aria-selected={highlight === newCropRowIndex}
-                onClick={beginNewCropType}
-                onMouseEnter={() => setHighlight(newCropRowIndex)}
-                style={createRowStyle(highlight === newCropRowIndex, false)}
-              >
-                ＋ New crop type…
-              </li>
-              {creating && <li style={primerRow}>Creating "{query.trim()}"…</li>}
-            </>
-          ) : (
-            <>
+          <>
               {loading && (
                 <li style={primerRow}>Loading varieties…</li>
               )}
@@ -717,8 +802,7 @@ export default function VarietyPicker({
                   )}
                 </li>
               )}
-            </>
-          )}
+          </>
         </ul>
       )}
 
@@ -858,6 +942,41 @@ const createRowStyle = (active, busy) => ({
   fontWeight: 600,
   minHeight: 48,
 })
+
+// V4-CROPTYPEREACH-001 crop-chooser panel: the listbox's anchoring/elevation lifted onto a wrapper
+// so a filter input can sit above the rows without living inside role="listbox". overflow hidden
+// keeps the child <ul>'s scroll from spilling past the rounded corners.
+const cropPanelStyle = {
+  position: 'absolute',
+  top: 'calc(100% + 4px)',
+  left: 0,
+  right: 0,
+  zIndex: 50,
+  backgroundColor: P.white,
+  border: `1px solid ${P.border}`,
+  borderRadius: 8,
+  boxShadow: '0 6px 22px rgba(0,0,0,0.12)',
+  boxSizing: 'border-box',
+  overflow: 'hidden',
+}
+
+const cropFilterRow = {
+  padding: '8px 10px',
+  borderBottom: `1px solid ${P.border}`,
+  backgroundColor: P.white,
+}
+
+// The list inside cropPanelStyle: static (the panel anchors), and bounded on its own so the panel
+// total stays near the 280px the bare listbox used. overscrollBehavior contains the flick so it
+// cannot chain to a hosting Sheet — same reason PlantingSelect's listbox does it.
+const cropListStyle = {
+  margin: 0,
+  padding: 0,
+  listStyle: 'none',
+  maxHeight: 232,
+  overflowY: 'auto',
+  overscrollBehavior: 'contain',
+}
 
 // V4-CROPTYPE-001 mint-a-crop-type panel. Same anchoring/elevation as the listbox so it reads as
 // the same surface, but a plain container (no listStyle overflow) since it holds form controls.

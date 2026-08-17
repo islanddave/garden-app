@@ -782,3 +782,179 @@ describe('VarietyPicker — crop-type panel survives real focus transfer', () =>
     }
   })
 })
+
+// ── V4-CROPTYPEREACH-001: the chooser must make minting REACHABLE ───────────
+// V4-CROPTYPE-001 shipped the mint but put it LAST, below every crop type, in an unfiltered 280px
+// scrollport. At 141 live types that is a blind scroll, and it is how "Kousa Dogwood" was added on
+// 2026-08-17 with crop_type_slug NULL. These pin the two properties that fix it: the mint row is
+// FIRST, and the list is filterable.
+describe('VarietyPicker — crop chooser reachability (CROPTYPEREACH)', () => {
+  // Deliberately more than a handful, and deliberately NOT alphabetical by slug, so "first row"
+  // cannot pass by accident and the filter has something to actually narrow.
+  const MANY = [
+    { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 },
+    { slug: 'tomato', display_name: 'Tomato', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 },
+    { slug: 'aloe', display_name: 'Aloe', default_lifecycle: 'perennial', category: 'succulent', sort_order: 1 },
+    { slug: 'hibiscus', display_name: 'Hibiscus', default_lifecycle: 'tender_perennial', category: 'ornamental', sort_order: 2 },
+  ]
+
+  function mockVocab(extra) {
+    fetchSpy.mockImplementation((path, opts) => {
+      if (extra) { const r = extra(path, opts); if (r) return r }
+      if (path === '/api/varieties/crop-types') return Promise.resolve(MANY)
+      return Promise.resolve([])
+    })
+  }
+
+  async function openChooser(name = 'Kousa') {
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: name } })
+    await waitFor(() => screen.getByText(/Create/))
+    await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+    await waitFor(() => screen.getByText('Pepper'))
+  }
+
+  it('renders the mint row FIRST — above "No crop type" and above every crop type', async () => {
+    mockVocab()
+    setup()
+    await openChooser()
+
+    const rows = screen.getAllByRole('option')
+    expect(rows[0].textContent).toMatch(/New crop type/)
+    expect(rows[1].textContent).toMatch(/No crop type/)
+    // And the vocabulary genuinely follows it, so this is ordering and not a missing list.
+    expect(rows.slice(2).map(r => r.textContent)).toEqual(
+      expect.arrayContaining([expect.stringContaining('Pepper'), expect.stringContaining('Hibiscus')]),
+    )
+    // The regression this pins: the mint row must never be the LAST row again.
+    expect(rows[rows.length - 1].textContent).not.toMatch(/New crop type/)
+  })
+
+  it('filters the crop list by display name, keeping the mint row visible', async () => {
+    mockVocab()
+    setup()
+    await openChooser()
+    expect(screen.getByText('Pepper')).toBeDefined()
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Filter crop types'), { target: { value: 'hib' } })
+    })
+
+    expect(screen.getByText('Hibiscus')).toBeDefined()
+    expect(screen.queryByText('Pepper')).toBeNull()
+    expect(screen.queryByText('Tomato')).toBeNull()
+    expect(screen.getByText(/New crop type/)).toBeDefined()
+  })
+
+  it('filters by category too, so "succulent" finds Aloe', async () => {
+    mockVocab()
+    setup()
+    await openChooser()
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Filter crop types'), { target: { value: 'succulent' } })
+    })
+    expect(screen.getByText('Aloe')).toBeDefined()
+    expect(screen.queryByText('Tomato')).toBeNull()
+  })
+
+  it('a filter matching nothing points at the mint row instead of reading as an empty vocabulary', async () => {
+    mockVocab()
+    setup()
+    await openChooser()
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Filter crop types'), { target: { value: 'dogwood' } })
+    })
+    expect(screen.getByText(/No crop type matches "dogwood"/)).toBeDefined()
+    // The mint row itself (a real option), not the prose that mentions it.
+    const rows = screen.getAllByRole('option')
+    expect(rows[0].textContent).toMatch(/New crop type/)
+    // ...and no crop-type option survived the filter, so the mint is the actionable row.
+    expect(rows).toHaveLength(2)
+  })
+
+  it('Enter on the top row opens the mint form; the highlight does NOT start there', async () => {
+    mockVocab()
+    setup()
+    await openChooser()
+    const input = screen.getByRole('combobox')
+
+    // Highlight starts on "No crop type", NOT on the mint row — a stray Enter must not begin
+    // minting a crop type the user never asked for.
+    await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+    expect(screen.queryByPlaceholderText('e.g. Hibiscus')).toBeNull()
+  })
+
+  it('ArrowUp to the top row then Enter opens the mint form', async () => {
+    mockVocab()
+    setup()
+    await openChooser()
+    const input = screen.getByRole('combobox')
+    await act(async () => { fireEvent.keyDown(input, { key: 'ArrowUp' }) })
+    await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+    expect(screen.getByPlaceholderText('e.g. Hibiscus')).toBeDefined()
+  })
+
+  it('ArrowDown from the initial highlight lands on the first crop type, not on a stale index', async () => {
+    mockVocab((path, opts) => {
+      if (path === '/api/varieties' && opts?.method === 'POST') {
+        return Promise.resolve({ id: 'v-new', name: 'Kousa', crop_type_slug: 'pepper' })
+      }
+      return null
+    })
+    const { onChange } = setup()
+    await openChooser()
+    const input = screen.getByRole('combobox')
+    await act(async () => { fireEvent.keyDown(input, { key: 'ArrowDown' }) })
+    await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const post = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')
+    expect(JSON.parse(post[1].body).crop_type_slug).toBe('pepper')
+  })
+
+  it('picking a crop AFTER filtering submits that crop, not the same-indexed unfiltered one', async () => {
+    // The index-mapping regression: rows are indexed against the FILTERED list. With 'hib' applied,
+    // the only crop row is Hibiscus — an unfiltered mapping would send Pepper.
+    mockVocab((path, opts) => {
+      if (path === '/api/varieties' && opts?.method === 'POST') {
+        return Promise.resolve({ id: 'v-new', name: 'Kousa', crop_type_slug: 'hibiscus' })
+      }
+      return null
+    })
+    const { onChange } = setup()
+    await openChooser()
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Filter crop types'), { target: { value: 'hib' } })
+    })
+    await act(async () => { fireEvent.click(screen.getByText('Hibiscus').closest('li')) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const post = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')
+    expect(JSON.parse(post[1].body).crop_type_slug).toBe('hibiscus')
+  })
+
+  it('focusing the filter input does not close the chooser', async () => {
+    // The filter takes REAL focus (it must, to be typed into), which blurs the combobox and would
+    // otherwise trip the 150ms deferred close and unmount the chooser mid-tap.
+    vi.useFakeTimers()
+    try {
+      mockVocab()
+      setup()
+      const input = screen.getByRole('combobox')
+      fireEvent.focus(input)
+      fireEvent.change(input, { target: { value: 'Kousa' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+      await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+
+      const filter = screen.getByLabelText('Filter crop types')
+      await act(async () => { fireEvent.blur(input, { relatedTarget: filter }) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+
+      expect(screen.getByLabelText('Filter crop types')).toBeDefined()
+      expect(screen.getByText(/New crop type/)).toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
