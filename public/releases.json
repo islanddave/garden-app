@@ -8,7 +8,9 @@
       "The ready-to-pick tray in a harvest session no longer swallows the screen. With the keyboard open it could take the whole viewport and push the weigh-in form out of sight; it now holds to about half, and long planting names can't push it past that.",
       "The rain gauge now also rejects a negative daily total. It already refused impossible highs; a day of negative readings was quietly collapsing to a truthful-looking 'no rain'.",
       "Harvest anchors are re-derived nightly, so a planting whose sowing or potting-up date arrives later gets an updated estimate instead of keeping the one guessed on the day it was added.",
-      "Today was asking the server for your full planting list two or three times over on a single screen, once per block that needed it. It now asks once and shares the answer."
+      "Today was asking the server for your full planting list two or three times over on a single screen, once per block that needed it. It now asks once and shares the answer.",
+      "Your planting list was being sent uncompressed — about 580 KB of text per request. It now compresses, which is roughly a fifth of the size over the wire. Most noticeable on mobile data.",
+      "Plantings can now be marked as having arrived already grown — a nursery plant or a set, rather than something started here. Nothing shows this in the app yet; it currently keeps those plants from skewing the harvest-window estimates for everything else."
     ]
   },
   {
