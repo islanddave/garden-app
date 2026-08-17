@@ -209,10 +209,16 @@ describe('computeMaturity — Slice D site calibration', () => {
     expect(m.maturityMaxDate.toISOString().slice(0, 10)).toBe('2026-08-14')
   })
 
-  it('labels a calibrated window as visibly distinct from a catalogue one', () => {
+  it('calibrates the DATES without advertising the calibration in the label', () => {
+    // Dave 2026-08-17: the "" suffix was removed. The arithmetic is unchanged —
+    // this test now pins that the suffix is GONE while the calibrated dates and the `calibrated`
+    // flag survive, which is the whole point of the change. A future session restoring the suffix
+    // fails here.
     const m = computeMaturity(transplantCrop(70, 80), new Date('2026-06-02T00:00:00'))
-    expect(m.harvestWindowLabel).toContain('site-calibrated')
+    expect(m.harvestWindowLabel).not.toContain('site-calibrated')
     expect(m.harvestWindowLabel).toContain('Est. harvest')
+    expect(m.calibrated).toBe(true)
+    expect(m.calibrationFactor).toBe(0.75)
   })
 
   it('leaves from-sow windows on the raw catalogue dates, unlabelled', () => {
@@ -243,7 +249,7 @@ describe('computeMaturity — Slice D site calibration', () => {
     // An OPEN calibrated window keeps its closing date — collapsing to a bare "Maturity window
     // reached" would discard the +/-14d uncertainty and read as more confident than the catalogue
     // label it replaced.
-    expect(m.harvestWindowLabel).toBe('Harvest window open — through Aug 14, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Harvest window open — through Aug 14, 2026')
   })
 
   it('an OPEN uncalibrated (from-sow) window keeps the original wording untouched', () => {

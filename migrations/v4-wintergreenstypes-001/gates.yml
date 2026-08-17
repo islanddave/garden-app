@@ -1,0 +1,113 @@
+# gates.yml
+# V4-WINTERGREENSTYPES-001 — create 4 cold-hardy winter salad crop_types.
+#
+# SEQUENCING (ORDERED):
+#   1. pre gates -> 0a-data.sql -> post gates. Apply to BOTH staging and prod (CI integration
+#      branches off staging, so a staging-missing slug fails the integration job later).
+#   2. No 0c-validate step: 0a adds no constraints. The existing CHECKs on crop_types are already
+#      convalidated and enforce every literal at INSERT time — a bad value fails the apply, loudly.
+#   3. No CTAS snapshot: this migration only INSERTs new rows and touches no existing row, so there
+#      is nothing to snapshot. 0r-rollback is a guarded DELETE.
+#
+# BLAST RADIUS. Deliberately small — this is additive reference vocabulary.
+#   * 4 new rows appear in the crop-type picker on the add-planting and add-variety forms.
+#   * NOTHING existing changes: no UPDATE, no backfill, no row touched. Every gate below is
+#     environment-agnostic (violation counts, not prod-derived absolute totals) so it passes on
+#     staging, which carries a different crop_types population.
+#   * v_sow_candidates LEFT JOINs crop_types and needs no re-creation.
+#   * These slugs have no cultivars and no seed, so no planting, sow-window or harvest surface can
+#     reference them until a variety is created. The user-visible change is picker contents only.
+
+pre:
+  # Schema facts — identical in every environment. Data-only migration, so the columns it writes
+  # must already exist.
+  - name: pre_target_columns_exist
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'crop_types'
+         AND column_name IN ('harvest_habit', 'repeat_interval_days', 'loss_horizon_hours',
+                             'dtm_basis', 'default_unit', 'grams_per_unit',
+                             'weight_source', 'weight_confidence', 'first_year_harvest')
+    expect: rowcount_eq
+    value: 9
+
+  # A SOFT-DELETED target slug would make ON CONFLICT DO NOTHING silently skip the row, leaving the
+  # gap in place and the post gate failing for a reason nobody would guess. An ABSENT slug is the
+  # expected state; a soft-deleted one is a real surprise worth stopping for.
+  - name: pre_no_target_slug_soft_deleted
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NOT NULL
+         AND slug IN ('mache', 'claytonia', 'tatsoi', 'mizuna')
+    expect: scalar_eq
+    value: 0
+
+  # Non-vacuity: if all four already exist and are live, this migration writes nothing and the post
+  # gate would pass without the apply having done anything. Fail here instead of passing hollowly.
+  - name: pre_at_least_one_target_absent
+    sql: |
+      SELECT 4 - count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL AND slug IN ('mache', 'claytonia', 'tatsoi', 'mizuna')
+    expect: scalar_gte
+    value: 1
+
+post:
+  - name: post_all_four_present
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL AND slug IN ('mache', 'claytonia', 'tatsoi', 'mizuna')
+    expect: scalar_eq
+    value: 4
+
+  # The whole point of the migration: these must NOT join the 75-of-137 NULL-habit pile that the
+  # harvest-surface split excludes. Any target row missing any asserted attribute is a violation.
+  - name: post_no_target_row_underpopulated
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND slug IN ('mache', 'claytonia', 'tatsoi', 'mizuna')
+         AND (harvest_habit IS NULL OR dtm_basis IS NULL OR default_unit IS NULL
+              OR grams_per_unit IS NULL OR weight_source IS NULL OR first_year_harvest IS NULL)
+    expect: scalar_eq
+    value: 0
+
+  # Habit is asserted per-crop, not defaulted. mache is the heading/rosette crop and must be
+  # 'single'; the other three regrow and must be 'cut_and_come_again'. This gate is what catches a
+  # future well-meaning edit that "harmonises" all four to one value.
+  - name: post_habits_are_per_crop
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND ((slug = 'mache' AND harvest_habit <> 'single')
+           OR (slug IN ('claytonia', 'tatsoi', 'mizuna') AND harvest_habit <> 'cut_and_come_again'))
+    expect: scalar_eq
+    value: 0
+
+  # chk_crop_types_repeat_interval already forbids a 'single' row carrying an interval, so this is
+  # belt-and-braces — but it is the exact defect v4-radicchio-croptype was written to fix, so it is
+  # cheap to keep an explicit eye on it.
+  - name: post_single_habit_carries_no_interval
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL AND slug IN ('mache', 'claytonia', 'tatsoi', 'mizuna')
+         AND harvest_habit = 'single' AND repeat_interval_days IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  # Grams are authored estimates, not measurements. If a later session measures them it should also
+  # move weight_source off 'estimate' — this gate makes the provenance claim explicit rather than
+  # letting an estimate quietly read as data.
+  - name: post_grams_declared_as_estimates
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL AND slug IN ('mache', 'claytonia', 'tatsoi', 'mizuna')
+         AND weight_source <> 'estimate'
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT count(*) FROM public.schema_version
+       WHERE version = '4.32.1-wintergreenstypes-001'
+    expect: scalar_eq
+    value: 1

@@ -172,7 +172,7 @@ describe('CropCard — continuous-harvest window (V4-MATURITYREPEAT-001)', () =>
 
   it('paints an open-ended window on the repeat-habit pepper', () => {
     render(<CropCard planting={armageddon('repeat')} />)
-    expect(screen.getByText(/Harvest window open — picking from Jul 4, 2026 · site-calibrated/)).toBeTruthy()
+    expect(screen.getByText(/Harvest window open — picking from Jul 4, 2026/)).toBeTruthy()
     expect(screen.queryByText(/through Aug 16/)).toBeNull()
     // the rest of the band is untouched
     expect(screen.getByText(/^Day 85 since transplanted$/)).toBeTruthy()
@@ -181,6 +181,6 @@ describe('CropCard — continuous-harvest window (V4-MATURITYREPEAT-001)', () =>
 
   it('still paints the closing date on a single-habit crop', () => {
     render(<CropCard planting={armageddon('single')} />)
-    expect(screen.getByText(/Harvest window open — through Aug 16, 2026 · site-calibrated/)).toBeTruthy()
+    expect(screen.getByText(/Harvest window open — through Aug 16, 2026/)).toBeTruthy()
   })
 })

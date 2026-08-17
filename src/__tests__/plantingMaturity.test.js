@@ -224,8 +224,8 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
 
   it('no longer tells Dave a pepper he is picking has finished', () => {
     const m = computeMaturity(ARMAGEDDON, TODAY)
-    // BEFORE: 'Harvest window open — through Aug 16, 2026 · site-calibrated'
-    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 4, 2026 · site-calibrated')
+    // BEFORE: 'Harvest window open — through Aug 16, 2026'
+    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 4, 2026')
     // The close is gone as a CLAIM, not merely reworded around: no closing date may appear at all.
     expect(m.harvestWindowLabel).not.toMatch(/through/)
     expect(m.harvestWindowLabel).not.toContain('Aug 16')
@@ -235,7 +235,7 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
     const before = new Date('2026-06-01T00:00:00') // still short of the 2026-07-04 opening
     const m = computeMaturity(ARMAGEDDON, before)
     expect(m.isMature).toBe(false)
-    expect(m.harvestWindowLabel).toBe('Est. first harvest Jul 4, 2026 – Aug 16, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Est. first harvest Jul 4, 2026 – Aug 16, 2026')
     // identical arithmetic to the `single` reading of the same row — only the wording differs
     const asSingle = computeMaturity(
       { ...ARMAGEDDON, variety_ref: { ...ARMAGEDDON.variety_ref, harvest_habit: 'single' } },
@@ -251,7 +251,7 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
       TODAY,
     )
     expect(m.continuousHarvest).toBe(true)
-    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 4, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Harvest window open — picking from Jul 4, 2026')
   })
 
   it('the habit set is exactly the two continuous habits', () => {
@@ -266,7 +266,7 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
       TODAY,
     )
     expect(m.continuousHarvest).toBe(false)
-    expect(m.harvestWindowLabel).toBe('Harvest window open — through Aug 16, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Harvest window open — through Aug 16, 2026')
   })
 
   it("'single' keeps the plain 'Est. harvest' lead before the window opens", () => {
@@ -274,7 +274,7 @@ describe('computeMaturity — continuous-harvest habits (V4-MATURITYREPEAT-001)'
       { ...ARMAGEDDON, variety_ref: { ...ARMAGEDDON.variety_ref, harvest_habit: 'single' } },
       new Date('2026-06-01T00:00:00'),
     )
-    expect(m.harvestWindowLabel).toBe('Est. harvest Jul 4, 2026 – Aug 16, 2026 · site-calibrated')
+    expect(m.harvestWindowLabel).toBe('Est. harvest Jul 4, 2026 – Aug 16, 2026')
   })
 
   // The NULL/absent habit is 54 live plantings, every one an ornamental. It must be byte-identical

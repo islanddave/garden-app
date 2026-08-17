@@ -175,10 +175,18 @@ export function computeMaturity(planting, today = new Date()) {
 
     const a = fmt(out.maturityMinDate)
     const b = fmt(out.maturityMaxDate)
-    // A calibrated number must be visibly distinct from a catalogue one (design D3's labelling
-    // rule). Plain text in the same ink and type scale as the rest of the label — deliberately not
-    // a badge, tint, or confidence gradient (Reward UX V102 bars colour used to encode magnitude).
-    const suffix = calib ? ' · site-calibrated' : ''
+    // The " · site-calibrated" suffix was REMOVED 2026-08-17 on Dave's direction: "strip the
+    // unnecessary site-calibrated text — I'm not worried about calibration as much as you are. I
+    // just need a general window. My eyeballs tell me enough right now."
+    //
+    // What changed is the CLAIM, not the arithmetic. SITE_FACTOR (0.75) still scales the window and
+    // `out.calibrated` / `out.calibrationFactor` are still set, so every consumer and every
+    // measurement of calibration accuracy is untouched. Design D3's labelling rule said a
+    // calibrated number must be visibly distinct from a catalogue one; that rule assumed the
+    // distinction was useful to the reader. It was not — the window is read as a rough guide, and
+    // the suffix advertised a precision the reader was not asking for. Do not restore it without a
+    // new Dave decision; re-tightening the window itself is a separate 2027 task.
+    const suffix = ''
     // V4-MATURITYREPEAT-001: on a continuous-harvest crop the pair is an estimate of the FIRST pick,
     // so it is named as one. Same two dates, no numeric change — the range already meant this; the
     // old wording just implied the harvest was over by `b`.
