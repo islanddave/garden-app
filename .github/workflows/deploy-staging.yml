@@ -204,10 +204,17 @@ jobs:
           fi
 
       - name: Wait for ${{ matrix.function }}-staging
+        # OPS-STAGINGFIRSTCREATE-001: function-updated keys off LastUpdateStatus, which is not the
+        # gate after a CREATE — State is, and State is exactly what the health check below asserts.
+        # So wait on both. Update path (every pre-existing function): a code/env change never moves
+        # State off Active on these non-VPC functions, so function-active matches on its first poll
+        # and adds no delay, and the function-updated wait that follows is unchanged. Net-new leg:
+        # function-active is the wait that actually matters, closing the Pending -> step-6 race.
         run: |
-          aws lambda wait function-updated \
-            --function-name "garden-${{ matrix.function }}-staging"
-          echo "garden-${{ matrix.function }}-staging active"
+          FN="garden-${{ matrix.function }}-staging"
+          aws lambda wait function-active --function-name "$FN"
+          aws lambda wait function-updated --function-name "$FN"
+          echo "$FN active"
 
       - name: Health check ${{ matrix.function }}-staging
         run: |
@@ -364,11 +371,26 @@ jobs:
           if aws lambda get-function-url-config --function-name "$FN" 2>/dev/null; then
             echo "Function URL already exists for $FN"
           else
+            # OPS-STAGINGFIRSTCREATE-001: record that this leg had NO URL before this run, so the
+            # CORS step below can tell "net-new create did not land" (skip loudly) from "a
+            # pre-existing URL vanished" (hard stop). Written before the attempts so it is set even
+            # if all of them fail.
+            echo "URL_WAS_NET_NEW=true" >> "$GITHUB_ENV"
             echo "Creating Function URL for $FN"
-            aws lambda create-function-url-config \
-              --function-name "$FN" \
-              --auth-type NONE \
-              --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'
+            # Create-branch only, unreachable for an existing URL. This is the one call on a net-new
+            # leg that races the function itself settling, so it gets bounded retries rather than one
+            # shot — a single transient here used to resurface as a ResourceNotFoundException in the
+            # hard-failing CORS step below.
+            for ATTEMPT in 1 2 3; do
+              if aws lambda create-function-url-config \
+                --function-name "$FN" \
+                --auth-type NONE \
+                --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'; then
+                break
+              fi
+              echo "create-function-url-config attempt $ATTEMPT failed for $FN"
+              sleep 10
+            done
             aws lambda add-permission \
               --function-name "$FN" \
               --statement-id FunctionURLAllowPublicAccess \
@@ -384,14 +406,38 @@ jobs:
           # Ship-then-wire: a net-new staging function's URL is not knowable until this step creates
           # it. Echo it so it can be pasted into the STAGING_API_* block at the top of this file
           # (the reason STAGING_API_FACEBOOK_SHARE ships empty on the first run).
-          aws lambda get-function-url-config --function-name "$FN" --query 'FunctionUrl' --output text
+          if ! aws lambda get-function-url-config --function-name "$FN" --query 'FunctionUrl' --output text; then
+            echo "::error::$FN — no Function URL readable after this step (never created, or GetFunctionUrlConfig failing). Its staging surface is unreachable and STAGING_API_* for it cannot be wired. Check lambda:CreateFunctionUrlConfig on garden-app-github-deploy-staging."
+            exit 1
+          fi
 
       - name: Restore staging Lambda CORS
         if: matrix.function != 'photocdn-derivative'  # no Function URL to configure
+        # OPS-STAGINGFIRSTCREATE-001: this step is hard-failing while the step that creates the
+        # Function URL above is continue-on-error, so on a net-new leg anything swallowed up there
+        # came back down here as a bare ResourceNotFoundException — the promote gate dying at the
+        # wrong step with the wrong error. Now the two cases are separated by URL_WAS_NET_NEW, which
+        # only the create branch above ever sets: a never-created URL is loud but non-blocking (the
+        # function had no URL before this run either, and that step's own declared intent is that an
+        # IAM gap must not red the gate), while a pre-existing URL going missing still hard-stops.
         run: |
+          FN="garden-${{ matrix.function }}-staging"
+          if ! aws lambda get-function-url-config --function-name "$FN" >/dev/null 2>/tmp/url-probe-err; then
+            if grep -q 'ResourceNotFoundException' /tmp/url-probe-err; then
+              if [[ "${URL_WAS_NET_NEW:-}" == "true" ]]; then
+                echo "::error::$FN — net-new Function URL was not created by the step above (it is continue-on-error; its log has the cause). CORS skipped. The function had no URL before this run either, so this is not a regression and does not red the gate."
+                exit 0
+              fi
+              echo "::error::$FN had a Function URL when the step above ran and does not now — refusing to continue."
+              exit 1
+            fi
+            # Any other probe failure (throttle, transient API error) falls through to the update
+            # call below, which is exactly what this step did before the probe existed.
+            cat /tmp/url-probe-err
+          fi
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH"],"AllowOrigins":["${{ env.STAGING_CF_ORIGIN }}"],"ExposeHeaders":[],"MaxAge":300}'
           aws lambda update-function-url-config \
-            --function-name "garden-${{ matrix.function }}-staging" \
+            --function-name "$FN" \
             --region us-east-1 \
             --cors "$CORS" \
             --query 'Cors.AllowOrigins[0]' --output text
@@ -399,6 +445,10 @@ jobs:
       - name: Verify photocdn-derivative-staging (arm64 self-test + no public URL)
         if: matrix.function == 'photocdn-derivative'
         run: |
+          # OPS-STAGINGFIRSTCREATE-001: the config step above is continue-on-error, so if its own
+          # post-update wait is what failed, this invoke lands mid-update and 409s
+          # (ResourceConflictException) on a HARD step. Re-wait — a no-op when nothing is in flight.
+          aws lambda wait function-updated --function-name garden-photocdn-derivative-staging
           # (a) The whole point of OPS-STAGINGMATRIX-001 for this function: prove the arm64 package
           # actually loads on Lambda BEFORE the identical zip goes to prod. The /d/__selftest__ route
           # touches neither S3 nor the DB, so it works with the generic staging exec role.
