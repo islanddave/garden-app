@@ -19,7 +19,7 @@ import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { jsonResponder } from './http-response.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
-import { validateClear, approxOrNull } from './validate.js';
+import { validateClear, approxOrNull, validateAcquiredMature } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 import { deriveAnchorOnCreate } from './anchorCreate.js';
 
@@ -194,6 +194,7 @@ export const handler = async (event) => {
                p.parent_plant_id, p.divergence_type, p.lineage_note,
                p.succession_group_id, p.succession_order,
                p.container_type, p.container_size, p.location_id,
+               p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at,
                p.cultivar_id AS variety_id
           FROM public.garden_node p
           LEFT JOIN public.container pp ON pp.id = p.container_id
@@ -379,6 +380,7 @@ export const handler = async (event) => {
                  p.parent_plant_id, p.divergence_type, p.lineage_note,
                  p.succession_group_id, p.succession_order, p.assignee_user_id,
                  p.container_type, p.container_size, p.location_id,
+                 p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at,
                  pp.display_name AS project_name,
                  CASE WHEN pv.id IS NOT NULL THEN
                    jsonb_build_object(
@@ -548,6 +550,14 @@ export const handler = async (event) => {
         const hasVariety = Object.prototype.hasOwnProperty.call(body, 'variety_id');
         const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
         const hasLocation = Object.prototype.hasOwnProperty.call(body, 'location_id');
+        // V4-ACQMATURE-001: same presence-sentinel, and here it is doing MORE work than for the
+        // FKs above. acquired_mature is a tri-state whose NULL is a meaningful third answer ("never
+        // asked"), so a COALESCE merge would make that answer unreachable the moment anything is
+        // written — the sentinel is the only shape that can express all three. Deliberately NOT on
+        // the `clear` allowlist; validate.js's tier-3 block says why.
+        const hasAcquiredMature = Object.prototype.hasOwnProperty.call(body, 'acquired_mature');
+        const _amErr = validateAcquiredMature(body);
+        if (_amErr) return resp(400, { error: _amErr });
         if (hasFeatured && body.featured_photo_id != null) {
           // V4-PHOTOFEATURE-002 (Dave bug: "Couldn't set featured photo"): accept a photo linked
           // to this plant EITHER directly (photos.plant_id) OR via an event logged on this plant
@@ -777,6 +787,35 @@ export const handler = async (event) => {
             location_id              = CASE
               WHEN ${hasLocation} THEN ${body.location_id ?? null}
               ELSE p.location_id
+            END,
+            -- V4-ACQMATURE-001. The verdict, its provenance and its stamp move together or not at
+            -- all: every one of the three is gated on the SAME hasAcquiredMature sentinel, so there
+            -- is no request shape that leaves a tag describing a verdict that is not there (the
+            -- shape gates.yml's sweep_no_orphan_acquired_mature_source exists to catch).
+            --
+            -- Provenance and stamp are DERIVED IN SQL from the verdict param rather than accepted
+            -- from the body. A client that could send its own acquired_mature_source could write
+            -- 'backfill' over a real answer and make a guess indistinguishable from Dave's word,
+            -- which is the exact distinction the column pair exists to preserve. Every write that
+            -- arrives through this Lambda is, by definition, 'user'.
+            --
+            -- The verdict expression is repeated inside the two dependent CASEs on purpose, exactly
+            -- as the sown_at_approx guard above does it and for the same reason: Postgres evaluates
+            -- every SET expression against the PRE-update row, so a sibling column's new value is
+            -- not readable here and the three reads agree only by construction.
+            acquired_mature          = CASE
+              WHEN ${hasAcquiredMature} THEN ${body.acquired_mature ?? null}
+              ELSE p.acquired_mature
+            END,
+            acquired_mature_source   = CASE
+              WHEN ${hasAcquiredMature}
+                THEN (CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE 'user' END)
+              ELSE p.acquired_mature_source
+            END,
+            acquired_mature_set_at   = CASE
+              WHEN ${hasAcquiredMature}
+                THEN (CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE now() END)
+              ELSE p.acquired_mature_set_at
             END
           WHERE p.id = ${plantId}
             AND (
@@ -788,7 +827,7 @@ export const handler = async (event) => {
               OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
             )
             AND p.deleted_at IS NULL
-          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
+          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
         `,
         ];
         if (_statusChanged) {
@@ -1011,6 +1050,7 @@ export const handler = async (event) => {
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
                    p.container_type, p.container_size, p.location_id,
+                   p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at,
                    pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
@@ -1116,6 +1156,7 @@ export const handler = async (event) => {
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
                    p.container_type, p.container_size, p.location_id,
+                   p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at,
                    pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
@@ -1237,6 +1278,12 @@ export const handler = async (event) => {
       if (body.container_type != null && !ALLOWED_CONTAINER.includes(body.container_type)) {
         return resp(400, { error: `container_type must be one of ${ALLOWED_CONTAINER.join(', ')} or null` });
       }
+      // V4-ACQMATURE-001. Strict boolean-or-null, shared with the PUT path via validate.js so the
+      // two verbs cannot drift. An omitted key and an explicit null are both "never asked" on a
+      // create — there is no prior row for a sentinel to preserve here, so unlike the PUT this path
+      // needs no hasOwnProperty distinction.
+      const _amErrPost = validateAcquiredMature(body);
+      if (_amErrPost) return resp(400, { error: _amErrPost });
 
       // ── AUTHZ: body-supplied PARENT ids (BUG-PARENTOWN-001, 5th instance of the pattern) ────────
       // Until now POST stored project_id / location_id / parent_plant_id / source_inventory_item_id /
@@ -1307,7 +1354,8 @@ export const handler = async (event) => {
            source_type, source_ref, source_generation,
            parent_plant_id, divergence_type, lineage_note,
            succession_group_id, succession_order,
-           container_type, container_size, location_id)
+           container_type, container_size, location_id,
+           acquired_mature, acquired_mature_source, acquired_mature_set_at)
         VALUES (
           ${body.project_id},
           ${body.name},
@@ -1346,9 +1394,18 @@ export const handler = async (event) => {
           ${body.succession_order ?? null},
           ${body.container_type ?? null},
           ${body.container_size ?? null},
-          ${body.location_id ?? null}
+          ${body.location_id ?? null},
+          -- V4-ACQMATURE-001. Provenance and stamp are DERIVED from the verdict rather than read
+          -- from the body — same rule as the PUT, same reason: a client that could name its own
+          -- acquired_mature_source could write 'backfill' and make a guess indistinguishable from
+          -- Dave's word. A create that says nothing leaves all three NULL, which is "never asked",
+          -- not "no". The ::boolean cast is required because this param is compared to NULL in a
+          -- bare expression rather than against a typed sibling column.
+          ${body.acquired_mature ?? null},
+          CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE 'user' END,
+          CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE now() END
         )
-        RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, kind, workspace_id, last_seen_at, attr_override, version
+        RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
       `;
       const newPlant = inserted[0];
 
@@ -1392,7 +1449,7 @@ export const handler = async (event) => {
           SET succession_group_id = id
           WHERE id = ${newPlant.id}
             AND succession_group_id IS NULL
-          RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, kind, workspace_id, last_seen_at, attr_override, version
+          RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
         `;
         if (updated.length) return resp(201, updated[0]);
       }

@@ -67,6 +67,12 @@ export const CLEARABLE_FIELDS = [
 //                       tracked separately as BUG-NOLOCOUTDOOR-001 (a location-less planting
 //                       currently resolves covered=false, i.e. OUTDOOR, which enables rain credit
 //                       on an indoor plant). Do not fold that into this channel.
+//   acquired_mature     Same call as location_id: already fully tri-state via its own
+//                       hasAcquiredMature sentinel (V4-ACQMATURE-001), so this channel would add
+//                       nothing. It would also be actively wrong here — `clear` means "set to
+//                       NULL", and for this column NULL is not an empty value, it is the assertion
+//                       "nobody has been asked", which is exactly what the sentinel already
+//                       expresses without an ambiguous second spelling.
 //   created_by          Guarded by an ownership-transfer trigger on 9 tables that raises on any
 //                       IS DISTINCT FROM change — including value->NULL. Must never be listed.
 export const CLEARABLE_SET = new Set(CLEARABLE_FIELDS);
@@ -110,4 +116,28 @@ export function validateClear(clear, body = {}) {
 // safe from both. Every other lambda test avoids this by reading index.js as TEXT.
 export function approxOrNull(dateVal, approxVal) {
   return (dateVal ?? null) === null ? null : (approxVal ?? false);
+}
+
+// V4-ACQMATURE-001 — acquired_mature is a TRI-STATE, and the third state is the point of it.
+//
+//   true   this plant arrived already grown; its transplanted_at is an ARRIVAL date, not a growth
+//          start, so its time-to-first-harvest measures the nursery, not this site
+//   false  asked, and it started here
+//   NULL   never asked — the DEFAULT, and NOT the same claim as false
+//
+// The site calibration excludes `true` from its cohort. A default of false would have stamped a
+// verdict on all 261 live plantings that nobody made, and the exclusion predicate would then have
+// read that fabrication as evidence — the recon measured that NO existing column, tag, event type
+// or derived table can infer this (source_type is anti-correlated: nursery_transplant's mean ratio
+// is 0.763 against a cohort mean of 0.717). NULL has to stay reachable and has to stay distinct.
+//
+// STRICT BOOLEAN, no truthy coercion. `"true"`, `1` and `"yes"` are all REJECTED rather than
+// silently accepted, because a coerced string is how a client bug becomes a permanent wrong
+// assertion about a real plant. Returns an error string or null, matching validateClear's contract.
+export function validateAcquiredMature(body = {}) {
+  if (!Object.prototype.hasOwnProperty.call(body, 'acquired_mature')) return null;
+  const v = body.acquired_mature;
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'boolean') return 'acquired_mature must be true, false or null';
+  return null;
 }

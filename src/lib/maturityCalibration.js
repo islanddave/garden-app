@@ -4,6 +4,11 @@
 // measured and refuted (raw is right 1/41, calibrated 35/41), so what shipped is the re-fit the
 // measurement actually supported. Full decision record: project-state/dropcalib-decision-V100-
 // 20260816.md; re-fit workings: _lane_reports/calibrefit-20260816.md.
+// V4-ACQMATURE-001 (2026-08-17) — the cohort exclusion stopped being a hand-maintained list of
+// names and became a predicate over plants.acquired_mature. The FACTOR IS UNCHANGED (0.7504 on the
+// same n=35 either way — measured, see below); what changed is that the exclusion now covers
+// plantings nobody has thought to add to a list yet. Recon: _lane_reports/acqmature-recon-
+// 20260816b.md; build: _lane_reports/acqmature-build-20260817.md.
 //
 // WHY THIS EXISTS
 // Slice A made the DTM anchor basis-aware. Measuring the result against live harvest events showed
@@ -52,7 +57,7 @@
 // 10.78 d and ratio sd 0.165 -> 0.145.
 //
 // MODEL: MULTIPLICATIVE, POOLED, RANGE-ONLY
-// Measured on the n=35 cohort (see STRUCTURAL_OUTLIERS below for the 2 exclusions):
+// Measured on the n=35 cohort (see ACQUIRED_MATURE_FIELD below for the 2 exclusions):
 //   additive offset      residual rms 11.59 d   (centre -18.0 d)
 //   multiplicative       residual rms 10.78 d   (centre  0.7504)   <- better, and scale-correct
 // Multiplicative still wins, though by less than at n=18 (12.81 vs 10.66 then). It stays the model
@@ -95,6 +100,10 @@
 // sow-to-transplant gap, ordinary provenance) and not a probe (weight is an estimate, so unjudgable)
 // — it is a bulb crop pulled young as scallions, a harvest that is real but is not the DTM event.
 // No column separates "pulled young on purpose" from "matured early" either. Left in the fit.
+// DO NOT SET acquired_mature ON IT. The flag means "arrived already grown", and Yellow Onions was
+// sown here on 2026-05-23; flagging it would use the new column to hide a residual, which is fitting
+// the exclusion to the answer and is precisely the failure the column was built to stop. Its
+// mechanism needs its own fix, not this one's.
 //
 // SCOPE: from-transplant ONLY. from-sow crops are the only group that ever lands in the catalogue
 // window, and their residual (sd 20.9) is nearly twice the from-transplant residual — indistin-
@@ -133,29 +142,68 @@ export const CALIBRATION_SAMPLE = Object.freeze({
   derivedOn: '2026-08-16',
 })
 
-// The 2 rows excluded from the fit. Both are plants ACQUIRED AS ESTABLISHED, whose transplanted_at
-// records the day they arrived in Dave's garden, not a true set-out from a seedling. They are a
-// data problem, not a model problem: including them inflates the ratio sd from 0.145 to 0.212 and
-// the residual rms from 10.8 to 17.9 d.
+// THE EXCLUSION, V4-ACQMATURE-001 (2026-08-17) — now a PREDICATE OVER A COLUMN, not a list of
+// names. `STRUCTURAL_OUTLIERS` used to live here: a hand-maintained array of two `{ name, ... }`
+// literals matched by display-name string. It is gone, and what replaced it is
+// `plants.acquired_mature` (nullable boolean, no default; migrations/v4-acqmature-001, exposed on
+// public.garden_node by the same migration).
 //
-// Was 3. `Beefsteak Rescue 1` is gone — the planting is now `Cherry Rescue 1` and its cultivar
-// carries no days_to_maturity at all, so the cohort's DTM filter drops it before this list is ever
-// consulted. Nothing was un-excluded; the row stopped being reachable. Ghost and Shallots were
-// re-checked on the n=41 cohort and are still the right two: ratios 0.100 and 0.122 against a
-// next-lowest survivor of 0.430.
+// WHAT IS BEING EXCLUDED, unchanged: plants ACQUIRED AS ESTABLISHED, whose transplanted_at records
+// the day they arrived in Dave's garden rather than a set-out from a seedling. Their observed
+// time-to-first-harvest measures a nursery, not this site. Including them inflates the ratio sd
+// from 0.145 to 0.212 and the residual rms from 10.8 to 17.9 d.
 //
-// NOTE FOR WHOEVER FIXES THE DATA: no column separates this class, and 2026-08-16 added a second
-// measured negative to the first. `source_type` does not — 21 of the 41 cohort rows are
-// 'nursery_transplant', including well-behaved ones (Ukrainian Purple, ratio 0.667) and including
-// Shallots. `sown_at IS NULL` does not — 21 of 41 lack a sow date. And a short sow-to-transplant
-// gap, which looks like the giveaway (a purchased plant has no seedling phase to record), does not
-// either: gap <= 3 days catches 5 plantings whose ratios are 0.529, 0.581, 0.877, 0.910 and 1.000 —
-// three of them among the best-behaved rows in the cohort. It needs a new explicit flag. Do not try
-// to infer it from source_type, from a missing sow date, or from the sow-to-transplant gap.
-export const STRUCTURAL_OUTLIERS = Object.freeze([
-  { name: 'Ghost', sourceType: 'rescued', observedDays: 10, dtm: 100 },
-  { name: 'Shallots', sourceType: 'nursery_transplant', observedDays: 11, dtm: 90 },
-])
+// WHY THE LIST HAD TO GO, and it is not tidiness. It excluded rows it had been TOLD about. A
+// planting acquired mature next season is not on it, nobody adds it, and the factor quietly rots as
+// the garden grows — the list could only ever describe the past. A column is answered at the moment
+// the planting is entered, so the exclusion is complete by construction instead of by vigilance.
+// The name-matching was the lesser problem and was still real: `Beefsteak Rescue 1` was on this
+// list until 2026-08-16 and had by then been renamed `Cherry Rescue 1`, so the entry had stopped
+// matching anything at all.
+//
+// MEASURED EQUIVALENCE AT THE SWAP (live prod, read-only, 2026-08-17). Same cohort query, only the
+// exclusion mechanism changed:
+//
+//   no structural exclusion            n=37   factor 0.7158   sd 0.2035
+//   minus STRUCTURAL_OUTLIERS by NAME  n=35   factor 0.7504   sd 0.1453   <- the shipped fit
+//   minus acquired_mature IS TRUE      n=35   factor 0.7504   sd 0.1453   <- identical
+//
+// The backfill (0b) sets the flag on exactly the two rows the list named — Ghost
+// (1bbfe326-…, ratio 0.100) and Shallots (9cd590d4-…, 0.122) — so day one is a no-op on the number
+// and a permanent change to the mechanism. The exclusion is worth +0.035 on the factor today.
+//
+// STILL TRUE, AND STILL THE REASON A COLUMN WAS NEEDED: no existing column, tag, event type or
+// derived table separates this class. `source_type` does not — 27 of the 41 cohort rows are
+// 'nursery_transplant' (this said "21" until 2026-08-17; the correct count is 27, re-measured three
+// ways, and it UNDERSTATED the argument), including well-behaved ones (Ukrainian Purple, ratio
+// 0.667) and including Shallots. It is in fact ANTI-correlated: nursery transplants average 0.763
+// against a cohort mean of 0.717. `sown_at IS NULL` does not — 21 of 41 lack a sow date. Nor does a
+// short sow-to-transplant gap, which looks like the giveaway: gap <= 3 days catches 5 plantings
+// whose ratios are 0.529, 0.581, 0.877, 0.910 and 1.000, three of them among the best-behaved rows.
+// The decisive case is a pair nothing can separate — King Richard (leek, 0.707) and Shallots
+// (0.122) share source_type, source_ref, a NULL sown_at, container and empty notes. Do not try to
+// infer this from source_type, from a missing sow date, or from the sow-to-transplant gap; all
+// three were measured against the real cohort and all three fail.
+export const ACQUIRED_MATURE_FIELD = 'acquired_mature'
+
+// STRICTLY `=== true`. The column is a TRI-STATE and its NULL is load-bearing: NULL means nobody
+// has been asked, false means asked and told no. A truthy test would read `undefined` — which is
+// what every planting object fetched before the column shipped carries — as false, which is the
+// right answer for the wrong reason and would keep being the right answer after the column started
+// meaning something. Explicitly true, or it is not an exclusion.
+export function isAcquiredMature(planting) {
+  return planting?.[ACQUIRED_MATURE_FIELD] === true
+}
+
+// The predicate a re-fit filters its cohort on. Exported as text because the fit is a SQL query run
+// by hand against live Neon, not app code — this is the thing that actually replaces the array, and
+// having it here means the next person re-fitting reads the exclusion off the same file that states
+// the factor instead of reconstructing it from a report.
+//
+// `IS NOT TRUE`, not `= false` and not `IS NULL OR = false`: the cohort keeps every planting that
+// has not been flagged, including the ones nobody has been asked about, which is exactly what the
+// name list did. Only an explicit true is excluded.
+export const CALIBRATION_COHORT_EXCLUSION_SQL = 'gn.acquired_mature IS NOT TRUE'
 
 // Returns { loDays, hiDays } day-offsets from the transplant anchor, or null when calibration does
 // not apply. Pure; null-tolerant.
