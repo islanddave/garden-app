@@ -60,6 +60,12 @@ const SITES = {
     { rule: 'observed_anchor',
       note: 'the nightly sweep — backstop for non-Lambda writers and the only healer for rows that '
         + 'went stale before the write paths shipped.' },
+    { rule: 'rederive',
+      note: 'V4-ANCHORRESWEEP-001, the nightly RE-derivation retire. A THIRD rule: it fires on the '
+        + 'inverse predicate — precisely when none of the observed columns is set — so matching the '
+        + 'observed-anchor guard would mean lying to it. Records superseded_by = REDERIVE_REASON '
+        + 'rather than claiming an observation, and is aliased `stale` so the two rules in this file '
+        + 'stay distinguishable by shape rather than by source order.' },
   ],
   'lambda/events/index.js': [
     { rule: 'observed_anchor',
@@ -169,10 +175,11 @@ describe('every site that retires a derivation is enumerated', () => {
 
   // Stated as a number so that reclassifying a site — the one edit that could shrink coverage while
   // leaving both assertions above green — has to be deliberate.
-  it('six of the seven statements are the observed-anchor retire', () => {
-    expect(OCCURRENCES).toHaveLength(7)
+  it('six of the eight statements are the observed-anchor retire', () => {
+    expect(OCCURRENCES).toHaveLength(8)
     expect(withRule('observed_anchor')).toHaveLength(6)
     expect(withRule('merge_loser')).toHaveLength(1)
+    expect(withRule('rederive')).toHaveLength(1)
   })
 })
 
@@ -205,6 +212,21 @@ describe('the supersede rule is identical at every site that writes it', () => {
     expect(/superseded_by\s*=\s*'observed_anchor'/i.test(block),
       `${rel} #${i + 1} files a merge retirement as an observed anchor`).toBe(false)
   })
+
+  // The re-derivation retire is the inverse predicate, so it is exempt from the observed-column gate
+  // above by classification rather than by an allowlist. What it is NOT exempt from: the re-run guard,
+  // and recording SOME reason. The latter is not hypothetical — merge.js's loser statement retires with
+  // superseded_at alone, and all six retired rows on prod carry superseded_by IS NULL as a result, which
+  // is exactly the provenance hole that makes a retirement unattributable after the fact.
+  it.each(withRule('rederive'))('%s retires idempotently and records a reason that is not an observation',
+    (_label, rel, i) => {
+      const block = blockAt(rel, i)
+      expect(/superseded_at\s+is\s+null/i.test(block), `${rel} #${i + 1} lost its re-run guard`).toBe(true)
+      expect(/superseded_by\s*=/i.test(block),
+        `${rel} #${i + 1} retires without recording why — an unattributable retirement`).toBe(true)
+      expect(/superseded_by\s*=\s*'observed_anchor'/i.test(block),
+        `${rel} #${i + 1} files a re-derivation as an observed anchor`).toBe(false)
+    })
 })
 
 describe('retire, never erase', () => {
