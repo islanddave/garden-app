@@ -86,6 +86,27 @@ const scenarios = [
     },
   },
   {
+    name: 'rain-light-partial-credit',
+    note: '(d2) DRG-RAINDEPTH-001: ONE 0.21" day across all three substrate tiers. The discriminating '
+      + 'case the 1.0" rain-week golden cannot see — at 1.0" every tier saturates to a full reset and '
+      + 'the retired IA-cliff model and the depth model converge. At 0.21" they disagree in BOTH '
+      + 'directions: the cliff gave in_ground a full 3-day hold and gave the bed/bag exactly nothing.',
+    input: {
+      today: TODAY, nowMs: NOW, weather: WX, hydrology: HY, ownerFallback: 'dave',
+      plantings: [
+        P({ id: 'rl-ig', container_type: 'in_ground', container_size: null, last_water: ago(6) }),
+        P({ id: 'rl-bed', container_type: 'raised_bed', container_size: null, last_water: ago(6) }),
+        P({ id: 'rl-bag', container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(6) }),
+      ],
+      weatherDaily: weatherDaily({ precipOn: { [ago(3)]: 0.21 } }),
+      eventsByPlant: {
+        'rl-ig': [w(ago(6), 12, null, 'i1')],
+        'rl-bed': [w(ago(6), 12, null, 'b1')],
+        'rl-bag': [w(ago(6), 12, null, 'g1')],
+      },
+    },
+  },
+  {
     name: 'heatwave-fixed-ref',
     note: '(e) 14 flat hot days: demand stays >1 all wave; bag ramp reads weather_daily.tmax_f',
     input: {

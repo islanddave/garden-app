@@ -169,6 +169,25 @@ function computeConfidence({ via, vesselKnown, weatherOk, snoozeCount, trayUnpro
 //   transplantAt,                     'YYYY-MM-DD' | null
 // }
 const PRIO = { watering: 0, rain: 0, moisture_check: 1, day_credit: 2 };
+
+// ── DRG-RAINDEPTH-001 depth mapping ──────────────────────────────────────────────────────────────
+// Ordered weakest->strongest; demotion walks left and falls off the end to null (= no credit).
+const DEPTH_ORDER = ['light', 'normal', 'deep'];
+// Measured daily precip -> depth class for one substrate tier. Lower bounds, strongest wins.
+// Non-positive/non-finite precip earns nothing (a null row is filtered by the caller).
+function rainDepthClass(tier, precipIn) {
+  const t = P.RAIN_DEPTH[tier] ?? P.RAIN_DEPTH.small_fast;
+  if (!Number.isFinite(precipIn) || precipIn <= 0) return null;
+  if (precipIn >= t.deep) return 'deep';
+  if (precipIn >= t.normal) return 'normal';
+  if (precipIn >= t.light) return 'light';
+  return null;                                                     // trace: below the light floor
+}
+// One-class demotion (the bag-heat soften). 'light' demotes to null, not to a zero-value class.
+function demoteDepth(depth) {
+  const i = DEPTH_ORDER.indexOf(depth);
+  return i <= 0 ? null : DEPTH_ORDER[i - 1];
+}
 function foldLedger(ctx) {
   const { wiEff, thr, events = [], weatherByDate = {}, weatherRowCount = 0,
     todayStr, effNowMs, todayEt0 = null, todayTmax = null,
@@ -217,24 +236,25 @@ function foldLedger(ctx) {
     items.push({ t, prio: PRIO[e.type] ?? 0, id: String(e.id), type: e.type, depth: e.depth || null });
   }
   // Gauge/forecast rain day-credits: once per qualifying settled day, at 23:59 ET, outdoor only,
-  // transplant carve-out honored per-day, bag>=85F credit SOFTENED to 50% (canon legacy-term table).
+  // transplant carve-out honored per-day. DRG-RAINDEPTH-001: the day's MEASURED precip maps to a
+  // depth class (per substrate tier) and the credit is that class's watering arithmetic — not a
+  // tier-keyed number of days. bag>=85F demotes one class (a bag in heat does not hold the rain).
   if (exposure === 'outdoor' && !spaceDegenerate) {
-    const ia = P.RAIN_DAY.ia[rainTier] ?? P.RAIN_DAY.ia.small_fast;
-    const hold = P.RAIN_DAY.hold[rainTier] ?? P.RAIN_DAY.hold.small_fast;
     for (let d = windowStartStr; d < todayStr; d = addDays(d, 1)) {
       const row = weatherByDate[d];
       if (!row || row.precip_in == null) continue;
-      if (row.precip_in - ia <= 0) continue;                        // didn't clear first-wetting loss
+      let depth = rainDepthClass(rainTier, row.precip_in);
+      if (depth == null) continue;                                  // trace: under the tier's light floor
       const carved = vessel.smallVessel && transplantAt != null
         && calDays(transplantAt, d) >= 0 && calDays(transplantAt, d) <= P.TRANSPLANT_CARVEOUT_DAYS;
       if (carved) continue;                                         // fresh small root ball: no credit
-      let credit = Math.min(hold, wiEff);
       if (vessel.isFabric && row.tmax_f != null && row.tmax_f >= P.RAIN_DAY.bagHeatSoftenF) {
-        credit *= P.RAIN_DAY.bagHeatSoftenFactor;
+        depth = demoteDepth(depth);
+        if (depth == null) continue;                                // demoted off the bottom
       }
       const t = etMidnightMs(d) + DAY - 60000;                      // 23:59 ET of the qualifying day
       if (t < windowStartMs || t > effNowMs) continue;
-      items.push({ t, prio: PRIO.day_credit, id: d, type: 'day_credit', credit });
+      items.push({ t, prio: PRIO.day_credit, id: d, type: 'day_credit', depth });
     }
   }
   items.sort((a, b) => (a.t - b.t) || (a.prio - b.prio) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -253,27 +273,40 @@ function foldLedger(ctx) {
       t = segEnd;
     }
   };
+  // Depth arithmetic, shared by waterings and (DRG-RAINDEPTH-001) rain — one implementation so the
+  // two can never drift. allowBank is the ONE asymmetry: a manual Deep may bank below 0 on a
+  // banking vessel, rain may NOT. Rain banking would forfeit canon's resurfacing guarantee (the
+  // structural property that retired the maxdays ceiling), and a wet week must never be able to
+  // push a planting past its own cadence. Deep rain therefore still outranks Normal — it resets
+  // flat to 0 and clears the long-dry hedges — it just cannot go negative.
+  const applyDepth = (Dcur, depth, allowBank) => {
+    if (depth === 'deep') {
+      return (allowBank && vessel.banks)
+        ? Math.max(Math.min(Dcur, 0) - P.BANK.deepBankWi * wiEff, -P.BANK.bankFloorWi * wiEff)
+        : 0;                                                         // container Deep: full reset, clears hedges
+    }
+    if (depth === 'light') return Math.max(0, Dcur - P.LIGHT_CREDIT_WI * wiEff);
+    if (Dcur > P.HEDGE.longDryWi * wiEff) {                          // Normal on a long-dry profile: partial rewet
+      return vessel.inGroundClass
+        ? Math.min(Dcur - wiEff, P.HEDGE.inGroundCapWi * wiEff)
+        : P.HEDGE.containerResetWi * wiEff;
+    }
+    return 0;
+  };
   for (const it of items) {
     accrueTo(it.t);
     if (it.type === 'watering') {
       const depth = it.depth === 'deep' ? 'deep' : it.depth === 'light' ? 'light' : 'normal'; // absent/unknown = normal
-      if (depth === 'deep') {
-        D = vessel.banks
-          ? Math.max(Math.min(D, 0) - P.BANK.deepBankWi * wiEff, -P.BANK.bankFloorWi * wiEff)
-          : 0;                                                       // container Deep: full reset, clears hedges
-      } else if (depth === 'light') {
-        D = Math.max(0, D - P.LIGHT_CREDIT_WI * wiEff);
-      } else if (D > P.HEDGE.longDryWi * wiEff) {                    // Normal on a long-dry profile: partial rewet
-        D = vessel.inGroundClass
-          ? Math.min(D - wiEff, P.HEDGE.inGroundCapWi * wiEff)
-          : P.HEDGE.containerResetWi * wiEff;
-      } else D = 0;
+      D = applyDepth(D, depth, true);
     } else if (it.type === 'rain') {
-      D = 0;                                                         // logged rain keeps full-reset semantics (canon Decision 12)
+      // A rain event with NO depth is a MANUAL log — Dave watching it pour and calling these
+      // watered — and keeps canon Decision 12 full-reset semantics. A depth-carrying rain event is
+      // gauge-written (metadata.water_depth_source='rain_gauge') and folds like a watering.
+      D = it.depth ? applyDepth(D, it.depth, false) : 0;
     } else if (it.type === 'moisture_check') {
       D = Math.min(D, Math.max(0, thr - Math.max(P.SNOOZE.minFloorWi * wiEff, demandFor(etParts(it.t).date))));
     } else if (it.type === 'day_credit') {
-      D = Math.max(0, D - it.credit);                                // floored at 0: rain never banks negative
+      D = applyDepth(D, it.depth, false);                            // never banks negative (see applyDepth)
     }
   }
   accrueTo(effNowMs);
@@ -326,5 +359,6 @@ function buildLedgerOpts({ weatherDaily = null, eventsByPlant = null, today, now
 module.exports = {
   foldLedger, buildLedgerOpts, computeConfidence, exposureClass, vesselProfile,
   parseContainerGal, sizeBucket, inchDiameterGal,
+  rainDepthClass, demoteDepth,
   etParts, etMidnightMs, addDays, calDays,
 };

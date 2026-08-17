@@ -11,7 +11,7 @@ import handler from './handler.js';
 
 const {
   foldLedger, buildLedgerOpts, computeConfidence, exposureClass, vesselProfile,
-  parseContainerGal, etMidnightMs, addDays,
+  parseContainerGal, etMidnightMs, addDays, rainDepthClass,
 } = L;
 
 const H = 3600000;
@@ -233,16 +233,81 @@ describe('fold ops', () => {
   });
 });
 
-describe('gauge-rain day-credits', () => {
-  it('one qualifying day credits min(hold, wi) at 23:59 ET — once, not per rolling-72h re-test', () => {
-    const bare = mk({ events: [PRIMER] });
-    const wet = mk({ events: [PRIMER], weather: flatWeather({ precipOn: { '2026-08-09': 0.5 } }) });
-    expect(bare.d - wet.d).toBeCloseTo(2, 2);           // intermediate hold 2, wi 4
+describe('rainDepthClass — measured precip -> depth class (DRG-RAINDEPTH-001)', () => {
+  it('reads thresholds as LOWER BOUNDS, strongest class wins', () => {
+    const t = LP.RAIN_DEPTH.intermediate;                 // light .10 / normal .30 / deep .75
+    expect(rainDepthClass('intermediate', t.deep)).toBe('deep');
+    expect(rainDepthClass('intermediate', t.deep - 0.001)).toBe('normal');
+    expect(rainDepthClass('intermediate', t.normal)).toBe('normal');
+    expect(rainDepthClass('intermediate', t.normal - 0.001)).toBe('light');
+    expect(rainDepthClass('intermediate', t.light)).toBe('light');
+    expect(rainDepthClass('intermediate', t.light - 0.001)).toBe(null);
   });
-  it('precip at or under the tier IA earns nothing', () => {
+  it('coarser vessels need MORE rain for the same class (bag sheds, bed absorbs)', () => {
+    for (const cls of ['light', 'normal', 'deep']) {
+      expect(LP.RAIN_DEPTH.small_fast[cls]).toBeGreaterThanOrEqual(LP.RAIN_DEPTH.intermediate[cls]);
+      expect(LP.RAIN_DEPTH.intermediate[cls]).toBeGreaterThanOrEqual(LP.RAIN_DEPTH.in_ground[cls]);
+    }
+  });
+  it('every tier table is strictly ordered light < normal < deep', () => {
+    for (const [tier, t] of Object.entries(LP.RAIN_DEPTH)) {
+      expect(t.light, tier).toBeLessThan(t.normal);
+      expect(t.normal, tier).toBeLessThan(t.deep);
+    }
+  });
+  it('unknown tier fails safe to small_fast (least credit); zero/negative/NaN earn nothing', () => {
+    // 0.3" is Normal on in_ground but only Light on small_fast — an unknown tier must get the latter.
+    expect(rainDepthClass('in_ground', 0.3)).toBe('normal');
+    expect(rainDepthClass('bogus', 0.3)).toBe('light');
+    expect(rainDepthClass('bogus', 0.3)).toBe(rainDepthClass('small_fast', 0.3));
+    for (const bad of [0, -1, NaN, null, undefined]) expect(rainDepthClass('in_ground', bad)).toBe(null);
+  });
+});
+
+describe('gauge-rain day-credits', () => {
+  it('a Light-class day credits exactly LIGHT_CREDIT_WI x wi at 23:59 ET — once, not per re-test', () => {
+    // 0.15" on intermediate (light 0.10, normal 0.30) -> Light. Light is SUBTRACTIVE, so a second
+    // application would show as a 4-day delta: this is what pins once-per-day idempotency.
     const bare = mk({ events: [PRIMER] });
-    const drizzle = mk({ events: [PRIMER], weather: flatWeather({ precipOn: { '2026-08-09': 0.25 } }) });
-    expect(drizzle.d).toBeCloseTo(bare.d, 6);
+    const wet = mk({ events: [PRIMER], weather: flatWeather({ precipOn: { '2026-08-09': 0.15 } }) });
+    expect(bare.d - wet.d).toBeCloseTo(LP.LIGHT_CREDIT_WI * 4, 6);   // 0.5 x wi 4 = 2, exactly once
+  });
+  it('a Normal-class day rewets through the SAME long-dry hedge as a Normal watering', () => {
+    // 0.5" on intermediate -> Normal. D at 08-09 23:59 is ~26.5 (>> 1.5x wi), so the container
+    // hedge applies: D := containerResetWi x wi = 1.0, then 2.084d of accrual.
+    const wet = mk({ events: [PRIMER], weather: flatWeather({ precipOn: { '2026-08-09': 0.5 } }) });
+    expect(wet.d).toBeCloseTo(LP.HEDGE.containerResetWi * 4 + 2 + 2 / 24, 2);
+  });
+  it('a trace under the tier light floor earns nothing', () => {
+    const bare = mk({ events: [PRIMER] });
+    const trace = mk({ events: [PRIMER], weather: flatWeather({ precipOn: { '2026-08-09': 0.05 } }) });
+    expect(trace.d).toBeCloseTo(bare.d, 6);
+  });
+  it('DRG-RAINDEPTH-001: 0.21" is no longer discarded — it lands as Light on EVERY tier', () => {
+    // The originating case (2026-08-17, 0.21" measured). Under the retired IA cliff this earned
+    // in_ground a full 3-day hold and intermediate/small_fast exactly nothing.
+    for (const [tier, vessel] of [
+      ['in_ground', vesselProfile('in_ground', null)],
+      ['intermediate', vesselProfile('trough', '5 gal')],
+      ['small_fast', vesselProfile('fabric_bag', '5 gal')],
+    ]) {
+      expect(rainDepthClass(tier, 0.21)).toBe('light');
+      const bare = mk({ events: [PRIMER], rainTier: tier, vessel });
+      const wet = mk({ events: [PRIMER], rainTier: tier, vessel,
+        weather: flatWeather({ precipOn: { '2026-08-09': 0.21 } }) });
+      expect(bare.d - wet.d).toBeCloseTo(LP.LIGHT_CREDIT_WI * 4, 6);
+    }
+  });
+  it('deep RAIN resets flat to 0 but NEVER banks, where a manual Deep on the same vessel does', () => {
+    // The one deliberate asymmetry in applyDepth. in_ground banks; both ops land at 23:59 ET of the
+    // same day, so the whole difference is the forfeited bank (deepBankWi x wi = 0.6).
+    const ig = { vessel: vesselProfile('in_ground', null), rainTier: 'in_ground' };
+    const deepWater = mk({ ...ig,
+      events: [PRIMER, { id: 'd1', t: at('2026-08-09', 23, 59), type: 'watering', depth: 'deep' }] });
+    const deepRain = mk({ ...ig, events: [PRIMER],
+      weather: flatWeather({ precipOn: { '2026-08-09': 1.0 } }) });
+    expect(deepRain.d - deepWater.d).toBeCloseTo(LP.BANK.deepBankWi * 4, 6);
+    expect(deepRain.d).toBeGreaterThan(0);
   });
   it('(d) consecutive qualifying rain days floor D at 0 — and the planting RESURFACES after', () => {
     const soaked = {};
@@ -265,14 +330,22 @@ describe('gauge-rain day-credits', () => {
       expect(wet.d).toBeCloseTo(bare.d, 6);
     }
   });
-  it('bag >=85F denial is SOFTENED to 50% credit, keyed to the day\'s tmax_f', () => {
+  it('bag >=85F DEMOTES one class (Deep -> Normal), keyed to the day\'s tmax_f', () => {
     const bag = { vessel: vesselProfile('fabric_bag', '7 gal'), rainTier: 'small_fast' };
     const cool = mk({ ...bag, events: [PRIMER],
       weather: flatWeather({ precipOn: { '2026-08-09': 1.0, '2026-08-09_tmax': 84.9 } }) });
     const hot = mk({ ...bag, events: [PRIMER],
       weather: flatWeather({ precipOn: { '2026-08-09': 1.0, '2026-08-09_tmax': 85 } }) });
-    // credit halves (1.0 -> 0.5); the 0.1F demand-side ramp delta is noise at this tolerance
-    expect(hot.d - cool.d).toBeCloseTo(0.5, 1);
+    // 1.0" > small_fast deep 0.90. Cool: Deep -> 0 (a 7-gal bag does not bank). Hot: demoted to
+    // Normal -> the container hedge, 0.25 x wi = 1.0. The 0.1F demand-ramp delta is noise here.
+    expect(hot.d - cool.d).toBeCloseTo(LP.HEDGE.containerResetWi * 4, 1);
+  });
+  it('a Light-class day on a hot bag demotes off the bottom to nothing', () => {
+    const bag = { vessel: vesselProfile('fabric_bag', '7 gal'), rainTier: 'small_fast' };
+    const bare = mk({ ...bag, events: [PRIMER], weather: flatWeather({ precipOn: { '2026-08-09_tmax': 85 } }) });
+    const hot = mk({ ...bag, events: [PRIMER],
+      weather: flatWeather({ precipOn: { '2026-08-09': 0.2, '2026-08-09_tmax': 85 } }) });
+    expect(hot.d).toBeCloseTo(bare.d, 6);
   });
   it('fresh small-vessel transplant keeps the carve-out: no credit inside 21 days', () => {
     const cup = { vessel: vesselProfile('solo_cup', '0.5 qt'), rainTier: 'small_fast', wi: 1, thr: 1 };

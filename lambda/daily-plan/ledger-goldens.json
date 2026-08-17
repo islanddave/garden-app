@@ -154,6 +154,73 @@
    }
   }
  },
+ "rain-light-partial-credit": {
+  "note": "(d2) DRG-RAINDEPTH-001: ONE 0.21\" day across all three substrate tiers. The discriminating case the 1.0\" rain-week golden cannot see — at 1.0\" every tier saturates to a full reset and the retired IA-cliff model and the depth model converge. At 0.21\" they disagree in BOTH directions: the cliff gave in_ground a full 3-day hold and gave the bed/bag exactly nothing.",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 3,
+     "water_due": 3,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "rl-bag",
+      "days_since": 6,
+      "interval": 3,
+      "overdue_by": 3
+     },
+     {
+      "id": "rl-ig",
+      "days_since": 6,
+      "interval": 5,
+      "overdue_by": 1
+     },
+     {
+      "id": "rl-bed",
+      "days_since": 6,
+      "interval": 5,
+      "overdue_by": 1
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 3,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "rl-bag",
+      "days_since": 6,
+      "interval": 3,
+      "overdue_by": 2,
+      "d": 5.4,
+      "confidence": "HIGH"
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ },
  "heatwave-fixed-ref": {
   "note": "(e) 14 flat hot days: demand stays >1 all wave; bag ramp reads weather_daily.tmax_f",
   "off": {

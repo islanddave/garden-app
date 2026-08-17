@@ -85,16 +85,37 @@ const HEDGE = { longDryWi: 1.5, inGroundCapWi: 0.5, containerResetWi: 0.25 };
 const LIGHT_CREDIT_WI = 0.5;                 // Light: D := max(0, D - this x wi)
 // Gauge/forecast rain day-credits, applied ONCE per qualifying weather_daily day at 23:59 ET,
 // floored at 0 (rain never banks negative — the resurfacing guarantee that retires the maxdays
-// ceiling). IA/hold values MIRROR engine.js RAIN_TIER_IA / RAIN_TIER_HOLD (same tiers, canon: "Same
-// IA tiers, same transplant carve-out"); duplicated here because ledger.js must not require
-// engine.js (engine requires ledger), and pinned equal by ledger.test.js.
+// ceiling; preserved by DRG-RAINDEPTH-001 below, see allowBank).
+// ia/hold NO LONGER DRIVE THE FOLD as of DRG-RAINDEPTH-001 — RAIN_DEPTH does. They are retained
+// because they still MIRROR engine.js RAIN_TIER_IA / RAIN_TIER_HOLD, which remain live on the
+// flag-OFF legacy path, and ledger.test.js pins the two tables equal to catch drift while both
+// models coexist. Delete both halves together at the CARE_WATER_LEDGER_ENABLED flip, alongside the
+// CARE_RAIN_MAXDAYS removal already owed there.
 const RAIN_DAY = {
   ia: { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 },
   hold: { in_ground: 3, intermediate: 2, small_fast: 1 },
-  // Bag >=85F credit denial SOFTENED to 50% (canon legacy-term table: demand now carries the heat
-  // physics; full denial + 1.25x demand was a double penalty). Keyed to weather_daily.tmax_f of the
-  // qualifying day, not today's forecast high.
+  // Bag >=85F credit denial SOFTENED (canon legacy-term table: demand now carries the heat physics;
+  // full denial + 1.25x demand was a double penalty). Keyed to weather_daily.tmax_f of the
+  // qualifying day, not today's forecast high. Under RAIN_DEPTH this is a ONE-CLASS DEMOTION
+  // (deep->normal->light->nothing) rather than a 0.5x scalar — the scalar had no meaning once the
+  // credit stopped being a number of days. bagHeatSoftenFactor is retained for the legacy mirror.
   bagHeatSoftenF: 85, bagHeatSoftenFactor: 0.5,
+};
+// DRG-RAINDEPTH-001 (2026-08-17, Dave directive) — measured daily precip -> Light/Normal/Deep class,
+// per substrate tier. REPLACES the RAIN_DAY.ia cliff + amount-blind `min(hold, wi)` credit, under
+// which 0.21" and 2.1" bought an in-ground bed the identical 3 days while a fabric bag got nothing
+// from either. Rain now folds through the SAME depth arithmetic as a manual watering, so a sprinkle
+// no longer resets a cadence and a real soak is no longer discarded.
+// Values are inches of gauge-measured daily precip, read as lower bounds: >=deep is Deep, >=normal
+// is Normal, >=light is Light, below light is a trace and earns nothing. Coarser vessels need MORE
+// rain for the same class — a bag sheds and dries where a bed absorbs and holds.
+// Provenance: agronomy estimate for the Conway MA site (cool-humid, clay-ish native soil), NOT
+// measured. These are the #1 soak-tune target — same posture as RAIN_DAY.ia was (err toward
+// watering: raise the thresholds, never lower them, on an unproven shadow-soak).
+const RAIN_DEPTH = {
+  in_ground:    { light: 0.10, normal: 0.25, deep: 0.60 },
+  intermediate: { light: 0.10, normal: 0.30, deep: 0.75 },
+  small_fast:   { light: 0.15, normal: 0.40, deep: 0.90 },
 };
 const TRANSPLANT_CARVEOUT_DAYS = 21;         // mirrors engine.TRANSPLANT_CARVEOUT_DAYS (pinned by test)
 
@@ -116,6 +137,6 @@ const WINDOW_DAYS = 30;      // fold lookback; MUST equal handler.WEATHER_DAILY_
 module.exports = {
   ET0_REF_MONTHLY, WINTER_REF_MIN, DEMAND_CLAMP, GLOBAL_NORMALIZATION,
   VESSEL_CLASS_FACTOR, VESSEL_UNKNOWN_FACTOR, FABRIC_BAG, TRAY_TYPES, TRAY_WI_CAP_DAYS, SIZE_BUCKETS,
-  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, TRANSPLANT_CARVEOUT_DAYS,
+  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, TRANSPLANT_CARVEOUT_DAYS,
   SNOOZE, CONFIDENCE, WINDOW_DAYS,
 };
