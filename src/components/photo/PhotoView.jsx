@@ -78,10 +78,9 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
   const atLast = step >= chain.length - 1
   const source = chain[Math.min(step, chain.length - 1)] ?? null
 
-  // Advance the chain on the FIRST failure of a non-final source. PhotoImg only re-mints when it is
-  // given a photoId, so while a cheap in-hand degrade is still available we withhold it — that keeps
-  // the missing-thumb case free of a network round-trip. On the final source we hand the id over and
-  // PhotoImg's expiry self-heal takes charge.
+  // Advance the chain on the FIRST failure of a non-final source. `hasFallback` (below) is what keeps
+  // that degrade free of a network round-trip: PhotoImg forwards the error and stands down instead of
+  // spending a mint on a URL this component is about to replace.
   const handleError = useCallback((ev) => {
     onError?.(ev)
     setStep(s => (s + 1 < chain.length ? s + 1 : s))
@@ -104,9 +103,18 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
     )
   }
 
+  // The id is a fact about the PHOTO, so it is handed over at every step — gating it on `atLast` (as
+  // this did until the thumb tier gave the Garden tile a two-entry chain) silently disabled PhotoImg's
+  // PROACTIVE re-mint for every mid-chain source: `if (!photoId) return`. A tier=THUMB surface resumed
+  // past the 900s TTL therefore stopped re-minting before render — it 403'd on the thumb, degraded all
+  // the way to the ORIGINAL and recovered reactively, i.e. it both failed requests and landed on the
+  // very payload tier=THUMB exists to avoid. `hasFallback` carries the part `atLast` was actually
+  // right about: only the LAST source may spend a mint on an error, because every earlier one has a
+  // cheaper swap in hand. Proactive is orthogonal to that and must run at any step.
   return (
     <PhotoImg
-      photoId={atLast ? p.id : undefined}
+      photoId={p.id}
+      hasFallback={!atLast}
       initialUrl={source.url}
       alt={alt === undefined ? p.alt : alt}
       onOpen={onOpen}

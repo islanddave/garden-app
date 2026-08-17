@@ -16,7 +16,9 @@
 //
 // FROZEN CONTRACT — C's tier-agnostic PhotoHero and the A2b img sites compose this; PhotoImg gains
 // NO hero/variant/tier prop (composition, not configuration). Freeze deltas folded in: (1) placeholder
-// inherits the consumer's box styling; (2) `fallback` governs the empty, pending, AND error render.
+// inherits the consumer's box styling; (2) `fallback` governs the empty, pending, AND error render;
+// (3) `hasFallback` says whether the CONSUMER can take over on error — a fact about the caller's own
+// state, not about which derivative this is, so the tier stays entirely on PhotoView's side.
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -70,14 +72,25 @@ export function mintUrl(photoId, authedFetch) {
 
 // Seed lastMintedAt from the initialUrl provided at mount (it came from a recent list fetch), so the
 // proactive elapsed gate doesn't re-mint a just-mounted fresh hero on the first foreground (NEW-4).
-function _seed(photoId, initialUrl) {
+//
+// `publishUrl` is false when the consumer holds a fallback BELOW this source (PhotoView mid-degrade).
+// The TIMESTAMP is still true of the photo id either way — every URL for that id came down in the
+// same list response, so they age together — but the URL is a derivative that this id's OTHER
+// consumers must not inherit. `.url` is read by exactly one path (the mount-fetch below), and its
+// callers include the full-screen Lightbox, which would otherwise paint a 163 KB thumb at 94vw.
+function _seed(photoId, initialUrl, publishUrl = true) {
   if (!photoId || !initialUrl) return
   const e = _cache.get(photoId)
-  if (!e || (e.at == null && !e.inFlight)) _cache.set(photoId, { url: initialUrl, at: Date.now(), inFlight: null })
+  if (!e || (e.at == null && !e.inFlight)) _cache.set(photoId, { url: publishUrl ? initialUrl : null, at: Date.now(), inFlight: null })
 }
 
+// `hasFallback` — the consumer has a cheaper source in hand for this same photo and will swap it in
+// on error (PhotoView's degrade chain). NOT a tier prop: PhotoImg still knows nothing about thumbs or
+// derivatives, only that it is not the last resort. It suppresses the REACTIVE heal and the shared-
+// cache URL publish; the PROACTIVE heal is deliberately untouched, because keeping a rendered source's
+// presign alive across a resume is exactly as necessary mid-chain as it is at the end of one.
 export default function PhotoImg({
-  photoId, initialUrl, alt = '', fallback = 'placeholder', loading,
+  photoId, initialUrl, alt = '', fallback = 'placeholder', loading, hasFallback = false,
   onOpen, onRemint, onError, onLoad, style, className, ...rest
 }) {
   const { fetch: apiFetch } = useApiFetch()
@@ -103,7 +116,7 @@ export default function PhotoImg({
     abortRef.current?.abort()                        // stop a pending reactive heal bound to the old id
   }
 
-  useEffect(() => { _seed(photoId, initialUrl) }, [photoId, initialUrl])
+  useEffect(() => { _seed(photoId, initialUrl, !hasFallback) }, [photoId, initialUrl, hasFallback])
   // Set true on (re)mount — StrictMode runs mount→cleanup→remount, and a cleanup-only ref would leave
   // mountedRef=false after remount, making every async heal bail on the !mountedRef guard.
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; abortRef.current?.abort() } }, [])
@@ -132,6 +145,11 @@ export default function PhotoImg({
   // Reactive heal: the <img> errored. Treat as expiry → one re-mint. Classify the MINT failure.
   const handleError = useCallback(async (ev) => {
     onError?.(ev)
+    // The consumer swaps in its own next source on this same event, so minting here would spend a
+    // round-trip on a URL about to be replaced — and going terminal would blank the box for the frame
+    // before the swap lands. Return BEFORE the retry budget is touched: the budget belongs to the
+    // source that actually gets to heal.
+    if (hasFallback) return
     if (!photoId || retriedRef.current) { if (fallback !== 'none') setTerminal(true); return }
     retriedRef.current = true
     abortRef.current?.abort()
@@ -148,7 +166,7 @@ export default function PhotoImg({
       else if (st === 403) { setTerminal(true) }                                       // fresh URL still forbidden → terminal
       else { retriedRef.current = false }   // 429/5xx/network/offline → non-terminal, budget NOT spent; proactive/online retries
     }
-  }, [photoId, apiFetch, fallback, onRemint, onError, adopt])
+  }, [photoId, apiFetch, fallback, hasFallback, onRemint, onError, adopt])
 
   // P1 — Fetch-on-mount: a photoId with NO consumer-provided url (an id-only thumb) resolves once on
   // mount so it renders without an interaction. Guarded so the initialUrl-present path (every shipped
