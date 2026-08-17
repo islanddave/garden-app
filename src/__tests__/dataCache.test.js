@@ -73,6 +73,63 @@ describe('dataCache — merge-by-id URL preservation (no re-download churn)', ()
     expect(cache.getSnapshot(K).data).toBe(d1)                 // …and produced NO new data identity
   })
 
+  // The case above passes with a FLAT fixture row, which no real /api/plants row is: the list
+  // projection carries `variety_ref` (a jsonb_build_object cultivar join) and the `metadata` jsonb
+  // column. Every response is a fresh JSON.parse, so those two never survive an === compare and the
+  // guard silently reported presign-only churn as a data change — new list identity, enrichment
+  // rebuilt, fresh presign into PhotoImg's initialUrl, thumbnails re-downloaded on every background
+  // refresh. Measured false at 9c335bf before _sameField.
+  it('a plants row carrying nested jsonb (variety_ref, metadata) keeps the prior data ref', async () => {
+    const K = 'u1|/api/plants'
+    let n = 0
+    // JSON round-trip per call: reproduces the fresh-parse identities a real response has.
+    cache.register(K, () => {
+      n++
+      return Promise.resolve(JSON.parse(JSON.stringify([{
+        id: 'pl9', name: 'Bhut Jolokia', status: 'growing', location_id: 'loc1',
+        metadata: { bed: 3, notes: null },
+        variety_ref: { id: 'v1', name: 'Bhut Jolokia', crop_type_slug: 'pepper', days_to_maturity_min: 90 },
+        featured_photo_id: 'ph9',
+        featured_photo_view_url: `https://s3.invalid/plants/a.jpg?sig=full${n}`,
+        featured_photo_thumb_url: `https://s3.invalid/thumbs/plants/a.jpg?sig=thumb${n}`,
+      }])))
+    })
+    cache.revalidate(K); await flush()
+    const d1 = cache.getSnapshot(K).data
+    cache.revalidate(K); await flush()
+    expect(n).toBe(2)
+    expect(cache.getSnapshot(K).data).toBe(d1)
+  })
+
+  it('a change INSIDE a nested jsonb field still adopts the fresh list', async () => {
+    const K = 'u1|/api/plants'
+    const lists = [
+      [{ id: 'pl9', variety_ref: { id: 'v1', crop_type_slug: 'pepper' }, featured_photo_view_url: 'u1' }],
+      [{ id: 'pl9', variety_ref: { id: 'v1', crop_type_slug: 'tomato' }, featured_photo_view_url: 'u2' }],
+    ]
+    let i = 0
+    cache.register(K, () => Promise.resolve(lists[i++]))
+    cache.revalidate(K); await flush()
+    const d1 = cache.getSnapshot(K).data
+    cache.revalidate(K); await flush()
+    expect(cache.getSnapshot(K).data).not.toBe(d1)
+    expect(cache.getSnapshot(K).data[0].variety_ref.crop_type_slug).toBe('tomato')
+  })
+
+  it('a nested field appearing or disappearing adopts the fresh list', async () => {
+    const K = 'u1|/api/plants'
+    const lists = [
+      [{ id: 'pl9', variety_ref: null, featured_photo_view_url: 'u1' }],
+      [{ id: 'pl9', variety_ref: { id: 'v1' }, featured_photo_view_url: 'u2' }],
+    ]
+    let i = 0
+    cache.register(K, () => Promise.resolve(lists[i++]))
+    cache.revalidate(K); await flush()
+    const d1 = cache.getSnapshot(K).data
+    cache.revalidate(K); await flush()
+    expect(cache.getSnapshot(K).data).not.toBe(d1)
+  })
+
   it('a real membership change adopts the fresh list', async () => {
     const K = 'u1|/api/photos'
     const lists = [[{ id: 'a', view_url: 'u' }], [{ id: 'a', view_url: 'u2' }, { id: 'b', view_url: 'u3' }]]

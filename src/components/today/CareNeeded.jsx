@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import { SEVERITY_STYLES } from '../../lib/waterDue.js'
 import { useApiFetch } from '../../lib/api.js'
+import { useCachedFetch } from '../../hooks/useCachedFetch.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
 import GroupByControl from '../forms/GroupByControl.jsx'
 import Sheet from '../forms/Sheet.jsx'
@@ -27,6 +28,9 @@ const GROUP_OPTS = [
   { value: 'location', label: 'By location' },
   { value: 'type', label: 'By type' },
 ]
+
+// Stable identity for "no enrichment yet" so enrichedRows doesn't re-memo on every render.
+const NO_ENRICHMENT = Object.freeze({})
 
 function todayLocalISO() {
   const d = new Date()
@@ -168,35 +172,45 @@ export default function CareNeeded({ plan }) {
   const [bulkChecked, setBulkChecked] = useState(() => new Set())
   const [bulkProgress, setBulkProgress] = useState(null)  // { done, total } during fan-out
   const liveRef = useRef(null)
-  const [enrichById, setEnrichById] = useState(() => ({}))  // V4-TODAYLOC-001: plantingId -> {locationId,locationName,containerType,thumb}
 
   // V4-TODAYLOC-001 — best-effort enrichment for true location grouping + thumbnails. Joins
   // /api/plants (location_id, container_type, featured thumb) with /api/locations/with-path
   // (id -> full_path name). Degrades silently to project-proxy grouping if either fetch fails.
+  //
+  // /api/plants goes through dataCache so this shares ONE request with StorageDeadlineAlert (and
+  // with the sibling CareNeeded that the household lens mounts per caretaker) instead of each
+  // instance pulling its own ~0.5-1 MB copy of the same 243-row list on one paint.
+  const { data: plants } = useCachedFetch('/api/plants')
+  // Tri-state on purpose: undefined = not settled, null = settled-but-failed, array = settled ok.
+  const [locPaths, setLocPaths] = useState(undefined)
   useEffect(() => {
     let alive = true
-    ;(async () => {
-      const [plants, paths] = await Promise.all([
-        Promise.resolve().then(() => fetch('/api/plants')).catch(() => null),
-        Promise.resolve().then(() => fetch('/api/locations/with-path')).catch(() => null),
-      ])
-      if (!alive) return
-      const nameById = new Map()
-      if (Array.isArray(paths)) for (const l of paths) nameById.set(l.id, l.full_path || l.name || null)
-      const map = {}
-      if (Array.isArray(plants)) for (const pl of plants) {
-        map[pl.id] = {
-          locationId: pl.location_id || null,
-          locationName: (pl.location_id && nameById.get(pl.location_id)) || null,
-          containerType: pl.container_type || null,
-          thumb: pl.featured_photo_view_url || null,
-          photoId: pl.featured_photo_id || null,
-        }
-      }
-      if (Object.keys(map).length) setEnrichById(map)
-    })()
+    Promise.resolve().then(() => fetch('/api/locations/with-path'))
+      .catch(() => null)
+      .then(d => { if (alive) setLocPaths(Array.isArray(d) ? d : null) })
     return () => { alive = false }
   }, [fetch])
+
+  // Enrich only once BOTH sources have settled. The previous Promise.all made that atomicity
+  // implicit; splitting the fetches makes it load-bearing, because groupRows derives a group's KEY
+  // from locationId but its LABEL from locationName — so applying plants before the paths land
+  // would show each group under its project name for a beat and then flip it to the location name.
+  const enrichById = useMemo(() => {
+    if (locPaths === undefined || !Array.isArray(plants)) return NO_ENRICHMENT
+    const nameById = new Map()
+    if (Array.isArray(locPaths)) for (const l of locPaths) nameById.set(l.id, l.full_path || l.name || null)
+    const map = {}
+    for (const pl of plants) {
+      map[pl.id] = {
+        locationId: pl.location_id || null,
+        locationName: (pl.location_id && nameById.get(pl.location_id)) || null,
+        containerType: pl.container_type || null,
+        thumb: pl.featured_photo_view_url || null,
+        photoId: pl.featured_photo_id || null,
+      }
+    }
+    return map
+  }, [plants, locPaths])
 
   const allRows = useMemo(() => buildCareNeeded(plan), [plan])
   const rows = useMemo(

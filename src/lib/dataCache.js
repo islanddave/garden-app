@@ -106,6 +106,25 @@ export function register(key, fetcher) { _entry(key).fetcher = fetcher }
 // featured_photo_thumb_url joined at V4-PERFTHEMEA-001, when /api/plants started signing the
 // thumbs/ companion alongside featured_photo_view_url.
 const URL_FIELDS = ['view_url', 'thumb_url', 'featured_photo_view_url', 'featured_photo_thumb_url']
+
+// A field holding a JSON OBJECT never survives an === compare: every response is a fresh JSON.parse,
+// so two byte-identical values hold different identities. That silently defeats the whole guard for
+// any row carrying one — /api/plants rows carry TWO (`variety_ref`, a jsonb_build_object cultivar
+// join, and the `metadata` jsonb column), so an identity-only compare reported EVERY plants
+// revalidate as a data change: new list identity, enrichment rebuilt, fresh presign into PhotoImg's
+// initialUrl, and a re-download of the visible thumbnails on every background refresh — precisely
+// the churn URL_FIELDS exists to prevent. (Measured at 9c335bf: ref preserved = false for a row with
+// variety_ref + metadata and presign-only churn; the pre-existing unit case passed only because its
+// fixture row was flat.) Scalars keep the cheap === path. Structural compare is strictly MORE
+// accurate than ===, never more permissive: a real nested edit still compares unequal and the fresh
+// list is adopted. Key order is stable (same server projection, same parser), and any stringify
+// failure falls back to "changed", i.e. to the prior behaviour.
+function _sameField(a, b) {
+  if (a === b) return true
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
+  try { return JSON.stringify(a) === JSON.stringify(b) } catch { return false }
+}
+
 // True when prev and next are the same list except for presigned-URL churn (same ids, same order,
 // same non-URL fields). Lets a plain revalidate keep the prior `data` ref (URL freshness → PhotoImg).
 function _sameExceptUrls(prev, next) {
@@ -116,7 +135,7 @@ function _sameExceptUrls(prev, next) {
     if (a === b) continue
     if (!a || !b || a.id !== b.id) return false
     const keys = new Set([...Object.keys(a), ...Object.keys(b)])
-    for (const k of keys) { if (URL_FIELDS.includes(k)) continue; if (a[k] !== b[k]) return false }
+    for (const k of keys) { if (URL_FIELDS.includes(k)) continue; if (!_sameField(a[k], b[k])) return false }
   }
   return true
 }

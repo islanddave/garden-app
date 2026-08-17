@@ -44,8 +44,8 @@
 //
 // Ambient posture matches its neighbours on Today: self-fetching, error swallowed, hidden when
 // empty, and pure date math with `todayISO` injectable so nothing depends on the test clock.
-import React, { useEffect, useMemo, useState } from 'react'
-import { useApiFetch } from '../../lib/api.js'
+import React, { useMemo } from 'react'
+import { useCachedFetch } from '../../hooks/useCachedFetch.js'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 import {
@@ -117,16 +117,13 @@ export function storageDeadlineGroups(plantings, todayISO, cap = STORAGE_DEADLIN
 }
 
 export default function StorageDeadlineAlert({ todayISO = null }) {
-  const { fetch } = useApiFetch()
-  const [plantings, setPlantings] = useState(null)
-
-  useEffect(() => {
-    let alive = true
-    fetch('/api/plants')
-      .then(d => { if (alive) setPlantings(Array.isArray(d) ? d : []) })
-      .catch(() => { /* ambient: never surface a fetch error onto Today */ })
-    return () => { alive = false }
-  }, [fetch])
+  // Shares ONE /api/plants request with CareNeeded rather than issuing a second copy of the same
+  // ~0.5-1 MB / 243-row list on the same paint (dataCache's in-flight dedup — both mount inside one
+  // tick, so the second register/revalidate joins the first's promise). Still ambient and still
+  // self-fetching: the hook owns the request, this component owns nothing but the render.
+  // Error stays SWALLOWED — a cold failure leaves `data` undefined, and storageDeadlineGroups
+  // returns [] for anything that isn't an array, so the alert renders nothing exactly as before.
+  const { data: plantings } = useCachedFetch('/api/plants')
 
   const day = todayISO ?? todayLocalISO()
   const groups = useMemo(() => storageDeadlineGroups(plantings, day), [plantings, day])

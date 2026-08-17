@@ -63,7 +63,12 @@ describe('CareNeeded — Slice 7', () => {
   })
 
   it('on write failure the row stays and an error toast shows (no fade-and-forget)', async () => {
-    fetchMock.mockRejectedValueOnce(new Error('boom'))
+    // Fail the WRITE specifically. This used to be a bare mockRejectedValueOnce, which relied on the
+    // mount-time enrichment fetches being deferred by a microtask so the events POST was the first
+    // call to land; the plants read now goes through useCachedFetch, whose no-sub PLAIN branch calls
+    // fetch synchronously, and the once-rejection was being spent on /api/plants instead.
+    fetchMock.mockImplementation((path) =>
+      path === '/api/events' ? Promise.reject(new Error('boom')) : Promise.resolve([]))
     render(<CareNeeded plan={plan()} />)
     fireEvent.click(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i }))
     await waitFor(() => expect(toastMock.show).toHaveBeenCalledTimes(1))
@@ -74,7 +79,10 @@ describe('CareNeeded — Slice 7', () => {
     render(<CareNeeded plan={plan()} />)
     fireEvent.click(screen.getByRole('button', { name: /Skip Habanero today/i }))
     expect(screen.queryByText('Habanero')).toBeNull()
-    expect(fetchMock).not.toHaveBeenCalled()
+    // Assert the named behaviour — no EVENT is written. A blanket not.toHaveBeenCalled() also
+    // asserted that no mount-time enrichment read had fired yet, which was only ever true because
+    // those reads were microtask-deferred; that is timing, not the contract this test is about.
+    expect(fetchMock.mock.calls.some(c => c[0] === '/api/events')).toBe(false)
   })
 
   it('shows the all-clear empty state when nothing needs care', () => {
