@@ -37,7 +37,14 @@ import { onReconnect } from '../lib/reconnect.js'
 // Paths worth warming at boot. ONLY globally-knowable keys belong here: per-planting and per-location
 // photo paths depend on a route param nobody has navigated to yet, so warming them would be guesswork
 // that costs a request and usually misses.
-export const BOOT_WARM_PATHS = ['/api/photos']
+//
+// EMPTY SINCE OPS-BOOTWARMSTALE-001. '/api/photos' lived here because Garden's Photos sub-tab rendered
+// <PhotosWall /> at its DEFAULT path. V4-GARDENSEGCTRL-001 (2aece6f) deleted that sub-tab, and the one
+// remaining PhotosWall site (SpaceDetail.jsx:246) passes an explicit ?space_id= path — a DIFFERENT cache
+// key. PhotoLibrary uses plain apiFetch, not useCachedFetch. So the warm had zero readers.
+// Before adding a path back: prove a useCachedFetch call site reads that EXACT string (keys are
+// path-scoped, so a query-string variant does not hit it).
+export const BOOT_WARM_PATHS = []
 
 // Foreground revalidate is gated on entry age. Below this, a wake is treated as an app-switch glance
 // and skipped: visibilitychange fires on every alt-tab, and an ungated version would refetch every

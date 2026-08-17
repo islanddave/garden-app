@@ -125,7 +125,15 @@ describe('captureQueue (Inc 2 Bite 4)', () => {
     await enqueueText({ text: 'newer' })
     await markHandedOff(old.id)
     const age = await getOldestUnprocessedAgeMs()
-    expect(age).toBeLessThan(30)              // newer is now the oldest unprocessed
+    // OPS-CAPTUREQUEUEFLAKE-001. The old assertion was `age < 30`: a 30 ms WALL-CLOCK budget covering
+    // three IndexedDB round-trips (the tail of enqueue, markHandedOff, and list). Typical margin is
+    // 0-6 ms, but under full-suite worker contention a scheduler stall pushed it to 61-96 ms and the
+    // test failed. Anchor on the RECORD instead: a stall inflates both ages equally, so their
+    // DIFFERENCE is stable at ~30 ms regardless of load. Non-vacuous — if handed_off were NOT
+    // excluded, `old` would be the oldest, the difference would collapse to ~0, and this fails.
+    const oldAge = Date.now() - new Date(old.capturedAt).getTime()
+    expect(age).not.toBeNull()
+    expect(oldAge - age).toBeGreaterThanOrEqual(25)
   })
 
   it('enqueueRecording requires blob (throws if absent)', async () => {

@@ -207,28 +207,54 @@ describe('D-2 B4: refreshAll()', () => {
 // ── Hook wiring ─────────────────────────────────────────────────────────────────────────────────
 function Harness({ sub }) { useCacheLifecycle(sub); return null }
 
+// B5/B6 need a key that is seeded AND has a registered fetcher. Boot-warm used to provide one for
+// free; since OPS-BOOTWARMSTALE-001 emptied BOOT_WARM_PATHS the tests seed it themselves, exactly the
+// way warm() would. This is a FIXTURE, not the behaviour under test — B5's contract is "revalidate
+// watched keys on wake", independent of who seeded them.
+const seedWarm = (sub, path) => cache.warm(cache.keyFor(sub, path), () => {
+  apiCalls.push(path)
+  return Promise.resolve([{ id: 'a', view_url: 'u1' }])
+})
+
 describe('D-2 wiring: useCacheLifecycle', () => {
-  it('warms the boot paths once an identity resolves', async () => {
+  // OPS-BOOTWARMSTALE-001 — BOOT_WARM_PATHS is now EMPTY. The only reader of the warmed
+  // `{sub}|/api/photos` key was Garden's Photos sub-tab (<PhotosWall /> at its DEFAULT path), deleted
+  // by V4-GARDENSEGCTRL-001; the surviving PhotosWall site passes an explicit ?space_id= path, a
+  // different key. So the warm fetched on every boot and nothing ever read it. The loop contract is
+  // still pinned below (it stays correct if a path is added back), and the empty-list invariant gets
+  // its own pin. The B5/B6 tests that used the warm as a fixture now seed the key themselves.
+  it('warms exactly the boot paths, and no others, once an identity resolves', async () => {
     render(<Harness sub="user_1" />)
-    await waitFor(() => expect(apiCalls).toEqual(BOOT_WARM_PATHS))
-    expect(cache.peek(cache.keyFor('user_1', '/api/photos')).data).toEqual([{ id: 'a', view_url: 'u1' }])
+    await flush()
+    expect(apiCalls).toEqual(BOOT_WARM_PATHS)
+    for (const path of BOOT_WARM_PATHS) {
+      // A warm under a differently-shaped key would look successful and still miss on every read,
+      // so this pins the shared key builder too.
+      expect(cache.peek(cache.keyFor('user_1', path)).data).toEqual([{ id: 'a', view_url: 'u1' }])
+    }
+  })
+
+  it('boot-warms NOTHING: no path in the list, because none has a useCachedFetch reader', async () => {
+    // The pin for OPS-BOOTWARMSTALE-001. A path added back here must FIRST be shown to be read
+    // through useCachedFetch at that EXACT string — keys are path-scoped, so `/api/photos?x=1` never
+    // hits `/api/photos`. This failing is the prompt to produce that proof, not to update the list.
+    render(<Harness sub="user_1" />)
+    await flush()
+    expect(BOOT_WARM_PATHS).toEqual([])
+    expect(apiCalls).toEqual([])
   })
 
   it('warms NOTHING while the identity is unresolved (nothing cached under an absent sub)', async () => {
+    // Dormant while BOOT_WARM_PATHS is empty (the resolved case fetches nothing either), kept because
+    // it is the guard that becomes load-bearing the moment a path is added back.
     render(<Harness sub={null} />)
     await flush()
     expect(apiCalls).toEqual([])
   })
 
-  it('uses the shared key builder, so the warmed key is the one useCachedFetch reads', async () => {
-    render(<Harness sub="user_1" />)
-    await waitFor(() => expect(apiCalls.length).toBe(BOOT_WARM_PATHS.length))
-    // A warm under a differently-shaped key would look successful and still miss on every read.
-    expect(cache.peek('user_1|/api/photos')).not.toBeNull()
-  })
-
   it('revalidates on foreground and removes its listeners on unmount', async () => {
     const { unmount } = render(<Harness sub="user_1" />)
+    seedWarm('user_1', '/api/photos')
     await waitFor(() => expect(apiCalls.length).toBe(1))
     cache.subscribe(cache.keyFor('user_1', '/api/photos'), () => {})
 
@@ -246,6 +272,7 @@ describe('D-2 wiring: useCacheLifecycle', () => {
 
   it('ignores a visibilitychange that fires while the page is hidden', async () => {
     render(<Harness sub="user_1" />)
+    seedWarm('user_1', '/api/photos')
     await waitFor(() => expect(apiCalls.length).toBe(1))
     cache.subscribe(cache.keyFor('user_1', '/api/photos'), () => {})
     const spy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')

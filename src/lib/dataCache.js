@@ -274,6 +274,9 @@ export function revalidateLive(minAgeMs = 0) {
 // deps-`[sub]` so it never re-seeds within a session — so calling refreshAll() from any surface
 // that isn't PhotosWall DELETED the boot-warmed /api/photos entry, making the next Photos visit a
 // cold fetch-and-re-presign. A control reached for to make things fresher made the app slower.
+// (OPS-BOOTWARMSTALE-001: the named reader is gone — BOOT_WARM_PATHS is now empty, so there is no
+// boot-warmed entry left to delete. The MECHANISM above is still the reason this doesn't delete;
+// read "PhotosWall" as "whatever surface reads the warmed key" if a path is ever added back.)
 // The delete was also redundant with _evict()'s LRU cap (which already skips subscribed keys), and
 // didn't even reliably shrink the store — getSnapshot() calls _entry(), which recreates entries on
 // read. Latent, not live: refreshAll has no non-test callers. Fixed now so the next session wiring

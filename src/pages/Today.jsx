@@ -141,9 +141,13 @@ export default function Today() {
       {/* BD-008 / V4-HIDEREADYBAND-001 — HarvestReadyBand (V4-HARVESTSURF-001, "Due for a pick")
           is UNMOUNTED from Today, not deleted. Dave 08-13: he does not log harvests from that
           block, so it earns no space on the app's highest-traffic route. Hide-not-delete is
-          deliberate: the component and its 15 unit tests stay intact because HarvestWatchBand
-          shares harvestWindows.json with it and the band may return (re-open V4-READYDISMISS-001
-          if it does). Restoring = re-import + re-mount here, above the watch band. */}
+          deliberate: the component and its unit tests stay intact so the band can be re-mounted
+          without a rebuild. Restoring = re-import + re-mount here, above the watch band.
+          CORRECTION (OPS-READYBANDDEAD-001): the earlier "HarvestWatchBand shares
+          harvestWindows.json with it" reason was FALSE — HarvestReadyBand.jsx never imports
+          harvestWindows; HarvestWatchBand.jsx:111 and planting/CropCard.jsx:181 each lazy-import
+          lib/harvestWindows.js independently. V4-READYDISMISS-001 is `dropped`, so that re-open
+          gate is closed too. The ONLY live reason to keep this file is cheap re-mountability. */}
 
       {/* V4-HARVSURFACE-001 Slice 1 — Section 2 of the two-section harvest surface: the "worth
           checking" watch list — since BD-008 the one harvest band on Today. A plan surface
