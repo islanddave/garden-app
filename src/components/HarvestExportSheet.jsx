@@ -29,6 +29,7 @@ import HarvestTimeframeChips from './HarvestTimeframeChips.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { shareEntity } from '../lib/shareEntity.js'
 import { buildTotalsExport, buildLogExport, narratedHeader } from '../lib/harvestExport.js'
+import { sortAggregates, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR } from '../lib/harvestSort.js'
 import { etDay } from '../lib/harvestSummary.js'
 import { HARVEST_TZ } from '../lib/growYear.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
@@ -59,6 +60,13 @@ export default function HarvestExportSheet({
   initialCrops = [],
   cropOptions = [],
   seasonYears,
+  // The page's current Totals ordering. The sheet fetches its OWN rowset (its timeframe and crop
+  // selection are sheet-local and editable), so it cannot inherit the page's already-sorted array —
+  // it has to re-apply the same ordering to its own. Without this the export silently reverts to
+  // the server's weight-desc order and disagrees with the screen it was copied from, which is
+  // exactly the reconciliation guarantee harvestExport.js is built around.
+  sortMode = DEFAULT_SORT_MODE,
+  sortDir = DEFAULT_SORT_DIR,
 }) {
   const { fetch: apiFetch } = useApiFetch()
   // Sheet edits are sheet-LOCAL and session-ephemeral (design §2c) — they never write back to the
@@ -107,7 +115,10 @@ export default function HarvestExportSheet({
         // proceed with the app's existing cached-data semantics (design §2c).
         const data = await apiFetch(qs({ include: 'aggregates', timeframe }))
         if (runRef.current !== rid) return
-        const agg = data?.aggregates ?? null
+        // Sort BEFORE the crop filter: filtering only removes rows, so ordering the full set first
+        // and then dropping some is identical to filtering then ordering, and doing it here means
+        // every downstream consumer (buildTotalsExport AND narratedHeader) sees one ordered shape.
+        const agg = sortAggregates(data?.aggregates ?? null, sortMode, sortDir)
         const filtered = selected.size === 0 ? agg : {
           ...agg,
           crops: (agg?.crops ?? []).filter((c) => selected.has(c.crop_type_slug)),
@@ -155,7 +166,10 @@ export default function HarvestExportSheet({
       // failure this abort exists to prevent.
       setText(null); setShareText(null); setHasRows(false); setStatus('error')
     }
-  }, [apiFetch, format, timeframe, crops])
+    // sortMode/sortDir are page-owned and cannot change while the sheet is open (the sheet is
+    // unmounted when closed), but they belong in the deps: they are read inside the effect, and
+    // omitting them would leave a stale-closure trap for whoever later makes the sort editable here.
+  }, [apiFetch, format, timeframe, crops, sortMode, sortDir])
 
   useEffect(() => { if (open) load() }, [open, load])
 

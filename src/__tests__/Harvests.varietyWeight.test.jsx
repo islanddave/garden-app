@@ -60,33 +60,57 @@ async function renderTotals(aggregatesOverride = {}) {
   return aggregates
 }
 
+// Provenance is a property of a VARIETY, not of a row position. These originally read
+// `[top, second]` off the rendered array, which silently coupled a provenance assertion to the
+// ordering decision — so making the order a user control broke tests that have nothing to do with
+// order. Look each variety up by name instead: now an ordering change cannot make these lie, and a
+// provenance regression cannot hide behind a re-sort.
+function weightByVariety() {
+  const out = {}
+  for (const n of screen.getAllByTestId('variety-weight')) {
+    out[n.parentElement.parentElement.firstChild.textContent] = n.textContent
+  }
+  return out
+}
+
 describe('variety sub-rows carry weight', () => {
   it('renders each variety’s grams with its provenance counts attached', async () => {
     await renderTotals()
-    const lines = screen.getAllByTestId('variety-weight').map((n) => n.textContent)
-    expect(lines).toEqual(['≈ 8.23 kg · 26 weighed · 1 estimated', '≈ 763 g · 36 estimated'])
+    expect(weightByVariety()).toEqual({
+      'Moskvich Heirloom': '≈ 8.23 kg · 26 weighed · 1 estimated',
+      'Cherry Falls': '≈ 763 g · 36 estimated',
+    })
   })
 
   it('an ALL-MODELLED variety is visibly distinguishable from a mostly-weighed one', async () => {
     // The whole point of the counts riding along: both rows are "a number of grams", and only one
     // of them is a measurement. Same ≈, very different standing.
     await renderTotals()
-    const [top, second] = screen.getAllByTestId('variety-weight').map((n) => n.textContent)
-    expect(top).toContain('26 weighed')
-    expect(second).not.toContain('weighed')
-    expect(second).toContain('36 estimated')
+    const rows = weightByVariety()
+    expect(rows['Moskvich Heirloom']).toContain('26 weighed')
+    expect(rows['Cherry Falls']).not.toContain('weighed')
+    expect(rows['Cherry Falls']).toContain('36 estimated')
   })
 
-  it('renders the rows in the order the server sent — heaviest first, not alphabetical', async () => {
+  // CONTRACT CHANGED — V4-HARVSORTCTRL-001. v4.32.0 shipped weight-desc as the ONLY order, which
+  // fixed the misleading ranking and broke retrieval: you cannot scan a ranked list for a known
+  // variety. Dave: "having it weighted first and only is not all that useful when I'm trying to find
+  // specific items - alphanumeric is better sort for that and the default I want." Ordering is now a
+  // control and NAME is the default, so the default render is alphabetical. The weight ranking is
+  // still one tap away and still correct — see harvestSort.test.js for the ranking itself.
+  it('defaults to ALPHABETICAL, not heaviest-first — the retrieval case', async () => {
     await renderTotals()
     const names = screen.getAllByTestId('variety-weight')
       .map((n) => n.parentElement.parentElement.firstChild.textContent)
-    expect(names).toEqual(['Moskvich Heirloom', 'Cherry Falls'])
+    expect(names).toEqual(['Cherry Falls', 'Moskvich Heirloom'])
   })
 
-  it('names the sort key, so a weight-ordered list is not read as a broken alphabetical one', async () => {
+  it('names the ACTIVE sort key, so a re-ordered list is not read as a broken alphabetical one', async () => {
     await renderTotals()
-    expect(screen.getByText('By weight · ≈ estimated')).toBeTruthy()
+    // Was a hardcoded "By weight". Once ordering became a control that string was a latent lie: it
+    // would keep claiming weight while the rows sat in name order. This is the guard for that.
+    expect(screen.getByText('By name · ≈ estimated')).toBeTruthy()
+    expect(screen.queryByText('By weight · ≈ estimated')).toBeNull()
   })
 
   it('claims no ordering when nothing under the crop has a weight', async () => {

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
@@ -10,6 +10,8 @@ import Sparkline from '../components/Sparkline.jsx'
 import HarvestTimeframeChips from '../components/HarvestTimeframeChips.jsx'
 import HarvestExportSheet from '../components/HarvestExportSheet.jsx'
 import CropWeightLine from '../components/CropWeightLine.jsx'
+import HarvestSortControl from '../components/HarvestSortControl.jsx'
+import { sortAggregates, naturalDirFor, HARVEST_SORT_MODES, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR } from '../lib/harvestSort.js'
 import { useHarvests } from '../hooks/useHarvests.js'
 import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
@@ -76,6 +78,23 @@ export default function Harvests() {
   const [view, setView] = useState(() => (
     restored?.v === 'log' || restored?.v === 'totals' ? restored.v : (arrivedWithCrop ? 'log' : 'totals')
   )) // 'log' | 'totals'
+
+  // Totals sort. NAME/ASC is the shipped default and a fresh arrival always lands on it — Dave's
+  // stated preference ("I like having alpha as our default sort"). It rides the same restore tuple
+  // as the filters, so sorting by weight, opening a planting and coming back keeps your order; a
+  // new tab or a first visit returns to alphabetical rather than stranding you in a ranking you set
+  // days ago. That is DELIBERATELY not localStorage: a default you asked for should reassert
+  // itself. If it should instead follow you across devices, the V4-USERPREFS-001 store that shipped
+  // in v4.32.0 is the home for it — a separate decision, not this slice's to make.
+  const [sortMode, setSortMode] = useState(() => (
+    HARVEST_SORT_MODES.some((o) => o.value === restored?.sm) ? restored.sm : DEFAULT_SORT_MODE
+  ))
+  const [sortDir, setSortDir] = useState(() => (
+    restored?.sd === 'asc' || restored?.sd === 'desc' ? restored.sd : DEFAULT_SORT_DIR
+  ))
+  // Changing the AXIS resets direction to that axis's natural one — see naturalDirFor(). Flipping
+  // direction alone never touches the mode.
+  const changeSortMode = (m) => { setSortMode(m); setSortDir(naturalDirFor(m)) }
   // V4-HARVDEFAULT-001 + boss condition C1: the bare-arrival default timeframe is the CURRENT
   // grow-year (from season 2 on, an all-time blend dilutes "what THIS season gave" into a number that
   // never visibly moves off-season). ?crop= arrivals keep '' (All time) — silently rescoping the
@@ -177,8 +196,17 @@ export default function Harvests() {
     saveState({
       v: view, tf: timeframe, dtf: defaultTimeframeRef.current, tt: timeframeTouched.current,
       c: crop, cl: cropLabel, p: project, pl: projectLabel, n: entries.length,
+      sm: sortMode, sd: sortDir,
     })
-  }, [saveState, view, timeframe, crop, cropLabel, project, projectLabel, entries.length])
+  }, [saveState, view, timeframe, crop, cropLabel, project, projectLabel, entries.length, sortMode, sortDir])
+
+  // ONE ordering, applied once, consumed by BOTH the view and the export sheet. The sheet owns a
+  // separate fetch, so it re-sorts its own rowset with the same (mode, dir) — without that, a copied
+  // export would silently disagree with the screen it was copied from.
+  const sortedAggregates = useMemo(
+    () => sortAggregates(aggregates, sortMode, sortDir),
+    [aggregates, sortMode, sortDir],
+  )
 
   const clearAll = () => { setTimeframe(''); setCrop(''); setCropLabel(''); setProject(''); setProjectLabel('') }
   // "See in log →" from an expanded Totals crop row: filter the Log to that crop and switch tabs
@@ -241,6 +269,18 @@ export default function Harvests() {
           />
         )}
 
+        {/* The control renders only over a populated Totals list. Above an empty state or a
+            skeleton it would offer to reorder nothing, and above the Log it would be a lie — the
+            Log is chronological by construction and this sorts crop aggregates, not entries. */}
+        {view === 'totals' && !loading && !error && (aggregates?.crops?.length ?? 0) > 0 && (
+          <HarvestSortControl
+            mode={sortMode}
+            dir={sortDir}
+            onModeChange={changeSortMode}
+            onDirChange={setSortDir}
+          />
+        )}
+
         {loading ? (
           <LoadingSkeleton />
         ) : error ? (
@@ -248,7 +288,7 @@ export default function Harvests() {
         ) : view === 'log' ? (
           <LogView entries={entries} filterActive={filterActive} onClearFilters={clearAll} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
         ) : (
-          <TotalsView aggregates={aggregates} onSeeInLog={seeInLog} timeframe={timeframe} />
+          <TotalsView aggregates={sortedAggregates} onSeeInLog={seeInLog} timeframe={timeframe} sortMode={sortMode} />
         )}
       </div>
 
@@ -264,6 +304,8 @@ export default function Harvests() {
           initialCrops={crop ? [crop] : []}
           cropOptions={cropOptions}
           seasonYears={seasonYears}
+          sortMode={sortMode}
+          sortDir={sortDir}
         />
       )}
 
@@ -600,7 +642,14 @@ function sparkValues(weekly, timeframe) {
   return rows.map((w) => Number(w.count))
 }
 
-function TotalsView({ aggregates, onSeeInLog, timeframe }) {
+// The variety sub-row caption. Always names the ACTIVE key — see the call site for why a hardcoded
+// "By weight" became wrong the moment ordering became a control.
+function sortCaption(mode) {
+  const key = mode === 'name' ? 'By name' : mode === 'count' ? 'By picks' : 'By weight'
+  return `${key} · ≈ estimated`
+}
+
+function TotalsView({ aggregates, onSeeInLog, timeframe, sortMode }) {
   const [expanded, setExpanded] = useState(() => new Set())
   const crops = aggregates?.crops ?? []
   const other = aggregates?.other ?? []
@@ -625,6 +674,7 @@ function TotalsView({ aggregates, onSeeInLog, timeframe }) {
           open={expanded.has(c.crop_type_slug)}
           onToggle={() => toggle(c.crop_type_slug)}
           onSeeInLog={onSeeInLog}
+          sortMode={sortMode}
         />
       ))}
       {other.length > 0 && (
@@ -646,7 +696,7 @@ function TotalsView({ aggregates, onSeeInLog, timeframe }) {
 
 // One expandable crop total. Collapsed = crop name + per-unit season total + unquantified count.
 // Expanded (in place) adds variety sub-rows, first-pick date per planting, and the See-in-log jump.
-function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog }) {
+function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog, sortMode }) {
   const varieties = Array.isArray(c.varieties) ? c.varieties : []
   // A single unnamed variety is just the crop total again — only surface sub-rows when they add info.
   const showVarieties = varieties.length > 1 || (varieties.length === 1 && !!varieties[0].variety_name)
@@ -678,15 +728,19 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
         <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${P.border}` }}>
           {showVarieties && (
             <div style={{ marginTop: 8 }}>
-              {/* V4-HARVGRAIN-001 (B3): the sub-rows now arrive ordered by grams, not by name, and a
-                  re-ordered list with no stated key reads as alphabetical-that-went-wrong. Naming it
-                  here also names the marker, because the ranking is only as good as its inputs:
-                  every estimated gram is a flat per-variety constant (Cherry Falls resolves to
-                  6.04 g/unit on all 36 of its rows, min = max), so an all-≈ ordering is the pick
-                  count rescaled and nothing more. Suppressed when nothing under the crop has a
-                  weight — then the order IS the name order and saying otherwise would be false. */}
+              {/* V4-HARVGRAIN-001 (B3): a re-ordered list with no stated key reads as
+                  alphabetical-that-went-wrong, so the key is always named. Naming it also names the
+                  marker, because the ranking is only as good as its inputs: every estimated gram is
+                  a flat per-variety constant (Cherry Falls resolves to 6.04 g/unit on all 36 of its
+                  rows, min = max), so an all-≈ ordering is the pick count rescaled and nothing more.
+                  Suppressed when nothing under the crop has a weight.
+                  V4-HARVSORTCTRL-001: this said a hardcoded "By weight". Once the order became a
+                  CONTROL that string was a latent lie — the caption would still claim weight while
+                  the rows sat in name order. It now follows the active key. The sort control lives
+                  at the top of the page and a crop row can be far below it, so the local restatement
+                  earns its space rather than duplicating what is already on screen. */}
               {varieties.some((v) => v.weight?.grams > 0) && (
-                <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 4 }}>By weight · ≈ estimated</div>
+                <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 4 }}>{sortCaption(sortMode)}</div>
               )}
               {varieties.map((v) => (
                 <div key={v.variety_id ?? '__novar__'} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.83rem', color: P.mid, padding: '3px 0' }}>

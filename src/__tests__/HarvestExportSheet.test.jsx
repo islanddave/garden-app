@@ -19,6 +19,7 @@ vi.mock('../lib/shareEntity.js', () => ({ shareEntity: shareSpy }))
 
 import HarvestExportSheet from '../components/HarvestExportSheet.jsx'
 import { buildTotalsExport, buildLogExport, narratedHeader } from '../lib/harvestExport.js'
+import { sortAggregates, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR } from '../lib/harvestSort.js'
 import { etDay } from '../lib/harvestSummary.js'
 import { HARVEST_TZ } from '../lib/growYear.js'
 
@@ -63,7 +64,14 @@ describe('HarvestExportSheet — Totals mode', () => {
     const urls = fetchSpy.mock.calls.map((c) => decodeURIComponent(String(c[0])))
     expect(urls).toHaveLength(1)
     expect(urls[0]).toContain(`timeframe=season:${YEAR}`)
-    expect(preview().value).toBe(buildTotalsExport({ aggregates: AGG, timeframe: `season:${YEAR}`, cropNames: [], generatedOn: TODAY, currentYear: YEAR }))
+    // V4-HARVSORTCTRL-001: the sheet applies the PAGE's ordering to its own rowset before building,
+    // so the expectation builds from the sorted shape too. That is the point of the assertion, not
+    // an accommodation of it: this is the "the export reconciles with the page" guarantee, and if
+    // the sheet ever stopped sorting, this comparison against the sorted expectation would fail.
+    expect(preview().value).toBe(buildTotalsExport({
+      aggregates: sortAggregates(AGG, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR),
+      timeframe: `season:${YEAR}`, cropNames: [], generatedOn: TODAY, currentYear: YEAR,
+    }))
   })
 
   it('a crop chip narrows the export and re-materializes it — the copy line states the Unassigned rule', async () => {
@@ -209,7 +217,10 @@ describe('HarvestExportSheet — Copy vs Share (the activation landmine)', () =>
     fireEvent.click(shareBtn())
     expect(shareSpy).toHaveBeenCalledTimes(1) // synchronous, same reasoning as Copy
     const sent = shareSpy.mock.calls[0][0].text
-    expect(sent.startsWith(narratedHeader({ mode: 'totals', aggregates: AGG, timeframe: `season:${YEAR}` }))).toBe(true)
+    // narratedHeader reads the ordered shape too — the sheet sorts BEFORE building, so both the
+    // header and the body describe the same list the page shows.
+    const ordered = sortAggregates(AGG, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR)
+    expect(sent.startsWith(narratedHeader({ mode: 'totals', aggregates: ordered, timeframe: `season:${YEAR}` }))).toBe(true)
     expect(sent).toContain('Garden harvests — Totals')
     await waitFor(() => expect(screen.getByText('Shared')).toBeTruthy())
     expect(screen.queryByText('Copied')).toBeNull()
