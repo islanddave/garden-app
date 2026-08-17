@@ -56,18 +56,19 @@ export default function PlantingTile({
   // /api/photos/view-url/<plantId> — a 404, i.e. a permanent blank the first time a URL expires,
   // with no symptom any static or jsdom test could see. Hence the explicit remap.
   //
-  // NOT the resolveById arm: /api/plants presigns, so the URL is already in hand. photoModel treats
-  // featured_photo_view_url as a FULL source (never a thumb — no thumb derivative exists under that
-  // name), so tier=FULL yields a one-entry chain and PhotoView renders `initialUrl` + `photoId`
-  // exactly as the raw <PhotoImg> did. Byte-identical on purpose: this tile renders 24-at-a-time in
-  // a windowed Garden grid, where any per-tile mount fetch would be 24 requests, not one.
+  // NOT the resolveById arm: /api/plants presigns, so the URL is already in hand. photoModel maps
+  // featured_photo_view_url to the FULL source and featured_photo_thumb_url to the THUMB, so
+  // tier=THUMB yields a two-entry chain and PhotoView renders `initialUrl` with no per-tile mount
+  // fetch. That matters here above anywhere else: this tile renders 24-at-a-time in a windowed
+  // Garden grid, where any per-tile network round-trip would be 24 requests, not one.
   // plant_id is the photo's real parent (the featured photo is auto-promoted from this plant's own
   // photos); PhotoView does not read parentage, but a fabricated orphan would be a lie in the model.
   const photo = React.useMemo(() => (hasPhoto ? {
     id: pl.featured_photo_id ?? null,
     featured_photo_view_url: pl.featured_photo_view_url,
+    featured_photo_thumb_url: pl.featured_photo_thumb_url ?? null,
     plant_id: pl.id,
-  } : null), [hasPhoto, pl.featured_photo_id, pl.featured_photo_view_url, pl.id])
+  } : null), [hasPhoto, pl.featured_photo_id, pl.featured_photo_view_url, pl.featured_photo_thumb_url, pl.id])
   // photo-count (option a, frontend-only): render ONLY when a count field is present; omit
   // otherwise. /api/plants does not return one today, so the chip is inert until an additive
   // COUNT lands -- forward-compatible with zero further frontend change.
@@ -137,7 +138,14 @@ export default function PlantingTile({
           card overlay above now owns navigation + the "Open {name}" name. aspect-ratio reserves
           the box (no CLS). RES-4: single origin URL, decoding=async. NO loading="lazy" — measured
           0 of 120 images ever requested with it (BUG-PHOTOTHUMB-001); the tile count is instead
-          bounded by TileGrid's windowSize on the Garden grids. */}
+          bounded by TileGrid's windowSize on the Garden grids.
+
+          V4-PERFTHEMEA-001 — tier=THUMB, not FULL. This box is ~180 CSS px wide and was painting
+          the ORIGINAL: measured across the 230 live featured heroes, originals average 2.97 MB
+          against 163 KB for their thumbs/ derivative (18.7x), so a windowSize=24 group pulled
+          ~71 MB. 6 of those 230 have no thumb; PhotoView's degrade chain falls onto
+          featured_photo_view_url — already in hand from the same list response, so recovering
+          costs one 404 and NO extra round-trip. */}
       <div
         style={{
           position: 'relative',
@@ -153,7 +161,7 @@ export default function PlantingTile({
         {hasPhoto ? (
           <PhotoView
             photo={photo}
-            tier={TIER.FULL}
+            tier={TIER.THUMB}
             sizes="(max-width: 720px) 50vw, 360px"
             alt=""
             decoding="async"

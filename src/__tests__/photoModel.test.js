@@ -89,6 +89,29 @@ describe('sources — thumb truthiness carries ZERO information (BUG-PHOTONEWTHU
     expect(sourceChain(p, TIER.THUMB).map(s => s.url)).toEqual([URL_FULL])
   })
 
+  // V4-PERFTHEMEA-001 — /api/plants now signs the same thumbs/<storage_path> companion the photos
+  // list has signed since BUG-PHOTOBLANK-001, under the featured_photo_ spelling.
+  it('adapts featured_photo_thumb_url as a THUMB source that degrades to the featured original', () => {
+    const p = toPhoto({
+      id: 'f2', storage_path: 'plants/P/a.jpg', plant_id: 'x',
+      featured_photo_view_url: URL_FULL, featured_photo_thumb_url: URL_THUMB,
+    })
+    expect(p.sources.thumb.url).toBe(URL_THUMB)
+    expect(p.sources.thumb.guaranteed).toBe(false)   // 6 of 230 live heroes have no thumb object
+    expect(sourceChain(p, TIER.THUMB).map(s => s.url)).toEqual([URL_THUMB, URL_FULL])
+    // A hero/lightbox asking for FULL must still never be handed the 800px derivative.
+    expect(sourceChain(p, TIER.FULL).map(s => s.url)).toEqual([URL_FULL])
+  })
+
+  it('prefers thumb_url over featured_photo_thumb_url when a row somehow carries both', () => {
+    const p = toPhoto({
+      id: 'f3', storage_path: 'plants/P/a.jpg', plant_id: 'x',
+      thumb_url: URL_THUMB, featured_photo_thumb_url: 'https://other.invalid/t.jpg',
+      view_url: URL_FULL,
+    })
+    expect(p.sources.thumb.url).toBe(URL_THUMB)
+  })
+
   it('a row with no renderable URL yields an empty chain rather than an undefined src', () => {
     const p = toPhoto({ id: 'n1', storage_path: 's/a.jpg', plant_id: 'x' })
     expect(sourceChain(p, TIER.THUMB)).toEqual([])

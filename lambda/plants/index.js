@@ -50,6 +50,37 @@ async function getFeaturedPhotoViewUrl(storagePath) {
   }
 }
 
+// V4-PERFTHEMEA-001 — BUG-PHOTOBLANK-001 thumb parity for the plants surfaces.
+//
+// /api/photos has derived a `thumbs/<storage_path>` companion since 4f15890 ("serve thumbnails to
+// the grid"); /api/plants never did, so the Garden grid rendered full-resolution ORIGINALS into
+// ~180 CSS-px 4:3 boxes. Measured on the 230 live featured heroes (S3 + Neon, 2026-08-16):
+// originals avg 2.97 MB vs thumbs avg 163 KB — 18.7x — so one windowSize=24 group was ~71 MB.
+//
+// ADDITIVE, never a substitution. featured_photo_view_url keeps pointing at the original: the
+// planting-detail hero and the lightbox need the full source, PhotoView degrades a missing thumb
+// onto it with zero network, and src/lib/dataCache.js's _sameExceptUrls list carries BOTH names so
+// a revalidate's presign churn still reads as "no data change".
+//
+// The thumb key is SERVER-DERIVED from the already-validated storage_path (same closed grammar the
+// photos Lambda uses — never caller-supplied), and presigning is pure signature math that never
+// touches S3. So this adds ZERO round-trips to a 243-row list, and the flip side is that a returned
+// thumb URL is a HINT, not proof the object exists: 6 of the 230 live heroes have no thumb, and
+// those degrade client-side through photoModel's source chain onto featured_photo_view_url. A
+// per-row HEAD to make the hint authoritative would cost 225 S3 calls per request — a far worse
+// regression than the bug.
+async function featuredPhotoUrls(storagePath) {
+  if (!storagePath) return { featured_photo_view_url: null, featured_photo_thumb_url: null };
+  const [featured_photo_view_url, featured_photo_thumb_url] = await Promise.all([
+    resolvePhotoViewUrl(storagePath, { presign: getFeaturedPhotoViewUrl, sm }),
+    // Non-fatal by construction: a thumb that cannot be signed comes back null and the client
+    // renders the original, exactly as it does for a thumb that signs but 404s.
+    resolvePhotoViewUrl(`thumbs/${storagePath}`, { presign: getFeaturedPhotoViewUrl, sm })
+      .catch(() => null),
+  ]);
+  return { featured_photo_view_url, featured_photo_thumb_url };
+}
+
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
@@ -475,9 +506,9 @@ export const handler = async (event) => {
         row.next_water_at = verdict.next_water_at;
         row.water_due_source = verdict.water_due_source;
 
-        const featured_photo_view_url = await resolvePhotoViewUrl(row.featured_photo_storage_path, { presign: getFeaturedPhotoViewUrl, sm });
+        const photoUrls = await featuredPhotoUrls(row.featured_photo_storage_path);
         const { featured_photo_storage_path: _ignore, ...rest } = row;
-        return resp(200, { ...rest, featured_photo_view_url });
+        return resp(200, { ...rest, ...photoUrls });
       }
 
       if (method === 'PUT') {
@@ -1173,11 +1204,12 @@ export const handler = async (event) => {
             ORDER BY p.created_at DESC
             LIMIT 5000
           `;
-      // Sign each featured photo's S3 URL (900s), strip the raw storage_path.
+      // Sign each featured photo's S3 URL (900s) plus its thumbs/ companion, strip the raw
+      // storage_path. See featuredPhotoUrls for why the thumb is additive and why it is a hint.
       const enriched = await Promise.all(rows.map(async (row) => {
-        const featured_photo_view_url = await resolvePhotoViewUrl(row.featured_photo_storage_path, { presign: getFeaturedPhotoViewUrl, sm });
+        const photoUrls = await featuredPhotoUrls(row.featured_photo_storage_path);
         const { featured_photo_storage_path: _ignore, ...rest } = row;
-        return { ...rest, featured_photo_view_url };
+        return { ...rest, ...photoUrls };
       }));
       return resp(200, enriched);
     }
