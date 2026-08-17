@@ -1,9 +1,14 @@
-// PlantingSelectKeyboard.test.jsx — V4-PICKERKB-002 + V4-PICKERVOICE-001.
+// PlantingSelectKeyboard.test.jsx — V4-PICKERKB-002 + V4-PICKERVOICE-001 + V4-PICKERKBDEF-001.
 //
 // Dave, prod smoke 2026-08-03: "It should act the same on every place where I can pick a
 // planting unless we've carved out an exception. For now, I don't know of an exception."
 // This suite pins the PlantingSelect side of that contract — the same pins
 // VarietyPickerKeyboard.test.jsx holds for the picker the mechanism shipped on.
+//
+// V4-PICKERKBDEF-001 (Dave, 2026-08-16) INVERTS the default for THIS picker only: it now opens
+// keyboard-ready. The first describe below therefore pins the opposite of what it used to, and
+// VarietyPickerKeyboard.test.jsx is the regression pin that the flip did not leak through the
+// shared hook.
 //
 // WHAT THIS CAN PROVE (same scoping as the VarietyPicker suite): whether Chrome Android actually
 // raises/withholds the on-screen keyboard is not observable in jsdom. What IS deterministic is
@@ -51,7 +56,9 @@ beforeEach(() => {
 })
 
 const field = () => screen.getByRole('combobox')
-const kbBtn = () => screen.queryByLabelText('Type to search plantings')
+const typeBtn = () => screen.queryByLabelText('Type to search plantings')
+const hideBtn = () => screen.queryByLabelText('Hide the keyboard and browse plantings')
+const kbBtn = () => typeBtn() ?? hideBtn()
 const micBtn = () => screen.queryByLabelText(/Speak to search plantings|Stop listening|Microphone unavailable/)
 
 async function openPicker(props = {}) {
@@ -60,55 +67,99 @@ async function openPicker(props = {}) {
   await act(async () => { await Promise.resolve() })
 }
 
-describe('V4-PICKERKB-002 — PlantingSelect opens without asking for the keyboard', () => {
-  it('declares inputmode="none" when the list opens, so the on-screen keyboard stays down', async () => {
+describe('V4-PICKERKBDEF-001 — PlantingSelect opens keyboard-ready', () => {
+  it('declares inputmode="text" when the list opens, so the tap that focused it raises the keyboard', async () => {
     await openPicker()
-    expect(field().getAttribute('inputmode')).toBe('none')
+    expect(field().getAttribute('inputmode')).toBe('text')
   })
 
-  it('still holds focus — the combobox contract survives suppressing the keyboard', async () => {
+  // The keyboard-open default is carried ENTIRELY by inputmode. If a future change reaches for
+  // autoFocus instead, Chrome Android would ignore it on the gesture path (no user activation on a
+  // mount-time focus) and it would steal focus everywhere else — so the absence is a pin, not a gap.
+  it('does not focus itself on mount — the user gesture is the only thing that opens the keyboard', async () => {
+    render(<PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" />)
+    await act(async () => { await Promise.resolve() })
+    expect(document.activeElement).toBe(document.body)
+    expect(field().getAttribute('aria-expanded')).toBe('false')
+    expect(field().hasAttribute('autofocus')).toBe(false)
+  })
+
+  // V4-HARVFAB-001's programmatic open is the one path with no tap behind it. It must open the
+  // PANEL without taking focus, or the harvest FAB lands on a keyboard nobody asked for.
+  it('autoOpen shows the list without stealing focus', async () => {
+    render(<PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" autoOpen />)
+    await act(async () => { await Promise.resolve() })
+    expect(field().getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('still holds focus once opened — the combobox contract is unchanged by the flip', async () => {
     await openPicker()
     expect(document.activeElement).toBe(field())
     expect(field().getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('offers the ⌨ control only while the list is open', async () => {
+  it('offers the toggle only while the list is open', async () => {
     render(<PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" />)
     expect(kbBtn()).toBeNull()
     field().focus()
     await act(async () => { await Promise.resolve() })
-    expect(kbBtn()).toBeTruthy()
+    expect(hideBtn()).toBeTruthy()
+    expect(hideBtn().getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('switches to inputmode="text" when ⌨ is used, then hides the control', async () => {
+  // The escape hatch V4-PICKERKB-001 exists for: browse the whole list with no keyboard in the way.
+  it('⌄ drops back to inputmode="none" and the slot becomes the ⌨ control again', async () => {
     await openPicker()
-    fireEvent.click(kbBtn())
+    fireEvent.click(hideBtn())
+    await waitFor(() => expect(field().getAttribute('inputmode')).toBe('none'))
+    expect(typeBtn()).toBeTruthy()
+    expect(typeBtn().getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('round-trips back to inputmode="text" from the ⌨ control', async () => {
+    await openPicker()
+    fireEvent.click(hideBtn())
+    await waitFor(() => expect(typeBtn()).toBeTruthy())
+    fireEvent.click(typeBtn())
     await waitFor(() => expect(field().getAttribute('inputmode')).toBe('text'))
-    expect(kbBtn()).toBeNull()
+    expect(hideBtn()).toBeTruthy()
   })
 
   it('keeps the list open through the deliberate blur+refocus the inputMode swap requires', async () => {
     await openPicker()
-    fireEvent.click(kbBtn())
+    fireEvent.click(hideBtn())
     fireEvent.blur(field())
     await act(async () => { await new Promise(r => setTimeout(r, 250)) })
     expect(field().getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('reverts to keyboard-free on the next open — one opt-in does not become the default', async () => {
+  it('reverts to keyboard-ready on the next open — hiding it once is not sticky', async () => {
     await openPicker()
-    fireEvent.click(kbBtn())
-    await waitFor(() => expect(field().getAttribute('inputmode')).toBe('text'))
+    fireEvent.click(hideBtn())
+    await waitFor(() => expect(field().getAttribute('inputmode')).toBe('none'))
     field().blur()
     await act(async () => { await new Promise(r => setTimeout(r, 250)) })
     field().focus()
     await act(async () => { await Promise.resolve() })
-    expect(field().getAttribute('inputmode')).toBe('none')
-    expect(kbBtn()).toBeTruthy()
+    expect(field().getAttribute('inputmode')).toBe('text')
+    expect(hideBtn()).toBeTruthy()
+  })
+
+  // Re-entering the picker from chip mode is a tap on "Change", so Chrome's transient user
+  // activation still covers the setTimeout(0) refocus — the same mechanism the ⌨ swap relies on.
+  it('re-opening from the chip "Change" button returns a keyboard-ready focused field', async () => {
+    render(<PlantingSelect value="p1" onChange={() => {}} plants={PLANTS} aria-label="Planting" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Change' }))
+    await act(async () => { await new Promise(r => setTimeout(r, 10)) })
+    expect(document.activeElement).toBe(field())
+    expect(field().getAttribute('inputmode')).toBe('text')
   })
 
   it('typing still works with the keyboard suppressed — hardware keyboards are unaffected', async () => {
     await openPicker()
+    fireEvent.click(hideBtn())
+    await waitFor(() => expect(field().getAttribute('inputmode')).toBe('none'))
     fireEvent.change(field(), { target: { value: 'Spine' } })
     expect(field().value).toBe('Spine')
     expect(screen.getByText('Spineless')).toBeTruthy()
