@@ -31,8 +31,18 @@ const FROM_CACHE_HEADER = 'X-From-Cache'
 // Re-emit a cached response carrying FROM_CACHE_HEADER. Headers on a Response handed back by the Cache
 // API are immutable, so the response must be rebuilt rather than mutated. Null-body statuses (204/205/304)
 // cannot legally carry a body through the Response constructor.
+//
+// V4-APIGZIP-001: the two transport headers are dropped on the rebuild because they describe the wire
+// form, not what is being re-emitted. Now that /api/plants negotiates gzip, a cached API response
+// carries `Content-Encoding: gzip` and a compressed `Content-Length` — but the Cache API stores the
+// DECODED body (that is why it uses more disk than the HTTP cache), so cached.body is plain JSON and
+// both headers are false statements about it. Copying them forward asks the consumer to gunzip
+// something that is not gzipped and to expect ~1/5 of the bytes present. Nothing in src/ reads either
+// header, so dropping them costs nothing and removes the one place this SW would restate them.
 function markFromCache(cached) {
   const headers = new Headers(cached.headers)
+  headers.delete('Content-Encoding')
+  headers.delete('Content-Length')
   headers.set(FROM_CACHE_HEADER, '1')
   const nullBody = cached.status === 204 || cached.status === 205 || cached.status === 304
   return new Response(nullBody ? null : cached.body, {
