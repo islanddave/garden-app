@@ -34,6 +34,9 @@ import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggreg
 import {
   matchWatchRoute, handleWatchGet, handleDismissToggle, handleDismissalPost, handleDismissalUndo,
 } from './watch-route.js';
+// V4-READYTRAYIMPRESSION-001 — the weigh-in tray's impression beacon. Same prefix trick, same
+// pure/DB split; separate module because it serves a different surface with a different model.
+import { matchReadyImpressionRoute, handleReadyImpressionPost } from './ready-impression.js';
 export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates } from './aggregate.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -120,7 +123,10 @@ export const handler = async (event) => {
   // src/lib/api.js routes by first-match PREFIX, so /api/harvests/watch resolves here with no new
   // Function URL, no repo variable, no deploy-lambda.yml matrix entry and no api.js edit. Matched
   // BEFORE the /api/harvests exact-path guard below, which would otherwise 405 every watch request.
-  const watchRoute = matchWatchRoute(method, rawPath);
+  // V4-READYTRAYIMPRESSION-001 rides the same seam: its path is disjoint from every watch path, so
+  // the two matchers can be tried in either order, and both feed the SAME ctx/JSON-body block below
+  // rather than a second copy of it.
+  const watchRoute = matchWatchRoute(method, rawPath) ?? matchReadyImpressionRoute(method, rawPath);
   if (watchRoute) {
     if (watchRoute.kind === 'method_not_allowed') return resp(405, { error: 'Method not allowed' });
     let body = {};
@@ -144,6 +150,7 @@ export const handler = async (event) => {
       if (watchRoute.kind === 'watch_get') out = await handleWatchGet(ctx);
       else if (watchRoute.kind === 'dismiss_toggle') out = await handleDismissToggle(ctx);
       else if (watchRoute.kind === 'dismissal_post') out = await handleDismissalPost(ctx);
+      else if (watchRoute.kind === 'ready_impression_post') out = await handleReadyImpressionPost(ctx);
       else out = await handleDismissalUndo(ctx, watchRoute.id);
       return resp(out.statusCode, out.body);
     } catch (err) {

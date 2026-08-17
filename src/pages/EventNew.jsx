@@ -47,6 +47,7 @@ import { recordCropLog } from '../lib/cropLogLedger.js'
 // and the band never disagree about what "next" means.
 import { rankHarvestReady } from '../lib/harvestReadiness.js'
 import { selectTrayChips, harvestTrayScrollport } from '../lib/harvestTray.js'
+import { sendReadyImpressions } from '../lib/readyImpressions.js'
 // V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
 // for the metadata contract with the events Lambda and why it is NOT quantity_numeric.
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
@@ -510,12 +511,33 @@ export default function EventNew() {
       for (const e of (harvD?.entries ?? [])) {
         if (!e.plant_id || e.planting_removed || seen.has(e.plant_id)) continue
         seen.add(e.plant_id)
-        recent.push({ plant_id: e.plant_id, project_id: e.project_id, name: e.planting_name ?? 'planting' })
+        recent.push({ plant_id: e.plant_id, project_id: e.project_id, name: e.planting_name ?? 'planting', source: 'recent' })
       }
-      setReadyChips([
-        ...ready.map(c => ({ plant_id: c.plant_id, project_id: c.project_id, name: c.name })),
+      // V4-READYTRAYIMPRESSION-001 — `source` is the PROVENANCE FLAG (recon §7c called it a blocking
+      // prerequisite). Before it, the two producers flattened into one shape and an impression could
+      // not tell "the readiness MODEL surfaced this" from "the recency FALLBACK surfaced this" —
+      // which is exactly the discrimination any precision claim about the model needs. The ready
+      // rows additionally carry their frozen rank coordinate. NOTHING RENDERS ANY OF THESE FIELDS:
+      // they exist so the impression log can freeze the model's claim as shown, and every chip
+      // consumer below still reads only plant_id / project_id / name.
+      const merged = [
+        ...ready.map(c => ({
+          plant_id: c.plant_id, project_id: c.project_id, name: c.name, source: 'ready',
+          overdue_ratio: c.overdue_ratio,
+          days_since_last_harvest: c.days_since_last_harvest,
+          repeat_interval_days: c.repeat_interval_days,
+        })),
         ...recent,
-      ].slice(0, 14))
+      ].slice(0, 14)
+      setReadyChips(merged)
+      // Record what was OFFERED, split by what the COLLAPSED tray actually renders. selectTrayChips
+      // is called rather than a cap re-derived here, so the region label cannot drift from the
+      // pixels. Its user-state arguments are omitted deliberately: nothing has been tapped when the
+      // tray first paints, and the only shipped entry point is /log?session=harvest with no &plant=
+      // (Harvests.jsx) — so the collapsed set is the top HARVEST_TRAY_COLLAPSED_MAX by rank.
+      // NOT awaited and cannot reject (src/lib/readyImpressions.js): a telemetry failure must never
+      // reach the weigh-in.
+      sendReadyImpressions(apiFetch, merged, selectTrayChips({ chips: merged }).map(c => c.plant_id))
     })
     return () => { off = true }
   }, [inHarvestSession, apiFetch])
