@@ -238,12 +238,18 @@ describe('the pick grain and the plant grain stay separated', () => {
   });
 
   it('the reduction write touches no disposition', () => {
-    // The mirror direction. The reduction UPDATE names plants columns only; if it ever learned about
-    // harvest_log.disposition it would also inherit this ticket's 42703 deploy ordering, silently.
-    const i = SRC.indexOf('UPDATE plants p');
-    if (i === -1) return;                       // no plants UPDATE in this Lambda: nothing to check
-    const stmts = SRC.slice(i).split('`;');
-    for (const s of stmts.slice(0, 4)) expect(s).not.toMatch(/disposition/);
+    // The mirror direction. If the reduction statement ever learned about harvest_log.disposition it
+    // would silently inherit this ticket's 42703 deploy ordering.
+    //
+    // THE FIRST DRAFT OF THIS TEST WAS VACUOUS and the end-to-end harness is what caught it: it
+    // looked for `UPDATE plants p` and RETURNED EARLY when it found nothing, so it asserted exactly
+    // nothing — forever, silently. V4-LOSSEVENT-001's reduction targets the `garden_node` VIEW, not
+    // the base table, because garden_node has no RLS and an inner join drops the container-less
+    // plantings. Located by what it WRITES now, and its absence is a failure rather than a pass.
+    const stmts = [...SRC.matchAll(/sql`([\s\S]*?)`/g)].map((m) => m[1]);
+    const reductions = stmts.filter((s) => /UPDATE public\.garden_node/.test(s) && /qty_lost/.test(s));
+    expect(reductions.length, 'no plant-reduction statement found — has it moved?').toBeGreaterThan(0);
+    for (const s of reductions) expect(s).not.toMatch(/disposition/);
   });
 
   it('the two vocabularies are allowed to overlap, and that is not a bug', () => {
