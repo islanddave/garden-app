@@ -593,6 +593,9 @@ export default function EventNew() {
 
   // V1.2a-2 Wave 3: harvest panel state — only submitted for event_type=harvest.
   const [harvest, setHarvest] = useState(freshHarvest)
+  // V4-HARVDRAFTGAP-001: names the event_type a draft restore installed, so the type-change reset
+  // below can skip that one synthetic transition. Null whenever no restore is in flight.
+  const draftRestoredTypeRef = useRef(null)
   const [harvestError, setHarvestError] = useState(null)
   // BUG-LOGTARGETREQ-001 per-crop unit: true once the user explicitly picks a unit for the CURRENT
   // entry — the per-crop re-seed effect below must never override a deliberate in-entry choice.
@@ -682,6 +685,17 @@ export default function EventNew() {
 
   // Reset metadata when event type changes
   useEffect(() => {
+    // V4-HARVDRAFTGAP-001: a draft restore SETS form.event_type, which lands here as a type CHANGE
+    // and would reset the harvest panel the restore just populated — restoring the bytes and
+    // destroying them one effect later. (Notes never hit this because they live in `form`, which
+    // this effect does not touch; the harvest panel is separate state, which is why it does.)
+    // Skipped exactly once, for the one transition INTO the restored type: every panel this effect
+    // clears is already empty on a fresh mount, so the skip drops nothing. A later manual type
+    // change finds the ref spent and resets normally.
+    if (draftRestoredTypeRef.current !== null && form.event_type === draftRestoredTypeRef.current) {
+      draftRestoredTypeRef.current = null
+      return
+    }
     setMetadataState({})
     // V1.2a-2 Wave 3: reset the type-specific panels too. Harvest unit is
     // re-seeded from localStorage so the user's last choice persists across types.
@@ -802,6 +816,33 @@ export default function EventNew() {
     // No-op for every non-harvest type: they never render this disclosure.
     if (typeof draft.showHarvestMore === 'boolean') setShowHarvestMore(draft.showHarvestMore)
     if (picked.notes || picked.private_notes) setShowHarvestMore(true)
+    // V4-HARVDRAFTGAP-001: restore the harvest panel. It lives in its own state object, not in
+    // `form`, so DRAFT_FORM_FIELDS could never have carried it however it was spelled — a typed
+    // weight was simply not stashed, and Escape/Back/dismiss destroyed it with nothing to restore.
+    // (The SW-reload leg of that same loss is held open by the reload gate above; this is the
+    // dismiss/navigate leg, which no gate can defer.)
+    // Both fields sit ABOVE the "Photo, notes & date" disclosure, so unlike notes they cannot come
+    // back invisible and need no showHarvestMore fallback.
+    if (draft.harvest) {
+      const h = draft.harvest
+      // Claim the upcoming type transition BEFORE it fires (see the type-change effect).
+      if (picked.event_type) draftRestoredTypeRef.current = picked.event_type
+      setHarvest(cur => ({
+        ...cur,
+        quantity:       typeof h.quantity === 'string' ? h.quantity : cur.quantity,
+        weight:         typeof h.weight === 'string' ? h.weight : cur.weight,
+        quality_rating: h.quality_rating ?? cur.quality_rating,
+        // Units restore only when the draft carried them, so a stale draft can never downgrade the
+        // crop-aware default a fresh mount just computed.
+        unit:           h.unit || cur.unit,
+        weight_unit:    h.weight_unit || cur.weight_unit,
+      }))
+      // Carry the EXPLICITNESS of the unit pick, not just its value. The crop-default reseed
+      // effect below re-fires on plant/type changes and skips only when unitTouchedRef is set, so
+      // restoring a deliberately-chosen unit without this flag lets the default clobber it — while
+      // setting it unconditionally would pin a never-chosen default as though the user picked it.
+      if (h.unitTouched) unitTouchedRef.current = true
+    }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // §4 draft stash — persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001).
@@ -812,13 +853,34 @@ export default function EventNew() {
   // in the snapshot whenever text is present. Draft-restored plant_id is KEPT by design
   // (adjudicated: the user explicitly chose that planting in this draft — user context, never a
   // silent default).
+  // V4-HARVDRAFTGAP-001 widens the predicate to the TYPED harvest fields. Deliberately excludes
+  // unit/weight_unit: freshHarvest() seeds both from stored prefs, so counting them would satisfy
+  // the predicate on every pristine harvest mount and re-create exactly the stale-draft rewrite the
+  // narrowing above was introduced to kill. quality_rating counts because a tapped star is a
+  // deliberate entry, and resetForNext() clears all three, so a post-save mount reads clean.
   useEffect(() => {
-    const dirty = !!(form.notes || form.private_notes || form.quantity)
+    const dirty = !!(
+      form.notes || form.private_notes || form.quantity ||
+      harvest.quantity || harvest.weight || harvest.quality_rating != null
+    )
     if (!dirty) return
     const snap = {}
     for (const k of DRAFT_FORM_FIELDS) snap[k] = form[k]
-    writeDraft(EVENTNEW_DRAFT_KEY, { form: snap, showPrivate, showAddDetails, showHarvestMore })
-  }, [form, showPrivate, showAddDetails, showHarvestMore])
+    writeDraft(EVENTNEW_DRAFT_KEY, {
+      form: snap,
+      showPrivate,
+      showAddDetails,
+      showHarvestMore,
+      harvest: {
+        quantity: harvest.quantity,
+        weight: harvest.weight,
+        quality_rating: harvest.quality_rating,
+        unit: harvest.unit,
+        weight_unit: harvest.weight_unit,
+        unitTouched: unitTouchedRef.current,
+      },
+    })
+  }, [form, harvest, showPrivate, showAddDetails, showHarvestMore])
 
   // V4-DRAFTFULLPAGE-001 (b) — report in-progress content to the hosting Sheet (OverlayHost feeds
   // Sheet §5.2: a stray backdrop tap no-ops while dirty; Escape + the labelled Close stay live, and
