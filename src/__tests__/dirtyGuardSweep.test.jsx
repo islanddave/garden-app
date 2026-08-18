@@ -208,8 +208,9 @@ describe('CaptureFlow ↔ dirty guard', () => {
 
   it('a merely-VISITED Snap does not hold the gate; a staged photo does', async () => {
     await renderPage(<CaptureFlow />)
-    // Eight seeded fields on arrival: evType 'watering', locType 'observation', invType
-    // 'consumable', invCat 'other', invQty '1', invUnit 'each', plus two dates set to today. A
+    // Six seeded fields on arrival: evType 'watering', invType 'consumable', invCat 'other',
+    // invQty '1', invUnit 'each', plus evDate set to today. (Was eight — BUG-LOCEVENT400-001 dropped
+    // the location destination's locType/locDate along with the event it could never write.) A
     // truthiness guard over any of them would hold every deploy for anyone who opened Snap.
     expect(isReloadBlocked(), 'a merely-visited Snap must not hold a deploy').toBe(false)
     // A staged File is the one piece of state the stash cannot carry, so it is the whole guard.

@@ -80,10 +80,27 @@ export function validatePostBody(body) {
   // a typo. Verified nullable on live prod: garden_node.container_id and event_log.project_id are
   // both NULLABLE.
   //
-  // The real invariant is the DB's entity_memory_exactly_one_parent CHECK — an event must hang off
-  // SOMETHING. So require project_id OR plant_id rather than project_id alone. Requiring at least
-  // one still rejects a fully parentless event, which would be unreachable in every read path
-  // (every listing joins through one of them).
+  // THE INVARIANT, RE-ANCHORED (BUG-LOCEVENT400-001). This used to cite
+  // entity_memory_exactly_one_parent, which is the WRONG CONSTRAINT and argues the opposite case: it
+  // is on `entity_memory`, not event_log, and it is a THREE-way XOR
+  // (plant XOR project XOR location) with 6 live location-only rows behind it. Cited as written it
+  // reads as licence for a location-only EVENT.
+  //
+  // The constraint that actually governs this table, verified on live prod 2026-08-18, is
+  //   event_log_has_anchor  CHECK (plant_id IS NOT NULL OR project_id IS NOT NULL)  NOT VALID
+  // Two-way. No location arm. NOT VALID suppresses back-validation of existing rows, NOT enforcement
+  // on INSERT — so a parentless event is refused by Postgres as 23514 whatever this function does.
+  // Relaxing the check below without first migrating that CHECK does not enable the write; it only
+  // trades a truthful 400 for an opaque 500. 0 of 15,019 prod rows have both ids NULL.
+  //
+  // The reachability half is independently true: every GET branch in index.js filters on project_id
+  // or plant_id, there is no ?location_id branch, and GET /api/events/:id's ownership predicate
+  // resolves false when both are NULL — so such a row would 404 to its own author.
+  //
+  // CaptureFlow's location destination used to send exactly this parentless body and 400'd on every
+  // save; it now writes the photo onto the location instead (photos_must_have_parent DOES admit
+  // location_id alone). src/__tests__/CaptureFlow.eventContract.test.jsx runs this very function over
+  // the bodies that component actually sends, so the two halves red together rather than drift.
   if (!body.project_id && !body.plant_id) {
     return { status: 400, error: 'project_id or plant_id is required' };
   }
