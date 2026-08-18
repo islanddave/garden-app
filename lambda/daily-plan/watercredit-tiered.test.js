@@ -62,8 +62,12 @@ describe('WXWATER byte-identity anchors (B2) — untouched legacy symbols', () =
 describe('WXWATER STANDING FLAG-OFF GUARD — generatePlan(flag:off) == default across all 8 parity goldens', () => {
   for (const s of scenarios) {
     it(`flag:false deep-equals default for "${s.name}"`, () => {
-      const off = generatePlan({ ...s.input, cadence, fertModel, rainCreditEnabled: false });
-      const def = generatePlan({ ...s.input, cadence, fertModel });
+      // BUG-PARITYFLAGBLIND-001: parity scenarios now DECLARE rainCreditEnabled (the -flagon ones declare
+      // true), so the flag has to be stripped before the `def` call — left in, "default" would inherit the
+      // scenario's own flag and this guard would stop asserting anything about the default at all.
+      const { rainCreditEnabled: _declared, ...base } = s.input;
+      const off = generatePlan({ ...base, cadence, fertModel, rainCreditEnabled: false });
+      const def = generatePlan({ ...base, cadence, fertModel });
       expect(off).toEqual(def);
     });
   }

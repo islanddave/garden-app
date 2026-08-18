@@ -1,0 +1,93 @@
+{
+  "date": "2026-06-22",
+  "hot": false,
+  "hydrology": {
+    "rain_coming": false,
+    "rain_horizon": null,
+    "recent_precip_in": 0.3,
+    "status": {
+      "ok": true,
+      "uncertainty": {
+        "flag": false
+      }
+    },
+    "today_pop": 10,
+    "today_precip_in": 0,
+    "tomorrow_pop": 0,
+    "tomorrow_precip_in": 0,
+    "upcoming_precip_in": 0
+  },
+  "users": {
+    "dave": {
+      "counts": {
+        "cold": 0,
+        "dormancy_suppressed": 0,
+        "dormant": 0,
+        "fertilize": 0,
+        "no_history": 0,
+        "pest": 0,
+        "plantings": 2,
+        "rain_skipped": 1,
+        "water_due": 1
+      },
+      "substrate": {
+        "feeding_now": 2,
+        "fertilize_recs": 0,
+        "msg": "Feeding on HOLD — fresh MG slow-release mix is feeding all 2 plantings (potted recently; mix feeds 3-6 months). Optional: kelp via sprayer for transplant establishment. Watch for Mg (Epsom) / blossom-end-rot (gypsum) symptoms.",
+        "on_hold": true,
+        "phase_counts": {
+          "mg_active_3_12wk": 2
+        },
+        "water_note": "Hard water (high Ca/Mg/bicarbonate) slowly raises root-zone pH -> micronutrient (Fe/Mn) lockout, worst for acid-lovers (blueberry)."
+      },
+      "tasks": {
+        "cold": [],
+        "dormancy_suppressed": [],
+        "dormant": [],
+        "fertilize": [],
+        "no_history": [],
+        "pest": [],
+        "rain_skipped": [
+          {
+            "credited_days": 3,
+            "crop": "tomato",
+            "days_since": 4,
+            "id": "bed2",
+            "in_ground": true,
+            "interval": 4,
+            "name": "Main Bed Tomato",
+            "project": "Garden",
+            "project_id": "pj1",
+            "reason": "Skip — 0.3\" rain over the last few days counts as watering"
+          }
+        ],
+        "water_due": [
+          {
+            "crop": "pepper",
+            "days_since": 3,
+            "id": "nv1",
+            "in_ground": false,
+            "interval": 3,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Unlabelled Vessel Pepper",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": "Water — 0.3\" rain under the 0.35\" soak-in threshold"
+          }
+        ]
+      }
+    }
+  },
+  "water_source": "well water (likely HARD)",
+  "weather": {
+    "callout": null,
+    "code": 1,
+    "highToday": 79,
+    "short": "Clearing",
+    "tonightLow": 60,
+    "unit": "F"
+  }
+}

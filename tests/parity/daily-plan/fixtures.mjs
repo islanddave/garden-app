@@ -46,6 +46,7 @@ const TODAY_MODERATE = {
   weather: { tonightLow: 68, highToday: 86, code: 61, short: 'Rain developing', unit: 'F' },
   hydrology: { recent_precip_in: 0.2, today_precip_in: 1.0, today_pop: 80, upcoming_precip_in: 0.1, tomorrow_precip_in: 0.1, tomorrow_pop: 20 },
   ownerFallback: 'dave',
+  rainCreditEnabled: false,
   plantings: [
     P({ id: 'sv1', name: 'Bench Pepper Cell', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'solo_cup', container_size: '0.5 qt', substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-30', covered: false, db_cadence: PEPPER }),
     P({ id: 'bed1', name: 'Main Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'in_ground', container_size: null, substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-29', covered: false, db_cadence: INGROUND_TOMATO }),
@@ -62,10 +63,47 @@ const TODAY_HEAVY = {
   weather: { tonightLow: 66, highToday: 78, code: 63, short: 'Heavy rain', unit: 'F' },
   hydrology: { recent_precip_in: 0, today_precip_in: 2.5, today_pop: 90, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
   ownerFallback: 'dave',
+  rainCreditEnabled: false,
   plantings: [
     P({ id: 'sv1', name: 'Bench Pepper Cell', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'solo_cup', container_size: '0.5 qt', substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-30', covered: false, db_cadence: PEPPER }),
     P({ id: 'ft1', name: 'Fresh Pepper Cell', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'tray_cell', container_size: '0.5 qt', substrate_start: '2026-07-29', transplant_at: '2026-07-29', last_water: '2026-07-30', covered: false, db_cadence: PEPPER }),
     P({ id: 'bed1', name: 'Main Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'in_ground', container_size: null, substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-29', covered: false, db_cadence: INGROUND_TOMATO }),
+  ],
+};
+
+// ── BUG-PARITYFLAGBLIND-001 goldens — CARE_RAIN_CREDIT_ENABLED coverage.
+// planFor never passed rainCreditEnabled, so it defaulted false (engine.js:811) and EVERY scenario — including
+// rain-credit-skip, whose 0.6" looks like rain-credit coverage — ran the flag-OFF branch. RAIN_TIER_IA,
+// RAIN_TIER_HOLD and rainTierFor were unreachable from this gate while prod runs the flag ON, which is why the
+// gate stayed green through six mutations of the tier tables. Every scenario now DECLARES rainCreditEnabled
+// (guarded by the harness self-test below) and these two inputs are captured under BOTH configurations.
+// RAIN_TIER_KNIFE: 0.35" window rain, established outdoor 'pot' (small_fast tier), exactly due (dW 3 = wi 3).
+//   flag-OFF: RAIN_IA.outdoor 0.25 -> eff 0.10 -> credited -> rain_skipped.
+//   flag-ON:  RAIN_TIER_IA.small_fast 0.35 -> eff 0 -> NO credit -> waters, and the note prints the tier IA.
+//   Sits ON the small_fast IA, so any retune of that constant flips the bucket AND the note (falsifiability).
+const RAIN_TIER_KNIFE = {
+  today: '2026-06-22',
+  weather: { tonightLow: 60, highToday: 80, code: 1, short: 'Clearing', unit: 'F' },
+  hydrology: { recent_precip_in: 0.35, today_precip_in: 0, today_pop: 10, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  ownerFallback: 'dave',
+  plantings: [
+    P({ id: 'rk1', name: 'Deck Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'pot', container_size: '5 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', covered: false, db_cadence: PEPPER }),
+  ],
+};
+// RAIN_TIER_VESSELS: 0.30" window rain across the two tiers prod actually lands on.
+//   nv1 — NULL container_type (~22 such rows in prod): rainTierFor's 'small_fast' FALLBACK, IA 0.35 -> no credit
+//         under the flag, so it waters. Pins the fail-safe direction of the fallback: re-pointing it at
+//         intermediate/in_ground (IA 0.25/0.20) would credit it and flip this golden.
+//   bed2 — in_ground: IA 0.20 -> credited, and RAIN_TIER_HOLD.in_ground 3 gives credited_days 3 vs the
+//         flag-OFF RAIN_HOLD_DAYS 1, so the hold table is pinned too.
+const RAIN_TIER_VESSELS = {
+  today: '2026-06-22',
+  weather: { tonightLow: 60, highToday: 79, code: 1, short: 'Clearing', unit: 'F' },
+  hydrology: { recent_precip_in: 0.30, today_precip_in: 0, today_pop: 10, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  ownerFallback: 'dave',
+  plantings: [
+    P({ id: 'nv1', name: 'Unlabelled Vessel Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: null, container_size: null, substrate_start: '2026-05-01', transplant_at: null, last_water: '2026-06-19', covered: false, db_cadence: PEPPER }),
+    P({ id: 'bed2', name: 'Main Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'in_ground', container_size: null, substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-18', covered: false, db_cadence: INGROUND_TOMATO }),
   ],
 };
 
@@ -101,6 +139,7 @@ export const scenarios = [
       weather: { tonightLow: 58, highToday: 78, code: 1, short: 'Partly cloudy', unit: 'F' },
       hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'w1', name: 'Cayenne Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'pot', container_size: '3 gal', substrate_start: '2026-06-12', transplant_at: '2026-06-12', last_water: '2026-06-15', db_cadence: PEPPER }),
         P({ id: 'nh1', name: 'New Basil', variety: 'Genovese', genus: 'Ocimum', status: 'vegetative', container_type: 'pot', container_size: '1 gal', substrate_start: '2026-06-18', transplant_at: null, last_water: null, db_cadence: LETTUCE }),
@@ -117,6 +156,10 @@ export const scenarios = [
       weather: { tonightLow: 60, highToday: 80, code: 1, short: 'Clearing', unit: 'F' },
       hydrology: { recent_precip_in: 0.6, today_precip_in: 0, today_pop: 10, upcoming_precip_in: 0.1, tomorrow_precip_in: 0.1, tomorrow_pop: 20 },
       ownerFallback: 'dave',
+      // The BUG-PARITYFLAGBLIND-001 trap: this scenario NAMES rain credit but pinned the flag-OFF
+      // (RAIN_IA.outdoor 0.25) verdict the whole time. Kept OFF deliberately — the flag-ON tier path is
+      // covered by the rain-tier-* pairs below — but now says so.
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'rc1', name: 'Outdoor Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'pot', container_size: '5 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', covered: false, db_cadence: PEPPER }),
       ],
@@ -130,6 +173,7 @@ export const scenarios = [
       weather: { tonightLow: 62, highToday: 80, code: 1, short: 'Clearing', unit: 'F' },
       hydrology: { recent_precip_in: 0.8, today_precip_in: 0, today_pop: 10, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'ft1', name: 'Pepper Plug', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'solo_cup', container_size: '0.5 qt', substrate_start: '2026-06-10', transplant_at: '2026-06-12', last_water: '2026-06-18', covered: false, db_cadence: PEPPER }),
       ],
@@ -143,6 +187,7 @@ export const scenarios = [
       weather: { tonightLow: 66, highToday: 90, code: 0, short: 'Hot and sunny', unit: 'F' },
       hydrology: { recent_precip_in: 0.7, today_precip_in: 0, today_pop: 5, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'fb1', name: 'Bag Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'fabric_bag', container_size: '7 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', covered: false, db_cadence: TOMATO }),
       ],
@@ -156,6 +201,7 @@ export const scenarios = [
       weather: { tonightLow: 60, highToday: 82, code: 1, short: 'Mild', unit: 'F' },
       hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'hv1', name: 'Harvested Lettuce', variety: 'Buttercrunch', genus: 'Lactuca', status: 'harvested', container_type: 'pot', container_size: '2 gal', substrate_start: '2026-05-10', transplant_at: '2026-05-10', last_water: '2026-06-18', covered: false, db_cadence: LETTUCE }),
       ],
@@ -169,6 +215,7 @@ export const scenarios = [
       weather: { tonightLow: 60, highToday: 80, code: 1, short: 'Mild', unit: 'F' },
       hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'act1', name: 'Active Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', project: 'Active', project_id: 'pa', project_status: 'active', container_type: 'pot', container_size: '3 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-10', db_cadence: PEPPER }),
         P({ id: 'plan1', name: 'Future Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'vegetative', project: 'Planning', project_id: 'pp', project_status: 'planning', container_type: null, container_size: null, substrate_start: null, transplant_at: null, last_water: null, db_cadence: TOMATO }),
@@ -183,6 +230,7 @@ export const scenarios = [
       weather: { tonightLow: 37, highToday: 55, code: 2, short: 'Cold front', unit: 'F' },
       hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'cp1', name: 'Tender Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'flowering', container_type: 'pot', container_size: '3 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', db_cadence: PEPPER }),
       ],
@@ -196,6 +244,7 @@ export const scenarios = [
       weather: { tonightLow: 70, highToday: 92, code: 0, short: 'Hot', unit: 'F' },
       hydrology: { recent_precip_in: 0.05, today_precip_in: 0.02, today_pop: 80, upcoming_precip_in: 0.4, tomorrow_precip_in: 0.4, tomorrow_pop: 70 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'ht1', name: 'Thirsty Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'pot', container_size: '5 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-20', covered: false, db_cadence: TOMATO }),
       ],
@@ -213,6 +262,7 @@ export const scenarios = [
       weather: { tonightLow: 66, highToday: 82, code: 1, short: 'Mild', unit: 'F' },
       hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
       ownerFallback: 'dave',
+      rainCreditEnabled: false,
       plantings: [
         P({ id: 'li1', name: 'Lithops (seeded)', variety: 'Lithops', genus: null, status: 'active', container_type: 'pot', container_size: '4 in', substrate_start: '2026-01-01', transplant_at: null, last_water: '2026-06-24', covered: true, db_cadence: { _seeded: true, crop: 'succulent (Lithops / living stone)', no_calendar_water: true, water_rule: 'growth_gated', water_interval_days_container: 30, fertilize_interval_days: 0, soil_moisture_target: 'OVERRIDE: water ONLY when actively growing; otherwise DO NOT WATER' } }),
         // variety deliberately ABSENT from cadence-data-v2.json by_variety (the bundled 'Lithops' entry
@@ -243,6 +293,30 @@ export const scenarios = [
     name: 'today-heavy-flagon',
     desc: '2.5"@90% today forecast, flag ON: established solo_cup skips at the 0.91" small bar (2.5" cleared the old 2.0" bar too, so this golden is unchanged), fresh transplant still waters, in_ground skips.',
     input: { ...TODAY_HEAVY, todayAwareEnabled: true },
+  },
+  // BUG-PARITYFLAGBLIND-001 — rain-credit flag pairs (see RAIN_TIER_KNIFE/RAIN_TIER_VESSELS above for the
+  // verdict map). These are the ONLY scenarios that reach RAIN_TIER_IA / RAIN_TIER_HOLD / rainTierFor, i.e.
+  // the configuration prod actually runs (CARE_RAIN_CREDIT_ENABLED=true). rainMaxDaysEnabled stays OFF —
+  // that is a separately-flagged clamp (DRG-WXFLAGSPLIT-001 F1) and pinning it here would conflate the two.
+  {
+    name: 'rain-tier-knife-flagoff',
+    desc: '0.35" on an established outdoor pot, flag OFF: clears RAIN_IA.outdoor 0.25 -> rain_skipped.',
+    input: { ...RAIN_TIER_KNIFE, rainCreditEnabled: false },
+  },
+  {
+    name: 'rain-tier-knife-flagon',
+    desc: '0.35" on an established outdoor pot, flag ON: sits exactly ON RAIN_TIER_IA.small_fast 0.35 -> eff 0, no credit -> waters with the "under the 0.35\\" soak-in threshold" note. Retuning that constant either way changes this golden.',
+    input: { ...RAIN_TIER_KNIFE, rainCreditEnabled: true },
+  },
+  {
+    name: 'rain-tier-vessels-flagoff',
+    desc: '0.30" across a NULL-container_type planting and an in-ground bed, flag OFF: one undifferentiated 0.25 IA / 1-day hold -> both rain_skipped with credited_days 1.',
+    input: { ...RAIN_TIER_VESSELS, rainCreditEnabled: false },
+  },
+  {
+    name: 'rain-tier-vessels-flagon',
+    desc: '0.30" same input, flag ON: the NULL vessel takes rainTierFor\'s small_fast fallback (IA 0.35 -> no credit, waters) while the bed takes in_ground (IA 0.20, hold 3 -> credited_days 3). Pins both the fallback direction and the hold table.',
+    input: { ...RAIN_TIER_VESSELS, rainCreditEnabled: true },
   },
 ];
 

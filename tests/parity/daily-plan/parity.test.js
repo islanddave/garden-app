@@ -29,8 +29,32 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
       // BUG-TODAYWATER-001: today-qualifying inputs — without these the gate is blind to the today branch.
       'today-moderate-flagoff', 'today-moderate-flagon', 'today-heavy-flagoff', 'today-heavy-flagon',
       // DRG-NOCALWATER-001: profile-declared watering suppression (incl. the live unseeded-profile shape).
-      'dormancy-suppressed']) {
+      'dormancy-suppressed',
+      // BUG-PARITYFLAGBLIND-001: rain-credit flag pairs — without the -flagon halves nothing in this gate
+      // reaches RAIN_TIER_IA / RAIN_TIER_HOLD / rainTierFor, which is the configuration prod runs.
+      'rain-tier-knife-flagoff', 'rain-tier-knife-flagon',
+      'rain-tier-vessels-flagoff', 'rain-tier-vessels-flagon']) {
       expect(names).toContain(required);
+    }
+  });
+
+  // BUG-PARITYFLAGBLIND-001 — the gate stayed 30/30 green through six mutations of the tier tables because
+  // planFor never passed rainCreditEnabled, so every scenario silently took the flag's `=false` default while
+  // prod ran it true. These two tests make the omission loud instead of silent: the first forbids relying on
+  // the default, the second proves the flag-ON goldens actually pin a DIFFERENT plan (a flag that changes
+  // nothing observable is coverage on paper only).
+  it('every scenario declares rainCreditEnabled explicitly (no silent default)', () => {
+    for (const s of scenarios) {
+      expect(typeof s.input.rainCreditEnabled, `${s.name} must declare rainCreditEnabled`).toBe('boolean');
+    }
+    expect(scenarios.filter((s) => s.input.rainCreditEnabled === true).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('each rain-tier flag pair diverges — the flag-ON goldens are non-vacuous', () => {
+    for (const base of ['rain-tier-knife', 'rain-tier-vessels']) {
+      const off = canonicalJSON(canonicalize(planFor(`${base}-flagoff`)));
+      const on = canonicalJSON(canonicalize(planFor(`${base}-flagon`)));
+      expect(on, `${base}: flag ON produced the flag-OFF plan`).not.toBe(off);
     }
   });
 
