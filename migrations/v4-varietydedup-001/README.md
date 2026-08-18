@@ -12,15 +12,50 @@ been run anywhere. This is ready for Dave's review before anyone applies it.
 
 **Prod-only by construction.** The SQL is keyed to specific live prod row UUIDs found by querying
 prod directly. Staging's isolated Neon branch doesn't carry these rows, so unlike a schema
-migration there is no "apply to staging first" step — apply to prod only, when Dave says so.
+migration there is no "apply to staging first" step — apply to prod only, when Dave says so. The
+*gates*, however, are deliberately not prod-only: they are written as violation counts (or carry
+`env: prod`) so a staging run reports vacuously-green or n/a rather than red for the mere absence
+of Dave's rows.
 
 ## What ships here
 
 | File | Purpose |
 |---|---|
-| `0a-data-fix.sql` | The fix: 1 repoint + 2 soft-deletes for Alaska Mix, 3 soft-deletes for the CA Wonder family. Every statement is `WHERE id = ... AND <guard>`, so a second run changes 0 rows. |
-| `0r-rollback.sql` | Reverses exactly the rows `0a` touched, by explicit id. |
-| `gates.yml` | 6 pre / 6 post data-state gates (`scripts/gate_runner.py`). Not schema-shape checks — this migration adds no schema — row-state checks instead. |
+| `0a-data-fix.sql` | The fix, in ONE transaction: 1 relation-scoped repoint + 2 soft-deletes for Alaska Mix, 3 soft-deletes for the CA Wonder family, + its `schema_version` receipt. Every statement is guarded, so a second run changes 0 rows. |
+| `0r-rollback.sql` | Reverses exactly the rows `0a` touched, by explicit id, in one transaction, and deletes the receipt. |
+| `gates.yml` | 7 pre / 9 post data-state gates (`scripts/gate_runner.py`). Not schema-shape checks — this migration adds no schema — row-state checks instead. |
+
+## Transaction, receipt, and self-arming gates
+
+`0a` is wrapped in `BEGIN`/`COMMIT`. Without it the statements autocommit separately under
+`psql -f` and a partial apply is reachable — the repoint lands and its paired soft-delete doesn't,
+or the reverse — leaving the data half-migrated with nothing to roll back to.
+
+It writes `schema_version` version **`4.36.0-varietydedup-001`**, which does two jobs: it answers
+"was this applied?", and it is the arming key for the post gates. Every post assertion carries
+`AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.36.0-varietydedup-001')`, so it
+is vacuously green before apply and becomes a real standing invariant the moment the receipt
+exists. That replaces the "flip `continuous: false` → `true` by hand after applying" runbook step
+the earlier draft carried: `gate-invariants.yml` runs post gates continuously against **prod**,
+where this is unapplied, and `continuous:` defaults to **true** when omitted — so an un-armed post
+gate asserting this migration's own effect is permanently red until someone applies it. `0r`
+deletes the receipt, which disarms the gates again.
+
+## The Alaska repoint is scoped by the relation, not by a row id
+
+`0a` repoints `WHERE variety_id = <loser>`, not `WHERE plants.id = '7ea304c4…'`. The single
+planting on the loser is a 2026-08-18 *measurement*, not the scope of the write. Pinning the id
+would no-op in any environment that id doesn't exist in, and would silently orphan any planting
+created on the duplicate between that read and the apply — orphaned onto a soft-deleted variety,
+rendering with a blank `variety_ref` (`lambda/plants/index.js:455`). The loser's soft-delete now
+also carries `AND NOT EXISTS (SELECT 1 FROM plants WHERE variety_id = <loser>)`, so the archive
+cannot happen while anything still references it.
+
+`pre_no_other_planting_on_alaska_loser` is the matching pre-gate. It exists because `0a` repoints
+by relation while `0r` reverts one literal `plants.id`: the two agree only while exactly one
+planting is in scope, and this gate proves that before anyone applies. If it ever fires, `0a` is
+still correct but `0r` would be incomplete — extend the rollback (or add the `snap_` ledger from
+`migrations/v4-croptypealoe-001/0b-data.sql`) first.
 
 ## V4-VARIETYDUP-001 — Alaska Mix: true duplicate, merged
 
@@ -46,9 +81,10 @@ watching for.
 
 `a11dd600` is kept as survivor (richer data, more active references). Its `created_by` matches
 `MANAGED_PRINCIPAL_PATTERNS` (`data-audit-%`) in `lambda/varieties/authz.js`, so it stays editable
-by Dave through the app's normal household-scoped write path — not stuck unowned. Repointed:
-`plants.id = 7ea304c4…` (the loser's one referencing planting, already deleted, repointed anyway
-for FK correctness). Checked and confirmed 0 rows to repoint in `inventory_items`,
+by Dave through the app's normal household-scoped write path — not stuck unowned. Repointed: every
+`plants` row holding the FK to the loser, which at the 2026-08-18 read was one already-deleted
+planting (`7ea304c4…`, moved anyway for FK correctness) — see the relation-scoping section above.
+Checked and confirmed 0 rows to repoint in `inventory_items`,
 `cultivar_weight_sample`, `preservation_log`, `proj_rescope_events`. `entity` needs no manual
 touch — `plant_varieties_entity_softdel` mirrors `deleted_at` automatically.
 
@@ -101,10 +137,14 @@ observation.
 export NEON_DATABASE_URL=$(grep -m1 '^NEON_DATABASE_URL=' .env.local | sed 's/^NEON_DATABASE_URL=//' | tr -d '"')
 python3 scripts/gate_runner.py --migration migrations/v4-varietydedup-001 --env prod --phase pre
 # all pre gates must be green before applying
-psql "$NEON_DATABASE_URL" -f migrations/v4-varietydedup-001/0a-data-fix.sql
+psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/v4-varietydedup-001/0a-data-fix.sql
 python3 scripts/gate_runner.py --migration migrations/v4-varietydedup-001 --env prod --phase post
-# flip continuous: false -> true on every post_* gate once this is green
+# no hand-editing step: the post gates arm themselves off the schema_version receipt 0a just wrote
 ```
 
-Rollback: `psql "$NEON_DATABASE_URL" -f migrations/v4-varietydedup-001/0r-rollback.sql`, safe at any
-time — every statement is guarded and only touches the exact rows `0a` touched.
+Rollback: `psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/v4-varietydedup-001/0r-rollback.sql`
+— one transaction, every statement guarded, only the exact rows `0a` touched, and it deletes the
+receipt so the post gates disarm. **Caveat still open, not fixed here:** `0a` skips a target that
+was already archived before it ran, but `0r` un-archives every target it finds archived, and
+nothing snapshots which population was which — so a rollback can un-archive a row that was archived
+independently of this migration. Reviewer's call before applying.
