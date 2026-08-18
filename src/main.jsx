@@ -4,6 +4,7 @@ import { ClerkProvider } from '@clerk/react'
 import App from './App.jsx'
 import { registerServiceWorker } from './lib/registerSW.js'
 import { requestPersistence } from './lib/durableStorage.js'
+import { warmApiOrigins } from './lib/warmOrigins.js'
 import { iconCssVars } from './lib/tokens.js'
 
 const globalStyle = document.createElement('style')
@@ -21,6 +22,13 @@ globalStyle.textContent = `
   ${iconCssVars()}
 `
 document.head.appendChild(globalStyle)
+
+// V4-PERFCLERK-001 Option A — tokenless cold-start warm-ping, FIRST network action of the boot.
+// Placed here, ahead of everything else in this file, because the ~2.5s of Clerk resolution that
+// follows is dead time on the network: the Lambda containers Today needs are cold and nothing has
+// asked them for anything. It is synchronous, carries no token, reads no response and swallows
+// every failure — see src/lib/warmOrigins.js for the measurements and the four leak invariants.
+warmApiOrigins()
 
 registerServiceWorker()
 
