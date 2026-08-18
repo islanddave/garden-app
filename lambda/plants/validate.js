@@ -141,3 +141,38 @@ export function validateAcquiredMature(body = {}) {
   if (typeof v !== 'boolean') return 'acquired_mature must be true, false or null';
   return null;
 }
+
+// V4-LOSSEVENT-001 / BUG-LOSSCAUSE-001 — qty_lost must be a non-negative integer.
+//
+// THIS GUARD IS A DEPLOY-ORDERING PRECONDITION, NOT A NICETY. migrations/v4-losscapture-001 arms
+// `chk_plants_qty_lost_nonneg` on plants.qty_lost. A CHECK added NOT VALID exempts EXISTING rows but
+// constrains every SUBSEQUENT write, so the instant that constraint lands, a still-deployed Lambda
+// with no floor turns a client-supplied negative into a 23514 -> 500 on a route that used to work.
+// Arming a CHECK is a deploy, not a migration: this guard must be LIVE before the arming step runs.
+// migrations/v4-losscapture-001/gates.yml carries pre_qty_lost_guard_is_deployed as the manual gate
+// that refuses the apply until it is, and README.md's apply order is the sequence.
+//
+// STRICT, no coercion — same call as validateAcquiredMature above, and for the same reason: the
+// column is `integer`, so `"3"`, `3.5` and `true` are all client bugs, and silently coercing one
+// writes a number nobody chose onto a real plant's attrition record. Verified 2026-08-18 that NO
+// caller in the repo sends qty_lost at all (`grep -rn qty_lost src/ lambda/` finds only reads and
+// test fixtures), so strictness costs no existing caller.
+//
+// CLAMPING WAS CONSIDERED AND REJECTED. A clamp to 0 would satisfy the CHECK while silently
+// discarding the caller's intent, and qty_lost is a counter the new loss write path ACCUMULATES
+// into (qty_lost + N) — a clamped accumulate is indistinguishable from a correct one afterwards.
+// A 400 is recoverable; a wrong counter is not.
+//
+// Shared by BOTH verbs so PUT and POST cannot drift, matching the validateAcquiredMature precedent.
+// An absent key and an explicit null are both no-ops: on PUT the COALESCE preserves the prior value,
+// on POST the `?? 0` supplies the column default.
+export function validateQtyLost(body = {}) {
+  if (!Object.prototype.hasOwnProperty.call(body, 'qty_lost')) return null;
+  const v = body.qty_lost;
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'number' || !Number.isInteger(v)) {
+    return 'qty_lost must be a non-negative integer or null';
+  }
+  if (v < 0) return 'qty_lost must be a non-negative integer or null';
+  return null;
+}

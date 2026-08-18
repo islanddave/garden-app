@@ -1,11 +1,13 @@
--- 0c-validate.sql
--- V4-LOSSCAPTURE-001 — L-058 sweep: VALIDATE the NOT-VALID CHECK constraints added in 0a.
+-- 0c-validate.sql — PHASE 3 of 3. L-058 sweep: VALIDATE the NOT-VALID CHECKs armed in 0b.
+-- Ledger items: V4-LOSSEVENT-001 / BUG-LOSSCAUSE-001 / V4-HARVDISPOSITION-001.
 --
--- Run AFTER the events + plants Lambda deploys carrying the loss/disposition write paths, so this
--- VALIDATE is a real assertion over whatever rows those paths have since written (plus every
+-- Run AFTER 0b, so this VALIDATE is a real assertion over the whole existing heap (every
 -- pre-existing loss_cause value on prod, which the Lambda's own ALLOWED_LOSS already constrained to
--- the same five values — this should never fail on that population) rather than a vacuous scan of an
--- all-NULL column.
+-- the same five values, and every pre-existing qty_lost, which nothing ever floored) rather than a
+-- vacuous scan of an all-NULL column. The pre gates pre_no_out_of_vocab_loss_cause and
+-- pre_no_negative_qty_lost PREDICT this file's outcome and are the reason it should not surprise
+-- anyone; they live in the pre phase precisely because a prediction of a later phase's result is
+-- not a post-condition of an earlier one.
 --
 -- SAFETY: idempotent — VALIDATE CONSTRAINT on an already-validated constraint is a no-op. No data
 --   change. VALIDATE CONSTRAINT acquires only SHARE UPDATE EXCLUSIVE (concurrent reads/writes
@@ -22,3 +24,7 @@
 ALTER TABLE public.plants VALIDATE CONSTRAINT chk_plants_loss_cause;
 ALTER TABLE public.plants VALIDATE CONSTRAINT chk_plants_qty_lost_nonneg;
 ALTER TABLE public.harvest_log VALIDATE CONSTRAINT chk_harvest_log_disposition;
+
+INSERT INTO public.schema_version (version, description)
+VALUES ('4.25.2-losscapture-001-validate','V4-LOSSEVENT-001/BUG-LOSSCAUSE-001/V4-HARVDISPOSITION-001 phase 3/3 (POST-DEPLOY). VALIDATEs chk_plants_loss_cause, chk_plants_qty_lost_nonneg and chk_harvest_log_disposition against the FULL heap (soft-deleted rows included). No-op on any environment where the three already read convalidated. This row is what arms post_validate_all_three_checks_convalidated as a continuous invariant.')
+ON CONFLICT (version) DO NOTHING;

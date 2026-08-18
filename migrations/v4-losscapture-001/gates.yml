@@ -1,23 +1,70 @@
-# gates.yml
-# V4-LOSSCAPTURE-001 — plants.loss_cause/qty_lost formalized + CHECK, harvest_log.disposition + CHECK.
+# gates.yml — V4-LOSSEVENT-001 / BUG-LOSSCAUSE-001 / V4-HARVDISPOSITION-001.
+# plants.loss_cause/qty_lost formalized (0a) + three CHECKs armed (0b) + validated (0c).
 #
-# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
-#   1. STAGING: run pre gates -> apply 0a-additive-ddl.sql -> post gates.
-#   2. deploy-staging (events + plants Lambdas carrying the loss/disposition write paths) + full
-#      regression pass on staging.
-#   3. STAGING: 0c-validate.sql -> post-validate gates.
-#   4. PROD: run pre gates -> 0a -> post gates -> deploy (Lambdas) -> 0c-validate.sql ->
-#      post-validate gates. Dave-gated apply; confirm the DATABASE_URL host printed by the runner
-#      before applying.
-#   5. Promote (version bump set at ship per L-171).
+# ═══ THE RULE THIS GATE SET WAS REWRITTEN TO OBEY (2026-08-18) ═══
 #
-# Pre: plants already carries loss_cause/qty_lost (hand-applied, pre-existing on both live
-#      environments per 0a's header) but NEITHER constraint name is in use yet; harvest_log has
-#      none of the three new/touched columns' constraint names in use and no disposition column.
-# Post (0a): harvest_log.disposition exists, nullable, no default; all three CHECKs exist as
-#      NOT VALID (not yet convalidated). Post (0c): all three CHECKs are convalidated.
+#   `continuous:` DEFAULTS TO TRUE. `.github/workflows/gate-invariants.yml` runs every continuous
+#   POST gate against live prod AND staging on a schedule AND on every push touching migrations/**,
+#   and it has been BLOCKING since 2026-08-10. There is no skip-if-unapplied logic anywhere in
+#   gate_runner.py. So a post gate that asserts THIS migration's own effect goes red the moment the
+#   directory reaches the branch, and stays red until the apply — which here is deliberately blocked
+#   behind a Lambda deploy, so that window is open-ended.
+#
+# The first draft of this file shipped six such gates. Every asserting post gate below is now
+# SELF-ARMING on the schema_version row of the phase that ESTABLISHES the fact it asserts:
+# vacuously true before that phase, a genuine permanent invariant after it, with no follow-up edit
+# to remember. Reference shape: migrations/v4-cachemissingrow-001/gates.yml.
+#
+# ONE INVERSION WORTH STATING, because copying cachemissingrow naively gets it backwards.
+# cachemissingrow's self-armed gates are VIOLATION-shaped (`rowcount_eq 0`, enumerating defects), so
+# a bare `AND EXISTS (schema_version...)` conjunct is enough — unarmed returns 0 rows and passes.
+# Four of the gates here are PRESENCE assertions ("the constraint exists", "the column exists"). On
+# those, a bare EXISTS conjunct makes the gate return 0 rows before apply against an expectation of
+# 3 — i.e. it FAILS exactly when it is supposed to be quiet. Each is therefore re-expressed as a
+# violation: `SELECT 1 WHERE <armed> AND NOT <the fact>`, expecting 0. Same self-arming property,
+# correct polarity.
+#
+# `continuous: false` is used ONLY for a pure apply-time receipt (one gate: the 0c schema_version
+# row). It is honoured only under --continuous-only, which gate-invariants.yml passes and the
+# runbook does not — so a continuous:false gate still runs, and must still be TRUE, at the runbook
+# checkpoint it belongs to.
+#
+# ═══ PHASE OWNERSHIP — which file each gate is a statement about ═══
+#   pre    before 0a. Includes the two gates that PREDICT 0c's VALIDATE outcome: a prediction of a
+#          later phase's result is not a post-condition of an earlier one. Also carries the manual
+#          deploy-ordering gate, which is the machine-readable form of README.md's apply order.
+#   sweep  between 0b and 0c. Receipts for 0a/0b and the pre-VALIDATE measurement that cannot live
+#          in `pre` because harvest_log.disposition does not exist yet at that point — a column
+#          reference is resolved at parse time, so no EXISTS guard can make such a gate safe to run
+#          before 0a. gate-invariants.yml runs `--phase post` only, so nothing here is continuous.
+#   post   standing invariants only. All self-arming, except the one apply-time receipt.
+#
+# DELETED IN THE REWRITE: `post_checks_not_yet_validated`. As written it was mutually exclusive with
+# post_validate_all_three_checks_convalidated in the same phase — no environment state satisfies
+# both — so the post phase could not be green at either runbook checkpoint. Its real content ("0b
+# armed them NOT VALID, so no full-table lock was taken") is a statement about 0b checked before 0c,
+# and survives as sweep_checks_armed_not_valid.
 
 pre:
+  # THE ORDERING PRECONDITION, and the reason this bundle has a 0b at all. gate_runner can only
+  # assert DATABASE state, and "a Lambda is deployed" is not database state — so this is a manual
+  # gate rather than a fake SQL one. gate_runner reports MANUAL and does NOT count it as a pass.
+  - name: pre_qty_lost_guard_is_deployed
+    manual: true
+    note: >
+      0b-arm-checks.sql MUST NOT RUN until the plants Lambda carrying validateQtyLost
+      (lambda/plants/validate.js, wired into BOTH the PUT and the POST path in
+      lambda/plants/index.js) is LIVE. chk_plants_qty_lost_nonneg is added NOT VALID, which exempts
+      existing rows and constrains every subsequent write, so arming it against the pre-guard
+      artifact turns a client-supplied negative into a 23514 -> 500 on a live route, and any prod
+      row already holding a negative qty_lost becomes un-editable through the app. Verify:
+      `aws lambda get-function-configuration --function-name <plants>` shows a LastModified at or
+      after the deploy-lambda run for the promote carrying qty-lost-guard.test.js. NOTE that
+      deploy-lambda.yml ships all 26 Lambdas in ONE fail-fast:false matrix on push:main and is a
+      SEPARATE workflow from promote-gate.yml's SPA deploy — "promote succeeded" does NOT mean this
+      guard is live. Wait for the deploy-lambda run to settle and check LastModified.
+      Verifier = whoever runs the apply.
+
   - name: pre_plants_loss_columns_present
     sql: |
       SELECT 1 FROM information_schema.columns
@@ -41,54 +88,20 @@ pre:
     expect: rowcount_eq
     value: 0
 
-post:
-  - name: post_harvest_log_disposition_present_nullable_defaultless
+  # A resumed run would otherwise re-enter the sequence mid-way with the earlier phases' gates
+  # already invalidated. Fail loudly and let a human pick the phase to resume at.
+  - name: pre_not_already_applied
     sql: |
-      SELECT 1 FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='harvest_log'
-         AND column_name='disposition'
-         AND is_nullable='YES' AND column_default IS NULL
+      SELECT 1 FROM public.schema_version WHERE version='4.25.0-losscapture-001'
     expect: rowcount_eq
-    value: 1
+    value: 0
 
-  - name: post_all_three_checks_present
-    sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
-    expect: rowcount_eq
-    value: 3
-
-  # continuous: false — only true in the window between 0a and 0c. Once 0c runs, all three read
-  # convalidated and this would red forever afterward.
-  - name: post_checks_not_yet_validated
-    continuous: false
-    sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
-         AND NOT convalidated
-    expect: rowcount_eq
-    value: 3
-
-  - name: post_loss_cause_vocab_exact
-    sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conname='chk_plants_loss_cause'
-         AND pg_get_constraintdef(oid) LIKE '%pest%' AND pg_get_constraintdef(oid) LIKE '%disease%'
-         AND pg_get_constraintdef(oid) LIKE '%weather%' AND pg_get_constraintdef(oid) LIKE '%transplant_shock%'
-         AND pg_get_constraintdef(oid) LIKE '%unknown%'
-    expect: rowcount_eq
-    value: 1
-
-  - name: post_disposition_vocab_exact
-    sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conname='chk_harvest_log_disposition'
-         AND pg_get_constraintdef(oid) LIKE '%dropped%' AND pg_get_constraintdef(oid) LIKE '%culled%'
-         AND pg_get_constraintdef(oid) LIKE '%aborted%' AND pg_get_constraintdef(oid) LIKE '%damaged%'
-    expect: rowcount_eq
-    value: 1
-
-  - name: post_no_out_of_vocab_loss_cause
+  # MOVED FROM post (2026-08-18). This PREDICTS whether 0c's VALIDATE of chk_plants_loss_cause will
+  # succeed; it is not a post-condition of 0a or 0b, neither of which touches a row. Full table, no
+  # deleted_at filter — the 2026-08-03 outage class is a pre-VALIDATE check scoped to live rows
+  # passing green and then VALIDATE scanning the whole heap and failing on a soft-deleted row.
+  # Safe in `pre` because loss_cause already exists on both live environments (0a's header).
+  - name: pre_no_out_of_vocab_loss_cause
     sql: |
       SELECT 1 FROM public.plants
        WHERE loss_cause IS NOT NULL
@@ -96,13 +109,47 @@ post:
     expect: rowcount_eq
     value: 0
 
-  - name: post_no_negative_qty_lost
+  # MOVED FROM post, same reasoning — and this is the one with teeth. Nothing has ever floored
+  # qty_lost, so unlike loss_cause (guarded in the Lambda since V1.2a-4 S1) this population is
+  # genuinely unconstrained today. A non-zero reading here means 0c WILL fail and the apply must
+  # stop for a data decision, not that the constraint should be forced.
+  - name: pre_no_negative_qty_lost
     sql: |
       SELECT 1 FROM public.plants WHERE qty_lost IS NOT NULL AND qty_lost < 0
     expect: rowcount_eq
     value: 0
 
-  - name: post_no_out_of_vocab_disposition
+sweep:
+  - name: sweep_schema_version_0a_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.25.0-losscapture-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: sweep_schema_version_0b_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.25.1-losscapture-001-checks'
+    expect: rowcount_eq
+    value: 1
+
+  # RE-PHASED from `post_checks_not_yet_validated`. The content is a real assertion about 0b — that
+  # it armed NOT VALID and therefore took no full-table lock — and it is true in exactly one window,
+  # between 0b and 0c. That window is a runbook checkpoint, which is what the sweep phase is for. In
+  # `post` it was mutually exclusive with the convalidated gate and made the phase ungreenable.
+  - name: sweep_checks_armed_not_valid
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
+         AND NOT convalidated
+    expect: rowcount_eq
+    value: 3
+
+  # MOVED FROM post. Predicts 0c's VALIDATE of chk_harvest_log_disposition, so by rights it belongs
+  # with its two siblings in `pre` — but it CANNOT run there: harvest_log.disposition does not exist
+  # until 0a, and a column reference is resolved at parse time, so no EXISTS/self-arming guard can
+  # make this query safe against a pre-0a database. It would raise 42703, not fail cleanly. Sweep is
+  # the earliest phase where it is well-formed. Full table, no deleted_at filter, same outage class.
+  - name: sweep_no_out_of_vocab_disposition
     sql: |
       SELECT 1 FROM public.harvest_log
        WHERE disposition IS NOT NULL
@@ -110,18 +157,84 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # Post-0c only: all three checks convalidated. Gated the same way harvattr's equivalent gate is —
-  # this one only reads true after step 3/4's 0c run, so it is meaningful post-validate, not post-0a.
+post:
+  # SELF-ARMING on 0a's row. Before 0a: the outer WHERE is false, 0 rows, passes — the invariant is
+  # not yet CLAIMED. After 0a: asserts for real, permanently. information_schema is used rather than
+  # a direct column reference precisely so this gate is well-formed on a pre-0a database.
+  - name: post_harvest_log_disposition_present_nullable_defaultless
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.0-losscapture-001')
+         AND NOT EXISTS (
+           SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='harvest_log'
+              AND column_name='disposition'
+              AND is_nullable='YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # SELF-ARMING on 0b's row, NOT 0a's — the CHECKs are 0b's effect, and the 0a->0b window is a real
+  # (if short) state in which arming on 0a's row would red this gate for something that has not gone
+  # wrong. Every phase gate keys on its own phase's receipt for that reason.
+  # Violation-shaped: `count(*) <> 3` inside the armed branch. See the header's inversion note.
+  - name: post_all_three_checks_present
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.1-losscapture-001-checks')
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')) <> 3
+    expect: rowcount_eq
+    value: 0
+
+  # The vocabulary itself, not just the constraint's existence — a CHECK dropped and re-added with a
+  # widened ARRAY would pass post_all_three_checks_present and silently re-open the drift class
+  # BUG-DIVERGENCEVOCAB-001 closed for divergence_type. lambda/plants/loss-cause parity is asserted
+  # separately in code; this is the DB half.
+  - name: post_loss_cause_vocab_exact
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.1-losscapture-001-checks')
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_constraint
+            WHERE conname='chk_plants_loss_cause'
+              AND pg_get_constraintdef(oid) LIKE '%pest%' AND pg_get_constraintdef(oid) LIKE '%disease%'
+              AND pg_get_constraintdef(oid) LIKE '%weather%' AND pg_get_constraintdef(oid) LIKE '%transplant_shock%'
+              AND pg_get_constraintdef(oid) LIKE '%unknown%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_disposition_vocab_exact
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.1-losscapture-001-checks')
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_constraint
+            WHERE conname='chk_harvest_log_disposition'
+              AND pg_get_constraintdef(oid) LIKE '%dropped%' AND pg_get_constraintdef(oid) LIKE '%culled%'
+              AND pg_get_constraintdef(oid) LIKE '%aborted%' AND pg_get_constraintdef(oid) LIKE '%damaged%')
+    expect: rowcount_eq
+    value: 0
+
+  # SELF-ARMING on 0c's row. This is the gate the old draft made unsatisfiable by pairing it, in the
+  # same phase, with an assertion that the same three constraints were NOT convalidated. Keyed on
+  # 0c's own receipt it is exact at every point in the sequence: quiet until 0c runs, then a
+  # permanent invariant that reds if anyone drops and re-adds one of the three NOT VALID.
   - name: post_validate_all_three_checks_convalidated
     sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
-         AND convalidated
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.2-losscapture-001-validate')
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
+                 AND convalidated) <> 3
     expect: rowcount_eq
-    value: 3
+    value: 0
 
-  - name: post_schema_version_recorded
+  # continuous:false — an APPLY-TIME RECEIPT, not a standing invariant. Left continuous it would be
+  # red from the moment this directory reaches the branch until 0c runs, which is the exact backlog
+  # the self-arming above exists to avoid. The 0a/0b receipts live in `sweep` for the same reason.
+  - name: post_schema_version_0c_recorded
+    continuous: false
     sql: |
-      SELECT 1 FROM public.schema_version WHERE version='4.25.0-losscapture-001'
+      SELECT 1 FROM public.schema_version WHERE version='4.25.2-losscapture-001-validate'
     expect: rowcount_eq
     value: 1
