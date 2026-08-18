@@ -7,9 +7,8 @@ const STATIC_CACHE  = `static-${CACHE_VERSION}`
 // V4-SWCACHEID-001: the API cache is no longer ONE cache. It is one cache PER SIGNED-IN SUBJECT,
 // named by apiCacheNameFor() below, because a single shared `api-*` cache served the previous
 // user's bodies to whoever held the device next — including a signed-OUT device, which needs no
-// credential at all to read them. LEGACY_API_CACHE is retained solely as the one-shot delete
-// target on activate; nothing reads or writes it.
-const LEGACY_API_CACHE = `api-${CACHE_VERSION}`
+// credential at all to read them. There is deliberately no API_CACHE constant any more: a single
+// name is the defect, and leaving one in scope invites a future edit to reach for it.
 // V4-PHOTOCDN-001 P2 (supersedes V3-CACHE-001): image cache is now VERSIONED and purged
 // on activate. The old unversioned garden-images cache persisted stale/poisoned entries forever
 // (excluded from purge), and per-request presigned URLs rotate the query string so entries
@@ -144,12 +143,14 @@ self.addEventListener('install', (event) => {
 // per-entry one and is the only thing that cleans a client activating under an UNCHANGED name.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    // V4-SWCACHEID-001 one-shot: delete the BARE legacy `api-${CACHE_VERSION}` unconditionally,
-    // not merely as a consequence of the sweep. The sweep only removes it once CACHE_VERSION has
-    // actually moved, and the deploy-time CACHE_VERSION rewrite is a separate mechanism that can
-    // fail independently — a client built without it keeps the base default forever, the sweep
-    // finds nothing to purge, and the unsegmented entries this change exists to remove survive it.
-    caches.delete(LEGACY_API_CACHE).then(() => caches.keys()).then((keys) => {
+    // V4-SWCACHEID-001: keepCacheKey REJECTS the bare `api-${CACHE_VERSION}`, so the sweep itself
+    // removes the legacy unsegmented cache — including on a client whose deploy-time CACHE_VERSION
+    // rewrite never ran, which is the case the design worried about. Design V100 D5 also called for
+    // a separate unconditional one-shot delete of that name; it was written against the OLD
+    // exact-equality allowlist, which KEPT `api-${CACHE_VERSION}`. Under the predicate it is
+    // unreachable dead code — mutation testing confirmed removing it changed no observable
+    // behaviour — so it is deliberately not here. The purge below is the whole mechanism.
+    caches.keys().then((keys) => {
       return Promise.all(
         keys
           .filter(k => !keepCacheKey(k, CACHE_VERSION)) // old garden-images + prior images-* + every prior-version per-sub partition

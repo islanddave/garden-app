@@ -103,9 +103,15 @@ describe('fail closed — a request with no identity gets no cache, in either di
     online = false
     const anon = await apiGet(sw, apiRequest(null)) // A signs out; device goes offline
 
-    // Mutation: fall back to a shared/'anon' partition on a null sub => 200 with A's body.
+    // Mutation: revert apiCacheNameFor to one shared `api-${version}` for everyone (the exact
+    // pre-Slice-1 shape) => 200 carrying A's 10,247 events.
     expect(anon.status).toBe(503)
     expect(await anon.text()).not.toContain('10247')
+    // ...and no 'anon' partition was invented to hold unidentified data either. Without this line
+    // the test also passes against a build that fails OPEN into a shared anon bucket, because A's
+    // body lives in A's partition and the anon read misses for the WRONG reason.
+    // Mutation: return `api-${version}-u-anon` for a null sub => a partition appears here.
+    expect([...caches.store.keys()]).toEqual([nameFor(SUB_A)])
   })
 
   it('never WRITES an unidentified response into any cache', async () => {
@@ -179,7 +185,7 @@ describe('activate purge', () => {
     expect(caches.store.has(nameFor(SUB_B))).toBe(true)
   })
 
-  it('deletes the bare legacy api- cache unconditionally, and prior-version partitions', async () => {
+  it('deletes the bare legacy api- cache and prior-version partitions', async () => {
     const caches = makeFakeCaches({
       [`api-${CACHE_VERSION}`]: {},              // bare, unsegmented — the pre-Slice-1 cache
       'api-v15-20260101-u-user_old': {},          // a prior version's partition
@@ -188,10 +194,10 @@ describe('activate purge', () => {
     })
     const sw = loadServiceWorker({ caches })
     await dispatchActivate(sw)
-    // Mutation: drop the one-shot caches.delete(LEGACY_API_CACHE) => on a client whose deploy-time
-    // CACHE_VERSION rewrite never ran, the sweep finds nothing stale and the unsegmented entries
-    // this change exists to remove survive the upgrade.
-    expect(caches.delete).toHaveBeenCalledWith(`api-${CACHE_VERSION}`)
+    // The bare name must NOT survive: it holds bodies written before segmentation existed, which
+    // are by definition cross-identity. This is what makes the upgrade actually remove the defect
+    // rather than leave a readable copy of it behind.
+    // Mutation: make keepCacheKey accept `api-${version}` (i.e. keep the legacy cache) => fails.
     expect(caches.store.has(`api-${CACHE_VERSION}`)).toBe(false)
     expect(caches.store.has('api-v15-20260101-u-user_old')).toBe(false)
     expect(caches.store.has(nameFor(SUB_A))).toBe(true)
