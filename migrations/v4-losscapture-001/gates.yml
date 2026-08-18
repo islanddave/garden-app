@@ -1,0 +1,127 @@
+# gates.yml
+# V4-LOSSCAPTURE-001 — plants.loss_cause/qty_lost formalized + CHECK, harvest_log.disposition + CHECK.
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING: run pre gates -> apply 0a-additive-ddl.sql -> post gates.
+#   2. deploy-staging (events + plants Lambdas carrying the loss/disposition write paths) + full
+#      regression pass on staging.
+#   3. STAGING: 0c-validate.sql -> post-validate gates.
+#   4. PROD: run pre gates -> 0a -> post gates -> deploy (Lambdas) -> 0c-validate.sql ->
+#      post-validate gates. Dave-gated apply; confirm the DATABASE_URL host printed by the runner
+#      before applying.
+#   5. Promote (version bump set at ship per L-171).
+#
+# Pre: plants already carries loss_cause/qty_lost (hand-applied, pre-existing on both live
+#      environments per 0a's header) but NEITHER constraint name is in use yet; harvest_log has
+#      none of the three new/touched columns' constraint names in use and no disposition column.
+# Post (0a): harvest_log.disposition exists, nullable, no default; all three CHECKs exist as
+#      NOT VALID (not yet convalidated). Post (0c): all three CHECKs are convalidated.
+
+pre:
+  - name: pre_plants_loss_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants'
+         AND column_name IN ('loss_cause','qty_lost')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_harvest_log_disposition_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='harvest_log'
+         AND column_name='disposition'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_check_constraint_names_free
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_harvest_log_disposition_present_nullable_defaultless
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='harvest_log'
+         AND column_name='disposition'
+         AND is_nullable='YES' AND column_default IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_all_three_checks_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
+    expect: rowcount_eq
+    value: 3
+
+  # continuous: false — only true in the window between 0a and 0c. Once 0c runs, all three read
+  # convalidated and this would red forever afterward.
+  - name: post_checks_not_yet_validated
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
+         AND NOT convalidated
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_loss_cause_vocab_exact
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_plants_loss_cause'
+         AND pg_get_constraintdef(oid) LIKE '%pest%' AND pg_get_constraintdef(oid) LIKE '%disease%'
+         AND pg_get_constraintdef(oid) LIKE '%weather%' AND pg_get_constraintdef(oid) LIKE '%transplant_shock%'
+         AND pg_get_constraintdef(oid) LIKE '%unknown%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_disposition_vocab_exact
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_harvest_log_disposition'
+         AND pg_get_constraintdef(oid) LIKE '%dropped%' AND pg_get_constraintdef(oid) LIKE '%culled%'
+         AND pg_get_constraintdef(oid) LIKE '%aborted%' AND pg_get_constraintdef(oid) LIKE '%damaged%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_no_out_of_vocab_loss_cause
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE loss_cause IS NOT NULL
+         AND loss_cause NOT IN ('pest','disease','weather','transplant_shock','unknown')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_negative_qty_lost
+    sql: |
+      SELECT 1 FROM public.plants WHERE qty_lost IS NOT NULL AND qty_lost < 0
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_out_of_vocab_disposition
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE disposition IS NOT NULL
+         AND disposition NOT IN ('dropped','culled','aborted','damaged')
+    expect: rowcount_eq
+    value: 0
+
+  # Post-0c only: all three checks convalidated. Gated the same way harvattr's equivalent gate is —
+  # this one only reads true after step 3/4's 0c run, so it is meaningful post-validate, not post-0a.
+  - name: post_validate_all_three_checks_convalidated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_plants_loss_cause','chk_plants_qty_lost_nonneg','chk_harvest_log_disposition')
+         AND convalidated
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.25.0-losscapture-001'
+    expect: rowcount_eq
+    value: 1
