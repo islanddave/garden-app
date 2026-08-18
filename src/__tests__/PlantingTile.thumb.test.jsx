@@ -137,21 +137,28 @@ describe('a missing thumb degrades to the in-hand original (6 of 230 live heroes
 // nothing else refreshes these presigns — the heal is the only thing standing between a resumed tile
 // and a blank.
 describe('a tile resumed past the presign TTL heals BEFORE it renders', () => {
+  // The seed names the THUMB tier because the cache slot it has to age is the thumb's own
+  // (V4-TIERBLINDMINT-001) — seeding the full slot leaves the thumb slot to _seed, which stamps it
+  // at NOW and closes the elapsed gate. That is the whole point: the tile's two derivatives no
+  // longer share one expiry.
   it('a past-TTL foreground re-mints at the THUMB step (not only at the end of the chain)', async () => {
     fetchSpy.mockResolvedValue({ view_url: MINTED })
-    __seedPhotoImgUrl('ph9', `${THUMB}&i=9`, Date.now() - PRESIGN_TTL_MS - 1)   // aged → elapsed gate open
+    __seedPhotoImgUrl('ph9', `${THUMB}&i=9`, Date.now() - PRESIGN_TTL_MS - 1, 'thumb')   // aged → elapsed gate open
     const { container } = render(<PlantingTile planting={withThumb()} />)
     expect(src(container)).toBe(`${THUMB}&i=9`)                     // still on the thumb: step 0, not final
     onScreen(container.querySelector('img'))
     foreground()
     await waitFor(() => expect(viewUrlCalls()).toHaveLength(1))
-    expect(String(viewUrlCalls()[0][0])).toBe('/api/photos/view-url/ph9')
+    // pl9 is the PLANT, ph9 is the PHOTO — and the heal now names the tier it is renewing. Without
+    // `?tier=thumb` this mint returns the ~2.97 MB ORIGINAL and the tile adopts it for the rest of
+    // its life: no blank, no failed request, and every byte of the thumbnail saving gone.
+    expect(String(viewUrlCalls()[0][0])).toBe('/api/photos/view-url/ph9?tier=thumb')
     await waitFor(() => expect(src(container)).toBe(MINTED))        // healed with ZERO failed requests
   })
 
   it('an off-screen tile is still skipped — the fix does not reopen the P5 grid storm', async () => {
     fetchSpy.mockResolvedValue({ view_url: MINTED })
-    __seedPhotoImgUrl('ph9', `${THUMB}&i=9`, Date.now() - PRESIGN_TTL_MS - 1)
+    __seedPhotoImgUrl('ph9', `${THUMB}&i=9`, Date.now() - PRESIGN_TTL_MS - 1, 'thumb')
     render(<PlantingTile planting={withThumb()} />)                 // no onScreen() → 0×0 rect = off-screen
     foreground()
     await act(async () => {})
