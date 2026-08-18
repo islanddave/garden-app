@@ -32,8 +32,14 @@
 //
 // The CALM states above still render nothing — that is the locked Slice 5a design (on calm days the
 // hero leads), and this is a fact ADDED to an existing band, not a reason to introduce a new one.
+//
+// `intervalDays` (additive, BUG-CADENCEONEDAY-001) collapses the ACTIVE band to its due-today form
+// for a one-day cadence: gold, headline "Due today", qualified "· daily" so the reader learns WHY
+// this band is here every single morning instead of reading it as a debt that keeps growing. The
+// elapsed-time fact survives verbatim in the "Last watered {date}" line the band already carries —
+// which is why the band can drop the days-overdue count without dropping any information.
 import React from 'react'
-import { severityTier, SEVERITY_STYLES, overdueLabel } from '../lib/waterDue.js'
+import { severityTier, SEVERITY_STYLES, overdueLabel, isDailyCadence } from '../lib/waterDue.js'
 import Icon from './Icon.jsx'
 
 const SIZE_PX = { sm: 16, md: 20, lg: 24 }
@@ -45,7 +51,7 @@ function fmtShortDate(value) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export default function CareStatus({ nextWaterAt, lastWateredAt, locationType, size = 'md', variant = 'band' }) {
+export default function CareStatus({ nextWaterAt, lastWateredAt, locationType, intervalDays, size = 'md', variant = 'band' }) {
   // CALM — no schedule at all.
   if (nextWaterAt == null) return null
 
@@ -55,8 +61,9 @@ export default function CareStatus({ nextWaterAt, lastWateredAt, locationType, s
   if (daysOver < 0) return null
 
   // ACTIVE — due today or overdue.
-  const tier = severityTier(nextWaterAt, locationType)
-  const label = overdueLabel(nextWaterAt)      // 'due today' | '1 day overdue' | 'N days overdue'
+  const daily = isDailyCadence(intervalDays)
+  const tier = severityTier(nextWaterAt, locationType, intervalDays)
+  const label = overdueLabel(nextWaterAt, intervalDays)   // 'due today' | '1 day overdue' | 'N days overdue'
   const style = SEVERITY_STYLES[tier]
   const headline = label === 'due today' ? 'Due today' : 'Overdue'
   const iconPx = SIZE_PX[size] ?? SIZE_PX.md
@@ -89,6 +96,9 @@ export default function CareStatus({ nextWaterAt, lastWateredAt, locationType, s
           <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{headline}</span>
           {label !== 'due today' && (
             <span style={{ fontWeight: 400, fontSize: '0.9rem' }}> · {label}</span>
+          )}
+          {daily && (
+            <span style={{ fontWeight: 400, fontSize: '0.9rem' }}> · daily</span>
           )}
         </span>
         {lastWatered && (

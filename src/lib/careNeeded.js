@@ -7,6 +7,11 @@
 // already emits. A planting present in two buckets yields two rows (two distinct needs/events).
 // Dormant carries no action and is excluded from the actionable list.
 
+// isDailyCadence is imported rather than re-derived so "what counts as daily" has ONE definition
+// across the two surfaces that answer it from two different inputs — this file reads the daily
+// plan's `interval`, CareStatus reads entity_memory's `watering_interval_days` — and cannot drift.
+import { isDailyCadence } from './waterDue.js'
+
 // Bucket -> the event_type a one-tap log writes (identical to the Log form's write path so the
 // events Lambda side effects — critter award + entity_memory.next_water_at — fire). dormant: none.
 export const NEED_EVENT_TYPE = {
@@ -42,6 +47,19 @@ export function needReason(need, it) {
   switch (need) {
     case 'water_due':
       if (it.rain_note) return it.rain_note
+      // BUG-CADENCEONEDAY-001 — a daily-cadence row never says "overdue". `overdue_by = dW - wi` on
+      // wi=1 is just "days since watering, minus one": it counts the calendar, not a deficit, and
+      // across the ~80 plantings that carry wi=1 it renders a met-then-skipped cadence as a growing
+      // backlog. Naming the cadence is the honest replacement — it explains why the row is back
+      // again this morning. Past WATER_STALE_DAYS the row states the RECORD as a fact instead
+      // ("last watered 5d ago"), the same claim-what-you-know move waterStaleness makes below: a
+      // genuinely long gap on a daily plant is still visible, it is just no longer an accusation.
+      if (isDailyCadence(it.interval)) {
+        const ds = it.days_since
+        return (typeof ds === 'number' && ds >= WATER_STALE_DAYS)
+          ? 'Daily — last watered ' + ds + 'd ago'
+          : 'Daily — due today'
+      }
       if (typeof it.overdue_by === 'number' && it.overdue_by > 0) return it.overdue_by + 'd overdue'
       return 'Due today'
     case 'no_history':
@@ -66,6 +84,10 @@ export function needReason(need, it) {
 // never disagree (one mental model — L-075). Non-water needs are "needed today" => gold.
 export function needTier(need, it) {
   if (need === 'water_due') {
+    // Daily cadence pins to gold ("needed today") and never escalates on elapsed days — same rule as
+    // severityTier, so the Today row and the detail band still agree (L-075). Colour is not the
+    // channel carrying the long-gap signal anyway; needReason's text is (SC 1.4.1).
+    if (isDailyCadence(it.interval)) return 'gold'
     const o = it.overdue_by
     if (typeof o === 'number') {
       if (o >= 3) return 'terra-bold'
@@ -98,6 +120,12 @@ export function buildCareNeeded(plan) {
     const items = Array.isArray(plan[need]) ? plan[need] : []
     for (const it of items) {
       if (it && it.done) continue
+      // BUG-CADENCEONEDAY-001 — overdueBy is suppressed AT THE SOURCE for a daily cadence rather
+      // than filtered at each render site. It is meaningless there (see needReason), and every
+      // downstream consumer — rowSeverity today, whatever reads the row next — then gets the right
+      // answer without having to know the rule. The raw engine value is still on the plan payload
+      // for anyone who genuinely wants it; `interval` rides along so the rule stays checkable.
+      const daily = isDailyCadence(it.interval)
       rows.push({
         key: it.id + ':' + need,
         plantingId: it.id,
@@ -109,7 +137,8 @@ export function buildCareNeeded(plan) {
         eventType: NEED_EVENT_TYPE[need],
         reason: needReason(need, it),
         tier: needTier(need, it),
-        overdueBy: typeof it.overdue_by === 'number' ? it.overdue_by : null,
+        interval: typeof it.interval === 'number' ? it.interval : null,
+        overdueBy: (!daily && typeof it.overdue_by === 'number') ? it.overdue_by : null,
         inGround: !!it.in_ground,
         never: !!it.never,
       })
@@ -124,7 +153,10 @@ export function buildCareNeeded(plan) {
 const WATER_NEEDS = new Set(['water_due', 'no_history'])
 
 // Per-row severity. A water row is worth its presence (1) plus its overdue days; anything else is
-// present but not on an overdue clock, so it scores a fraction of one row.
+// present but not on an overdue clock, so it scores a fraction of one row. A daily-cadence water row
+// therefore scores exactly its presence — buildCareNeeded nulls its overdueBy — which is the point:
+// a 60-row daily group should win the auto-expand sort on its MASS, not on a phantom day-backlog
+// that would let 36% of the garden out-shout every genuinely-lapsed weekly planting.
 function rowSeverity(r) {
   if (!WATER_NEEDS.has(r.need)) return 0.5
   return 1 + (typeof r.overdueBy === 'number' && r.overdueBy > 0 ? r.overdueBy : 0)
@@ -191,6 +223,23 @@ export function autoExpandKeys(groups, budget = EXPAND_ROW_BUDGET) {
     keys.add(g.key); used += n
   }
   return keys
+}
+
+// ── Effort denomination (BUG-CADENCEONEDAY-001) ─────────────────────────────────────────────────
+// A row count is the wrong unit for this list. Dave's watering is ONE bulk action fanning out to
+// ~200 event rows in 14 seconds — 190 rows on 08-07 all created 13:03:08→13:03:22 — so "80 plantings
+// need water" prices a single tap as eighty jobs. That mis-pricing is what makes a correct daily
+// cadence feel unpayable. This note re-denominates the same list in the unit the work is actually
+// done in, next to the button that does it. It does not hide, reorder or exclude a single row.
+//
+// Only past EXPAND_ROW_BUDGET rows: a list that fits one chunk on screen is already legible as an
+// amount of work, and re-explaining it there would be noise. Reuses that tuned constant rather than
+// inventing a second threshold that would then need its own justification.
+export function bulkWaterNote(bulkCount, totalRows) {
+  if (!(typeof bulkCount === 'number' && bulkCount > EXPAND_ROW_BUDGET)) return null
+  return bulkCount >= totalRows
+    ? 'One bulk water covers all ' + bulkCount + '.'
+    : 'One bulk water covers ' + bulkCount + ' of these ' + totalRows + '.'
 }
 
 // ── Watering staleness (V4-WATERMATH-001 / skeptic seat) ────────────────────────────────────────

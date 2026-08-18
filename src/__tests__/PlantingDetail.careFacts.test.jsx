@@ -90,3 +90,37 @@ describe('PlantingDetail — the Details tab is sticky (no forced reset)', () =>
     expect(screen.getByText('Last watered')).toBeTruthy()
   })
 })
+
+// BUG-CADENCEONEDAY-001 — the WIRING guard. CareStatus's own suite proves the band renders the
+// daily form when told the cadence; nothing there proves the page ever tells it. Drop the
+// intervalDays prop at the call site and the band silently reverts to "2 days overdue" with every
+// unit test still green, which is precisely the failure mode this case exists to catch.
+describe('PlantingDetail — the care band is told the watering cadence', () => {
+  const withInterval = (n) => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, watering_interval_days: n })
+      if (path.startsWith('/api/events')) return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+  }
+
+  it('a daily planting reads as a cadence, not a two-day debt', async () => {
+    withInterval(1)
+    renderPage()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    const band = screen.getByRole('status', { name: 'Watering due today' })
+    expect(band.textContent).toContain('Due today')
+    expect(band.textContent).toContain('daily')
+    expect(band.textContent).not.toContain('overdue')
+    expect(band.textContent).toContain('Aug 13')      // the elapsed fact survives
+  })
+
+  it('a longer cadence keeps its overdue count at the identical next_water_at', async () => {
+    withInterval(2)
+    renderPage()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    const band = screen.getByRole('status', { name: /Watering .*overdue/i })
+    expect(band.textContent).toContain('2 days overdue')
+    expect(band.textContent).not.toContain('daily')
+  })
+})

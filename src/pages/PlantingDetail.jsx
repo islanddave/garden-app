@@ -663,7 +663,7 @@ export default function PlantingDetail() {
       {/* Slice 5a — live care band: renders only when this planting needs water (calm → null).
           last_watered_at rides in the same record load, so surfacing it here is free and lifts
           "when did I last water this" out of the Details fly-up's non-default Care tab. */}
-      <CareStatus nextWaterAt={pl.next_water_at} lastWateredAt={pl.last_watered_at} locationType={pl.location_type} />
+      <CareStatus nextWaterAt={pl.next_water_at} lastWateredAt={pl.last_watered_at} locationType={pl.location_type} intervalDays={pl.watering_interval_days} />
 
       {/* V4-OVERWINTERCARE-001 — the writer for the overwintering care attribute, directly under the
           band it changes: marking a planting overwintering is what holds it OUT of water_due and

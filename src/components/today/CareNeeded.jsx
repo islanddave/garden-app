@@ -11,6 +11,7 @@ import Icon from '../Icon.jsx'
 import PhotoImg from '../PhotoImg.jsx'
 import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
+  bulkWaterNote,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
 } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
@@ -470,6 +471,19 @@ export default function CareNeeded({ plan }) {
               })}
             </div>
           )}
+
+          {/* BUG-CADENCEONEDAY-001 — the list's true unit, stated directly under the button that
+              applies it. Counts the SAME candidate set the pill logs (bed-wait exclusions included),
+              so the two numbers can never disagree. Ambient copy, same weight as the staleness note
+              above: a fact about the work, not another thing to do. */}
+          {(() => {
+            const note = bulkWaterNote(candidatesFor('watering').length, total)
+            return note && (
+              <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, padding: '0 2px', marginTop: -4 }}>
+                {note}
+              </div>
+            )
+          })()}
 
           {groups.map(g => (
             <Group key={g.key} group={g} expanded={isExpanded(g)}

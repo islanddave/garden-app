@@ -84,3 +84,57 @@ describe('CareStatus — active band', () => {
     expect(region.style.backgroundColor).toBe(probe.style.backgroundColor)
   })
 })
+
+// BUG-CADENCEONEDAY-001 — the band's daily-cadence form. Every case below is asserted against the
+// SAME nextWaterAt on a 3-day cadence, because the whole point is that the two do not collapse into
+// each other: five days past due on a 3-day plant is a real deficit and must keep saying so.
+describe('CareStatus — daily cadence (intervalDays=1)', () => {
+  const FIVE_DAYS_LATE = () => ISO(-5 * DAY - 5000)
+
+  it('reads "Due today · daily" instead of an accumulating overdue count', () => {
+    const { container } = render(<CareStatus nextWaterAt={FIVE_DAYS_LATE()} intervalDays={1} locationType={null} />)
+    expect(container.firstChild).not.toBeNull()           // the band is NOT suppressed
+    expect(container.textContent).toContain('Due today')
+    expect(container.textContent).toContain('daily')
+    expect(container.textContent).not.toContain('Overdue')
+    expect(container.textContent).not.toContain('5 days overdue')
+  })
+
+  it('keeps the elapsed fact — the last-watered date is what carries the long gap', () => {
+    const { container } = render(
+      <CareStatus nextWaterAt={FIVE_DAYS_LATE()} lastWateredAt="2026-08-13" intervalDays={1} locationType={null} />,
+    )
+    expect(container.textContent).toContain('Last watered')
+    expect(container.textContent).toContain('Aug 13')
+  })
+
+  it('announces the due state, not a debt', () => {
+    const { getByRole } = render(<CareStatus nextWaterAt={FIVE_DAYS_LATE()} intervalDays={1} locationType={null} />)
+    expect(getByRole('status').getAttribute('aria-label')).toBe('Watering due today')
+  })
+
+  it('stays gold — no tier escalation on elapsed days', () => {
+    const { getByRole } = render(<CareStatus nextWaterAt={FIVE_DAYS_LATE()} intervalDays={1} locationType={null} />)
+    const probe = document.createElement('div')
+    probe.style.backgroundColor = SEVERITY_STYLES.gold.bg
+    expect(getByRole('status').style.backgroundColor).toBe(probe.style.backgroundColor)
+  })
+
+  it('does NOT flatten a wi>=2 cadence at the identical nextWaterAt', () => {
+    const { container, getByRole } = render(<CareStatus nextWaterAt={FIVE_DAYS_LATE()} intervalDays={3} locationType={null} />)
+    expect(container.textContent).toContain('Overdue')
+    expect(container.textContent).toContain('5 days overdue')
+    expect(container.textContent).not.toContain('daily')
+    const probe = document.createElement('div')
+    probe.style.backgroundColor = SEVERITY_STYLES['terra-bold'].bg
+    expect(getByRole('status').style.backgroundColor).toBe(probe.style.backgroundColor)
+  })
+
+  it('an absent interval behaves exactly as before the change', () => {
+    // The Dashboard tile groups per PROJECT, where plantings legitimately mix intervals, so it
+    // passes nothing. That caller must keep its old rendering, not inherit the daily form.
+    const { container } = render(<CareStatus nextWaterAt={FIVE_DAYS_LATE()} locationType={null} />)
+    expect(container.textContent).toContain('5 days overdue')
+    expect(container.textContent).not.toContain('daily')
+  })
+})

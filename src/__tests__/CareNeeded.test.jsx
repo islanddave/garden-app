@@ -308,6 +308,54 @@ describe('CareNeeded — Slice 7', () => {
     })
   })
 
+  // BUG-CADENCEONEDAY-001 — the daily cohort as it actually renders. Shape from prod 2026-08-18:
+  // 82 of 228 plantings on interval 1, last bulk-watered 08-13 (days_since 5), sitting beside
+  // longer-cadence rows that must keep their overdue escalation.
+  describe('daily cadence framing', () => {
+    const dailyPlan = () => ({
+      hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10 },
+      rain_skipped: [],
+      water_due: [
+        ...Array.from({ length: 12 }, (_, i) => ({
+          id: 'bag' + i, name: 'Bag ' + i, project: 'Bag Area', project_id: 'prBag',
+          interval: 1, days_since: 5, overdue_by: 4, in_ground: false,
+        })),
+        // Same location group on purpose — the two cadences have to read differently SIDE BY SIDE,
+        // which is exactly how Bag Area renders live (fabric-bag tomatoes at 1, blueberries at 7).
+        { id: 'bb1', name: 'Blueberry Bag', project: 'Bag Area', project_id: 'prBag', interval: 7, days_since: 11, overdue_by: 4, in_ground: false },
+      ],
+      no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
+    })
+
+    it('shows the daily rows as a cadence and the wi>=2 row as overdue, in the same list', () => {
+      render(<CareNeeded plan={dailyPlan()} />)
+      expect(screen.getAllByText('Daily — last watered 5d ago').length).toBe(12)
+      expect(screen.getByText('4d overdue')).toBeTruthy()   // the 7-day row keeps its backlog
+    })
+
+    it('keeps every daily planting visible and one-tap loggable', async () => {
+      render(<CareNeeded plan={dailyPlan()} />)
+      expect(screen.getByText('Bag 0')).toBeTruthy()
+      expect(screen.getAllByRole('button', { name: /^Log Water for/i }).length).toBe(13)
+      fireEvent.click(screen.getByRole('button', { name: /^Log Water for Bag 0$/i }))
+      await waitFor(() => expect(screen.queryByText('Bag 0')).toBeNull())
+      const [, opts] = fetchMock.mock.calls.find(c => c[0] === '/api/events')
+      expect(JSON.parse(opts.body).event_type).toBe('watering')
+      expect(JSON.parse(opts.body).plant_id).toBe('bag0')
+    })
+
+    it('denominates the list in bulk actions beside the button that performs one', () => {
+      render(<CareNeeded plan={dailyPlan()} />)
+      expect(screen.getByText('One bulk water covers all 13.')).toBeTruthy()
+      expect(screen.getByRole('button', { name: /^Log all watering \(13\)$/i })).toBeTruthy()
+    })
+
+    it('stays silent on a list short enough to read as an amount of work', () => {
+      render(<CareNeeded plan={plan()} />)     // two rows
+      expect(screen.queryByText(/One bulk water covers/i)).toBeNull()
+    })
+  })
+
   it('bulk undo failure keeps rows hidden + error toast', async () => {
     let n = 0
     fetchMock.mockImplementation((path, opts) => {
