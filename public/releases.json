@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.38.0",
+    "date": "2026-08-18",
+    "highlights": [
+      "Every screen now has the same header. Today, Garden, Harvests, Findings and Dashboard used to show a wide search box under the title, while every other screen showed search as a small round button beside Snap and Harvest. Those five now match the rest — three small buttons, no search box. They keep their titles and gain no back arrow, because a back arrow on a main tab has nowhere sensible to go.",
+      "The header is also shorter on those five screens, which gives back about 36 pixels of the page to what you actually came to look at. The title lettering was re-checked against the photo backdrop at the new height so it stays readable over a bright picture."
+    ]
+  },
+  {
     "version": "4.37.0",
     "date": "2026-08-18",
     "highlights": [
