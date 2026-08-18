@@ -565,6 +565,55 @@ export async function recordWatchImpressions(sql, { userId, shownOn, served, sno
   }
 }
 
+// V4-WATCHEXCLUDEDLOG-001 — the NOT-SHOWN set, persisted at row grain.
+//
+// Panel Q2:65 marks this a MANDATORY rider on the sibling-anchor restriction, and the reason is not
+// completeness for its own sake: restricting the anchor moved tomato and pepper — the only two crops
+// that have ever reached n>=20 first-picked plantings — out of the watch list as `no_anchor`
+// exclusions. Without a row-level record, the model's own false-negative region (plantings it
+// declined that were picked anyway) is unrecoverable, and a resolver that quietly stops watching a
+// crop is indistinguishable from a crop nobody grew.
+//
+// The {metric:'watch_excluded'} console line below is NOT this. It is an aggregate census with no
+// plant_id: it cannot be joined to event_log, cannot be read in SQL beside the impression and
+// dismissal tables, and lives under a log-retention policy. It stays as the per-request heartbeat.
+//
+// SAME POSTURE AS recordWatchImpressions, deliberately — non-fatal by construction, one statement,
+// explicit ::casts on every bind (scalar binds in a SELECT list and nullable array elements are both
+// untypeable for Neon's driver, and inside this try/catch that would present as the table silently
+// never populating), ON CONFLICT DO NOTHING against uq_watch_exclusion_day so N Today opens in one
+// day collapse to one row per reason. `reason` is in the conflict key because a verdict legitimately
+// changes within a day (a candidate at breakfast is `dismissed` by noon) and both were true.
+export async function recordWatchExclusions(sql, { userId, evaluatedOn, excludedRows }) {
+  try {
+    // No ET day to stamp -> write nothing. Guessing a civil day would corrupt the dedupe grain, and
+    // binding NULL into a NOT NULL column would fail the whole batch anyway.
+    if (!evaluatedOn) return 0;
+    const rows = (excludedRows ?? []).filter((r) => r?.plant_id != null && r?.reason != null);
+    if (rows.length === 0) return 0;
+    await sql`
+      INSERT INTO public.watch_exclusion
+        (user_id, plant_id, evaluated_on, reason, model_version)
+      SELECT ${userId}::text, u.plant_id, ${evaluatedOn}::date, u.reason, ${WATCH_MODEL_VERSION}::text
+        FROM unnest(
+               ${rows.map((r) => r.plant_id)}::uuid[],
+               ${rows.map((r) => r.reason)}::text[]
+             ) AS u(plant_id, reason)
+      ON CONFLICT (user_id, plant_id, evaluated_on, reason) DO NOTHING
+    `;
+    console.log(JSON.stringify({
+      metric: 'watch_exclusions', model_version: WATCH_MODEL_VERSION, evaluated_on: evaluatedOn,
+      rows: rows.length,
+    }));
+    return rows.length;
+  } catch (e) {
+    console.warn(JSON.stringify({
+      msg: 'watch_exclusion write failed — GET response unaffected', error: e?.message,
+    }));
+    return 0;
+  }
+}
+
 // GET /api/harvests/watch
 export async function handleWatchGet(ctx) {
   const { sql, householdIds, userId, tz, query = {} } = ctx;
@@ -576,18 +625,14 @@ export async function handleWatchGet(ctx) {
   const nursery = resolveNurseryOffset(rows);
   const fruiting = resolveFruitingInterval(rows);
 
-  const { candidates, excluded, snoozed } = buildWatchList(rows, etToday, {
+  const { candidates, excluded, excludedRows, snoozed } = buildWatchList(rows, etToday, {
     nurseryOffsetDays: nursery.days, derivedEnabled: resolveDerivedEnabled(ctx),
     fruitingIntervalDays: fruiting.days,
   });
 
-  // PANEL Q2: persist the resolver's exclusion breakdown, do not merely return it. v1 is one
-  // structured JSON line per invocation — CloudWatch retains it, so the model's own false-positive
-  // region stays on record across resolver changes (the sibling restriction removed the only two
-  // n>=20 calibration crops; this line is the audit trail of what the restriction excluded). The
-  // filed impression log now exists too — recordWatchImpressions below writes the row-level
-  // denominator to public.watch_impression; this line stays as the aggregate-level view of the
-  // same request.
+  // The per-request heartbeat: one structured line per invocation, aggregate grain. It is NOT the
+  // panel Q2 rider — recordWatchExclusions below is (see its header). This line stays because it
+  // costs nothing and reads the census at a glance in CloudWatch without a query.
   console.log(JSON.stringify({
     metric: 'watch_excluded', model_version: WATCH_MODEL_VERSION, et_today: etToday,
     total_watching: candidates.length, snoozed: snoozed.length, excluded,
@@ -601,6 +646,10 @@ export async function handleWatchGet(ctx) {
   // BEFORE the response goes out but never in its way — the writer is non-fatal by construction
   // and a failure (including the migration not having landed yet) cannot affect this GET.
   await recordWatchImpressions(sql, { userId, shownOn: etToday, served, snoozed });
+
+  // V4-WATCHEXCLUDEDLOG-001 — the declined half of the same census. Sequenced AFTER the impression
+  // write and equally non-fatal: neither writer can fail the GET, and neither can fail the other.
+  await recordWatchExclusions(sql, { userId, evaluatedOn: etToday, excludedRows });
 
   return {
     statusCode: 200,

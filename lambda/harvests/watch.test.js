@@ -332,8 +332,10 @@ describe('ranking and payload', () => {
   });
 
   it('empty / null input is an empty list, never a throw', () => {
-    expect(buildWatchList(null, TODAY)).toEqual({ candidates: [], excluded: {}, snoozed: [] });
-    expect(buildWatchList([], TODAY)).toEqual({ candidates: [], excluded: {}, snoozed: [] });
+    // excludedRows (V4-WATCHEXCLUDEDLOG-001) is part of the return shape — toEqual pins it so a
+    // future key cannot be added without a deliberate edit here.
+    expect(buildWatchList(null, TODAY)).toEqual({ candidates: [], excluded: {}, excludedRows: [], snoozed: [] });
+    expect(buildWatchList([], TODAY)).toEqual({ candidates: [], excluded: {}, excludedRows: [], snoozed: [] });
   });
 });
 

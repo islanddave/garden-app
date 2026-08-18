@@ -89,6 +89,14 @@ export const FRUITING_TO_PICK_DAYS_FALLBACK = 18;
 // melon 168h / watermelon 240h vs basil 24h — it would clamp exactly the wrong crops and miss the
 // fast-flip melons entirely). No schema column encodes observable velocity; the refit supplies the
 // crop-level answer once the dismissal table has real taps.
+//
+// THE REFIT THAT REPLACES THIS VALUE IS dismissalRefit.js — do not hand-compute a percentile here.
+// §4.4's plan as written is not sound (repeated dismissals on one planting are a correlated series,
+// the estimator ignores right-censoring on the plantings that never fruit, and the n>=20-per-crop
+// gate can essentially never fire); V4-DISMISSREFITSTATS-001 built those three corrections into that
+// module as REFUSALS, so a fit that should not have been run returns a named reason instead of a
+// number. When it does produce one, replace this constant WITH its provenance — n in PLANTINGS, the
+// censoring fraction, the partition it was fitted on — the way maturityCalibration.js records its.
 export const WATCH_SUPPRESS_DAYS = 10;
 
 // V4-ANCHORBASE-001. OFF, and off is the decision, not a placeholder.
@@ -981,6 +989,12 @@ export function projectSnoozedRow(row, verdict) {
 // list is explainable at the API boundary instead of being an unreadable silence — and the snoozed
 // rows themselves, so the tail can print each suppressed planting with its return date (panel Q4).
 //
+// V4-WATCHEXCLUDEDLOG-001 adds `excludedRows`: the SAME verdicts as the `excluded` census, at row
+// grain instead of count grain. The census is what goes on the wire (a client needs "why is this
+// list empty", not a list of ids); excludedRows is what gets PERSISTED, because a count can never be
+// joined to event_log to ask whether the model was right to decline a particular planting. Both are
+// derived from one pass over one verdict per row, so they cannot disagree.
+//
 // RANKING NOTE (panel Q3: "the returning row must not come back at the top"). No code change was
 // needed for that and none should be added: rankWatchCandidates orders by days_watching ascending
 // (newest watch first) and suppression never touches check_from, so a returning row re-enters
@@ -988,12 +1002,17 @@ export function projectSnoozedRow(row, verdict) {
 export function buildWatchList(rows, etToday, opts = {}) {
   const candidates = [];
   const excluded = {};
+  const excludedRows = [];
   const snoozed = [];
   for (const row of rows ?? []) {
     const verdict = classifyWatchCandidate(row, etToday, opts);
     if (verdict.eligible) candidates.push(projectWatchRow(row, verdict, etToday));
     else {
       excluded[verdict.reason] = (excluded[verdict.reason] ?? 0) + 1;
+      // plant_id may be absent on a malformed row; such a row cannot be persisted (the column is
+      // NOT NULL and FK'd) but MUST still count in the census, which is why the guard is here and
+      // not above.
+      if (row?.plant_id != null) excludedRows.push({ plant_id: row.plant_id, reason: verdict.reason });
       if (verdict.reason === 'dismissed' || verdict.reason === 'basis_unchanged') {
         snoozed.push(projectSnoozedRow(row, verdict));
       }
@@ -1003,7 +1022,7 @@ export function buildWatchList(rows, etToday, opts = {}) {
   snoozed.sort((a, b) => String(a.suppressed_until ?? '9999').localeCompare(String(b.suppressed_until ?? '9999'))
     || String(a.name ?? '').localeCompare(String(b.name ?? ''))
     || String(a.plant_id).localeCompare(String(b.plant_id)));
-  return { candidates: rankWatchCandidates(candidates), excluded, snoozed };
+  return { candidates: rankWatchCandidates(candidates), excluded, excludedRows, snoozed };
 }
 
 // ── Dismissal snapshot ───────────────────────────────────────────────────────────────────────────

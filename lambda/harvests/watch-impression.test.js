@@ -143,9 +143,12 @@ describe('GET /api/harvests/watch — the impression write', () => {
     const res = await handleWatchGet(ctx(sql, { query: { limit: '200' } }));
     expect(res.statusCode).toBe(200);
 
-    expect(sql.calls).toHaveLength(2); // candidate query + ONE impression batch, never N inserts
-    const insert = sql.calls[1];
-    expect(insert.text).toMatch(/INSERT INTO public\.watch_impression/);
+    // ONE impression batch, never N inserts. Counted by matching the statement rather than by the
+    // total call count: the GET also writes the exclusion log (V4-WATCHEXCLUDEDLOG-001), and a bare
+    // length assertion would make this test fail for a reason that has nothing to do with it.
+    const impressionInserts = sql.calls.filter((c) => /INSERT INTO public\.watch_impression/.test(c.text));
+    expect(impressionInserts).toHaveLength(1);
+    const insert = impressionInserts[0];
 
     const b = impressionBinds(insert);
     expect(b.userId).toBe(USER);
@@ -212,12 +215,14 @@ describe('GET /api/harvests/watch — the impression write', () => {
     }
   });
 
-  it('issues ZERO insert statements when nothing was served and nothing is snoozed', async () => {
-    // habit_not_watched excludes the row without snoozing it — there is nothing to record.
+  it('issues ZERO impression inserts when nothing was served and nothing is snoozed', async () => {
+    // habit_not_watched excludes the row without snoozing it — there is no IMPRESSION to record.
+    // The row is still a real exclusion, so the exclusion log does write it: "never seen" and "the
+    // resolver declined it" are different facts and only the first one is this table's business.
     const sql = makeSql([[row({ harvest_habit: null })]]);
     const res = await handleWatchGet(ctx(sql, { query: {} }));
     expect(res.statusCode).toBe(200);
-    expect(sql.calls).toHaveLength(1); // the candidate query only
+    expect(sql.calls.filter((c) => /INSERT INTO public\.watch_impression/.test(c.text))).toHaveLength(0);
   });
 
   it('refuses to write without an ET day rather than corrupting the day grain', async () => {
