@@ -22,6 +22,7 @@ import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STAT
 import { validateClear, approxOrNull, validateAcquiredMature } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 import { deriveAnchorOnCreate } from './anchorCreate.js';
+import { setOverwinterCore } from './overwinterAttr.js';
 
 
 // V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
@@ -154,6 +155,11 @@ export const handler = async (event) => {
   // shape. POST-only; the destructive half (soft-deleting the losers) is gated behind an explicit
   // loser_ids list, and `dry_run: true` returns the full plan without writing anything.
   const mergeMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/merge$/);
+  // V4-OVERWINTERCARE-001: the writer for the overwintering care attribute. New-endpoint-only and
+  // additive — idMatch's /([^/]+)$/ does not match the /overwinter suffix, so no existing route
+  // changes shape. PATCH-only, symmetric set/clear like /archive. The row it writes lives in
+  // care_profile, NOT on the planting; see overwinterAttr.js for why it is not a PUT column.
+  const overwinterMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/overwinter$/);
 
   try {
     // ── V4-RESTORESURFACE-001 — the recovery path for plantings (audit I9) ───────────────────────
@@ -323,6 +329,23 @@ export const handler = async (event) => {
       return resp(r.status, r.body);
     }
 
+    // ── V4-OVERWINTERCARE-001 — set / clear the overwintering care attribute ─────────────────────
+    //
+    // All of the work is in overwinterAttr.js, which is import-able by a test (index.js is not —
+    // it pulls @neondatabase/serverless + @clerk/backend + @aws-sdk/* at module load, which is why
+    // every other guard in this directory is source-text only). This branch stays a thin adapter
+    // deliberately: everything worth asserting about the write is then asserted against a running
+    // function rather than a regex over its source.
+    if (overwinterMatch) {
+      const plantId = overwinterMatch[1];
+      if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
+      let body;
+      try { body = JSON.parse(event.body ?? '{}'); }
+      catch { return resp(400, { error: 'Invalid JSON body' }); }
+      const r = await setOverwinterCore(sql, { plantId, householdIds, body });
+      return resp(r.status, r.body);
+    }
+
     if (archiveMatch) {
       const plantId = archiveMatch[1];
       if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
@@ -413,9 +436,22 @@ export const handler = async (event) => {
                    em.next_water_at,
                    em.last_watered_at + (COALESCE(em.watering_interval_days, 4)::int * INTERVAL '1 day')
                  ) AS next_water_at,
-                 em.location_type, em.watering_interval_days, em.last_watered_at
+                 em.location_type, em.watering_interval_days, em.last_watered_at,
+                 -- V4-OVERWINTERCARE-001 read-back. The PATCH writer below has no surface to read
+                 -- itself from without this: the attribute lives in care_profile, not on the
+                 -- planting, so the detail page would have shown "not set" the moment it reloaded
+                 -- and the user would have re-set it forever. Exactly the write→read asymmetry
+                 -- class BUG-PLANTREAD-001 and V4-ACQMATURE-001 already cost this file twice.
+                 -- LEAF SCOPE ONLY, on purpose. v_resolved_care merges system||cultivar||leaf, so
+                 -- reading the resolved profile here would show an inherited cultivar-level value
+                 -- as though it were this planting's setting — and the Clear button would then
+                 -- appear to do nothing, because clearing the leaf row cannot remove a cultivar
+                 -- key. This column answers "what is set ON THIS PLANTING", which is the only
+                 -- question the control can act on.
+                 ow.profile -> 'overwintering' AS overwintering
           FROM public.garden_node p
           LEFT JOIN public.container pp ON pp.id = p.container_id
+          LEFT JOIN care_profile ow ON ow.scope = 'leaf'::care_scope AND ow.scope_id = p.id
           LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
           LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
           -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the

@@ -93,6 +93,11 @@ const DIALOG_SURFACES = {
 // shared <Sheet> (so the dismiss behaviour is Sheet's, and no DIALOG_SURFACES entry is owed) and
 // deliberately reuses EventDeleteConfirm's grammar rather than minting a second confirm dialect.
 // Note PhotoLibrary.jsx stays in DIALOG_SURFACES for its own PhotoModal overlay, unrelated to this.
+// V4-OVERWINTERCARE-001: components/planting/OverwinterPrompt.jsx is a DELIBERATE addition, and the
+// same shape as TransplantDatePrompt.jsx directly below it — a chrome-less tappable row on the
+// planting page that opens the shared <Sheet> to pick one of four overwintering regimes. It renders
+// <Sheet armsBack>, so the registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry
+// is owed; `busy={saving}` is passed so the write in flight blocks dismissal.
 const SHEET_SITES = [
   'App.jsx',
   'components/BottomNav.jsx',
@@ -100,6 +105,7 @@ const SHEET_SITES = [
   'components/photo/EventDeleteConfirm.jsx',
   'components/photo/PhotoDeleteConfirm.jsx',
   'components/HarvestTimeframeChips.jsx',
+  'components/planting/OverwinterPrompt.jsx',
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',
   'pages/AddSeeds.jsx',

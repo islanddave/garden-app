@@ -317,6 +317,18 @@ const NOT_IN_SITES = [
   'plants::target_id',          // UPDATE critter_state/treatment_association (cf. events::target_id)
   'plants::op_id',              // text idempotency key, no FK at all (cf. projects::op_id)
   'plants::workspace_id',       // copied off the winner's own row (cf. projects::workspace_id)
+  // V4-OVERWINTERCARE-001 — care_profile.scope_id, written by setOverwinterCore (plants/
+  // overwinterAttr.js) at scope='leaf'. Not body-settable: the value is the ROUTE's path segment,
+  // and the body carries only a regime string and two MM-DD dates, all of which are validated
+  // against an allowlist before any statement is built. The gate is the preflight immediately
+  // above the write — the same canonical planting predicate /archive and the PUT use (container
+  // arm with the F4 deleted-container conjunct, plus the project-less own-created_by arm) — and it
+  // 404s before the upsert. Absolving it here rather than adding a SITES row because there is no
+  // loader to name: the id being gated IS the path id, so a per-column loader would re-ask the
+  // question the preflight just answered. It is pinned by a running assertion rather than a regex,
+  // in plants/overwinter-writer.test.js ('404s when the ownership preflight matches nothing, and
+  // writes nothing' + 'preflights with the canonical ownership predicate, aliased gn').
+  'plants::scope_id',
   'inventory-items::featured_photo_id', // must be a photo LINKED to this item + created_by
   // POST /api/share/facebook: `SELECT ... FROM photos WHERE id = ANY(photoIds) AND created_by =
   // ANY(householdIds) AND deleted_at IS NULL`, and a short count is a 404 for the WHOLE request

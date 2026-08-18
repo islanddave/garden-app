@@ -50,6 +50,7 @@ import QuickActions from '../components/planting/QuickActions.jsx'
 import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
 import CropCard from '../components/planting/CropCard.jsx'
 import CareStatus from '../components/CareStatus.jsx'
+import OverwinterPrompt from '../components/planting/OverwinterPrompt.jsx'
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
@@ -663,6 +664,15 @@ export default function PlantingDetail() {
           last_watered_at rides in the same record load, so surfacing it here is free and lifts
           "when did I last water this" out of the Details fly-up's non-default Care tab. */}
       <CareStatus nextWaterAt={pl.next_water_at} lastWateredAt={pl.last_watered_at} locationType={pl.location_type} />
+
+      {/* V4-OVERWINTERCARE-001 — the writer for the overwintering care attribute, directly under the
+          band it changes: marking a planting overwintering is what holds it OUT of water_due and
+          swaps it for a reduced-cadence moisture check. Patches the record in place on save (same
+          onUpdated contract as CropCard) so the row re-labels without a refetch. */}
+      <OverwinterPrompt
+        planting={pl}
+        onUpdated={(patch) => setPlanting(prev => (prev ? { ...prev, ...patch } : prev))}
+      />
 
       {/* V4-PLANTINGUI-001 — primary quick-actions: water / photo. (V4-STATUSTAP-001: status
           moved to the hero StatusPicker.) */}
