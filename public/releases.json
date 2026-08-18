@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.37.0",
+    "date": "2026-08-18",
+    "highlights": [
+      "What you have typed into a form is no longer thrown away when the app reloads itself. The app updates in the background and can reload the moment a new version lands — and until now that reload did not care whether you were halfway through logging a harvest, sowing a packet, or recording a put-up. Whatever was on screen was simply gone. Those three forms now hold the reload until you are done, and keep a copy of what you had typed in case anything else interrupts.",
+      "The same protection now covers five more places where you enter things: the capture flow, field capture, adding inventory, starting a project, and adding seeds. Every one of them could previously lose what you had entered to a background reload or a stray tap on the backdrop.",
+      "Watering depth is no longer silently dropped. When you set a depth on a batch of waterings and then left the form, the depth was not saved with the rest of your draft — so it came back empty and the form did not even consider itself unfinished. It is now kept with everything else.",
+      "A new put-up is no longer attached to an old harvest. If you started a put-up from a harvest, left, and later opened a fresh one from scratch, the app quietly reused the previous harvest's link — filing your new batch against the wrong pick. A blank put-up now starts genuinely blank, while resuming one you started from a harvest still works as before.",
+      "Fertiliser products stop disappearing. Recording what you fed a plant worked, but any later edit of that entry — fixing a typo, correcting the date — wiped the product name out. Worse, the product was never shown anywhere unless you opened the edit screen, so it vanished without a trace. Edits now leave it alone, and it is visible on the entry itself."
+    ]
+  },
+  {
     "version": "4.36.0",
     "date": "2026-08-18",
     "highlights": [
