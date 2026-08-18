@@ -29,6 +29,20 @@ const SRC = decomment(RAW);
 const TREATMENT_COLS = ['treatment_product_id', 'treatment_product_text', 'treatment_category',
                         'treatment_amount', 'pest_target'];
 
+// Which JS predicate each column's force-null arm is gated on.
+//
+// BUG-TREATMENTPRODUCT-001 split what used to be one gate. treatment_product_text is the ONE column
+// fertilizing also captures, so it moved to `capturesProductText`; the other four stay pinned to
+// `isTreatment` and that pinning is DELIBERATE — widening them would let a fertilizing edit keep a
+// pest_target the POST could never have written, which is a new bug, not the same fix.
+const FORCE_NULL_GATE = {
+  treatment_product_id:   'isTreatment',
+  treatment_product_text: 'capturesProductText',
+  treatment_category:     'isTreatment',
+  treatment_amount:       'isTreatment',
+  pest_target:            'isTreatment',
+};
+
 // The PUT's UPDATE, isolated.
 //
 // Anchored BACKWARDS from a token unique to this statement, not forwards from the first
@@ -52,6 +66,38 @@ const putUpdate = () => {
   return block;
 };
 
+// The PUT's predicate preamble — the `const isTreatment` / `const capturesProductText` lines that
+// sit immediately above its UPDATE. Anchored backwards from the same SET-list marker putUpdate()
+// uses, because BOTH names are ALSO defined in the POST handler ~900 lines further down: a bare
+// SRC.includes finds the POST's copy and passes while the PUT has no predicate at all — which is
+// EXACTLY the drift BUG-TREATMENTPRODUCT-001 was (the POST widened, the PUT did not, and the PUT
+// runs last so it won). The two arms are told apart by their operand: the PUT reads `body.event_type`,
+// the POST reads a pre-extracted `eventType`.
+const putPreamble = () => {
+  const marker = SRC.indexOf('private_notes = ${body.private_notes');
+  expect(marker, 'the PUT SET-list marker must exist').toBeGreaterThan(-1);
+  const end = SRC.lastIndexOf('UPDATE event_log el', marker);
+  const start = SRC.lastIndexOf('const isTreatment', end);
+  expect(start, 'the PUT must define its own isTreatment above its UPDATE').toBeGreaterThan(-1);
+  const block = SRC.slice(start, end);
+  expect(block, 'anchored on the POST arm, not the PUT').toContain('body.event_type');
+  return block;
+};
+
+// The predicates, EXECUTED rather than merely matched. The two `const` lines are lifted verbatim
+// out of the PUT's own preamble and evaluated, so the cases below run the SHIPPED expression, not a
+// re-typed copy of it that is free to drift. A regex alone would pass against
+// `const capturesProductText = isTreatment` — a rename carrying no behaviour, which is the vacuous
+// guard this codebase keeps re-learning to distrust. new Function's input is this repo's own
+// source, already read at the top of this file.
+const putGate = () => {
+  const lines = putPreamble().split('\n').map((l) => l.trim())
+    .filter((l) => l.startsWith('const isTreatment') || l.startsWith('const capturesProductText'));
+  expect(lines.length, 'the PUT preamble must define both predicates').toBe(2);
+  // eslint-disable-next-line no-new-func
+  return new Function('body', `${lines.join('\n')}\nreturn { isTreatment, capturesProductText };`);
+};
+
 describe('the PUT writes the columns it used to only return', () => {
   it('sets flagged_as_issue from the RESOLVED pair, never straight from the body', () => {
     // Binding body.flagged_as_issue directly reintroduces the 23514: the column is NOT NULL and
@@ -64,16 +110,52 @@ describe('the PUT writes the columns it used to only return', () => {
   });
 
   for (const col of TREATMENT_COLS) {
-    it(`${col} is settable, clearable, and force-nulled when the type is not a treatment type`, () => {
+    it(`${col} is settable, clearable, and force-nulled when the type does not own it`, () => {
       const b = putUpdate();
-      expect(b, `${col} must be force-nulled when the edit changes the type away from a treatment type`)
-        .toMatch(new RegExp(`${col}\\s*= CASE WHEN NOT \\$\\{isTreatment\\}::boolean THEN NULL`));
+      const gate = FORCE_NULL_GATE[col];
+      expect(b, `${col} must be force-nulled when the edit changes the type to one that does not own it`)
+        .toMatch(new RegExp(`${col}\\s*= CASE WHEN NOT \\$\\{${gate}\\}::boolean THEN NULL`));
       expect(b, `${col} needs a clear arm`)
         .toMatch(new RegExp(`WHEN \\$\\{clear\\} @> ARRAY\\['${col}'\\] THEN NULL`));
       expect(b, `${col} must PRESERVE on an absent key, not full-replace`)
         .toMatch(new RegExp(`ELSE COALESCE\\(\\$\\{body\\.${col} \\?\\? null\\}, el\\.${col}\\) END`));
     });
   }
+
+  it("a fertilizing event's product text survives an edit — the whole preserve chain", () => {
+    // BUG-TREATMENTPRODUCT-001, the round trip that was broken. EventDetail sends event_type on
+    // EVERY save and sends treatment_product_text on NONE for fertilizing, so all three links have
+    // to hold or the value is gone on the next unrelated edit:
+    //   1. the gate resolves TRUE for fertilizing, so the force-null arm is skipped;
+    //   2. the column's CASE is bound to THAT gate, not to isTreatment;
+    //   3. the ELSE preserves on an absent key instead of full-replacing with NULL.
+    expect(putGate()({ event_type: 'fertilizing' }).capturesProductText,
+      'fertilizing must skip the force-null arm').toBe(true);
+    const b = putUpdate();
+    expect(b, 'treatment_product_text must be gated on capturesProductText')
+      .toMatch(/treatment_product_text\s*= CASE WHEN NOT \$\{capturesProductText\}::boolean THEN NULL/);
+    expect(b, 'an absent key must preserve the stored value, not blank it')
+      .toMatch(/ELSE COALESCE\(\$\{body\.treatment_product_text \?\? null\}, el\.treatment_product_text\) END/);
+  });
+
+  it('a genuinely non-product event type still nulls the column — the gate is not open', () => {
+    // The over-widening this fix must NOT become. `capturesProductText = true`, or a gate that
+    // admits every type, would leave a product string on a watering event that the POST could never
+    // have created — the orphaned-treatment-data case the original isTreatment gate exists for.
+    const gate = putGate();
+    for (const t of ['watering', 'observation', 'harvest', 'transplant', 'sowing']) {
+      expect(gate({ event_type: t }).capturesProductText, `${t} must NOT capture product text`).toBe(false);
+    }
+    // The two types that always owned it, plus the one this fix adds — no more, no less.
+    for (const t of ['pest_treatment', 'doctored', 'fertilizing']) {
+      expect(gate({ event_type: t }).capturesProductText, `${t} must capture product text`).toBe(true);
+    }
+    // And the widened gate must not have leaked into isTreatment, which still guards the other four.
+    expect(gate({ event_type: 'fertilizing' }).isTreatment,
+      'fertilizing must not become a treatment type').toBe(false);
+    expect(putUpdate(), 'the force-null arm must still exist at all')
+      .toMatch(/treatment_product_text\s*= CASE WHEN NOT \$\{capturesProductText\}::boolean THEN NULL/);
+  });
 
   it('the four legacy full-replace columns are NOT migrated in this commit', () => {
     // title/notes/private_notes/quantity keep `${body.x ?? null}` — an omitted key clears them.

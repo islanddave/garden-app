@@ -923,8 +923,17 @@ function EventFields({ event: ev }) {
   // NOTE the absent ['Type', …] row: V4-EVENTDETAILRICH-001 moved it to the header (see the kicker).
   // `Quantity` here is event_log.quantity — free text, a note on the event. It is NOT the harvest
   // amount, and on a harvest it now sits BELOW the real amount rather than impersonating it.
+  // BUG-TREATMENTPRODUCT-001: treatment_product_text had NO read-mode render anywhere in src/. It
+  // was writable by the POST, seeded into the edit form, and returned by both the GET and the PUT —
+  // but invisible unless you tapped Edit. That is what made the server-side data loss silent: the
+  // value was gone from a column nothing on screen was reading, so nothing on screen changed.
+  //
+  // Value-gated, not type-gated, exactly like the Quantity row above it. A type gate would re-hide
+  // the rows this fix exists to protect — an event whose type was later edited still holds the
+  // product someone typed, and hiding it is the same invisibility bug in a different place.
   const rows = [
     ['Date', dateStr],
+    ev.treatment_product_text && ['Product', ev.treatment_product_text],
     ev.quantity && ['Quantity', ev.quantity],
     ev.notes && ['Notes', ev.notes],
     ev.private_notes && ['Private notes', ev.private_notes],

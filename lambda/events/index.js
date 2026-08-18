@@ -1478,11 +1478,21 @@ export const handler = async (event) => {
           return resp(400, { error: 'an event must keep a plant_id or a project_id' });
         }
 
-        // V4-TREATLOG-001 parity with the POST (:1584): the five treatment columns are recorded
-        // ONLY for these two types. On an edit that changes the type AWAY from a treatment type,
-        // this forces them back to NULL rather than leaving orphaned treatment data on, say, a
+        // V4-TREATLOG-001 parity with the POST (:1584): four of the five treatment columns are
+        // recorded ONLY for these two types. On an edit that changes the type AWAY from a treatment
+        // type, this forces them back to NULL rather than leaving orphaned treatment data on, say, a
         // watering event — the POST would never have produced that row.
         const isTreatment = body.event_type === 'pest_treatment' || body.event_type === 'doctored';
+        // BUG-TREATMENTPRODUCT-001. The POST widened its product-text gate to fertilizing and this
+        // arm did not, so the two halves disagreed about which types own the column — and the PUT
+        // won, because it runs LAST. EventDetail sends event_type on every save, so a single later
+        // edit of ANY kind (a fixed typo, a date correction) drove `NOT isTreatment` true and nulled
+        // a fertilizing row's product. Silent both ways: EventDetail never sent the key for
+        // fertilizing (nothing to compare against) and never rendered it, so the value vanished with
+        // no error and nothing on screen changed. Same predicate as the POST's (:1584) —
+        // deliberately a textual copy, matching how isTreatment itself is duplicated across the two
+        // arms; if a third type ever captures product text, BOTH lines have to move.
+        const capturesProductText = isTreatment || body.event_type === 'fertilizing';
 
         const updatedRows = await sql`
           UPDATE event_log el
@@ -1515,7 +1525,10 @@ export const handler = async (event) => {
                  treatment_product_id   = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
                                                WHEN ${clear} @> ARRAY['treatment_product_id'] THEN NULL
                                                ELSE COALESCE(${body.treatment_product_id ?? null}, el.treatment_product_id) END,
-                 treatment_product_text = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
+                 -- The ONE column gated on capturesProductText rather than isTreatment: fertilizing
+                 -- captures a product name too. The other four stay isTreatment-only — widening
+                 -- them would let a fertilizing edit carry a pest_target the POST could never write.
+                 treatment_product_text = CASE WHEN NOT ${capturesProductText}::boolean THEN NULL
                                                WHEN ${clear} @> ARRAY['treatment_product_text'] THEN NULL
                                                ELSE COALESCE(${body.treatment_product_text ?? null}, el.treatment_product_text) END,
                  treatment_category     = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
@@ -1549,8 +1562,8 @@ export const handler = async (event) => {
                     el.is_public, el.logged_by, el.created_at, el.updated_at,
                     el.flagged_as_issue, el.severity, el.resolved_at, el.resolved_by,
                     -- BUG-EVENTEDITFIELDS-001: returned so the client can re-seed its form from
-                    -- the SAVED row rather than from what it hoped it sent. The isTreatment gate
-                    -- above can null all five, and the client has to be able to see that happen.
+                    -- the SAVED row rather than from what it hoped it sent. The two gates above can
+                    -- null all five, and the client has to be able to see that happen.
                     el.treatment_product_id, el.treatment_product_text, el.treatment_category,
                     el.treatment_amount, el.pest_target,
                     -- V4-WATERMATH-001 F0 edit half: the STORED metadata rides back for the same
