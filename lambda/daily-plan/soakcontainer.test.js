@@ -25,7 +25,7 @@ const { withCoverFlags } = _cf;
 
 const {
   generatePlanForUser, saturationSuppressed, todayQualifies,
-  SOAK_TODAY_SMALL_IN, SOAK_CAP_IN, isSmallVessel,
+  SOAK_TODAY_SMALL_IN, SOAK_CAP_IN, isSmallVessel, RAIN_TIER_IA, rainTierFor,
 } = engine;
 // Read from the shared JSON, not from an engine export: this doubles as proof that the value the engine
 // acts on is the value in the single-source file, so a private literal reintroduced in engine.js fails here.
@@ -34,7 +34,12 @@ const { SOAK_FCST_QPF_IN } = THRESHOLDS;
 // The two agronomic inputs the derivation rests on. Kept as named constants so a reader can see that the
 // assertions below are arithmetic over Dave's number and the engine's own number, not free-floating magic.
 const CONTAINER_NEED_IN_PER_DAY = 0.075;  // Dave-observed, 2026-08-12: "containers are VERY happy with .075 a day"
-const IA_SMALL_FAST_IN = 0.35;            // engine RAIN_TIER_IA.small_fast — live in prod (CARE_RAIN_CREDIT_ENABLED=true)
+// BUG-SOAKTESTLITERAL-001: READ from the engine, never transcribed. As a local `= 0.35` this line made the
+// header's "arithmetic over the engine's own number" claim FALSE — retuning RAIN_TIER_IA.small_fast left the
+// derivation below asserting against a number the engine had stopped using, and every test here stayed green
+// (verified: at small_fast 0.40 the pre-fix file passed 13/13). Importing it is what makes the derivation
+// track its source, so a retune that invalidates the physics fails here instead of going quiet.
+const IA_SMALL_FAST_IN = RAIN_TIER_IA.small_fast;  // live in prod (CARE_RAIN_CREDIT_ENABLED=true)
 const WORST_OBSERVED_DELIVERY = 0.47;     // 2026-06-22: 1.42" forecast @ 91% PoP -> 0.67" actually delivered
 
 const sup = (hy, smallVessel) => saturationSuppressed('outdoor', hy, { todayAware: true, smallVessel });
@@ -79,6 +84,11 @@ describe('BUG-SOAKBAR-001 — the bar is derived, and the derivation is executab
   // Arithmetic, not a restatement of the literal: if someone retunes the bar without redoing the physics,
   // this fails. A bar that cannot cover one day of need under the worst measured bust is not defensible.
   it('a worst-case forecast bust at the bar still banks a full day of container need', () => {
+    // The loss term has to be the loss the vessels this bar governs ACTUALLY take, not just a table entry
+    // that happens to be spelled small_fast: remap a rigid pot to a gentler tier and the derivation below
+    // would be subtracting an abstraction containers never pay. Pinned via the engine's own resolver.
+    expect(RAIN_TIER_IA[rainTierFor('plastic_pot')]).toBe(IA_SMALL_FAST_IN);
+    expect(RAIN_TIER_IA[rainTierFor(null)]).toBe(IA_SMALL_FAST_IN);  // unknown vessels land here too
     const delivered = SOAK_TODAY_SMALL_IN * WORST_OBSERVED_DELIVERY;
     const banked = delivered - IA_SMALL_FAST_IN;
     expect(banked).toBeGreaterThanOrEqual(CONTAINER_NEED_IN_PER_DAY);
