@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useId } from 'react'
 import { takePendingCapture } from '../lib/pendingCapture.js'
 import { createFinalResultReader } from '../lib/voiceResults.js'
 import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
@@ -40,6 +40,7 @@ import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedbac
 import { useToast } from '../context/ToastContext.jsx'
 import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger — fed at the same post-save moment as
 // logone.lastPlant below; PlantingSelect reads it at picker-open to band-order its crop chips.
 import { recordCropLog } from '../lib/cropLogLedger.js'
@@ -838,14 +839,48 @@ export default function EventNew() {
   // so the type-change effect that resets treatment never fires). Harmless while the card covered
   // the form; with the form live it left the sheet reporting dirty after a SUCCESSFUL
   // pest_treatment save, so a backdrop tap no-opped. resetForNext() now clears it too.
-  useReportOverlayDirty(!!(
+  // Hoisted to a named value because it now feeds TWO channels with different lifetimes: the Sheet
+  // backdrop guard below, and the service-worker reload gate. Same predicate on purpose — both ask
+  // the identical question ("is there typed content a dismissal/reload would destroy"), and letting
+  // them drift is how one surface ends up defended and the other not.
+  const hasUnsavedInput = !!(
     form.notes || form.private_notes || form.quantity ||
     photoFile || harvest.quantity || harvest.weight ||
     Object.keys(metadataState).length ||
     treatment.pest_target || treatment.product_id || treatment.product_text || treatment.category || treatment.amount ||
     container.type || container.size.trim() ||
     issueOther
-  ))
+  )
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // V4-RELOADGATEWIRE-001 — the producer half of OPS-SWRELOADGUARD-001. reloadGate.js and
+  // registerSW's deferral shipped fully built and mutation-proved, but NOTHING ever held the gate,
+  // so `isReloadBlocked()` was false at every controllerchange and the deferral could not fire: an
+  // inert feature that passed every test it had and changed nothing for the user. This is the call
+  // that arms it.
+  //
+  // Runs on BOTH surfaces, unlike useReportOverlayDirty above — that hook is a deliberate no-op with
+  // no provider (full page), but a deploy reload hits the full-page /log form exactly as hard as the
+  // overlay, and it is the harvest form Dave uses at the plant.
+  //
+  // The cleanup release is REQUIRED, not defensive: a dismissed or navigated-away dirty form that
+  // kept its hold would wedge updates forever and rebuild BUG-STALECLIENT-001, which is the bug that
+  // made this a DEFERRAL rather than a cancellation in the first place.
+  //
+  // Note the release is safe here only because the dep is a BOOLEAN: while the user keeps typing,
+  // `hasUnsavedInput` stays true, the deps compare equal and the effect never re-runs, so the
+  // cleanup cannot release mid-form. It fires on a genuine true→false flip (correct — the form is
+  // clean, let the deferred reload land) or on unmount. Widen this dep to a non-boolean and that
+  // stops being true: a release NOTIFIES, and registerSW reloads on that notification.
+  //
+  // Key is per-instance: reloadGate holds a Set, and if the overlay ever mounts over the full-page
+  // form, a shared literal key would let the first unmount release the second instance's hold.
+  const reloadGateKey = `event-new:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   // Load plants when project selection changes (project-scoped mode — the default).
   useEffect(() => {
