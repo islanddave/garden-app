@@ -162,6 +162,23 @@ describe('HarvestExportSheet — Log mode drain', () => {
     expect(preview().value).toBe('')
   })
 
+  // BUG-EXPORTDRAINBOUND-001. Unreachable at 549 lifetime events, latent at 10,000: a server that keeps
+  // handing back a cursor exhausts MAX_PAGES and the loop simply FALLS THROUGH. Before the fix that built
+  // the export from the 200-page prefix and rendered it READY — a truncated export presenting itself as
+  // complete, which is the one outcome the drain-integrity invariant exists to forbid. It has to abort
+  // like any other broken page, not quietly succeed.
+  it('exhausting the page bound with a cursor still open ABORTS — never a complete-looking prefix', async () => {
+    fetchSpy.mockResolvedValue({ entries: PAGE1, aggregates: AGG, cursor: 'never-ends' })
+    open({ defaultFormat: 'log' })
+    await waitFor(() => expect(screen.getByTestId('export-error')).toBeTruthy())
+    // The bound is honoured on the way in, too: it stops requesting rather than looping forever.
+    expect(fetchSpy).toHaveBeenCalledTimes(200)
+    expect(preview().value).toBe('')          // no 200-page prefix left materialized
+    expect(copyBtn().disabled).toBe(true)
+    expect(writeSpy).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
+  })
+
   it('Try again re-runs the drain and recovers', async () => {
     fetchSpy
       .mockResolvedValueOnce({ entries: PAGE1, aggregates: AGG, cursor: 'c1' })

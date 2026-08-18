@@ -152,6 +152,11 @@ export default function HarvestExportSheet({
         cursor = data?.cursor ?? null
         if (!cursor) break
       }
+      // MAX_PAGES is a BOUND, not a limit (see its declaration). Falling out of the loop still holding a
+      // cursor means the drain never reached the end, so `all` is a PREFIX of the rowset — and building
+      // the export from it would produce exactly the silently-short, complete-looking export the header's
+      // drain-integrity invariant forbids. Take the same loud abort a failed or cache-served page takes.
+      if (cursor) throw new Error('drain-bound')
       if (runRef.current !== rid) return
       const rows = selected.size === 0 ? all : all.filter((e) => selected.has(e.crop_type_slug))
       const opts = { entries: rows, timeframe, cropNames, generatedOn: today, currentYear }
