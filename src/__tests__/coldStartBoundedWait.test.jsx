@@ -127,6 +127,30 @@ describe('V4-COLDSTART-001 B — a Clerk that resolves normally is never truncat
     expect(last().identity).toBe('signed-in')
   })
 
+  it('DISARMS the timer when Clerk is already resolved — nothing is left ticking', () => {
+    // Found by mutation: dropping the `if (isLoaded) return` guard and the [isLoaded] dependency
+    // survived every other assertion in this file, because a fired-but-inert flag cannot change
+    // `identity` once the resolved branch wins. What it DOES do is publish a new context value at
+    // t=10s in every healthy session — a whole-tree re-render, on Dave's phone, for nothing. The
+    // observable is therefore the render count, not the identity.
+    signedIn()
+    const { flush } = mount()
+    flush()
+    const before = seen.length
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => { vi.advanceTimersByTime(CLERK_LOAD_TIMEOUT_MS * 2) })
+    expect(seen.length).toBe(before)
+  })
+
+  it('DISARMS the timer on a late resolve too — the effect re-runs and clears it', () => {
+    const { flush } = mount()
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    signedIn()
+    flush()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('a LATE resolve CLEARS `unknown` — the state is not sticky, so the notice self-heals', () => {
     const { flush } = mount()
     act(() => { vi.advanceTimersByTime(CLERK_LOAD_TIMEOUT_MS + 1) })
