@@ -42,10 +42,16 @@
 --
 -- NOT applied to any environment by the authoring session — apply is Dave-gated, staging first.
 
--- Byte-comparable with lambda/plants/index.js's ALLOWED_LOSS and lambda/events/validators.js's
--- ALLOWED_LOSS_CAUSES (textual mirror across the two Lambda zips, per the house convention
--- lambda/plants/validate.js's header documents — each Lambda zips from its own directory, so an
--- import cannot cross them).
+-- Byte-comparable with lambda/plants/index.js's ALLOWED_LOSS, which exists TWICE — one literal on
+-- the PUT path, one on the POST path (each Lambda zips from its own directory, so the house
+-- convention lambda/plants/validate.js's header documents is a textual mirror, not an import).
+-- Three hand-maintained copies of one vocabulary, plus gates.yml's set-equality expectation, is the
+-- BUG-DIVERGENCEVOCAB-001 shape; lambda/plants/loss-cause-vocab.test.js parses THIS ARRAY as the
+-- single source of truth and asserts the other three against it.
+-- CORRECTED 2026-08-18: an earlier draft of this header also cited
+-- `lambda/events/validators.js`'s ALLOWED_LOSS_CAUSES. No such constant exists, or ever has — the
+-- string `ALLOWED_LOSS_CAUSES` occurs in exactly one place in the repo, and it was this comment.
+-- There is no events-side loss vocabulary to be byte-comparable with.
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_plants_loss_cause') THEN
     ALTER TABLE public.plants ADD CONSTRAINT chk_plants_loss_cause

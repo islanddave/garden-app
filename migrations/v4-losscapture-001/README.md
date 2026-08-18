@@ -64,6 +64,26 @@ three staggered ones, and `0b`'s header records which is which.
 - Steps 2 and 4 may run in the same operator session *after* step 1 has settled — the split exists
   to put a verifiable boundary between the code deploy and the constraint, not to add a wait.
 
+### A THIRD ordering constraint, in the opposite direction — the writer
+
+The two above are *code before schema*. The disposition writer is *schema before code*, and missing
+that inverts the hazard rather than avoiding it:
+
+```
+2.  0a      ADD COLUMN harvest_log.disposition
+5.  DEPLOY  any Lambda that SELECTs or writes harvest_log.disposition   ← never before step 2
+```
+
+A column reference is resolved at **parse time**, so a deployed writer naming `disposition` against
+a database where `0a` has not run raises **42703 on every request that touches it** — not on the
+ones that supply a value. This is the same parse-time fact that forced
+`sweep_no_out_of_vocab_disposition` out of the `pre` phase, and it is why the "no writer yet" gap
+below is *safe* today: nothing in the repo names the column, so the bundle can be applied in any
+order relative to a promote. That stops being true the moment a writer is written.
+
+`plants.loss_cause` has no equivalent constraint — the column already exists on both live
+environments and the deployed Lambda already reads and validates it.
+
 ### Runbook
 
 ```bash
@@ -129,6 +149,36 @@ statement about `0b` checked before `0c`, which is what the `sweep` phase is for
 Nothing in `pre` or `sweep` runs continuously (`gate-invariants.yml` passes `--phase post`), so the
 trap is post-only; the audit above covers every gate in the file.
 
+### The two vocabulary gates were self-arming but vacuous — fixed 2026-08-18
+
+`post_loss_cause_vocab_exact` and `post_disposition_vocab_exact` were written as a conjunction of
+`pg_get_constraintdef(oid) LIKE '%value%'` tests. That form is satisfied by any **superset** and by
+any value that merely *contains* the expected token, so the gate whose own comment says it exists to
+catch "a CHECK dropped and re-added with a **widened** ARRAY" could not catch one. Measured on a
+scratch PG 17.10 with `0a`+`0b` applied — rows returned, `0` = pass:
+
+| constraint state | old `LIKE` form | set-equality form |
+|---|---|---|
+| exact vocabulary | 0 — pass | 0 — pass |
+| widened with a sixth value `'sabotage'` | **0 — passes** | 1 — fails |
+| narrowed by dropping `'unknown'` | 1 — fails | 1 — fails |
+| renamed `pest`→`pest_damage`, `unknown`→`unknown_x` | **0 — passes** | 1 — fails |
+
+Both gates now extract the `ARRAY` literals from `pg_get_constraintdef` and assert **set equality**
+(`@>` **and** `<@`) — order- and collation-independent, so it does not depend on how the server
+renders or sorts. The regex requires the `::text` suffix, so it matches only the vocabulary literals.
+
+`lambda/plants/loss-cause-vocab.test.js` then pins the gate's hard-coded expectation to `0b`'s ARRAY,
+alongside the two `ALLOWED_LOSS` copies in `lambda/plants/index.js`. A set-equality gate is only
+worth having if the set it compares against is the migration's; without that test an edit to `0b`
+that `gates.yml` did not follow would leave the gate confidently asserting a vocabulary the database
+no longer has.
+
+`0b`'s header also claimed byte-comparability with `lambda/events/validators.js`'s
+`ALLOWED_LOSS_CAUSES`. **No such constant exists or ever has** — the string occurred in exactly one
+place in the repo, and it was that comment. The header is corrected; the real twins are the two
+`ALLOWED_LOSS` literals in `lambda/plants/index.js`.
+
 ## Known gaps, recorded rather than hidden
 
 - **There is still no writer.** This bundle is DDL only. The `POST /api/events` loss path and the
@@ -136,7 +186,17 @@ trap is post-only; the audit above covers every gate in the file.
   (`grep -rn 'qty_lost\|disposition' lambda/events/ src/` finds nothing). Until they ship, `0c`
   validates a `disposition` column that is 100% NULL — a real but vacuous assertion, and exactly the
   V4-EVENTSOURCE-001 shape (DDL applied, backfill never ran) that `gate-invariants.yml` exists to
-  catch. The three ledger items are not closed by applying this bundle.
+  catch. The three ledger items are not closed by applying this bundle. The writer's own deploy
+  ordering is §"A THIRD ordering constraint" above; `loss-cause-vocab.test.js` reds the moment one
+  defines an allowlist, so the parity set gets extended rather than a fourth copy started.
+- **V4-LOSSEVENT-001 is not addressed by this bundle at all, and no file here can address it.**
+  Dave's 2026-07-28 decision was to add a **loss event type**. `EVENT_TYPES` carries 49 members
+  (verified against `lambda/events/eventTypes.generated.js` on this branch) and not one of them is a
+  loss, mortality, discard or spoilage type — `deadheaded` is the only near-miss and it is a pruning
+  action. The vocabulary's source of truth is `src/lib/eventTypes.js`, not the database, so closing
+  that item is a code change with a CI drift check (`npm run check:event-types`), not DDL. What this
+  bundle contributes to that item is `plants.qty_lost`'s guard and floor; the event type itself is
+  untouched work.
 - **`plants.loss_cause` and `plants.qty_lost` exist on prod and staging with no migration in the
   repo that created them.** Hand-applied, like `divergence_type` before V4-DIVERGENCEVOCAB-001.
   `0a` formalizes them; the provenance gap itself is not repaired by anything here.

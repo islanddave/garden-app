@@ -190,16 +190,34 @@ post:
   # widened ARRAY would pass post_all_three_checks_present and silently re-open the drift class
   # BUG-DIVERGENCEVOCAB-001 closed for divergence_type. lambda/plants/loss-cause parity is asserted
   # separately in code; this is the DB half.
+  #
+  # SET EQUALITY, NOT A CONJUNCTION OF SUBSTRING TESTS (2026-08-18). The first draft asserted
+  # `constraintdef LIKE '%pest%' AND ... LIKE '%unknown%'`, which is satisfied by ANY superset and by
+  # any value that merely CONTAINS the expected token. Mutation-measured on a scratch PG 17.10 with
+  # 0a+0b applied — old form vs this one, rows returned (0 = pass):
+  #     exact vocabulary                          old 0   new 0
+  #     widened with a sixth value 'sabotage'     old 0   new 1
+  #     narrowed by dropping 'unknown'            old 1   new 1
+  #     renamed pest->pest_damage, unknown->..._x old 0   new 1
+  # i.e. the old gate caught only NARROWING and was blind to widening and to substring-renaming —
+  # the exact two drift shapes the comment above says it exists to catch. It was a vacuous guard.
+  # `@>` plus `<@` is set equality: order-independent and collation-independent, so it does not
+  # depend on how pg_get_constraintdef happens to order or how the server sorts. The regex requires
+  # the `::text` suffix, so it matches only the ARRAY literals and not any other quoted token.
   - name: post_loss_cause_vocab_exact
     sql: |
       SELECT 1
        WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.1-losscapture-001-checks')
          AND NOT EXISTS (
-           SELECT 1 FROM pg_constraint
-            WHERE conname='chk_plants_loss_cause'
-              AND pg_get_constraintdef(oid) LIKE '%pest%' AND pg_get_constraintdef(oid) LIKE '%disease%'
-              AND pg_get_constraintdef(oid) LIKE '%weather%' AND pg_get_constraintdef(oid) LIKE '%transplant_shock%'
-              AND pg_get_constraintdef(oid) LIKE '%unknown%')
+           SELECT 1
+             FROM pg_constraint c
+             CROSS JOIN LATERAL (
+               SELECT array_agg(m[1]) AS vocab
+                 FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''::text', 'g') AS m
+             ) x
+            WHERE c.conname='chk_plants_loss_cause'
+              AND x.vocab @> ARRAY['pest','disease','weather','transplant_shock','unknown']
+              AND x.vocab <@ ARRAY['pest','disease','weather','transplant_shock','unknown'])
     expect: rowcount_eq
     value: 0
 
@@ -208,10 +226,15 @@ post:
       SELECT 1
        WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.1-losscapture-001-checks')
          AND NOT EXISTS (
-           SELECT 1 FROM pg_constraint
-            WHERE conname='chk_harvest_log_disposition'
-              AND pg_get_constraintdef(oid) LIKE '%dropped%' AND pg_get_constraintdef(oid) LIKE '%culled%'
-              AND pg_get_constraintdef(oid) LIKE '%aborted%' AND pg_get_constraintdef(oid) LIKE '%damaged%')
+           SELECT 1
+             FROM pg_constraint c
+             CROSS JOIN LATERAL (
+               SELECT array_agg(m[1]) AS vocab
+                 FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''::text', 'g') AS m
+             ) x
+            WHERE c.conname='chk_harvest_log_disposition'
+              AND x.vocab @> ARRAY['dropped','culled','aborted','damaged']
+              AND x.vocab <@ ARRAY['dropped','culled','aborted','damaged'])
     expect: rowcount_eq
     value: 0
 
