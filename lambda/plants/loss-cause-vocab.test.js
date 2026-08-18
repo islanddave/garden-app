@@ -20,9 +20,9 @@
 // A NOTE ON WHAT IS NOT HERE. There is no ALLOWED_LOSS_CAUSES in lambda/events/ — 0b's header
 // claimed one and no such constant has ever existed in this repo (the string appears in exactly one
 // place: that comment). The header is corrected; nothing is asserted about a file that has nothing
-// in it. harvest_log.disposition likewise has no writer anywhere yet, so its vocabulary is pinned
-// between the migration and the gate only. When a disposition writer ships it must be added to the
-// parity set below — it will not appear on its own.
+// in it. harvest_log.disposition HAD no writer anywhere; V4-HARVDISPOSITION-001 shipped one in
+// lambda/events/validators.js, so its vocabulary is now pinned across four homes (the CHECK, two
+// gates, and that constant) exactly as loss_cause is.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -175,12 +175,30 @@ describe('V4-HARVDISPOSITION-001 disposition vocabulary parity', () => {
     for (const a of arrays) expect(sorted(a)).toEqual(sorted(DISPOSITION));
   });
 
-  it('has no code twin yet — the writer is the open half of this ticket', () => {
-    // NOT a passive observation. The bundle is DDL only: applying it gives a disposition column
-    // that is 100% NULL, which is the V4-EVENTSOURCE-001 shape (DDL landed, nothing ever wrote the
-    // data). This assertion is the tripwire — the moment a writer defines an allowlist, this reds
-    // and whoever added it has to extend the parity set above rather than start a fourth copy.
-    expect(LAMBDA_SRC).not.toMatch(/ALLOWED_DISPOSITION/);
+  it("the sweep gate screens against the SAME vocabulary 0c will enforce", () => {
+    // The THIRD copy inside gates.yml, and — like pre_no_out_of_vocab_loss_cause before
+    // V4-LOSSEVENT-001 — it used to be written `NOT IN (...)`, which this parser cannot see. It
+    // could therefore have kept the original four while 0b moved: too narrow and the sweep reds on
+    // a legitimately-stored value, too wide and it waves through a row 0c then fails on.
+    // Rewritten to `<> ALL (ARRAY[...])` for exactly this assertion (V4-HARVDISPOSITION-001).
+    const arrays = gateExpectations('sweep_no_out_of_vocab_disposition');
+    expect(arrays, 'sweep_no_out_of_vocab_disposition must screen against an ARRAY literal').toHaveLength(1);
+    expect(sorted(arrays[0])).toEqual(sorted(DISPOSITION));
+  });
+
+  it('the events Lambda ALLOWED_DISPOSITION is the SAME SET as the armed CHECK', () => {
+    // THE TRIPWIRE THAT FIRED AS DESIGNED. Until V4-HARVDISPOSITION-001 this assertion read
+    // `expect(LAMBDA_SRC).not.toMatch(/ALLOWED_DISPOSITION/)` — "no code twin yet, and when a writer
+    // ships it must be added to the parity set above, it will not appear on its own." A writer has
+    // now shipped, so this is that addition. Note the twin is in lambda/EVENTS/, not lambda/plants/:
+    // the old assertion watched the plants Lambda and would have stayed green forever against a
+    // writer living one directory over, which is why it is REPLACED rather than kept alongside.
+    const src = decomment(
+      readFileSync(resolve(__dirname, '../events/validators.js'), 'utf8'),
+    );
+    const m = src.match(/ALLOWED_DISPOSITION\s*=\s*\[([^\]]*)\]/);
+    expect(m, 'ALLOWED_DISPOSITION not found in lambda/events/validators.js').toBeTruthy();
+    expect(sorted(quoted(m[1]))).toEqual(sorted(DISPOSITION));
   });
 
   it('NULL stays legal, so a normal pick is never nagged for a value', () => {

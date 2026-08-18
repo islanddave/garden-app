@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
@@ -1642,6 +1642,13 @@ export const handler = async (event) => {
           // Explicit null means "I'm clearing my weight" -> fall back to the reference estimate.
           // An ABSENT key must preserve a weight the user previously recorded (see validators.js).
           const hClearWeight = body.harvest.weight === null;
+          // V4-HARVDISPOSITION-001 — the same absent/null/value split, and the SAME reason it is
+          // load-bearing: EventDetail round-trips the whole harvest object on every save without
+          // knowing this key, so treating absent as a clear would silently drop a recorded
+          // disposition the first time anyone tapped a quality star. `in` rather than
+          // `!== undefined` so an explicit `disposition: undefined` still reads as absent.
+          const hTouchDisposition = 'disposition' in body.harvest;
+          const hDisposition = body.harvest.disposition ?? null;
           const updatedHarvest = await sql`
             UPDATE harvest_log h
                SET quantity         = ${hq}::numeric,
@@ -1699,6 +1706,13 @@ export const handler = async (event) => {
                    weight_basis     = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
                                             AND h.unit NOT IN ('g','kg','lb','oz')
                                            THEN h.weight_basis ELSE rw.weight_basis END,
+                   -- V4-HARVDISPOSITION-001. h.disposition is the PRE-UPDATE value (SET expressions
+                   -- see the old row), so an absent key is a genuine no-op rather than a re-write of
+                   -- the same value. DEPLOY-ORDERED with the whole statement: this reference resolves
+                   -- at parse time, so the entire harvest-edit arm 42703s against a database where 0a
+                   -- has not run — see the POST binding and the bundle README §Ordering.
+                   disposition      = CASE WHEN ${hTouchDisposition}::boolean
+                                           THEN ${hDisposition}::text ELSE h.disposition END,
                    updated_at = NOW()
               FROM event_log ne,
               LATERAL public.resolve_harvest_weight(
@@ -1724,7 +1738,7 @@ export const handler = async (event) => {
              WHERE h.event_id = ${eventId}
                AND h.deleted_at IS NULL
                AND ne.id = h.event_id
-            RETURNING h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated, h.weight_basis
+            RETURNING h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated, h.weight_basis, h.disposition
           `;
           harvestRow = updatedHarvest[0] ?? null;
 
@@ -1739,7 +1753,14 @@ export const handler = async (event) => {
           // measurement. Reading the request here would retire a sample whose weight is still very
           // much present. The row's own (weight_estimated=false AND unit is not a weight unit) pair
           // is the same test used everywhere else to mean "the user typed this".
-          const savedGrams = isUserSuppliedWeight(harvestRow) ? Number(harvestRow.weight_grams) : 0;
+          //
+          // V4-HARVDISPOSITION-001 — and this is why the unconditional call is a gift rather than a
+          // cost. Marking an already-saved pick "unripe abort" must RETIRE the sample it seeded, not
+          // merely stop seeding new ones, and passing 0 grams is exactly how this function is already
+          // told to void an event's samples. Read off the POST-UPDATE ROW, same as the grams, so the
+          // absent-key preservation above is honoured rather than re-derived from the request.
+          const savedGrams = isUserSuppliedWeight(harvestRow)
+            && seedsWeightCalibration(harvestRow.disposition) ? Number(harvestRow.weight_grams) : 0;
           try {
             await sql`SELECT public.record_harvest_weight_sample(
               ${eventId}::uuid, ${updatedRows[0].plant_id}::uuid, ${hu},
@@ -2497,6 +2518,13 @@ export const handler = async (event) => {
       const harvestUnit = isHarvest ? body.harvest.unit : null;
       const harvestQuality = isHarvest ? (body.harvest.quality_rating ?? null) : null;
       const harvestNotes = isHarvest ? (body.harvest.notes ?? null) : null;
+      // V4-HARVDISPOSITION-001 — the outcome of this pick, or NULL for a normal one (703 of the 707
+      // live harvests). ⚠ DEPLOY-ORDERED: the CTE below NAMES harvest_log.disposition, and a column
+      // reference resolves at PARSE time, so this Lambda 42703s on EVERY harvest POST — not only the
+      // ones carrying a value — against a database where migrations/v4-losscapture-001/0a has not
+      // run. SCHEMA FIRST here, which is the OPPOSITE of the qty_lost narrowing in the same bundle.
+      // See that bundle's README §Ordering; the ordering is asserted by harvest-disposition.test.js.
+      const harvestDisposition = isHarvest ? (body.harvest.disposition ?? null) : null;
       // V4-HARVDUAL-001 Slice A — optional user-supplied weight, converted to grams server-side
       // (the client sends whatever the scale read). 0 = not supplied; see the CTE note below.
       const harvestUserGrams = isHarvest && typeof body.harvest.weight === 'number'
@@ -2701,7 +2729,7 @@ export const handler = async (event) => {
           new_harvest AS (
             INSERT INTO harvest_log
               (event_id, project_id, quantity, unit, quality_rating, notes, created_by,
-               weight_grams, weight_estimated, weight_basis)
+               weight_grams, weight_estimated, weight_basis, disposition)
             SELECT
               ne.id, ne.project_id,
               ${harvestQty}::numeric,
@@ -2720,14 +2748,18 @@ export const handler = async (event) => {
               -- probed on the pinned 0.10.4 against prod. Kept because it works; see the PUT arm.
               rw.weight_grams,
               rw.weight_estimated,
-              rw.weight_basis
+              rw.weight_basis,
+              -- V4-HARVDISPOSITION-001. Bound LAST so the column order matches the list above; the
+              -- ::text cast is what types a NULL bind here, exactly as the ::numeric/::smallint
+              -- casts do for their columns.
+              ${harvestDisposition}::text
             FROM new_event ne,
             LATERAL public.resolve_harvest_weight(
               ne.plant_id, ${harvestUnit}, ${harvestQty}::numeric,
               NULLIF(${harvestUserGrams}::numeric, 0)
             ) rw
             WHERE ${isHarvest}::boolean = true
-            RETURNING id, quantity, unit, quality_rating, notes, weight_grams, weight_estimated, weight_basis
+            RETURNING id, quantity, unit, quality_rating, notes, weight_grams, weight_estimated, weight_basis, disposition
           )
           SELECT
             ne.*,
@@ -3096,7 +3128,15 @@ export const handler = async (event) => {
       //
       // All the branch logic (weight-unit harvests, unattributed plantings, unchanged re-saves)
       // lives in the SQL function, so this stays a single call from both write paths.
-      if (isHarvest && harvestUserGrams > 0) {
+      //
+      // V4-HARVDISPOSITION-001 — one exception the SQL function CANNOT make, because disposition is
+      // not one of its parameters and it is called from here with grams already resolved. A pick
+      // carrying a disposition is the app declaring this pick was not typical, so its weight must
+      // not become the cultivar's idea of a typical fruit. Measured on prod before this shipped:
+      // "Unripe abort" (2 g) is the SOLE sample behind Habanero's derived 2.0 g/fruit and "Very
+      // early aborts" (1 g / 2 count) the sole sample behind Pumpkin Jalapeno's 0.50 g/fruit.
+      // Inert until a disposition can exist, so no currently-live behaviour changes.
+      if (isHarvest && harvestUserGrams > 0 && seedsWeightCalibration(harvestDisposition)) {
         try {
           await sql`SELECT public.record_harvest_weight_sample(
             ${eventId}::uuid, ${newEvent.plant_id}::uuid, ${harvestUnit},
