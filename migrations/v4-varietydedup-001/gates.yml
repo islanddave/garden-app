@@ -1,0 +1,261 @@
+# gates.yml
+# V4-VARIETYDUP-001 + V4-CWARCHIVE-001 — plant_varieties consolidation (data-only, no DDL).
+#
+# STATUS (2026-08-18): PREPARED — NOT APPLIED to any environment.
+#
+# PROD-KEYED SQL, BUT NOT PROD-ABSOLUTE GATES. 0a-data-fix.sql is keyed to live prod
+# plant_varieties UUIDs found by querying prod directly; staging's isolated Neon branch
+# (br-damp-frog-amdfxwrr) does not carry Dave's real Alaska Mix / California Wonder rows under these
+# ids. So the gates below are written as VIOLATION COUNTS that must be 0, not as "count(*) = 1" —
+# an absolute like that fails on staging purely because the row is absent, which is not a defect.
+# The cost, stated rather than discovered: a violation-count gate can pass VACUOUSLY where the rows
+# do not exist. The two env: prod gates (post_prod_apply_actually_landed,
+# post_prod_repoint_landed_on_survivor) are the ones that distinguish "applied" from "matched
+# nothing" — same shape as v4-harvhabitgap-001. Gates that genuinely describe the prod starting
+# state carry env: prod, so they are NOT_APPLICABLE on staging rather than red.
+#
+# POST GATES SELF-ARM — THEY ARE NOT FLIPPED BY HAND. gate-invariants.yml runs continuously against
+# PROD, where this migration is unapplied, and `continuous:` defaults to TRUE when the key is
+# absent. A post gate asserting this migration's own effect would therefore be permanently red
+# until someone applied it (that exact omission is why post_bee_balm_is_cut_and_come_again_14 has
+# dev CI red today). Rather than the known-bad "flip them to true after apply" runbook step
+# (v4-cachemissingrow-001/gates.yml:249 documents why that fails), every post assertion carries
+#   AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.36.0-varietydedup-001')
+# so it is vacuously green before apply, becomes a real standing invariant the moment 0a writes its
+# receipt, and disarms itself again if 0r removes it.
+#
+# `continuous: false` is confined to the two places it is the right answer: the three pure
+# apply-time receipts at the bottom of post:, and every pre: gate. The pre gates describe an
+# apply-window precondition that ORDINARY APP USE is entitled to change before anyone applies this
+# — Dave adding a planting to the still-live Alaska Mix duplicate is not a defect, and must not
+# read as one in the sweep. (Moot in practice, since gate-invariants.yml runs
+# `--phase post --continuous-only` against both environments and never loads pre: at all, but the
+# classification is stated rather than left to that coincidence.) Their post-apply counterparts —
+# post_alaska_repoint_landed and post_no_orphaned_active_planting — carry the same assertions
+# forward as real self-armed standing invariants.
+
+pre:
+  - name: pre_alaska_survivor_live
+    note: Survivor row exists and is not yet archived. env:prod — staging has no such row.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = 'a11dd600-84b4-4bd6-8611-f85336bc3c2e' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_alaska_loser_live
+    note: >
+      Loser row exists and is not yet archived (confirms the starting state before 0a). env:prod —
+      staging has no such row.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_no_other_planting_on_alaska_loser
+    note: >
+      THE safety invariant for V4-VARIETYDUP-001, and the gate that was missing. 0a repoints BY
+      RELATION (every planting on the loser) but 0r reverts BY LITERAL (one plants.id), so the two
+      agree only while exactly one planting is in scope. This proves that: nothing OTHER than the
+      measured planting 7ea304c4 references the loser at apply time. Counts soft-deleted plantings
+      too — an FK left pointing at an archived variety is a defect whether or not the row is
+      visible. If this ever returns >0, STOP: 0a will still do the right thing (relation-scoped),
+      but 0r would only reverse part of it — extend the rollback, or add the snap_ ledger from
+      v4-croptypealoe-001/0b-data.sql, before applying. Violation-count form, so it passes
+      correctly (and vacuously) on staging where neither row exists.
+    sql: |
+      SELECT count(*) FROM public.plants
+       WHERE variety_id = 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7'
+         AND id <> '7ea304c4-5ae5-4408-94e5-546d706e3392'
+    expect: scalar_eq
+    value: 0
+    continuous: false
+
+  - name: pre_alaska_known_planting_still_reversible
+    note: >
+      The planting 0r reverts by literal is still on either the loser (not yet applied) or the
+      survivor (already applied) — anything else means something re-pointed it since 2026-08-18 and
+      0r would clobber that third value. Not "count(*) = 1": that is a prod absolute. Violation
+      count, so an absent row passes.
+    sql: |
+      SELECT count(*) FROM public.plants
+       WHERE id = '7ea304c4-5ae5-4408-94e5-546d706e3392'
+         AND variety_id IS DISTINCT FROM 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7'
+         AND variety_id IS DISTINCT FROM 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'
+    expect: scalar_eq
+    value: 0
+    continuous: false
+
+  - name: pre_cw_archive_targets_live
+    note: >
+      Golden California Wonder + Orange Sun + California Wonder all still live (not archived).
+      env:prod — staging has no such rows.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id IN ('960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                     '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                     '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NULL
+    expect: rowcount_gte
+    value: 3
+    continuous: false
+
+  - name: pre_emerald_green_is_keeper
+    note: >
+      The pre-existing 'Emerald Green' row (not named in the original ledger text) already carries
+      the rename target name and is live — this is why 0a contains no UPDATE ... SET name. env:prod
+      — staging has no such row.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '7a6ab71f-4449-4740-8e4c-1947fa9da361'
+         AND lower(name) = 'emerald green' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_no_active_planting_on_archive_targets
+    note: >
+      THE safety invariant for V4-CWARCHIVE-001. Proves — before archiving — that no currently
+      visible planting (not soft-deleted, not archived) references any of the 3 rows about to be
+      archived, i.e. archiving them will not blank a variety_ref an active view is showing
+      (lambda/plants/index.js:455 LEFT JOINs plant_varieties with deleted_at IS NULL). If this ever
+      returns >0 for a future reuse of this pattern, STOP — do not archive until that planting is
+      re-pointed or the archive is otherwise justified.
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE variety_id IN ('960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                             '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                             '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NULL AND archived_at IS NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_alaska_loser_archived
+    note: The duplicate is archived. Self-armed — vacuous before apply, invariant after.
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE id = 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7'
+         AND deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.36.0-varietydedup-001')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_alaska_survivor_alive
+    note: The survivor was not archived by mistake — this migration must never soft-delete a11dd600.
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE id = 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'
+         AND deleted_at IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.36.0-varietydedup-001')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_alaska_repoint_landed
+    note: >
+      Stated as the relation, matching 0a: NOTHING may still reference the archived loser. Strictly
+      stronger than the old "plants.id 7ea304c4 now points at the survivor" check, which passed
+      while a second planting sat orphaned on the archived row.
+    sql: |
+      SELECT count(*) FROM public.plants
+       WHERE variety_id = 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.36.0-varietydedup-001')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_cw_archive_targets_archived
+    note: All three California Wonder off-target rows are archived; none is still live.
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE id IN ('960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                     '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                     '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.36.0-varietydedup-001')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_emerald_green_untouched
+    note: >
+      Proves the keeper's name and live-state were not altered by this migration — the whole
+      ledger deviation rests on 7a6ab71f being left exactly as Dave created it.
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE id = '7a6ab71f-4449-4740-8e4c-1947fa9da361'
+         AND (lower(name) IS DISTINCT FROM 'emerald green' OR deleted_at IS NOT NULL)
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.36.0-varietydedup-001')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_no_orphaned_active_planting
+    note: >
+      THE blast-radius bound. No visible planting may be left referencing any of the 4 archived
+      varieties, because lambda/plants/index.js:455 would render it with a blank variety_ref.
+      Covers the Alaska loser as well as the 3 CA Wonder rows.
+    sql: |
+      SELECT count(*) FROM public.plants
+       WHERE variety_id IN ('f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7',
+                             '960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                             '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                             '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NULL AND archived_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.36.0-varietydedup-001')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_prod_apply_actually_landed
+    note: >
+      env:prod and scripted. On prod all four rows exist, so this is the gate that tells an applied
+      migration from one that matched nothing — every self-armed gate above shares its predicate
+      with 0a and so passes vacuously where the rows are absent. continuous: false: it is false by
+      construction on any environment this has not been applied to, which is correct there.
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 4 - count(*) FROM public.plant_varieties
+       WHERE id IN ('f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7',
+                     '960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                     '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                     '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  - name: post_prod_repoint_landed_on_survivor
+    note: >
+      The positive half of the repoint receipt, and the ONLY place the measured plants.id literal
+      still appears — honest here, because this asserts a prod fact rather than scoping a write.
+      post_alaska_repoint_landed proves nothing is left on the loser; this proves where it went.
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 - count(*) FROM public.plants
+       WHERE id = '7ea304c4-5ae5-4408-94e5-546d706e3392'
+         AND variety_id = 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_present
+    note: >
+      Apply-time receipt, and the arming key for every self-armed gate above. continuous: false —
+      it is absent from any environment this has not been applied to, which is the correct state
+      there, not a failure.
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.36.0-varietydedup-001' LIMIT 1
+    expect: rowcount_gte
+    value: 1
