@@ -553,7 +553,19 @@ export const handler = async (event) => {
 
         // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation for the new
         // lifecycle/source/lineage fields. Mirrors DB CHECK constraints; NULL allowed.
-        const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
+        //
+        // V4-LOSSEVENT-001 WIDENED THIS (2026-08-18, Dave): + animal_damage, + culled. DEPLOY-
+        // ORDERED, AND IN THE OPPOSITE DIRECTION FROM validateQtyLost IN THE SAME BUNDLE —
+        // SCHEMA FIRST. A widened validator against a narrow DB turns 'culled' into a 23514 on
+        // plants_loss_cause_check; a narrow validator against a widened DB is just a 400 with a
+        // clear message. So migrations/v4-losscapture-001/0b must be applied to BOTH environments
+        // before this Lambda ships. It is safe to be out of order TODAY only because nothing in
+        // src/ has ever sent loss_cause — lambda/plants/loss-cause-vocab.test.js asserts that
+        // absence, so this stops being a free pass the moment a caller appears.
+        //
+        // Canonical vocabulary: src/lib/eventTypes.js LOSS_REASONS, pinned to the migration ARRAY
+        // and to gates.yml by that same test. Do not edit one copy.
+        const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown', 'animal_damage', 'culled'];
         // V4-SOURCEFREE-001: source_type is free-text (like event_type). No server allowlist; DB CHECK dropped. UI dropdownRegistry is the single source of truth.
         // BUG-DIVERGENCEVOCAB-001: this list had ZERO overlap with plants_divergence_type_check
         // ('division','cutting','saved_seed_from'), so every value this allowlist admitted the DB
@@ -1402,7 +1414,9 @@ export const handler = async (event) => {
       // Existing callers still pass project_id, so their behavior is unchanged.
 
       // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation. NULL allowed.
-      const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
+      // V4-LOSSEVENT-001 widened this to seven — the SCHEMA-FIRST deploy ordering and the whole
+      // rationale are on the PUT path above; this is its textual twin and both move together.
+      const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown', 'animal_damage', 'culled'];
       // V4-SOURCEFREE-001: source_type is free-text — no server allowlist (see PUT path).
       // BUG-DIVERGENCEVOCAB-001: must stay set-equal to plants_divergence_type_check. Rationale and
       // canonical source on the PUT path above; the drift guard asserts both copies match the

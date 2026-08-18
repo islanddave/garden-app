@@ -43,14 +43,20 @@ const TRANSITIONS = [
 describe('planting status-advance UPDATEs — container-less ownership scope', () => {
   it('finds every garden_node UPDATE statement in the file', () => {
     // 6 status advances + 2 germinated_at set-once writes (single + batch) + 2 transplanted_at
-    // set-once writes (single + batch, V4-TRANSPLANTANCHOR-001). If this drifts, the per-statement
-    // assertions below may be inspecting the wrong slices.
+    // set-once writes (single + batch, V4-TRANSPLANTANCHOR-001) + 2 V4-LOSSEVENT-001 plant-
+    // reduction counter writes (apply on POST + reverse on DELETE). If this drifts, the
+    // per-statement assertions below may be inspecting the wrong slices.
+    //
+    // The reduction pair is the first entry here that is NOT a status advance and NOT a lifecycle
+    // date — it moves quantity / qty_current / qty_lost and deliberately never touches `status`.
+    // That absence is asserted in lambda/events/plant-reduction.test.js, not here, because this
+    // file's per-statement loop is keyed on the transition it expects each statement to make.
     //
     // The two anchor-supersede statements V4-TRANSPLANTANCHOR-001 adds alongside the transplant
     // writes are NOT in this census and must not be: they target public.plant_anchor_derivation,
     // not garden_node. They read garden_node through an EXISTS aliased `gp`, which the anchor in
     // this regex (`UPDATE public.garden_node p`) correctly declines to match.
-    expect(STATEMENTS.length).toBe(10);
+    expect(STATEMENTS.length).toBe(12);
   });
 
   for (const [status, count, guard] of TRANSITIONS) {

@@ -71,6 +71,10 @@ export const EVENT_TYPES = [
   'seed_saved',
   'cloves_saved',
   'overwinter_survived',
+  // V4-LOSSEVENT-001 — the two PLANT-REDUCTION types. See PLANT_REDUCTION_EVENT_TYPES below for
+  // the whole contract; they are ordinary EVENT_TYPES members in every other respect.
+  'failed',
+  'given_away',
   'observation',
   'photo',
   'other',
@@ -133,6 +137,14 @@ export const EVENT_TYPE_META = {
   seed_saved:          { label: 'Seed saved',           emoji: '🫘', category: 'Harvest' },
   cloves_saved:        { label: 'Cloves saved',         emoji: '🧄', category: 'Harvest' },
   overwinter_survived: { label: 'Overwinter survived',  emoji: '🧥', category: 'Environmental' },
+  // V4-LOSSEVENT-001. The labels name the EVENT (what happened to the plants), never the cause —
+  // the cause is the reason value, and Dave's ruling was that a reason naming the outcome
+  // ("plant death") is not a reason at all. 'Attrition' is a NEW category: 'Pest & Health' would
+  // have been a defensible home for `failed` and an actively wrong one for `given_away` (a plant
+  // swap is not a health event), and the whole point of keeping the two vocabularies apart is that
+  // a gift never reads as a loss. Category placement is a taste call — Dave's to overrule.
+  failed:          { label: 'Plants lost',          emoji: '🥀', category: 'Attrition' },
+  given_away:      { label: 'Plants given away',    emoji: '🎁', category: 'Attrition' },
   observation:     { label: 'Observed / Note',      emoji: '👁️', category: 'Notes & Photos' },
   photo:           { label: 'Photo only',           emoji: '📷', category: 'Notes & Photos' },
   other:           { label: 'Other',                emoji: '📝', category: 'Environmental' },
@@ -201,6 +213,13 @@ export const PRIMARY_EVENT_TYPES = [
 //                              500 need water" without touching them is a fabricated observation,
 //                              and it would let one tap suppress the whole water bar. Also see
 //                              NON_REWARD_EVENT_TYPES: it earns nothing, so bulk has no upside.
+//   V4-LOSSEVENT-001:
+//     failed, given_away    — carry a PER-PLANTING quantity, the same disqualifier `harvest` has.
+//                             Worse here than for harvest, because the batch path writes a
+//                             side-effect the user cannot see: one "lost 3" fanned across a
+//                             500-planting scope would decrement 500 plantings by 3 each and accrue
+//                             1500 to qty_lost. Bulk attrition is not a real gesture anyway — you
+//                             count what a pest actually took on the planting in front of you.
 export const BATCH_EXCLUDED_TYPES = [
   'harvest',
   'first_harvest',
@@ -209,6 +228,8 @@ export const BATCH_EXCLUDED_TYPES = [
   'cutting_taken',
   'hand_pollinated',
   'moisture_check',
+  'failed',
+  'given_away',
 ]
 
 // ── Reward-bearing partition (V4-WATERMATH-001 F0) ──────────────────
@@ -276,6 +297,119 @@ export function isRewardedEventType(eventType) {
 export const WATER_DEPTH_CLASSES = ['light', 'normal', 'deep']
 export const WATER_DEPTH_SOURCES = ['user', 'default']
 
+// ── V4-LOSSEVENT-001 — plant-reduction ledger ───────────────────────
+// DAVE'S REQUIREMENT, in his words: he starts more seeds than he needs, plants out ten lettuce,
+// and between seedling and plant-out takes that to five — and he needs to record WHY the count
+// went from ten to five. That is NOT the planting failing. The planting is alive and healthy, just
+// smaller. Three of ten eaten by a pest is the same shape.
+//
+// So the unit of record is a PARTIAL QUANTITY REDUCTION on a still-ACTIVE planting, repeatable:
+// 10 -> 8 (pest) then 8 -> 5 (culled) must BOTH be recoverable afterwards, each with its own
+// reason, quantity and date. A single `plants.loss_cause` scalar cannot hold that — it holds one
+// value, so the second reduction would erase the first — which is why the history lives in
+// event_log and not in a column. See lambda/events/validators.js validateReduction for the wire
+// contract and lambda/events/index.js for the counter write.
+//
+// TWO TYPES, TWO VOCABULARIES, AND THE SEPARATION IS THE POINT. A plant swap is not a loss. If
+// give-away reasons were folded into loss_cause then "how much did I lose to problems this season"
+// would count every gift. They are kept apart at the STORAGE layer, not merely the vocabulary
+// layer: `loss_reason` is only ever written on `failed` rows and `giveaway_reason` only on
+// `given_away` rows, so a loss aggregate that forgets to filter by event_type STILL cannot pick up
+// a gift.
+export const PLANT_REDUCTION_EVENT_TYPES = ['failed', 'given_away']
+
+// The reason vocabulary for `failed`. THIS IS THE SAME VOCABULARY AS plants.loss_cause — one
+// vocabulary, five homes (here, the generated Lambda mirror, migrations/v4-losscapture-001's
+// ARRAY, both ALLOWED_LOSS literals in lambda/plants/index.js, and gates.yml's set-equality
+// expectation), pinned against each other by lambda/plants/loss-cause-vocab.test.js.
+//
+// `animal_damage` and `culled` are Dave's additions (2026-08-18) to the five that were already
+// deployed. Widening the DB CHECK is DEPLOY-ORDERED — see that migration's README §Ordering;
+// the direction is SCHEMA FIRST for a widening, the opposite of the qty_lost narrowing in the
+// same bundle.
+//
+// 'plant death' was proposed and REJECTED by Dave: it names the outcome, not the cause, and the
+// event type already says the plant is gone.
+export const LOSS_REASONS = [
+  'pest',
+  'disease',
+  'weather',
+  'transplant_shock',
+  'unknown',
+  'animal_damage',
+  'culled',
+]
+
+// The reason vocabulary for `given_away`. Dave confirmed this is the PLANT being given away, not
+// the produce (produce disposition is harvest_log.disposition, V4-HARVDISPOSITION-001 — a third
+// and unrelated vocabulary that happens to share the token 'culled'; do not merge them).
+// 'sold' and 'traded' are plausible and are NOT here: they were proposed rather than approved,
+// and an unapproved value in a closed vocabulary is indistinguishable from an approved one once
+// rows exist.
+export const GIVEAWAY_REASONS = ['friend', 'donated', 'plant_swap']
+
+// Deliberate vs accidental, DERIVED FROM THE REASON VALUE ALONE — no `intentional` column. A
+// stored boolean alongside the reason is a second source of truth for one fact, and the pair drifts
+// the first time a reason is renamed. Every give-away is deliberate by construction; among losses
+// only culling is.
+export const INTENTIONAL_LOSS_REASONS = ['culled']
+
+export function isIntentionalReduction(reason) {
+  return INTENTIONAL_LOSS_REASONS.includes(reason) || GIVEAWAY_REASONS.includes(reason)
+}
+
+// The three metadata keys the reduction ledger writes. Named constants because the client, the
+// API validator and every aggregate query have to agree on the spelling, and a typo in a jsonb key
+// fails SILENTLY (`metadata->>'loss_reson'` is NULL, not an error).
+export const REDUCTION_QTY_KEY = 'qty_reduced'
+export const LOSS_REASON_KEY = 'loss_reason'
+export const GIVEAWAY_REASON_KEY = 'giveaway_reason'
+
+// Which reason key belongs to which type, and therefore which vocabulary applies. An event type
+// absent from this map carries NO reduction keys at all.
+export const REDUCTION_REASON_KEY_BY_TYPE = {
+  failed: LOSS_REASON_KEY,
+  given_away: GIVEAWAY_REASON_KEY,
+}
+
+export const REDUCTION_REASONS_BY_KEY = {
+  [LOSS_REASON_KEY]: LOSS_REASONS,
+  [GIVEAWAY_REASON_KEY]: GIVEAWAY_REASONS,
+}
+
+export function isPlantReductionEventType(eventType) {
+  return PLANT_REDUCTION_EVENT_TYPES.includes(eventType)
+}
+
+// Only a LOSS accrues into plants.qty_lost. A give-away is a reduction, not a loss: the plant is
+// alive somewhere else. Give-away totals are read off the ledger instead of getting their own
+// column — a `qty_given_away` counter would need its own CHECK, its own non-negative guard and its
+// own deploy ordering to answer a question one SUM already answers.
+export function accruesQtyLost(eventType) {
+  return eventType === 'failed'
+}
+
+// The list every EVENT-CREATION picker renders, as opposed to the vocabulary the API accepts.
+//
+// `failed` / `given_away` are real, first-class, API-accepted EVENT_TYPES values — but the API
+// REQUIRES a quantity and a reason on them and no capture panel exists to collect either. Offered in
+// a picker as things stand they would be a visible option that 400s every time: the
+// CATCH_UP_EDITOR_SHIPPED failure shape (a badge linking to an editor nobody built). WHEN THE
+// CAPTURE PANEL SHIPS, change the filter below to `EVENT_TYPES` and nothing else has to move.
+//
+// DERIVED HERE RATHER THAN BEHIND A featureFlags.js CONST, which was the first shape of this and is
+// where the house "hidden until it ships" flags live. Measured instead of assumed: 78 test files
+// `vi.mock('../lib/featureFlags.js', ...)` with a partial factory, and vitest THROWS on reading an
+// export a mock factory omits — so routing four widely-imported surfaces (EventTypePicker,
+// CaptureFlow, ProjectDetail, FeedPage) through that module reds unrelated suites on a name they
+// have no reason to know about. This file has zero imports by design and already owns every other
+// derived list (BATCH_EVENT_TYPES, PLANTING_EXEMPT_TYPES), so the derivation belongs here.
+//
+// The BATCH picker needs no gating: BATCH_EVENT_TYPES already excludes both for its own reasons.
+export const SELECTABLE_EVENT_TYPES = EVENT_TYPES.filter(
+  (t) => !PLANT_REDUCTION_EVENT_TYPES.includes(t),
+)
+
 // ── Derived batch allowlist (NEVER hand-listed) ─────────────────────
 // The server (validateBatchBody) and the LogMany picker both consume this.
 export const BATCH_EVENT_TYPES = EVENT_TYPES.filter(
@@ -293,6 +427,9 @@ export const CATEGORY_ORDER = [
   'Environmental',
   'Harvest',
   'Pest & Health',
+  // V4-LOSSEVENT-001. Anchored after the other exception buckets: the rarest group and the one
+  // whose members are terminal for the plants they name.
+  'Attrition',
   'Notes & Photos',
 ]
 
@@ -332,6 +469,11 @@ export const PLANTING_REQUIRED_TYPES = new Set([
   'deadheaded', 'hand_pollinated', 'divided', 'cutting_taken', 'rooting', 'relocated',
   'flowering', 'fruit_set', 'first_harvest', 'harvest', 'scape_cut', 'cured', 'seed_saved',
   'cloves_saved', 'overwinter_survived',
+  // V4-LOSSEVENT-001: a reduction is arithmetic ON a specific planting's count. Without a planting
+  // there is no count to reduce, so this is the strongest predication in the whole map — and unlike
+  // the rest of it the SERVER enforces this pair too (validatePostBody), because the write has a
+  // side effect on plants and a planting-less one would be a no-op behind a success response.
+  'failed', 'given_away',
 ])
 
 // EXEMPT (a space/garden target, never nothing): rain, cover, uncover, mulched, mesh_netting,

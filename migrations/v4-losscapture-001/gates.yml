@@ -101,13 +101,33 @@ pre:
   # deleted_at filter — the 2026-08-03 outage class is a pre-VALIDATE check scoped to live rows
   # passing green and then VALIDATE scanning the whole heap and failing on a soft-deleted row.
   # Safe in `pre` because loss_cause already exists on both live environments (0a's header).
+  #
+  # V4-LOSSEVENT-001: widened to the seven-value vocabulary, and rewritten from `NOT IN (...)` to
+  # `<> ALL (ARRAY[...])`. Same semantics, but the ARRAY form is the one
+  # lambda/plants/loss-cause-vocab.test.js can parse, so this — the THIRD copy of the vocabulary in
+  # this file — is now pinned to 0b's ARRAY alongside the other two instead of drifting silently.
+  # Seven and not five because this gate exists to PREDICT 0c's VALIDATE of the seven-value
+  # constraint; at five it would red on a legitimately-stored 'culled'.
   - name: pre_no_out_of_vocab_loss_cause
     sql: |
       SELECT 1 FROM public.plants
        WHERE loss_cause IS NOT NULL
-         AND loss_cause NOT IN ('pest','disease','weather','transplant_shock','unknown')
+         AND loss_cause <> ALL (ARRAY['pest','disease','weather','transplant_shock','unknown','animal_damage','culled'])
     expect: rowcount_eq
     value: 0
+
+  # V4-LOSSEVENT-001. 0b DROPs `plants_loss_cause_check`, the auto-named VALIDATED five-value CHECK
+  # that was found live on prod and staging. If it is ALREADY absent, this environment is not the
+  # one that was measured — either someone dropped it by hand, or this is a fresh database built
+  # from migrations (where it never existed, because no migration in this repo ever created it: it
+  # is hand-applied, like the columns themselves). Either way the apply should stop and be looked
+  # at rather than silently no-op the consolidation. Cheap to clear if intended: delete this gate
+  # with the DROP in 0b.
+  - name: pre_legacy_loss_cause_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname='plants_loss_cause_check'
+    expect: rowcount_eq
+    value: 1
 
   # MOVED FROM post, same reasoning — and this is the one with teeth. Nothing has ever floored
   # qty_lost, so unlike loss_cause (guarded in the Lambda since V1.2a-4 S1) this population is
@@ -216,8 +236,27 @@ post:
                  FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''::text', 'g') AS m
              ) x
             WHERE c.conname='chk_plants_loss_cause'
-              AND x.vocab @> ARRAY['pest','disease','weather','transplant_shock','unknown']
-              AND x.vocab <@ ARRAY['pest','disease','weather','transplant_shock','unknown'])
+              AND x.vocab @> ARRAY['pest','disease','weather','transplant_shock','unknown','animal_damage','culled']
+              AND x.vocab <@ ARRAY['pest','disease','weather','transplant_shock','unknown','animal_damage','culled'])
+    expect: rowcount_eq
+    value: 0
+
+  # V4-LOSSEVENT-001. THE GATE WITHOUT WHICH THE WIDENING IS COSMETIC.
+  #
+  # plants.loss_cause already carried a live VALIDATED CHECK under Postgres's auto-generated name
+  # `plants_loss_cause_check` (five values) — measured on prod AND staging 2026-08-18, read-only.
+  # 0b now drops it and consolidates into the house-named seven-value chk_plants_loss_cause. If that
+  # drop is ever removed or fails, the catalog holds BOTH: the narrow VALIDATED one still rejects
+  # 'culled', while post_loss_cause_vocab_exact above reports the widened one as perfectly correct.
+  # Every other gate in this file passes in that state. This one is what makes the pair non-vacuous.
+  #
+  # Self-arming on 0b's row, matching its siblings — quiet until the phase that establishes the fact
+  # has actually run, so it does not stand red in the scheduled sweep while the bundle is unapplied.
+  - name: post_legacy_loss_cause_check_removed
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.25.1-losscapture-001-checks')
+         AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='plants_loss_cause_check')
     expect: rowcount_eq
     value: 0
 

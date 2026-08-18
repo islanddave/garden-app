@@ -52,11 +52,40 @@
 -- `lambda/events/validators.js`'s ALLOWED_LOSS_CAUSES. No such constant exists, or ever has — the
 -- string `ALLOWED_LOSS_CAUSES` occurs in exactly one place in the repo, and it was this comment.
 -- There is no events-side loss vocabulary to be byte-comparable with.
+--
+-- ═══ CORRECTED AGAIN 2026-08-18 (V4-LOSSEVENT-001) — TWO CHANGES, BOTH LOAD-BEARING ═══
+--
+-- (1) THE COLUMN ALREADY HAS A LIVE, VALIDATED CHECK, and this file did not know it. Measured
+--     read-only on prod AND staging: `plants_loss_cause_check`, convalidated = true, over exactly
+--     the same five values. 0a's header says "The DB CHECK loss_cause never had is armed in 0b" —
+--     that is false. So the original form of this statement added a SECOND constraint over one
+--     column under a different name, which is merely redundant while the two agree and is a
+--     SILENT TRAP the moment they do not: the narrower VALIDATED one still rejects, so a widened
+--     `chk_plants_loss_cause` would be entirely cosmetic and 'culled' would keep 23514-ing with
+--     two constraints in the catalog both looking correct. The legacy constraint is therefore
+--     DROPPED here and consolidated into the house-named one. 0r restores it.
+--
+-- (2) THE VOCABULARY IS WIDENED TO SEVEN (+ animal_damage, + culled; Dave 2026-08-18), and that
+--     inverts the deploy ordering RELATIVE TO THE OTHER TWO CONSTRAINTS IN THIS FILE:
+--         narrowing (qty_lost >= 0)   -> CODE FIRST. The guard must be live before the CHECK.
+--         widening  (loss_cause + 2)  -> SCHEMA FIRST. This file must be applied before the
+--                                       plants Lambda carrying the seven-value ALLOWED_LOSS.
+--     Reversed, the deployed writer accepts 'culled' and the database 23514s it. The reverse
+--     mistake is harmless by comparison: a narrow writer against a wide DB just 400s.
+--     README.md §Ordering carries the full sequence.
+--
+-- Set-equality is asserted by gates.yml post_loss_cause_vocab_exact, and the absence of the legacy
+-- constraint by post_legacy_loss_cause_check_removed — without that second gate, a shadowing
+-- narrow constraint would satisfy every other gate in this file.
 DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plants_loss_cause_check') THEN
+    ALTER TABLE public.plants DROP CONSTRAINT plants_loss_cause_check;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_plants_loss_cause') THEN
     ALTER TABLE public.plants ADD CONSTRAINT chk_plants_loss_cause
       CHECK (loss_cause IS NULL OR loss_cause = ANY (ARRAY[
-        'pest'::text, 'disease'::text, 'weather'::text, 'transplant_shock'::text, 'unknown'::text
+        'pest'::text, 'disease'::text, 'weather'::text, 'transplant_shock'::text, 'unknown'::text,
+        'animal_damage'::text, 'culled'::text
       ])) NOT VALID;
   END IF;
 END $$;

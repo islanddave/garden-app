@@ -8,7 +8,7 @@
 //
 // WHY this file exists: the events Lambda ships as a standalone zip with NO
 // bundler, so it cannot import from src/lib/ at runtime. validators.js imports
-// THIS sibling instead. (Source byte-length at generation: 21364.)
+// THIS sibling instead. (Source byte-length at generation: 29930.)
 
 export const EVENT_TYPES = [
   'sowing',
@@ -57,6 +57,8 @@ export const EVENT_TYPES = [
   'seed_saved',
   'cloves_saved',
   'overwinter_survived',
+  'failed',
+  'given_away',
   'observation',
   'photo',
   'other',
@@ -70,6 +72,8 @@ export const BATCH_EXCLUDED_TYPES = [
   'cutting_taken',
   'hand_pollinated',
   'moisture_check',
+  'failed',
+  'given_away',
 ]
 
 // Derived (EVENT_TYPES minus BATCH_EXCLUDED_TYPES) — kept explicit here so the
@@ -141,3 +145,50 @@ export const WATER_DEPTH_SOURCES = [
   'user',
   'default',
 ]
+
+// V4-LOSSEVENT-001 — plant-reduction ledger. The two vocabularies are SEPARATE on purpose: a gift
+// is not a loss, and keeping loss_reason off given_away rows is what stops a loss aggregate from
+// counting one. See src/lib/eventTypes.js for the full contract.
+export const PLANT_REDUCTION_EVENT_TYPES = [
+  'failed',
+  'given_away',
+]
+
+export const LOSS_REASONS = [
+  'pest',
+  'disease',
+  'weather',
+  'transplant_shock',
+  'unknown',
+  'animal_damage',
+  'culled',
+]
+
+export const GIVEAWAY_REASONS = [
+  'friend',
+  'donated',
+  'plant_swap',
+]
+
+export const REDUCTION_QTY_KEY = 'qty_reduced'
+export const LOSS_REASON_KEY = 'loss_reason'
+export const GIVEAWAY_REASON_KEY = 'giveaway_reason'
+
+export const REDUCTION_REASON_KEY_BY_TYPE = {
+  failed: LOSS_REASON_KEY,
+  given_away: GIVEAWAY_REASON_KEY,
+}
+
+export const REDUCTION_REASONS_BY_KEY = {
+  [LOSS_REASON_KEY]: LOSS_REASONS,
+  [GIVEAWAY_REASON_KEY]: GIVEAWAY_REASONS,
+}
+
+export function isPlantReductionEventType(eventType) {
+  return PLANT_REDUCTION_EVENT_TYPES.includes(eventType)
+}
+
+// Only a LOSS accrues into plants.qty_lost — a given-away plant is alive somewhere else.
+export function accruesQtyLost(eventType) {
+  return eventType === 'failed'
+}

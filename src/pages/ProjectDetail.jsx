@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
-import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
+import { P, PROJECT_STATUSES, SELECTABLE_EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import Icon from '../components/Icon.jsx'
@@ -1105,7 +1105,7 @@ export default function ProjectDetail() {
                   value={eventForm.event_type}
                   onChange={e => setEventForm(f => ({ ...f, event_type: e.target.value }))}
                 >
-                  {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
+                  {[...SELECTABLE_EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                     <option key={t} value={t}>
                       {EVENT_TYPE_META[t]?.label ?? t.replace(/_/g, ' ')}
                     </option>

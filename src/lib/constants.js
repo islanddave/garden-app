@@ -65,7 +65,7 @@ export const P = {
 // (single source of truth). Re-exported here so the 5 existing importers of
 // EVENT_TYPES from constants.js keep working unchanged. Add new values in
 // eventTypes.js, NOT here.
-export { EVENT_TYPES } from './eventTypes.js'
+export { EVENT_TYPES, SELECTABLE_EVENT_TYPES } from './eventTypes.js'
 
 // Location type_label values for UI icons/display
 export const LOCATION_TYPE_LABELS = [

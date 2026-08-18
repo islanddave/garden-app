@@ -82,8 +82,14 @@ describe('events Lambda — Household Mode surgical widening', () => {
     //   The count moves by two and not zero because these UPDATEs are NEW statements, not a
     //   predicate migrating within an existing one (contrast BUG-STATUSADVNOPROJ-001 directly
     //   above, which is why the two entries look inconsistent and are not).
+    // + V4-LOSSEVENT-001 plant-reduction counter WRITE and its delete-time reversal (2026-08-18):
+    //   TWO sites, 21 -> 23. Same class and same two-arm shape as the transplant anchor above —
+    //   two NEW garden_node UPDATEs, each contributing exactly one pp.created_by predicate from
+    //   inside its EXISTS. These two are the first statements in this file to change a COUNTER
+    //   rather than a status or a date, so the household scope is what stops one member's log from
+    //   decrementing another household's planting.
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(21);
+    expect(matches.length).toBe(23);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
     const localAuthz = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
@@ -104,17 +110,23 @@ describe('events Lambda — Household Mode surgical widening', () => {
   // sibling status-advance-scope.test.js header calls out. germinated_at is deliberately NOT in this
   // census — those two writes still carry the narrower container join (recorded, not fixed here), so
   // counting them would assert a property the file does not have.
-  it("all eight ownership-scoped garden_node writes keep the container-less arm", () => {
+  it("all ten ownership-scoped garden_node writes keep the container-less arm", () => {
     const harvested = SRC.match(/SET status = 'harvested'/g) ?? [];
     const fruiting  = SRC.match(/SET status = 'fruiting'/g) ?? [];
     const flowering = SRC.match(/SET status = 'flowering'/g) ?? [];
     const transplanted = SRC.match(/SET transplanted_at = /g) ?? [];
+    // V4-LOSSEVENT-001: the reduction write and its delete-time reversal. Grouped by their own
+    // signature for the same reason the four above are — a bare total of 10 would be satisfied by
+    // nine status arms and one reduction arm. Matched on the qty_lost assignment because it is the
+    // one line unique to these two statements and absent from every other garden_node write.
+    const reduction = SRC.match(/qty_lost {4}= /g) ?? [];
     expect(harvested.length).toBe(2);                   // single-event path + batch path
     expect(fruiting.length).toBe(2);                    // V3-FRUITSET-001 + V4-EVENTSEL-002 batch
     expect(flowering.length).toBe(2);                   // V3-FLOWERING-001 + V4-EVENTSEL-002 batch
     expect(transplanted.length).toBe(2);                // V4-TRANSPLANTANCHOR-001 single + batch
+    expect(reduction.length).toBe(2);                   // V4-LOSSEVENT-001 apply + reverse
     const arms = SRC.match(/p\.container_id IS NULL AND p\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(arms.length).toBe(8);
+    expect(arms.length).toBe(10);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {

@@ -70,6 +70,12 @@ const REUSE = {
   harvest:    STATUS_GLYPHS.harvesting,
   watering:   ANCHORS['care.drop'],
   potting_up: ANCHORS['nav.garden'],
+  // V4-LOSSEVENT-001. Both REUSE rather than redraw, and both reuses are exact rather than
+  // convenient: status.failed already IS "these plants are gone" in this icon language, and
+  // action.share already IS "this went to someone else". Drawing a second form for either would
+  // put two glyphs on one meaning, which is the drift this REUSE block exists to prevent.
+  failed:      STATUS_GLYPHS.failed,
+  given_away:  ANCHORS['action.share'],
 }
 
 const FORM = (t) => NEW[t] || REUSE[t]

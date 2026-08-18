@@ -16,9 +16,9 @@ import { SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
-import { EVENT_TYPES, EVENT_TYPE_META } from '../lib/eventTypes.js'
+import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { INVENTORY_TYPES, INVENTORY_CATEGORIES, INVENTORY_UNITS } from '../lib/inventoryEnums.js'
-import { P } from '../lib/constants.js'
+import { P, SELECTABLE_EVENT_TYPES } from '../lib/constants.js'
 import Field from '../components/forms/Field.jsx'
 import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
@@ -594,7 +594,7 @@ export default function CaptureFlow() {
                 </Field>
                 <Field label="Event">
                   <Select value={evType} onChange={e => setEvType(e.target.value)}>
-                    {EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
+                    {SELECTABLE_EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
                   </Select>
                 </Field>
                 <Field label="Date">
@@ -617,7 +617,7 @@ export default function CaptureFlow() {
                 </Field>
                 <Field label="Event">
                   <Select data-testid="cap-loctype" value={locType} onChange={e => setLocType(e.target.value)}>
-                    {EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
+                    {SELECTABLE_EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
                   </Select>
                 </Field>
                 <Field label="Date">
