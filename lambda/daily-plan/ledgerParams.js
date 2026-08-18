@@ -93,8 +93,10 @@ const LIGHT_CREDIT_WI = 0.5;                 // Light: D := max(0, D - this x wi
 // models coexist. Delete both halves together at the CARE_WATER_LEDGER_ENABLED flip, alongside the
 // CARE_RAIN_MAXDAYS removal already owed there.
 const RAIN_DAY = {
-  ia: { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 },
-  hold: { in_ground: 3, intermediate: 2, small_fast: 1 },
+  // fabric_ground added by BUG-RAINCREDITLIVEPATH-001 purely to hold the mirror equal — these two maps drive
+  // NOTHING (only bagHeatSoftenF below is read at runtime); the engine-side row is the one with behaviour.
+  ia: { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35, fabric_ground: 0.20 },
+  hold: { in_ground: 3, intermediate: 2, small_fast: 1, fabric_ground: 3 },
   // Bag >=85F credit demotion. Keyed to weather_daily.tmax_f of the qualifying day, not today's
   // forecast high. Under RAIN_DEPTH this is a ONE-CLASS DEMOTION (deep->normal->light->nothing)
   // rather than a 0.5x scalar — the scalar had no meaning once the credit stopped being a number of

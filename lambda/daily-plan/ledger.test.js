@@ -51,27 +51,42 @@ describe('params lockstep (mirrored constants cannot drift)', () => {
     expect(LP.RAIN_DAY.ia).toEqual(engine.RAIN_TIER_IA);
     expect(LP.RAIN_DAY.hold).toEqual(engine.RAIN_TIER_HOLD);
   });
-  it('rainDepthTierFor mirrors rainTierFor except on the TWO declared divergences', () => {
-    // Two resolvers exist because the two tables disagree on which row is strictest. They must stay
-    // identical everywhere the divergence is not declared, and rainTierFor's answers must NOT drift
-    // at all: it keys the live flag-OFF IA/hold path, where 'small_fast' is still the correct
-    // fail-safe AND the only row a fabric_bag can legally key.
-    const declared = Object.keys(engine.RAIN_DEPTH_TIER_OVERRIDE);
+  it('rainDepthTierFor mirrors rainTierFor except on the ONE declared divergence (the fallback)', () => {
+    // Two resolvers still exist because the two tables disagree on which row is the FAIL-SAFE:
+    // RAIN_DEPTH has an explicit 'unknown' row, RAIN_TIER_IA/HOLD does not and uses 'small_fast'.
+    // REWRITTEN by BUG-RAINCREDITLIVEPATH-001. This block previously pinned the OPPOSITE of the
+    // shipped behaviour: it asserted the legacy resolver must NOT learn 'fabric_ground' and that the
+    // three engine tables must NOT carry that key. Its stated reason was that the name "would read as
+    // undefined on the live path" — that hazard is what the patch removes by ADDING the row to all
+    // three tables, so the guard is re-pointed at the same hazard rather than weakened: the size-gated
+    // fabric_bag answer is now pinned IDENTICAL across both resolvers, and every tier name either
+    // resolver can return is pinned to exist in every table that gets keyed by it.
     for (const ct of Object.keys(engine.RAIN_VESSEL_TIER)) {
-      if (declared.includes(ct)) continue;
-      expect(engine.rainDepthTierFor(ct, 10), ct).toBe(engine.rainTierFor(ct));
-      expect(engine.rainDepthTierFor(ct, null), `${ct} unsized`).toBe(engine.rainTierFor(ct));
+      expect(engine.rainDepthTierFor(ct, 10), ct).toBe(engine.rainTierFor(ct, 10));
+      expect(engine.rainDepthTierFor(ct, null), `${ct} unsized`).toBe(engine.rainTierFor(ct, null));
+      expect(engine.rainDepthTierFor(ct, 0.06), `${ct} tiny`).toBe(engine.rainTierFor(ct, 0.06));
     }
+    // The one surviving divergence: the fallback for an unrecognized/NULL container_type.
     for (const ct of [null, undefined, '', 'mystery_pot']) {
       expect(engine.rainTierFor(ct), `${ct} (live)`).toBe('small_fast');
+      expect(engine.rainTierFor(ct, 20), `${ct} (live, sized)`).toBe('small_fast');  // size cannot rescue an unknown type
       expect(engine.rainDepthTierFor(ct), `${ct} (F2)`).toBe('unknown');
     }
-    // Divergence 2: the legacy resolver must NOT learn the new tier name — 'fabric_ground' is not a
-    // key of RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS and would read as undefined on the live path.
+    // The size gate itself, on the live resolver, at the shared threshold.
+    expect(engine.rainTierFor('fabric_bag', 5)).toBe('fabric_ground');
+    expect(engine.rainTierFor('fabric_bag', engine.FABRIC_GROUND_MIN_GAL)).toBe('fabric_ground');
+    expect(engine.rainTierFor('fabric_bag', 0.06)).toBe('small_fast');
     expect(engine.rainTierFor('fabric_bag')).toBe('small_fast');
-    expect(engine.RAIN_TIER_IA.fabric_ground).toBeUndefined();
-    expect(engine.RAIN_TIER_HOLD.fabric_ground).toBeUndefined();
-    expect(engine.RAIN_MAX_DAYS.fabric_ground).toBeUndefined();
+    // REPLACES the toBeUndefined trio: every name the live resolver can return MUST key all three
+    // live tables, which is the actual invariant those assertions were protecting.
+    for (const ct of [...Object.keys(engine.RAIN_VESSEL_TIER), null, 'mystery_pot']) {
+      for (const gal of [null, 0.06, 5, 100]) {
+        const tier = engine.rainTierFor(ct, gal);
+        expect(engine.RAIN_TIER_IA[tier], `IA[${tier}] (${ct}/${gal})`).toBeTypeOf('number');
+        expect(engine.RAIN_TIER_HOLD[tier], `HOLD[${tier}] (${ct}/${gal})`).toBeTypeOf('number');
+        expect(engine.RAIN_MAX_DAYS[tier], `MAX_DAYS[${tier}] (${ct}/${gal})`).toBeTypeOf('object');
+      }
+    }
   });
   // D1 RESCOPE GUARD (crucible 2026-08-17). The morning edit merged these two rows; the panel found
   // it applied a fabric-bag field observation to 87 plantings that are rigid pots, tray cells,

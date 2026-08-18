@@ -187,8 +187,11 @@ function rainCreditDays(cls, wi, hy){
 // path (and watercredit.test.js's RAIN_IA.in_ground===undefined assertion) stays byte-identical. Constants are the
 // agronomy coarse-v1 values (W. MA cool-humid, clay-ish native soil); the flagged uncertain ones are soak-tunable
 // (spec §6/§8 — err toward watering: raise IA, shorten hold, tighten ceiling; in_ground IA is the #1 tune target).
-const RAIN_TIER_IA   = { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 }; // inches (initial abstraction per tier)
-const RAIN_TIER_HOLD = { in_ground: 3,    intermediate: 2,    small_fast: 1    }; // max credit days per tier; never raise small_fast
+// BUG-RAINCREDITLIVEPATH-001: fabric_ground ports RAIN_DEPTH_TIER_OVERRIDE's bed-equivalence onto this LIVE
+// flag-OFF-ledger path. Values equal in_ground deliberately (same intent as ledgerParams.RAIN_DEPTH.fabric_ground).
+// small_fast is UNCHANGED and stays the strictest row + the NULL/unknown fallback (see the invariant at :197-208).
+const RAIN_TIER_IA   = { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35, fabric_ground: 0.20 }; // inches (initial abstraction per tier)
+const RAIN_TIER_HOLD = { in_ground: 3,    intermediate: 2,    small_fast: 1,    fabric_ground: 3     }; // max credit days per tier; never raise small_fast
 // Vessel -> tier. Covers the full DB container_type CHECK vocab (14 values, verified prod 2026-07-08) + the generic
 // 'pot' used in fixtures. Rigid pots (plastic/terracotta/ceramic/'pot') are small_fast: generic unknown-size pots dry
 // fast; large rigid pots re-tag to trough.
@@ -204,6 +207,10 @@ const RAIN_TIER_HOLD = { in_ground: 3,    intermediate: 2,    small_fast: 1    }
 //     invariant. small_fast has since been restored; the separate resolver and the explicit unknown row stay,
 //     because the failure was a NAMED ALIAS encoding one day's ordering, not the particular values.)
 // Re-check this comment against BOTH tables whenever either is retuned.
+// BUG-RAINCREDITLIVEPATH-001 (2026-08-18): the tables now BOTH carry a fabric_ground row, so the size-gated
+// fabric_bag divergence is no longer RAIN_DEPTH-only. The fail-safe invariant is unaffected in either direction:
+// fabric_ground is reachable ONLY from an explicitly-typed fabric_bag WITH a parsed size >= 3 gal, never from a
+// fallback, and small_fast remains the strictest row of RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS.
 const RAIN_VESSEL_TIER = {
   in_ground: 'in_ground',
   raised_bed: 'intermediate', trough: 'intermediate', whiskey_barrel: 'intermediate', window_box: 'intermediate',
@@ -211,22 +218,28 @@ const RAIN_VESSEL_TIER = {
   solo_cup: 'small_fast', plastic_pot: 'small_fast', terracotta: 'small_fast', ceramic: 'small_fast',
   pot: 'small_fast', other: 'small_fast',
 };
-function rainTierFor(container_type){ return RAIN_VESSEL_TIER[(container_type||'').toLowerCase()] || 'small_fast'; }
-// F2/RAIN_DEPTH sibling of rainTierFor. Kept separate rather than changing rainTierFor because these tier names
-// also key RAIN_TIER_IA/HOLD/RAIN_MAX_DAYS above, which are LIVE on the flag-OFF path: any name this returns that
-// those tables do not carry would read as undefined there. Two documented divergences, both RAIN_DEPTH-only:
+const FABRIC_GROUND_MIN_GAL = 3;
+// sizeGal is OPTIONAL and is vesselProfile().sizeGal (parsed gallons, or null). Omitted, null or unparseable ->
+// the strict pre-existing row, so every pre-BUG-RAINCREDITLIVEPATH-001 caller and every unsized/unknown vessel
+// keeps today's verdict. Only an explicitly-typed fabric_bag with a parsed size >= FABRIC_GROUND_MIN_GAL moves.
+// Failing to parse a size therefore errs toward WATERING — the same direction vesselProfile.smallVessel takes.
+function rainTierFor(container_type, sizeGal){
+  const ct = (container_type||'').toLowerCase();
+  const base = RAIN_VESSEL_TIER[ct] || 'small_fast';
+  if(ct !== 'fabric_bag') return base;
+  return (Number.isFinite(sizeGal) && sizeGal >= FABRIC_GROUND_MIN_GAL) ? 'fabric_ground' : base;
+}
+// F2/RAIN_DEPTH sibling of rainTierFor. Still kept separate: the two tables disagree on which row is the fail-safe
+// (RAIN_DEPTH has an explicit 'unknown' row; RAIN_TIER_IA/HOLD does not), so the resolvers cannot share a fallback.
+// Since BUG-RAINCREDITLIVEPATH-001 only ONE divergence remains, and it is the fallback:
 //   1. unrecognized/NULL container_type -> 'unknown' instead of collapsing into 'small_fast' (small_fast IS still
 //      the strictest IA/hold row, so rainTierFor's fallback stays correct; editing it would loosen live verdicts
 //      for every NULL-container planting — ~22 in prod: IA 0.35->0.25, hold 1->2).
-//   2. fabric_bag -> 'fabric_ground' (RAIN_DEPTH_TIER_OVERRIDE), the bed-equivalent row, but ONLY at
-//      sizeGal >= FABRIC_GROUND_MIN_GAL. The evidence for bed-equivalent retention is Dave's 5-10 gal bags:
-//      fabric on soil, mulched, clustered. A small bag has the fabric but not the buffer — one live fabric_bag is
-//      recorded as "3 in" (parses to 0.06 gal) — and an UNPARSEABLE size is treated the same as a small one,
-//      which is the same err-toward-watering direction vesselProfile.smallVessel already takes on a null size.
-// sizeGal is vesselProfile().sizeGal (parsed gallons, or null). Callers on the flag-OFF path pass nothing and get
-// the strict row, which is the safe default rather than an accident.
+// FORMERLY divergence 2 — fabric_bag -> 'fabric_ground' above sizeGal >= FABRIC_GROUND_MIN_GAL — is now shared by
+// both resolvers and is pinned as shared by ledger.test.js. The evidence for bed-equivalent retention is Dave's
+// 5-10 gal bags: fabric on soil, mulched, clustered. A small bag has the fabric but not the buffer — one live
+// fabric_bag is recorded as "3 in" (parses to 0.06 gal) — and an UNPARSEABLE size is treated the same as a small one.
 const RAIN_DEPTH_TIER_OVERRIDE = { fabric_bag: 'fabric_ground' };
-const FABRIC_GROUND_MIN_GAL = 3;
 function rainDepthTierFor(container_type, sizeGal){
   const ct = (container_type || '').toLowerCase();
   const base = RAIN_VESSEL_TIER[ct];
@@ -242,6 +255,10 @@ const RAIN_MAX_DAYS = {
   small_fast:   { seedling: 1, vegetative: 2, flowering: 2, fruiting: 1, mature: 2 },
   intermediate: { seedling: 2, vegetative: 3, flowering: 3, fruiting: 2, mature: 4 },
   in_ground:    { seedling: 2, vegetative: 4, flowering: 3, fruiting: 3, mature: 5 },
+  // BUG-RAINCREDITLIVEPATH-001. Inert today (CARE_RAIN_MAXDAYS_ENABLED is absent from the live Lambda env), but
+  // REQUIRED: without it, enabling that flag makes rainMaxDays read RAIN_MAX_DAYS.fabric_ground -> undefined for
+  // every big bag. Mirrors in_ground, matching the tier's IA/hold.
+  fabric_ground:{ seedling: 2, vegetative: 4, flowering: 3, fruiting: 3, mature: 5 },
 };
 function rainStageFor(status){ const s=(status||'').toLowerCase();
   if(s==='seedling'||s==='germinated'||s==='sown') return 'seedling';
@@ -594,7 +611,10 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // DRG-WXFLAGSPLIT-001 F1: the tier is needed by EITHER flag (credit uses it for IA/hold, the ceiling for the
     // clamp), so derive it when either is on; the clamp itself is now gated on rainMaxDaysEnabled ALONE. With both
     // OFF the tier stays null and wi is untouched -> byte-identical to pre-split.
-    const _rainTier = (rainCreditEnabled || rainMaxDaysEnabled) ? rainTierFor(p.container_type) : null;
+    // BUG-RAINCREDITLIVEPATH-001: pass the parsed size so a >=3 gal fabric_bag resolves to 'fabric_ground'.
+    // vesselProfile is a pure parse (ledger.js:109) already require'd at the top of this file, so no new import.
+    const _rainTier = (rainCreditEnabled || rainMaxDaysEnabled)
+      ? rainTierFor(p.container_type, ledger.vesselProfile(p.container_type, p.container_size).sizeGal) : null;
     if(rainMaxDaysEnabled){ const _cap=rainMaxDays(_rainTier, p.status, c.crop); if(_cap!=null && wi>_cap) wi=_cap; }
     const dW=daysBetween(today,p.last_water);
     // DRG-WATERCREDIT-001 Path B-plus: credit qualifying window rain against the cadence (per class), with a

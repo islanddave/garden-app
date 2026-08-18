@@ -95,9 +95,38 @@ describe('WXWATER tier lookup — every DB container_type maps; unknown fails sa
     expect(rainTierFor(undefined)).toBe('small_fast');
     expect(rainTierFor('mystery_pot')).toBe('small_fast');
   });
+  // BUG-RAINCREDITLIVEPATH-001. The one-arg assertions above pass because sizeGal is undefined -> strict row,
+  // which is the DESIGNED default but is a reason those tests do not state. Pin the size gate explicitly so a
+  // green above can never again be mistaken for "fabric_bag is unconditionally small_fast".
+  it('fabric_bag size gate: >= FABRIC_GROUND_MIN_GAL -> fabric_ground, below/unsized -> small_fast', () => {
+    expect(rainTierFor('fabric_bag', 5)).toBe('fabric_ground');       // Dave's modal 5 gal bag
+    expect(rainTierFor('fabric_bag', 0.06)).toBe('small_fast');       // the live "3 in" bag
+    expect(rainTierFor('fabric_bag')).toBe('small_fast');             // omitted -> pre-existing verdict
+    expect(rainTierFor('fabric_bag', 3)).toBe('fabric_ground');       // boundary is inclusive
+    expect(rainTierFor('fabric_bag', 2.99)).toBe('small_fast');
+    expect(rainTierFor('fabric_bag', null)).toBe('small_fast');       // unparseable size fails safe
+    expect(rainTierFor('fabric_bag', NaN)).toBe('small_fast');
+    // sizeGal is contracted as a parsed NUMBER of gallons. null/undefined/NaN are handled by the bare
+    // comparison alone, so these two are what actually pin the Number.isFinite guard: without it a string
+    // or Infinity coerces past the gate. A caller handing over a raw container_size must fail SAFE.
+    expect(rainTierFor('fabric_bag', '5')).toBe('small_fast');
+    expect(rainTierFor('fabric_bag', Infinity)).toBe('small_fast');
+    // the gate is fabric-only: a big rigid pot does NOT get promoted, and no fallback can reach the new row
+    expect(rainTierFor('plastic_pot', 20)).toBe('small_fast');
+    expect(rainTierFor('mystery_pot', 20)).toBe('small_fast');
+    expect(rainTierFor(null, 20)).toBe('small_fast');
+  });
   it('tier constants are the coarse-v1 values (IA spreads around the legacy 0.25; holds 3/2/1)', () => {
-    expect(RAIN_TIER_IA).toEqual({ in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 });
-    expect(RAIN_TIER_HOLD).toEqual({ in_ground: 3, intermediate: 2, small_fast: 1 });
+    // fabric_ground added by BUG-RAINCREDITLIVEPATH-001 at the in_ground values (0.20 / 3).
+    // small_fast is UNCHANGED and must stay the strictest row — it is still the NULL/unknown fallback.
+    expect(RAIN_TIER_IA).toEqual({ in_ground: 0.20, intermediate: 0.25, small_fast: 0.35, fabric_ground: 0.20 });
+    expect(RAIN_TIER_HOLD).toEqual({ in_ground: 3, intermediate: 2, small_fast: 1, fabric_ground: 3 });
+    // the fail-safe invariant as a property of the TABLE, not of the literals above
+    for (const t of Object.keys(RAIN_TIER_IA)) {
+      if (t === 'small_fast') continue;
+      expect(RAIN_TIER_IA.small_fast, `IA ${t}`).toBeGreaterThanOrEqual(RAIN_TIER_IA[t]);
+      expect(RAIN_TIER_HOLD.small_fast, `hold ${t}`).toBeLessThanOrEqual(RAIN_TIER_HOLD[t]);
+    }
   });
 });
 
@@ -146,7 +175,11 @@ describe('WXWATER flag-ON behavior — directional divergence from flag-OFF', ()
     expect(bucket(ov, H(0.22), true).b).toBe('SKIP');
   });
   it('small_fast fruiting pepper, moderate rain: flag-ON is stricter (IA 0.35 + ceiling 1) -> DUE where flag-OFF SKIPs', () => {
-    const ov = { container_type: 'fabric_bag', container_size: '5 gal', status: 'fruiting', last_water: ago(3), db_cadence: SEED({ crop: 'pepper' }) };
+    // BUG-RAINCREDITLIVEPATH-001 retargeted this fixture from a '5 gal' fabric_bag to a rigid pot. The size-gated
+    // fabric_ground tier means a 5 gal bag is no longer a small_fast planting, so the old fixture stopped
+    // exercising the tier its own title names. The rigid pot is still small_fast at any size, so the assertions
+    // below are the ORIGINAL ones, unweakened. The fabric_bag arm of the same scenario is pinned in the next test.
+    const ov = { container_type: 'plastic_pot', container_size: '5 gal', status: 'fruiting', last_water: ago(3), db_cadence: SEED({ crop: 'pepper' }) };
     // flag-OFF: outdoor IA 0.25, 0.5" clears, dW==wi(3) -> SKIP
     expect(bucket(ov, H(0.5), false, wx).b).toBe('SKIP');
     // credit ON, ceiling OFF (the F2 target state): IA rises to 0.35 but 0.5" still clears it, small_fast hold=1
@@ -155,6 +188,27 @@ describe('WXWATER flag-ON behavior — directional divergence from flag-OFF', ()
     // both ON: small_fast ceiling for fruiting Solanaceae = 1 -> wi clamps to 1, dW=3 -> DUE. The CEILING is the
     // operative half of "stricter" here, which is precisely why F1 split it onto its own flag.
     expect(bucket(ov, H(0.5), true, wx, true).b).toBe('DUE');
+  });
+  // BUG-RAINCREDITLIVEPATH-001 — the end-to-end delta, through generatePlan on the LIVE flag configuration
+  // (credit ON, ceiling OFF), which no test previously covered (recon gap 6).
+  it('fabric_ground: a >=3 gal bag is credited where the same bag under small_fast is watered', () => {
+    const base = { status: 'vegetative', last_water: ago(3), db_cadence: SEED({ crop: 'chard' }) };
+    // 0.21" — the real 2026-08-17 window precip. Above fabric_ground IA 0.20, below small_fast IA 0.35.
+    const big   = { ...base, container_type: 'fabric_bag', container_size: '5 gal' };
+    const tiny  = { ...base, container_type: 'fabric_bag', container_size: '3 in' };   // 0.06 gal, the live outlier
+    const nosz  = { ...base, container_type: 'fabric_bag', container_size: null };
+    const rigid = { ...base, container_type: 'plastic_pot', container_size: '5 gal' };
+    expect(bucket(big,   H(0.21), true, wx, false).b).toBe('SKIP');   // the change
+    expect(bucket(tiny,  H(0.21), true, wx, false).b).toBe('DUE');    // below the gate -> unchanged
+    expect(bucket(nosz,  H(0.21), true, wx, false).b).toBe('DUE');    // unparseable -> unchanged, errs to watering
+    expect(bucket(rigid, H(0.21), true, wx, false).b).toBe('DUE');    // not a bag -> unchanged
+    // and it is the rain CREDIT that moved it, not the saturation-cap branch (which sets saturated:true)
+    const w = bucket(big, H(0.21), true, wx, false).out.tasks.rain_skipped.find((x) => x.id === 't');
+    expect(w.credited_days).toBe(3);                    // hold 3, capped at wi=3
+    expect(w.saturated).toBeUndefined();
+    expect(w.reason).toBe('Skip — 0.21" rain over the last few days counts as watering');
+    // flag-OFF is untouched by all of this (outdoor IA 0.25 > 0.21 -> no credit)
+    expect(bucket(big, H(0.21), false, wx).b).toBe('DUE');
   });
   it('max-days ceiling clamps a long cadence so the plant re-surfaces (anti suppression-inversion)', () => {
     // in_ground, mature, cadence 5, big rain: flag-OFF holds 1 day (SKIP at dW==5). ceiling(mature in_ground)=5,
