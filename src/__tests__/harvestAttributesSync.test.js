@@ -171,12 +171,17 @@ describe('harvest-attributes JSON is in sync with the generated 0b-data.sql seed
 
   it('the ornamental/succulent NULLs added 2026-08-17 are recorded', () => {
     // aloe, calibrachoa and lantana each carry one live planting and zero picks and had drifted out
-    // of the list, so their NULL habit read as a coverage gap. ginger is deliberately NOT here: it
-    // is edible, and whether Dave harvests it is his call, not an authoring decision. (bee_balm is
-    // already listed, with its own `contested` note.)
+    // of the list, so their NULL habit read as a coverage gap. ginger is deliberately NOT here — but
+    // no longer because it is an open question. V4-GINGERCOLD-001: the decision IS recorded, in
+    // establishing_not_yet_harvestable, and the reason ginger stays out of THIS list is that the list
+    // means ornamental / will-not-fruit-here, which ginger is not. Asserting the positive home as
+    // well as the negative one is what stops the exclusion from decaying back into a bare gap.
+    // (bee_balm is already listed, with its own `contested` note.)
     const listed = new Set(doc.not_harvest_tracked.slugs)
     for (const slug of ['aloe', 'calibrachoa', 'lantana']) expect(listed.has(slug), slug).toBe(true)
-    expect(listed.has('ginger'), 'ginger is an open question, not a recorded decision').toBe(false)
+    expect(listed.has('ginger'), 'ginger is edible and intended to be eaten — not an ornamental NULL').toBe(false)
+    expect('ginger' in doc.establishing_not_yet_harvestable.entries,
+      'excluded from not_harvest_tracked ONLY because it is recorded as establishing').toBe(true)
   })
 
   it("ginger's habit is recorded as ESTABLISHING, and never as not_harvest_tracked", () => {

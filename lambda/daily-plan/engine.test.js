@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
 import cad from './cadence-data-v2.json';
 import fm from './fertilization-model.json';
+import fc from './frostClass.js';
 const { generatePlan, resolveCadence, fertilizeRec, feedPhase } = engine;
 
 describe('CARE-CADENCE-001: resolveCadence prefers DB-resolved profile (v_resolved_care) when seeded', () => {
@@ -411,5 +412,76 @@ describe('V4-TROPICALCOLD-001 — the bring-indoors channel reaches crops with n
   it('a hardy crop never enters the cold bucket via the crop-type table', () => {
     const kale = { name: 'Kale', variety: 'Kale', genus: null, crop_type_slug: 'kale' };
     expect(coldRows(planFor([kale], { tonightLow: 30, highToday: 45 })).map(r => r.name)).not.toContain('Kale');
+  });
+});
+
+describe('V4-GINGERCOLD-001 — the 55F profile on the AUTHORITATIVE variety tier', () => {
+  // V4-TROPICALCOLD-001 (above) gave ginger a cold profile via frostClass.COLD_BY_CROP_TYPE, which
+  // coldFor reaches through `p.crop_type_slug` ONLY. That column is plant_varieties.crop_type_slug
+  // through a LEFT JOIN (handler.js), and it is nullable — 8 active plantings on prod carry no
+  // variety row at all today, so no slug reaches the engine for them. For a one-off gift plant with
+  // no second source, protection that hangs on one nullable column is not protection. This block
+  // pins the profile on the tier resolveCadence consults FIRST from [p.variety, p.name], where
+  // plants.name is NOT NULL, so the signal survives losing the variety row entirely.
+  const planFor = (ps, weather, extra = {}) => generatePlan({
+    plantings: ps.map((p, i) => ({
+      id: 'gc-' + i, project: 'Tropicals', project_id: 'pt', status: 'vegetative',
+      substrate_start: '2026-05-01', last_water: '2026-09-01', last_fert: null, db_cadence: null,
+      container_type: 'plastic_pot', ...p,
+    })),
+    cadence: cad, fertModel: fm, today: '2026-09-01', weather: { unit: 'F', ...weather }, ownerFallback: 'dave', ...extra,
+  });
+  const coldRows = (plan) => Object.values(plan.users).flatMap(u => u.tasks.cold);
+  // The live prod row, 2026-08-17: plants.name 'Ginger', plant_varieties.name 'Ginger', genus '',
+  // cadence_scopes {} (so resolveCadence does NOT adopt db_cadence and DOES read by_variety) — with
+  // the variety join deliberately severed, which is the state the crop-type tier cannot serve.
+  const DETACHED = { name: 'Ginger', variety: null, genus: null, crop_type_slug: null };
+
+  it('51F cards the ginger even with NO crop_type_slug (before this entry it carded at no temperature)', () => {
+    // The measured event that forced the item: the site hit 51.3F on 2026-08-16. On the pre-change
+    // data this planting resolved `_via:'default'`, and `default` carries no `cold` key, so coldFor
+    // returned null at 51F and at every other temperature.
+    const rows = coldRows(planFor([DETACHED], { tonightLow: 51, highToday: 72 }));
+    expect(rows.map(r => r.name)).toContain('Ginger');
+    expect(rows.find(r => r.name === 'Ginger').text).toMatch(/bring in tonight/);
+  });
+
+  it('the variety tier trips at exactly 55F, not at a frost band', () => {
+    // Both sides pinned, so this is a threshold assertion and not a "something fired" assertion.
+    expect(coldRows(planFor([DETACHED], { tonightLow: 56, highToday: 72 })).map(r => r.name)).not.toContain('Ginger');
+    expect(coldRows(planFor([DETACHED], { tonightLow: 55, highToday: 72 })).map(r => r.name)).toContain('Ginger');
+  });
+
+  it('resolves via the variety tier, not the crop-type fallback', () => {
+    const c = resolveCadence({ name: 'Ginger', variety: null, genus: null, db_cadence: null }, cad);
+    expect(c._via).toBe('variety:Ginger');
+    expect(c.cold).toEqual({ tender: true, protect_below_F: 55 });
+  });
+
+  it('REGRESSION: the new entry does not strip ginger of its watering task', () => {
+    // resolveCadence returns the by_variety object INSTEAD OF `default`, it does not merge with it.
+    // A cold-only entry — which is what the one-line prescription literally asks for — would leave
+    // ginger with no water_interval_days_container and silently drop it out of the water bucket.
+    const c = resolveCadence({ name: 'Ginger', variety: null, genus: null, db_cadence: null }, cad);
+    expect(c.water_interval_days_container, 'a cold-only entry would make this undefined').toBe(cad.default.water_interval_days_container);
+    expect(c.fertilize_interval_days).toBe(cad.default.fertilize_interval_days);
+    const plan = planFor([{ ...DETACHED, last_water: '2026-08-20' }], { tonightLow: 60, highToday: 78 });
+    const w = plan.users.dave.tasks.water_due.find(x => x.name === 'Ginger');
+    expect(w, 'ginger must still appear in the water bucket when due').toBeTruthy();
+    expect(w.interval).toBe(cad.default.water_interval_days_container);
+  });
+
+  it('the variety tier and the crop-type fallback carry the SAME number', () => {
+    // Two hand-authored surfaces now state ginger's threshold. They can drift, and the drift would
+    // be invisible: whichever tier resolves first would simply win. Change both or neither.
+    expect(cad.by_variety.Ginger.cold.protect_below_F).toBe(fc.COLD_BY_CROP_TYPE.ginger.protect_below_F);
+    expect(cad.by_variety.Ginger.cold.tender).toBe(fc.COLD_BY_CROP_TYPE.ginger.tender);
+  });
+
+  it('SUPPRESSION still applies through the variety tier', () => {
+    // The indoors check runs BEFORE profile resolution, so it must hold on this path too — otherwise
+    // the authoritative tier reintroduces the nightly nag the crop-type tier was careful to avoid.
+    const inside = { ...DETACHED, last_brought_inside: '2026-08-30' };
+    expect(coldRows(planFor([inside], { tonightLow: 44, highToday: 60 })).map(r => r.name)).not.toContain('Ginger');
   });
 });

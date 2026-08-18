@@ -904,6 +904,23 @@
    "confidence": "high",
    "notes": "Drought tolerant; overwatering more common error"
   },
+  "Ginger": {
+   "crop": "ginger",
+   "water_interval_days_container": 3,
+   "water_interval_days_inground": 3,
+   "water_method": "even_moist_top2in",
+   "water_volume_note": "Water when the top inch dries; a rhizome rots in standing wet and shrivels irrecoverably if run dry",
+   "soil_moisture_target": "evenly moist, never soggy",
+   "drought_tolerance": "low",
+   "heat_response": "wants heat and humidity; check daily above 88F",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 55
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "medium",
+   "notes": "V4-GINGERCOLD-001. The 55F cold profile is the point of this entry. Zingiber officinale takes CUMULATIVE, IRREVERSIBLE chilling injury in the low 50s, long before any frost — the site hit 51.3F on 2026-08-16 and 53.4F on 08-15, and measured over 11 years the first <=55F night falls 09-01 to 09-12 EVERY year (median 09-02), i.e. 5-9 weeks before the first frost. frostClass.COLD_BY_CROP_TYPE.ginger carries the same 55 as a FALLBACK; this entry puts it on the authoritative variety tier, which resolves from [plants.name, plant_varieties.name] and therefore survives a null/changed crop_type_slug (nullable; 8 active plantings have no variety row at all, so no crop_type_slug reaches the engine for them). The two numbers are pinned equal by a test — change both or neither. The water/fert intervals are NOT decoration: resolveCadence returns this object INSTEAD OF `default`, so an entry carrying only `cold` would silently strip ginger's watering task. They deliberately restate the default (3/14) so this change moves cold and nothing else. confidence medium: the 55F figure is horticultural convention, not a site measurement, unlike the night-temperature record behind it."
+  },
   "Golden Pothos": {
    "crop": "houseplant",
    "water_interval_days_container": 10,
