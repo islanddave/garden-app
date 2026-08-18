@@ -8,8 +8,10 @@
 //
 // First-run safety: initial deploy sets DRY_RUN=true. After one clean run (visible in CloudWatch logs),
 // flip DRY_RUN=false via:
-//   aws lambda update-function-configuration --function-name garden-xp-reconcile \
-//     --environment Variables='{DRY_RUN=false}'
+//   scripts/lambda-env-set.sh garden-xp-reconcile DRY_RUN false
+// NOT via a bare `--environment Variables='{DRY_RUN=false}'` (what this comment recommended until
+// 2026-08-18): that argument REPLACES the whole Variables map, so it would drop SECRET_REFRESH.
+// The helper read-merges, guards on RevisionId, and verifies the key set after the write.
 //
 // Kill-switch: aws events disable-rule --name garden-xp-reconcile-daily
 

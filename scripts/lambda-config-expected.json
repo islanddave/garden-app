@@ -1,0 +1,192 @@
+{
+  "_README": [
+    "OPS-LAMBDACONFIG-001 — the repo's declaration of prod Lambda configuration.",
+    "Enforced by scripts/check-lambda-config.py, which deploy-lambda.yml's verify-daily-plan job",
+    "runs against the LIVE account after every prod deploy. A mismatch fails the run.",
+    "",
+    "WHY: on 2026-08-17 CARE_WATER_LEDGER_ENABLED and CARE_RAIN_MAXDAYS_ENABLED were found ABSENT",
+    "(not false) from garden-daily-plan, so RAIN_DEPTH — ~140 lines, fully unit-tested — was",
+    "unreachable in prod while CI stayed green either way. Nothing in the repo asserted prod flag",
+    "state, so a code comment claiming a flag was on was the only 'source'. Absent and false behave",
+    "identically at a === 'true' gate but mean different things, so this file distinguishes them.",
+    "The same deploy also revealed garden-plants living at 1024MB with the repo declaring nothing.",
+    "",
+    "SCHEMA — per function name (the live name, e.g. 'garden-plants'):",
+    "  memory   int    required MemorySize in MB",
+    "  timeout  int    required Timeout in seconds (optional; omit to not assert)",
+    "  env      obj    per-KEY expectation. NOT exhaustive — unlisted keys are ignored, which is",
+    "                  deliberate: SECRET_REFRESH / FORCE_COLD_START are operational churn.",
+    "",
+    "ENV VALUE SENTINELS — type-encoded so they can never collide with a real value (always a string):",
+    "  null      key MUST BE ABSENT from the live map. This is the absent-vs-false distinction.",
+    "  true      key MUST BE PRESENT with any value. For values that are environment-derived or",
+    "            not worth pinning (Clerk subs, SNS ARNs). Proves 'not wiped' without hardcoding.",
+    "  \"string\"  key MUST BE PRESENT and equal exactly.",
+    "",
+    "FLIPPING A FLAG IS A REPO CHANGE. Editing this file is how a flag flip becomes reviewable;",
+    "flipping live without editing here fails the next deploy. That is the point, not a nuisance.",
+    "Use scripts/lambda-env-set.sh for the live write — never a bare --environment (set-not-merge).",
+    "",
+    "Captured from live us-east-1 on 2026-08-18. Values are CURRENT REALITY, not aspiration."
+  ],
+
+  "garden-daily-plan": {
+    "memory": 256,
+    "timeout": 120,
+    "_note": "memory INTENTIONALLY 256 — DRG-NIGHTLYTIMEOUT-001 proved I/O wait, not CPU. env below is the COMPLETE set of vars lambda/daily-plan reads, so every flag is declared present-or-absent.",
+    "env": {
+      "DRY_RUN": "false",
+      "SYSTEM_CLERK_SUB": true,
+      "OWNER_FALLBACK_SUB": true,
+      "FROST_TOPIC_ARN": true,
+      "FROST_ALERT_ENABLED": "true",
+      "CARE_CADENCE_SCOPES_ENABLED": "true",
+      "CARE_TODAY_AWARE_ENABLED": "true",
+      "CARE_RAIN_CREDIT_ENABLED": "true",
+      "CARE_WATER_LEDGER_ENABLED": null,
+      "CARE_RAIN_MAXDAYS_ENABLED": null,
+      "FROST_HEAT_ENABLED": null,
+      "FROST_BAND_THRESHOLDS_JSON": null,
+      "FROST_SEASON_START_MMDD": null,
+      "FROST_SEASON_END_MMDD": null,
+      "FROST_THRESHOLD_OFFSET_F": null,
+      "OPS_TOPIC_ARN": null,
+      "SECRET_NAME": null,
+      "UPDATE_LEDGER_GOLDENS": null,
+      "AWN_SECRET_NAME": null,
+      "AWN_STATIONS_JSON": null,
+      "AWN_FRESHNESS_MAX_MIN": null,
+      "AWN_RAIN_MIN_DAILY_IN": null,
+      "AWN_RAIN_MAX_DAILY_IN": null
+    }
+  },
+
+  "garden-plants": {
+    "memory": 1024,
+    "timeout": 30,
+    "_note": "OPS-PLANTSLAMBDACPU-001 — bumped 256->1024 live 2026-08-17 with Dave's approval: ~446 HMAC CDN presigns per list request were CPU-bound at 256MB's 0.145 vCPU. update-function-code does not touch memory, so the bump survives deploys, but it was UNDECLARED until now.",
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "S3_PHOTOS_BUCKET": "garden-photos-prod",
+      "PHOTO_CDN_DOMAIN": "dovwpi82qccqi.cloudfront.net",
+      "PHOTO_CDN_KEY_PAIR_ID": "K1JIPLZ9SVNU1N",
+      "PHOTO_CDN_SIGNING_SECRET": "garden-app/photocdn-signing",
+      "PHOTO_CDN_ENABLED": null
+    }
+  },
+
+  "garden-photos": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "SECRET_NAME": "garden-app/secrets",
+      "S3_PHOTOS_BUCKET": "garden-photos-prod",
+      "PHOTO_CDN_DOMAIN": "dovwpi82qccqi.cloudfront.net",
+      "PHOTO_CDN_KEY_PAIR_ID": "K1JIPLZ9SVNU1N",
+      "PHOTO_CDN_SIGNING_SECRET": "garden-app/photocdn-signing",
+      "PHOTO_CDN_ENABLED": null,
+      "SPACE_PHOTOS_ENABLED": "true"
+    }
+  },
+
+  "garden-projects": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "ADMIN_CLERK_SUBS": true,
+      "S3_PHOTOS_BUCKET": "garden-photos-prod",
+      "PHOTO_CDN_DOMAIN": "dovwpi82qccqi.cloudfront.net",
+      "PHOTO_CDN_KEY_PAIR_ID": "K1JIPLZ9SVNU1N",
+      "PHOTO_CDN_SIGNING_SECRET": "garden-app/photocdn-signing",
+      "PHOTO_CDN_ENABLED": null
+    }
+  },
+
+  "garden-locations": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "S3_PHOTOS_BUCKET": "garden-photos-prod",
+      "PHOTO_CDN_DOMAIN": "dovwpi82qccqi.cloudfront.net",
+      "PHOTO_CDN_KEY_PAIR_ID": "K1JIPLZ9SVNU1N",
+      "PHOTO_CDN_SIGNING_SECRET": "garden-app/photocdn-signing",
+      "PHOTO_CDN_ENABLED": null
+    }
+  },
+
+  "garden-inventory-items": {
+    "memory": 512,
+    "timeout": 120,
+    "_note": "V4-SEEDINV-001 — Anthropic image-OCR proxy needs >30s and base64 headroom.",
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "S3_PHOTOS_BUCKET": "garden-photos-prod",
+      "PHOTO_CDN_DOMAIN": "dovwpi82qccqi.cloudfront.net",
+      "PHOTO_CDN_KEY_PAIR_ID": "K1JIPLZ9SVNU1N",
+      "PHOTO_CDN_SIGNING_SECRET": "garden-app/photocdn-signing",
+      "PHOTO_CDN_ENABLED": null
+    }
+  },
+
+  "garden-facebook-share": {
+    "memory": 512,
+    "timeout": 60,
+    "_note": "V4-FBSHARE-001 — FB_SHARE_ENABLED absent is the kill switch OFF (endpoint 503s). Declared absent so a stray flip is caught.",
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "ADMIN_CLERK_SUBS": true,
+      "S3_PHOTOS_BUCKET": "garden-photos-prod",
+      "FB_SECRET_NAME": "garden-app/facebook-page-token",
+      "FB_SHARE_ENABLED": null
+    }
+  },
+
+  "garden-photocdn-derivative": {
+    "memory": 2048,
+    "timeout": 30,
+    "_note": "Created by infra/photocdn.yaml (CFN), not by deploy-lambda.yml's create branch — which would produce nodejs20.x/x86_64/256MB. Asserted here so a CFN placeholder-revert is caught by the deploy rather than days later.",
+    "env": {
+      "ORIGINALS_BUCKET": "garden-photos-prod",
+      "DERIVATIVES_BUCKET": "garden-photos-derivatives-769788341849"
+    }
+  },
+
+  "garden-xp-reconcile": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "DRY_RUN": "true"
+    }
+  },
+
+  "garden-harvests":         { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-members":          { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-events":           { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-dashboard":        { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-varieties":        { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-findings":         { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-evidence-ingest":  { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-storage-location": { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-preservation":     { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+  "garden-daily-plan-read":  { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
+
+  "garden-tags": {
+    "memory": 256,
+    "timeout": 30,
+    "env": { "GARDEN_HOUSEHOLD_IDS": true, "ADMIN_CLERK_SUBS": true }
+  },
+  "garden-ux-events": {
+    "memory": 256,
+    "timeout": 30,
+    "env": { "ADMIN_CLERK_SUBS": true }
+  },
+
+  "garden-favorites":     { "memory": 256, "timeout": 30 },
+  "garden-app-events":    { "memory": 256, "timeout": 30 },
+  "garden-achievements":  { "memory": 256, "timeout": 30 },
+  "garden-critter":       { "memory": 256, "timeout": 30 },
+  "garden-shared-state":  { "memory": 256, "timeout": 30 }
+}

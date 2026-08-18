@@ -295,6 +295,33 @@ jobs:
             echo "timeout=120 memory=512 set on $FN"
           fi
 
+      - name: Ensure plants config
+        # OPS-PLANTSLAMBDACPU-001: garden-plants mints ~446 HMAC CloudFront presigns on a single
+        # list request. At the create-function default of 256MB it gets 0.145 vCPU, and that signing
+        # loop — not the query — was the wall-clock cost. Bumped to 1024MB live on 2026-08-17 with
+        # Dave's approval; vCPU scales with memory, so this is a CPU purchase, not headroom.
+        #
+        # The bump SURVIVES deploys today (the existing-function path calls update-function-code,
+        # which does not touch memory), so this step is not fixing a revert — it is ending UNDECLARED
+        # DRIFT. The repo said 256 and prod ran 1024, and the only way to know was to go and look.
+        # Idempotent compare-then-update, cloned from "Ensure inventory-items config" above.
+        # Timeout is deliberately not asserted here: 30s is the create default and correct.
+        if: matrix.function == 'plants'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
+        run: |
+          FN="garden-plants"
+          M=$(aws lambda get-function-configuration --function-name "$FN" --query 'MemorySize' --output text 2>/dev/null || echo "None")
+          if [[ "$M" == "1024" ]]; then
+            echo "memory already correct on $FN (memory=$M)"
+          else
+            echo "Setting memory-size=1024 on $FN (was: memory=$M)"
+            aws lambda update-function-configuration \
+              --function-name "$FN" \
+              --memory-size 1024 >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "memory=1024 set on $FN"
+          fi
+
       - name: Ensure ADMIN_CLERK_SUBS env for ux-events
         if: matrix.function == 'ux-events'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
@@ -398,22 +425,38 @@ jobs:
           fi
           echo "verified: no Function URL on garden-photocdn-derivative"
 
-      - name: Set xp-reconcile DRY_RUN env on first deploy
+      - name: Set xp-reconcile DRY_RUN env on first deploy (read-merge)
         if: matrix.function == 'xp-reconcile'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent (only sets if unset)
         run: |
-          # On first deploy, set DRY_RUN=true. Subsequent deploys preserve whatever value is currently set.
-          CURRENT=$(aws lambda get-function-configuration \
-            --function-name garden-xp-reconcile \
-            --query 'Environment.Variables.DRY_RUN' --output text 2>/dev/null || echo "None")
-          if [[ "$CURRENT" == "None" || -z "$CURRENT" ]]; then
-            echo "DRY_RUN not set; defaulting to true on first deploy."
-            aws lambda update-function-configuration \
-              --function-name garden-xp-reconcile \
-              --environment 'Variables={DRY_RUN=true}'
-            aws lambda wait function-updated --function-name garden-xp-reconcile
-          else
+          # On first deploy, set DRY_RUN=true. Subsequent deploys preserve whatever value is set.
+          #
+          # READ-MERGE. Until 2026-08-18 this step wrote `--environment 'Variables={DRY_RUN=true}'`,
+          # which is set-not-MERGE — it deletes every other key. garden-xp-reconcile carries
+          # SECRET_REFRESH, so the literal form silently drops the secret-rotation marker.
+          # It was also REACHABLE on an already-deployed function: the old read ended in
+          # `|| echo "None"`, so a throttled read reported DRY_RUN unset, the first-deploy branch
+          # fired, and the map was replaced. An unreadable baseline is therefore now a hard skip,
+          # never a default — same rule as scripts/lambda-env-set.sh guarantee 1.
+          FN=garden-xp-reconcile
+          if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+                            --query 'Environment.Variables' --output json 2>/dev/null); then
+            echo "::warning::could not read $FN env — skipping the DRY_RUN default rather than writing a partial map"
+            exit 0
+          fi
+          if [[ -z "$EXISTING" || "$EXISTING" == "null" ]]; then EXISTING="{}"; fi
+          CURRENT=$(echo "$EXISTING" | jq -r '.DRY_RUN // empty')
+          if [[ -n "$CURRENT" ]]; then
             echo "DRY_RUN already set to: $CURRENT (preserving)"
+          else
+            echo "DRY_RUN not set; defaulting to true on first deploy (merging into $(echo "$EXISTING" | jq 'length') existing key(s))."
+            echo "$EXISTING" | jq '. + {DRY_RUN:"true"}' > /tmp/env-xp-reconcile.json
+            echo "{\"Variables\": $(cat /tmp/env-xp-reconcile.json)}" > /tmp/env-xp-reconcile-payload.json
+            aws lambda update-function-configuration \
+              --function-name "$FN" \
+              --environment file:///tmp/env-xp-reconcile-payload.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "DRY_RUN=true set on $FN"
           fi
 
       # BUG-TODAYWATER-001 — INTRADAY REGENERATION.
@@ -564,6 +607,10 @@ jobs:
   #       replaces the entire Variables map with a partial one;
   #   (2) DRY_RUN == "false" — a wiped/reset value silently re-darkens the nightly engine (L-186 class);
   #   (3) EventBridge rule garden-daily-plan-nightly is ENABLED with exactly one target.
+  #   (4) OPS-LAMBDACONFIG-001 — live memory/timeout/env across ALL 26 functions matches
+  #       scripts/lambda-config-expected.json, including flags declared deliberately ABSENT.
+  #       (1)-(3) stay as hand-written invariants because they cover EventBridge and cross-key
+  #       relationships the manifest's per-key model cannot express; (4) covers the breadth.
   # environment:production is REQUIRED (the OIDC trust for AWS_DEPLOY_ROLE_ARN is scoped to the
   # env:production subject) — in this repo's observed behavior that means a SECOND approval prompt
   # after the deploy matrix completes. needs:deploy default semantics: this job runs only when the
@@ -573,6 +620,12 @@ jobs:
     needs: deploy
     environment: production
     steps:
+      # Needed by the config-manifest step below. Pinned to the ref being deployed, NOT the branch
+      # head: the manifest must be the one belonging to the commit whose Lambdas just shipped.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
@@ -621,6 +674,26 @@ jobs:
             exit 1
           fi
           echo "A0.3 verify OK: env keys present, DRY_RUN=false, $RULE ENABLED with exactly 1 target."
+
+      # OPS-LAMBDACONFIG-001 — the generalization of the step above, across all 26 functions.
+      #
+      # The A0.3 invariants are hand-written and daily-plan-only, so they could not have caught what
+      # 2026-08-17 found: CARE_WATER_LEDGER_ENABLED and CARE_RAIN_MAXDAYS_ENABLED ABSENT (not false)
+      # from garden-daily-plan, leaving the RAIN_DEPTH subsystem — ~140 lines, fully unit-tested —
+      # unreachable in prod with a green suite either way; and garden-plants running at 1024MB
+      # against a repo that declared 256. Neither was a regression. Both were states nobody had
+      # written down, so the only way to learn them was to go and look at the live account.
+      #
+      # scripts/lambda-config-expected.json is now that written-down state, and this step is what
+      # makes disagreeing with it a red deploy. It also backstops the many `continue-on-error: true`
+      # env-ensure steps in the deploy job above: today one of those can fail silently and leave,
+      # say, garden-harvests with no GARDEN_HOUSEHOLD_IDS — a per-user data partition, green build.
+      #
+      # Deliberately in THIS job rather than a new one: a third `environment: production` job would
+      # add a third approval prompt to every promote. Also deliberately NOT in `deploy_result`, so
+      # a config-drift failure reds the run loudly without withholding a good frontend.
+      - name: Assert live Lambda config matches the declared manifest (hard fail)
+        run: python3 scripts/check-lambda-config.py --region us-east-1
 
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
