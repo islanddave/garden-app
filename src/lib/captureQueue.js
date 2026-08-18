@@ -349,11 +349,14 @@ export async function getTotalCount() {
 /**
  * Age (ms) of the oldest unprocessed record (status !== handed_off). Returns
  * null if no unprocessed records.
+ *
+ * `now` is an injectable clock (defaults to Date.now) so tests can assert an
+ * exact age without a wall-clock sleep. Callers pass nothing (OPS-CAPTUREQUEUEFLAKE-001).
  */
-export async function getOldestUnprocessedAgeMs() {
+export async function getOldestUnprocessedAgeMs({ now = Date.now } = {}) {
   const all = await list()
   const unprocessed = all.filter((r) => r.status !== STATUS.HANDED_OFF)
   if (unprocessed.length === 0) return null
   const oldest = unprocessed[0]
-  return Date.now() - new Date(oldest.capturedAt).getTime()
+  return now() - new Date(oldest.capturedAt).getTime()
 }

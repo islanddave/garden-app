@@ -120,20 +120,21 @@ describe('captureQueue (Inc 2 Bite 4)', () => {
   })
 
   it('getOldestUnprocessedAgeMs ignores handed_off records', async () => {
+    // OPS-CAPTUREQUEUEFLAKE-001. Every wall-clock dependency is gone: capturedAt is stamped
+    // explicitly and the age is read against an injected clock, so nothing here can be
+    // perturbed by scheduler stalls or IndexedDB round-trip latency under suite contention.
+    // Non-vacuous: if handed_off were NOT excluded, `old` would be the oldest and the age
+    // would be OLD_AGE_MS (45000), not NEWER_AGE_MS (15000).
+    const T0 = Date.parse('2026-08-18T12:00:00.000Z')
+    const OLD_AGE_MS = 45000
+    const NEWER_AGE_MS = 15000
     const old = await enqueueText({ text: 'old' })
-    await new Promise((r) => setTimeout(r, 30))
-    await enqueueText({ text: 'newer' })
+    const newer = await enqueueText({ text: 'newer' })
+    await update(old.id, { capturedAt: new Date(T0).toISOString() })
+    await update(newer.id, { capturedAt: new Date(T0 + (OLD_AGE_MS - NEWER_AGE_MS)).toISOString() })
     await markHandedOff(old.id)
-    const age = await getOldestUnprocessedAgeMs()
-    // OPS-CAPTUREQUEUEFLAKE-001. The old assertion was `age < 30`: a 30 ms WALL-CLOCK budget covering
-    // three IndexedDB round-trips (the tail of enqueue, markHandedOff, and list). Typical margin is
-    // 0-6 ms, but under full-suite worker contention a scheduler stall pushed it to 61-96 ms and the
-    // test failed. Anchor on the RECORD instead: a stall inflates both ages equally, so their
-    // DIFFERENCE is stable at ~30 ms regardless of load. Non-vacuous — if handed_off were NOT
-    // excluded, `old` would be the oldest, the difference would collapse to ~0, and this fails.
-    const oldAge = Date.now() - new Date(old.capturedAt).getTime()
-    expect(age).not.toBeNull()
-    expect(oldAge - age).toBeGreaterThanOrEqual(25)
+    const now = () => T0 + OLD_AGE_MS
+    expect(await getOldestUnprocessedAgeMs({ now })).toBe(NEWER_AGE_MS)
   })
 
   it('enqueueRecording requires blob (throws if absent)', async () => {
