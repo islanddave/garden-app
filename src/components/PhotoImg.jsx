@@ -19,40 +19,80 @@
 // inherits the consumer's box styling; (2) `fallback` governs the empty, pending, AND error render;
 // (3) `hasFallback` says whether the CONSUMER can take over on error — a fact about the caller's own
 // state, not about which derivative this is, so the tier stays entirely on PhotoView's side.
+// (4) V4-TIERBLINDMINT-001 NARROWS the no-tier-prop clause and machine-enforces what it was for.
+// The clause bans a VARIANT MODE — a prop the component branches on to render differently. It was
+// also, unintentionally, stopping the component from telling the mint layer WHICH SOURCE to renew,
+// so every heal re-selected the original: PhotoImg was performing the tier SELECTION this contract
+// assigns to PhotoView, silently, because until the Lambda accepted ?tier there was no other answer
+// to give. `mintTier` is that missing identity, not a mode — it reaches the mint URL and the cache
+// key and nothing else, the component body below names no tier vocabulary at all, and
+// PhotoImg.tier.test.jsx reds if either stops being true. Render, layout and degrade stay tier-blind.
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { TIER } from '../lib/photoModel.js'
 
 export const PRESIGN_TTL_MS = 900 * 1000            // == server view-url expiresIn:900
 const MAX_CONCURRENT_MINTS = 6
 
-// Module-level storm control. photoId -> { url, at, inFlight }. Shared across every mounted instance.
+// Module-level storm control. _key(photoId, tier) -> { url, at, inFlight }. Shared across every
+// mounted instance. Keyed on the TIER as well as the id because a hero and a tile of the SAME photo
+// are two different objects in the bucket: a single-key cache lets a thumb mint answer a full one
+// and paint 163 KB at 94vw (the hazard _seed's publishUrl below was invented to dodge one path of).
 const _cache = new Map()
 let _active = 0
 const _queue = []
 
-// Test seams — reset / seed module state between cases.
+const _TIERS = Object.freeze(Object.values(TIER))
+// Unknown/absent tier => the original. The SERVER deliberately 400s an unknown tier rather than
+// coercing (it is the authority; hiding a caller's typo behind a 200 IS the tier-blindness). The
+// client is not the authority and sits in a render path, where a 400 would be classified as a
+// transient failure and retried forever — so a bad tier degrades to the pre-existing full-tier
+// behaviour instead. PhotoImg.tier.test.jsx pins _TIERS against the Lambda's own enum so the two
+// vocabularies cannot drift apart.
+const _tier = (t) => (_TIERS.includes(t) ? t : TIER.FULL)
+// The tier is always the suffix after the LAST `|`, and no member of the closed enum contains one,
+// so the split point is unambiguous and no (id, tier) pair can spell another's key — a photo id is
+// a UUID, which cannot contain `|` either. A NUL separator proves the same thing and makes this
+// whole file BINARY to git: no diff, no blame, no review on a core component. Any printable byte
+// outside the enum buys the identical guarantee for free.
+const _key = (photoId, tier) => `${photoId}|${_tier(tier)}`
+
+// The server reads `?tier=`; ABSENT means 'full' (viewTier.js normalizeViewTier), so the default
+// tier is sent as no parameter at all. The full-tier request is then byte-identical to the one every
+// deployed client already makes — nothing to re-verify on that path — and a full-tier heal cannot
+// 400 against a Lambda that predates the enum. Only a non-default tier has to say so.
+const _viewUrl = (photoId, tier) => `/api/photos/view-url/${photoId}${tier === TIER.FULL ? '' : `?tier=${tier}`}`
+
+// Test seams — reset / seed module state between cases. `tier` is trailing+defaulted so the
+// pre-tier 3-arg call sites keep seeding the full-tier slot they always meant.
 export function __resetPhotoImgCache() { _cache.clear(); _active = 0; _queue.length = 0 }
-export function __seedPhotoImgUrl(photoId, url, at) { _cache.set(photoId, { url, at: at == null ? Date.now() : at, inFlight: null }) }
+export function __seedPhotoImgUrl(photoId, url, at, tier) { _cache.set(_key(photoId, tier), { url, at: at == null ? Date.now() : at, inFlight: null }) }
 
 function _drain() { _active--; const next = _queue.shift(); if (next) next() }
 
-// Re-mint a fresh presigned URL for photoId. Dedups in-flight per photoId, caps global concurrency.
+// Re-mint a fresh presigned URL for photoId AT `tier`. Dedups in-flight per (photoId, tier), caps
+// global concurrency. Two co-visible instances of one photo at DIFFERENT tiers are two objects in
+// the bucket, so they correctly cost two requests; same-tier still collapses to one.
 // NOTE: `cache:'no-store'` governs the BROWSER HTTP cache only — it does NOT bypass the service worker
 // (the SW fetch handler still intercepts /api/photos/view-url via networkFirst). Online this always
 // serves a fresh mint; only true-offline can serve a cached — possibly expired — view-url, which then
 // self-heals on the next online/foreground. authedFetch = useApiFetch().fetch (returns parsed JSON,
 // throws Error{status} on non-2xx). Resolves to a fresh url string; rejects (with .status) on failure.
-// 404/absent-url is normalized to status 404.
-export function mintUrl(photoId, authedFetch) {
-  const existing = _cache.get(photoId)
+// 404/absent-url is normalized to status 404. The 200 body also NAMES the tier it minted; that name
+// is deliberately not gated on — an older Lambda omits it, and rejecting its response would trade a
+// wrong-tier image for no image at all.
+export function mintUrl(photoId, authedFetch, tier) {
+  const t = _tier(tier)
+  const k = _key(photoId, t)
+  const existing = _cache.get(k)
   if (existing?.inFlight) return existing.inFlight
   const exec = async () => {
     try {
-      const d = await authedFetch(`/api/photos/view-url/${photoId}`, { cache: 'no-store' })
+      const d = await authedFetch(_viewUrl(photoId, t), { cache: 'no-store' })
       const url = d && d.view_url
       if (!url) { const e = new Error('view-url returned no url'); e.status = 404; throw e }
-      _cache.set(photoId, { url, at: Date.now(), inFlight: null })
+      _cache.set(k, { url, at: Date.now(), inFlight: null })
       return url
     } finally { _drain() }
   }
@@ -63,10 +103,10 @@ export function mintUrl(photoId, authedFetch) {
   // Clear the in-flight handle on settle (identity-guarded so a newer mint isn't clobbered) so a
   // transient failure can't poison the key with a rejected promise.
   inFlight.catch(() => {}).finally(() => {
-    const e = _cache.get(photoId)
-    if (e && e.inFlight === inFlight) _cache.set(photoId, { ...e, inFlight: null })
+    const e = _cache.get(k)
+    if (e && e.inFlight === inFlight) _cache.set(k, { ...e, inFlight: null })
   })
-  _cache.set(photoId, { ...(existing || {}), inFlight })
+  _cache.set(k, { ...(existing || {}), inFlight })
   return inFlight
 }
 
@@ -78,10 +118,13 @@ export function mintUrl(photoId, authedFetch) {
 // same list response, so they age together — but the URL is a derivative that this id's OTHER
 // consumers must not inherit. `.url` is read by exactly one path (the mount-fetch below), and its
 // callers include the full-screen Lightbox, which would otherwise paint a 163 KB thumb at 94vw.
-function _seed(photoId, initialUrl, publishUrl = true) {
+// Keeping `publishUrl` now that the slot is tier-keyed is deliberate belt-and-braces: the key stops
+// a thumb answering a FULL reader, and this stops a mid-chain source answering at all.
+function _seed(photoId, initialUrl, publishUrl = true, tier) {
   if (!photoId || !initialUrl) return
-  const e = _cache.get(photoId)
-  if (!e || (e.at == null && !e.inFlight)) _cache.set(photoId, { url: publishUrl ? initialUrl : null, at: Date.now(), inFlight: null })
+  const k = _key(photoId, tier)
+  const e = _cache.get(k)
+  if (!e || (e.at == null && !e.inFlight)) _cache.set(k, { url: publishUrl ? initialUrl : null, at: Date.now(), inFlight: null })
 }
 
 // `hasFallback` — the consumer has a cheaper source in hand for this same photo and will swap it in
@@ -89,8 +132,15 @@ function _seed(photoId, initialUrl, publishUrl = true) {
 // derivatives, only that it is not the last resort. It suppresses the REACTIVE heal and the shared-
 // cache URL publish; the PROACTIVE heal is deliberately untouched, because keeping a rendered source's
 // presign alive across a resume is exactly as necessary mid-chain as it is at the end of one.
+//
+// `mintTier` — WHICH source of this photo the consumer handed down, so a heal renews THAT one instead
+// of always re-selecting the original. Destructured (never left in ...rest) so it cannot reach the
+// <img> as an unknown DOM attribute. It is not a mode: nothing below branches on it, no render,
+// layout, degrade or a11y path reads it, and it changes in lockstep with `initialUrl` (each step of
+// PhotoView's chain carries its own URL), so the existing initialUrl-change reset already covers a
+// tier switch and no separate mintTier-change branch is needed.
 export default function PhotoImg({
-  photoId, initialUrl, alt = '', fallback = 'placeholder', loading, hasFallback = false,
+  photoId, initialUrl, alt = '', fallback = 'placeholder', loading, hasFallback = false, mintTier,
   onOpen, onRemint, onError, onLoad, style, className, ...rest
 }) {
   const { fetch: apiFetch } = useApiFetch()
@@ -116,7 +166,7 @@ export default function PhotoImg({
     abortRef.current?.abort()                        // stop a pending reactive heal bound to the old id
   }
 
-  useEffect(() => { _seed(photoId, initialUrl, !hasFallback) }, [photoId, initialUrl, hasFallback])
+  useEffect(() => { _seed(photoId, initialUrl, !hasFallback, mintTier) }, [photoId, initialUrl, hasFallback, mintTier])
   // Set true on (re)mount — StrictMode runs mount→cleanup→remount, and a cleanup-only ref would leave
   // mountedRef=false after remount, making every async heal bail on the !mountedRef guard.
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; abortRef.current?.abort() } }, [])
@@ -155,7 +205,7 @@ export default function PhotoImg({
     abortRef.current?.abort()
     const ac = new AbortController(); abortRef.current = ac
     try {
-      const fresh = await mintUrl(photoId, apiFetch)
+      const fresh = await mintUrl(photoId, apiFetch, mintTier)
       if (!mountedRef.current || ac.signal.aborted) return
       onRemint?.(photoId)
       adopt(fresh, photoId)
@@ -166,7 +216,7 @@ export default function PhotoImg({
       else if (st === 403) { setTerminal(true) }                                       // fresh URL still forbidden → terminal
       else { retriedRef.current = false }   // 429/5xx/network/offline → non-terminal, budget NOT spent; proactive/online retries
     }
-  }, [photoId, apiFetch, fallback, hasFallback, onRemint, onError, adopt])
+  }, [photoId, apiFetch, fallback, hasFallback, mintTier, onRemint, onError, adopt])
 
   // P1 — Fetch-on-mount: a photoId with NO consumer-provided url (an id-only thumb) resolves once on
   // mount so it renders without an interaction. Guarded so the initialUrl-present path (every shipped
@@ -175,12 +225,12 @@ export default function PhotoImg({
     if (!photoId || initialUrl) return
     if (mountFetchedForRef.current === photoId) return   // once per photoId (parent re-renders must not re-mint/flicker)
     mountFetchedForRef.current = photoId
-    const cached = _cache.get(photoId)
+    const cached = _cache.get(_key(photoId, mintTier))
     if (cached?.url && cached.at != null && Date.now() - cached.at <= PRESIGN_TTL_MS) { adopt(cached.url, photoId); return }
     // No per-effect cancelled flag: adopt()'s mountedRef + photoIdRef guards already drop a resolve
     // after a real unmount, and under StrictMode (mount→cleanup→remount) the mountFetchedForRef guard
     // suppresses the second mint while the first still adopts (mountedRef is true again post-remount).
-    mintUrl(photoId, apiFetch).then((fresh) => {
+    mintUrl(photoId, apiFetch, mintTier).then((fresh) => {
       if (!mountedRef.current) return
       onRemint?.(photoId)
       adopt(fresh, photoId)
@@ -191,7 +241,7 @@ export default function PhotoImg({
       else if (st === 403) { setTerminal(true) }
       // network/5xx/offline → non-terminal; the proactive/online path recovers it
     })
-  }, [photoId, initialUrl, apiFetch, adopt, onRemint, onError])
+  }, [photoId, initialUrl, apiFetch, mintTier, adopt, onRemint, onError])
 
   // Proactive heal: on foreground / resume / bfcache-restore, re-mint an IN-VIEWPORT photo BEFORE the
   // stale URL renders — but only if the last mint is older than the presign TTL (elapsed gate, NEW-4),
@@ -208,10 +258,10 @@ export default function PhotoImg({
       const vh = (typeof window !== 'undefined' && window.innerHeight) || 0
       const vw = (typeof window !== 'undefined' && window.innerWidth) || 0
       if (!(r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw)) return   // P5: only refresh the visible screenful
-      const e = _cache.get(photoId)
+      const e = _cache.get(_key(photoId, mintTier))
       if (e && e.at != null && Date.now() - e.at <= PRESIGN_TTL_MS) return
       retriedRef.current = false
-      mintUrl(photoId, apiFetch).then((fresh) => { if (mountedRef.current) { onRemint?.(photoId); adopt(fresh, photoId) } }).catch(() => {})
+      mintUrl(photoId, apiFetch, mintTier).then((fresh) => { if (mountedRef.current) { onRemint?.(photoId); adopt(fresh, photoId) } }).catch(() => {})
     }
     document.addEventListener('visibilitychange', onWake)
     window.addEventListener('pageshow', onWake)
@@ -223,7 +273,7 @@ export default function PhotoImg({
       document.removeEventListener('resume', onWake)
       window.removeEventListener('online', onWake)
     }
-  }, [photoId, apiFetch, onRemint, adopt])
+  }, [photoId, apiFetch, mintTier, onRemint, adopt])
 
   // ── Render ────────────────────────────────────────────────────────────────────────────────────
   // empty (no photoId AND no url), pending (a photoId whose mount-mint hasn't resolved yet — never
