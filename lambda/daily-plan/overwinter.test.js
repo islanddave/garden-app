@@ -99,7 +99,7 @@ describe('attribute resolution', () => {
     expect(prof.regime).toBe(DEFAULT_REGIME);
     expect(prof.unknown_regime).toBe('garage_ish');
     const shortest = Math.min(...Object.values(OVERWINTER_REGIMES).map((r) => r.check_interval_days));
-    // Not the global shortest (tender_indoors is 10 and indoor-only) — the shortest that is safe to
+    // Not the global shortest (tender_indoors is 7 and indoor-only) — the shortest that is safe to
     // apply to an unknown, possibly-outdoor planting.
     expect(prof.check_interval_days).toBeGreaterThanOrEqual(shortest);
     expect(prof.check_interval_days).toBeLessThanOrEqual(21);
@@ -128,6 +128,22 @@ describe('regime cadences', () => {
     expect(R.field_hardy.check_interval_days).toBeLessThan(R.protected_quiescent.check_interval_days);
   });
 
+  // THE VALUES THEMSELVES, not just their rank. The ordering test above stays green for ANY
+  // tender_indoors value below 14, so it cannot catch a silent revert to the 10d this regime shipped
+  // with in v4.34.0 — which is the one number a panel moved. 7d is the adjudicated value
+  // (2026-08-18): heated indoor air is roughly 1.43x the vapour-pressure deficit of a Conway summer,
+  // on the plant class whose failure is the fastest and least reversible. The other three are pinned
+  // alongside it because the same panel defended each of them explicitly, so a drift in any of the
+  // four is a decision being reversed rather than a tuning. Mutation: set tender_indoors back to 10
+  // — or nudge any of the other three — and this goes red naming the regime.
+  it('pins each regime interval to its adjudicated value', () => {
+    const R = OVERWINTER_REGIMES;
+    expect(R.tender_indoors.check_interval_days, 'tender_indoors').toBe(7);
+    expect(R.protected_productive.check_interval_days, 'protected_productive').toBe(14);
+    expect(R.field_hardy.check_interval_days, 'field_hardy').toBe(21);
+    expect(R.protected_quiescent.check_interval_days, 'protected_quiescent').toBe(30);
+  });
+
   // The engine holds every overwintering planting out of the feed cadence, so no guidance string may
   // tell Dave to feed it — the text and the code must not contradict each other on the same screen.
   // Every `feed` in the corpus must be negated. Mutation: drop the "do not " from any guidance string
@@ -151,7 +167,7 @@ describe('reduced cadence is monotone', () => {
     expect(checkIntervalFor(st('protected_productive'), 3)).toBe(14);
     expect(checkIntervalFor(st('protected_productive'), 45)).toBe(45);
     expect(checkIntervalFor(st('protected_quiescent'), 45)).toBe(45);
-    expect(checkIntervalFor(st('tender_indoors'), 3)).toBe(10);
+    expect(checkIntervalFor(st('tender_indoors'), 3)).toBe(7);
   });
 
   // A missing/garbage base interval must not produce NaN and silently mark everything due forever.

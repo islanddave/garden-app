@@ -31,7 +31,7 @@ export const OVERWINTER_REGIME_OPTIONS = [
     value: 'tender_indoors',
     icon: '🫚',
     label: 'Held indoors, tender',
-    description: 'Ginger and tropicals kept above their cold floor. Check every 10 days — heated air dries a pot fast.',
+    description: 'Ginger and tropicals kept above their cold floor. Check every 7 days — heated air dries a pot fast.',
   },
   {
     value: 'protected_quiescent',

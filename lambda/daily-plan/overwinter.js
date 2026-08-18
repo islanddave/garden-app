@@ -78,9 +78,18 @@ const MANUAL_EXIT_LAG_DAYS = 28;
 //                        quiet in a normal one.
 //  tender_indoors        ginger, tropicals held above their chilling floor indoors. Heated indoor air
 //                        plus a pot with no rain at all: the FASTEST-drying of the four despite being
-//                        the least active, so it gets the SHORTEST interval, 10d. Dormant's cold-and-
-//                        dry track would kill this regime outright, which is the sharpest argument
-//                        against folding overwintering into dormant_skip.
+//                        the least active, so it gets the SHORTEST interval, 7d. It is the only one of
+//                        the four whose environment is HARSHER THAN SUMMER — heated air at winter
+//                        indoor humidity works out to roughly 1.43x the vapour-pressure deficit of a
+//                        Conway summer outdoors — and it is also the plant class whose failure is the
+//                        fastest and the least reversible: a rhizome that dries through does not come
+//                        back the way a wilted kale does. Two panel seats reached "10d is too long"
+//                        independently (2026-08-18); 7d is the adjudicated value.
+//                        7d is a PROMPT, not a guarantee. A 4-inch pot can run dry well inside a week,
+//                        and vessel size is not an input to this model — the interval is set by regime
+//                        alone, so a small pot still needs judgement between checks.
+//                        Dormant's cold-and-dry track would kill this regime outright, which is the
+//                        sharpest argument against folding overwintering into dormant_skip.
 const OVERWINTER_REGIMES = {
   protected_productive: { check_interval_days: 14, protected: true,  harvestable: true,  auto_exit: true,
     guidance: 'Under cover — the cover sheds rain, so check the soil on a thaw day and water only if it is dry below the top inch. Vent on a sunny day above freezing. Harvest at midday, never at dawn while the leaves are frozen.' },
@@ -88,7 +97,7 @@ const OVERWINTER_REGIMES = {
     guidance: 'Cold and quiescent — keep the medium BARELY damp and no more; wet plus cold is what rots these. Check monthly, water only if the medium is dry well below the surface. Keep it dark and cold; do not feed.' },
   field_hardy:          { check_interval_days: 21, protected: false, harvestable: false, auto_exit: true,
     guidance: 'Hardy in the ground — rain and snowmelt do the work. Check only during a snowless dry cold snap: desiccation and frost heave, not cold, are what take these. Do not feed until spring.' },
-  tender_indoors:       { check_interval_days: 10, protected: true,  harvestable: false, auto_exit: false,
+  tender_indoors:       { check_interval_days: 7,  protected: true,  harvestable: false, auto_exit: false,
     guidance: 'Held indoors above its chilling floor — reduced but NEVER bone dry. Check the top inch; water when it is dry, less than in summer. Watch for scale and spider mites. Do not feed while it is resting.' },
 };
 
