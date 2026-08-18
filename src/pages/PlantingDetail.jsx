@@ -29,6 +29,13 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 // server ever DOES return exactly the ceiling we say the history is clipped rather than lying quietly.
 const EVENT_FETCH_LIMIT = 200
 const EVENT_PAGE_SIZE = 50
+// BUG-PLANTHARVCURSOR-001 — a BOUND on the harvest-entry drain, not a limit. /api/harvests pages at
+// PAGE_LIMIT = 50, and the chips it feeds can only ever land on an event the timeline rendered, so
+// EVENT_FETCH_LIMIT/50 = 4 pages already covers every event this page will ever show. 8 is double
+// that, which leaves room for the endpoint's page size to shrink without silently clipping. Hitting
+// it means something is wrong upstream, so the drain stops and the rowset is treated as a PREFIX
+// (the BUG-EXPORTDRAINBOUND-001 rule) rather than as the whole harvest history.
+export const MAX_HARVEST_PAGES = 8
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
@@ -58,7 +65,7 @@ import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
-import { describeHarvestWeight, sumHarvestWeights, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import { describeHarvestWeight, sumHarvestWeights, serverWeightTotal, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { vesselDataGaps } from '../lib/vesselData.js'
 
 
@@ -231,28 +238,67 @@ export default function PlantingDetail() {
   // there, a quantified row with no derivable weight shows "no weight yet"; here, an event with NO
   // matching entry at all renders NOTHING, because "we did not load it" and "it has no weight" are
   // different facts and only the second one is safe to tell Dave.
-  const [harvestByEvent, setHarvestByEvent] = useState(null)
+  //
+  // BUG-PLANTHARVCURSOR-001 — the fetch above was a SINGLE request against an endpoint that pages at
+  // PAGE_LIMIT = 50 and hands back a `cursor` when more remain. Nobody followed it, so a planting
+  // past 50 picks summed its first page and printed a total short by the rest: no error, no
+  // indicator, and short in the one direction Dave would believe. Prod was three days from the first
+  // crossing when this was written. Two independent repairs, and the independence is the design:
+  //
+  //   TOTAL   <- the server's un-capped aggregate. Exact by construction, one request, no loop.
+  //   CHIPS   <- a bounded drain. The timeline reveals every event (EVENT_FETCH_LIMIT = 200), so a
+  //              row past the boundary would otherwise render with no weight beside it.
+  //
+  // Because the total never reads the drained entries, a drain that fails or hits its bound costs
+  // chips and cannot make the number wrong.
+  const [harvests, setHarvests] = useState(null)
   useEffect(() => {
     if (!planting?.id) return
     let cancelled = false
-    setHarvestByEvent(null)
-    fetch(`/api/harvests?plant=${planting.id}&include=entries&timeframe=all`)
-      .then(data => {
-        if (cancelled) return
-        const m = new Map()
-        for (const en of data?.entries ?? []) if (en?.event_id) m.set(en.event_id, en)
-        setHarvestByEvent(m)
-      })
-      .catch(() => { if (!cancelled) setHarvestByEvent(new Map()) })
+    setHarvests(null)
+    const base = `/api/harvests?plant=${planting.id}&timeframe=all`
+    const run = async () => {
+      const byEvent = new Map()
+      let weight = null
+      let cursor = null
+      let complete = false
+      try {
+        for (let i = 0; i < MAX_HARVEST_PAGES; i++) {
+          // Aggregates ONLY on the first request. The Lambda recomputes the whole GROUPING SETS
+          // roll-up over the full range on any request that asks for them, so carrying `aggregates`
+          // through the drain would re-derive one un-capped total per page (the same waste
+          // BUG-EXPORTDRAINBOUND-001's I-4 note records against the export sheet).
+          const data = await fetch(cursor ? `${base}&include=entries&cursor=${encodeURIComponent(cursor)}` : `${base}&include=entries,aggregates`)
+          if (cancelled) return
+          for (const en of data?.entries ?? []) if (en?.event_id) byEvent.set(en.event_id, en)
+          if (i === 0) {
+            // The PLANTING-grain member of the roll-up, not `aggregates.weight` (the grand total).
+            // They are the same number only when the Lambda honours ?plant=; the planting grain is
+            // scoped by its own GROUPING SET, so it stays correct against an older handler that
+            // ignores the param and aggregates the whole household. Absent -> null -> say nothing.
+            weight = serverWeightTotal((data?.aggregates?.first_pick ?? []).find(f => f?.plant_id === planting.id)?.weight)
+          }
+          const next = data?.cursor ?? null
+          // A stuck cursor (a cache replaying one page, or a keyset bug) would otherwise re-fetch
+          // the same rows until the bound; there is nothing further to collect either way.
+          if (!next || next === cursor) { complete = true; break }
+          cursor = next
+        }
+      } catch { /* SECONDARY BY DESIGN — keep whatever landed, never surface an error here */ }
+      if (!cancelled) setHarvests({ byEvent, weight, complete })
+    }
+    run()
     return () => { cancelled = true }
   }, [planting, fetch, refreshKey])
+  const harvestByEvent = harvests?.byEvent ?? null
 
-  // The planting's own weight total, from the same entries. sumHarvestWeights sums estimated and
-  // measured together — the honest arithmetic — and hands back the counts so the line under it can
-  // say how much of the number was inferred instead of implying the whole of it was weighed.
+  // The planting's own weight total. The server roll-up when the wire carries it; otherwise the
+  // local sum, which sumHarvestWeights derives with the same honest arithmetic (estimated and
+  // measured added together, counts returned alongside so the line under it can say how much of the
+  // number was inferred rather than implying the whole of it was weighed).
   const harvestWeightTotal = useMemo(
-    () => sumHarvestWeights(harvestByEvent ? [...harvestByEvent.values()] : []),
-    [harvestByEvent],
+    () => harvests?.weight ?? sumHarvestWeights(harvestByEvent ? [...harvestByEvent.values()] : []),
+    [harvests, harvestByEvent],
   )
 
   // SPLIT-ARTIFACT GUARD. The SPA and the harvests Lambda deploy on separate legs, so this page can
@@ -264,9 +310,16 @@ export default function PlantingDetail() {
   // The discriminator is `undefined` vs `null`: the new wire sends weight_grams: null for a genuinely
   // unweighed pick, the old wire omits the key entirely. Checked with `in`, not truthiness — a
   // legitimately-null weight must still count as wire support.
+  //
+  // BUG-PLANTHARVCURSOR-001 adds the second leg of the same rule. Falling back to the local sum is
+  // only honest over a rowset we know is whole: an INCOMPLETE drain is a prefix, and the wire told
+  // us so by still holding a cursor. With no server roll-up and no finished drain there is no true
+  // number to print, so the block stays dark rather than reprinting the truncation this row fixes.
   const harvestWeightWireReady = useMemo(
-    () => !!harvestByEvent && [...harvestByEvent.values()].some(en => en && 'weight_grams' in en),
-    [harvestByEvent],
+    () => !!harvests?.weight || (
+      !!harvests?.complete && [...(harvests?.byEvent?.values() ?? [])].some(en => en && 'weight_grams' in en)
+    ),
+    [harvests],
   )
 
   // Planting photos (V1 display-only). V4-PHOTOGALLERY-001: the gallery shows every photo ATTACHED to
