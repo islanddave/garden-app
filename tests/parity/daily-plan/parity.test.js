@@ -33,7 +33,10 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
       // BUG-PARITYFLAGBLIND-001: rain-credit flag pairs — without the -flagon halves nothing in this gate
       // reaches RAIN_TIER_IA / RAIN_TIER_HOLD / rainTierFor, which is the configuration prod runs.
       'rain-tier-knife-flagoff', 'rain-tier-knife-flagon',
-      'rain-tier-vessels-flagoff', 'rain-tier-vessels-flagon']) {
+      'rain-tier-vessels-flagoff', 'rain-tier-vessels-flagon',
+      // BUG-RAINCREDITLIVEPATH-001: KNIFE and VESSELS reach the tier path but only its small_fast/in_ground
+      // rows, so the size-gated fabric_ground row added by that fix was still unreachable from this gate.
+      'rain-tier-fabric-flagoff', 'rain-tier-fabric-flagon']) {
       expect(names).toContain(required);
     }
   });
@@ -51,7 +54,7 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
   });
 
   it('each rain-tier flag pair diverges — the flag-ON goldens are non-vacuous', () => {
-    for (const base of ['rain-tier-knife', 'rain-tier-vessels']) {
+    for (const base of ['rain-tier-knife', 'rain-tier-vessels', 'rain-tier-fabric']) {
       const off = canonicalJSON(canonicalize(planFor(`${base}-flagoff`)));
       const on = canonicalJSON(canonicalize(planFor(`${base}-flagon`)));
       expect(on, `${base}: flag ON produced the flag-OFF plan`).not.toBe(off);

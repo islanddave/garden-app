@@ -106,6 +106,31 @@ const RAIN_TIER_VESSELS = {
     P({ id: 'bed2', name: 'Main Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'in_ground', container_size: null, substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-18', covered: false, db_cadence: INGROUND_TOMATO }),
   ],
 };
+// RAIN_TIER_FABRIC: 0.30" window rain across three fabric bags that differ ONLY in container_size, so the
+// size gate is the only variable in play. BUG-RAINCREDITLIVEPATH-001 added RAIN_TIER_IA/HOLD.fabric_ground
+// (0.20 / 3) behind rainTierFor's >= FABRIC_GROUND_MIN_GAL (3 gal) gate; KNIFE and VESSELS reach the tier
+// path but never that row, so without this pair the gate stays blind to it (verified: setting
+// RAIN_TIER_IA.fabric_ground = -99 left the parity suite 36/36 green).
+//   fg1 — '5 gal' (Dave's modal bag, 76 of 80 active bags are >= 3 gal): promotes to fabric_ground, IA 0.20
+//         -> eff 0.10 -> credited, and RAIN_TIER_HOLD.fabric_ground 3 gives credited_days 3. The PEPPER
+//         3-day interval is deliberate: credit_days is min(hold, wi), so on a 2-day cadence a hold of 2, 3 or
+//         99 would all read 2 and the hold value would not actually be pinned.
+//   fg2 — '3 in' (0.06 gal — the one live below-gate bag): stays small_fast, IA 0.35 -> no credit -> waters.
+//   fg3 — unsized: sizeGal null -> stays small_fast -> waters. Pins the fail-safe direction of an unparseable
+//         or absent size.
+// Because all three are the same container_type, fg1 diverging from fg2/fg3 pins the gate itself AND the call
+// site passing sizeGal through: a silent revert to the one-arg rainTierFor collapses fg1 onto fg2.
+const RAIN_TIER_FABRIC = {
+  today: '2026-06-22',
+  weather: { tonightLow: 60, highToday: 79, code: 1, short: 'Clearing', unit: 'F' },
+  hydrology: { recent_precip_in: 0.30, today_precip_in: 0, today_pop: 10, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  ownerFallback: 'dave',
+  plantings: [
+    P({ id: 'fg1', name: 'Big Bag Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'fabric_bag', container_size: '5 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', covered: false, db_cadence: PEPPER }),
+    P({ id: 'fg2', name: 'Small Bag Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'fabric_bag', container_size: '3 in', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', covered: false, db_cadence: PEPPER }),
+    P({ id: 'fg3', name: 'Unsized Bag Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'fabric_bag', container_size: null, substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', covered: false, db_cadence: PEPPER }),
+  ],
+};
 
 // Helper to keep planting literals terse + uniform.
 //
@@ -317,6 +342,16 @@ export const scenarios = [
     name: 'rain-tier-vessels-flagon',
     desc: '0.30" same input, flag ON: the NULL vessel takes rainTierFor\'s small_fast fallback (IA 0.35 -> no credit, waters) while the bed takes in_ground (IA 0.20, hold 3 -> credited_days 3). Pins both the fallback direction and the hold table.',
     input: { ...RAIN_TIER_VESSELS, rainCreditEnabled: true },
+  },
+  {
+    name: 'rain-tier-fabric-flagoff',
+    desc: '0.30" across a 5 gal / "3 in" / unsized fabric bag, flag OFF: size is not consulted at all -> one undifferentiated RAIN_IA.outdoor 0.25 / 1-day hold -> all three rain_skipped with credited_days 1.',
+    input: { ...RAIN_TIER_FABRIC, rainCreditEnabled: false },
+  },
+  {
+    name: 'rain-tier-fabric-flagon',
+    desc: '0.30" same input, flag ON: the 5 gal bag promotes to fabric_ground (IA 0.20, hold 3 -> credited_days 3) while the "3 in" and unsized bags stay small_fast (IA 0.35 -> no credit, water). The only scenario that reaches RAIN_TIER_IA/HOLD.fabric_ground, and it pins the >= 3 gal gate in both directions.',
+    input: { ...RAIN_TIER_FABRIC, rainCreditEnabled: true },
   },
 ];
 
