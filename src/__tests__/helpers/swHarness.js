@@ -89,6 +89,8 @@ export function loadServiceWorker({ source, fetchImpl, caches: cachesImpl } = {}
     self, caches: cachesMock, fetch: fetchMock,
     Response, Request, Headers, URL, AbortController,
     setTimeout, clearTimeout, console,
+    // Present in a real ServiceWorkerGlobalScope; needed by subFromAuthHeader's JWT payload decode.
+    atob, TextDecoder, Uint8Array, JSON,
   }
   sandbox.globalThis = sandbox
   vm.runInNewContext(src, sandbox, { filename: SW_SRC_PATH })
@@ -120,6 +122,24 @@ export async function dispatchActivate(sw) {
 
 export const LAMBDA_URL = (p = '/api/plants') =>
   `https://abc123.lambda-url.us-east-1.on.aws${p}`
+
+/**
+ * An UNSIGNED JWT carrying `sub`. Unsigned on purpose: sw.js does not verify the token, and a test
+ * that supplied a signed one would imply a verification step that does not exist. Payload is
+ * base64URL (`-`/`_`, unpadded) exactly as a real Clerk token encodes it.
+ */
+export function jwtWithSub(sub, extraClaims = {}) {
+  const b64url = (obj) =>
+    Buffer.from(JSON.stringify(obj), 'utf8').toString('base64')
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${b64url({ alg: 'RS256', typ: 'JWT' })}.${b64url({ sub, ...extraClaims })}.sig_not_verified`
+}
+
+/** A GET at the Lambda origin, optionally bearing `sub`'s token. No token => no header at all. */
+export function apiRequest(sub, path = '/api/plants') {
+  const headers = sub ? { Authorization: `Bearer ${jwtWithSub(sub)}` } : {}
+  return new Request(LAMBDA_URL(path), { method: 'GET', headers })
+}
 
 /** A rejection shaped like a real offline failure (fetch rejects with TypeError). */
 export const offlineError = () => new TypeError('Failed to fetch')

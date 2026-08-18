@@ -24,6 +24,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(resolve(__dirname, '../../public/sw.js'), 'utf8')
 
 const API_URL = 'https://abc123.lambda-url.us-east-1.on.aws/api/photos'
+// The subject whose cache partition these tests operate in (V4-SWCACHEID-001).
+const SUB = 'user_2networkfirst'
+const AUTH_JWT = [
+  Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url'),
+  Buffer.from(JSON.stringify({ sub: SUB })).toString('base64url'),
+  'sig_not_verified',
+].join('.')
+const authedRequest = (url = API_URL) =>
+  new Request(url, { headers: { Authorization: `Bearer ${AUTH_JWT}` } })
 const PAYLOAD = [{ id: 'p1', view_url: 'https://s3/p1?X-Amz-Signature=old' }]
 
 const keyOf = (r) => (typeof r === 'string' ? r : r.url)
@@ -70,14 +79,28 @@ function loadSW(fetchImpl) {
   const cachesStub = makeCaches()
   const factory = new Function(
     'self', 'caches', 'fetch', 'Response', 'Request', 'Headers', 'URL',
-    'AbortController', 'setTimeout', 'clearTimeout',
-    `${SRC}\nreturn { networkFirst, navigationFallback, markFromCache, API_CACHE, STATIC_CACHE, FROM_CACHE_HEADER }`,
+    'AbortController', 'setTimeout', 'clearTimeout', 'atob', 'TextDecoder', 'Uint8Array',
+    // V4-SWCACHEID-001: API_CACHE no longer exists as a single constant — the cache is chosen per
+    // subject. `API_CACHE` below is THIS test's subject partition, derived by the real
+    // apiCacheNameFor so the name can never drift from the one sw.js computes at runtime.
+    `${SRC}\nreturn { networkFirst, navigationFallback, markFromCache, STATIC_CACHE, FROM_CACHE_HEADER,`
+    + ` CACHE_VERSION, subFromAuthHeader, apiCacheNameFor, keepCacheKey,`
+    + ` API_CACHE: apiCacheNameFor(CACHE_VERSION, ${JSON.stringify(SUB)}) }`,
   )
   const api = factory(
     selfStub, cachesStub, fetchImpl, Response, Request, Headers, URL,
-    AbortController, setTimeout, clearTimeout,
+    AbortController, setTimeout, clearTimeout, atob, TextDecoder, Uint8Array,
   )
   return { ...api, caches: cachesStub, listeners }
+}
+
+/**
+ * networkFirst defers its cache write onto event.waitUntil. Direct callers below pass this fake
+ * event so the write is awaitable instead of racing the assertion.
+ */
+function withWrites() {
+  const waits = []
+  return { event: { waitUntil: (p) => waits.push(p) }, settle: () => Promise.all(waits) }
 }
 
 // Network stub with a switchable failure mode. `offline` models fetch rejecting outright (no radio);
@@ -96,8 +119,10 @@ function net() {
 
 async function warmCache(sw, n) {
   n.state.mode = 'online'
-  const res = await sw.networkFirst(new Request(API_URL), sw.API_CACHE)
+  const w = withWrites()
+  const res = await sw.networkFirst(new Request(API_URL), sw.API_CACHE, w.event)
   await res.json()
+  await w.settle()
   return res
 }
 
@@ -205,7 +230,9 @@ describe('sw.js networkFirst — offline cache fallback is marked (SW-STALEAPI-0
     await warmCache(sw, n)
 
     n.state.mode = 'offline'
-    const event = { request: new Request(API_URL), respondWith: vi.fn() }
+    // Bears SUB's token: the listener derives the partition from this header, and warmCache seeded
+    // exactly that partition. An unauthenticated request here would correctly 503 (fail closed).
+    const event = { request: authedRequest(), respondWith: vi.fn(), waitUntil: vi.fn() }
     sw.listeners.fetch(event)
     expect(event.respondWith).toHaveBeenCalledTimes(1)
     const res = await event.respondWith.mock.calls[0][0]
