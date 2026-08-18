@@ -138,6 +138,32 @@ export function sumHarvestWeights(harvests) {
   return out
 }
 
+// BUG-PLANTHARVCURSOR-001. The same total, but taken from the server's roll-up instead of summed
+// here — the entries a client holds are a PAGE (PAGE_LIMIT = 50) while the aggregate is computed
+// over the full filter range with no cursor and no limit, so past 50 harvests only one of the two
+// is the real number. Postgres also sums `numeric` exactly, where a JS reduce over parsed decimals
+// does not.
+//
+// This is a SHAPE ADAPTER and nothing more. The server (lambda/harvests/aggregate.js shapeWeightRow)
+// speaks grams/measured_grams/estimated_grams/measured/estimated/unweighed; sumHarvestWeights above
+// speaks the same vocabulary minus the gram split and plus the rendered `text`. Converting here
+// rather than at the call site keeps ONE definition of the object every weight surface renders, so a
+// total sourced from the wire and a total summed locally cannot drift in shape or in phrasing.
+// Returns null for an absent row, which callers must treat as "say nothing" — a missing roll-up is
+// an older Lambda, not a planting that weighs zero.
+export function serverWeightTotal(weight) {
+  if (!weight || typeof weight !== 'object') return null
+  const grams = Number(weight.grams)
+  if (!Number.isFinite(grams)) return null
+  return {
+    grams,
+    measured: Number(weight.measured) || 0,
+    estimated: Number(weight.estimated) || 0,
+    unweighed: Number(weight.unweighed) || 0,
+    text: formatGrams(grams),
+  }
+}
+
 // V4-HARVEXPORT-001: the qualifier clauses that must ride every weight number. Lifted out of
 // Harvests.jsx (where it was local) so the Totals view and the Totals EXPORT emit the SAME
 // phrasing — a bare "12 kg" claims every gram was weighed, which is false for nearly every row

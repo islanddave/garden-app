@@ -1484,6 +1484,20 @@ export const handler = async (event) => {
         // watering event — the POST would never have produced that row.
         const isTreatment = body.event_type === 'pest_treatment' || body.event_type === 'doctored';
 
+        // BUG-QTYSPLITBRAIN-001. event_log.quantity_numeric is the mirror half of the pairing
+        // invariant migrations/v1-2a-2/0a-additive-ddl.sql §3.2 states as Lambda-enforced:
+        // quantity_numeric = harvest_log.quantity. The POST CTE honours it — both columns take the
+        // same bound value. This route updated harvest_log alone, so editing a harvest amount moved
+        // one side and froze the other at whatever the INSERT wrote. It went unnoticed because
+        // quantity_numeric has no reader yet; prod carries one live violation (35 vs 1).
+        //
+        // Hoisted here rather than read off body.harvest at the harvest_log UPDATE below so BOTH
+        // writes bind the SAME local. Two hand-copied expressions kept in agreement by a comment is
+        // the exact shape of bug this route already exists to fix (see the Slice A note at the
+        // harvest_log UPDATE).
+        const editsHarvest = body.harvest != null && hasHarvestRow;
+        const hq = editsHarvest ? body.harvest.quantity : null;
+
         const updatedRows = await sql`
           UPDATE event_log el
              SET event_type    = ${body.event_type},
@@ -1492,6 +1506,12 @@ export const handler = async (event) => {
                  notes         = ${body.notes ?? null},
                  private_notes = ${body.private_notes ?? null},
                  quantity      = ${body.quantity ?? null},
+                 -- BUG-QTYSPLITBRAIN-001. PRESERVE on the absent arm, never null: a non-harvest
+                 -- edit, and a harvest edit that omits the harvest block, must leave the mirror
+                 -- byte-identical. Same CASE grammar as metadata below and for the same reason — a
+                 -- COALESCE here would collapse "no harvest block" into "clear it".
+                 quantity_numeric = CASE WHEN ${editsHarvest}::boolean THEN ${hq}::numeric
+                                         ELSE el.quantity_numeric END,
                  is_public     = COALESCE(${body.is_public ?? null}::boolean, el.is_public),
                  -- V4-WATERMATH-001 F0 edit half: HAS-KEY grammar, resolved in JS (meta.has /
                  -- meta.value — see clearFields.js resolveMetadataArm). Absent key keeps
@@ -1562,8 +1582,7 @@ export const handler = async (event) => {
         if (!updatedRows.length) return resp(404, { error: 'Not found' });
 
         let harvestRow = null;
-        if (body.harvest != null && hasHarvestRow) {
-          const hq = body.harvest.quantity;
+        if (editsHarvest) {
           const hu = body.harvest.unit;
           const hqual = body.harvest.quality_rating ?? null;
           // V4-HARVDUAL-001 Slice A. The weight derivation now lives in ONE place —

@@ -176,7 +176,8 @@ describe('harvest-attributes JSON is in sync with the generated 0b-data.sql seed
     // establishing_not_yet_harvestable, and the reason ginger stays out of THIS list is that the list
     // means ornamental / will-not-fruit-here, which ginger is not. Asserting the positive home as
     // well as the negative one is what stops the exclusion from decaying back into a bare gap.
-    // (bee_balm is already listed, with its own `contested` note.)
+    // (bee_balm WAS listed here on 2026-08-17. It left the list on 2026-08-18 when its pre-authored
+    // condition fired — see the V4-HARVHABITGAP-001 block below.)
     const listed = new Set(doc.not_harvest_tracked.slugs)
     for (const slug of ['aloe', 'calibrachoa', 'lantana']) expect(listed.has(slug), slug).toBe(true)
     expect(listed.has('ginger'), 'ginger is edible and intended to be eaten — not an ornamental NULL').toBe(false)
@@ -197,6 +198,40 @@ describe('harvest-attributes JSON is in sync with the generated 0b-data.sql seed
     expect(g.release_condition && g.release_condition.length, 'a release condition is required').toBeGreaterThan(20)
     expect(new Set(doc.not_harvest_tracked.slugs).has('ginger')).toBe(false)
     expect('ginger' in authored, 'seeding it would let a readiness predicate fire').toBe(false)
+  })
+
+  // V4-HARVHABITGAP-001 — bee_balm's pre-authored flip, EXECUTED (2026-08-18).
+  //
+  // This is the one crop in the whole NULL-habit gap whose answer was written down in advance:
+  // not_harvest_tracked.contested held "flip to cut_and_come_again/14d if Dave actually picks it",
+  // and the Wild Bergamot planting carries a harvest event, so the condition was met rather than
+  // re-decided. Pinned at the recorded VALUES, not merely at "is seeded": the point of a
+  // pre-authored condition is that executing it cannot drift into a fresh horticultural judgement.
+  it("bee_balm carries the pre-authored cut_and_come_again/14d, in both the JSON and the seed", () => {
+    const row = authored.bee_balm
+    expect(row, 'bee_balm must be seeded — its condition fired').toBeTruthy()
+    expect(row.harvest_habit, 'the recorded habit, not a fresh call').toBe('cut_and_come_again')
+    expect(row.repeat_interval_days, 'the recorded cadence, not a fresh call').toBe(14)
+    // The condition named a habit and a cadence and nothing else. NULL = UNKNOWN is the honest
+    // record for the rest; a number here would be invented.
+    expect(row.loss_horizon_hours ?? null, 'not named by the condition — stays UNKNOWN').toBeNull()
+    // And the projection actually carries it, so an environment applying the seed gets the value.
+    expect(seed.get('bee_balm')).toMatchObject({
+      harvest_habit: 'cut_and_come_again', repeat_interval_days: 14, loss_horizon_hours: null,
+    })
+  })
+
+  it('bee_balm is on NO deliberate-NULL list now that it is seeded', () => {
+    // The half that makes the flip real rather than contradictory: leaving it on
+    // not_harvest_tracked while seeding it would assert both "deliberately NULL" and a live habit.
+    // The generic both-sides test above would catch it, but it names no slug in the failure.
+    expect(new Set(doc.not_harvest_tracked.slugs).has('bee_balm')).toBe(false)
+    expect(new Set(doc.unseeded_vocabulary.slugs).has('bee_balm')).toBe(false)
+    expect('bee_balm' in doc.establishing_not_yet_harvestable.entries).toBe(false)
+    // The condition itself stays on the record. Deleting it would erase the only evidence that this
+    // value was executed from a prior decision rather than guessed at now.
+    expect(doc.not_harvest_tracked.contested.bee_balm, 'the fired condition stays recorded')
+      .toMatch(/cut_and_come_again\/14d/)
   })
 
   it('DOY windows are set only where being outside the window is actively harmful', () => {

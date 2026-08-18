@@ -370,6 +370,14 @@
       "confidence": "low",
       "notes": "UNCERTAIN — arguably not schedulable at all. Bay leaves are picked as needed from a slow-growing evergreen; there is no biological readiness event. 30d/168h is a placeholder that keeps the row non-NULL; consider reverting it to NULL if the predicate produces noise."
     },
+    "bee_balm": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 14,
+      "loss_horizon_hours": null,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "V4-HARVHABITGAP-001 (2026-08-18) — EXECUTING the pre-authored condition held in not_harvest_tracked.contested, not making a new call: 'flip to cut_and_come_again/14d if Dave actually picks it.' He has — the Wild Bergamot planting carries 1 harvest event — so the condition fired and these are the values already written down. Monarda is a genuine culinary/tea herb (category='herb'); cutting stems for tea is cut-and-come-again by definition. loss_horizon_hours stays NULL DELIBERATELY: the pre-authored condition named a habit and a cadence and nothing else, NULL means UNKNOWN, and the column has no runtime consumer (it records post-harvest shelf life, cf. lambda/harvests/watch.js). Inventing a number here would add an unsourced value and nothing else."
+    },
     "nasturtium": {
       "harvest_habit": "cut_and_come_again",
       "repeat_interval_days": 7,
@@ -428,7 +436,7 @@
     }
   },
   "not_harvest_tracked": {
-    "note": "Deliberately left NULL in the DB. These are ornamentals, houseplants, succulents, or (avocado) a plant that will not fruit in this zone. NULL here is a decision, not a gap — but it is indistinguishable from 'unseeded' at the column level, which is why this list is recorded. 2026-08-17: aloe, calibrachoa and lantana added — each has one live planting, zero picks, and had drifted into reading as an unexplained NULL. Version stays 1.0.0 because this list is not part of the JSON->0b-data.sql projection the sync gate re-confirms; by_crop_type is unchanged.",
+    "note": "Deliberately left NULL in the DB. These are ornamentals, houseplants, succulents, or (avocado) a plant that will not fruit in this zone. NULL here is a decision, not a gap — but it is indistinguishable from 'unseeded' at the column level, which is why this list is recorded. 2026-08-17: aloe, calibrachoa and lantana added — each has one live planting, zero picks, and had drifted into reading as an unexplained NULL. 2026-08-18 (V4-HARVHABITGAP-001): bee_balm REMOVED — its contested entry below carried a pre-authored flip condition and that condition fired, so it is seeded in by_crop_type now. That removal DOES touch the projection, unlike the 2026-08-17 additions, so 0b-data.sql gains the matching seed row in the same change and migrations/v4-harvhabitgap-001 applies it to environments already seeded.",
     "slugs": [
       "geranium", "coleus", "fittonia", "petunia", "calibrachoa", "lantana", "tradescantia",
       "sedum", "echeveria", "aloe",
@@ -438,10 +446,10 @@
       "cobaea", "foxglove", "helichrysum", "thunbergia", "torenia", "sunflower",
       "morning_glory", "poppy", "stock", "viola", "columbine", "delphinium", "hollyhock",
       "carnation", "milkweed", "money_plant", "four_o_clock", "edelweiss", "tweedia",
-      "blackberry_lily", "crown_of_thorns", "avocado", "pineapple", "bee_balm"
+      "blackberry_lily", "crown_of_thorns", "avocado", "pineapple"
     ],
     "contested": {
-      "bee_balm": "Monarda is a real culinary/tea herb (category='herb' in the vocab) but is grown here as a pollinator ornamental. Left NULL per brief; flip to cut_and_come_again/14d if Dave actually picks it.",
+      "bee_balm": "NOT on this list as of 2026-08-18 (V4-HARVHABITGAP-001) — its pre-authored condition FIRED. The recorded wording was: 'Monarda is a real culinary/tea herb (category=herb in the vocab) but is grown here as a pollinator ornamental. Left NULL per brief; flip to cut_and_come_again/14d if Dave actually picks it.' He picked it — the Wild Bergamot planting carries 1 harvest event — so it is now seeded at exactly those values. See by_crop_type.bee_balm. Kept here rather than deleted so the condition, and the fact that it was met rather than overridden, stay on the record (same shape as the nasturtium entry below).",
       "avocado": "Will not fruit as a zone-5b container houseplant. NULL is correct and permanent, not provisional.",
       "nasturtium": "NOT on this list — seeded as edible. See by_crop_type.nasturtium."
     }

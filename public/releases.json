@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.36.0",
+    "date": "2026-08-18",
+    "highlights": [
+      "Photos now record when they were actually taken. Every photo in the app until now had no capture time at all — the resize that shrinks a picture before upload was quietly stripping that information off it first, so the moment a photo was taken was destroyed on the phone and could never be recovered. The capture time is now read from the original before the resize touches it. Photos that genuinely have no capture time — screenshots, downloads, anything already stripped by a messaging app — stay blank rather than being given a made-up date.",
+      "The planting picker can be dismissed. On the log-a-harvest path the picker opened by itself and then could not be closed: it never took keyboard focus, so tapping away did nothing. There is now a close button, and Android's Back closes it too, without losing what you had already typed.",
+      "A planting with more than 50 harvests no longer understates its own total. The planting page asked for one page of harvests and used whatever came back, so past fifty picks the total on screen quietly stopped counting. It now reads the full, uncapped total the server already calculates. Your Pineapple Tomatillo was days away from crossing that line.",
+      "Editing a harvest keeps its weight consistent. Logging a harvest recorded the weight in two places; editing one afterwards only updated one of them. One record in the garden had already drifted this way — 35 in one field and 1 in the other.",
+      "Plantings can no longer be permanently and wrongly ruled out as too-late-to-mature. A behind-the-scenes check compared the expected maturity date against a deliberately cautious frost date rather than the real one, and anything it flagged was both hidden from the harvest watch list and skipped by the nightly recheck — so a wrong verdict stuck forever. Three plantings, including a Sweet Potato, have been put back."
+    ]
+  },
+  {
     "version": "4.35.0",
     "date": "2026-08-18",
     "highlights": [

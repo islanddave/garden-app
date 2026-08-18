@@ -22,6 +22,16 @@
 --     (2026-09-28) is not a low-confidence estimate — it is impossible (one target derives to
 --     Oct 9). Consumers must be able to drop both classes in one predicate. 0b stamps this at
 --     write time; the column is nullable and additive.
+--
+--     ⚠️ "(2026-09-28)" IN THE LINE ABOVE IS WRONG AND IS KEPT AS THE RECORD OF THE ERROR
+--     (BUG-ANCHORSQLFROST-001). That is FROST_ANCHORS.firstFallFrost, a conservative SOWING-SAFETY
+--     MARGIN, not a frost date — measurement at this site puts the earliest first <=32F night at
+--     10-10 and the median at 10-29 over 11 years, so the margin ran 12-41 days ahead of any frost
+--     that has occurred. 0b now compares against OBSERVED_FIRST_FALL_FROST.latestMonthDay ('11-08'),
+--     resolved into the anchor's grow year; the full argument, including why the tail bound and not
+--     the median, is in 0b-backfill.sql's plausibility block. The DDL below is UNCHANGED and stays
+--     applied as-is — only the reasoning above was wrong, and the column's own COMMENT deliberately
+--     names "the first-fall-frost anchor" without pinning a date, so it needs no re-apply.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';

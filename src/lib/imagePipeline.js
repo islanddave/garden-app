@@ -38,7 +38,28 @@
 //          NULL forever, re-shipping the exact hole V4-PHOTOEXIF-001 exists to fill. Do not use.
 //   lite — DateTimeOriginal + Orientation + GPS + OffsetTimeOriginal all parse, incl. from a
 //          128KB slice. 48K vs full's 76K.
-import exifr from 'exifr/dist/lite.esm.mjs';
+//
+// LOADED LAZILY (BUG-PHOTOTAKENATNULL-001). It was a static import while this module had no
+// non-test caller, so it cost nothing. Wiring readCaptureMeta into useUploadPhoto put all 45,894
+// bytes of it in the entry chunk (measured on a before/after `vite build`) — the same chunk
+// V4-COLLECTIONSPLIT-001 had just finished shrinking, for a dependency needed only when a photo is
+// actually uploaded. Same shape as critterFactsLoader.js and for the same reason its header gives:
+// a plain import() whose failure branch is a VALUE, never a throw. A cold offline miss resolves
+// null and lands in readCaptureMeta's existing catch, which already yields all-null metadata — so
+// a missing chunk costs the capture time, never the photo.
+// Idempotent and concurrency-safe: N simultaneous callers share one import() and one chunk fetch.
+// A FAILED load clears the cache so a later upload (back on signal) can retry.
+let exifrModule = null;
+let exifrInflight = null;
+function loadExifr() {
+  if (exifrModule) return Promise.resolve(exifrModule);
+  if (exifrInflight) return exifrInflight;
+  exifrInflight = import('exifr/dist/lite.esm.mjs')
+    .then((m) => { exifrModule = m.default ?? m; return exifrModule; })
+    .catch(() => null)
+    .finally(() => { exifrInflight = null; });
+  return exifrInflight;
+}
 
 export const MAX_EDGE = 2560;
 export const QUALITY = 0.85;
@@ -82,6 +103,8 @@ export async function readCaptureMeta(file, { headerBytes = HEADER_BYTES } = {})
   const empty = { takenAt: null, tzOffset: null, gpsLat: null, gpsLon: null, orientation: null };
   if (!file) return empty;
   try {
+    const exifr = await loadExifr();
+    if (!exifr) return empty;   // chunk unreachable (cold offline) -> same degraded result as no EXIF
     const head = file.slice(0, headerBytes);
     // No `pick`: it silently returns nothing on the lite build (verified). It is only an
     // optimization and we already read a bounded slice.

@@ -5,6 +5,16 @@
 -- unapplied on purpose: the measurement below says 89% of what it would write is a baseline guess,
 -- and that is Dave's call to make before any of it feeds a surface.
 --
+-- ⚠️ THE PARAGRAPH ABOVE IS AS-AUTHORED AND HAS BEEN FALSE SINCE 2026-08-12, when the expert consult
+-- returned a conditional-YES and 0b was applied to staging (12 rows) and prod. gates.yml carries the
+-- same correction against its own stale header; it is kept rather than deleted for the same reason,
+-- because it records what was believed at authoring. READ THIS BEFORE ACTING ON A CHANGE TO THIS
+-- FILE: prod holds live derivations right now, so editing the plausibility CASE does NOT re-label
+-- them. An INSERT ... WHERE NOT EXISTS is a no-op against a planting that already has a live row.
+-- Existing rows change only by an explicit re-derivation, which is a separate, gated decision —
+-- BUG-ANCHORSQLFROST-001 leaves that SQL, unapplied, in
+-- _lane_anchorsqlfrost/relabel-frost.local.sql rather than running it.
+--
 -- THIS FILE WRITES TO EXACTLY ONE RELATION: public.plant_anchor_derivation. It does not UPDATE
 -- public.plants, does not touch sown_at / transplanted_at / planted_out_at, and does not fire the
 -- four row-level UPDATE triggers on plants (see 0a's header). Verified by 0c check 5.
@@ -68,7 +78,22 @@ WITH params AS (
   SELECT 'America/New_York'::text AS tz,
          'anchor-derive-v1'::text AS model_version,
          7::int                   AS stated_offset_days,
-         5::int                   AS offset_min_sample
+         5::int                   AS offset_min_sample,
+         -- BUG-ANCHORSQLFROST-001. BOTH frost anchors are named here, for the reason
+         -- src/lib/sowEngine.js names both: until one of them had a name, every consumer that wanted
+         -- the other silently took this one. Only `observed_first_fall_frost_mmdd` is consumed (see
+         -- the plausibility block below); the margin is carried unread so that a reader can see
+         -- WHICH question this file is not asking, and so that a future edit that wants the margin
+         -- has to reach for it by name.
+         --
+         -- = FROST_ANCHORS.firstFallFrost. A CONSERVATIVE SOWING-SAFETY MARGIN — the date past which
+         -- a SOWING decision should stop assuming it has a season. Not an observed frost date; frost
+         -- has never occurred this early here in 11 years of measurement.
+         '09-28'::text            AS sowing_safety_margin_mmdd,
+         -- = OBSERVED_FIRST_FALL_FROST.latestMonthDay. The LATEST first <=32F night in 11 years of
+         -- ERA5 at this site (2017). See the plausibility block for why the tail bound and not the
+         -- median: this file's only use of a frost date is an IMPOSSIBILITY claim.
+         '11-08'::text            AS observed_first_fall_frost_mmdd
 ),
 -- Every live planting with no anchor of its own. Live = the definition lambda/harvests/watch-route.js
 -- settled on: not deleted, not archived, project not deleted/archived, status not in the dead set.
@@ -170,26 +195,91 @@ clamped AS (
          least(d.evidence_date + d.offset_days, d.today) AS anchor_date,
          (d.evidence_date + d.offset_days) > d.today     AS clamped_to_today
     FROM derived d
+),
+-- BUG-ANCHORSQLFROST-001 — the frost date, resolved into the GROW YEAR the anchor sits in.
+--
+-- The literal it replaces was `DATE '2026-09-28'`: one fixed calendar day, in a statement whose own
+-- header calls it idempotent and re-runnable. Every anchor derived in 2027 would have compared
+-- against a date sixteen months in its past and come back impossible. The grow year runs Nov 1 -
+-- Oct 31 — the boundary watch-route.js's `bounds` CTE and scripts/measure-anchor-coverage.sql
+-- already use — so from November onward the NEXT first fall frost belongs to the following calendar
+-- year. Same roll as lambda/harvests/watch.js firstFallFrostFor(); the mm-dd is the only literal.
+--
+-- Resolved against ANCHOR_DATE, not against today: the question is whether this planting could
+-- mature before the frost that follows ITS anchor, and that is a property of the row, not of the
+-- day the backfill happens to run.
+frosted AS (
+  SELECT c.*,
+         make_date(
+           CASE WHEN extract(month FROM c.anchor_date) >= 11
+                THEN extract(year FROM c.anchor_date)::int + 1
+                ELSE extract(year FROM c.anchor_date)::int END,
+           split_part(prm.observed_first_fall_frost_mmdd, '-', 1)::int,
+           split_part(prm.observed_first_fall_frost_mmdd, '-', 2)::int
+         ) AS observed_first_fall_frost
+    FROM clamped c
+    CROSS JOIN params prm
 )
 -- plausibility (consult 2026-08-12, horticulture seat — see 0a2 for the column):
 --   post_frost_impossible wins over rescue_suspect (the stronger objection): even the EARLIEST
---   catalogue maturity (dtm_min) from the derived anchor lands after the 2026-09-28 first-frost
---   anchor. rescue_suspect: the add-date is likely an acquisition date, not a planting date.
+--   catalogue maturity (dtm_min) from the derived anchor lands after frost. rescue_suspect: the
+--   add-date is likely an acquisition date, not a planting date.
+--
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
+-- BUG-ANCHORSQLFROST-001 — WHICH FROST DATE, AND WHY IT IS NOT THE MARGIN
+--
+-- This test compared against `DATE '2026-09-28'`, which is FROST_ANCHORS.firstFallFrost — a
+-- CONSERVATIVE SOWING-SAFETY MARGIN, not a frost date. src/lib/sowEngine.js states the rule the
+-- fourth consumer of that constant is expected to follow (BUG-FROSTANCHORWRONG-001, shipped
+-- v4.35.0): a consumer asking "is it too late to START something frost will kill?" takes the
+-- MARGIN; a consumer asking "when will frost actually happen?" takes OBSERVED_FIRST_FALL_FROST.
+-- This file asks the second question and was answering with the first one's number. The identifier
+-- sweep that fixed the JS consumers missed it because it is SQL.
+--
+-- The measurement (11 years ERA5 at 42.5087,-72.6471; the same executable `query` carried on
+-- OBSERVED_FIRST_FALL_FROST.measured_basis and storageDeadlines.json): first <=32F night has never
+-- fallen before 10-10, median 10-29, latest 11-08. ZERO September nights at or below 32F, coldest
+-- September night in the whole record 38.2F. So the margin sat 12 to 41 days ahead of any frost
+-- that has actually occurred, and this CASE was declaring plantings impossible over a hazard with
+-- no September tail at all.
+--
+-- THE TAIL BOUND (latestMonthDay), NOT THE MEDIAN, and this is the second decision rather than a
+-- restatement of the first. The label is an assertion of IMPOSSIBILITY that permanently removes a
+-- row from service, and the two errors are wildly asymmetric:
+--   * FALSE POSITIVE is unrecoverable. lambda/harvests/watch-route.js's `derived` CTE drops every
+--     non-NULL plausibility, so the planting silently leaves the watch band; and
+--     lambda/daily-plan/handler.js's nightly re-derivation sweep EXCLUDES marked rows on purpose
+--     ("re-deriving one would silently UN-SUPPRESS rows a human decision put out of the band"), so
+--     nothing ever revisits the mark. A wrong stamp is permanent.
+--   * FALSE NEGATIVE is already caught downstream, by a better-informed guard. watch.js condition 3
+--     re-tests the frost window at READ time, per crop, against a live etToday and a 10-day closing
+--     window. lambda/plants/anchorCreate.js's header says so explicitly and is why the create path
+--     stamps rescue_suspect only.
+-- Against that asymmetry the median is a coin flip — frost arrived LATER than 10-29 in 5 of the 11
+-- measured years — and "impossible" is not a coin-flip word. 11-08 is the only value in the record
+-- for which "frost has certainly happened by now" holds in every observed year.
+--
+-- NO PER-CROP ARM, deliberately, and it is not an omission. watch.js splits the anchor by
+-- FALL_HARDY_CROPS (hardy -> measured median, everything else -> margin). Mirroring that here would
+-- put a FOURTH copy of a 27-slug set in the repo — the drift liability handler.js already refuses to
+-- take on. It is unnecessary because the single value chosen here (11-08) is later than BOTH arms of
+-- that ternary, so this stamp is uniformly at least as permissive as watch.js is for any crop,
+-- hardy or tender. A hardy crop cannot be marked here unless it would also be marked as tender.
 INSERT INTO public.plant_anchor_derivation
   (user_id, plant_id, anchor_date, anchor_field, source, confidence, model_version,
    evidence_date, offset_days, offset_source, offset_sample_n, clamped_to_today, derived_on,
    plausibility)
-SELECT c.user_id, c.plant_id, c.anchor_date, c.anchor_field, c.source, c.confidence, c.model_version,
-       c.evidence_date, c.offset_days, c.offset_source, c.offset_sample_n, c.clamped_to_today, c.today,
-       CASE WHEN c.dtm_min IS NOT NULL
-              AND c.anchor_date + c.dtm_min > DATE '2026-09-28' THEN 'post_frost_impossible'
-            WHEN c.plant_name ILIKE '%rescue%'
-              OR c.plant_status IN ('flowering', 'fruiting')    THEN 'rescue_suspect'
+SELECT f.user_id, f.plant_id, f.anchor_date, f.anchor_field, f.source, f.confidence, f.model_version,
+       f.evidence_date, f.offset_days, f.offset_source, f.offset_sample_n, f.clamped_to_today, f.today,
+       CASE WHEN f.dtm_min IS NOT NULL
+              AND f.anchor_date + f.dtm_min > f.observed_first_fall_frost THEN 'post_frost_impossible'
+            WHEN f.plant_name ILIKE '%rescue%'
+              OR f.plant_status IN ('flowering', 'fruiting')              THEN 'rescue_suspect'
             ELSE NULL END
-  FROM clamped c
+  FROM frosted f
  WHERE NOT EXISTS (
          SELECT 1 FROM public.plant_anchor_derivation x
-          WHERE x.plant_id = c.plant_id AND x.superseded_at IS NULL);
+          WHERE x.plant_id = f.plant_id AND x.superseded_at IS NULL);
 
 COMMIT;
 

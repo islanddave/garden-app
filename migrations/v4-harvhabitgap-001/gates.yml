@@ -1,0 +1,94 @@
+# gates.yml
+# V4-HARVHABITGAP-001 — bee_balm harvest_habit NULL -> cut_and_come_again / 14d.
+#
+# DATA ONLY. No DDL, no view, no code, no deploy. Executes a condition pre-authored in
+# src/data/harvest-attributes-v1.json on 2026-07-21; it makes no new horticultural call.
+#
+# STAGING MAY BE VACUOUS AND THAT IS EXPECTED. Staging's crop_types vocabulary is not guaranteed to
+# carry a bee_balm row, and the gates below are all violation-count-must-be-0, so on staging they can
+# pass by matching nothing. post_prod_flip_actually_applied is the env:prod gate that distinguishes
+# "applied" from "matched nothing" — scripted rather than left to a human reading runner output,
+# same shape as v4-rapinidtm-001.
+
+pre:
+  # Not "count(*) = 1": that is a prod absolute and would fail on a staging branch with no such row.
+  # This asserts only that the slug scope can never match MORE than one live row, which is what a
+  # slug-scoped UPDATE is already supposed to guarantee.
+  - name: pre_bee_balm_at_most_one_live_row
+    sql: |
+      SELECT CASE WHEN count(*) <= 1 THEN 0 ELSE 1 END FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NULL
+    expect: scalar_eq
+    value: 0
+
+  # The forward UPDATE is guarded `harvest_habit IS NULL` (first-write-wins). If something already
+  # wrote a DIFFERENT habit onto this row, the migration would silently no-op and the post gate
+  # would then be asserting someone else's value. Catch that before applying, not after.
+  - name: pre_bee_balm_habit_is_null_or_already_the_target
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NULL
+         AND harvest_habit IS NOT NULL
+         AND harvest_habit IS DISTINCT FROM 'cut_and_come_again'
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_bee_balm_is_cut_and_come_again_14
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NULL
+         AND (harvest_habit IS DISTINCT FROM 'cut_and_come_again'
+              OR repeat_interval_days IS DISTINCT FROM 14)
+    expect: scalar_eq
+    value: 0
+
+  # The condition named a habit and a cadence. Anything else appearing on this row means someone
+  # invented a value on the way through, which is precisely what executing a pre-authored decision
+  # is supposed to make impossible.
+  - name: post_bee_balm_unnamed_attributes_stay_null
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NULL
+         AND (loss_horizon_hours IS NOT NULL
+              OR set_to_first_pick_days IS NOT NULL
+              OR harvest_season_start_doy IS NOT NULL
+              OR harvest_season_end_doy IS NOT NULL)
+    expect: scalar_eq
+    value: 0
+
+  # THE BLAST-RADIUS BOUND. This migration seeds exactly one previously-NULL habit. The other four
+  # slugs in the V4-HARVHABITGAP-001 item are deliberate NULLs — aloe/calibrachoa/lantana are
+  # ornamentals on not_harvest_tracked, ginger is recorded as establishing — and every one of them
+  # must STILL be NULL afterwards. lambda/harvests/watch.js:24 says of the ornamental exclusions
+  # "they are correctly excluded and must STAY excluded"; this is that sentence, enforced.
+  - name: post_the_deliberate_nulls_stay_null
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND slug IN ('aloe','calibrachoa','lantana','ginger','avocado')
+         AND harvest_habit IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  # env:prod, and scripted. On prod the row exists, so this is the only gate that can tell an applied
+  # migration from one that matched nothing — post_bee_balm_is_cut_and_come_again_14 shares its slug
+  # predicate with the UPDATE and so passes vacuously where the row is absent.
+  - name: post_prod_flip_actually_applied
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 - count(*) FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NULL
+         AND harvest_habit = 'cut_and_come_again' AND repeat_interval_days = 14
+    expect: scalar_eq
+    value: 0
+
+  # Apply-time receipt. continuous: false — it is absent from any environment this has not been
+  # applied to, which is the correct state there, not a failure.
+  - name: post_schema_version_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.35.0-harvhabitgap-001' LIMIT 1
+    expect: rowcount_gte
+    value: 1
