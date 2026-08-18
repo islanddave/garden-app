@@ -38,7 +38,6 @@ import EventDetail from './pages/EventDetail.jsx'
 import PlantingDetail from './pages/PlantingDetail.jsx'
 import Harvests from './pages/Harvests.jsx'
 import Achievements from './pages/Achievements.jsx'
-import Collection from './pages/Collection.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
@@ -66,6 +65,25 @@ import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { DismissRegistryProvider } from './context/DismissRegistry.jsx'
 import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED, CRITTERS_QUIET } from './lib/featureFlags.js'
+
+// V4-COLLECTIONSPLIT-001 — the ONE lazy route. Every other page above is a static import on purpose:
+// they share components, so splitting them fragments the critical path into extra requests for no
+// byte win. Collection.jsx is the exception — critters-roster.json (39KB) and CritterOfDay.jsx are
+// single-owner subgraphs no other route reaches, so this import boundary moves real bytes off the
+// Android boot path while the critical path stays a SINGLE file.
+//
+// DO NOT convert this back to a static import. A static import here is re-bundled into the entry
+// chunk silently — the tests stay green and the feature still works, which is exactly the inert-
+// regression class this repo has been bitten by (V4-CIGUARD-002). App.collectionSplit.test.jsx
+// asserts at RUNTIME that this module is NOT evaluated at App module-eval time and IS reached when
+// /collection renders; a static import turns it red.
+const Collection = React.lazy(() => import('./pages/Collection.jsx'))
+
+// Suspense fallback for the lazy route above. Deliberately quiet: the chunk is ~40KB gzip off a
+// warm CDN, so a spinner would flash more often than it would inform.
+function ChunkFallback() {
+  return <div role="status" aria-live="polite" data-testid="route-chunk-fallback" style={{ padding: '32px 20px', textAlign: 'center', color: '#7a7266' }}>Loading…</div>
+}
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -232,7 +250,9 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/findings',      element: <Protected><Findings /></Protected> },
     { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Today /></ErrorBoundary></Protected> },
     { path: '/capture',       element: <Protected><CaptureFlow /></Protected> },
-    { path: '/collection',    element: <Protected><Collection /></Protected> },
+    // V4-COLLECTIONSPLIT-001 — the Suspense boundary belongs HERE, at the route, not at the shell:
+    // a shell-level boundary would blank TopChrome/BottomNav while the chunk lands.
+    { path: '/collection',    element: <Protected><React.Suspense fallback={<ChunkFallback />}><Collection /></React.Suspense></Protected> },
     { path: '/admin/classify', element: <Protected><ProjectsAdminClassify /></Protected> },
     { path: '/admin/garden-activity', element: <Protected><GardenActivity /></Protected> },
     // BUG-VOICEDUPE-002 raw Web Speech capture. Unlinked + Jen-invisible, same convention as
