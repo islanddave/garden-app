@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useId } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useOverlaySwap, OverlaySwapLink, useOverlayDismiss, useOverlayBackground } from '../context/OverlayContext.jsx'
+import { useOverlaySwap, OverlaySwapLink, useOverlayDismiss, useOverlayBackground, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups, PRIMARY_EVENT_TYPES } from '../lib/eventTypes.js'
@@ -198,6 +199,13 @@ export default function LogMany() {
     return () => { on = false }
   }, [fetch, params])
 
+  // Shared dirty predicate — feeds the draft-persist effect just below, useReportOverlayDirty (the
+  // overlay backdrop guard) and the reload-gate producer effect (V4-RELOADGATEWIRE-001), all three.
+  // One predicate answers "does this form hold picked/typed content a dismiss or SW reload would
+  // destroy" for every consumer; letting them drift apart is how one channel ends up defended and
+  // another not (see EventNew.jsx's `hasUnsavedInput` for the sibling wiring).
+  const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes
+
   // §4 draft stash: persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001 (c)),
   // so a dismiss OR a full-page exit preserves it; cleared on a successful confirm/undo below.
   // Never persists the pristine default or the
@@ -210,9 +218,28 @@ export default function LogMany() {
   // lastScope memory; from then on it persists real edits normally.
   useEffect(() => {
     if (result || !ready) return
-    const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes
     if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current })
-  }, [result, ready, eventType, eventDate, scope, notes])
+  }, [result, ready, dirty, eventType, eventDate, scope, notes])
+
+  // §4 (b): report in-progress content to the hosting Sheet — a stray backdrop tap no-ops while
+  // dirty. No-op on the full page (no provider); the draft stash above covers persistence there.
+  useReportOverlayDirty(dirty)
+
+  // V4-RELOADGATEWIRE-001 — the producer half of OPS-SWRELOADGUARD-001 for Log Many. reloadGate.js
+  // and registerSW's deferral ship inert until something calls setReloadBlocked; this is that call
+  // for the bulk-log form. Runs on BOTH surfaces (unlike useReportOverlayDirty above) — a deploy
+  // reload hits the full-page /log/many route exactly as hard as the overlay, and reloadGate.js
+  // names LogMany explicitly as an intended consumer.
+  //
+  // Key is per-instance: reloadGate holds a Set, and a shared literal key would let one instance's
+  // unmount release a different instance's hold. The cleanup release is required, not defensive — a
+  // dismissed/navigated-away dirty form that kept its hold would wedge every future update
+  // (BUG-STALECLIENT-001).
+  const reloadGateKey = `log-many:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, dirty)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, dirty])
 
   // V4-WATERMATH-001 F0: a new event type or a new scope is a new batch. Per-row overrides are
   // keyed by plant_id against a preview that has just been re-fetched, so keeping them would
