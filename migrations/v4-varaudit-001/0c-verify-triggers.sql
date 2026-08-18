@@ -194,34 +194,53 @@ CREATE TRIGGER _v0c_break_audit BEFORE INSERT ON public.audit_events
   FOR EACH ROW EXECUTE FUNCTION pg_temp._v0c_break();
 
 -- S1: a generic failure is swallowed. The user's write must still commit.
-SELECT set_config('_v0c.errcode', '23514', true);   -- check_violation
-INSERT INTO public.plant_varieties (id, name, created_by, crop_type_slug)
-VALUES ('0c000000-0000-0000-0000-000000000005', '_v0c S1', 'user_0c', '_v0c_crop');
-
+--
+-- The write is issued INSIDE a block that catches, rather than as a bare top-level statement. That
+-- is not defensive noise: with the handler removed, a bare statement raises out of the script and
+-- psql's ON_ERROR_STOP aborts before any assertion below runs — the property would be "proved" by an
+-- opaque psql error, and the named assertion in this block would be unreachable code that has never
+-- been shown to fire. Catching it here makes the failure land on THIS message.
 DO $$
-DECLARE nrow int; naudit int;
+DECLARE aborted boolean := false; sqlst text; nrow int; naudit int;
 BEGIN
+  PERFORM set_config('_v0c.errcode', '23514', true);   -- check_violation
+  BEGIN
+    INSERT INTO public.plant_varieties (id, name, created_by, crop_type_slug)
+    VALUES ('0c000000-0000-0000-0000-000000000005', '_v0c S1', 'user_0c', '_v0c_crop');
+  EXCEPTION WHEN OTHERS THEN
+    aborted := true; sqlst := SQLSTATE;
+  END;
+
+  IF aborted THEN
+    RAISE EXCEPTION 'S1: the audit failure ABORTED the user INSERT (SQLSTATE=%) — the exact defect this migration closes', sqlst;
+  END IF;
+
   SELECT count(*) INTO nrow FROM public.plant_varieties
    WHERE id = '0c000000-0000-0000-0000-000000000005';
   SELECT count(*) INTO naudit FROM public.audit_events
    WHERE row_id = '0c000000-0000-0000-0000-000000000005';
-  IF nrow <> 1 THEN
-    RAISE EXCEPTION 'S1: the audit failure ABORTED the user INSERT — the exact defect this migration closes';
-  END IF;
-  IF naudit <> 0 THEN RAISE EXCEPTION 'S1: expected 0 audit rows (the write was injected to fail), got %', naudit; END IF;
+  IF nrow <> 1 THEN RAISE EXCEPTION 'S1: the user row is missing after a swallowed audit failure'; END IF;
+  -- Without this half, S1 would pass just as well if the injection never fired, and the whole
+  -- scenario would be proving that a working INSERT works.
+  IF naudit <> 0 THEN RAISE EXCEPTION 'S1: expected 0 audit rows (the audit write was injected to fail), got %', naudit; END IF;
   RAISE NOTICE 'S1 PASS: audit write failed (0 audit rows) and the user INSERT still landed.';
 END $$;
 
 -- S1b: same for UPDATE, which is the 1,427-row-per-quarter path.
-UPDATE public.plant_varieties SET care_notes = '_v0c S1b'
- WHERE id = '0c000000-0000-0000-0000-000000000005';
 DO $$
-DECLARE v text;
+DECLARE aborted boolean := false; v text;
 BEGIN
+  BEGIN
+    UPDATE public.plant_varieties SET care_notes = '_v0c S1b'
+     WHERE id = '0c000000-0000-0000-0000-000000000005';
+  EXCEPTION WHEN OTHERS THEN
+    aborted := true;
+  END;
+  IF aborted THEN RAISE EXCEPTION 'S1b: the audit failure ABORTED the user UPDATE'; END IF;
   SELECT care_notes INTO v FROM public.plant_varieties
    WHERE id = '0c000000-0000-0000-0000-000000000005';
   IF v IS DISTINCT FROM '_v0c S1b' THEN
-    RAISE EXCEPTION 'S1b: the audit failure ABORTED the user UPDATE (care_notes=%)', coalesce(v,'NULL');
+    RAISE EXCEPTION 'S1b: the user UPDATE did not take effect (care_notes=%)', coalesce(v,'NULL');
   END IF;
   RAISE NOTICE 'S1b PASS: audit write failed and the user UPDATE still committed.';
 END $$;

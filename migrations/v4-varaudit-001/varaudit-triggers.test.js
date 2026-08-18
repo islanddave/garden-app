@@ -242,21 +242,49 @@ describe('OPS-VARAUDIT-001 — 0c is safe to run on prod', () => {
   });
 
   it('V22 0c refuses to run against an unarmed database', () => {
-    // Without the precondition, running 0c before 0b exercises the OLD trigger and reports success.
-    expect(SQL.c).toContain('0c precondition');
-    expect(SQL.c).toContain('trg_audit_plant_varieties_ins');
+    // Without the precondition, running 0c before 0b exercises the OLD row-level trigger and every
+    // capture assertion passes — a green report about the code that was supposed to be replaced.
+    //
+    // This asserts the GUARD, not its wording. A first draft matched the substring '0c precondition'
+    // and survived a mutation that gutted the first message, because the SECOND precondition also
+    // contains that substring. Two separate structural facts are required instead.
+    const armed = SQL.c.match(/count\(\*\) FROM pg_trigger[\s\S]{0,400}?\)\s*<>\s*3/);
+    expect(armed, '0c must refuse to run unless all three new triggers are attached').not.toBeNull();
+    expect(armed[0]).toContain('trg_audit_plant_varieties_ins');
+    expect(armed[0]).toContain('trg_audit_plant_varieties_upd');
+    expect(armed[0]).toContain('trg_audit_plant_varieties_del');
+
+    const oldGone = SQL.c.match(/IF EXISTS \(SELECT 1 FROM pg_trigger[^)]*tgname = 'trg_audit_plant_varieties'\)/);
+    expect(oldGone, '0c must also refuse to run while the old row-level trigger is still attached').not.toBeNull();
   });
 
   it('V23 0c proves the three safety properties, not just capture', () => {
     for (const marker of ['S1 PASS', 'S1b PASS', 'S2 PASS', 'S3 PASS']) {
       expect(RAW.c, `0c must assert ${marker}`).toContain(marker);
     }
-    // Injecting a failure is what makes S1 non-vacuous; without it S1 asserts nothing.
-    expect(SQL.c).toContain('_v0c_break');
+    // The failure INJECTION is what makes S1 non-vacuous — without a failing audit write, S1 only
+    // proves that a working INSERT works. A first draft matched the bare name '_v0c_break', which
+    // survived deleting the CREATE TRIGGER because the function definition and the DROP still
+    // mention it. The trigger must actually be ATTACHED to audit_events.
+    expect(SQL.c, 'the failure injection must be attached to audit_events, not merely defined')
+      .toMatch(/CREATE TRIGGER _v0c_break_audit BEFORE INSERT ON public\.audit_events/);
+    // ...and S1 must check BOTH halves: the user's row survived AND the audit row did not.
+    const s1 = SQL.c.slice(SQL.c.indexOf("'S1: the audit failure ABORTED"), SQL.c.indexOf('S1 PASS'));
+    expect(s1, 'S1 must assert the audit write actually failed').toContain('naudit <> 0');
   });
 
   it('V24 0c exercises the real production write path — the cultivar view', () => {
-    expect(SQL.c, 'the Lambda writes public.cultivar, never the base table').toContain('UPDATE public.cultivar');
+    // lambda/varieties/index.js writes public.cultivar, an auto-updatable view. If a base-table
+    // statement-level trigger did not see view-routed rows, this migration would audit nothing in
+    // production. Bound to the specific writes C and D3 assert on, rather than to "the file mentions
+    // the view somewhere" — the loose form survived a mutation that rerouted one of the two.
+    const cWrite = SQL.c.match(/UPDATE\s+(\S+)\s+SET days_to_maturity_min = 75/);
+    expect(cWrite, "0c's C-section write must exist").not.toBeNull();
+    expect(cWrite[1], "C asserts on a view-routed UPDATE, so it must write the view").toBe('public.cultivar');
+
+    const restoreWrite = SQL.c.match(/UPDATE\s+(\S+)\s+SET deleted_at = NULL/);
+    expect(restoreWrite, "0c's RESTORE write must exist").not.toBeNull();
+    expect(restoreWrite[1], 'the RESTORE path is view-routed in production too').toBe('public.cultivar');
   });
 });
 
