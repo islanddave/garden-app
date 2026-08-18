@@ -118,6 +118,11 @@ async function runPasteExtract(text = 'Order #123: Shirley Single Blend Corn Pop
 beforeEach(() => {
   fetchSpy.mockReset()
   navigateSpy.mockReset()
+  // V4-DIRTYGUARDSWEEP-001 — AddSeeds now stashes its intake to sessionStorage, which is
+  // per-realm and therefore shared by every test in this file. Without this, the first test to
+  // extract packets leaves a draft that the next mount restores, the chooser never renders, and
+  // the failure reads as a missing radio rather than as leaked state.
+  try { sessionStorage.clear() } catch { /* jsdom build without Storage — draftStash no-ops too */ }
 })
 
 describe('AddSeeds — chooser', () => {

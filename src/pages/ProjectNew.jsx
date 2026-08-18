@@ -1,12 +1,15 @@
 import React from 'react'
 import ProjectOptions from '../components/ProjectOptions.jsx'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, projectKindOptions } from '../lib/constants.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { VARIETY_REF_UI_SHIPPED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, StatusSelect, SelectChip } from '../components/forms'
 
 function slugify(str) {
@@ -25,6 +28,9 @@ function generateSlug(name, startDate) {
 // Named once, consumed twice, so the breadcrumb and the Cancel target cannot drift apart.
 const BACK_TO = PROJECTS_HIDDEN ? '/garden' : '/projects'
 const BACK_LABEL = PROJECTS_HIDDEN ? 'Garden' : 'Projects'
+
+// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+const DRAFT_KEY = 'projectnew'
 
 export default function ProjectNew() {
   const { fetch } = useApiFetch()
@@ -49,6 +55,58 @@ export default function ProjectNew() {
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState(null)
+
+  // V4-DIRTYGUARDSWEEP-001 — restore an interrupted draft. One-shot on mount and deliberately
+  // independent of the fetches below: nothing restored here needs the loaded lists, and the pickers
+  // re-render against the restored ids the moment those lists arrive. Merged over the seeds rather
+  // than replacing them, so a draft written before a field existed cannot leave it undefined.
+  useEffect(() => {
+    const draft = readDraft(DRAFT_KEY)
+    if (draft?.form) setForm(f => ({ ...f, ...draft.form }))
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // STASH predicate — BROAD on purpose: every field the user can move off its seed, picks included.
+  // Over-capturing is free here in a way it is NOT on EventNew: this form has no sticky/remembered
+  // seeds, and handleSubmit clears the draft on success, so there is no post-save rewrite that could
+  // store a stale draft (EventNew.jsx:849-855, the regression that narrowed ITS stash trigger).
+  // start_date and status are compared against their seeds rather than tested for truthiness —
+  // both are non-empty on a pristine mount.
+  const hasDraftContent = !!(
+    form.name || form.slug || form.variety || form.species || form.description ||
+    form.kind || form.target_end_date || form.parent_project_id || form.location_id ||
+    form.project_type_id
+  ) || form.start_date !== today || form.status !== 'planning'
+
+  useEffect(() => {
+    if (hasDraftContent) writeDraft(DRAFT_KEY, { form })
+  }, [hasDraftContent, form])
+
+  // GUARD predicate — a SEPARATE, NARROWER question than the stash above, because the two failures
+  // cost different things. A missed stash costs a re-type; a false-positive guard holds a
+  // service-worker update and deadens the sheet backdrop for a user who merely opened the page.
+  // So this counts free text ONLY: the seeded fields are excluded (they are true on a pristine
+  // mount), and the pickers are excluded because they are both restored by the stash above and one
+  // tap to redo. Reusing hasDraftContent here would pin the gate the instant a project-type chip is
+  // tapped, which is exactly the over-broad-guard failure this row exists to avoid.
+  const hasUnsavedInput = !!(
+    form.name.trim() || form.slug.trim() || form.variety.trim() ||
+    form.species.trim() || form.description.trim()
+  )
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /projects/new is not an overlayable route today, so the hook above is a strict no-op and the
+  // reload gate below is what actually protects this page. Both legs are wired anyway: the gap this
+  // row closes is "the wiring was never done", and a page that is half-wired reopens it silently the
+  // next time a route is made overlayable.
+  // Per-instance key and a BOOLEAN dep, both for the reasons EventNew.jsx:933-941 records — a shared
+  // literal key lets one unmount release another instance's hold, and a non-boolean dep would let
+  // the cleanup release mid-typing (a release NOTIFIES, and registerSW reloads on that).
+  const reloadGateKey = `project-new:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   useEffect(() => {
     // Fetch types independently — route may not exist on all Lambda versions
@@ -107,6 +165,7 @@ export default function ProjectNew() {
         }),
       })
       ux.complete({ outcome: 'created' })
+      clearDraft(DRAFT_KEY)   // the project exists — the working draft is spent
       navigate(`/projects/${data.id}`)
     } catch (err) {
       const msg = err.message ?? ''
