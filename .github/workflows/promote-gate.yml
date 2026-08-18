@@ -273,8 +273,30 @@ jobs:
           DISPATCH_EPOCH=$(date -u +%s)
           HTTP=$(curl -sS -o /tmp/disp.json -w "%{http_code}" -X POST -H "Authorization: token $BOT_TOKEN" -H "Accept: application/vnd.github+json" -d "{\"ref\":\"dev\",\"inputs\":{\"dev_sha\":\"$DEV_SHA\"}}" "https://api.github.com/repos/$REPO/actions/workflows/deploy-staging.yml/dispatches")
           if [ "$HTTP" != "204" ]; then
+            # OPS-PROMOTE503MSG-001. This used to print "garden-bot App likely needs Actions:write"
+            # on ANY non-204 — a guess stated as a finding. On 2026-08-17 the real failure was a
+            # transient 503 whose body said "please try resubmitting", and three sessions burned
+            # four promotes chasing a phantom permissions problem because the string named one.
+            # A genuine permissions failure is 403 "Resource not accessible by integration".
+            # Branch on the code, and echo the response body in EVERY branch — the body alone
+            # would have ended the confusion in one read.
+            echo "--- deploy-staging dispatch response body (HTTP $HTTP) ---"
             cat /tmp/disp.json || true
-            echo "::error::deploy-staging dispatch failed ($HTTP) — garden-bot App likely needs Actions:write on the installation"; exit 1
+            echo
+            echo "--- end response body ---"
+            BODY=$(tr '\n' ' ' < /tmp/disp.json 2>/dev/null || true)
+            case "$HTTP" in
+              403)
+                echo "::error::deploy-staging dispatch forbidden (HTTP 403) — garden-bot App likely needs Actions:write on the installation. Body: ${BODY:-(empty)}"
+                ;;
+              5??)
+                echo "::error::deploy-staging dispatch hit a GitHub transient (HTTP $HTTP) — retry the dispatch; this is NOT a permissions problem. Body: ${BODY:-(empty)}"
+                ;;
+              *)
+                echo "::error::deploy-staging dispatch failed (HTTP $HTTP) — read the body below before assuming a cause. Body: ${BODY:-(empty)}"
+                ;;
+            esac
+            exit 1
           fi
           echo "dispatched deploy-staging for $DEV_SHA at epoch $DISPATCH_EPOCH"
           # 2) locate the run we just created.
