@@ -111,13 +111,19 @@ describe('V4-PICKERGATE-001 Tier 1 — every offered type actually POSTs clean (
       expect(rejected).toEqual([])
     })
 
-    it(`${name}: every type it drops would have 400ed`, () => {
-      for (const t of dropped) {
-        const err = validatePostBody(body(t))
-        expect(err, `${t} was dropped but the server accepts it from this surface`).not.toBeNull()
-        expect(err.status).toBe(400)
-      }
-    })
+    // GUARDED AGAINST ITSELF. EventNew drops nothing, so this loop would iterate over an empty
+    // array and pass while asserting literally nothing — a vacuous test that reads as coverage.
+    // The panel-bearing surface is covered by the explicit "drops NOTHING" assertion below instead.
+    if (dropped.length > 0) {
+      it(`${name}: every one of the ${dropped.length} types it drops would have 400ed`, () => {
+        expect(dropped.length).toBe(EVENT_TYPES.length - offered.length)
+        for (const t of dropped) {
+          const err = validatePostBody(body(t))
+          expect(err, `${t} was dropped but the server accepts it from this surface`).not.toBeNull()
+          expect(err.status).toBe(400)
+        }
+      })
+    }
   }
 
   it('EventNew drops NOTHING — the panel-bearing surface still offers the whole vocabulary', () => {
