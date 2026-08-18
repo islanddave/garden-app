@@ -19,7 +19,7 @@ import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { jsonResponder } from './http-response.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
-import { validateClear, approxOrNull, validateAcquiredMature } from './validate.js';
+import { validateClear, approxOrNull, validateAcquiredMature, validateQtyLost } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 import { deriveAnchorOnCreate } from './anchorCreate.js';
 import { setOverwinterCore } from './overwinterAttr.js';
@@ -594,6 +594,13 @@ export const handler = async (event) => {
         const hasAcquiredMature = Object.prototype.hasOwnProperty.call(body, 'acquired_mature');
         const _amErr = validateAcquiredMature(body);
         if (_amErr) return resp(400, { error: _amErr });
+        // V4-LOSSEVENT-001 — non-negative floor on qty_lost, shared with the POST path. MUST BE
+        // DEPLOYED BEFORE migrations/v4-losscapture-001/0b-arm-checks.sql arms
+        // chk_plants_qty_lost_nonneg: the COALESCE below writes body.qty_lost straight through, so
+        // without this the arming step converts a client-supplied negative from a stored (bad) row
+        // into a 23514 -> 500 on a live route. validate.js carries the full ordering note.
+        const _qlErr = validateQtyLost(body);
+        if (_qlErr) return resp(400, { error: _qlErr });
         if (hasFeatured && body.featured_photo_id != null) {
           // V4-PHOTOFEATURE-002 (Dave bug: "Couldn't set featured photo"): accept a photo linked
           // to this plant EITHER directly (photos.plant_id) OR via an event logged on this plant
@@ -1417,6 +1424,11 @@ export const handler = async (event) => {
       // needs no hasOwnProperty distinction.
       const _amErrPost = validateAcquiredMature(body);
       if (_amErrPost) return resp(400, { error: _amErrPost });
+      // V4-LOSSEVENT-001 — same floor as the PUT path, same validator, so the two verbs cannot
+      // drift. The INSERT below binds `body.qty_lost ?? 0`, which passes a negative through
+      // untouched; qty-lost-guard.test.js asserts BOTH call sites exist.
+      const _qlErrPost = validateQtyLost(body);
+      if (_qlErrPost) return resp(400, { error: _qlErrPost });
 
       // ── AUTHZ: body-supplied PARENT ids (BUG-PARENTOWN-001, 5th instance of the pattern) ────────
       // Until now POST stored project_id / location_id / parent_plant_id / source_inventory_item_id /
