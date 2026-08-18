@@ -50,6 +50,11 @@
 // Two sessions did it, on opposite readings, and both were wrong. The dataset's `frost_anchor_warning`
 // carries the argument and every dated record now carries a reproducible `measured_basis`;
 // storageDeadlines.test.js pins the date to that measurement rather than to the anchor.
+// BUG-FROSTANCHORWRONG-001 (2026-08-17) gave the measurement a NAME so the next consumer does not
+// have to re-derive it: sowEngine.js exports OBSERVED_FIRST_FALL_FROST carrying the identical
+// `measured_basis`, and sowEngine.test.js pins the two copies deep-equal. The standing rule above is
+// unchanged — FROST_ANCHORS is still not a frost date — but "which value SHOULD I use" now has an
+// answer that is a symbol rather than a warning.
 
 import DATA from '../data/storageDeadlines.json'
 

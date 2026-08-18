@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { packetToVarietyCols } from '../lib/parseSowProfile.js';
 import {
   FROST_ANCHORS,
+  OBSERVED_FIRST_FALL_FROST,
   FALL_SLOWDOWN_DAYS,
   FALL_GRACE_DAYS,
   bucketize,
@@ -21,6 +22,12 @@ import {
   isArchivedForSeason,
   FALL_HARDY_CROPS,
 } from '../lib/sowEngine.js';
+// BUG-FROSTANCHORWRONG-001. Both imported ONLY to cross-check the measured anchor against surfaces
+// derived independently of it: storageDeadlines.json holds the same site frost measurement (kept in
+// lockstep below), and overwinter.js computes the 10-hour daylength wall from latitude alone, which
+// is what bounds the hardy clamp from above. The engine itself imports neither.
+import storageDeadlines from '../data/storageDeadlines.json';
+import ow from '../../lambda/daily-plan/overwinter.js';
 // Imported ONLY to pin the engine's local bunching predicate against the canonical derivation, so
 // the two cannot silently diverge. The engine itself never imports from lambda/.
 import { alliumType } from '../../lambda/varieties/crop-derive.js';
@@ -438,19 +445,26 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
   // output. Spinach is one of the crops the prose test MISSED: its packet says "spinach tolerates
   // light frost", which HARDY_RE does not match, so it took the 14d grace (Aug 13) while radish took
   // 28d on the strength of a different copywriter. Spinach is hardier than radish. It now takes the
-  // hardy grace by crop type: FF + 28 - 60 = Aug 27.
+  // hardy clamp by crop type.
+  //
+  // REBASELINED AGAIN BY BUG-FROSTANCHORWRONG-001, +3d: the hardy clamp was FF + 28 - 60 = Aug 27,
+  // where FF is the sowing-safety margin and the 28 was an underived constant copied from
+  // FALL_GRACE_DAYS.cool. It is now FFobs - 60 = Aug 30, FFobs being the MEASURED median first
+  // <=32F night (10-29). Small in days, but the number is now derived from a measurement instead of
+  // being the product of two errors that happened to nearly cancel.
   it('Spinach Oceanside -> direct_sow_now via class D (rules) [golden said hold ~Aug 20]', () => {
     const { bucket, entry } = locate(golden(), 'Oceanside');
     expect(bucket).toBe('direct_sow_now');
-    expect(entry.daysLeft).toBe(48); // open until Aug 27 = FF + (28 - 60)
+    expect(entry.daysLeft).toBe(51); // open until Aug 30 = FFobs (10-29) - 60
   });
 
   // REBASELINED BY V4-HARDYSET-001, same cause as spinach above: lettuce carries no frost prose at
-  // all and lost 14 days to that. FF + 28 - 50 = Sep 6 (was Aug 23).
-  it('Lettuce Black Seeded Simpson -> direct_sow_now (class D through Sep 6)', () => {
+  // all and lost 14 days to that (was Aug 23, then Sep 6). REBASELINED AGAIN BY
+  // BUG-FROSTANCHORWRONG-001 for the same reason as spinach: FFobs (10-29) - 50 = Sep 9.
+  it('Lettuce Black Seeded Simpson -> direct_sow_now (class D through Sep 9)', () => {
     const { bucket, entry } = locate(golden(), 'Black Seeded Simpson');
     expect(bucket).toBe('direct_sow_now');
-    expect(entry.daysLeft).toBe(58);
+    expect(entry.daysLeft).toBe(61);
     expect(entry.action).toBe('direct_sow');
   });
 
@@ -1346,8 +1360,8 @@ describe('V4-HARDYSET-001 fall hardiness set', () => {
     // match and prose that did NOT now give the same date for the same crop, and the prose that
     // used to buy 14 days buys nothing on a crop that does not stand frost.
     const HARDY_PROSE = 'Frost tolerant. Improves in flavor after a light frost.';
-    expect(latestSafe({ crop_type_slug: 'spinach', sow_notes: '' })).toBe('Aug 27');
-    expect(latestSafe({ crop_type_slug: 'spinach', sow_notes: HARDY_PROSE })).toBe('Aug 27');
+    expect(latestSafe({ crop_type_slug: 'spinach', sow_notes: '' })).toBe('Aug 30');
+    expect(latestSafe({ crop_type_slug: 'spinach', sow_notes: HARDY_PROSE })).toBe('Aug 30');
     expect(latestSafe({ crop_type_slug: 'poppy', sow_notes: HARDY_PROSE })).toBe('Aug 13');
   });
 
@@ -1359,8 +1373,8 @@ describe('V4-HARDYSET-001 fall hardiness set', () => {
     const lacinato = { crop_type_slug: 'kale', sow_notes: 'Frost tolerant.' };
     const vates = { crop_type_slug: 'kale', sow_notes: 'OR direct sow in midsummer for fall crop.' };
     expect(latestSafe(vates)).toBe(latestSafe(lacinato));
-    expect(latestSafe(vates)).toBe('Aug 27');
-    expect(latestSafe({ ...lacinato, days_to_maturity_max: 62 })).toBe('Aug 25');
+    expect(latestSafe(vates)).toBe('Aug 30');
+    expect(latestSafe({ ...lacinato, days_to_maturity_max: 62 })).toBe('Aug 28');
   });
 
   it('the grace stays cool-season only — a hardy slug in a warm packet gains nothing', () => {
@@ -1393,5 +1407,129 @@ describe('V4-HARDYSET-001 fall hardiness set', () => {
       direct_sow_timing: 'as soon as the soil can be worked', days_to_maturity_max: null,
     }), PROBE_DAY);
     expect(bucket).toBe('needs_profile');
+  });
+});
+
+// ── BUG-FROSTANCHORWRONG-001 — the two anchors, and which branch consumes which ───
+// `FROST_ANCHORS.firstFallFrost` ('09-28') is a conservative SOWING-SAFETY MARGIN. It was being read
+// in places that wanted an observed frost DATE — 31 days later at the median — and the two errors
+// compounded silently because there was only ever one named quantity. The separation is now
+// structural, and these guards pin the SEPARATION (which branch moves when which anchor moves),
+// not the rationale for it.
+//
+// Every assertion below names the source edit that turns it red. All five were run against a
+// mutated source and observed failing before being committed green; the mutation is stated inline.
+describe('BUG-FROSTANCHORWRONG-001 alerting margin vs measured frost date', () => {
+  const D = 86400000;
+  const toMs = (mmdd, y = 2026) => Date.UTC(y, Number(mmdd.slice(0, 2)) - 1, Number(mmdd.slice(3)));
+  // 'Oct 29' -> ms. Hand-rolled rather than `new Date('Oct 29 2026')`, whose parse is
+  // implementation-defined and locale/TZ-sensitive — the exact class of thing a guard must not rest on.
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const labelToMs = (label, y = 2026) => {
+    const [mon, day] = label.split(' ');
+    return Date.UTC(y, MON.indexOf(mon), Number(day));
+  };
+
+  // Same PROBE_DAY readout as the V4-HARDYSET-001 block above, but with the anchors argument open so
+  // an override can be pushed through bucketize. A class-C clause closes at EXACTLY latestSafe.
+  function clampISO(over, anchors) {
+    const row = viewRow({
+      variety_name: 'Anchor probe',
+      start_method: 'direct_sow',
+      direct_sow_timing: 'as soon as the soil can be worked',
+      days_to_maturity_max: 60,
+      ...over,
+    });
+    const buckets = bucketize([row], PROBE_DAY, anchors);
+    const key = Object.keys(buckets).find((k) => buckets[k].length > 0);
+    const label = buckets[key][0]?.windowLabel ?? '';
+    return /through ([A-Z][a-z]{2} \d+)/.exec(label)?.[1] ?? label;
+  }
+  const HARDY = { crop_type_slug: 'spinach' };      // in FALL_HARDY_CROPS
+  const NOT_HARDY = { crop_type_slug: 'poppy' };    // cool, absent from the set
+
+  it('the two anchors are separate quantities and the margin is the earlier one', () => {
+    // MUTATION: set OBSERVED_FIRST_FALL_FROST.medianMonthDay to '09-28' (i.e. "simplify" by
+    // collapsing the two anchors back into one) and this goes red on the strict inequality.
+    expect(FROST_ANCHORS.firstFallFrost < OBSERVED_FIRST_FALL_FROST.medianMonthDay).toBe(true);
+    const gapDays = (toMs(OBSERVED_FIRST_FALL_FROST.medianMonthDay)
+      - toMs(FROST_ANCHORS.firstFallFrost)) / D;
+    expect(gapDays).toBe(31);
+  });
+
+  it('moving the SAFETY MARGIN moves the frost-killed branches and NOT the hardy one', () => {
+    // The load-bearing guard. MUTATION: restore the old hardy branch
+    // (`return ctx.FF + (28 - dtm) * DAY_MS`) in latestSafeMs and the hardy clamp starts tracking
+    // firstFallFrost — the first and third assertions both go red.
+    const base = clampISO(HARDY);
+    const movedFF = clampISO(HARDY, { firstFallFrost: '10-18' }); // +20d on the margin
+    expect(movedFF).toBe(base);
+
+    const notHardyBase = clampISO(NOT_HARDY);
+    const notHardyMoved = clampISO(NOT_HARDY, { firstFallFrost: '10-18' });
+    expect(notHardyBase).toBe('Aug 13');   // FF (09-28) + 14 - 60
+    expect(notHardyMoved).toBe('Sep 2');   // 10-18 + 14 - 60
+  });
+
+  it('moving the MEASURED anchor moves the hardy branch and NOT the frost-killed ones', () => {
+    // The other half — proves the hardy branch really reads FFobs rather than merely ignoring FF.
+    // MUTATION: change the hardy branch to any FF-relative expression and the first pair goes red.
+    expect(clampISO(HARDY)).toBe('Aug 30');                                    // FFobs (10-29) - 60
+    expect(clampISO(HARDY, { observedFirstFallFrost: '11-08' })).toBe('Sep 9'); // +10d
+    expect(clampISO(NOT_HARDY, { observedFirstFallFrost: '11-08' })).toBe('Aug 13');
+    expect(clampISO({ ...HARDY, sow_season: 'warm' }, { observedFirstFallFrost: '11-08' }))
+      .toBe('Jul 16'); // FF - (60 + 14): hardiness never crosses the season gate
+  });
+
+  it('the measured stats are RECOMPUTED from first_frost_by_year, not asserted beside it', () => {
+    // MUTATION: edit any one of the three *_month_day literals, or edit any single year's date in
+    // first_frost_by_year, and this goes red. That is what stops the block being decoration.
+    const b = OBSERVED_FIRST_FALL_FROST.measured_basis;
+    const dates = Object.values(b.first_frost_by_year).slice().sort(); // all 10-xx/11-xx: lexical == chronological
+    expect(dates).toHaveLength(b.years);
+    expect(dates[0]).toBe(b.first_frost_earliest_month_day);
+    expect(dates[dates.length - 1]).toBe(b.first_frost_latest_month_day);
+    expect(dates[(dates.length - 1) / 2]).toBe(b.first_frost_median_month_day);
+    // The three exported fields must be the same three numbers, not a second opinion.
+    expect(OBSERVED_FIRST_FALL_FROST.earliestMonthDay).toBe(b.first_frost_earliest_month_day);
+    expect(OBSERVED_FIRST_FALL_FROST.medianMonthDay).toBe(b.first_frost_median_month_day);
+    expect(OBSERVED_FIRST_FALL_FROST.latestMonthDay).toBe(b.first_frost_latest_month_day);
+  });
+
+  it('one site has ONE frost measurement — storageDeadlines.json carries the same basis', () => {
+    // src/lib may not import a Lambda, and storageDeadlines.json is a data file, so the measurement
+    // exists in two places by necessity. This is the lockstep that keeps them one measurement — the
+    // same pattern anchorDerive.test.js uses for watch.js's restated anchor.
+    // MUTATION: change a digit in either copy's `query`, `years` or any *_month_day and this is red.
+    // `what` and `instrument_limits` are deliberately NOT compared: both are per-consumer prose
+    // (theirs names sweet-potato vines and its 10-10 backstop). Every field that is a MEASUREMENT is.
+    const theirs = storageDeadlines.by_crop_type.sweet_potato.measured_basis;
+    const mine = OBSERVED_FIRST_FALL_FROST.measured_basis;
+    for (const k of ['query', 'source', 'source_url', 'years', 'first_frost_earliest_month_day',
+      'first_frost_median_month_day', 'first_frost_latest_month_day', 'september_bounds',
+      'reproduced_by']) {
+      expect(mine[k], k).toEqual(theirs[k]);
+    }
+    expect(mine.first_frost_by_year).toEqual(theirs.first_frost_by_year);
+  });
+
+  it('the hardy clamp is bounded by the site 10-hour wall, computed independently', () => {
+    // The upper bound that killed the old `FALL_GRACE_HARDY = 28`. Carrying that grace onto the
+    // measured anchor aims a hardy sowing at 11-26, past the date cool-season growth stops here.
+    // The wall comes from lambda/daily-plan/overwinter.js, a separate derivation (solar declination
+    // from latitude) that knows nothing about frost — so this is a cross-check, not a restatement.
+    // MUTATION: `return ctx.FFobs + (28 - dtm) * DAY_MS` — i.e. keep the measured anchor but carry
+    // the old grace onto it — and the first assertion goes red by 17 days. Note that reverting the
+    // WHOLE branch to `ctx.FF + (28 - dtm)` does NOT trip this one (Oct 26 is inside the wall); that
+    // mutation is caught by the two anchor-movement guards above. The pair is what covers both.
+    const wall = ow.persephoneDates(ow.SITE_LAT, 2026).closes; // '2026-11-0x'
+    const latestMaturity = labelToMs(clampISO({ ...HARDY, days_to_maturity_max: 0 }));
+    expect(latestMaturity).toBeLessThan(toMs(wall.slice(5)));
+    // ...and not so conservative that it lands before frost has ever been recorded here — the
+    // direction the original defect ran. MUTATION: `return ctx.FF - dtm * DAY_MS`, i.e. put the
+    // hardy branch back on the safety margin, and this goes red (Sep 28 < Oct 10). Pinning it to
+    // earliestMonthDay would sit exactly on this bound and pass, which is intended: 10-10 is a
+    // defensible backstop reading, just a more conservative one than the median.
+    expect(latestMaturity).toBeGreaterThanOrEqual(toMs(OBSERVED_FIRST_FALL_FROST.earliestMonthDay));
   });
 });

@@ -14,10 +14,63 @@
 // maturityCalibration.js dependency-free or this note stops being true.
 import { DTM_BASIS_TRANSPLANT } from './plantingMaturity.js';
 
+// ── The two frost anchors, and which question each one answers ───────────────────
+// BUG-FROSTANCHORWRONG-001. There are TWO quantities here and there always were; until now only one
+// of them had a name, so every consumer that wanted the other one silently took this one.
+//
+//   FROST_ANCHORS.firstFallFrost ('09-28')  = a CONSERVATIVE SOWING-SAFETY MARGIN.
+//   OBSERVED_FIRST_FALL_FROST               = the MEASURED frost distribution at this site.
+//
+// They are 31 days apart at the median and that gap is deliberate, not error: '09-28' is the date
+// past which a sowing decision should stop assuming it has a season, and being early on a sowing
+// decision costs one forfeited sowing while being late costs the whole planting. Nothing about it is
+// a claim that frost arrives on 09-28 — measurement says it never has, in 11 years (see
+// OBSERVED_FIRST_FALL_FROST below).
+//
+// THE RULE: a consumer asking "is it too late to START something that frost will kill?" takes
+// FROST_ANCHORS. A consumer asking "when will frost actually happen?" takes
+// OBSERVED_FIRST_FALL_FROST. Consuming the margin as a date compounds two conservatisms and the
+// result is wrong-early by a month with no line of code that says so — which is how
+// storageDeadlines.json shipped a 09-25 sweet-potato lift deadline (reverted 1.2.0, see that file's
+// `frost_anchor_warning`) and how the fall-hardy grace below spent a month it did not have.
 export const FROST_ANCHORS = Object.freeze({
   lastSpringFrost: '05-20',
   firstFallFrost: '09-28',
   windowClosingDays: 10,
+});
+
+// The measured first-fall-frost distribution at THIS site. Same measurement, same field names and
+// same executable `query` as src/data/storageDeadlines.json's sweet_potato `measured_basis` — the two
+// are pinned deep-equal in sowEngine.test.js so one site cannot end up with two frost records. The
+// stats are not literals-by-assertion either: the same test recomputes earliest/median/latest FROM
+// `first_frost_by_year` and fails if a stat is edited without the data behind it.
+//
+// This is a DISTRIBUTION, not a date. `medianMonthDay` is the central estimate a consumer should aim
+// at; `earliestMonthDay` is the backstop for a year nobody watched the forecast; `latestMonthDay`
+// bounds the tail. None of the three is a forecast, and the forecast path
+// (lambda/daily-plan/frostClass.js) beats all of them when it exists.
+export const OBSERVED_FIRST_FALL_FROST = Object.freeze({
+  medianMonthDay: '10-29',
+  earliestMonthDay: '10-10',
+  latestMonthDay: '11-08',
+  measured_basis: Object.freeze({
+    what: 'First fall night at or below 32F at this site — the event that ends a frost-tender crop.',
+    query: 'GET https://archive-api.open-meteo.com/v1/archive?latitude=42.5087&longitude=-72.6471&start_date=2015-09-01&end_date=2025-11-30&daily=temperature_2m_min&temperature_unit=fahrenheit&timezone=America%2FNew_York — then, per year, the first date with temperature_2m_min <= 32.',
+    source: 'Open-Meteo historical reanalysis archive (ERA5), 2m minimum air temperature',
+    source_url: 'https://archive-api.open-meteo.com/v1/archive',
+    years: 11,
+    first_frost_earliest_month_day: '10-10',
+    first_frost_median_month_day: '10-29',
+    first_frost_latest_month_day: '11-08',
+    first_frost_by_year: Object.freeze({
+      2015: '10-18', 2016: '10-27', 2017: '11-08', 2018: '10-22',
+      2019: '11-02', 2020: '10-30', 2021: '11-04', 2022: '10-29',
+      2023: '11-01', 2024: '10-17', 2025: '10-10',
+    }),
+    september_bounds: "ZERO September nights <=36F in 11 years, and zero <=32F. Coldest September night in the whole record is 38.2F (2019-09-19). Only 4 September nights <=40F across all 11 years (38.2, 38.2, 38.5, 40.0), none earlier than 09-19. The first-frost distribution's left tail does not reach September at all, which is what falsified the 1.1.0 date of 09-25.",
+    instrument_limits: 'ERA5 is a ~9km grid and does not resolve a 518ft hilltop; canopy surface temperature on calm radiational nights runs 3-5F below 2m air. Applying a full 5F cold offset to the coldest September on record still yields ~33F, on 4 nights in 11 years, none before 09-19 — so the offset does not move the conclusion.',
+    reproduced_by: 'horticulture-planning-analyst seat, then boss-technical, then this implementation lane — three independent re-runs, identical row for row (2026-08-17).',
+  }),
 });
 
 /** Days shaved off fall math for slowing autumn growth. */
@@ -164,10 +217,19 @@ export const FALL_HARDY_CROPS = new Set([
   'spinach', 'turnip',
 ]);
 
-// Days past the fall frost anchor a cool-season DIRECT sowing may still be aimed at. Numerically
-// equal to FALL_GRACE_DAYS above, but a different quantity — that one is the fall INDOOR pass's
-// grace and is keyed by sow_season, not by hardiness. Do not collapse the two.
-const FALL_GRACE_HARDY = 28;
+// Days past the SOWING-SAFETY anchor a cool-season but NOT frost-hardy direct sowing may be aimed
+// at. Numerically equal to FALL_GRACE_DAYS.cool_warm above, but a different quantity — that one is
+// the fall INDOOR pass's grace and is keyed by sow_season, not by hardiness. Do not collapse them.
+//
+// BUG-FROSTANCHORWRONG-001 removed this constant's hardy sibling (`FALL_GRACE_HARDY = 28`) rather
+// than re-pointing it. Its own comment recorded that it was COPIED from FALL_GRACE_DAYS.cool, never
+// derived, and the copy only looked right because it was cancelling an anchor that sat 31 days early:
+// FROST_ANCHORS + 28 = Oct 26, which is a plausible latest-maturity date reached by adding a made-up
+// number to a number that means something else. Carrying the 28 onto the measured anchor would aim a
+// hardy sowing at Nov 26 — 17 days past the site's own 10-hour Persephone wall (2026-11-09, computed
+// independently in lambda/daily-plan/overwinter.js), i.e. at growth that cannot happen. The hardy
+// branch now consumes OBSERVED_FIRST_FALL_FROST.medianMonthDay with NO grace, which is bounded below
+// by the measurement and above by that wall; sowEngine.test.js asserts both bounds.
 const FALL_GRACE_COOL = 14;
 
 /** Split direct_sow_timing into clauses on ';' and ' or ' (case-insensitive). */
@@ -322,8 +384,14 @@ export function sowGoal(candidate, dtm) {
 
 /**
  * latest-safe direct-sow close date (ms), or null when it is genuinely UNKNOWN.
- * harvest goal:       cool hardy FF+28-dtm | warm FF-dtm-14 | cool_warm FF-dtm-7 | cool FF+14-dtm
+ * harvest goal:       cool hardy FFobs-dtm | warm FF-dtm-14 | cool_warm FF-dtm-7 | cool FF+14-dtm
  * establishment goal: FF-35 regardless of dtm — nothing is maturing this year.
+ *
+ * FFobs is the MEASURED anchor and appears on exactly one branch; every other branch takes the
+ * sowing-safety margin FF. See the two-anchor note at FROST_ANCHORS for which question each answers.
+ * The establishment clamp deliberately stays on FF: its FALL_GROWTH_TAIL=35 was derived against the
+ * margin (FF-35 = Aug 24) and is independently cross-checked by class H's Aug 15 close, so moving
+ * the anchor under it without re-deriving the 35 would break a validated absolute date.
  *
  * BUG-SOWNONANNUAL-001: this used to `return null` for every non-annual, which left class-B windows
  * with NO season-length clamp so they closed at the raw ctx.FF — four cards read "Direct sow through
@@ -346,11 +414,18 @@ function latestSafeMs(candidate, dtm, ctx) {
   }
   if (dtm == null) return null; // genuinely unknown — must NOT be fabricated into a date
   const season = candidate.sow_season;
+  // warm / cool_warm / cool-not-hardy all ask the SAME question — "will frost kill this before it
+  // finishes?" — so all three keep ctx.FF, the sowing-safety margin. Wrong-early forfeits one
+  // sowing; wrong-late loses the planting. That asymmetry is what the margin is for.
   if (season === 'warm') return ctx.FF - (dtm + 14) * DAY_MS;
   if (season === 'cool_warm') return ctx.FF - (dtm + 7) * DAY_MS;
   if (season === 'cool') {
-    const grace = FALL_HARDY_CROPS.has(candidate.crop_type_slug) ? FALL_GRACE_HARDY : FALL_GRACE_COOL;
-    return ctx.FF + (grace - dtm) * DAY_MS;
+    // BUG-FROSTANCHORWRONG-001. A FALL_HARDY_CROPS slug is by definition "unharmed or improved by
+    // frost" (frostClass.js's hardy band — this set is its edible subset), so first frost is not the
+    // thing that ends it and the safety margin has no job here. The question this branch actually
+    // asks is "when does frost arrive", which is a measurement, so it consumes ctx.FFobs.
+    if (FALL_HARDY_CROPS.has(candidate.crop_type_slug)) return ctx.FFobs - dtm * DAY_MS;
+    return ctx.FF + (FALL_GRACE_COOL - dtm) * DAY_MS;
   }
   return null;
 }
@@ -518,6 +593,11 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   // a LONGER nursery closes the window EARLIER, the conservative direction in a frost race.
   // from-sow and NULL (uncurated) shift by zero — byte-identical to the pre-basis behaviour, which
   // is what keeps this a provable no-op for direct-sow crops and for every uncurated crop type.
+  // BUG-FROSTANCHORWRONG-001 CLASSIFICATION — this pass stays on ctx.FF, the sowing-safety margin.
+  // It is keyed by sow_season and knows nothing about hardiness, so `cool` here covers both kale
+  // (which stands frost) and the cool-but-tender crops, and there is no branch to route separately.
+  // Re-keying the fall indoor pass by FALL_HARDY_CROPS is a real follow-up, not a constant swap:
+  // the nursery-offset correction above is tuned against this same anchor.
   const grace = FALL_GRACE_DAYS[candidate.sow_season];
   if (grace != null && dtm != null) {
     const fromTransplant = candidate.dtm_basis === DTM_BASIS_TRANSPLANT;
@@ -655,6 +735,7 @@ function bucketOne(candidate, ctx) {
       year: ctx.year + 1,
       LF: anchorToMs(ctx.lastSpringFrost, ctx.year + 1),
       FF: anchorToMs(ctx.firstFallFrost, ctx.year + 1),
+      FFobs: anchorToMs(ctx.observedFirstFallFrost, ctx.year + 1),
     };
     const rolled = [
       ...buildIndoorWindows(candidate, dtm, nextCtx, true),
@@ -753,7 +834,11 @@ export function isArchivedForSeason(candidate, year) {
  *   sow_next_year:[], window_closing:[], hold:[], too_late:[], needs_profile:[], archived:[]}}
  */
 export function bucketize(candidates, todayISO, anchors = {}) {
-  const cfg = { ...FROST_ANCHORS, ...anchors };
+  const cfg = {
+    ...FROST_ANCHORS,
+    observedFirstFallFrost: OBSERVED_FIRST_FALL_FROST.medianMonthDay,
+    ...anchors,
+  };
   const today = isoToMs(todayISO);
   const year = new Date(today).getUTCFullYear();
   const ctx = {
@@ -761,10 +846,15 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     year,
     LF: anchorToMs(cfg.lastSpringFrost, year),
     FF: anchorToMs(cfg.firstFallFrost, year),
+    // The MEASURED anchor, carried alongside FF rather than replacing it — see the two-anchor note
+    // at FROST_ANCHORS. Overridable on the same `anchors` argument so a test (or a second site) can
+    // move it, and so an override of `firstFallFrost` provably does NOT move the hardy branch.
+    FFobs: anchorToMs(cfg.observedFirstFallFrost, year),
     closingDays: cfg.windowClosingDays,
     // mm-dd anchors kept on ctx so the gated-allium hold can rebuild windows against year+1.
     lastSpringFrost: cfg.lastSpringFrost,
     firstFallFrost: cfg.firstFallFrost,
+    observedFirstFallFrost: cfg.observedFirstFallFrost,
   };
   // EVERY bucket key bucketOne can return MUST appear here — `buckets[bucket].push(entry)` below
   // throws on a missing key, which propagates out of the SowNow useMemo and white-screens /sow.

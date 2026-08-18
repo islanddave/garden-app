@@ -12,20 +12,22 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getTok
 
 import CultivationLead, { cultivationLines, CULTIVATION_LEAD_CAP } from '../components/today/CultivationLead.jsx'
 
-// 2026 anchors: FF = 09-28. Lettuce is fall-hardy (V4-HARDYSET-001), so a cool + annual DIRECT sow
-// closes at FF + (28 - dtm): dtm 69 -> Aug 18 (6 days from the fixed TODAY, inside the 10-day
-// closing window); dtm 72 -> Aug 15; dtm 74 -> Aug 13. The fall INDOOR pass is a different clamp
-// and did not move — FF + (28 - dtm - FALL_SLOWDOWN 14), so the indoor fixture keeps dtm 55 for the
-// same Aug 18.
+// 2026 anchors: FF (sowing-safety margin) = 09-28, FFobs (measured median first frost) = 10-29.
+// Lettuce is fall-hardy (V4-HARDYSET-001), so a cool + annual DIRECT sow closes at FFobs - dtm:
+// dtm 72 -> Aug 18 (6 days from the fixed TODAY, inside the 10-day closing window); dtm 75 -> Aug
+// 15; dtm 77 -> Aug 13. The fall INDOOR pass is a different clamp on the OTHER anchor and did not
+// move — FF + (28 - dtm - FALL_SLOWDOWN 14) — so the indoor fixture keeps dtm 55 for the same Aug 18.
 //
-// The dtm figures were raised by 14 to hold these dates when lettuce gained the hardy grace. Every
-// EXPECTED string below is unchanged, deliberately: the contract under test is the lead line's
-// wording, cap and ordering, and none of that moved — only the shared clamp that decides which
-// packets are closing. Retuning the input rather than the assertions keeps that visible.
+// The dtm figures were raised by 14 to hold these dates when lettuce gained the hardy grace
+// (V4-HARDYSET-001), then by a further 3 when BUG-FROSTANCHORWRONG-001 moved the hardy clamp off the
+// safety margin onto the measured anchor. Every EXPECTED string below is unchanged across both,
+// deliberately: the contract under test is the lead line's wording, cap and ordering, and none of
+// that moved — only the shared clamp that decides which packets are closing. Retuning the input
+// rather than the assertions keeps that visible.
 const TODAY = '2026-08-12'
 const lettuce = (over = {}) => ({
   variety_name: 'Winter Density', item_name: 'Lettuce packet', crop_type_slug: 'lettuce',
-  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 69, days_to_maturity_min: null,
+  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 72, days_to_maturity_min: null,
   direct_sow_timing: 'as soon as the soil can be worked', start_method: null,
   ...over,
 })
@@ -48,15 +50,15 @@ describe('cultivationLines (pure, real engine)', () => {
   it('caps at 2, most urgent first — never a third orient decision', () => {
     expect(CULTIVATION_LEAD_CAP).toBe(2)
     const lines = cultivationLines([
-      lettuce({ variety_name: 'A', days_to_maturity_max: 69 }), // Aug 18
-      lettuce({ variety_name: 'B', days_to_maturity_max: 74 }), // Aug 13
-      lettuce({ variety_name: 'C', days_to_maturity_max: 72 }), // Aug 15
+      lettuce({ variety_name: 'A', days_to_maturity_max: 72 }), // Aug 18
+      lettuce({ variety_name: 'B', days_to_maturity_max: 77 }), // Aug 13
+      lettuce({ variety_name: 'C', days_to_maturity_max: 75 }), // Aug 15
     ], TODAY)
     expect(lines).toEqual(['Sow B by Aug 13.', 'Sow C by Aug 15.'])
   })
 
   it('yields nothing when no window is closing — an open-but-not-closing window is /sow business', () => {
-    // dtm 30 -> close Sep 26, 45 days out: open, not closing.
+    // dtm 30 -> close Sep 29, 48 days out: open, not closing.
     expect(cultivationLines([lettuce({ days_to_maturity_max: 30 })], TODAY)).toEqual([])
   })
 

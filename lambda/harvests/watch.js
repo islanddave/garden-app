@@ -172,6 +172,17 @@ export const DERIVED_STATUS_SUPPRESSED = new Set(['flowering', 'fruiting']);
 // ±10d window and everything past it, since a row opening 30 days AFTER frost is more wrong than one
 // opening 5 days after, not less.
 //
+// BUG-FROSTANCHORWRONG-001 CLASSIFICATION — this consumer stays on the SOWING-SAFETY MARGIN, and
+// that is now a decision rather than an accident. sowEngine.js exports two anchors: the margin
+// ('09-28') and OBSERVED_FIRST_FALL_FROST (measured median '10-29'). Read strictly by contract this
+// guard wants the measured one — the comment above says "within ~10 days either side of first fall
+// frost", and against measurement it is currently firing ~31 days early on top of its own 10-day
+// window, i.e. two conservatisms stacked. It is NOT moved here because the arithmetic is a
+// SUPPRESSION and the band it suppresses is habit-scoped (single/repeat), not hardiness-scoped:
+// moving it later un-suppresses derived rows for frost-TENDER crops as well as hardy ones, and
+// nothing in this module can tell them apart. That trade needs the frost band, not a constant swap.
+// Filed separately; do not "finish the job" by editing the number alone.
+//
 // SINGLE SOURCE OF TRUTH: src/lib/sowEngine.js FROST_ANCHORS (`firstFallFrost` / `windowClosingDays`).
 // This Lambda CANNOT import it — lambda/** and src/** are separate module graphs and bundling src
 // into the harvests Lambda is not a thing this repo does (the same constraint watch-route.js states
