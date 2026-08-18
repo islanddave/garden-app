@@ -98,9 +98,18 @@ const DIALOG_SURFACES = {
 // planting page that opens the shared <Sheet> to pick one of four overwintering regimes. It renders
 // <Sheet armsBack>, so the registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry
 // is owed; `busy={saving}` is passed so the write in flight blocks dismissal.
+// V4-LOSSUI-001: components/EndStatusOffer.jsx is a DELIBERATE addition, the same shape as
+// OverwinterPrompt above it. When a plant-reduction empties a planting the events Lambda returns a
+// RANKED end-status offer, and the user must be able to pick one, decline, or walk away — a choice
+// window.confirm cannot hold and a toast cannot either. It renders the shared <Sheet armsBack>, so
+// the registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed;
+// `busy={applying}` blocks dismissal while the status PUT is in flight. armsBack is load-bearing
+// rather than decorative here: declining is the DEFAULT outcome and Dave's device is Chrome on
+// Android, where Back is the decline gesture he will actually reach for.
 const SHEET_SITES = [
   'App.jsx',
   'components/BottomNav.jsx',
+  'components/EndStatusOffer.jsx',
   'components/HarvestExportSheet.jsx',
   'components/photo/EventDeleteConfirm.jsx',
   'components/photo/PhotoDeleteConfirm.jsx',
