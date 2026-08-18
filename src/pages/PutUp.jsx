@@ -17,7 +17,7 @@
 // rows vanish from the read surface — the Lambda filters deleted_at IS NULL, we just refetch);
 // Cross-Device (all state server-side). Offline = require-online: the save is blocked with a clear
 // "can't save offline" state that PRESERVES entered input (no draft queue in V100 — tech-debt).
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useId } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
@@ -28,6 +28,13 @@ import PlantingSelect, { plantingWaveLabel } from '../components/forms/PlantingS
 import PutUpPhotoThumb from '../components/PutUpPhotoThumb.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { PUTUP_SOURCE_OPTIONS, PUTUP_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
+// V4-RELOADGATEWIRE-001 — the same three-part form-guard EventNew/LogMany carry: a versioned
+// sessionStorage draft (survives a dismiss/reload), the Sheet backdrop-tap guard, and the SW
+// reload deferral. See the `dirty` predicate below for why this form uses ONE shared predicate
+// for all three, unlike EventNew's two-predicate split.
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { setReloadBlocked } from '../lib/reloadGate.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -108,6 +115,9 @@ function ymd(v) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 function todayYMD() { return ymd(new Date()) }
+
+// V4-RELOADGATEWIRE-001 — draftStash route key for the log form (mirrors LogMany's 'logmany').
+const DRAFT_KEY = 'put-up'
 
 function prettyDate(v) {
   const s = ymd(v)
@@ -209,6 +219,100 @@ function PutUpForm({ prefill, onLogged }) {
   const prefillVarietyId = prefill.variety_id || null
   const effectiveVarietyId = variety?.id ?? prefillVarietyId ?? null
 
+  // V4-RELOADGATEWIRE-001 — same problem EventNew.jsx solved (see its hasUnsavedInput note): a
+  // deploy's SW reload (~4.4/active day) or a stray Sheet backdrop tap can silently discard a
+  // half-filled put-up. ONE predicate feeds draft persistence, useReportOverlayDirty AND the
+  // reload gate below — unlike EventNew's two-predicate split, because nothing this form owns is
+  // as unstashable as EventNew's harvest panel: every field here round-trips through draftStash,
+  // so one predicate can honor all three consumers without over- or under-protecting any of them.
+  //
+  // Mirrors LogMany's dirty OR-chain shape: compare each field to its OWN pristine default, not
+  // "any truthy value" — cropSlug/plantId/harvestLogId/variety are empty/null on a bare mount
+  // (prefill aside), so a genuine change is what trips this. showMore (disclosure-only, like
+  // EventNew's showAddDetails) and stashedPlantId (an applySourceKind implementation detail
+  // already implied by the sourceKind term below) are deliberately excluded from `dirty` — both
+  // still ride in the snapshot so a restore stays byte-faithful.
+  const hasPrefill = !!(prefill.crop_type_slug || prefill.variety_id || prefill.plant_id || prefill.harvest_log_id)
+  const dirty = !!(
+    cropSlug || qtyValue || notes || variety || plantId || harvestLogId ||
+    method !== 'whole_freeze' || methodOther ||
+    sourceKind !== 'own_garden' || sourceLabel ||
+    qtyUnit !== 'lbs' || storageId ||
+    useByMode !== 'auto' || useByDate ||
+    packageCount !== '1' ||
+    preservedAt !== todayYMD()
+  )
+
+  // §4 draft stash — restore a dismissed/abandoned form once, on mount. ONLY without a prefill: a
+  // harvest-triggered "preserve this?" navigation (line 9-10 above) is an explicit fresh intent
+  // and must win over a stale draft from an unrelated earlier session — the same rule EventNew and
+  // LogMany apply to their own seed/deep-link params.
+  //
+  // LANDMINE CHECK (cf. EventNew's draftRestoredTypeRef fix, ~line 598/695/829 there): this form
+  // has two places that derive state FROM other state — applySourceKind (clears
+  // plantId/harvestLogId when sourceKind leaves own_garden) and PlantingField's onDerive (forces
+  // sourceKind back to own_garden when a planting is picked). Neither is a REACTIVE effect keyed
+  // on the fields a restore sets below: applySourceKind only runs from the source control's
+  // onChange, and onDerive only runs from PlantingSelect's own select() — itself called only from
+  // a listbox click or an Enter keypress (the only two call sites in PlantingSelect.jsx), never
+  // from a `value`/prop change. So setting plantId/sourceKind directly here, bypassing both,
+  // cannot trip either one — unlike EventNew's type-change effect, which DOES fire reactively off
+  // a restored field and needed the skip-ref guard. Checked; no guard needed here.
+  useEffect(() => {
+    if (hasPrefill) return
+    const draft = readDraft(DRAFT_KEY)
+    if (!draft) return
+    if (typeof draft.cropSlug === 'string') setCropSlug(draft.cropSlug)
+    if (typeof draft.qtyValue === 'string') setQtyValue(draft.qtyValue)
+    if (typeof draft.qtyUnit === 'string') setQtyUnit(draft.qtyUnit)
+    if (typeof draft.method === 'string') setMethod(draft.method)
+    if (typeof draft.methodOther === 'string') setMethodOther(draft.methodOther)
+    if (typeof draft.preservedAt === 'string') setPreservedAt(draft.preservedAt)
+    if (typeof draft.storageId === 'string') setStorageId(draft.storageId)
+    if (typeof draft.useByMode === 'string') setUseByMode(draft.useByMode)
+    if (typeof draft.useByDate === 'string') setUseByDate(draft.useByDate)
+    if (typeof draft.showMore === 'boolean') setShowMore(draft.showMore)
+    if (typeof draft.packageCount === 'string') setPackageCount(draft.packageCount)
+    if (typeof draft.notes === 'string') setNotes(draft.notes)
+    if (draft.variety && typeof draft.variety === 'object') setVariety(draft.variety)
+    if (draft.plantId) setPlantId(draft.plantId)
+    if (draft.harvestLogId) setHarvestLogId(draft.harvestLogId)
+    if (typeof draft.sourceKind === 'string') setSourceKind(draft.sourceKind)
+    if (typeof draft.sourceLabel === 'string') setSourceLabel(draft.sourceLabel)
+    if (draft.stashedPlantId) setStashedPlantId(draft.stashedPlantId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // §4 draft stash — persist while dirty. Declared AFTER the restore effect above so the two can
+  // never race: React runs both passive effects in declaration order, in the SAME synchronous pass,
+  // before either one's setState calls are applied — so on the very first pass this effect still
+  // sees the PRE-restore (pristine) values and correctly no-ops, then re-fires once restore's
+  // batched update lands and simply re-writes the snapshot it just read (idempotent). No `ready`
+  // gate needed (unlike LogMany's, whose restore is nested inside an async projects/locations
+  // fetch): every field here is synchronous local state, so there is no async gap for a pristine
+  // write to land in ahead of the restore. Cleared on successful submit inside handleSubmit.
+  useEffect(() => {
+    if (!dirty) return
+    writeDraft(DRAFT_KEY, {
+      cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, storageId,
+      useByMode, useByDate, showMore, packageCount, notes,
+      variety, plantId, harvestLogId, sourceKind, sourceLabel, stashedPlantId,
+    })
+  }, [dirty, cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, storageId,
+      useByMode, useByDate, showMore, packageCount, notes,
+      variety, plantId, harvestLogId, sourceKind, sourceLabel, stashedPlantId])
+
+  // The Sheet backdrop-tap guard (§4/§5.2) and the SW reload deferral (OPS-SWRELOADGUARD-001),
+  // fed by the SAME `dirty` predicate as the draft stash above — see EventNew.jsx's
+  // hasUnsavedInput for the full rationale. Key is per-instance (useId), matching EventNew, so an
+  // overlay mounted over a full-page instance can never release the other's hold.
+  useReportOverlayDirty(dirty)
+  const reloadGateKey = `put-up:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, dirty)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, dirty])
+
   const loadStorage = useCallback(() => {
     fetch('/api/storage-locations')
       .then(rows => setStorageLocations(Array.isArray(rows) ? rows : []))
@@ -295,6 +399,7 @@ function PutUpForm({ prefill, onLogged }) {
       const fromBit = savedKind && savedKind !== 'own_garden'
         ? ` · from ${row.source_label || PUTUP_SOURCE_LABELS[savedKind] || savedKind}`
         : ''
+      clearDraft(DRAFT_KEY)   // saved to the DB — no longer a resumable draft
       setSuccess({
         text: `Now in ${storeLabel}: ${Number(qtyValue)} ${qtyUnit} ${cropLabel} (${body.package_count} ${body.package_count === 1 ? 'container' : 'containers'})${fromBit}.`,
         row,
