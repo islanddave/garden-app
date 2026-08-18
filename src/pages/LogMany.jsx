@@ -16,7 +16,7 @@ import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePi
 // forced decisions in a single burst, which is precisely the failure the chips exist to avoid.
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
 import {
-  WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
+  WATER_DEPTH_DEFAULT, isWaterDepth, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
@@ -133,6 +133,9 @@ export default function LogMany() {
   const [batchDepthTouched, setBatchDepthTouched] = useState(false)
   const [rowDepth, setRowDepth] = useState({})
   const depthApplies = isWaterDepthType(eventType)
+  // V4-LOGMANYDEPTHSTASH-001: one-shot handoff from the draft restore to the apply effect below.
+  // Not applied inline in the loader — the new-batch reset effect would wipe it in the same pass.
+  const [restoredDepth, setRestoredDepth] = useState(null)
 
   // V4-EVENTSEL-003: Log Many renders the SAME <EventTypePicker> tile grid as Log Event (below),
   // so the two selectors are visually identical. harvest/first_harvest tiles route to per-plant
@@ -184,6 +187,26 @@ export default function LogMany() {
               || (ds.type === 'project' && proj.some(p => p.id === ds.project_id))
               || (ds.type === 'space' && locs.some(l => l.id === ds.location_id)))) setScope(ds)
             if (typeof draft.idemKey === 'string') idemRef.current = draft.idemKey   // idempotent retry across dismiss
+            // V4-LOGMANYDEPTHSTASH-001: the amount class rides in the batch POST but was in neither
+            // the snapshot nor either predicate, so a dismissed watering batch came back as
+            // Normal/default — silently re-answering a question the user had already answered, on
+            // every row in the batch. Restored ONLY for a water-depth type: the chips are not
+            // rendered for anything else, so a class carried onto (say) a pruning draft would be
+            // invisible state feeding a guard predicate with no control on screen to explain it.
+            if (isWaterDepthType(draft.eventType)) {
+              setRestoredDepth({
+                batchDepth: isWaterDepth(draft.batchDepth) ? draft.batchDepth : WATER_DEPTH_DEFAULT,
+                // The honesty flag rides WITH the value. Restoring a chosen 'deep' as
+                // source='default' would report a deliberate pick as the preselected default and
+                // deflate exactly the annotation-rate signal the instrumentation gate reads
+                // (waterDepth.js header) — and restoring an untouched default as 'user' would
+                // inflate it.
+                batchDepthTouched: !!draft.batchDepthTouched,
+                rowDepth: draft.rowDepth && typeof draft.rowDepth === 'object'
+                  ? Object.fromEntries(Object.entries(draft.rowDepth).filter(([, v]) => isWaterDepth(v)))
+                  : {},
+              })
+            }
           } else {
             try {
               const saved = JSON.parse(localStorage.getItem(SCOPE_KEY) || 'null')
@@ -204,7 +227,12 @@ export default function LogMany() {
   //
   // `dirty` is the STASH predicate: broad, because a stash is free. Anything worth restoring after a
   // dismiss counts, including the picks — re-picking a type and a scope is cheap but not free.
-  const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes
+  // V4-LOGMANYDEPTHSTASH-001 adds the amount class. Both terms are pristine-safe: batchDepthTouched
+  // starts false and flips only on a chip tap, and rowDepth is empty until a row override is set —
+  // neither has a sticky/localStorage seed, so neither can trip this on a bare mount.
+  const rowDepthCount = Object.keys(rowDepth).length
+  const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes ||
+    batchDepthTouched || rowDepthCount > 0
 
   // §4 draft stash: persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001 (c)),
   // so a dismiss OR a full-page exit preserves it; cleared on a successful confirm/undo below.
@@ -218,8 +246,8 @@ export default function LogMany() {
   // lastScope memory; from then on it persists real edits normally.
   useEffect(() => {
     if (result || !ready) return
-    if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current })
-  }, [result, ready, dirty, eventType, eventDate, scope, notes])
+    if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current, batchDepth, batchDepthTouched, rowDepth })
+  }, [result, ready, dirty, eventType, eventDate, scope, notes, batchDepth, batchDepthTouched, rowDepth])
 
   // `hasUnsavedInput` is the GUARD predicate: it feeds the two channels that COST the user something
   // when they fire — the overlay backdrop stops dismissing, and a deploy's reload is held. Both are
@@ -238,7 +266,16 @@ export default function LogMany() {
   // and the screen is the confirmation + Undo. There is nothing left for a reload to destroy, and a
   // backdrop tap must dismiss rather than no-op. Without this term the counted fields survive the
   // save (only `logMore` clears the note) and the guards stayed armed on the success screen.
-  const hasUnsavedInput = !result && !!(eventDate || notes)
+  // V4-LOGMANYDEPTHSTASH-001 adds the amount class, on the same test the excluded picks fail and
+  // `eventDate` passes: is it possible on a mount with no user input? It is not. Both terms are
+  // false on a pristine mount and move only on a deliberate tap (the chip's own onChange sets
+  // batchDepthTouched; a row override is a second tap inside the Review list), and neither is
+  // seeded from localStorage, a deep link or a save. A restored draft can arm them — same as
+  // `eventDate`, and for the same reason: that IS this user's unsaved pick, just from an earlier
+  // dismiss. Gated on `depthApplies` so the terms can only count while the chips are actually on
+  // screen — a class left over from a type the user has since changed away from is not content a
+  // dismissal would destroy, and the reset effect below has already cleared it anyway.
+  const hasUnsavedInput = !result && !!(eventDate || notes || (depthApplies && (batchDepthTouched || rowDepthCount > 0)))
 
   // §4 (b): report in-progress content to the hosting Sheet — a stray backdrop tap no-ops while
   // there is unsaved input. No-op on the full page (no provider); the draft stash above covers
@@ -274,6 +311,26 @@ export default function LogMany() {
     setBatchDepth(WATER_DEPTH_DEFAULT); setBatchDepthTouched(false); setRowDepth({})
   }, [eventType, scope])
 
+  // V4-LOGMANYDEPTHSTASH-001 — apply a restored amount class here, AFTER the reset effect above,
+  // rather than inline in the loader. Declaration order is the whole mechanism: the restore sets
+  // eventType and scope in one batch, so the reset effect's deps change and it fires in that same
+  // passive-effect pass and clears the depth it just restored. React runs both effects in
+  // declaration order within that pass, so this one's writes land last and survive. (Same
+  // declaration-order reasoning PutUp's two stash effects already rely on.)
+  //
+  // A boolean skip-ref on the reset effect was the obvious alternative and is wrong: when a draft
+  // restores neither the type nor the scope (a depth-only draft on the default watering/all form),
+  // the reset effect never fires, the flag stays armed, and it then swallows the user's NEXT
+  // genuine reset — carrying one batch's per-row overrides onto a different set of plantings, which
+  // is the exact thing the reset effect exists to prevent.
+  useEffect(() => {
+    if (!restoredDepth) return
+    setBatchDepth(restoredDepth.batchDepth)
+    setBatchDepthTouched(restoredDepth.batchDepthTouched)
+    setRowDepth(restoredDepth.rowDepth)
+    setRestoredDepth(null)
+  }, [restoredDepth])
+
   // Server dry-run for ScopeChecklist. Stable (deps: fetch) — eventType/eventDate are
   // passed as call args so a vocabulary change retriggers the child's effect, not this fn.
   // `signal` flows to native fetch (api.js spreads options) → real request cancellation.
@@ -306,7 +363,9 @@ export default function LogMany() {
     // the POST fails and the user dismisses OR exits, re-opening restores THIS key so the retry is
     // idempotent. V4-DRAFTFULLPAGE-001 (c): both surfaces — this is the byte whose loss on the
     // full page turned a failed batch into a non-idempotent retry.
-    writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current })
+    // Same payload shape as the persist effect above — a failed POST that the user dismisses must
+    // come back with the amount class intact, not just the idemKey.
+    writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current, batchDepth, batchDepthTouched, rowDepth })
     setSaving(true); setError(null)
     try {
       // V4-WATERMATH-001 F0 — batch metadata contract with the events Lambda (W-F0-LAMBDA):
