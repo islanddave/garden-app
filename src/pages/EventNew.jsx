@@ -1266,6 +1266,13 @@ export default function EventNew() {
 
     // V4-TREATLOG-001: structured treatment fields (only for pest_treatment / doctored).
     const isTreatment = form.event_type === 'pest_treatment' || form.event_type === 'doctored'
+    // BUG-TREATMENTPRODUCT-001: fertilizing had NO product capture at all, so treatment_product_text
+    // (a column that already exists) stayed NULL on all 1130 fertilizing rows. It reuses the SAME
+    // `treatment.product_text` state slice TreatmentDetails writes — already reset on type change
+    // and already counted in hasUnsavedInput below — but sends ONLY the product text, not the other
+    // four treatment_* columns: those weren't asked for, and pest_target especially doesn't apply to
+    // a fertilizing event. isTreatment above stays pest_treatment/doctored-only on purpose.
+    const isFertilizing = form.event_type === 'fertilizing'
     const treatmentPayload = isTreatment
       ? {
           treatment_product_id:   treatment.product_id || null,
@@ -1274,7 +1281,9 @@ export default function EventNew() {
           treatment_amount:       treatment.amount.trim() || null,
           pest_target:            treatment.pest_target.trim() || null,
         }
-      : {}
+      : isFertilizing
+        ? { treatment_product_text: treatment.product_text.trim() || null }
+        : {}
     // 1 — POST event, get back { eventId, stats }
     let result
     try {
@@ -1711,6 +1720,25 @@ export default function EventNew() {
   const treatmentBlock = (
           (form.event_type === 'pest_treatment' || form.event_type === 'doctored') && (
             <TreatmentDetails value={treatment} onChange={setTreatment} inventory={inventory} eventType={form.event_type} />
+          )
+  )
+
+          /* ── BUG-TREATMENTPRODUCT-001: fertilizing gets just the product-text slice of the same
+               panel — no category chips (their enum is pest-flavored and wasn't asked for), no pest
+               target, no inventory picker (ticket: no product database, free text only, same as
+               `doctored` already captures). Same slot as treatmentBlock, directly below Event Type. ── */
+  const fertilizingProductBlock = (
+          form.event_type === 'fertilizing' && (
+            <Section label="Product used (optional)">
+              <Field label="Product" htmlFor="fert-product" optional help="e.g. Jack's 20-20-20, fish emulsion, compost tea">
+                <Input
+                  id="fert-product"
+                  value={treatment.product_text}
+                  onChange={e => setTreatment(t => ({ ...t, product_text: e.target.value }))}
+                  placeholder="e.g. Jack's 20-20-20, fish emulsion, compost tea"
+                />
+              </Field>
+            </Section>
           )
   )
 
@@ -2382,6 +2410,7 @@ export default function EventNew() {
               {photoBlock}
               {eventTypeBlock}
               {treatmentBlock}
+              {fertilizingProductBlock}
               {waterDepthBlock}
               {projectBlock}
               {plantingBlock}

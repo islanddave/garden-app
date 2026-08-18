@@ -2395,8 +2395,12 @@ export const handler = async (event) => {
       // V4-TREATLOG-001: structured treatment capture (pest_treatment / doctored). All nullable;
       // only recorded for those two types so a stray field on other events is ignored.
       const isTreatment = eventType === 'pest_treatment' || eventType === 'doctored';
+      // BUG-TREATMENTPRODUCT-001: fertilizing also captures a free-typed product name (client:
+      // EventNew's fertilizingProductBlock) — but ONLY that one column. isTreatment above stays
+      // pest_treatment/doctored-only for the other four treatment_* columns.
+      const capturesProductText = isTreatment || eventType === 'fertilizing';
       const treatmentProductId   = isTreatment ? (body.treatment_product_id ?? null) : null;
-      const treatmentProductText = isTreatment ? (body.treatment_product_text ?? null) : null;
+      const treatmentProductText = capturesProductText ? (body.treatment_product_text ?? null) : null;
       const treatmentCategory    = isTreatment ? (body.treatment_category ?? null) : null;
       const treatmentAmount      = isTreatment ? (body.treatment_amount ?? null) : null;
       const pestTarget           = isTreatment ? (body.pest_target ?? null) : null;
