@@ -181,6 +181,13 @@ post:
     value: 1
 
   # The deliberate NULLs must stay NULL — an over-broad seed here is silently wrong, not loud.
+  #
+  # bee_balm was REMOVED from this list by V4-HARVHABITGAP-001. It is no longer a deliberate NULL:
+  # commit f54e0a0 moved it out of not_harvest_tracked in src/data/harvest-attributes-v1.json, and
+  # v4-harvhabitgap-001/0a-data.sql flips it to cut_and_come_again/14d. This gate has no `continuous:`
+  # key, so it is a live continuous invariant — leaving the slug here would have gone red permanently
+  # the moment that flip was applied to any environment, in direct contradiction of that migration's
+  # own post gate. It is green today only because prod is not yet applied.
   - name: post_ornamentals_still_null
     sql: |
       SELECT 1 FROM public.crop_types
@@ -188,7 +195,7 @@ post:
          AND slug IN ('geranium','coleus','fittonia','petunia','tradescantia','sedum','echeveria',
                       'succulent','cactus','christmas_cactus','sempervivum','haworthia','jade',
                       'japanese_maple','spider_plant','pothos','flower_mix','marigold','rose',
-                      'hibiscus','hosta','begonia','avocado','bee_balm')
+                      'hibiscus','hosta','begonia','avocado')
     expect: rowcount_eq
     value: 0
 

@@ -34,12 +34,24 @@ pre:
     value: 0
 
 post:
+  # SELF-ARMING, not `continuous: false`. This is a POST-APPLY assertion, and it defaulted to
+  # continuous: true, so it ran against prod — where the migration has NOT been applied and bee_balm's
+  # harvest_habit is still NULL. That is the CORRECT state for a not-yet-applied environment, not a
+  # failure, but the bare predicate read it as a violation and took gate-invariants.yml red (CI run
+  # 32148716594: FAIL post/post_bee_balm_is_cut_and_come_again_14), blocking every dev push.
+  #
+  # The EXISTS on this migration's own schema_version row is the arming condition: the assertion is
+  # inert in any environment that has not applied 0a-data.sql, and becomes a real continuous
+  # invariant the instant it has. Strictly better than continuous: false, which would have made it an
+  # apply-window check only and left the flip unguarded forever after. Version string is byte-identical
+  # to the INSERT in 0a-data.sql and to post_schema_version_present below.
   - name: post_bee_balm_is_cut_and_come_again_14
     sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE slug = 'bee_balm' AND deleted_at IS NULL
-         AND (harvest_habit IS DISTINCT FROM 'cut_and_come_again'
-              OR repeat_interval_days IS DISTINCT FROM 14)
+      SELECT count(*) FROM public.crop_types c
+       WHERE c.slug = 'bee_balm' AND c.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.35.0-harvhabitgap-001')
+         AND (c.harvest_habit IS DISTINCT FROM 'cut_and_come_again'
+              OR c.repeat_interval_days IS DISTINCT FROM 14)
     expect: scalar_eq
     value: 0
 
