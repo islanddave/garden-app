@@ -19,12 +19,17 @@ import {
   DERIVED_ANCHOR_ENABLED, SIBLING_ANCHOR_HABITS, TIER_RANK, resolveWatchAnchor,
   classifyWatchCandidate, projectWatchRow, describeBasis, siblingLabel, buildWatchList,
   DERIVED_ANCHOR_HABITS, DERIVED_STATUS_SUPPRESSED, DERIVED_FIRST_FALL_FROST_MMDD,
-  DERIVED_FROST_WINDOW_DAYS, firstFallFrostFor, WATCHED_HABITS, addDays,
+  DERIVED_FROST_WINDOW_DAYS, DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD, DERIVED_FROST_HARDY_SLUGS,
+  firstFallFrostFor, WATCHED_HABITS, addDays,
 } from './watch.js';
-// V4-ANCHORFLIP-001 condition 3. Imported HERE and nowhere in lambda/**: the harvests Lambda and
-// src/lib are separate module graphs, so the frost constants are necessarily restated in watch.js.
-// This import is the lockstep pin that stops the two copies drifting — see the frost test below.
-import { FROST_ANCHORS } from '../../src/lib/sowEngine.js';
+// V4-ANCHORFLIP-001 condition 3, widened by BUG-WATCHFROSTSUPPRESS-001. Imported HERE and nowhere in
+// lambda/**: the harvests Lambda and src/lib are separate module graphs (deploy-lambda.yml zips each
+// function from its own directory), so the frost constants AND the hardy vocabulary are necessarily
+// restated in watch.js. This import is the lockstep pin that stops the copies drifting — see the
+// frost tests below. FALL_HARDY_CROPS is in turn pinned as a subset of frostClass.js's `hardy` band
+// by src/__tests__/sowEngine.test.js, so the chain reaches the canonical vocabulary without either
+// runtime module importing across a boundary it cannot.
+import { FROST_ANCHORS, OBSERVED_FIRST_FALL_FROST, FALL_HARDY_CROPS } from '../../src/lib/sowEngine.js';
 
 const TODAY = '2026-08-12';
 
@@ -440,9 +445,15 @@ describe('sibling anchor is restricted to single-habit crops', () => {
 describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
   // Anchorless, watched, no contradicting status. dtm_min 40 -> lead = min(22, round(40*0.25)) = 10,
   // so check_from = anchor + 30.
+  // BUG-WATCHFROSTSUPPRESS-001 moved this fixture's slug from 'garlic' to 'watermelon'. Not
+  // cosmetic: garlic is in FALL_HARDY_CROPS, so under the hardiness-scoped frost window every test
+  // in this block would silently have started exercising the MEASURED anchor, including the twenty
+  // that have nothing to do with frost. 'watermelon' is frost-tender (and is the slug
+  // watch-route.test.js's own derived fixture already uses), so the default here is the conservative
+  // arm and hardiness is an explicit opt-in in the tests that are about it.
   const BASE = {
     plant_id: 'p-flip', project_id: 'proj-flip', planting_name: 'Flip Fixture',
-    crop_type_slug: 'garlic', harvest_habit: 'single', status: 'growing', prior_harvest_count: 0,
+    crop_type_slug: 'watermelon', harvest_habit: 'single', status: 'growing', prior_harvest_count: 0,
     dtm_basis: null, days_to_maturity_min: 40, days_to_maturity_max: null,
     sown_at: null, transplanted_at: null, planted_out_at: null,
     set_to_first_pick_days: null, fruit_set_date: null, sibling_first_pick_date: null,
@@ -459,42 +470,122 @@ describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
 
   // ── Condition 3: the frost window (the horticulture seat's one non-negotiable) ──────────────────
 
-  it('restates the frost anchor in lockstep with src/lib/sowEngine.js FROST_ANCHORS', () => {
-    // The Lambda cannot import src/lib at runtime, so the constants are duplicated. A TEST can
+  // A fall-hardy slug. BASE is deliberately tender (see the fixture note above), so every hardy
+  // assertion below opts in explicitly and the contrast is visible in the test body.
+  const HARDY = { crop_type_slug: 'kale' };
+
+  it('restates the frost anchors AND the hardy vocabulary in lockstep with src/lib/sowEngine.js', () => {
+    // The Lambda cannot import src/lib at runtime, so all four values are duplicated. A TEST can
     // import both, and this is the only thing standing between that duplication and a silent
-    // divergence the day the frost date is retuned.
+    // divergence the day the frost date is retuned or a crop is banded.
+    // MUTATION: change any one of the four copies in watch.js — including adding or removing a
+    // single slug from DERIVED_FROST_HARDY_SLUGS — and this goes red.
     expect(DERIVED_FIRST_FALL_FROST_MMDD).toBe(FROST_ANCHORS.firstFallFrost);
     expect(DERIVED_FROST_WINDOW_DAYS).toBe(FROST_ANCHORS.windowClosingDays);
+    expect(DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD).toBe(OBSERVED_FIRST_FALL_FROST.medianMonthDay);
+    expect([...DERIVED_FROST_HARDY_SLUGS].sort()).toEqual([...FALL_HARDY_CROPS].sort());
+    // The two anchors must stay two. MUTATION: collapse them (set either copy to the other's value)
+    // and this is red — without it the lockstep above would pass on a one-anchor world.
+    expect(DERIVED_FIRST_FALL_FROST_MMDD < DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD).toBe(true);
   });
 
-  it('resolves the frost anchor into the grow year the date sits in', () => {
+  it('resolves the frost anchor into the grow year the date sits in, per crop', () => {
     expect(firstFallFrostFor('2026-08-12')).toBe('2026-09-28');
     expect(firstFallFrostFor('2026-01-04')).toBe('2026-09-28');
-    // Grow year runs Nov 1 - Oct 31, so from November the NEXT first fall frost is next year's.
+    // Grow year runs Nov 1 - Oct 31, so from November the NEXT first fall frost is next year's. The
+    // grow-year roll is anchor-independent: it must apply to the measured date too.
+    // MUTATION: drop 'kale' from DERIVED_FROST_HARDY_SLUGS, or point the hardy arm at any other
+    // mm-dd, and the hardy November case goes red at 2027-09-28 / 2027-10-10 respectively.
     expect(firstFallFrostFor('2026-11-15')).toBe('2027-09-28');
-    expect(firstFallFrostFor(null)).toBeNull();
+    expect(firstFallFrostFor('2026-11-15', 'kale')).toBe('2027-10-29');
+    expect(firstFallFrostFor('2026-08-12', 'kale')).toBe('2026-10-29');
+    expect(firstFallFrostFor(null, 'kale')).toBeNull();
   });
 
-  it('suppresses a derived row whose watch would open inside the frost window', () => {
-    // check_from = anchor + 30 = 2026-09-20, i.e. 8 days before first frost — inside +/-10d.
+  it('falls back to the MARGIN for an unknown, absent or null crop type', () => {
+    // The fail-safe direction, and it is the whole reason the mirrored set can be trusted: wrongly
+    // calling a crop hardy opens a row inviting Dave to walk out to a dead plant, while wrongly
+    // calling it tender only preserves today's behaviour. Matches frostClass's UNKNOWN_BAND='tender'.
+    // MUTATION: invert the ternary in firstFallFrostFor (hardy set selects the margin) and every
+    // line here goes red at 2026-10-29.
+    expect(firstFallFrostFor('2026-08-12', 'sedum')).toBe('2026-09-28');   // deliberately unbanded
+    expect(firstFallFrostFor('2026-08-12', null)).toBe('2026-09-28');
+    expect(firstFallFrostFor('2026-08-12', undefined)).toBe('2026-09-28');
+    // ...and through the real call path, on a row with no slug column at all.
+    const noSlug = { ...BASE, derived_anchor_date: '2026-08-21' };
+    delete noSlug.crop_type_slug;
+    expect(resolveWatchAnchor(noSlug, ON)).toBeNull();
+  });
+
+  it('suppresses a TENDER derived row whose watch would open inside the frost window', () => {
+    // check_from = anchor + 30 = 2026-09-20, i.e. 8 days before the margin — inside +/-10d.
     const row = { ...BASE, derived_anchor_date: '2026-08-21' };
     expect(resolveWatchAnchor(row, ON)).toBeNull();
     expect(classifyWatchCandidate(row, TODAY, { derivedEnabled: true }).reason).toBe('no_anchor');
   });
 
-  it('suppresses a derived row that would open AFTER first frost, not only near it', () => {
-    // check_from = 2026-11-01. More wrong than a row opening 5 days early, not less — which is why
-    // the cutoff is one-sided at (frost - 10) rather than a literal symmetric band.
-    const row = { ...BASE, derived_anchor_date: '2026-10-02' };
-    expect(resolveWatchAnchor(row, ON)).toBeNull();
+  it('ADMITS the same row for a fall-hardy crop — the suppression premise does not hold', () => {
+    // BUG-WATCHFROSTSUPPRESS-001, the whole behaviour delta in one pair. Identical date, identical
+    // habit, identical status; the only difference is a crop whose harvested organ keeps standing
+    // through frost, for which "the window it points at does not exist because the plant will be
+    // dead" is simply false. MUTATION: revert the call site to `firstFallFrostFor(etToday ??
+    // derivedDate)` (i.e. drop the slug argument) and this goes red while the tender test above
+    // stays green — which is the pair's job.
+    //
+    // The two silences are DIFFERENT, and the reason string is what says so: the tender row is
+    // `no_anchor` (suppressed — it will never surface), the hardy row is `not_yet_open` (the anchor
+    // exists and the watch opens on 09-20). Collapsing them is the failure this module's
+    // discriminated verdicts exist to prevent, so the assertion is on the reason, not on absence.
+    const row = { ...BASE, ...HARDY, derived_anchor_date: '2026-08-21' };
+    expect(resolveWatchAnchor(row, ON).check_from).toBe('2026-09-20');
+    const v = classifyWatchCandidate(row, TODAY, { derivedEnabled: true });
+    expect(v.reason).toBe('not_yet_open');
+    expect(v.check_from).toBe('2026-09-20');
   });
 
-  it('admits a derived row that opens the day before the frost cutoff', () => {
+  it('suppresses a derived row that would open AFTER first frost, not only near it', () => {
+    // check_from = 2026-11-01. More wrong than a row opening 5 days early, not less — which is why
+    // the cutoff is one-sided at (frost - 10) rather than a literal symmetric band. The one-sidedness
+    // is per-crop, not just per-constant: a hardy row past the MEASURED anchor is suppressed too.
+    // MUTATION: make the hardy arm skip the frost check entirely instead of moving it, and the
+    // second assertion goes red.
+    expect(resolveWatchAnchor({ ...BASE, derived_anchor_date: '2026-10-02' }, ON)).toBeNull();
+    expect(resolveWatchAnchor({ ...BASE, ...HARDY, derived_anchor_date: '2026-11-02' }, ON)).toBeNull();
+  });
+
+  it('admits a TENDER derived row that opens the day before the frost cutoff', () => {
     // cutoff = 2026-09-28 - 10 = 2026-09-18; anchor 2026-08-18 -> check_from 2026-09-17.
     expect(resolveWatchAnchor({ ...BASE, derived_anchor_date: '2026-08-18' }, ON).check_from)
       .toBe('2026-09-17');
     // ...and refuses it one day later, so the boundary is pinned from both sides.
     expect(resolveWatchAnchor({ ...BASE, derived_anchor_date: '2026-08-19' }, ON)).toBeNull();
+  });
+
+  it('pins the HARDY cutoff from both sides, 31 days later than the tender one', () => {
+    // cutoff = 2026-10-29 - 10 = 2026-10-19; anchor 2026-09-18 -> check_from 2026-10-18.
+    // MUTATION: point the hardy arm at earliestMonthDay ('10-10') instead of the median and the
+    // first assertion goes red — the guard pins WHICH measured statistic, not merely "a later one".
+    expect(resolveWatchAnchor({ ...BASE, ...HARDY, derived_anchor_date: '2026-09-18' }, ON).check_from)
+      .toBe('2026-10-18');
+    expect(resolveWatchAnchor({ ...BASE, ...HARDY, derived_anchor_date: '2026-09-19' }, ON)).toBeNull();
+    // The gap between the two cutoffs is the gap between the two anchors — computed from the live
+    // constants, never asserted as a literal beside them, so it dies the moment either moves.
+    const day = 86400000;
+    const gap = (Date.parse(`2026-${DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD}T00:00:00Z`)
+      - Date.parse(`2026-${DERIVED_FIRST_FALL_FROST_MMDD}T00:00:00Z`)) / day;
+    expect(gap).toBe(31);
+  });
+
+  it('hardiness moves ONLY the frost window — not the habit, status or coexistence gates', () => {
+    // The blast-radius guard. A hardy slug must not become a way around any other suppression, or
+    // the re-key would have widened the tier rather than corrected one arm of it.
+    // MUTATION: hoist the hardy check above the habit/status predicates and these go red.
+    const hardyBase = { ...BASE, ...HARDY, derived_anchor_date: '2026-05-28' };
+    expect(resolveWatchAnchor({ ...hardyBase, harvest_habit: 'cut_and_come_again' }, ON)).toBeNull();
+    expect(resolveWatchAnchor({ ...hardyBase, status: 'fruiting' }, ON)).toBeNull();
+    // A real date still wins: a hardy planting with its own transplant date rests on `calendar`.
+    expect(resolveWatchAnchor({ ...hardyBase, derived_anchor_date: null, transplanted_at: '2026-06-11' }, ON).kind)
+      .toBe('calendar');
   });
 
   it('never applies the frost window to a real anchor', () => {

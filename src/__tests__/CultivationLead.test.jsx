@@ -15,15 +15,17 @@ import CultivationLead, { cultivationLines, CULTIVATION_LEAD_CAP } from '../comp
 // 2026 anchors: FF (sowing-safety margin) = 09-28, FFobs (measured median first frost) = 10-29.
 // Lettuce is fall-hardy (V4-HARDYSET-001), so a cool + annual DIRECT sow closes at FFobs - dtm:
 // dtm 72 -> Aug 18 (6 days from the fixed TODAY, inside the 10-day closing window); dtm 75 -> Aug
-// 15; dtm 77 -> Aug 13. The fall INDOOR pass is a different clamp on the OTHER anchor and did not
-// move — FF + (28 - dtm - FALL_SLOWDOWN 14) — so the indoor fixture keeps dtm 55 for the same Aug 18.
+// 15; dtm 77 -> Aug 13. The fall INDOOR pass is a SEPARATE clamp and now sits on the same anchor for
+// hardy crops — FFobs - dtm - FALL_SLOWDOWN 14 — so the indoor fixture takes dtm 58 for the same
+// Aug 18. (It carried 55 while that pass was still on FF + 28 - dtm - 14.)
 //
 // The dtm figures were raised by 14 to hold these dates when lettuce gained the hardy grace
-// (V4-HARDYSET-001), then by a further 3 when BUG-FROSTANCHORWRONG-001 moved the hardy clamp off the
-// safety margin onto the measured anchor. Every EXPECTED string below is unchanged across both,
-// deliberately: the contract under test is the lead line's wording, cap and ordering, and none of
-// that moved — only the shared clamp that decides which packets are closing. Retuning the input
-// rather than the assertions keeps that visible.
+// (V4-HARDYSET-001), then by a further 3 when BUG-FROSTANCHORWRONG-001 moved the hardy DIRECT clamp
+// off the safety margin onto the measured anchor, and the indoor fixture by 3 when
+// V4-FALLINDOORHARDY-001 did the same to the INDOOR pass. Every EXPECTED string below is unchanged
+// across all three, deliberately: the contract under test is the lead line's wording, cap and
+// ordering, and none of that moved — only the shared clamps that decide which packets are closing.
+// Retuning the input rather than the assertions keeps that visible.
 const TODAY = '2026-08-12'
 const lettuce = (over = {}) => ({
   variety_name: 'Winter Density', item_name: 'Lettuce packet', crop_type_slug: 'lettuce',
@@ -41,7 +43,7 @@ describe('cultivationLines (pure, real engine)', () => {
 
   it('uses the indoor verb when the closing window is an indoor start', () => {
     const basil = lettuce({
-      variety_name: 'Genovese Basil', direct_sow_timing: null, days_to_maturity_max: 55,
+      variety_name: 'Genovese Basil', direct_sow_timing: null, days_to_maturity_max: 58,
       start_method: 'start_indoors', start_indoor_weeks_min: 4, start_indoor_weeks_max: 4,
     })
     expect(cultivationLines([basil], TODAY)).toEqual(['Start Genovese Basil indoors by Aug 18.'])

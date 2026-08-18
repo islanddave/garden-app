@@ -514,13 +514,18 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
     expect(entry.windowLabel).toContain('2027');
   });
 
-  it('Broccoli Belstar -> start_indoors_now (cool fall pass opens day-of Jul 10)', () => {
+  // REBASELINED BY V4-FALLINDOORHARDY-001, and this is the golden sitting exactly ON the old
+  // boundary rather than a bucket regression. Broccoli is a FALL_HARDY_CROPS slug, so its fall
+  // indoor pass moved from FF + 28 - 66 - 14 = Aug 7 to FFobs - 66 - 14 = Aug 10 — the same +3d the
+  // direct branch took under BUG-FROSTANCHORWRONG-001, from the same cause (a 31-day-early anchor
+  // and an underived 28 that nearly cancelled). The window is 28 days wide, so BOTH ends shift +3:
+  // it opened Jul 10 (this golden's `today`, per the old test name) and now opens Jul 13. The packet
+  // is not less sowable — it has 3 more days at the far end, and 3 fewer at the near end.
+  it('Broccoli Belstar -> hold, fall pass now opens Jul 13 (was open day-of Jul 10)', () => {
     const { bucket, entry } = locate(golden(), 'Belstar');
-    expect(bucket).toBe('start_indoors_now');
+    expect(bucket).toBe('hold');
     expect(entry.action).toBe('start_indoors');
-    // Rules: latest = FF + 28 - 66 - 14 = Aug 7 (panel note said Jul 24; the
-    // rules' grace/slowdown arithmetic gives Aug 7 — bucket is unchanged).
-    expect(entry.daysLeft).toBe(28);
+    expect(entry.reopensOn).toBe('2026-07-13');
   });
 
   // PANEL GOLDEN DEVIATION: panel expected direct_sow_now with class E window
@@ -535,15 +540,23 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
     expect(entry.windowLabel).toContain('Jul 20');
   });
 
-  // PANEL GOLDEN DEVIATION: panel expected window_closing. Under the rules the
-  // fall indoor pass closed Jul 9 (FF+28-95-14) and the class E direct window
-  // [FF-10w, FF-8w] = [Jul 20, Aug 3] (close clamped to Jul 23 by the
-  // cool-hardy latest_safe) has not opened yet -> hold with reopensOn Jul 20.
-  it('Radicchio Palla Rossa -> hold, reopens Jul 20 (rules) [golden said window_closing]', () => {
+  // PANEL GOLDEN DEVIATION: panel expected window_closing. Under the rules the fall indoor pass
+  // closed Jul 9 (FF+28-95-14) and the class E direct window [FF-10w, FF-8w] = [Jul 20, Aug 3]
+  // (close clamped to Jul 23 by the cool-hardy latest_safe) had not opened yet -> hold, reopens
+  // Jul 20.
+  //
+  // REBASELINED BY V4-FALLINDOORHARDY-001 — and this one lands back ON the panel's original call.
+  // Radicchio is a FALL_HARDY_CROPS slug, so its fall indoor pass moved to FFobs - 95 - 14 = Jul 12.
+  // It closed Jul 9 (three days before `today`) and now closes Jul 12 (two days after), so the
+  // packet is INSIDE its indoor window on Jul 10 instead of past it, at daysLeft 2 <=
+  // windowClosingDays -> window_closing. The bucket the panel expected all along; the deviation note
+  // above stays because the ARITHMETIC still differs from theirs, it is only the verdict that agrees.
+  it('Radicchio Palla Rossa -> window_closing, fall pass now closes Jul 12 [matches the panel again]', () => {
     const { bucket, entry } = locate(golden(), 'Palla Rossa Mavrik');
-    expect(bucket).toBe('hold');
-    expect(entry.reopensOn).toBe('2026-07-20');
-    expect(entry.action).toBe('direct_sow');
+    expect(bucket).toBe('window_closing');
+    expect(entry.daysLeft).toBe(2);
+    expect(entry.action).toBe('start_indoors');
+    expect(entry.windowLabel).toContain('Jul 12');
   });
 
   it('spreads the twelve packets across six buckets with no leftovers', () => {
@@ -560,14 +573,19 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
     // outranking the next-year window was itself wrong. With the establishment clamp the same
     // clause closes Aug 24 and carries horizon=next_year, and the bucket follows the horticulture.
     // Prior delta, still standing: V4-SOWNOW-PHOTOPERIOD-001 moved onion Monastrell too_late -> hold.
-    // Any movement BEYOND hollyhock is an unintended regression, not a rebaseline.
+    // V4-FALLINDOORHARDY-001 DELTA: exactly two packets swapped places, both fall-hardy cool crops
+    // whose indoor pass shifted +3d and whose window boundary straddles this golden's `today`.
+    // Broccoli start_indoors_now -> hold (opens Jul 13, was Jul 10) and radicchio hold ->
+    // window_closing (closes Jul 12, was Jul 9). Net totals move by one each way; nothing else in
+    // the twelve moved, which is the evidence the re-key touched only the fall indoor pass and only
+    // for hardy slugs. Any movement BEYOND those two is an unintended regression, not a rebaseline.
     expect(counts).toEqual({
-      start_indoors_now: 1, // broccoli
+      start_indoors_now: 0,
       direct_sow_now: 2,    // spinach, lettuce
       sow_inside_anytime: 0,
       sow_next_year: 1,     // hollyhock (biennial: sown now, blooms next June)
-      window_closing: 2,    // cucumber, pea
-      hold: 3,              // columbine, radicchio, onion (gated bulber)
+      window_closing: 3,    // cucumber, pea, radicchio
+      hold: 3,              // columbine, onion (gated bulber), broccoli
       too_late: 2,          // biquinho, black krim
       needs_profile: 1,     // california wonder
       // V4-SOWARCHIVE-001: no golden packet carries sow_archived_season, so this stays 0. That it
@@ -1201,10 +1219,14 @@ describe('fall indoor pass — DTM basis (V4-MATURITYBASIS-001 Slice C)', () => 
 
   it('reproduces the live prod correction for Belstar broccoli (dtm 66, 4-6 wks)', () => {
     // The Belstar packet literally reads "Days to maturity from transplant" — the ground truth
-    // this whole slice encodes. Prod said start-by Aug 7; the real deadline was Jun 26.
+    // this whole slice encodes. Prod said start-by Aug 7; the real deadline was Jun 26, and is now
+    // Jun 29 (V4-FALLINDOORHARDY-001: broccoli is fall-hardy, so the anchor moved FF -> FFobs, +3d).
+    // The correction this test exists for is the NURSERY shift, and it is unchanged at 42 days —
+    // Aug 10 - 42 = Jun 29, exactly as Aug 7 - 42 was Jun 26. The two are orthogonal, which is the
+    // point: re-keying the anchor did not disturb the basis correction measured against it.
     const belstar = toCandidate(PACKETS.broccoliBelstar, { dtm_basis: 'from-transplant' });
     const at = (d) => run(belstar, d);
-    expect(at('2026-06-20').entry.windowLabel).toContain('Jun 26');
+    expect(at('2026-06-20').entry.windowLabel).toContain('Jun 29');
     expect(at('2026-08-04').entry.windowLabel).not.toMatch(/Start indoors/);
   });
 });
@@ -1306,7 +1328,11 @@ describe('V4-SOWARCHIVE-001 archive-for-the-season', () => {
     const buckets = bucketize(rows, TODAY);
     expect(buckets.archived).toHaveLength(1);
     expect(buckets.window_closing).toHaveLength(1);
-    expect(buckets.start_indoors_now).toHaveLength(1);
+    // broccoli. `hold` rather than `start_indoors_now` since V4-FALLINDOORHARDY-001 moved its fall
+    // indoor open from Jul 10 (= TODAY) to Jul 13; see the golden rebaseline. What this test asserts
+    // is that archiving spinach leaves the OTHER two where bucketOne put them, which is unaffected.
+    expect(buckets.hold).toHaveLength(1);
+    expect(buckets.start_indoors_now).toHaveLength(0);
   });
 });
 
@@ -1531,5 +1557,113 @@ describe('BUG-FROSTANCHORWRONG-001 alerting margin vs measured frost date', () =
     // earliestMonthDay would sit exactly on this bound and pass, which is intended: 10-10 is a
     // defensible backstop reading, just a more conservative one than the median.
     expect(latestMaturity).toBeGreaterThanOrEqual(toMs(OBSERVED_FIRST_FALL_FROST.earliestMonthDay));
+  });
+});
+
+// ── V4-FALLINDOORHARDY-001 — the fall INDOOR pass, re-keyed by hardiness ──────────
+// BUG-FROSTANCHORWRONG-001 left this consumer on the margin and said why: the pass was keyed by
+// sow_season alone, so its `cool` bucket held kale and cool-but-tender crops together and there was
+// no branch to route. There is one now, and these guards pin the SPLIT — which arm moves when which
+// anchor moves — rather than the rationale for it. The +3d delta is the same one the direct branch
+// took, from the same pair of cancelling errors.
+//
+// Every assertion names the source edit that turns it red. All six were run against a mutated
+// sowEngine.js, observed failing, and reverted from a lane-local copy before being committed green.
+describe('V4-FALLINDOORHARDY-001 fall indoor pass — hardiness, not just season', () => {
+  const D = 86400000;
+  const toMs = (mmdd, y = 2026) => Date.UTC(y, Number(mmdd.slice(0, 2)) - 1, Number(mmdd.slice(3)));
+  const isoToMsUTC = (iso) => Date.parse(`${iso}T00:00:00Z`);
+  const shiftISO = (iso, n) => new Date(isoToMsUTC(iso) + n * D).toISOString().slice(0, 10);
+
+  // The last day seed may be STARTED INDOORS for the fall pass, read off the engine.
+  //
+  // Read from `reopensOn` (the window's OPEN) rather than from a "through ..." label, and run on
+  // PROBE_DAY: on Jun 1 the fall pass is still in the future under EVERY anchor override below, so
+  // the readout never changes shape as the window slides. The window is a fixed 28 days wide
+  // (`open: latest - 28 * DAY_MS`), so open + 28 is `latest`, the quantity under test.
+  function fallIndoorLatest(over = {}, anchors) {
+    const row = viewRow({
+      variety_name: 'Fall indoor probe',
+      start_method: 'start_indoors',      // no direct clauses: the fall INDOOR pass is the only window
+      start_indoor_weeks_min: 3,
+      start_indoor_weeks_max: 4,
+      days_to_maturity_max: 60,
+      sow_season: 'cool',
+      ...over,
+    });
+    const { bucket, entry } = locate(bucketize([row], PROBE_DAY, anchors), 'Fall indoor probe');
+    expect(bucket).toBe('hold');          // the readout's own precondition, asserted not assumed
+    return shiftISO(entry.reopensOn, 28);
+  }
+  const HARDY = { crop_type_slug: 'kale' };       // in FALL_HARDY_CROPS
+  const NOT_HARDY = { crop_type_slug: 'poppy' };  // cool, absent from the set
+
+  it('hardy takes the measured anchor with no grace; tender keeps margin + grace', () => {
+    // MUTATION: delete the `fallHardy` ternary in buildIndoorWindows (i.e. put the whole pass back on
+    // `ctx.FF + (grace - dtm - slowdown - nursery)`) and the first assertion goes red at Aug 13.
+    expect(fallIndoorLatest(HARDY)).toBe('2026-08-16');      // FFobs 10-29 - 60 - 14
+    expect(fallIndoorLatest(NOT_HARDY)).toBe('2026-08-13');  // FF 09-28 + 28 - 60 - 14, unchanged
+    // The two arms are 3 days apart and in that order — the whole delta of this item, stated once.
+    expect((isoToMsUTC(fallIndoorLatest(HARDY)) - isoToMsUTC(fallIndoorLatest(NOT_HARDY))) / D).toBe(3);
+  });
+
+  it('moving the SAFETY MARGIN moves the tender arm and NOT the hardy one', () => {
+    // MUTATION: route both arms to ctx.FF and the first assertion goes red (hardy starts tracking
+    // the margin). This is the guard that makes the separation structural rather than numeric.
+    expect(fallIndoorLatest(HARDY, { firstFallFrost: '10-18' })).toBe('2026-08-16');
+    expect(fallIndoorLatest(NOT_HARDY, { firstFallFrost: '10-18' })).toBe('2026-09-02'); // +20d
+  });
+
+  it('moving the MEASURED anchor moves the hardy arm and NOT the tender one', () => {
+    // The other half — proves the hardy arm really READS FFobs rather than merely ignoring FF.
+    // MUTATION: route both arms to ctx.FFobs and the second assertion goes red.
+    expect(fallIndoorLatest(HARDY, { observedFirstFallFrost: '11-08' })).toBe('2026-08-26'); // +10d
+    expect(fallIndoorLatest(NOT_HARDY, { observedFirstFallFrost: '11-08' })).toBe('2026-08-13');
+  });
+
+  it('cool_warm keeps the margin even for a hardy slug — hardiness never crosses the season gate', () => {
+    // latestSafeMs routes cool_warm to a strictly TIGHTER clamp (FF - dtm - 7) regardless of
+    // hardiness, so widening it here would make the indoor pass more permissive than the direct one
+    // for the same packet. 4 live cool_warm candidates carry a hardy slug.
+    // MUTATION: drop `candidate.sow_season === 'cool' &&` from the fallHardy predicate and both
+    // assertions go red (Jul 30 -> Aug 16).
+    const coolWarmHardy = { ...HARDY, sow_season: 'cool_warm' };
+    expect(fallIndoorLatest(coolWarmHardy)).toBe('2026-07-30'); // FF + 14 - 60 - 14
+    expect(fallIndoorLatest(coolWarmHardy, { observedFirstFallFrost: '11-08' })).toBe('2026-07-30');
+  });
+
+  it('the V4-MATURITYBASIS nursery shift is IDENTICAL on both arms', () => {
+    // The interaction BUG-FROSTANCHORWRONG-001 flagged as the reason this re-key was not a constant
+    // swap. It resolves in the helpful direction: the nursery term shifts `latest` back by the same
+    // number of days whichever anchor `latest` is measured from, so the basis correction and the
+    // anchor are orthogonal and a future re-derivation of the offset measures only the offset.
+    // Asserted as a computed SHIFT, never as two literals — a guard on two constants would survive
+    // the mutation it exists to catch. MUTATION: apply nurseryDays on only one arm and this is red.
+    const TX = { dtm_basis: 'from-transplant' };  // weeks 3-4 -> wMax 4 -> nursery 28d
+    const shift = (over) => (isoToMsUTC(fallIndoorLatest(over)) - isoToMsUTC(fallIndoorLatest({ ...over, ...TX }))) / D;
+    expect(shift(HARDY)).toBe(28);
+    expect(shift(NOT_HARDY)).toBe(28);
+    expect(shift(HARDY)).toBe(shift(NOT_HARDY));
+  });
+
+  it('hardy maturity lands inside the 10-hour wall, FALL_SLOWDOWN_DAYS before measured frost', () => {
+    // The structural bound, computed from the exports rather than pinned as a date: dropping the
+    // grace is what keeps `latest + nursery + dtm` at FFobs - slowdown instead of past it.
+    //
+    // The two assertions are ordered so each has its OWN mutation rather than the first masking the
+    // second (vitest stops a test at the first failing expect).
+    //   * The WALL bound: MUTATION carry the grace onto the hardy arm (`ctx.FFobs + (grace - dtm -
+    //     slowdown - nursery)`) — maturity lands 2026-11-12, past the 2026-11-07 wall, red. This is
+    //     the over-correction that killed the old FALL_GRACE_HARDY on the direct branch, caught here
+    //     on the indoor one. The wall comes from lambda/daily-plan/overwinter.js, derived from solar
+    //     declination and latitude with no knowledge of frost, so it is an independent cross-check
+    //     rather than a restatement of the anchor.
+    //   * The SLOWDOWN relation: MUTATION put the hardy arm back on ctx.FF, with or without the
+    //     branch — red at 17 (grace kept) or 45 (grace dropped), i.e. it catches the defect in the
+    //     original direction too.
+    const maturity = isoToMsUTC(fallIndoorLatest(HARDY)) + 60 * D; // latest + dtm, nursery 0
+    const wall = ow.persephoneDates(ow.SITE_LAT, 2026).closes;
+    expect(maturity).toBeLessThan(toMs(wall.slice(5)));
+    expect((toMs(OBSERVED_FIRST_FALL_FROST.medianMonthDay) - maturity) / D).toBe(FALL_SLOWDOWN_DAYS);
   });
 });

@@ -76,7 +76,15 @@ export const OBSERVED_FIRST_FALL_FROST = Object.freeze({
 /** Days shaved off fall math for slowing autumn growth. */
 export const FALL_SLOWDOWN_DAYS = 14;
 
-/** Fall indoor-pass grace days by season (warm gets no fall pass). */
+/** Fall indoor-pass grace days by season (warm gets no fall pass).
+ * V4-FALLINDOORHARDY-001 NARROWED WHAT `cool` MEANS HERE without changing its value. The fall indoor
+ * pass now routes FALL_HARDY_CROPS onto ctx.FFobs with NO grace, so `cool` is consumed only by
+ * cool-season crops that frost KILLS. 28 days past the sowing-safety margin (= Oct 26) was defensible
+ * while the bucket held kale and lettuce alongside them; for the tender remainder alone it is loose,
+ * and the honest value is probably FALL_GRACE_COOL's 14, matching the direct-sow branch. NOT changed
+ * here: that is a calibration decision with no measurement behind it either way, and this item is the
+ * anchor re-key. Filed rather than guessed.
+ */
 export const FALL_GRACE_DAYS = Object.freeze({ cool: 28, cool_warm: 14 });
 
 // ── Allium viability gate (V4-SOWNOW-PHOTOPERIOD-001) ────────────────────────────
@@ -582,9 +590,11 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   // anchor assumes days_to_maturity counts from that indoor sow. For a crop whose catalogue DTM is
   // quoted FROM TRANSPLANT that is wrong by the entire nursery period (4–6 weeks across the live
   // fall candidates), because maturity is reached `nursery` days later than the math assumes:
-  //     maturity      = indoorStart + nursery + dtm   must be <=  FF + grace - FALL_SLOWDOWN_DAYS
-  //     => indoorStart <= FF + grace - FALL_SLOWDOWN_DAYS - dtm - nursery
-  // i.e. the corrected latest-start is the existing one shifted back by the nursery period.
+  //     maturity      = indoorStart + nursery + dtm   must be <=  deadline - FALL_SLOWDOWN_DAYS
+  //     => indoorStart <= deadline - FALL_SLOWDOWN_DAYS - dtm - nursery
+  // i.e. the corrected latest-start is the existing one shifted back by the nursery period. The
+  // `deadline` term is what V4-FALLINDOORHARDY-001 below splits in two (FF + grace, or FFobs); the
+  // nursery shift is identical either way, which is why that split leaves this derivation intact.
   // Measured against live prod 2026-08-04: 14 fall brassica/lettuce windows the engine still showed
   // OPEN had in fact closed between 2026-06-23 and 2026-07-17. Telling the user to start fall
   // brassicas that cannot beat a Sep-28 frost is the failure this corrects.
@@ -593,11 +603,28 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   // a LONGER nursery closes the window EARLIER, the conservative direction in a frost race.
   // from-sow and NULL (uncurated) shift by zero — byte-identical to the pre-basis behaviour, which
   // is what keeps this a provable no-op for direct-sow crops and for every uncurated crop type.
-  // BUG-FROSTANCHORWRONG-001 CLASSIFICATION — this pass stays on ctx.FF, the sowing-safety margin.
-  // It is keyed by sow_season and knows nothing about hardiness, so `cool` here covers both kale
-  // (which stands frost) and the cool-but-tender crops, and there is no branch to route separately.
-  // Re-keying the fall indoor pass by FALL_HARDY_CROPS is a real follow-up, not a constant swap:
-  // the nursery-offset correction above is tuned against this same anchor.
+  // V4-FALLINDOORHARDY-001 — the follow-up BUG-FROSTANCHORWRONG-001 filed. This pass used to be keyed
+  // by sow_season ALONE, so its `cool` bucket held kale (which stands frost) and the cool-but-tender
+  // crops together on one anchor. It is now keyed by hardiness FIRST, exactly as latestSafeMs's cool
+  // branch is: a FALL_HARDY_CROPS slug is "unharmed or improved by frost", so frost is not the event
+  // that ends it and the sowing-safety margin has no job — the question is when frost ARRIVES, which
+  // is a measurement (ctx.FFobs). Everything else keeps ctx.FF.
+  //
+  // THE GRACE GOES WITH THE ANCHOR, and dropping it is the point rather than an omission. `grace` on
+  // the hardy arm was the SAME fabricated 28 that BUG-FROSTANCHORWRONG-001 deleted from the direct
+  // branch (FALL_GRACE_HARDY was copied FROM FALL_GRACE_DAYS.cool); it looked right only because it
+  // was cancelling an anchor 31 days early. Carrying it onto FFobs would aim maturity at Nov 26,
+  // past the site's own 10-hour wall. So the hardy arm is FFobs - dtm - slowdown - nursery, which
+  // moves the latest indoor start +3 days — the identical delta the direct branch took, from the
+  // identical cause.
+  //
+  // SCOPED TO `cool`, not to the whole hardy set: latestSafeMs routes cool_warm to a strictly TIGHTER
+  // margin (FF - dtm - 7) regardless of hardiness, and widening it here would make the indoor pass
+  // more permissive than the direct one for the same packet. 4 live cool_warm candidates carry a
+  // hardy slug (3 of them with an indoor method); they keep the margin.
+  //
+  // FALL_SLOWDOWN_DAYS STAYS ON BOTH ARMS. It corrects the DTM for shortening days, not the anchor
+  // for frost — a different quantity from the grace, and hardiness says nothing about it.
   const grace = FALL_GRACE_DAYS[candidate.sow_season];
   if (grace != null && dtm != null) {
     const fromTransplant = candidate.dtm_basis === DTM_BASIS_TRANSPLANT;
@@ -608,7 +635,15 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
     // all 28 fall-eligible from-transplant candidates carry indoor weeks (checked 2026-08-04).
     if (fromTransplant && wMax == null) return windows;
     const nurseryDays = fromTransplant ? wMax * 7 : 0;
-    const latest = ctx.FF + (grace - dtm - FALL_SLOWDOWN_DAYS - nurseryDays) * DAY_MS;
+    // The V4-MATURITYBASIS-001 nursery term is subtracted IDENTICALLY on both arms and is unchanged
+    // by this item: it shifts `latest` back by the nursery period whichever anchor `latest` is
+    // measured from. Re-deriving it gets EASIER, not harder — the 20 from-transplant hardy cool
+    // candidates it most affects now sit on the measured anchor, so a refit measures the nursery gap
+    // instead of absorbing 31 days of anchor error into it.
+    const fallHardy = candidate.sow_season === 'cool' && FALL_HARDY_CROPS.has(candidate.crop_type_slug);
+    const latest = fallHardy
+      ? ctx.FFobs - (dtm + FALL_SLOWDOWN_DAYS + nurseryDays) * DAY_MS
+      : ctx.FF + (grace - dtm - FALL_SLOWDOWN_DAYS - nurseryDays) * DAY_MS;
     windows.push({
       open: latest - 28 * DAY_MS,
       close: latest,

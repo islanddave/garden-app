@@ -172,35 +172,77 @@ export const DERIVED_STATUS_SUPPRESSED = new Set(['flowering', 'fruiting']);
 // ±10d window and everything past it, since a row opening 30 days AFTER frost is more wrong than one
 // opening 5 days after, not less.
 //
-// BUG-FROSTANCHORWRONG-001 CLASSIFICATION — this consumer stays on the SOWING-SAFETY MARGIN, and
-// that is now a decision rather than an accident. sowEngine.js exports two anchors: the margin
-// ('09-28') and OBSERVED_FIRST_FALL_FROST (measured median '10-29'). Read strictly by contract this
-// guard wants the measured one — the comment above says "within ~10 days either side of first fall
-// frost", and against measurement it is currently firing ~31 days early on top of its own 10-day
-// window, i.e. two conservatisms stacked. It is NOT moved here because the arithmetic is a
-// SUPPRESSION and the band it suppresses is habit-scoped (single/repeat), not hardiness-scoped:
-// moving it later un-suppresses derived rows for frost-TENDER crops as well as hardy ones, and
-// nothing in this module can tell them apart. That trade needs the frost band, not a constant swap.
-// Filed separately; do not "finish the job" by editing the number alone.
+// BUG-WATCHFROSTSUPPRESS-001 — this consumer is now HARDINESS-SCOPED, which is what unblocked it.
 //
-// SINGLE SOURCE OF TRUTH: src/lib/sowEngine.js FROST_ANCHORS (`firstFallFrost` / `windowClosingDays`).
-// This Lambda CANNOT import it — lambda/** and src/** are separate module graphs and bundling src
-// into the harvests Lambda is not a thing this repo does (the same constraint watch-route.js states
-// for IMPRESSION_PROJECT_SLOT_CAP). So the two values are RESTATED here and pinned in lockstep by
+// BUG-FROSTANCHORWRONG-001 classified it as wanting the measured date by contract (the comment above
+// says "within ~10 days either side of first fall frost", and against measurement the margin fires
+// ~31 days early ON TOP OF this window — two conservatisms stacked) and then deliberately did NOT
+// move it, for a reason that was about the code: the arithmetic is a SUPPRESSION, and the band it
+// suppresses is habit-scoped (single/repeat), not hardiness-scoped. Moving the constant alone would
+// have un-suppressed derived rows for frost-TENDER crops as well as hardy ones, which is strictly
+// worse than the conservatism it was fixing. Its prohibition on "finishing the job by editing the
+// number" was right, and this is not that edit: the discrimination it said was missing is supplied
+// below, and only then does the anchor move — for hardy crops ONLY.
+//
+// WHY crop_type_slug IS THE VECTOR, established rather than assumed. Three candidates were checked:
+//   * The frostClass BAND — the semantically ideal answer ("unharmed or improved by frost") — is in
+//     lambda/daily-plan/. Not importable: deploy-lambda.yml zips each function from its own directory
+//     (`cd lambda/<fn> && zip -r`), so a cross-directory import resolves under vitest and then 502s
+//     at module load in the deployed function. That is the documented house hazard at
+//     lambda/plants/validate.js:5-8, and it applies identically to src/lib/sowEngine.js.
+//   * A crop_types COLUMN would need no mirror at all. There is none: the live prod table carries no
+//     hardiness/frost column of any kind (checked 2026-08-18), and frostClass's bands are code-side
+//     slug lists, not data. So no join can answer this.
+//   * `row.crop_type_slug` IS already on every row this module sees — watch-route.js's `live` CTE
+//     selects cv.crop_type_slug and the final SELECT is `l.*`; projectWatchRow already re-emits it.
+// So the set is mirrored here and pinned in lockstep, the same trade the frost date itself already
+// makes below.
+//
+// FAIL-SAFE DIRECTION, deliberately. An unknown/absent slug falls through to the MARGIN, i.e. stays
+// suppressed — matching frostClass's own UNKNOWN_BAND='tender' rule. The two errors are not
+// symmetric: wrongly calling a crop hardy opens a row inviting Dave to walk out to a dead plant (the
+// horticulture seat's one non-negotiable), while wrongly calling it tender only preserves today's
+// behaviour.
+//
+// SINGLE SOURCE OF TRUTH: src/lib/sowEngine.js — FROST_ANCHORS (`firstFallFrost` /
+// `windowClosingDays`), OBSERVED_FIRST_FALL_FROST.medianMonthDay, and FALL_HARDY_CROPS. This Lambda
+// CANNOT import them (see the zip constraint above; watch-route.js states the same for
+// IMPRESSION_PROJECT_SLOT_CAP). So all four are RESTATED here and pinned in lockstep by
 // anchorDerive.test.js, which imports BOTH modules at test time and fails if they ever diverge.
-// Change them in sowEngine.js; this copy follows.
+// Change them in sowEngine.js; this copy follows. FALL_HARDY_CROPS is in turn pinned as a subset of
+// frostClass.js's `hardy` band by sowEngine.test.js, so the chain reaches the canonical vocabulary
+// without this file importing across either boundary.
 export const DERIVED_FIRST_FALL_FROST_MMDD = '09-28'; // = FROST_ANCHORS.firstFallFrost
 export const DERIVED_FROST_WINDOW_DAYS = 10;          // = FROST_ANCHORS.windowClosingDays
+// = OBSERVED_FIRST_FALL_FROST.medianMonthDay. A MEASURED central estimate (11 years, ERA5 at this
+// site), not a margin — read the two-anchor note at sowEngine.js FROST_ANCHORS before touching it.
+export const DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD = '10-29';
+// = FALL_HARDY_CROPS. The edible subset of frostClass's hardy band: the harvested organ keeps
+// standing, or improves, through repeated fall frost — so for these crops the window this tier
+// points at DOES exist past the margin, which is the whole premise of the suppression.
+export const DERIVED_FROST_HARDY_SLUGS = new Set([
+  'arugula', 'beet', 'bok_choy', 'broccoli', 'brussels_sprouts', 'bunching_onion', 'cabbage',
+  'carrot', 'celery', 'chard', 'chervil', 'chives', 'cilantro', 'collard', 'endive', 'garlic',
+  'kale', 'kohlrabi', 'leek', 'lettuce', 'mustard', 'parsley', 'parsnip', 'radicchio', 'radish',
+  'spinach', 'turnip',
+]);
 
-// The first-fall-frost date for the grow year `ymd` sits in. The grow year runs Nov 1 - Oct 31 (the
-// boundary watch-route.js's `bounds` CTE already uses), so from November onward the NEXT first fall
-// frost belongs to the following calendar year.
-export function firstFallFrostFor(ymd) {
+// The first-fall-frost date for the grow year `ymd` sits in, for a crop of type `cropTypeSlug`. The
+// grow year runs Nov 1 - Oct 31 (the boundary watch-route.js's `bounds` CTE already uses), so from
+// November onward the NEXT first fall frost belongs to the following calendar year.
+//
+// `cropTypeSlug` selects WHICH anchor, per the note above: measured for a fall-hardy crop, the
+// sowing-safety margin for everything else including null/unknown. It is optional so the function
+// stays callable without a row, and omitting it yields the pre-BUG-WATCHFROSTSUPPRESS-001 answer.
+export function firstFallFrostFor(ymd, cropTypeSlug = null) {
   const s = toYmd(ymd);
   if (s == null) return null;
   const year = Number(s.slice(0, 4));
   const month = Number(s.slice(5, 7));
-  return `${month >= 11 ? year + 1 : year}-${DERIVED_FIRST_FALL_FROST_MMDD}`;
+  const mmdd = DERIVED_FROST_HARDY_SLUGS.has(cropTypeSlug)
+    ? DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD
+    : DERIVED_FIRST_FALL_FROST_MMDD;
+  return `${month >= 11 ? year + 1 : year}-${mmdd}`;
 }
 
 // A single-habit crop is the POINT of this module (see the blind-spot note above). Repeating habits
@@ -520,7 +562,12 @@ function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR
       // Condition 3 — the frost window. Suppression compares the date the watch would OPEN against
       // the frost anchor, not the anchor date: a row is useless precisely when the thing it invites
       // Dave to go look for cannot happen before the plant dies.
-      const frost = firstFallFrostFor(etToday ?? derivedDate);
+      //
+      // BUG-WATCHFROSTSUPPRESS-001: which frost anchor is per-crop. "Before the plant dies" is a
+      // premise, not a constant — for a FALL_HARDY_CROPS slug the plant does not die at first frost,
+      // so the row it would suppress is a real one and the anchor becomes a measurement. An absent or
+      // unknown slug keeps the margin; see the fail-safe note at the constants.
+      const frost = firstFallFrostFor(etToday ?? derivedDate, row?.crop_type_slug ?? null);
       const frostCutoff = frost == null ? null : addDays(frost, -DERIVED_FROST_WINDOW_DAYS);
       const frostSuppressed = checkFrom != null && frostCutoff != null && checkFrom >= frostCutoff;
 
