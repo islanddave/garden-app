@@ -452,6 +452,12 @@ export function accruesQtyLost(eventType) {
 // consumers (FeedPage) is a READ filter over the feed, where the two types must appear the moment
 // rows carrying them exist — a distinction that is invisible if every site just imports
 // EVENT_TYPES. Re-narrowing a future panel-less type is one line here again.
+//
+// V4-PICKERGATE-001 — this is now the INPUT to creatableEventTypes() at the bottom of this file,
+// not the list a creation surface renders directly. Opening the gate here made the three types
+// with required capture fields (harvest, failed, given_away) visible on three surfaces that cannot
+// collect those fields, where every save is a guaranteed 400. Global narrowing stays a one-line
+// change here; per-surface narrowing is the capability cross down there.
 export const SELECTABLE_EVENT_TYPES = EVENT_TYPES
 
 // ── Derived batch allowlist (NEVER hand-listed) ─────────────────────
@@ -531,5 +537,55 @@ export const PLANTING_EXEMPT_TYPES = EVENT_TYPES.filter((t) => !PLANTING_REQUIRE
 // and carries its own plant_id gate) return false here — they are governed by their own rules.
 export function requiresPlanting(eventType) {
   return PLANTING_REQUIRED_TYPES.has(eventType)
+}
+
+// ── V4-PICKERGATE-001 — creation-surface capability gate ────────────
+// THE RULE: a creation surface must not OFFER a type it cannot successfully SUBMIT. Offering one is
+// worse than omitting it — the user makes a choice, fills the form, taps Save and gets a generic
+// error, which reads as a broken app rather than as an unsupported option.
+//
+// This is a CROSS of two facts, which is why it is a function of the surface and not a constant:
+// what the API DEMANDS of a type (below), against what a given surface can COLLECT (its call site).
+//
+// The types whose API contract demands a field only a dedicated capture panel can gather. Derived
+// from PLANT_REDUCTION_EVENT_TYPES for the reduction pair so that list stays the one source; the
+// third member is named here because nothing else names it:
+//   harvest     -> lambda/events/validators.js validateHarvestFields — `body.harvest` {quantity,unit}
+//                  is REQUIRED. Absent -> 400 'harvest fields required for event_type=harvest'.
+//   failed      -> validateReduction — `metadata.qty_reduced` + `metadata.loss_reason` REQUIRED.
+//   given_away  -> validateReduction — `metadata.qty_reduced` + `metadata.giveaway_reason` REQUIRED.
+//
+// The membership is HAND-LISTED here and PROVEN elsewhere, deliberately: this module has ZERO
+// imports by design (it is copied verbatim into the Lambda by gen-lambda-event-types.mjs), so it
+// cannot read the validator at runtime. creatableEventTypes.test.js closes the loop by running the
+// REAL validator over all EVENT_TYPES with each surface's real POST body, so a fourth
+// required-field type added to the validator and forgotten here reds the suite.
+export const CAPTURE_PANEL_REQUIRED_TYPES = ['harvest', ...PLANT_REDUCTION_EVENT_TYPES]
+
+export function requiresCapturePanel(eventType) {
+  return CAPTURE_PANEL_REQUIRED_TYPES.includes(eventType)
+}
+
+// The list a CREATION surface renders, given what that surface can collect. Reads
+// SELECTABLE_EVENT_TYPES, so the global creation gate stays the one-line seam it was: narrowing
+// there still narrows every creation surface at once, and a READ filter (FeedPage) keeps importing
+// the constant directly and is untouched by any of this.
+//
+//   capturePanels — the surface renders the required capture panels (harvest fields, plant
+//                   reduction fields). Today ONLY EventNew does.
+//   plantScoped   — the surface's POST carries a plant_id. A location-scoped event does not.
+//
+// Capabilities rather than a surface NAME (`creatableIn('mini-logger')`) on purpose: a name would
+// make this module know every page in the app — the wrong direction for a zero-import canonical
+// vocabulary — and it would say WHICH surface without saying WHY. A capability is checkable against
+// the call site's own code.
+export function creatableEventTypes(
+  { capturePanels = false, plantScoped = false } = {},
+  types = SELECTABLE_EVENT_TYPES,
+) {
+  return types.filter((t) => (
+    (capturePanels || !requiresCapturePanel(t)) &&
+    (plantScoped || !requiresPlanting(t))
+  ))
 }
 

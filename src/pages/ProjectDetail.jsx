@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
-import { P, PROJECT_STATUSES, SELECTABLE_EVENT_TYPES, APP_URL } from '../lib/constants.js'
-import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
+import { P, PROJECT_STATUSES, APP_URL } from '../lib/constants.js'
+import { EVENT_TYPE_META, requiresPlanting, creatableEventTypes } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import Icon from '../components/Icon.jsx'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
@@ -39,6 +39,16 @@ import useScrollRestore from '../hooks/useScrollRestore.js'
 // carries 5,257 events), which Route 4 now supports via &offset= — see the contract note on that
 // handler. 200 is therefore the PAGE SIZE here, not a ceiling.
 const EVENT_PAGE_SIZE = 200
+
+// V4-PICKERGATE-001 — what THIS surface can submit, not the whole vocabulary.
+//
+// The mini-logger's POST body (handleLogEvent) has no `harvest` key and no `metadata` key at all,
+// so every type whose API contract requires one was a guaranteed 400 from here: harvest has been
+// since it shipped, and V4-LOSSUI-001 added failed / given_away when it opened the creation gate.
+//
+// plantScoped: the form DOES carry a plant_id — it has a planting picker, required by
+// handleLogEvent for predicating types — so the ~34 planting-predicating types stay offered.
+const MINI_LOGGER_EVENT_TYPES = creatableEventTypes({ capturePanels: false, plantScoped: true })
 
 // V4-SCROLLRESTORE-001 (BD0806-05) — how much of a paged log a Back re-opens.
 //
@@ -1105,7 +1115,7 @@ export default function ProjectDetail() {
                   value={eventForm.event_type}
                   onChange={e => setEventForm(f => ({ ...f, event_type: e.target.value }))}
                 >
-                  {[...SELECTABLE_EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
+                  {[...MINI_LOGGER_EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                     <option key={t} value={t}>
                       {EVENT_TYPE_META[t]?.label ?? t.replace(/_/g, ' ')}
                     </option>
