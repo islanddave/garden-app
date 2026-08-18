@@ -69,7 +69,9 @@ BEGIN
 
   DELETE FROM public.event_log WHERE id = v_e1;
 
-  SELECT count(*), max(action), max(actor_clerk_sub), max(before_jsonb)
+  -- array_agg(...)[1] rather than max(): jsonb has no max() aggregate. Exactly one row is expected
+  -- here, and the count assertion immediately below is what enforces that.
+  SELECT count(*), max(action), max(actor_clerk_sub), (array_agg(before_jsonb))[1]
     INTO v_n, v_act, v_who, v_before
     FROM public.audit_events WHERE row_id = v_e1;
 
