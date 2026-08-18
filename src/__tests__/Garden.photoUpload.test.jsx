@@ -141,8 +141,13 @@ describe('Garden — per-planting photo uploader (V3-IA restore)', () => {
 
     // Step 3: POST /api/photos with linkage {plant_id, project_id} — featured/primary
     // semantics ride server-side auto-promote off this registration, same as old Plants page.
-    const postCall = fetchMock.mock.calls.find(([u, o]) => u === '/api/photos' && o?.method === 'POST')
-    expect(postCall).toBeDefined()
+    // waitFor, not a bare read: BUG-PHOTOTAKENATNULL-001 put a capture-metadata read on this path
+    // and readCaptureMeta lazy-loads exifr, so step 3 now lands a chunk-fetch tick after the change
+    // event instead of inside it. This test drives the input without awaiting the upload promise,
+    // so it is the one place that noticed. The contract asserted is unchanged.
+    const findPost = () => fetchMock.mock.calls.find(([u, o]) => u === '/api/photos' && o?.method === 'POST')
+    await waitFor(() => expect(findPost()).toBeDefined())
+    const postCall = findPost()
     const body = JSON.parse(postCall[1].body)
     expect(body).toMatchObject({ plant_id: 'p1', project_id: 'a', is_public: true, caption: null })
     expect(body.storage_path).toMatch(/^plants\/p1\/.+\.jpg$/)

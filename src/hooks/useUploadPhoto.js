@@ -5,7 +5,7 @@
 //  2b. GET  /api/photos/thumb-upload-url?key=... -> PUT the 800px thumb at thumbs/<key>
 //      BEST-EFFORT: every failure swallowed. Closes the gap where only the 913 backfilled
 //      photos had thumbs and every new upload fell back to its full-size original.
-//   3. POST /api/photos { storage_path, linkage..., caption, is_public } -> photo row
+//   3. POST /api/photos { storage_path, linkage..., caption, is_public, capture meta } -> photo row
 //
 // Owns URL.createObjectURL / revokeObjectURL lifecycle so callers can't leak blob URLs.
 //
@@ -29,6 +29,7 @@ import { useApiFetch, apiFetch } from '../lib/api.js';
 import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
 import { downscaleWithThumb } from '../lib/imageDownscale.js';
+import { readCaptureMeta } from '../lib/imagePipeline.js';
 import { putWithProgress } from '../lib/uploadPut.js';
 
 // Step 2b only. The thumb is ~50KB; if it has not landed in 10s it is not going to, and it must
@@ -72,6 +73,15 @@ async function blobToBase64(blob) {
 // to. On deadline, proceed with the ORIGINAL file — exactly the module's own fail-safe contract,
 // enforced by clock instead of by catch.
 const DOWNSCALE_DEADLINE_MS = 15_000;
+
+// BUG-PHOTOTAKENATNULL-001: same discipline for the capture-metadata read. readCaptureMeta reads a
+// bounded ~128KB slice and swallows its own errors, so the only way past this deadline is a File
+// whose read never settles (a content:// picker handle on a yanked SD card) or an exifr chunk that
+// never arrives. It is a backstop, not a budget — the read is kicked off at the top of upload() and
+// only awaited after the S3 PUT, so it has the whole upload to settle. Losing the metadata here is
+// acceptable; losing the photo is not.
+const CAPTURE_META_DEADLINE_MS = 5_000;
+const NO_CAPTURE_META = { takenAt: null, tzOffset: null, gpsLat: null, gpsLon: null, orientation: null };
 
 // Lightweight UUID for the photo key segment. Doesn't need RFC4122 — the DB
 // generates its own UUID for photos.id. This is the S3-key per-upload token.
@@ -140,6 +150,22 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
     setProgress(null);
 
     try {
+      // BUG-PHOTOTAKENATNULL-001: capture metadata, read from the ORIGINAL `file`. Both ends of
+      // this plumbing shipped in v3.55.0 — imagePipeline extracts the fields, and
+      // lambda/photos/index.js binds all of them in both INSERT templates — and nothing ever
+      // connected them, so taken_at was NULL on 1,270 of 1,270 prod rows while the phone destroyed
+      // the only copy on every upload.
+      //
+      // ORDERING (imagePipeline.js rule 1) IS PRESERVED BY WHICH BYTES ARE READ, NOT BY WHEN.
+      // canvas.toBlob() emits a bare JPEG with no APP1 segment, so reading the RESIZED output
+      // returns null forever. `file` is const and downscaleWithThumb returns a NEW File rather than
+      // mutating it, so this sees the original APP1 no matter how the resize below turns out.
+      // Started here and awaited only after the PUT: a 128KB header read overlapped with a ~50MB
+      // decode costs nothing, and it gives readCaptureMeta's lazy exifr chunk the whole presign+PUT
+      // window to arrive before anything waits on it.
+      const capturePromise = Promise.resolve(readCaptureMeta(file))
+        .then((v) => v ?? NO_CAPTURE_META, () => NO_CAPTURE_META);
+
       // BUG-PHOTOBLANK-001: shrink BEFORE anything derives from the file. Raw camera originals
       // (3-12MB) are what stall the S3 PUT on a mobile uplink. downscaleImage is fail-safe — it
       // returns the ORIGINAL file on any error or when re-encoding wouldn't save bytes — so this
@@ -244,6 +270,20 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
         } catch { /* no thumb: read path falls back to view_url, exactly as it does today */ }
       }
 
+      // Bounded for the same reason the downscale is (BUG-PHOTOUPLOADHANG-001): nothing new on the
+      // save path may be able to wedge it. The read has had the whole upload to settle by now, so
+      // this deadline only ever fires on a read or a chunk fetch that is never going to finish.
+      const capture = await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          console.warn(`capture-metadata read did not settle in ${CAPTURE_META_DEADLINE_MS}ms — taken_at will be null`);
+          resolve(NO_CAPTURE_META);
+        }, CAPTURE_META_DEADLINE_MS);
+        capturePromise.then(
+          (v) => { clearTimeout(timer); resolve(v); },
+          () => { clearTimeout(timer); resolve(NO_CAPTURE_META); },
+        );
+      });
+
       // Step 3: register the photo row + linkage
       const registered = await fetch('/api/photos', {
         method: 'POST',
@@ -252,6 +292,24 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
           caption,
           is_public,
           ...linkage,
+          // BUG-PHOTOTAKENATNULL-001. These columns have been bound by buildPhotoInsert since
+          // v3.55.0 and the client sent none of them. Written AFTER ...linkage deliberately: they
+          // are derived from the bytes actually uploaded and must not be clobberable by a caller's
+          // linkage object.
+          // NULL IS A LEGITIMATE VALUE, not a gap to paper over. A screenshot, a download, or a
+          // photo a messaging app already stripped genuinely has no capture time, and dating one
+          // by upload time would make the column assert something untrue — the exact distinction
+          // taken_at exists to draw (see its COMMENT in migrations/v4-photobulk-p1/0a-additive-ddl).
+          // Readers already fall back to created_at when it is NULL.
+          // content_hash is deliberately absent — writing it would arm idx_photos_content_hash_uniq
+          // and turn this INSERT into an UPSERT. That belongs to V4-PHOTOBULK-001's dedupe work,
+          // not to a capture-time fix; pinned by useUploadPhoto.captureMeta.test.js.
+          taken_at:          capture.takenAt ? capture.takenAt.toISOString() : null,
+          gps_lat:           capture.gpsLat,
+          gps_lon:           capture.gpsLon,
+          file_size_bytes:   typeof upFile.size === 'number' ? upFile.size : null,
+          mime_type:         mime,
+          original_filename: file.name || null,
         }),
       });
 
