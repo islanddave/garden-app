@@ -10,6 +10,7 @@ import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryIt
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isAllowedUploadKey } from './uploadKeyPolicy.js';
+import { normalizeViewTier, viewTierKey, PHOTO_VIEW_TIERS } from './viewTier.js';
 // W-DEL — the soft-delete + restore core lives in its own module BECAUSE this file is not
 // importable from the repo root, so anything written here can only be covered by SQL-text
 // assertions. See photoDelete.js's header.
@@ -592,10 +593,19 @@ export const handler = async (event) => {
       return resp(200, { ok: true, key, thumb: thumbStored });
     }
 
-    // GET /api/photos/view-url/:id — returns pre-signed GET URL for a photo record
+    // GET /api/photos/view-url/:id — returns pre-signed GET URL for a photo record.
+    //
+    // V4-TIERBLINDMINT-001 — `?tier=thumb` re-mints the THUMB derivative instead of the original,
+    // and the 200 body NAMES the tier it minted. Absent tier => 'full', i.e. the pre-change response
+    // plus one additive field, so every already-deployed client is unaffected. See viewTier.js for
+    // why the tier is an enum rather than a caller-supplied key fragment.
     const viewMatch = rawPath.match(/^\/api\/photos\/view-url\/([^/]+)$/);
     if (viewMatch && method === 'GET') {
       const photoId = viewMatch[1];
+      // Validated BEFORE the SELECT: a purely syntactic check on the caller's own input, so
+      // rejecting here leaks nothing about whether the photo exists and skips a pointless query.
+      const tier = normalizeViewTier(event.queryStringParameters?.tier);
+      if (!tier) return resp(400, { error: `tier must be one of: ${PHOTO_VIEW_TIERS.join(', ')}` });
       const rows = await sql`
         SELECT storage_path FROM photos
         WHERE id = ${photoId}
@@ -603,8 +613,17 @@ export const handler = async (event) => {
           AND deleted_at IS NULL
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
-      const viewUrl = await resolvePhotoViewUrl(rows[0].storage_path, { presign: getViewUrl, sm });
-      return resp(200, { view_url: viewUrl, expires_in: 900 });
+      // A missing thumb object presigns fine and fails on GET — the SAME hint contract both list
+      // paths already publish (BUG-PHOTONEWTHUMB-001: thumb_url is a non-empty string on all 1094
+      // rows, only 913 of which have an object), and the client's degrade chain already answers it
+      // by falling back to the full source. Deliberately no HEAD probe: it would spend an S3 round
+      // trip on every heal to learn what the next <img> error reports for free.
+      // Keyed on its own line, not inlined into the call: lambda/photo-access.test.js census
+      // requires every resolvePhotoViewUrl call to read `(<arg>, { presign, sm })` with no nested
+      // parens, so that one well-formed call cannot vouch for a malformed sibling.
+      const tierKey = viewTierKey(rows[0].storage_path, tier);
+      const viewUrl = await resolvePhotoViewUrl(tierKey, { presign: getViewUrl, sm });
+      return resp(200, { view_url: viewUrl, expires_in: 900, tier });
     }
 
     // ── V4-SPACEPHOTO-001 space routes (all inert unless SPACE_PHOTOS_ENABLED=true) ───────────────

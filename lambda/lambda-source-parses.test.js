@@ -38,8 +38,10 @@ function walkFiles(dir, out = []) {
   return out
 }
 
-// Deployable = everything the `zip -r` in .github/workflows/deploy-lambda.yml puts in the bundle,
-// which is the whole directory. Tests are excluded only because vitest already parses those itself.
+// Deployable = everything the `zip -r` in .github/workflows/deploy-lambda.yml puts in the bundle:
+// the whole directory MINUS *.test.js, which that step now excludes (OPS-LAMBDATESTZIP-001). The
+// filter below therefore mirrors the shipped bundle exactly; before the exclude it happened to
+// match only because vitest parses the test files itself.
 const FILES = walkFiles(LAMBDA).filter((f) => !/\.test\.js$/.test(f)).map((f) => relative(ROOT, f))
 
 describe('lambda source is valid JavaScript', () => {
