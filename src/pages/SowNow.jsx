@@ -168,10 +168,12 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   // LANDMINE CHECK (V4-RELOADGATEWIRE-001, cf. EventNew's draftRestoredTypeRef): EventNew's restore
   // set form.event_type, which a SEPARATE effect ([form.event_type]) watched and treated as a fresh
   // type change, wiping the very state the restore had just filled — fixed with a one-shot skip ref.
-  // No such landmine here: `sowTarget` is set by exactly one effect (this one) and read only by the
-  // render below and the two effects immediately following it, which key on `dirty`/`sowTarget`
-  // themselves rather than reacting to a sowTarget change as a "fresh" signal. Nothing else in this
-  // file is keyed on sowTarget, so a restored value cannot trigger a competing reset.
+  // No such landmine here — but NOT because there is a single writer: `sowTarget` is also set by
+  // openSowSheet (both the Sow and the "Sow anyway" taps), cleared by closeSowSheet, and cleared
+  // again on a successful create. What makes the restore safe is that nothing treats a sowTarget
+  // CHANGE as a fresh selection to reset from: the only readers are the render below and the two
+  // effects immediately following, which key on `dirty`/`sowTarget` to mirror the value outward
+  // (stash, overlay-dirty, reload gate) and reset no state of their own.
   const restoredDraftRef = useRef(false)
   useEffect(() => {
     if (restoredDraftRef.current || !buckets) return
@@ -186,19 +188,33 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     if (entry) setSowTarget(entry)
   }, [buckets])
 
-  // Persist while the sheet holds a target. NOT cleared on close/backdrop — same rule EventNew and
-  // LogMany apply: the stash exists precisely to survive a dismiss or a mid-form SW reload, so an
-  // explicit Close leaves it in place for recovery too. Cleared only on a successful sow, below.
+  // Persist while the sheet holds a target — for ABNORMAL exits only (see closeSowSheet: an
+  // explicit dismissal clears it, unlike EventNew/LogMany).
+  //
+  // WHAT THIS RECOVERS, PRECISELY: the inventory_item_id, i.e. WHICH packet was mid-sow, and
+  // nothing else. It does NOT preserve anything typed or picked inside the sheet — place/project,
+  // location, quantity, planting notes, dates — because PlantingEditor owns that state internally
+  // and exposes no onChange/onDirty prop for SowNow to observe. So a mid-sheet SW reload that beats
+  // the gate re-opens the right packet on an EMPTY form. Closing that gap needs a change to
+  // PlantingEditor's own interface (filed separately), not a bigger payload here: there is no way
+  // from this file to read the fields, and a stash that claims to restore a form it cannot read
+  // would be worse than one that honestly restores only the target.
   useEffect(() => {
     if (!dirty) return
     writeDraft(DRAFT_KEY, { inventoryItemId: sowTarget.candidate.inventory_item_id })
   }, [dirty, sowTarget])
 
   // Tells the hosting overlay Sheet (if any) not to let a stray backdrop tap silently discard this
-  // page while a sow is mid-flight. SowNow is registered ONLY as a full-page route (`/sow` in
-  // App.jsx) today, so this is presently a no-op (no OverlayDirtyContext provider) — added anyway so
-  // the page carries the standard three-guard shape and needs no follow-up if it is ever also reached
-  // as an overlay.
+  // page while a sow is mid-flight.
+  //
+  // INERT IN PRODUCTION TODAY — say so plainly rather than let the call site imply a guard that is
+  // running. App.jsx registers `/sow` as a plain full-page route with NO `overlayable` flag (unlike
+  // /log, /log/many and /put-up), so no OverlayDirtyProvider is ever mounted above this page and
+  // this hook reports into nothing. It is kept as forward-compat: it costs nothing, it keeps the
+  // page in the standard three-guard shape, and adding `overlayable` later then needs no follow-up
+  // here. The guard that actually runs on this surface is the reload gate below. The suite's
+  // dirty-channel assertions manufacture their own provider and are labelled forward-compat to
+  // match — they pin the contract, they do not evidence a live guard.
   useReportOverlayDirty(dirty)
 
   // V4-RELOADGATEWIRE-001 — hold the service-worker reload while the Sow sheet is open. This is the
@@ -212,6 +228,22 @@ export default function SowNow({ todayISO = localTodayISO() }) {
 
   const openSowSheet = useCallback((entry) => {
     setSowTarget(entry)
+  }, [])
+
+  // V4-RELOADGATEWIRE-001 — the single close path for the Sow sheet: the Sheet's Close control,
+  // Escape, an un-dirty backdrop tap, the back gesture, and the editor's own Cancel all land here.
+  //
+  // CLEARS THE STASH, which is the opposite of what EventNew and LogMany do on a dismiss — and the
+  // difference is not an inconsistency, it is the difference between what is being restored. Their
+  // drafts refill FIELDS in a form the user is already looking at; this one restores a MODAL'S OPEN
+  // STATE. Keeping it through a deliberate Close means the sheet re-opens itself on the next visit
+  // to /sow in the same tab, and the next, with no way to stop it short of actually sowing the
+  // packet — a dismissal the app refuses to accept. An exit the guards could NOT defer (SW reload,
+  // hard refresh, navigating away mid-sheet) never runs this, so the recovery case still works: the
+  // stash survives precisely the exits the user did not choose.
+  const closeSowSheet = useCallback(() => {
+    clearDraft(DRAFT_KEY)
+    setSowTarget(null)
   }, [])
 
   // V4-SOWARCHIVE-001. Archive/un-archive a packet for THIS season.
@@ -437,7 +469,7 @@ export default function SowNow({ todayISO = localTodayISO() }) {
       <Sheet
         armsBack
         open={!!sowTarget}
-        onClose={() => setSowTarget(null)}
+        onClose={closeSowSheet}
         title={sowTarget ? `Sow ${sowTarget.candidate.variety_name || sowTarget.candidate.item_name}` : undefined}
       >
         {sowTarget && (
@@ -451,11 +483,10 @@ export default function SowNow({ todayISO = localTodayISO() }) {
               addDefaults={{ status: 'seed', sown_at: todayISO, source_type: 'seed_packet' }}
               onCreated={() => {
                 setSownIds((prev) => new Set(prev).add(sowTarget.candidate.inventory_item_id))
-                clearDraft(DRAFT_KEY)
                 show({ message: 'Planted!' })
-                setSowTarget(null)
+                closeSowSheet()
               }}
-              onClose={() => setSowTarget(null)}
+              onClose={closeSowSheet}
             />
           </div>
         )}

@@ -7,9 +7,16 @@
 // state (place/quantity/notes) with no callback SowNow can observe, so the stash recovers the
 // packet, not the sheet's contents — see the reasoning comment on `dirty` in SowNow.jsx itself.
 //
-// Real reloadGate, real draftStash (sessionStorage), real OverlayContext — nothing mocked between
-// them, mirroring EventNew.reloadGateWire.test.jsx: a test that spied on setReloadBlocked/writeDraft
-// instead would prove only that SowNow CALLS them, not that the whole channel actually holds/persists.
+// THE STASH IS ABNORMAL-EXIT-ONLY HERE, and that is the one place this page's contract diverges
+// from EventNew/LogMany. Restoring `sowTarget` re-OPENS a modal; restoring their drafts refills
+// fields in a form the user is already looking at. So an explicit Close clears the stash (a
+// dismissal is a decision) and only an exit the guard could not defer — SW reload, hard refresh,
+// navigating away mid-sheet — leaves it behind to resume from.
+//
+// Real reloadGate, real registerSW, real draftStash (sessionStorage), real OverlayContext — nothing
+// mocked between them, mirroring EventNew.reloadGateWire.test.jsx: a test that spied on
+// setReloadBlocked/writeDraft instead would prove only that SowNow CALLS them, not that the whole
+// channel actually holds/persists.
 //
 // Harness mirrors SowNow.test.jsx (real sowEngine, fixed today=2026-07-10, same fetch routing shape).
 import React from 'react'
@@ -45,6 +52,7 @@ import SowNow from '../pages/SowNow.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { OverlayDirtyProvider } from '../context/OverlayContext.jsx'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
+import { registerServiceWorker } from '../lib/registerSW.js'
 
 const TODAY = '2026-07-10'
 const STASH_KEY = 'gardenApp.draft.sow-now'
@@ -125,6 +133,23 @@ async function renderSowNow(opts) {
   return utils
 }
 
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+// Ported verbatim from EventNew.reloadGateWire.test.jsx (itself mirroring registerSW.test.js
+// makeEnv): a PRIOR controller, so controllerchange counts as an UPDATE — the reload path — rather
+// than a first install claiming the page.
+function makeSwEnv() {
+  const registration = { update: vi.fn().mockResolvedValue(undefined) }
+  const sw = new EventTarget()
+  sw.controller = {}
+  sw.register = vi.fn().mockResolvedValue(registration)
+  const nav = { serviceWorker: sw }
+  const win = Object.assign(new EventTarget(), { location: { reload: vi.fn() } })
+  const doc = Object.assign(new EventTarget(), { readyState: 'complete', visibilityState: 'visible' })
+  const reload = vi.fn()
+  return { registration, sw, nav, win, doc, reload }
+}
+
 beforeEach(() => {
   fetchSpy.mockReset()
   navigateSpy.mockReset()
@@ -150,19 +175,31 @@ describe('SowNow draft stash (V4-RELOADGATEWIRE-001)', () => {
   })
 
   // The other entry point into sowTarget — proves the predicate/stash cover the OVERRIDE tap too,
-  // not just the ordinary Sow button.
-  it('the "Sow anyway" override tap on a gated hold also persists', async () => {
+  // not just the ordinary Sow button. Asserts BOTH channels the tap has to arm: a stash with no
+  // reload hold recovers the packet but still lets a mid-sheet deploy blow the form away.
+  it('the "Sow anyway" override tap on a gated hold persists AND holds the reload gate', async () => {
     routeFetch({ candidates: [FLAT_OF_ITALY] })
     await renderSowNow()
     await act(async () => {
       fireEvent.click(await screen.findByLabelText('Sow Flat of Italy anyway'))
     })
     expect(readStash()).toEqual({ inventoryItemId: 'inv-flatitaly' })
+    expect(isReloadBlocked()).toBe(true)
   })
 
-  it('restores the sheet on remount, validated against live data', async () => {
-    seedStash({ inventoryItemId: 'inv-cuke' })
+  // Restore is for an ABNORMAL exit — one the guards could not defer (SW reload, hard refresh,
+  // navigating away with the sheet still open). Deliberately never touches Close: a dismissed sheet
+  // clears its stash (below), so a restore test that closed first would be asserting the opposite
+  // contract.
+  it('restores the sheet after an abnormal exit — unmounted with the sheet still open', async () => {
     routeFetch()
+    const { unmount } = await renderSowNow()
+    await act(async () => {
+      fireEvent.click(await screen.findByLabelText('Sow Spacemaster 80'))
+    })
+    unmount()
+    expect(readStash()).toEqual({ inventoryItemId: 'inv-cuke' })
+
     await renderSowNow()
     const dialog = await screen.findByRole('dialog')
     expect(dialog.getAttribute('aria-label')).toBe('Sow Spacemaster 80')
@@ -194,9 +231,30 @@ describe('SowNow draft stash (V4-RELOADGATEWIRE-001)', () => {
     expect(readStash()).toBeNull()
   })
 
-  // NOT cleared on an explicit Close — same rule EventNew/LogMany apply: the stash exists precisely
-  // to survive a dismiss, so it must still be there to resume from on the next visit.
-  it('does NOT clear the draft on an explicit Close — it survives for recovery', async () => {
+  // CLEARED on an explicit Close — the one place this page's rule inverts EventNew/LogMany's.
+  // Restoring `sowTarget` re-opens a modal rather than refilling a visible form, so a surviving
+  // stash would re-open a sheet the user deliberately dismissed, every later visit to /sow in the
+  // tab, with no way to make it stop short of sowing the packet.
+  it('an explicit Close clears the draft', async () => {
+    routeFetch()
+    await renderSowNow()
+    await act(async () => {
+      fireEvent.click(await screen.findByLabelText('Sow Spacemaster 80'))
+    })
+    expect(readStash()).toEqual({ inventoryItemId: 'inv-cuke' })
+
+    const sheet = screen.getByRole('dialog')
+    await act(async () => {
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }))
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(readStash()).toBeNull()
+  })
+
+  // The editor's own Cancel is the second explicit-close path (Sheet Close is chrome, Cancel is
+  // inside the form) — both land on the same handler, and a fix wired to only one of them leaves
+  // the resurrection bug reachable from the other.
+  it("the editor's own Cancel clears the draft too", async () => {
     routeFetch()
     await renderSowNow()
     await act(async () => {
@@ -204,14 +262,47 @@ describe('SowNow draft stash (V4-RELOADGATEWIRE-001)', () => {
     })
     const sheet = screen.getByRole('dialog')
     await act(async () => {
-      fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }))
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }))
     })
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(readStash()).toEqual({ inventoryItemId: 'inv-cuke' })
+    expect(readStash()).toBeNull()
+  })
+
+  // The user-visible harm the clear exists to prevent, asserted end to end rather than by proxy.
+  it('a closed sheet does not re-open itself on the next visit to /sow', async () => {
+    routeFetch()
+    const { unmount } = await renderSowNow()
+    await act(async () => {
+      fireEvent.click(await screen.findByLabelText('Sow Spacemaster 80'))
+    })
+    const sheet = screen.getByRole('dialog')
+    await act(async () => {
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }))
+    })
+    unmount()
+
+    await renderSowNow()
+    // Waited on by ROLE, not by text or bare label: a resurrected sheet repeats the packet name in
+    // both its title and its own aria-label, so the looser queries die on an ambiguous match
+    // instead of on the assertion that matters.
+    await screen.findByRole('button', { name: 'Sow Spacemaster 80' })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 
-describe('SowNow ↔ overlay-dirty + reload gate (V4-RELOADGATEWIRE-001)', () => {
+// MIXED-STATUS SUITE — read the two channels differently.
+//
+//   isReloadBlocked() assertions  → SHIPPED behavior. /sow is a full-page route, and the reload gate
+//                                   is the guard that actually runs there.
+//   dirtySpy assertions           → FORWARD-COMPAT CONTRACT ONLY, true of this harness and vacuous
+//                                   about production. App.jsx registers `/sow` as a plain route with
+//                                   NO `overlayable` flag (unlike /log, /log/many, /put-up), so no
+//                                   OverlayDirtyProvider is ever mounted above SowNow in prod and
+//                                   useReportOverlayDirty is inert there. The provider below is
+//                                   manufactured by `tree({ dirtySpy })`. These assertions pin what
+//                                   the page must do the day /sow becomes overlayable — they are not
+//                                   evidence that anything is guarded today.
+describe('SowNow ↔ overlay-dirty (forward-compat) + reload gate (V4-RELOADGATEWIRE-001)', () => {
   it('a pristine mount holds neither channel', async () => {
     const dirtySpy = vi.fn()
     routeFetch()
@@ -221,7 +312,7 @@ describe('SowNow ↔ overlay-dirty + reload gate (V4-RELOADGATEWIRE-001)', () =>
     expect(dirtySpy).not.toHaveBeenCalledWith(true)
   })
 
-  it('opening the Sow sheet holds the reload gate AND reports dirty to the hosting overlay — same predicate, same moment', async () => {
+  it('opening the Sow sheet holds the reload gate AND (for a future overlayable /sow) reports dirty — same predicate, same moment', async () => {
     const dirtySpy = vi.fn()
     routeFetch()
     await renderSowNow({ dirtySpy })
@@ -272,5 +363,47 @@ describe('SowNow ↔ overlay-dirty + reload gate (V4-RELOADGATEWIRE-001)', () =>
     expect(isReloadBlocked()).toBe(true)
     unmount()
     expect(isReloadBlocked()).toBe(false)
+  })
+})
+
+// Ported from EventNew.reloadGateWire.test.jsx. Everything above asserts on isReloadBlocked(), which
+// proves SowNow drives the primitive correctly — but the primitive shipped fully built, unit-tested
+// and green while NOTHING called it, so "the flag is set" is exactly the assertion that missed a
+// wholly inert channel once already. These two run the real registerServiceWorker against the real
+// gate and assert on an actual reload() that did or did not happen.
+describe('SowNow ↔ registerSW, end to end (V4-RELOADGATEWIRE-001)', () => {
+  it('END TO END: an open Sow sheet DEFERS the SW reload, and unmount lets it fire exactly once', async () => {
+    const env = makeSwEnv()
+    const teardown = registerServiceWorker(env)
+    await flush()
+
+    routeFetch()
+    const { unmount } = await renderSowNow()
+    await act(async () => {
+      fireEvent.click(await screen.findByLabelText('Sow Spacemaster 80'))
+    })
+
+    // A deploy lands with the sheet open. Reloading here takes the place/quantity/notes typed into
+    // the embedded PlantingEditor with it — the fields the stash provably cannot restore.
+    env.sw.dispatchEvent(new Event('controllerchange'))
+    expect(env.reload).not.toHaveBeenCalled()
+
+    // Deferred, NOT cancelled (BUG-STALECLIENT-001): the moment the sheet is gone it lands.
+    unmount()
+    expect(env.reload).toHaveBeenCalledTimes(1)
+    teardown()
+  })
+
+  it('with no sheet open, a controllerchange still reloads immediately (gate is not a disarm)', async () => {
+    const env = makeSwEnv()
+    const teardown = registerServiceWorker(env)
+    await flush()
+
+    routeFetch()
+    await renderSowNow()
+    await screen.findByText('Spacemaster 80')
+    env.sw.dispatchEvent(new Event('controllerchange'))
+    expect(env.reload).toHaveBeenCalledTimes(1)
+    teardown()
   })
 })
