@@ -16,13 +16,21 @@
 //
 // No jest-dom (L-182): toBe/toBeNull/toBeTruthy only, matching the sibling suites.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { renderHook } from '@testing-library/react'
 import { ClerkOfflineError } from '@clerk/shared/error'
 import {
   isOfflineTokenError,
   tokenForRequest,
   apiFetch,
+  useApiFetch,
   OFFLINE_TOKEN_WAIT_MS,
 } from '../lib/api.js'
+
+// Group E drives the real useApiFetch, so Clerk's hook is the only thing stubbed. Without this the
+// hook body is never executed and nothing proves it WIRES tokenForRequest in — a regression to the
+// old bare `await getToken()` would leave every other test in this file green.
+let clerkGetToken
+vi.mock('@clerk/react', () => ({ useAuth: () => ({ getToken: (...a) => clerkGetToken(...a) }) }))
 import {
   loadServiceWorker,
   dispatchFetch,
@@ -212,6 +220,44 @@ describe('the request is actually ISSUED where it previously threw', () => {
     expect(token).toBe('tok_live')
     await expect(apiFetch('/api/plants', {}, token)).rejects.toMatchObject({ status: 401 })
     vi.unstubAllGlobals()
+  })
+})
+
+describe('useApiFetch wires the offline policy in (not just the helpers)', () => {
+  afterEach(() => { setOnLine(true); vi.unstubAllGlobals() })
+
+  it('E1: the HOOK issues a headerless request when the token throws offline', async () => {
+    setOnLine(false)
+    clerkGetToken = vi.fn(async () => { throw cdnOffline() })
+    const fetchSpy = vi.fn(async () => new Response('[]', {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    const body = await result.current.fetch('/api/plants')
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect('Authorization' in fetchSpy.mock.calls[0][1].headers).toBe(false)
+    expect(Array.isArray(body)).toBe(true)
+  })
+
+  it('E2: the getToken the hook RETURNS is the offline-safe wrapper, not Clerk\'s raw one', async () => {
+    setOnLine(false)
+    clerkGetToken = vi.fn(async () => { throw cdnOffline() })
+    const { result } = renderHook(() => useApiFetch())
+    // Telemetry callers (notificationPrefsClient et al) do `if (!token) return null`, so null lets
+    // them bail immediately; the raw hook would make them hold a promise for the whole ladder.
+    expect(await result.current.getToken()).toBeNull()
+  })
+
+  it('E3: the hook still surfaces a real ONLINE auth failure from getToken', async () => {
+    setOnLine(true)
+    const err = new CdnClerkRuntimeError('Unauthorized', { code: 'authentication_invalid' })
+    err.status = 401
+    clerkGetToken = vi.fn(async () => { throw err })
+    const { result } = renderHook(() => useApiFetch())
+    await expect(result.current.fetch('/api/plants')).rejects.toThrow('Unauthorized')
   })
 })
 
