@@ -32,6 +32,7 @@
 //   /api/share/facebook     → VITE_API_FACEBOOK_SHARE  post photos to the Gardens at Matthews FB Page (V4-FBSHARE-001)
 
 import { useAuth } from '@clerk/react'
+import { ClerkOfflineError } from '@clerk/shared/error'
 import { useCallback } from 'react'
 
 // Exported for src/__tests__/clientRouteLambdaContract.test.js, which resolves every client-side
@@ -151,14 +152,115 @@ export async function apiFetch(path, options = {}, token) {
   return data
 }
 
+// OFFLINE-AUTH — an offline token failure must degrade to "no token", not abort the request.
+//
+// getToken() caches with a 60s TTL over an IN-MEMORY singleton, so any tab idle for a minute is a
+// cache miss. Offline, a miss THROWS rather than returning null (@clerk/shared session.d.ts:246),
+// and this module used to await it bare: the throw escaped useApiFetch().fetch, apiFetch was never
+// called, no fetch() was ever issued, and so the service worker's fetch handler never ran. The SW
+// API cache was therefore unreachable for exactly the users it was built for.
+//
+// TWO codes, not one. clerk-js 6.29.2 Session.getToken (dist/clerk.browser.js @132530) wraps the
+// retry ladder in `catch(e){ if(!k()) throw new ClerkOfflineError(...); throw e }`, k() reading
+// navigator.onLine. So the escape depends on the radio's state when the ladder gives up:
+//   still offline      -> ClerkOfflineError,  code 'clerk_offline'
+//   came back mid-retry -> the INNER error, ClerkRuntimeError, code 'network_error'
+//                         (_getToken @138781: `else throw new x("Browser is offline, skipping
+//                         token fetch", { code: "network_error" })`)
+// Guarding only clerk_offline would miss every connectivity FLAP — the normal condition in a rural
+// dead zone, not an edge case. 'network_error' has no exported constant the way
+// ClerkOfflineError.ERROR_CODE does, hence the literal; it is a structured discriminant field on
+// the error, not a message match.
+const CLERK_NETWORK_ERROR_CODE = 'network_error'
+
+// ClerkOfflineError.is() is checked first but is NOT sufficient, and the reason is worth stating
+// because the obvious implementation is the broken one. Its doc comment claims it "checks both
+// instanceof and the error code to support cross-bundle/cross-realm errors". That is FALSE for this
+// subclass: the cross-realm arm is isClerkRuntimeError(), which compares
+// `err.constructor.kind === 'ClerkRuntimeError'`, but ClerkOfflineError SHADOWS that static with
+// 'ClerkOfflineError', so it never matches — and the instanceof arm fails because the throw
+// originates in the CDN-hotloaded @clerk/clerk-js, a different realm from the bundled
+// @clerk/shared. Measured against a faithful CDN-realm replica: .is() returns FALSE for the error
+// this app actually receives and TRUE for a same-realm one, i.e. a guard written on .is() alone is
+// green in every unit test and vacuous in production. The code comparison is what fires; .is() is
+// retained so this self-heals if Clerk ever fixes the guard.
+export function isOfflineTokenError(e) {
+  if (!e || typeof e !== 'object') return false
+  // A 4xx is Clerk's API ANSWERING — a revoked session, a bad key. That is a real auth failure and
+  // must surface; laundering it into "no token" would silently downgrade the request to anonymous
+  // and bury the cause. Checked first so no later arm can override it.
+  if (typeof e.status === 'number' && e.status >= 400 && e.status < 500) return false
+  if (ClerkOfflineError.is(e)) return true
+  return e.code === ClerkOfflineError.ERROR_CODE || e.code === CLERK_NETWORK_ERROR_CODE
+}
+
+// How long to wait for a token when navigator.onLine is ALREADY false.
+//
+// Not a tuning knob — derived from Clerk's retry ladder, which has a hard floor. retry()
+// (@clerk/shared/dist/retry.mjs) runs `return await callback()` FIRST with no preceding delay and
+// only sleeps BETWEEN retries; clerk-js passes initialDelay 3000 / factor 1.55 / jitter false and
+// caps offline at 4 attempts. That separates the two outcomes cleanly in time:
+//   warm-tab cache HIT -> resolves on attempt 1, no timer involved (~a microtask)
+//   offline cache MISS -> cannot produce anything for >=3000ms, then throws at ~14.9s
+// Any wait strictly between those bounds keeps the working path intact and truncates the dead one.
+// 1500ms is half the 3000ms floor: 2x headroom below the earliest answer Clerk could give, and ~3
+// orders of magnitude above an in-memory cache read, so main-thread jank cannot push a hit past it.
+export const OFFLINE_TOKEN_WAIT_MS = 1500
+
+// WHY PRE-EMPT rather than simply catching the throw when it finally arrives: when navigator.onLine
+// is false, clerk-js consults the SAME signal on every attempt, so all four hit `else throw` and the
+// ladder is futile BY CONSTRUCTION — it can only succeed if the radio returns mid-window. Waiting
+// ~14.9s to learn something knowable at t=0 also blows the entire request budget, because the stall
+// happens BEFORE apiFetch starts its own API_TIMEOUT_MS timer: today's worst case is ~30s of spinner
+// for a request that was never going to be sent. The cost is bounded and already covered — if the
+// radio does return between 1.5s and 14.9s we abandon a token that might have arrived, but the
+// 'online' event then fires and useCacheLifecycle's onReconnect revalidate refetches
+// automatically, so recovery needs no user action.
+async function tokenWithOfflineWait(getToken) {
+  let timer
+  try {
+    // Promise.race attaches reactions to BOTH arms immediately, so a getToken() that rejects at
+    // ~14.9s after the timeout already won still counts as handled — no unhandled rejection.
+    return await Promise.race([
+      getToken(),
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), OFFLINE_TOKEN_WAIT_MS) }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// The one seam every token acquisition goes through. Returns a token or null, where null means
+// "issue the request with no Authorization header".
+//
+// Issuing it is safe only because of V4-SWCACHEID-001 Slice 1, and the two changes are a pair: no
+// header -> subFromAuthHeader() returns null -> apiCacheNameFor() returns null -> the SW performs
+// NO cache read and NO cache write (`if (!cacheName) return new Response('Offline', {status:503})`).
+// A tokenless request therefore cannot be answered out of another subject's partition. Against the
+// pre-Slice-1 single shared cache this same change would have been a credential-less read of the
+// previous user's data — which is why this must not be rebased off that base.
+export async function tokenForRequest(getToken) {
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+  try {
+    return offline ? await tokenWithOfflineWait(getToken) : await getToken()
+  } catch (e) {
+    if (isOfflineTokenError(e)) return null
+    throw e
+  }
+}
+
 export function useApiFetch() {
   const { getToken } = useAuth()
   const fetch = useCallback(async (path, options = {}) => {
-    const token = await getToken()
+    const token = await tokenForRequest(getToken)
     return apiFetch(path, options, token)
   }, [getToken])
   // getToken is also returned so fire-and-forget telemetry (uxEvents) can route token
   // acquisition through this same seam — component tests mock useApiFetch, which keeps
-  // the Clerk dependency out of every consumer's test.
-  return { fetch, getToken }
+  // the Clerk dependency out of every consumer's test. Wrapped rather than raw: those callers all
+  // do `if (!token) return null`, so the offline-safe null lets them bail in 1.5s instead of
+  // holding a promise open for the full ladder to throw inside their own catch. Args are forwarded
+  // so the wrapper stays signature-compatible with Clerk's getToken(options).
+  const safeGetToken = useCallback((...args) => tokenForRequest(() => getToken(...args)), [getToken])
+  return { fetch, getToken: safeGetToken }
 }
