@@ -248,3 +248,54 @@ describe('voice-forgiving matching stays a WIDENING of typed search', () => {
     expect(screen.getByText(/No plantings match/)).toBeTruthy()
   })
 })
+
+// BUG-PICKERUNDISMISSABLE-001 — the autoOpen panel above opens with no focus behind it (by
+// design, per V4-HARVFAB-001 just above), so Escape/Tab/onBlur are all unreachable: every one of
+// them fires off a focus->blur transition, and nothing was ever focused to blur FROM. Before this
+// fix a real device had no way to close it short of picking a row — including when the list
+// failed to load or simply didn't contain what the user wanted. This pins the fallback.
+describe('BUG-PICKERUNDISMISSABLE-001 — an un-focused autoOpen panel is still touch-dismissable', () => {
+  it('closes on an outside tap even though nothing was ever focused', async () => {
+    render(<PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" autoOpen />)
+    await act(async () => { await Promise.resolve() })
+    expect(field().getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(document.body)   // still unfocused — the autoOpen contract
+    fireEvent.pointerDown(document.body)
+    await act(async () => { await Promise.resolve() })
+    expect(field().getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('leaves row selection untouched — a tap inside the panel is never "outside"', async () => {
+    const onChange = vi.fn()
+    render(<PlantingSelect value="" onChange={onChange} plants={PLANTS} aria-label="Planting" autoOpen />)
+    await act(async () => { await Promise.resolve() })
+    const row = screen.getByTestId('ps-opt-p1')
+    fireEvent.pointerDown(row)   // the same event the fallback listens for, aimed INSIDE the panel
+    fireEvent.click(row)
+    expect(onChange).toHaveBeenCalledWith('p1', expect.objectContaining({ id: 'p1' }))
+  })
+
+  it('leaves the picker in an ordinary, reopenable state after the fallback closes it', async () => {
+    render(<PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" autoOpen />)
+    await act(async () => { await Promise.resolve() })
+    fireEvent.pointerDown(document.body)
+    await act(async () => { await Promise.resolve() })
+    expect(field().getAttribute('aria-expanded')).toBe('false')
+    field().focus()
+    await act(async () => { await Promise.resolve() })
+    expect(field().getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(field())
+  })
+
+  // Scope guard: the fallback attaches only while focus has never landed, so a picker opened the
+  // ORDINARY way (a tap that focuses the field, every one of the six other call sites) gets no
+  // new listener at all — a bare outside pointerdown with no accompanying blur must leave it open,
+  // exactly as it did before this fix.
+  it('adds no new listener once the field already holds real focus', async () => {
+    await openPicker()
+    expect(field().getAttribute('aria-expanded')).toBe('true')
+    fireEvent.pointerDown(document.body)
+    await act(async () => { await Promise.resolve() })
+    expect(field().getAttribute('aria-expanded')).toBe('true')
+  })
+})

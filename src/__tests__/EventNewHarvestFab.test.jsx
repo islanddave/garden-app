@@ -15,7 +15,7 @@
 // which is what makes auto-opening the picker the right default rather than a nag.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor, within } from '@testing-library/react'
+import { render, screen, act, waitFor, within, fireEvent } from '@testing-library/react'
 
 const { apiFetchSpy, navigateSpy, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -163,5 +163,34 @@ describe('V4-HARVFAB-001 × BUG-LOGTARGETREQ-001 — fast, and still not pre-tar
     expect(rows[0].textContent).toContain('Sungold')
     expect(within(rows[0]).getByText('recent')).toBeTruthy()
     expect(rows[1].textContent).toContain('Cherokee')
+  })
+})
+
+// BUG-PICKERUNDISMISSABLE-001 — the picker being unreachable-by-touch did not just strand the
+// listbox open: V4-PICKERUX-001 hides the sticky Save band for exactly as long as the picker
+// reports itself open (PickerSaveCollision.test.jsx pins that half), and the picker only reports
+// itself closed through onOpenChange(false) — which this exact arrival could never reach, because
+// autoOpen opens it with no focus behind it (see PlantingSelectKeyboard.test.jsx for the
+// mechanism) and every close path the picker owns needs a prior focus to fire from. So the
+// highest-frequency loop in the app — Save the harvest — was hidden AND inert for as long as the
+// FAB's own picker stayed stuck open. Verified through the real host, not the picker in isolation.
+describe('BUG-PICKERUNDISMISSABLE-001 — dismissing the auto-opened picker un-blocks Save', () => {
+  it('restores the sticky Save band once an outside tap dismisses the auto-opened picker', async () => {
+    renderEventNew('event_type=harvest')
+    await flushLoad()
+    await waitFor(() => expect(listbox()).not.toBeNull())
+
+    const saveBand = screen.getByTestId('save-sticky')
+    expect(saveBand.style.visibility).toBe('hidden')
+    expect(saveBand.style.pointerEvents).toBe('none')
+
+    // The only touch path a real Android arrival had: nothing was ever focused (autoOpen's own
+    // contract), so this is not a stand-in for a keyboard Escape — it is the actual fallback.
+    fireEvent.pointerDown(document.body)
+    await act(async () => { await Promise.resolve() })
+
+    expect(listbox()).toBeNull()
+    expect(saveBand.style.visibility).toBe('visible')
+    expect(saveBand.style.pointerEvents).toBe('auto')
   })
 })

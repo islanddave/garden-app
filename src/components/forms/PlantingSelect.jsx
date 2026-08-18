@@ -401,6 +401,15 @@ export default function PlantingSelect({
   // The chip-mode "Change" button — the one control that still exists after a commit collapses the
   // picker. select() hands focus here so the TalkBack cursor never falls to <body>. See select().
   const changeBtnRef = useRef(null)
+  // BUG-PICKERUNDISMISSABLE-001 — wraps input + panel, so the outside-tap fallback below can ask
+  // "did this land inside me?" without a portal (there isn't one — PanelShell renders inline).
+  const rootRef = useRef(null)
+  // Has this instance's input ever taken REAL focus? Every dismiss path already owned by this
+  // component — Escape, Tab, onBlur — fires off a focus->blur transition. `autoOpen` opens the
+  // panel with no focus behind it (deliberate: see the `autoOpen` prop doc), so on that path
+  // nothing was ever focused and nothing can ever blur — ArrowDown/Enter re-open only reachable
+  // once focused, so this stays accurate for every other open path too.
+  const hasFocusedRef = useRef(false)
   // V4-PICKERA11Y-001 (A9). Was `Math.random()`. aria-activedescendant points at an option id
   // derived from this, so it must be stable across renders (random-per-mount already was) AND
   // deterministic per instance for tests to assert on. useId gives both. Its ':' delimiters are
@@ -524,6 +533,37 @@ export default function PlantingSelect({
     autoOpenedRef.current = true
     setOpen(true)
   }, [autoOpen, disabled])
+
+  // BUG-PICKERUNDISMISSABLE-001 — the missing touch-reachable close for a panel opened via the
+  // path above. Escape/Tab/onBlur all require the input to already hold focus, and `autoOpen`
+  // deliberately never calls `.focus()` (V4-HARVFAB-001: on Android that would summon the
+  // keyboard over the list the user came here to read — that ruling stands, this does not touch
+  // focus). So a panel opened by `autoOpen` had NO close reachable by touch: nothing was ever
+  // focused, so nothing could ever blur, and there was no independent outside-tap handler to
+  // fall back on. This is that fallback.
+  //
+  // Attached only while the input has never taken real focus, so the ordinary (already-shipped,
+  // already-tested) focused-open case gets zero new listeners — byte-identical behavior for the
+  // six other call sites. If real focus DOES land later in the same open session, this listener
+  // is not torn down mid-session — re-running the effect off a ref write is not a thing React
+  // does — but by then it is a harmless, idempotent second path to the same `setOpen(false)` the
+  // blur timer already reaches; the two cannot disagree about the end state, only about which one
+  // gets there first.
+  //
+  // `pointerdown` (not `click`/`mousedown`): fires uniformly for touch and mouse on Chrome
+  // Android — the only target browser (Dave is Android-only) — ahead of any focus change, so it
+  // cannot race the 150ms blur-close this component already ships.
+  useEffect(() => {
+    if (!open || hasFocusedRef.current) return
+    const onPointerDown = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) {
+        setOpen(false)
+        setTouched(true)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
 
   // V4-PICKERUX-001 — the single notification point for `open`. Keyed on `open` ONLY: keying it on
   // the callback identity would re-fire on every parent render (callers pass inline closures), and
@@ -941,7 +981,7 @@ export default function PlantingSelect({
     : `${visible.length} planting${visible.length === 1 ? '' : 's'} available`
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={rootRef} style={{ position: 'relative' }}>
       <div aria-live="polite" style={srOnly}>{liveCount}</div>
       <input
         ref={inputRef}
@@ -963,7 +1003,9 @@ export default function PlantingSelect({
         value={query}
         inputMode={kbMode}
         onChange={e => { setQuery(e.target.value); setOpen(true) }}
-        onFocus={() => { if (!disabled) setOpen(true) }}
+        // BUG-PICKERUNDISMISSABLE-001: marks real focus so the outside-tap fallback above stands
+        // down — from here on Escape/Tab/onBlur are reachable, so it would only double-cover them.
+        onFocus={() => { hasFocusedRef.current = true; if (!disabled) setOpen(true) }}
         // Required BY the Escape fix, not incidental to it. Escape now leaves focus on the input,
         // so tapping the field to re-open it fires NO focus event (it is already focused) and
         // onFocus alone can no longer re-open the list — the field would look dead. Idempotent:
