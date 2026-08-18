@@ -199,7 +199,7 @@ export default function Dashboard() {
   )
 
   return (
-    <div style={{ minHeight: 'calc(100dvh - 88px)', backgroundColor: P.cream, position: 'relative' }}>
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
       <div style={{ maxWidth: '720px', margin: '0 auto', padding: '32px 20px' }}>
 
         {/* Header — Welcome + Streak counter top-right.

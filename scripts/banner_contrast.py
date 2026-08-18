@@ -2,21 +2,27 @@
 """V4-APPBANNER-001 curation-time contrast + size gate (boss condition 1/4).
 Run after ANY banner pool change: python3 scripts/banner_contrast.py
 Verifies every committed banner asset against the TopChrome scrim (STOPS must mirror
-the SCRIM constant in src/components/TopChrome.jsx) across a viewport width matrix —
+the DIM_SCRIM constant in src/components/TopChrome.jsx) across a viewport width matrix —
 background-size:cover makes the visible window viewport-dependent, so single-width
 checks are decorative. Hard-fails <4.5:1 wordmark contrast or >80KB asset size.
 Requires: pillow. Not a CI job (assets change ~quarterly); committed here so
 re-curation re-runs it. Deps intentionally NOT in package.json.
+
+V4-HEADERPARITY-001 (2026-08-18): re-pointed from the 88px root header + breathing SCRIM
+to the ONE 52px header + DIM_SCRIM that now ships. This was not bookkeeping — the old
+gradient's 0.42-alpha stop at 70% sits behind the wordmark once the bar is 52px, and every
+banner in the pool drops to ~1.7-3.2:1 against a 4.5:1 floor. DIM_SCRIM at 52px passes.
 """
 import glob, os, sys
 from PIL import Image
 
 PEACH = (249, 227, 214)
 INK = (0x1F, 0x51, 0x38)              # P.greenDeep — wordmark ink
-STOPS = [(0, .92), (.45, .85), (.70, .42), (.97, .60), (1, .92)]  # == TopChrome SCRIM
+STOPS = [(0, .95), (1, .90)]          # == TopChrome DIM_SCRIM
+BAR_H = 52                            # == TopChrome BAR_H
 WIDTHS = (320, 375, 430, 768)         # viewport matrix
 TEXT_X = (14, 190)                    # wordmark zone, CSS px
-TEXT_Y = (10, 40)                     # wordmark rows, CSS px of 88
+TEXT_Y = (14, 38)                     # wordmark rows, CSS px of BAR_H (0.9rem brand, centred)
 SIZE_CAP = 80 * 1024
 MIN_CONTRAST = 4.5
 
@@ -47,12 +53,12 @@ def check(path):
     W, H = im.size
     px = im.load()
     for wcss in WIDTHS:
-        winfrac = min(1.0, (wcss / 88) / (W / H))
+        winfrac = min(1.0, (wcss / BAR_H) / (W / H))
         x0 = int((0.5 - winfrac / 2) * W)
         scale = (winfrac * W) / wcss
         tx0, tx1 = x0 + int(TEXT_X[0] * scale), x0 + int(TEXT_X[1] * scale)
         worst = 99
-        for y in range(int(TEXT_Y[0] / 88 * H), int(TEXT_Y[1] / 88 * H), 2):
+        for y in range(int(TEXT_Y[0] / BAR_H * H), int(TEXT_Y[1] / BAR_H * H), 2):
             a = scrim_alpha(y / H)
             for x in range(tx0, min(tx1, W - 1), 3):
                 r, g, b = px[x, y]

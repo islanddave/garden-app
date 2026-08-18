@@ -44,7 +44,7 @@ describe('routeClass — header IA guard', () => {
       expect(getRouteClass(p, { user: null })).toBe('unauth')
   })
 
-  it('ROOT_TABS covers the primary bottom-nav destinations (search-first belongs on roots)', () => {
+  it('ROOT_TABS covers the primary bottom-nav destinations (a journey start carries no Back)', () => {
     for (const t of ['/today', '/garden', '/findings']) expect(ROOT_TABS).toContain(t)
   })
 })

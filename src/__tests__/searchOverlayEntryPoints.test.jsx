@@ -10,6 +10,13 @@
 // `href === '/search'`, which is byte-identical for both link types, and overlayEntryPoints.test.jsx
 // covers Slice 2's /log tiles, never /search. Mutant recorded surviving 32/32 before this file.
 //
+// V4-HEADERPARITY-001 (2026-08-18): those two entry points became ONE element. Root gave up the
+// full-width launcher for the same magnifier circle detail carries, and both classes now render it
+// from HeaderActions. The <Link>-reversion mutant this file was built to catch is therefore a
+// single-site mutation now and still goes red below — but the *uniformity* half of §8.4 is no
+// longer a claim these tests have to establish; it is structural. Kept driving root AND detail
+// paths anyway: uniformity being free today is not a reason to stop noticing if it stops being.
+//
 // The flag is deliberately NOT mocked here. OVERLAY_ROUTES_ENABLED's shipped value is what makes
 // search a flyover in prod; pinning the real wiring is the point. If the flag is ever intentionally
 // flipped off, this file SHOULD go red — search would have stopped being a flyover.
@@ -50,8 +57,8 @@ function openSearchFrom(path) {
 }
 
 describe('/search entry points — BOTH carry a background (V102 §8.4)', () => {
-  // TopChrome.jsx root variant (cls === 'root'): the full "Search your garden" launcher.
-  it('root launcher (/today) opens search carrying /today as the background', () => {
+  // TopChrome.jsx, cls === 'root': the magnifier circle (was the full "Search your garden" launcher).
+  it('root tab (/today) opens search carrying /today as the background', () => {
     expect(openSearchFrom('/today')).toBe('/today')
   })
 
@@ -72,7 +79,7 @@ describe('/search entry points — BOTH carry a background (V102 §8.4)', () => 
   // Architecture A's deep-link property (V102 §1): the overlay is route-backed, so the control is a
   // real anchor to a real route. A middle-click / "open in new tab" / shared URL still renders
   // /search full-page. A non-anchor (button + navigate) would silently lose that.
-  it('the launcher stays a real anchor to /search (deep-link/full-page path preserved)', () => {
+  it('the search control stays a real anchor to /search (deep-link/full-page path preserved)', () => {
     render(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>)
     expect(screen.getByLabelText('Search your garden').getAttribute('href')).toBe('/search')
   })

@@ -131,8 +131,9 @@ const LIST_GAP = 8                // breathing room between the panel edge and t
 // so this can never desync from their real heights — INCLUDING V4-KBCHROME-001 suppression,
 // which zeroes those vars in the same commit it hides the components, so a suppressed nav is
 // automatically a 0px inset here with no coupling. Top = TopChrome's actual bottom edge — it is
-// `position: sticky; top: 0`, so it occupies the top of the scrollport, and its height varies by
-// route class (88 root / 52 detail) plus safe-area, which is why it is measured rather than
+// `position: sticky; top: 0`, so it occupies the top of the scrollport, and its height is 52 plus
+// a safe-area inset this cannot resolve statically (it was ALSO route-class-dependent, 88 root / 52
+// detail, until V4-HEADERPARITY-001 collapsed the two), which is why it is measured rather than
 // constant. Returns zeros in jsdom (no computed vars, zero rects), so the suite keeps today's path.
 //
 // CONTAINER-AWARE (analyst finding I2, generalized per Dave's photo-tag smoke 2026-08-03): inside

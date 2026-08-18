@@ -16,7 +16,7 @@
 // No jest-dom (L-182): roles/attrs + toBeTruthy/toBe(null), same as the sibling chrome suites.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, cleanup } from '@testing-library/react'
 import { MemoryRouter, Routes } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -292,22 +292,30 @@ describe('V4-PERFCLERK-001 C — signed-out, and resolving to signed-out after m
     expect(screen.queryByText('Sign in')).toBe(null)
   })
 
-  it('the pending header reserves the ROOT height on a root tab, so the signed-in handover does not reflow', () => {
+  it('the pending header reserves the resolved height on a root tab, so the signed-in handover does not reflow', () => {
     authState = PENDING
     const { container, rerender } = render(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>)
     const pendingH = container.querySelector('header').style.height
-    expect(pendingH).toBe('calc(88px + env(safe-area-inset-top))')
+    // 52 since V4-HEADERPARITY-001 — root lost its 88px launcher, so there is one height to reserve.
+    expect(pendingH).toBe('calc(52px + env(safe-area-inset-top))')
 
     authState = SIGNEDIN
     act(() => { rerender(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>) })
     expect(container.querySelector('header').style.height).toBe(pendingH)
   })
 
-  it('the pending header stays condensed on a non-root route (no phantom 88px bar on a detail page)', () => {
-    authState = PENDING
-    const { container } = render(<MemoryRouter initialEntries={['/projects/abc']}><TopChrome /></MemoryRouter>)
-    expect(container.querySelector('header').style.height).toBe('calc(52px + env(safe-area-inset-top))')
-    expect(screen.queryByTestId('topchrome-pending-launcher')).toBe(null)
+  // Was "stays condensed on a non-root route (no phantom 88px bar on a detail page)" — the phantom
+  // it guarded against cannot exist now that both classes are 52px, so it guards the stronger
+  // property instead: the reservation is route-class-INDEPENDENT, and the launcher-shaped bone that
+  // held the old 88px layout is gone everywhere rather than merely absent off-root.
+  it('the pending header reserves the SAME box on every route, root or detail', () => {
+    for (const path of ['/today', '/garden', '/projects/abc', '/settings']) {
+      cleanup()
+      authState = PENDING
+      const { container } = render(<MemoryRouter initialEntries={[path]}><TopChrome /></MemoryRouter>)
+      expect(container.querySelector('header').style.height, path).toBe('calc(52px + env(safe-area-inset-top))')
+      expect(screen.queryByTestId('topchrome-pending-launcher'), path).toBe(null)
+    }
   })
 
   it('pending and signed-in are MUTUALLY EXCLUSIVE in the shell — the nav skeleton and the real nav never coexist', () => {
