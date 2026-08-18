@@ -187,10 +187,21 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
 // byte-identical rollback lever, and it is the pattern any FUTURE additive space column must reuse
 // (code may promote ahead of its DDL again). Do not collapse the two templates into one.
 //
-// ADD-PARENT on conflict (widened branch only): the dedupe returns the EXISTING row, which today
-// silently drops the parent the caller asked for. A "grand photo" is by definition an image already
-// attached to a planting, so a plain INSERT would never attach it to the space. COALESCE keeps an
-// existing space_id (re-attaching elsewhere is a re-tag, not an upload) and fills a NULL one.
+// ADD-PARENT on conflict: the dedupe returns the EXISTING row, so a bare `DO UPDATE SET updated_at`
+// silently drops the parent the caller asked for and still answers 200. A "grand photo" is by
+// definition an image already attached to a planting, so a plain INSERT would never attach it to the
+// space. COALESCE keeps an existing parent (re-attaching elsewhere is a re-tag, not an upload) and
+// fills a NULL one.
+// BUG-PHOTODEDUPDROP-001 — the same COALESCE now covers EVERY parent slot, not space_id alone.
+// photos carries six independent parent columns, so ONE row genuinely attaches to a planting AND an
+// event AND an inventory item at once: re-uploading the same bytes against a slot the existing row
+// leaves NULL is exactly the second-target case, and it was being discarded. Column references only
+// — no new bound parameter, so the flag-OFF/flag-ON parameter parity below is unchanged.
+// WHAT THIS DOES NOT FIX (deliberately, and it needs schema): a SECOND value for an ALREADY-OCCUPIED
+// slot (bytes on planting A re-uploaded against planting B) still cannot be stored — one column
+// holds one id. COALESCE keeps A. That case is V4-PHOTOTAG-001's many-to-many attachment table; here
+// it stops being SILENT instead (see unhonoredParents at the duplicate return). Do not widen this
+// into a re-point: overwriting A would trade a silent drop for a silent MOVE.
 function buildPhotoInsert(sql, body, userId, spaceEnabled) {
   if (spaceEnabled) {
     return sql`
@@ -223,6 +234,11 @@ function buildPhotoInsert(sql, body, userId, spaceEnabled) {
       ON CONFLICT (created_by, content_hash)
         WHERE content_hash IS NOT NULL AND deleted_at IS NULL
         DO UPDATE SET updated_at = now(),
+                      project_id = COALESCE(photos.project_id, EXCLUDED.project_id),
+                      event_id = COALESCE(photos.event_id, EXCLUDED.event_id),
+                      location_id = COALESCE(photos.location_id, EXCLUDED.location_id),
+                      plant_id = COALESCE(photos.plant_id, EXCLUDED.plant_id),
+                      inventory_item_id = COALESCE(photos.inventory_item_id, EXCLUDED.inventory_item_id),
                       space_id = COALESCE(photos.space_id, EXCLUDED.space_id)
       RETURNING *, (xmax = 0) AS was_inserted
     `;
@@ -255,9 +271,30 @@ function buildPhotoInsert(sql, body, userId, spaceEnabled) {
     )
     ON CONFLICT (created_by, content_hash)
       WHERE content_hash IS NOT NULL AND deleted_at IS NULL
-      DO UPDATE SET updated_at = now()
+      DO UPDATE SET updated_at = now(),
+                    project_id = COALESCE(photos.project_id, EXCLUDED.project_id),
+                    event_id = COALESCE(photos.event_id, EXCLUDED.event_id),
+                    location_id = COALESCE(photos.location_id, EXCLUDED.location_id),
+                    plant_id = COALESCE(photos.plant_id, EXCLUDED.plant_id),
+                    inventory_item_id = COALESCE(photos.inventory_item_id, EXCLUDED.inventory_item_id)
     RETURNING *, (xmax = 0) AS was_inserted
   `;
+}
+
+// BUG-PHOTODEDUPDROP-001 — the honest half of the dedupe fix. COALESCE above fills every EMPTY
+// parent slot; this names the requests it could NOT honour, so an occupied slot stops being a 200
+// that quietly means "no". PURE (body + the row the upsert returned, no I/O) so it is unit-testable
+// by extraction, the way every other guard in this dir tests index.js internals.
+// Compares against the RETURNED row, never against the pre-upsert state: the row is post-COALESCE,
+// so a slot this very call filled correctly reads as honoured.
+// space_id is included only when the flag is on — the row has no such column otherwise, and a
+// flag-off caller cannot send one (the body gate at the space_id pre-read rejects it).
+const PHOTO_PARENT_COLUMNS = ['project_id', 'event_id', 'location_id', 'plant_id', 'inventory_item_id'];
+function unhonoredParents(body, row, spaceEnabled) {
+  const cols = spaceEnabled ? [...PHOTO_PARENT_COLUMNS, 'space_id'] : PHOTO_PARENT_COLUMNS;
+  return cols
+    .filter((c) => body[c] != null && row[c] !== body[c])
+    .map((c) => ({ column: c, requested: body[c], kept: row[c] ?? null }));
 }
 
 // ── V4-SPACEPHOTO-001 space-hero reads ────────────────────────────────────────────────────────────
@@ -1223,7 +1260,19 @@ export const handler = async (event) => {
       // auto-promote and BEFORE the evidence-capture block below, or a re-upload appends a second
       // first-party evidence row for the same photo and inflates DrG's confidence off one observation.
       if (wasInserted === false) {
-        return resp(200, { ...inserted, duplicate: true });
+        // BUG-PHOTODEDUPDROP-001 — buildPhotoInsert's COALESCE has already added every parent the
+        // existing row left empty, so `inserted` is the post-merge truth and the response is no
+        // longer a 200 that lost the caller's target. Anything left over is an ALREADY-OCCUPIED
+        // slot, which one column cannot hold twice (V4-PHOTOTAG-001's job): disclose it rather than
+        // imply success. warn-to-CloudWatch mirrors warnRejectedFk — the class is invisible today
+        // precisely because nothing ever recorded it. Additive response key; no client reads it yet.
+        const unhonored = unhonoredParents(body, inserted, spacePhotosEnabled);
+        if (unhonored.length) {
+          console.warn(JSON.stringify({
+            msg: 'photo-dedupe-parent-unhonored', userId, photoId: inserted.id, unhonored,
+          }));
+        }
+        return resp(200, { ...inserted, duplicate: true, unhonored_parents: unhonored });
       }
 
       await autoPromoteFeatured(sql, inserted, householdIds, { spaceEnabled: spacePhotosEnabled });

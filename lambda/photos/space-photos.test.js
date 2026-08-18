@@ -93,7 +93,12 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
     // Still the pre-V4 statement in every other respect.
     expect(sql.calls[0].text).toMatch(/INSERT INTO photos/);
     expect(sql.calls[0].text).toMatch(/uploaded_by, created_by,/);
-    expect(sql.calls[0].text).toMatch(/DO UPDATE SET updated_at = now\(\)\s*RETURNING/);
+    // BUG-PHOTODEDUPDROP-001 widened the flag-OFF dedupe from a bare `updated_at = now()` to a
+    // COALESCE over the five NON-space parents. What flag-OFF byte-identity actually requires is
+    // that the emitted text names no space_id — asserted directly above — not that the SET clause
+    // stays one column long. The full six-column COALESCE census lives in dedupe-add-parent.test.js.
+    expect(sql.calls[0].text).toMatch(/DO UPDATE SET updated_at = now\(\),/);
+    expect(sql.calls[0].text).toMatch(/plant_id = COALESCE\(photos\.plant_id, EXCLUDED\.plant_id\)/);
   });
 
   it('flag OFF binds exactly the pre-V4 parameter list, in the pre-V4 order', async () => {
@@ -216,7 +221,11 @@ describe('V4-SPACEPHOTO-001 — flag-ON shapes', () => {
     expect(values).toContain('space-1');
     // COALESCE, not a bare assignment: re-uploading bytes already attached to a space must not
     // silently re-point it, and a plain DO UPDATE SET updated_at would DROP the requested target.
-    expect(text).toMatch(/DO UPDATE SET updated_at = now\(\),\s*space_id = COALESCE\(photos\.space_id, EXCLUDED\.space_id\)/);
+    // BUG-PHOTODEDUPDROP-001: space_id is no longer the only COALESCEd parent, so it is no longer
+    // adjacent to updated_at. The space arm itself is what this test owns; the rest are censused in
+    // dedupe-add-parent.test.js.
+    expect(text).toMatch(/DO UPDATE SET updated_at = now\(\),/);
+    expect(text).toMatch(/space_id = COALESCE\(photos\.space_id, EXCLUDED\.space_id\)/);
   });
 
   it('the spaces promote arm mirrors its siblings but OMITS deleted_at (spaces has no such column)', async () => {
