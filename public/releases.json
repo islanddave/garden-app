@@ -1,5 +1,19 @@
 [
   {
+    "version": "4.35.0",
+    "date": "2026-08-18",
+    "highlights": [
+      "A planting watered every day now reads as a daily cadence instead of a growing debt. Before, a once-a-day planting re-entered the watering list every calendar morning and carried an 'overdue by N days' count — but on a daily plant that number just means N days went by, not that the plant is behind. Eighty-two of your plantings were in that state, so a third of the garden rendered as urgent all the time and the urgent styling stopped meaning anything. Daily plantings now say 'Daily — due today', the list tells you how many one bulk watering covers, and nothing is hidden. No watering interval changed.",
+      "Big fabric grow bags now get rain credit the way beds do. A mulched, ground-contact fabric bag of 3 gallons or more behaves much more like a bed than like a nursery pot, so a modest rain now counts toward it. Seventy-six of your eighty fabric bags qualify. Rigid plastic pots, tray cells, hanging baskets and anything whose container is unrecorded are deliberately unchanged — they dry out faster and the old, stricter rule is right for them.",
+      "Troughs, whiskey barrels and large ceramic pots are no longer treated as small vessels. The watering rule had no idea how big a container was, so a six-foot trough got the same daily floor as a five-gallon pot. Six plantings move off a daily cadence. Fabric bags are excluded on purpose: your own cultivar notes were written for the bag each plant is actually in and still call for daily water in summer.",
+      "Ginger is now warned about at 55°F, not at frost. Tropical plants take cumulative, irreversible chilling damage in the low fifties, weeks before the first frost — so a frost-based alert arrives far too late to be useful. The planting page can also now flag containers whose type or size is missing or looks wrong, so you can correct them as you walk past.",
+      "You can now mark a planting as overwintering, from the planting page. Pick one of four regimes — under cover and still growing, cold and resting, hardy and out in the ground, or held indoors and tender — and the watering schedule changes to a reduced check rather than either normal watering or nothing at all. Clearing it puts the planting straight back to normal care.",
+      "Fall sowing dates for frost-hardy crops are now based on when frost actually arrives here. The app had been using a deliberately cautious late-September date as if it were the real first-frost date; measured over eleven years, the first freezing night at this site has never come in September, and the median is 29 October. Hardy sow windows move about three days later. The cautious date is kept where caution is the right answer — frost alerts still use it.",
+      "The app starts faster. It now warms up the server while it is waiting for sign-in to complete, instead of leaving that time idle, and stops downloading a piece of the sign-in interface on every single launch.",
+      "A weight typed into the harvest panel is no longer lost if you back out. It is saved with the rest of the draft and restored when you come back."
+    ]
+  },
+  {
     "version": "4.34.0",
     "date": "2026-08-17",
     "highlights": [
