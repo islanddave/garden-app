@@ -5,15 +5,21 @@
 // the exact seed-provenance wire shape (source_type 'seed_packet' — dropdownRegistry
 // PLANT_SOURCE_OPTIONS seed value). NO quantity decrement (decision: quantity_on_hand
 // = packets owned; sowing doesn't consume a packet).
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { bucketize } from '../lib/sowEngine.js'
 import { P } from '../lib/tokens.js'
 import { formatDate } from '../lib/format.js'
 import { useToast } from '../context/ToastContext.jsx'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { Sheet } from '../components/forms'
 import PlantingEditor from '../components/PlantingEditor.jsx'
+
+// V4-RELOADGATEWIRE-001 — this page's draft-stash route key.
+const DRAFT_KEY = 'sow-now'
 
 // Section order is FIXED per the panel deltas spec. Third element = optional subtitle.
 // `sow_next_year` sits below every this-season section but above the non-actionable ones. It is
@@ -135,6 +141,74 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     () => (candidates ? bucketize(candidates, todayISO) : null),
     [candidates, todayISO]
   )
+
+  // V4-RELOADGATEWIRE-001 — the ONLY local state in this file that represents content the user
+  // explicitly typed or picked/overrode is `sowTarget`: which packet's Sow sheet is open, set from
+  // either an ordinary Sow tap or the "Sow anyway" engine-override tap on a gated hold. Everything
+  // else here is fetched data (candidates/projects), UI view state (disclosure open/closed, archive
+  // busy), or a post-save confirmation cache (sownIds) — none of it is unsaved input, and the
+  // per-candidate windowLabel/daysLeft annotations are computed by sowEngine and always regenerable
+  // from fresh candidates, never something a reload could "lose". PlantingEditor owns its own field
+  // state (place/quantity/notes) internally with no callback to observe it, so this predicate — like
+  // the stash and the checked-for-landmine restore below — recovers WHICH packet was mid-sow, not
+  // what was typed into the sheet itself.
+  //
+  // Hoisted to a named value (not inlined per-consumer) for the same reason EventNew's
+  // hasUnsavedInput is: it feeds three channels below (draft persist, the overlay-dirty report, the
+  // reload gate) and letting them drift to slightly different predicates is how one ends up defended
+  // and the others not.
+  const dirty = !!sowTarget
+
+  // Restore a dismissed/reloaded Sow sheet, once candidates have loaded. Gated on `buckets` rather
+  // than a bare mount: there is nothing to validate a stashed id against before the fetch resolves.
+  // The ref makes this fire exactly once — `buckets` gets a new identity after every archive/
+  // un-archive PATCH rewrites `candidates`, and without the guard a later PATCH would re-run this and
+  // reopen a sheet the user has since closed.
+  //
+  // LANDMINE CHECK (V4-RELOADGATEWIRE-001, cf. EventNew's draftRestoredTypeRef): EventNew's restore
+  // set form.event_type, which a SEPARATE effect ([form.event_type]) watched and treated as a fresh
+  // type change, wiping the very state the restore had just filled — fixed with a one-shot skip ref.
+  // No such landmine here: `sowTarget` is set by exactly one effect (this one) and read only by the
+  // render below and the two effects immediately following it, which key on `dirty`/`sowTarget`
+  // themselves rather than reacting to a sowTarget change as a "fresh" signal. Nothing else in this
+  // file is keyed on sowTarget, so a restored value cannot trigger a competing reset.
+  const restoredDraftRef = useRef(false)
+  useEffect(() => {
+    if (restoredDraftRef.current || !buckets) return
+    restoredDraftRef.current = true
+    const draft = readDraft(DRAFT_KEY)
+    if (!draft?.inventoryItemId) return
+    // Validated against LIVE data — the same rule LogMany applies to a restored scope. The stashed
+    // candidate may no longer resolve (sown/archived/removed elsewhere) or may now sit in a
+    // different bucket than when it was stashed; either way the fresh buckets are the source of
+    // truth, never the stashed snapshot.
+    const entry = Object.values(buckets).flat().find((e) => e.candidate.inventory_item_id === draft.inventoryItemId)
+    if (entry) setSowTarget(entry)
+  }, [buckets])
+
+  // Persist while the sheet holds a target. NOT cleared on close/backdrop — same rule EventNew and
+  // LogMany apply: the stash exists precisely to survive a dismiss or a mid-form SW reload, so an
+  // explicit Close leaves it in place for recovery too. Cleared only on a successful sow, below.
+  useEffect(() => {
+    if (!dirty) return
+    writeDraft(DRAFT_KEY, { inventoryItemId: sowTarget.candidate.inventory_item_id })
+  }, [dirty, sowTarget])
+
+  // Tells the hosting overlay Sheet (if any) not to let a stray backdrop tap silently discard this
+  // page while a sow is mid-flight. SowNow is registered ONLY as a full-page route (`/sow` in
+  // App.jsx) today, so this is presently a no-op (no OverlayDirtyContext provider) — added anyway so
+  // the page carries the standard three-guard shape and needs no follow-up if it is ever also reached
+  // as an overlay.
+  useReportOverlayDirty(dirty)
+
+  // V4-RELOADGATEWIRE-001 — hold the service-worker reload while the Sow sheet is open. This is the
+  // guard that actually matters on this full-page-only surface (see the no-op note above). Cleanup
+  // releases the key so a closed or unmounted sheet can never wedge updates (BUG-STALECLIENT-001).
+  const reloadGateKey = `sow-now:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, dirty)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, dirty])
 
   const openSowSheet = useCallback((entry) => {
     setSowTarget(entry)
@@ -377,6 +451,7 @@ export default function SowNow({ todayISO = localTodayISO() }) {
               addDefaults={{ status: 'seed', sown_at: todayISO, source_type: 'seed_packet' }}
               onCreated={() => {
                 setSownIds((prev) => new Set(prev).add(sowTarget.candidate.inventory_item_id))
+                clearDraft(DRAFT_KEY)
                 show({ message: 'Planted!' })
                 setSowTarget(null)
               }}
