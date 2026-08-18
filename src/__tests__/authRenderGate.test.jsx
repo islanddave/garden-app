@@ -470,8 +470,10 @@ describe('V4-COLDSTART-001 §6 property 2 — NO user-scoped data renders in the
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(/export function IdentityUnavailable\(\)/.test(code)).toBe(true)
     expect(/useAuth|useContext|useApiFetch|profile|\buser\b/.test(code)).toBe(false)
-    // And App renders THAT export in the gate — a component defined here but wired to a different
-    // one would leave the structural proof above covering nothing.
+    // PROVENANCE, not naming. The scan above only binds components declared in BootSkeleton.jsx, so
+    // it is worth nothing unless whatever App renders in the unknown state comes from there. Read
+    // the identifier OUT of the gate rather than asserting a spelling, so a rename stays green and a
+    // rewire — to a local component, or one from a file with no such invariant — fails.
     //
     // Line comments are stripped BEFORE block comments here, unlike the BootSkeleton scan above.
     // App.jsx contains the literal `/projects/:id/*` inside a `//` comment; strip blocks first and
@@ -479,9 +481,12 @@ describe('V4-COLDSTART-001 §6 property 2 — NO user-scoped data renders in the
     // including this gate — so the assertion would fail on correct code (it did).
     const app = readFileSync(resolve(process.cwd(), 'src/App.jsx'), 'utf8')
       .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
-    // Whole lines, anchored: a substring match would also be satisfied by prose mentioning it.
-    expect(/^import \{[^}]*IdentityUnavailable[^}]*\} from '\.\/components\/BootSkeleton\.jsx'$/m.test(app)).toBe(true)
-    expect(/^\s*if \(identity === 'unknown'\) return <IdentityUnavailable \/>$/m.test(app)).toBe(true)
+    const gate = app.match(/^\s*if \(identity === 'unknown'\) return <([A-Za-z0-9_]+) \/>$/m)
+    expect(gate, 'App.jsx no longer gates the unknown identity on a single prop-less element').toBeTruthy()
+    const imported = app.match(/^import \{([^}]*)\} from '\.\/components\/BootSkeleton\.jsx'$/m)
+    expect(imported, 'App.jsx no longer imports from BootSkeleton.jsx').toBeTruthy()
+    expect(imported[1].split(',').map((s) => s.trim())).toContain(gate[1])
+    expect(new RegExp(`export function ${gate[1]}\\(\\)`).test(code)).toBe(true)
   })
 })
 
