@@ -38,9 +38,18 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCANNED_SUFFIXES = (".yml", ".yaml", ".sh", ".bash", ".js", ".mjs", ".cjs", ".py", ".md")
 
 
+# This file is excluded from its own scan. It quotes the bad form deliberately — once in the
+# module docstring as the motivating example, and again below as the in-memory fixtures that prove
+# the detector can fail. Those are not executable and are the whole point of the file. The scan
+# reads `git ls-files`, so this went green while the file was untracked and turned red the moment
+# it was committed; excluding self is the fix, and the fixtures below keep the detector honest
+# without needing a real offender in the tree.
+SELF = os.path.relpath(os.path.abspath(__file__), REPO)
+
+
 def _tracked_files():
     out = subprocess.run(["git", "-C", REPO, "ls-files"], capture_output=True, text=True, check=True)
-    return [p for p in out.stdout.splitlines() if p.endswith(SCANNED_SUFFIXES)]
+    return [p for p in out.stdout.splitlines() if p.endswith(SCANNED_SUFFIXES) and p != SELF]
 
 
 def _executable_text(text):
