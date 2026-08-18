@@ -13,6 +13,12 @@
 //   4. the signed-OUT path still lands on /login
 //   5. the resolves-to-signed-out-AFTER-mount transition
 //
+// V4-COLDSTART-001 added a THIRD unresolved state — `unknown`, for a Clerk that will never resolve
+// (offline cold start) — which renders a terminal notice instead of the shell. That is exactly the
+// kind of "renders something before identity resolves" change the header above warns about, so §6
+// re-proves all five properties against it rather than assuming they carry over. The mechanics of
+// the bound that produces the state live in coldStartBoundedWait.test.jsx; §6 is the leak half.
+//
 // No jest-dom (L-182): roles/attrs + toBeTruthy/toBe(null), same as the sibling chrome suites.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -53,14 +59,24 @@ vi.mock('../lib/api.js', async (importOriginal) => ({
   useApiFetch: () => apiSeam,
 }))
 
+// V4-COLDSTART-001 — the retry affordance's only side effect. Mocked rather than spied because
+// jsdom's window.location is non-configurable, and the whole reason reloadApp lives in its own
+// module is so this seam exists at all.
+const { reloadSpy } = vi.hoisted(() => ({ reloadSpy: vi.fn() }))
+vi.mock('../lib/bootReload.js', () => ({ reloadApp: reloadSpy }))
+
 const { default: App, renderRoutes } = await import('../App.jsx')
 const { default: TopChrome } = await import('../components/TopChrome.jsx')
 const { getRouteClass } = await import('../lib/routeClass.js')
 const { AuthProvider: RealAuthProvider } = await vi.importActual('../context/AuthContext.jsx')
 
-const PENDING  = { user: null, profile: null, loading: true }
-const SIGNEDIN = { user: { id: 'user_dave' }, profile: { id: 'user_dave', display_name: 'Dave Nichols', avatar_url: null }, loading: false }
-const SIGNEDOUT = { user: null, profile: null, loading: false }
+const PENDING  = { user: null, profile: null, loading: true, identity: 'pending' }
+const SIGNEDIN = { user: { id: 'user_dave' }, profile: { id: 'user_dave', display_name: 'Dave Nichols', avatar_url: null }, loading: false, identity: 'signed-in' }
+const SIGNEDOUT = { user: null, profile: null, loading: false, identity: 'signed-out' }
+// V4-COLDSTART-001. loading:true is not decoration — `unknown` is a strict subset of `loading` (the
+// provider invariant proved in coldStartBoundedWait §C), so a fixture with loading:false would be a
+// shape the app can never produce and every §6 assertion below would be measuring a fiction.
+const UNKNOWN = { user: null, profile: null, loading: true, identity: 'unknown' }
 
 // Everything the pending shell must never contain. Two identities, because "no data leaked" has to
 // mean "no data at ALL", not "not the other one's" — a bug that painted the CURRENT user's name
@@ -76,6 +92,7 @@ beforeEach(() => {
   authState = PENDING
   apiCalls.length = 0
   tokenMints.length = 0
+  reloadSpy.mockClear()
   try { sessionStorage.clear() } catch { /* noop */ }
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no network in this suite'))))
 })
@@ -336,5 +353,222 @@ describe('V4-PERFCLERK-001 C — the route table is unchanged by the split', () 
     const els = renderRoutes({ overlay: false, user: null, loading: true })
     expect(els.every((e) => e.type === Routes.prototype ? false : true)).toBe(true)
     expect(els.every((e) => typeof e.props.path === 'string')).toBe(true)
+  })
+})
+
+// ── 6. V4-COLDSTART-001 — the SAME FIVE PROPERTIES, re-proved against the `unknown` state ─────────
+//
+// `unknown` means "loaded nothing, and we have given up expecting to" — an offline cold start where
+// clerk-js can never hot-load. It is the first state in which the app renders a real, worded screen
+// while not knowing who is in front of it, so every property above is re-derived here rather than
+// inherited. Property 1 is the one that CHANGES shape: in `pending` the win is that the shell mounts;
+// in `unknown` the requirement is the opposite — the shell must NOT be up, because a shell is a
+// promise of an app that is not coming. The other four hold identically and are asserted identically.
+describe('V4-COLDSTART-001 §6 property 1 — the unknown state REPLACES the shell, it does not sit inside it', () => {
+  it('renders the notice and mounts no chrome at all: no header, no nav, no route slot', () => {
+    authState = UNKNOWN
+    const { container } = renderApp('/today')
+    expect(screen.getByTestId('identity-unavailable')).toBeTruthy()
+    // Every surface the pending state paints is absent. This is what makes the leak argument
+    // structural instead of an enumeration: there is nothing else mounted to audit.
+    expect(container.querySelector('[data-app-chrome="top"]')).toBe(null)
+    expect(container.querySelector('[data-app-chrome="bottom"]')).toBe(null)
+    expect(screen.queryByTestId('route-skeleton')).toBe(null)
+    expect(screen.queryByTestId('nav-skeleton')).toBe(null)
+  })
+
+  it('is an alert with a retry affordance — an explanation AND a way out, not a prettier hang', () => {
+    authState = UNKNOWN
+    renderApp('/today')
+    const alert = screen.getByRole('alert')
+    expect(alert.getAttribute('data-testid')).toBe('identity-unavailable')
+    expect(screen.getByTestId('identity-retry').tagName).toBe('BUTTON')
+  })
+
+  it('the retry actually reloads — the only retry that can re-attempt the clerk-js hot-load', () => {
+    // IsomorphicClerk loads the script once and exposes no re-load API, so a button that did
+    // anything cleverer than a new document would be a button that does nothing.
+    authState = UNKNOWN
+    renderApp('/today')
+    expect(reloadSpy).not.toHaveBeenCalled()
+    act(() => { screen.getByTestId('identity-retry').click() })
+    expect(reloadSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('names the CAUSE honestly: "offline" only when the radio is actually down', () => {
+    // Both causes are real and want different next actions. Telling someone holding five bars that
+    // they are offline sends them debugging their phone instead of retrying.
+    const desc = Object.getOwnPropertyDescriptor(window.navigator, 'onLine')
+    try {
+      authState = UNKNOWN
+      Object.defineProperty(window.navigator, 'onLine', { value: false, configurable: true })
+      const offline = renderApp('/today')
+      expect(screen.getByTestId('identity-unavailable').textContent).toMatch(/offline/i)
+      offline.unmount()
+
+      Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+      renderApp('/today')
+      const text = screen.getByTestId('identity-unavailable').textContent
+      expect(text).not.toMatch(/offline/i)
+      expect(text).toMatch(/account/i)
+      // Either way it stays a dead end for data: no identity, so still nothing to render.
+      for (const s of IDENTITY_STRINGS) expect(text.includes(s)).toBe(false)
+    } finally {
+      if (desc) Object.defineProperty(window.navigator, 'onLine', desc)
+      else delete window.navigator.onLine
+    }
+  })
+
+  it('does not silently redirect anywhere — the URL Dave launched on is still the URL', () => {
+    // The rejected alternative, stated as an assertion: /login cannot work offline and reads as
+    // "you got signed out", which is false.
+    authState = UNKNOWN
+    renderApp('/today')
+    expect(window.location.pathname).toBe('/today')
+    expect(screen.queryByText(/Sign in with Google/i)).toBe(null)
+  })
+})
+
+describe('V4-COLDSTART-001 §6 property 2 — NO user-scoped data renders in the unknown state', () => {
+  it('renders no identity string anywhere, with a fully populated profile in the fixture', () => {
+    // Same trap as the pending case: the fixture carries Dave's name and id, so this fails loudly if
+    // the notice ever starts reading identity rather than passing because the fixture is empty.
+    authState = { ...SIGNEDIN, user: null, loading: true, identity: 'unknown' }
+    const { container } = renderApp('/today')
+    expect(screen.getByTestId('identity-unavailable')).toBeTruthy()
+    for (const s of IDENTITY_STRINGS) {
+      expect(container.textContent.includes(s), `unknown screen leaked "${s}"`).toBe(false)
+    }
+  })
+
+  it('mounts none of the user-gated surfaces and offers no navigation target at all', () => {
+    authState = { ...SIGNEDIN, user: null, loading: true, identity: 'unknown' }
+    const { container } = renderApp('/today')
+    expect(screen.queryByText('Today')).toBe(null)
+    expect(screen.queryByText('Harvests')).toBe(null)
+    expect(screen.queryByText('More')).toBe(null)
+    expect(screen.queryByLabelText('Search your garden')).toBe(null)
+    expect(screen.queryByTestId('topchrome-snap')).toBe(null)
+    // No link can be followed out of this screen — offline every one of them is a dead end, and a
+    // link into the app is a link into a tree that has no identity to render.
+    expect(container.querySelectorAll('a').length).toBe(0)
+    // The notice itself carries no imagery at all. The tree DOES hold one <img>: SplashScreen's
+    // brand illustration, a static asset that mounts above AuthProvider and is not gated on identity.
+    // Named rather than excluded by a loose count, so a second image appearing anywhere fails here.
+    const notice = screen.getByTestId('identity-unavailable')
+    expect(notice.querySelectorAll('img').length).toBe(0)
+    const imgs = [...container.querySelectorAll('img')]
+    expect(imgs.length).toBe(1)
+    expect(screen.getByRole('img', { name: /welcome/i }).contains(imgs[0])).toBe(true)
+  })
+
+  it('the notice is prop-less and context-free — no channel exists for identity to reach it', () => {
+    // CODE only, comments stripped: this file discusses identity at length and a guard a comment can
+    // satisfy is not a guard. Extends the existing BootSkeleton scan rather than duplicating it, so
+    // the new terminal screen is bound by the SAME structural invariant as the skeletons.
+    const code = readFileSync(resolve(process.cwd(), 'src/components/BootSkeleton.jsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    expect(/export function IdentityUnavailable\(\)/.test(code)).toBe(true)
+    expect(/useAuth|useContext|useApiFetch|profile|\buser\b/.test(code)).toBe(false)
+    // And App renders THAT export in the gate — a component defined here but wired to a different
+    // one would leave the structural proof above covering nothing.
+    //
+    // Line comments are stripped BEFORE block comments here, unlike the BootSkeleton scan above.
+    // App.jsx contains the literal `/projects/:id/*` inside a `//` comment; strip blocks first and
+    // that stray `/*` opens a comment that runs to the next `*/` and swallows 13 770 characters —
+    // including this gate — so the assertion would fail on correct code (it did).
+    const app = readFileSync(resolve(process.cwd(), 'src/App.jsx'), 'utf8')
+      .replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+    // Whole lines, anchored: a substring match would also be satisfied by prose mentioning it.
+    expect(/^import \{[^}]*IdentityUnavailable[^}]*\} from '\.\/components\/BootSkeleton\.jsx'$/m.test(app)).toBe(true)
+    expect(/^\s*if \(identity === 'unknown'\) return <IdentityUnavailable \/>$/m.test(app)).toBe(true)
+  })
+})
+
+describe('V4-COLDSTART-001 §6 property 3 — no tokenless request in the unknown state', () => {
+  it('issues ZERO useApiFetch calls and mints ZERO tokens, including a full second later', () => {
+    // The providers ABOVE the gate (Favorites/Zone/Mode/Toast) still mount, so this is not implied
+    // by "nothing renders" — it is the same assertion the pending window carries, made again for a
+    // state that lasts indefinitely rather than ~2.5s.
+    vi.useFakeTimers()
+    try {
+      authState = UNKNOWN
+      renderApp('/today')
+      expect(apiCalls).toEqual([])
+      expect(tokenMints).toEqual([])
+      act(() => { vi.advanceTimersByTime(1000) })
+      expect(apiCalls).toEqual([])
+      expect(tokenMints).toEqual([])
+    } finally { vi.useRealTimers() }
+  })
+})
+
+describe('V4-COLDSTART-001 §6 property 4 — the signed-OUT path is untouched by the new state', () => {
+  it('a signed-out user still lands on /login and never sees the offline notice', () => {
+    authState = SIGNEDOUT
+    renderApp('/login')
+    expect(screen.getByText(/Sign in with Google/i)).toBeTruthy()
+    expect(screen.queryByTestId('identity-unavailable')).toBe(null)
+  })
+
+  it('a signed-out user is still redirected off a Protected route', () => {
+    authState = SIGNEDOUT
+    const route = renderRoutes({ overlay: false, user: null, loading: false }).find((r) => r.props.path === '/today')
+    const Protected = route.props.element.type
+    const { container } = render(
+      <MemoryRouter initialEntries={['/today']}>
+        <Protected><div>secret</div></Protected>
+      </MemoryRouter>,
+    )
+    expect(container.textContent.includes('secret')).toBe(false)
+  })
+
+  it('the PENDING window is unchanged — the new gate did not swallow the state it sits beside', () => {
+    // The regression this change could most plausibly cause: gating too broadly and replacing the
+    // ~2.5s skeleton shell (the whole of V4-PERFCLERK-001 C) with the offline notice.
+    authState = PENDING
+    const { container } = renderApp('/today')
+    expect(screen.queryByTestId('identity-unavailable')).toBe(null)
+    expect(screen.getByTestId('route-skeleton')).toBeTruthy()
+    expect(screen.getByTestId('nav-skeleton')).toBeTruthy()
+    expect(container.querySelector('[data-app-chrome="top"]').getAttribute('data-chrome-state')).toBe('pending')
+  })
+})
+
+describe('V4-COLDSTART-001 §6 property 5 — the transitions OUT of unknown', () => {
+  it('unknown -> signed IN: the real shell takes over and the notice is gone', () => {
+    // A late resolve (the radio comes back, Clerk finally loads). The state is not sticky, so this
+    // recovers with no interaction at all.
+    authState = UNKNOWN
+    const { container, rerender } = render(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>)
+    expect(container.querySelector('[data-app-chrome="top"]').getAttribute('data-chrome-state')).toBe('pending')
+
+    authState = SIGNEDIN
+    act(() => { rerender(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>) })
+    expect(container.querySelector('[data-app-chrome="top"]').getAttribute('data-chrome-state')).toBe(null)
+    expect(screen.getByLabelText('Search your garden').getAttribute('href')).toBe('/search')
+  })
+
+  it('unknown -> signed OUT: the unauth chrome, and the signed-IN affordances never flash', () => {
+    authState = UNKNOWN
+    const { container, rerender } = render(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>)
+    expect(screen.queryByText('Sign in')).toBe(null)
+
+    authState = SIGNEDOUT
+    act(() => { rerender(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>) })
+    expect(screen.getByText('Sign in')).toBeTruthy()
+    expect(screen.queryByTestId('topchrome-snap')).toBe(null)
+    expect(screen.queryByLabelText('Search your garden')).toBe(null)
+  })
+
+  it('the full app tree recovers from unknown to a signed-in shell in place', () => {
+    authState = UNKNOWN
+    const { rerender } = renderApp('/today')
+    expect(screen.getByTestId('identity-unavailable')).toBeTruthy()
+
+    authState = SIGNEDIN
+    act(() => { rerender(<App />) })
+    expect(screen.queryByTestId('identity-unavailable')).toBe(null)
+    expect(screen.getByLabelText('Search your garden')).toBeTruthy()
   })
 })
