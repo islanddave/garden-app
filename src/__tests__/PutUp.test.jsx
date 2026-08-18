@@ -97,6 +97,12 @@ beforeEach(() => {
   uploadMock.mockResolvedValue({ photo: { id: 'photo-1' } })
   // jsdom has no object-URL implementation.
   if (!URL.createObjectURL) { URL.createObjectURL = vi.fn(() => 'blob:preview'); URL.revokeObjectURL = vi.fn() }
+  // V4-RELOADGATEWIRE-001: PutUpForm now stashes a dirty (unsubmitted) draft to sessionStorage
+  // keyed 'gardenApp.draft.put-up' (draftStash.js) and restores it on a fresh, no-prefill mount.
+  // Several tests below type into the form without ever reaching a successful submit (the only
+  // point that clears the stash), so without this reset a later bare renderPutUp() in the SAME
+  // file would restore an earlier test's leftover draft over its own fixture state.
+  sessionStorage.clear()
 })
 
 function pickPhoto() {
