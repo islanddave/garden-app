@@ -132,6 +132,66 @@ const RAIN_TIER_FABRIC = {
   ],
 };
 
+// BUG-CADENCESIZE-001 — VESSEL_FLOOR: the only scenario that reaches dailyFloorFor's decision.
+// Before it was added, the gate carried no trough, no whiskey_barrel and no rigid pot at or above
+// SIZE_BUCKETS.largeMinGal, so the entire vessel floor could be deleted without moving a single golden.
+//
+// One frozen input, nine plantings on a 1-day cadence. Eight sit at dW=1 (last_water 08-17, today 08-18)
+// — precisely the knife edge where a floor of 2 is the difference between due and not due. Three must move
+// off the list and four must stay on it, so the scenario discriminates in BOTH directions:
+//   tr1  trough '6x2 ft'        -> floored, NOT due   (the clearest live mis-assignment: 4 prod peppers)
+//   wb1  whiskey_barrel '15 gall' -> floored, NOT due (through the live size typo, so the parse is pinned)
+//   cer1 ceramic '15 gal'       -> floored, NOT due   (rigid pot qualifying on PARSED volume)
+//   fb2  fabric_bag '10 gal'    -> NOT floored, DUE   (the bulk of the live bag population, 31 prod rows)
+//   fb3  fabric_bag '20 gal'    -> NOT floored, DUE   (the deliberate exclusion, and the ONLY row here that
+//                                                      pins it: at 10 gal a bag is below largeMinGal anyway,
+//                                                      so folding fabric into the rigid set leaves fb2
+//                                                      unmoved and the golden green — verified by mutation.
+//                                                      This is the live Jet Star case, whose own profile
+//                                                      says "20-gal bag min ... 1-2 gal am+pm in 85F+")
+//   pp2  plastic_pot '6 in'     -> NOT floored, DUE   (small rigid: the threshold is real, not decorative)
+//   pp3  plastic_pot NULL size  -> NOT floored, DUE   (THE fail-safe row, and the largest uncertain live
+//                                                      population: 24 active plantings are a rigid type with
+//                                                      no recorded size, including the "Bag Area" rows that
+//                                                      photos suggest are really fabric bags. An unparseable
+//                                                      size must never read as large — without this row the
+//                                                      mutation that treats unknown as >= largeMinGal
+//                                                      SURVIVED this gate. It is also why the change is safe
+//                                                      to ship ahead of the data cleanup: recorded-as-pot and
+//                                                      actually-a-bag both land here, both keep wi=1.)
+//   nv3  NULL container_type    -> NOT floored, DUE   (fail-safe: unknown vessel keeps today's behaviour)
+// The eighth pins the floor's VALUE, not just its existence:
+//   tr2  trough '6x2 ft' at dW=2 -> DUE with interval 2, overdue_by 0. At dW=1 every floored row is absent
+//        from the payload whatever the floor is, so a floor of 3 or 4 — or switching to the `_inground`
+//        arm (3 here) — produced a byte-identical golden and this gate could not see the difference.
+//        Verified by mutation: before tr2 existed, DAILY_FLOOR_DAYS 2->4 and the inground-arm swap both
+//        SURVIVED the parity gate while the unit suite killed them. tr2 is due at 2 and not due at 3+, so
+//        the magnitude is now pinned here too.
+// Dry hydrology and 79F on purpose: no rain credit, no saturation cap, no bag heat gate and no >=88F heat
+// gate, so the ONLY thing separating these rows is the vessel floor.
+// rainCreditEnabled: true — prod's live configuration (CARE_RAIN_CREDIT_ENABLED=true). With zero rain in
+// the window the flag changes no verdict here, so there is no flag PAIR: pairing it would pin the flag,
+// not the floor, and this scenario exists to pin the floor.
+const DAILY_CROP = { _seeded: true, crop: 'pepper', water_interval_days_container: 1, water_interval_days_inground: 3, water_method: 'deep_even', soil_moisture_target: 'evenly_moist', drought_tolerance: 'medium', cold: { tender: true, protect_below_F: 45 }, fertilize_interval_days: 14 };
+const VESSEL_FLOOR = {
+  today: '2026-08-18',
+  weather: { tonightLow: 62, highToday: 79, code: 1, short: 'Clearing', unit: 'F' },
+  hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  ownerFallback: 'dave',
+  rainCreditEnabled: true,
+  plantings: [
+    P({ id: 'tr1', name: 'Trough Jalapeno', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'trough', container_size: '6x2 ft', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'tr2', name: 'Trough Serrano', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'trough', container_size: '6x2 ft', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-16', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'wb1', name: 'Barrel Habanero', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'whiskey_barrel', container_size: '15 gall', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'cer1', name: 'Ceramic Coleus', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'ceramic', container_size: '15 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'fb2', name: 'Ten Gallon Bag Tomato', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'fabric_bag', container_size: '10 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'fb3', name: 'Twenty Gallon Bag Tomato', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'fabric_bag', container_size: '20 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'pp2', name: 'Six Inch Pot Basil', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'plastic_pot', container_size: '6 in', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'pp3', name: 'Bag Area Unsized Pot', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'plastic_pot', container_size: null, substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+    P({ id: 'nv3', name: 'Unlabelled Vessel Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: null, container_size: null, substrate_start: '2026-05-01', transplant_at: null, last_water: '2026-08-17', covered: false, db_cadence: DAILY_CROP }),
+  ],
+};
+
 // Helper to keep planting literals terse + uniform.
 //
 // BUG-NOLOCOUTDOOR-001: the handler no longer hands the engine a single `covered` boolean. It
@@ -352,6 +412,11 @@ export const scenarios = [
     name: 'rain-tier-fabric-flagon',
     desc: '0.30" same input, flag ON: the 5 gal bag promotes to fabric_ground (IA 0.20, hold 3 -> credited_days 3) while the "3 in" and unsized bags stay small_fast (IA 0.35 -> no credit, water). The only scenario that reaches RAIN_TIER_IA/HOLD.fabric_ground, and it pins the >= 3 gal gate in both directions.',
     input: { ...RAIN_TIER_FABRIC, rainCreditEnabled: true },
+  },
+  {
+    name: 'vessel-floor',
+    desc: 'Nine 1-day-cadence plantings on the vessels that discriminate. At dW=1 trough/whiskey_barrel/15-gal ceramic are floored to 2 and drop off water_due while 10-gal and 20-gal fabric bags, a 6-in pot, an UNSIZED rigid pot and a NULL-vessel row stay due; a second trough at dW=2 is due with interval 2, which pins the floor VALUE (a floor of 3+, or the _inground arm, drops it). Pins the BUG-CADENCESIZE-001 floor, the deliberate fabric-bag exclusion, and the unknown-vessel fail-safe in one golden.',
+    input: { ...VESSEL_FLOOR },
   },
 ];
 

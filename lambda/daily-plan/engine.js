@@ -151,6 +151,53 @@ function isSmallVessel(p){
   if(s!=null) return s;
   return true;                                                         // unknown vessel in carve-out window -> fail safe (deny credit, water it)
 }
+// ── BUG-CADENCESIZE-001 — vessel floor under the watering interval (2026-08-18) ───────────────────
+// The interval derivation below is size-blind: a 6x2 ft trough, a 15-gal whiskey barrel and a 5-gal
+// fabric bag all take the cultivar's single `_container` number, because the data model has one number
+// per cultivar and no way to condition it on the vessel. This raises a FLOOR for vessels whose reservoir
+// makes a 24h cycle indefensible. Floor only, and capped at DAILY_FLOOR_DAYS: it can move wi 1->2 and
+// nothing else, so the worst case it can cause is a one-day delay, never a multi-day one.
+//
+// NOT the `_inground` arm, which is the obvious-looking alternative. Measured against live prod
+// 2026-08-18, the trough peppers' own `_inground` values are 3-5 — a 3-5x jump on August peppers, on
+// vessels that still have a bottom. A bounded +1 is defensible from the notes; 1->5 is not.
+//
+// FABRIC BAGS ARE EXCLUDED AT EVERY SIZE, 10 and 20 gal included, and that is the deliberate departure
+// from a plain gallon threshold. Their profile notes are authored for the bag the planting is actually
+// in and still say daily: "10+ gal bags heavy daily", "1-1.5 gal daily in 10-15 gal bag June", and for
+// the 20-gal Jet Star "1-2 gal am+pm in 85F+ ... check twice daily 85F+". A bag evaporates through every
+// wall and air-prunes, which is why fabric already gets its own evaporative treatment in this engine
+// (bagHeatGate) and its own per-day heat ramp in ledgerParams (FABRIC_BAG). Volume does not buy a bag a
+// second day, and overriding 18 researched notes with a gallon constant would re-commit the very
+// unresearched-constant defect this fix exists to remove.
+//
+// FAIL-SAFE — an unknown vessel never earns the floor, in either direction:
+//   * Reservoir TYPES qualify on the type alone (their size is implied by the type, exactly as ledger's
+//     SIZE_IMPLIED treats them), so a NULL/garbage `container_size` does not weaken them — nothing is
+//     being inferred from an unknown there.
+//   * Every other type must present a PARSED volume >= largeMinGal. NULL, absent, or unparseable leaves
+//     wi exactly where today's engine puts it: still daily, still prompting. That is the same
+//     err-toward-watering direction isSmallVessel and rainTierFor already take on an unknown vessel.
+const DAILY_FLOOR_DAYS = 2;
+// Deep soil masses. Deliberately NOT LARGE_VESSEL_TYPES: that set answers "is this a fresh small root
+// ball?" for the transplant carve-out and so carries hanging_basket + window_box, which are fast-drying
+// and must keep their daily cadence. in_ground/raised_bed normally take the `_inground` arm and never
+// reach this floor; they are listed anyway so the rule is COMPLETE (no reservoir vessel can hold a 1-day
+// cycle) rather than arbitrary, which also closes the documented `_inground`-absent fallthrough where a
+// genus stub with no `_inground` key hands an in-ground bed its 1-day container number. Zero live rows
+// take that path today.
+const RESERVOIR_VESSEL_TYPES = new Set(['in_ground','raised_bed','trough','whiskey_barrel']);
+// Rigid, non-breathing pots — they hold their water instead of wicking it out the sides, so a genuinely
+// large one earns the floor. Gated on parsed volume, never on the type alone (most of these are small).
+const RIGID_POT_TYPES = new Set(['ceramic','terracotta','plastic_pot','pot','other']);
+// Returns the floor in days, or null for "leave the interval alone".
+function dailyFloorFor(p){
+  const ct=((p&&p.container_type)||'').toLowerCase();
+  if(RESERVOIR_VESSEL_TYPES.has(ct)) return DAILY_FLOOR_DAYS;
+  if(!RIGID_POT_TYPES.has(ct)) return null;                            // fabric_bag, tray class, unknown/NULL type
+  const gal=ledger.parseContainerGal(p&&p.container_size);
+  return (gal!=null && gal>=LP.SIZE_BUCKETS.largeMinGal) ? DAILY_FLOOR_DAYS : null;
+}
 // BUG-NOLOCOUTDOOR-001: reads the handler's resolved flag, NOT the raw `covered` boolean.
 // Was `p.covered ? 'none' : 'outdoor'`, which is why a NULL tri-state could not be used directly:
 // NULL is FALSY, so an unknown location would have taken the 'outdoor' branch — the very bug — while
@@ -605,6 +652,15 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // V4-WATERMATH-001 F2: the ledger fold consumes the PRE-heat-gate interval — the >=88F wi-=1
     // gate is RETIRED in-flag (continuous ET0 demand subsumes it; retaining it double-counts heat).
     const _wiBase = wi;
+    // BUG-CADENCESIZE-001 vessel floor. Placed HERE, between _wiBase and the heat gate, for two reasons:
+    //   * AFTER _wiBase, so the F2 ledger fold never sees it. The ledger already models vessel size
+    //     continuously (vesselProfile sizeFactor + the fabric heat ramp); layering this coarse floor on
+    //     top would double-count the same signal, and F2 must stay unaffected by this change.
+    //   * BEFORE the heat gate, so a >=88F day still walks a low-drought-tolerance planting back down to
+    //     1. Heat is exactly when a trough pepper does want daily water, and it means this change is a
+    //     no-op on hot days and +1 day only on ordinary ones — the most conservative placement available.
+    const _floor = dailyFloorFor(p);
+    if(_floor!=null && wi<_floor) wi=_floor;
     if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1;
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): clamp the interval to the substrate x stage ceiling so a
     // rain-credited planting still re-surfaces for a moisture check. Flag-OFF leaves wi exactly as computed above.
@@ -861,4 +917,5 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
 module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
   FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered,
+  dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,
   overwinter: ow};

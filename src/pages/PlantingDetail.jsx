@@ -59,6 +59,7 @@ import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { describeHarvestWeight, sumHarvestWeights, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import { vesselDataGaps } from '../lib/vesselData.js'
 
 
 
@@ -472,6 +473,28 @@ export default function PlantingDetail() {
     ['Pot size', pl.container_size || null],
   ].filter(([, v]) => v)
 
+  // BUG-CADENCESIZE-001 — vessel gaps STATED rather than hidden. `.filter(([, v]) => v)` above drops any
+  // row with an empty value, so a planting with no recorded pot size rendered literally nothing — the one
+  // shape that can never prompt anyone to fix it. Now that the watering interval reads container_size for
+  // some vessels, that silence is the wrong default: 98 of 228 active plantings have no size on record,
+  // and a location named "Bag Area" holds 26 rows recorded as plastic_pot (three photographed, all fabric
+  // grow bags). The copy is muted, never a warning colour and never a badge, so it reads as an unfilled
+  // field noticed in passing rather than as a task. It only ever describes; the fix is the existing Edit
+  // path, untouched.
+  //
+  // KEPT OUT OF THE EMPTINESS TEST BELOW, deliberately. These rows are supplementary, so on a planting
+  // with nothing else recorded they would replace the "No additional details recorded yet." empty state
+  // with two rows both reading "Not recorded" — turning a clean empty state into a form stub, which is
+  // the chore-list feel this surface is explicitly meant to avoid. They therefore render only when the
+  // record is otherwise non-empty, i.e. an in-use planting Dave might actually walk past.
+  const vesselGapRows = [
+    ['Pot / bag', pl.container_type ? null : vesselGap(pl, 'container_type')],
+    ['Pot size', vesselGap(pl, 'container_size')],
+    // Only when the RECORDED type contradicts its location — a wrong value is worse than a missing one,
+    // because the interval derivation and everything else downstream treat it as known.
+    ['Check pot / bag', pl.container_type ? conflictNote(pl) : null],
+  ].filter(([, v]) => v)
+
   const careRows = [
     ['Next watering', renderNextWatering(pl)],
     ['Last watered', fmtDate(pl.last_watered_at)],
@@ -492,8 +515,14 @@ export default function PlantingDetail() {
     ['First harvest', fmtDate(firstHarvest)],
   ].filter(([, v]) => v)
 
+  // BUG-CADENCESIZE-001: computed from the REAL rows ONLY — vesselGapRows are deliberately excluded.
+  // That exclusion is what preserves the "No additional details recorded yet." empty state on a planting
+  // with nothing recorded: the render below checks tabsEmpty BEFORE activeRows, so gap copy alone can
+  // never make an empty planting look populated. Adding vesselGapRows to this expression would turn that
+  // clean empty state into two rows both reading "Not recorded" — pinned by a guard in
+  // PlantingDetail.vesselGaps.test.jsx.
   const tabsEmpty = basicsRows.length === 0 && careRows.length === 0 && moreRows.length === 0
-  const activeRows = tab === 'basics' ? basicsRows : tab === 'care' ? careRows : moreRows
+  const activeRows = tab === 'basics' ? [...basicsRows, ...vesselGapRows] : tab === 'care' ? careRows : moreRows
   const tabLabel = tab === 'basics' ? 'Basics' : tab === 'care' ? 'Care' : 'More'
 
   // PLANTING-PAGER swipe (Pointer Events only — iOS Safari ≥13 / Chrome Android both support them;
@@ -971,6 +1000,24 @@ function renderNextWatering(pl) {
         <span style={{ color: P.terra, fontWeight: 600, fontSize: '0.78rem' }}>Overdue</span>
       </span>
     : label
+}
+
+// BUG-CADENCESIZE-001 — muted copy for an unrecorded vessel field, or null when nothing is missing.
+// P.light is the same tone the row LABELS already use, so the value reads as quieter than a real value
+// rather than as an alert. Deliberately not P.terra: this is an unfilled field, not a problem with the
+// plant, and the watering engine has already declined to act on it rather than guessing.
+function vesselGap(pl, field) {
+  const gap = vesselDataGaps(pl).find((g) => g.field === field && g.kind !== 'type_conflicts_location')
+  if (!gap) return null
+  return <span style={{ color: P.light, fontStyle: 'italic' }}>{gap.text}</span>
+}
+
+// The type-vs-location contradiction. Separated from vesselGap because it attaches to a row that HAS a
+// value — the point is that the recorded value looks wrong, which the "Not recorded" copy cannot say.
+function conflictNote(pl) {
+  const gap = vesselDataGaps(pl).find((g) => g.kind === 'type_conflicts_location')
+  if (!gap) return null
+  return <span style={{ color: P.light }}>{gap.text}</span>
 }
 
 // Derive the earliest harvest from a DESC-ordered event list: prefer a first_harvest event,

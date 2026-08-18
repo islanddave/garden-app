@@ -36,7 +36,11 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
       'rain-tier-vessels-flagoff', 'rain-tier-vessels-flagon',
       // BUG-RAINCREDITLIVEPATH-001: KNIFE and VESSELS reach the tier path but only its small_fast/in_ground
       // rows, so the size-gated fabric_ground row added by that fix was still unreachable from this gate.
-      'rain-tier-fabric-flagoff', 'rain-tier-fabric-flagon']) {
+      'rain-tier-fabric-flagoff', 'rain-tier-fabric-flagon',
+      // BUG-CADENCESIZE-001: the vessel floor. Without this the gate carries no trough, no whiskey_barrel
+      // and no rigid pot >= largeMinGal, so dailyFloorFor could be deleted without moving a golden.
+      // NOT a flag pair, deliberately — see the divergence loop below.
+      'vessel-floor']) {
       expect(names).toContain(required);
     }
   });
@@ -53,6 +57,12 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
     expect(scenarios.filter((s) => s.input.rainCreditEnabled === true).length).toBeGreaterThanOrEqual(2);
   });
 
+  // BUG-CADENCESIZE-001: `vessel-floor` is deliberately NOT in this loop. It is a single scenario, not a
+  // flag pair: it carries zero rain in the window precisely so that nothing but the vessel floor separates
+  // its seven plantings, which means rainCreditEnabled changes no verdict in it and a paired golden would
+  // be byte-identical. Adding it here would fail; adding rain to make it pass would destroy the isolation
+  // that lets it pin the floor at all. Its non-vacuity is proven the other way — by mutation of
+  // dailyFloorFor, recorded in cadencesize-IMPL.md — not by a flag delta.
   it('each rain-tier flag pair diverges — the flag-ON goldens are non-vacuous', () => {
     for (const base of ['rain-tier-knife', 'rain-tier-vessels', 'rain-tier-fabric']) {
       const off = canonicalJSON(canonicalize(planFor(`${base}-flagoff`)));

@@ -1,0 +1,254 @@
+{
+  "date": "2026-08-18",
+  "hot": false,
+  "hydrology": {
+    "rain_coming": false,
+    "rain_horizon": null,
+    "recent_precip_in": 0,
+    "status": {
+      "ok": true,
+      "uncertainty": {
+        "flag": false
+      }
+    },
+    "today_pop": 0,
+    "today_precip_in": 0,
+    "tomorrow_pop": 0,
+    "tomorrow_precip_in": 0,
+    "upcoming_precip_in": 0
+  },
+  "users": {
+    "dave": {
+      "counts": {
+        "cold": 0,
+        "dormancy_suppressed": 0,
+        "dormant": 0,
+        "fertilize": 7,
+        "no_history": 0,
+        "pest": 0,
+        "plantings": 9,
+        "rain_skipped": 0,
+        "water_due": 6
+      },
+      "substrate": {
+        "feeding_now": 0,
+        "fertilize_recs": 7,
+        "msg": "7 planting(s) past the MG feed window — feed per recommendation.",
+        "on_hold": false,
+        "phase_counts": {
+          "mg_tapering_13_24wk": 9
+        },
+        "water_note": "Hard water (high Ca/Mg/bicarbonate) slowly raises root-zone pH -> micronutrient (Fe/Mn) lockout, worst for acid-lovers (blueberry)."
+      },
+      "tasks": {
+        "cold": [],
+        "dormancy_suppressed": [],
+        "dormant": [],
+        "fertilize": [
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "fb2",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Ten Gallon Bag Tomato",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          },
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "fb3",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Twenty Gallon Bag Tomato",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          },
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "nv3",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Unlabelled Vessel Pepper",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          },
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "pp3",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Bag Area Unsized Pot",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          },
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "tr1",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Trough Jalapeno",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          },
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "tr2",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Trough Serrano",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          },
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "wb1",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Barrel Habanero",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          }
+        ],
+        "no_history": [],
+        "pest": [],
+        "rain_skipped": [],
+        "water_due": [
+          {
+            "crop": "pepper",
+            "days_since": 1,
+            "id": "fb2",
+            "in_ground": false,
+            "interval": 1,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Ten Gallon Bag Tomato",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          },
+          {
+            "crop": "pepper",
+            "days_since": 1,
+            "id": "fb3",
+            "in_ground": false,
+            "interval": 1,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Twenty Gallon Bag Tomato",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          },
+          {
+            "crop": "pepper",
+            "days_since": 1,
+            "id": "nv3",
+            "in_ground": false,
+            "interval": 1,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Unlabelled Vessel Pepper",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          },
+          {
+            "crop": "pepper",
+            "days_since": 1,
+            "id": "pp2",
+            "in_ground": false,
+            "interval": 1,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Six Inch Pot Basil",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          },
+          {
+            "crop": "pepper",
+            "days_since": 1,
+            "id": "pp3",
+            "in_ground": false,
+            "interval": 1,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Bag Area Unsized Pot",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          },
+          {
+            "crop": "pepper",
+            "days_since": 2,
+            "id": "tr2",
+            "in_ground": false,
+            "interval": 2,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Trough Serrano",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          }
+        ]
+      }
+    }
+  },
+  "water_source": "well water (likely HARD)",
+  "weather": {
+    "callout": null,
+    "code": 1,
+    "highToday": 79,
+    "short": "Clearing",
+    "tonightLow": 62,
+    "unit": "F"
+  }
+}
