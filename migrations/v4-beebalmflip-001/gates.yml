@@ -1,0 +1,119 @@
+# gates.yml
+# V4-BEEBALMFLIP-001 — execute the pre-authored bee_balm flip: NULL -> cut_and_come_again/14d.
+#
+# SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. CTAS snapshot of crop_types (the only table written):
+#        CREATE TABLE ctas_20260818_crop_types_bbf001 AS SELECT * FROM public.crop_types;
+#   2. pre gates -> 0a-data.sql -> post gates.
+#   3. No 0c-validate step: 0a adds no constraints. The existing CHECKs
+#      (chk_crop_types_harvest_habit, chk_crop_types_repeat_interval) are already convalidated
+#      and enforce the write at UPDATE time — a bad literal fails the apply, loudly, which is
+#      the point.
+#
+# BLAST RADIUS. This migration CHANGES USER-VISIBLE BEHAVIOUR by design — that is the whole item.
+#   * bee_balm becomes eligible for the Today "Ready to pick" band (src/lib/harvestReadiness.js)
+#     once days_since_last_harvest >= 14 against its one logged pick, subject to the
+#     MAX_OVERDUE_RATIO=3 ceiling.
+#   * bee_balm is admitted to lambda/harvests/watch.js's WATCHED_HABITS ("Worth checking this
+#     week") immediately on the next Lambda read — no deploy needed, this is a data change.
+#   * bee_balm gains NO DERIVED_ANCHOR_HABITS anchor — cut_and_come_again is deliberately
+#     excluded from that tier (watch.js), same as every other c&c crop.
+#   * No catalogue-derived-harvest-end-date REMOVAL effect: bee_balm's harvest_habit was NULL
+#     before this migration, and NULL was already outside CONTINUOUS_HARVEST_HABITS's "derived
+#     end date shown" set (plantingMaturity.js) — so there is no visible removal here, unlike
+#     the general NULL->habit case in the recon doc's blast-radius table row #5.
+#   * No schema change, so no view is affected.
+#
+# Pre:  the 2 target columns exist; bee_balm exists and is live; both target columns are still
+#       NULL (so the write is real, not a vacuous no-op); this migration's own schema_version
+#       is not yet present.
+# Post: bee_balm carries exactly ('cut_and_come_again', 14) and no harvest_season DOY; no
+#       'single' row anywhere carries an interval; schema_version row present; a second apply
+#       changes 0 rows.
+
+pre:
+  - name: pre_not_already_applied
+    note: >
+      Mirrors the v4-croptypedogwood-001 convention: check this migration's own schema_version
+      row is absent before treating the "still NULL" read below as meaningful.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.34.0-beebalmflip-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_target_columns_exist
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'crop_types'
+         AND column_name IN ('harvest_habit', 'repeat_interval_days')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_bee_balm_live_not_deleted
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  - name: pre_bee_balm_currently_null
+    note: >
+      Confirms the write below is real, not a vacuous no-op, and that nobody has hand-set
+      bee_balm's habit to something other than what the pre-authored flip specifies.
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NULL
+         AND harvest_habit IS NULL AND repeat_interval_days IS NULL
+    expect: scalar_eq
+    value: 1
+
+post:
+  - name: post_bee_balm_seeded_exact
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL AND slug = 'bee_balm'
+         AND (harvest_habit, repeat_interval_days) IS DISTINCT FROM ('cut_and_come_again', 14)
+    expect: scalar_eq
+    value: 0
+
+  - name: post_bee_balm_no_doy_written
+    note: >
+      A wrong or accidental window SUPPRESSES a true readiness signal. This migration writes no
+      DOY window; this gate is the regression guard that stays true.
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'bee_balm' AND deleted_at IS NULL
+         AND (harvest_season_start_doy IS NOT NULL OR harvest_season_end_doy IS NOT NULL)
+    expect: scalar_eq
+    value: 0
+
+  - name: post_no_single_carries_interval
+    note: "chk_crop_types_repeat_interval restated globally, matching the v4-croptype-002 convention."
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE harvest_habit = 'single' AND repeat_interval_days IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_present
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.34.0-beebalmflip-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_second_apply_is_noop
+    manual: true
+    note: |
+      Re-run 0a-data.sql. Both UPDATE statements must report UPDATE 0 and the schema_version
+      INSERT must report INSERT 0 0. Any non-zero means an IS-NULL guard is missing and the file
+      is not first-write-wins.
+
+  - name: post_harvest_ready_diff
+    manual: true
+    note: |
+      PROD ONLY. Re-run the GET /api/events/harvest-ready candidate query before/after and diff
+      row-for-row. bee_balm (Wild Bergamot) MAY newly appear if days_since_last_harvest (from its
+      one logged pick) >= 14 at apply time and the MAX_OVERDUE_RATIO=3 ceiling
+      (harvestReadiness.js) has not already elapsed; every pre-existing row must still be
+      present. A DISAPPEARING row is a blocking regression. A new bee_balm row is expected
+      new-admission behavior, not a failure — it is the point of the migration.

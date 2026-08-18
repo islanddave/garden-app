@@ -13,7 +13,10 @@
 --     tradescantia, sedum, echeveria, succulent, cactus, sempervivum, japanese_maple, spider_plant,
 --     flower_mix, rose, hosta, ... ) — not harvest-tracked.
 --   * avocado — a zone-5b container houseplant that will never fruit. Permanent NULL.
---   * bee_balm — a genuine culinary herb grown here as a pollinator ornamental. NULL per owner brief.
+--   * bee_balm — WAS NULL here (a genuine culinary herb grown as a pollinator ornamental, per owner
+--     brief), conditional on "flip to cut_and_come_again/14d if Dave actually picks it". That
+--     condition fired 2026-08-18 — see the ADDENDUM at the end of this file and
+--     migrations/v4-beebalmflip-001/.
 --   * 14 edible slugs in the vocabulary with no live planting (artichoke, carrot, radish, spinach,
 --     parsnip, celery, bok_choy, brussels_sprouts, luffa, mustard, perilla, borage, althaea,
 --     vietnamese_coriander) — seed them when something is actually planted rather than guessing now.
@@ -65,6 +68,7 @@ WITH seed(slug, harvest_habit, repeat_interval_days, loss_horizon_hours,
   ('basil','cut_and_come_again',12,24,NULL,NULL,NULL),  -- high | Tip-pinch above a leaf node every 10-14d; pinching is what prevents bolt, ...
   ('bay','cut_and_come_again',30,168,NULL,NULL,NULL),  -- low | UNCERTAIN — arguably not schedulable at all. Bay leaves are picked as need...
   ('bean','repeat',3,72,8,NULL,NULL),  -- high | Snap bean. 2-3d cadence; pods go stringy and the plant stops setting if le...
+  ('bee_balm','cut_and_come_again',14,NULL,NULL,NULL,NULL),  -- high | ADDED 2026-08-18 (V4-BEEBALMFLIP-001): pre-authored flip executed, Dave has...
   ('beet','single',NULL,336,NULL,NULL,NULL),  -- medium | Root is one terminal harvest. The GREENS are genuinely cut_and_come_again ...
   ('bitter_melon','repeat',3,72,12,NULL,NULL),  -- low | UNCERTAIN. Extrapolated from cucurbit relatives. Pick while green and firm...
   ('black_raspberry','repeat',2,48,30,NULL,NULL),  -- medium | As red raspberry, ~1-2 weeks earlier in zone 5b. NOT currently planted.
@@ -130,3 +134,27 @@ VALUES ('4.15.1-harvattr-seed-001','HARVATTR data seed: harvest_habit/repeat_int
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
+
+-- ============================================================================
+-- ADDENDUM 2026-08-18 (V4-BEEBALMFLIP-001) — bee_balm row added, this file now seeds 52.
+--
+-- This file self-describes (line 7-9 above) as MECHANICALLY GENERATED from
+-- src/data/harvest-attributes-v1.json, and src/__tests__/harvestAttributesSync.test.js asserts
+-- set-equality between the JSON's by_crop_type and this file's seed VALUES block — it is the
+-- ONLY SQL file that test reads. When bee_balm moved from harvest-attributes-v1.json's
+-- not_harvest_tracked (conditional NULL) into by_crop_type (seeded), this file was regenerated
+-- to match, per this file's own convention. The historical schema_version INSERT immediately
+-- above is UNCHANGED and NOT re-run (ON CONFLICT DO NOTHING; '4.15.1-harvattr-seed-001' is
+-- already applied) — its description text still describes the original 51-row, bee_balm-NULL
+-- seed and is left as an accurate record of what that specific INSERT actually wrote historically.
+--
+-- The ACTUAL DB write for bee_balm's two columns is NOT this file — it is
+-- migrations/v4-beebalmflip-001/0a-data.sql, a separate, independently gated, Dave-approved
+-- migration with its own schema_version row ('4.34.0-beebalmflip-001'). This file's UPDATE...FROM
+-- seed statement above is idempotent and guarded (`c.harvest_habit IS NULL`), so if this file
+-- were ever re-run in an environment where v4-beebalmflip-001 has NOT yet been applied, it would
+-- ALSO correctly seed bee_balm with the same values — the two migrations cannot conflict, only
+-- race harmlessly to the same first-write-wins result. Do not re-run this file as a way to apply
+-- the bee_balm flip; use migrations/v4-beebalmflip-001/ so the change is tracked, gated, and
+-- rollback-able on its own.
+-- ============================================================================
