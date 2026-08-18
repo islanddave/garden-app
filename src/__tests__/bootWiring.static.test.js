@@ -1,17 +1,18 @@
-// V4-PERFCLERK-001 Option A — static guard on the src/main.jsx boot warm-ping wiring.
+// V4-PERFCLERK-001 — static guard on the two src/main.jsx boot changes.
 //
 // WHY A FILE-READING TEST: main.jsx is the entry module. Importing it calls
 // createRoot(document.getElementById('root')) against a jsdom document that has no #root, mounts the
 // whole app, and boots a real ClerkProvider — so it is not importable under vitest. Same house
 // pattern as bootPaint.static.test.js / viewportMeta.static.test.js.
 //
-// WHAT IT CATCHES: silent loss of the call site. It is pure-performance — the app WORKS without
-// it, which is exactly why nothing else in CI would ever notice it had gone. warmOrigins.test.js
+// WHAT IT CATCHES: silent loss of either change. Both are pure-performance — the app WORKS without
+// them, which is exactly why nothing else in CI would ever notice they had gone. warmOrigins.test.js
 // proves the warm-ping BEHAVES; only this file proves anything ever CALLS it. A perfectly-tested
 // module that no entry point imports is dead code with a green suite.
 //
-// WHAT IT DOES NOT CATCH: whether the warm-ping actually retires the Lambda cold start. That is a
-// device measurement on Chrome for Android and is not assertable in jsdom.
+// WHAT IT DOES NOT CATCH: whether the warm-ping actually retires the Lambda cold start (device
+// measurement), and whether prefetchUI={false} moves isLoaded (browser waterfall on Chrome for
+// Android). Both need a real device pass; neither is assertable in jsdom.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -51,5 +52,28 @@ describe('main.jsx boot warm-ping wiring (V4-PERFCLERK-001 Option A)', () => {
     const stripper = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
     expect(stripper('// warmApiOrigins()\n')).not.toMatch(/warmApiOrigins/)
     expect(stripper('warmApiOrigins()\n')).toMatch(/warmApiOrigins/)
+  })
+})
+
+describe('main.jsx Clerk prefetchUI (V4-PERFCLERK-001 Option B)', () => {
+  it('passes prefetchUI={false} to ClerkProvider', () => {
+    // @clerk/react 6.12.7 IsomorphicClerk.getEntryChunks() awaits getClerkUIEntryChunk() BEFORE
+    // awaiting clerk.load(), and clerk.load() is what resolves /v1/environment + /v1/client and
+    // flips isLoaded. getClerkUIEntryChunk() returns early on `options.prefetchUI === false`, so
+    // this prop removes a serial await — measured at t=1265→2249ms in bootSplash.js's trace — from
+    // the path to isLoaded. The serialization is proven at source; the magnitude is device-dependent.
+    expect(code).toMatch(/<ClerkProvider[^>]*\bprefetchUI=\{false\}/)
+  })
+
+  it('keeps publishableKey on the same element — prefetchUI must not have displaced it', () => {
+    expect(code).toMatch(/<ClerkProvider[^>]*publishableKey=\{import\.meta\.env\.VITE_CLERK_PUBLISHABLE_KEY\}/)
+  })
+
+  it('SELF-TEST: the prefetchUI matcher rejects the pre-fix element and truthy variants', () => {
+    const re = /<ClerkProvider[^>]*\bprefetchUI=\{false\}/
+    expect('<ClerkProvider publishableKey={k}>').not.toMatch(re)
+    expect('<ClerkProvider publishableKey={k} prefetchUI={true}>').not.toMatch(re)
+    expect('<ClerkProvider publishableKey={k} prefetchUI>').not.toMatch(re)
+    expect('<ClerkProvider publishableKey={k} prefetchUI={false}>').toMatch(re)
   })
 })

@@ -37,10 +37,23 @@
 // config-canonicity violation that warms a socket staging never uses. Vite substitutes %VITE_*% in
 // index.html at build time; the `pk_` guard also covers the unsubstituted literal in any context
 // where substitution did not run.
-// NO crossorigin, deliberately: Chrome keys its socket pool on credentials mode, and both
-// consumers of this origin are credentialed — clerk.browser.js is a plain <script> (cookies sent)
-// and Clerk's /v1/* calls use credentials:'include'. `crossorigin` would warm the ANONYMOUS pool
-// and buy exactly nothing while looking like it worked.
+// TWO preconnects to the one host, one plain and one crossorigin. Chrome keys its socket pool on
+// credentials mode, so a single link warms exactly one pool and the other consumer still pays the
+// full handshake — which is what makes the pair the standard pattern rather than a redundancy.
+//
+// ⚠ CORRECTION (V4-PERFCLERK-001, 2026-08-18). The original single link omitted `crossorigin` on
+// the stated premise that "both consumers of this origin are credentialed — clerk.browser.js is a
+// plain <script> (cookies sent) and Clerk's /v1/* calls use credentials:'include'". THE FIRST HALF
+// IS FALSE for the shipped @clerk/react 6.12.7 loader: it does not emit a plain <script>, it calls
+// its injector with `crossOrigin:'anonymous'` for BOTH data-clerk-js-script (clerk.browser.js) and
+// data-clerk-ui-script (@clerk/ui) — confirmed in the decompressed prod bundle and in
+// node_modules/@clerk/react/dist/ClerkProvider-*.mjs. So the credentialed preconnect warmed a
+// socket neither script download could use, and the t=823ms handshake it was written to eliminate
+// was still being paid. The second half is true, which is why the plain link STAYS: the later
+// /v1/environment + /v1/client calls really do use credentials:'include' and really do need it.
+// Measured cost of the handshake this recovers: TCP+TLS ≈ 112ms on wired broadband; plausibly
+// 300–600ms on Android cellular. Do not "tidy" either link away — they serve different pools.
+//
 // The inline script is try/catch-wrapped because it runs in <head> before #root exists: a throw
 // would abort boot outright. A preconnect is an optimisation; boot is not negotiable.
 //
@@ -48,6 +61,9 @@
 // main-thread evaluation inside that waterfall (route-level code splitting), the 21 independent
 // Lambda origins whose cold TTFB measured 1.4–1.8s vs 0.13–0.24s warm, and extending the existing
 // dataCache/useCachedFetch beyond the three photo surfaces. Each needs a decision above this lane.
+// UPDATE (V4-PERFCLERK-001): the Lambda-origin half now has a partial answer — src/lib/warmOrigins.js
+// spends the Clerk dead window cold-starting the four above-the-fold origins with tokenless GETs.
+// The other two remain open.
 
 // Remove the pre-React boot paint. Idempotent; a no-op when the element was never rendered (unit
 // tests never load index.html into jsdom). Called from a LAYOUT effect at the App root so the

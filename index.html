@@ -21,9 +21,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Gardens at Mathews" />
     <title>Gardens at Mathews</title>
-    <!-- V4-PERFTHEMEA-001 preconnect. Rationale, measurements and the no-crossorigin /
-         derive-don't-hardcode reasoning: src/lib/bootSplash.js. Guarded by bootPaint.static.test.js.
-         Comments here are terse ON PURPOSE — this document is the critical path. -->
+    <!-- V4-PERFTHEMEA-001 preconnect, BOTH socket pools (V4-PERFCLERK-001 Option B). Rationale,
+         measurements and the derive-don't-hardcode reasoning: src/lib/bootSplash.js. Guarded by
+         bootPaint.static.test.js. Comments here are terse ON PURPOSE — this is the critical path. -->
     <script>
       (function () {
         try {
@@ -31,10 +31,13 @@
           if (k.slice(0, 3) !== 'pk_') return
           var host = atob(k.replace(/^pk_(live|test)_/, '')).replace(/\$+$/, '')
           if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) return
-          var l = document.createElement('link')
-          l.rel = 'preconnect'
-          l.href = 'https://' + host
-          document.head.appendChild(l)
+          for (var i = 0; i < 2; i++) {
+            var l = document.createElement('link')
+            l.rel = 'preconnect'
+            l.href = 'https://' + host
+            if (i) l.crossOrigin = 'anonymous'
+            document.head.appendChild(l)
+          }
         } catch (e) { /* never break boot for a preconnect */ }
       })()
     </script>

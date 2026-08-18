@@ -46,9 +46,23 @@ requestPersistence().catch(() => {})
 // install affordance for nothing (push-P0, 2026-07-22). If P4+ builds an
 // in-app install button, capture the event there and consume it via .prompt().
 
+// V4-PERFCLERK-001 Option B — prefetchUI={false} takes @clerk/ui off the path to isLoaded.
+// SERIAL, PROVEN AT SOURCE, not inferred from resource-timing order: @clerk/react 6.12.7's
+// IsomorphicClerk.getEntryChunks() does `const ClerkUI = ... await this.getClerkUIEntryChunk()` and
+// only THEN `await clerk.load({...})` — and clerk.load() is what resolves /v1/environment +
+// /v1/client and flips isLoaded. The measured trace has that chunk downloading t=1265→2249ms.
+// getClerkUIEntryChunk() short-circuits on `this.options.prefetchUI === false`, and ClerkProvider
+// spreads every prop it does not consume straight into those options.
+// SAFE HERE BECAUSE THE APP HAS NO PREBUILT CLERK UI: sign-in is custom
+// (AuthContext.signInWithGoogle → clerk.client.signIn.authenticateWithRedirect), and the one
+// UI-shaped import, HandleSSOCallback on /auth/callback, is headless — it renders
+// <div><div id="clerk-captcha"/></div> and drives signIn/signUp through the API. No <SignIn/>,
+// <SignUp/>, <UserButton/>, <UserProfile/>, openSignIn() or mount* call exists in src/.
+// Still a SIGN-IN-FLOW change: smoke /auth/callback end to end on staging (Chrome for Android)
+// before this is promoted, not just on the unit suite.
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <ClerkProvider publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}>
+    <ClerkProvider publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY} prefetchUI={false}>
       <App />
     </ClerkProvider>
   </StrictMode>

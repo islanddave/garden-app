@@ -3,6 +3,9 @@
 // WHY A FILE-READING TEST: vitest runs jsdom with no `environmentOptions.html`, so index.html is
 // never loaded into the test document — a DOM query would return null and prove nothing. Same
 // house pattern as viewportMeta.static.test.js / noBareViewUrlImg.static.
+// The preconnect block goes one step further and EXECUTES the extracted inline script against a
+// fake document (appendedLinks below): since V4-PERFCLERK-001 the two links are emitted from a
+// loop, and any source-text count of them would read one.
 //
 // WHAT IT CATCHES: silent removal of the pre-React boot paint or of the Clerk preconnect by a
 // merge, a re-skin, or an html-transform plugin. Both are single-site changes with no other
@@ -30,6 +33,22 @@ function between(source) {
   const b = source.indexOf('id="boot-splash"')
   if (a === -1 || b === -1) return null
   return source.slice(Math.min(a, b), Math.max(a, b))
+}
+
+// V4-PERFCLERK-001: EXECUTE the inline <head> script against a fake document and return the link
+// elements it appended, substituting a probe publishable key the way Vite substitutes the real one
+// at build time. Behavioural, not source-text, and that distinction is load-bearing here: the two
+// preconnects come out of a `for` loop, so counting `appendChild` occurrences in the source would
+// report one and a regression to a single link would stay green.
+const PROBE_HOST = 'probe.clerk.example.com'
+const PROBE_KEY = `pk_test_${Buffer.from(`${PROBE_HOST}$`).toString('base64')}`
+
+function appendedLinks(body = script(), key = PROBE_KEY) {
+  const links = []
+  const doc = { createElement: () => ({}), head: { appendChild: (el) => links.push(el) } }
+  // eslint-disable-next-line no-new-func
+  new Function('document', body.replace('%VITE_CLERK_PUBLISHABLE_KEY%', key))(doc)
+  return links
 }
 
 describe('index.html pre-React boot paint (V4-PERFTHEMEA-001)', () => {
@@ -77,22 +96,35 @@ describe('index.html Clerk preconnect (V4-PERFTHEMEA-001)', () => {
     expect(html).not.toMatch(/clerk\.garden\.futureishere\.net/)
   })
 
-  it('appends rel="preconnect" WITHOUT crossorigin — the credentialed socket pool', () => {
-    // Asserted against the SCRIPT BODY, not the whole document: an earlier version of this matched
-    // anywhere in the file and was tripped by the word "crossorigin" appearing in a nearby HTML
-    // comment. A prose mention is not a code path.
-    expect(script()).toMatch(/rel\s*=\s*'preconnect'/)
-    // Chrome keys its socket pool on credentials mode. Both consumers of this origin are
-    // credentialed — clerk.browser.js is a plain <script> (cookies sent) and Clerk's /v1/* calls
-    // use credentials:'include'. `crossorigin` would warm the ANONYMOUS pool instead and buy
-    // exactly nothing while looking like it worked.
-    expect(script()).not.toMatch(/crossorigin/i)
+  it('appends TWO preconnects to the one host, one per socket pool (V4-PERFCLERK-001)', () => {
+    // Chrome keys its socket pool on credentials mode, so ONE link warms exactly one pool.
+    // @clerk/react 6.12.7 injects BOTH clerk.browser.js and @clerk/ui with crossOrigin:'anonymous'
+    // (verified in node_modules/@clerk/react/dist/ClerkProvider-*.mjs and in the decompressed prod
+    // bundle), so the original credentialed-only preconnect warmed a socket neither script download
+    // could use — the t=823ms handshake it was written to eliminate was still being paid.
+    // The plain link is NOT redundant and must not be "tidied" away: the later /v1/environment +
+    // /v1/client calls really do use credentials:'include'. Dropping either half re-opens a
+    // handshake measured at TCP+TLS ≈ 112ms wired, plausibly 300–600ms on Android cellular.
+    const links = appendedLinks()
+    expect(links).toHaveLength(2)
+    expect(links.every((l) => l.rel === 'preconnect')).toBe(true)
+    expect(links.every((l) => l.href === `https://${PROBE_HOST}`)).toBe(true)
+    // Exactly one of each pool. Two crossorigin links, or two plain ones, is the silent regression.
+    expect(links.filter((l) => l.crossOrigin === 'anonymous')).toHaveLength(1)
+    expect(links.filter((l) => l.crossOrigin === undefined)).toHaveLength(1)
   })
 
-  it('SELF-TEST: the crossorigin matcher actually flags a script that sets it', () => {
-    const bad = "var l=document.createElement('link');l.rel='preconnect';l.crossOrigin='anonymous'"
-    expect(bad).toMatch(/rel\s*=\s*'preconnect'/)
-    expect(bad).toMatch(/crossorigin/i)
+  it('SELF-TEST: the executor actually flags a script that appends only the credentialed link', () => {
+    // Without this, every assertion above is vacuously true the moment the extractor stops matching.
+    const single = "var l=document.createElement('link');l.rel='preconnect';document.head.appendChild(l)"
+    const links = appendedLinks(single)
+    expect(links).toHaveLength(1)
+    expect(links.filter((l) => l.crossOrigin === 'anonymous')).toHaveLength(0)
+  })
+
+  it('derives the SAME host for both links from the key, and appends nothing for a bad key', () => {
+    expect(appendedLinks(script(), 'not-a-clerk-key')).toHaveLength(0)
+    expect(appendedLinks(script(), `pk_live_${Buffer.from('no-tld$').toString('base64')}`)).toHaveLength(0)
   })
 
   it('is wrapped so a malformed key can never break boot', () => {
