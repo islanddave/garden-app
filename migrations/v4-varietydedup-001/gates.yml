@@ -1,0 +1,147 @@
+# gates.yml
+# V4-VARIETYDUP-001 + V4-CWARCHIVE-001 — plant_varieties consolidation (data-only, no DDL).
+#
+# STATUS (2026-08-18): PREPARED — NOT APPLIED to any environment.
+#
+# PROD-ONLY BY CONSTRUCTION. Unlike a schema migration, this file's SQL is keyed to specific live
+# prod plant_varieties/plants row UUIDs discovered by querying prod directly — staging's isolated
+# Neon branch (br-damp-frog-amdfxwrr) does not carry Dave's real Alaska Mix / California Wonder
+# rows under these ids, so there is no meaningful "apply to staging first" step here the way DDL
+# migrations get mirrored. Run only against prod, after Dave reviews 0a-data-fix.sql.
+#
+# All gates carry continuous: false at authoring (L-369 category 1) — the migration is UNAPPLIED,
+# so a scheduled post-phase sweep against live prod would currently read the PRE state as a
+# standing failure. After Dave applies 0a to prod, flip the post_* gates to continuous: true (the
+# pre_* gates should stay continuous: false permanently — they describe the un-migrated starting
+# state, which is expected to stop holding once applied).
+
+pre:
+  - name: pre_alaska_survivor_live
+    note: Survivor row exists and is not yet archived.
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id = 'a11dd600-84b4-4bd6-8611-f85336bc3c2e' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_alaska_loser_live
+    note: Loser row exists and is not yet archived (confirms starting state before 0a).
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id = 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_alaska_repoint_target
+    note: The one planting 0a repoints is still pointing at the loser.
+    sql: |
+      SELECT 1 FROM plants
+       WHERE id = '7ea304c4-5ae5-4408-94e5-546d706e3392'
+         AND variety_id = 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_cw_archive_targets_live
+    note: Golden California Wonder + Orange Sun + California Wonder all still live (not archived).
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id IN ('960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                     '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                     '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NULL
+    expect: rowcount_gte
+    value: 3
+    continuous: false
+
+  - name: pre_emerald_green_is_keeper
+    note: >
+      The pre-existing 'Emerald Green' row (not named in the original ledger text) already carries
+      the rename target name and is live — this is why 0a contains no UPDATE ... SET name.
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id = '7a6ab71f-4449-4740-8e4c-1947fa9da361'
+         AND lower(name) = 'emerald green' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_no_active_planting_on_archive_targets
+    note: >
+      THE safety invariant for V4-CWARCHIVE-001. Proves — before archiving — that no currently
+      visible planting (not soft-deleted, not archived) references any of the 3 rows about to be
+      archived, i.e. archiving them will not blank a variety_ref an active view is showing
+      (lambda/plants/index.js:455 LEFT JOINs plant_varieties with deleted_at IS NULL). If this ever
+      returns >0 for a future reuse of this pattern, STOP — do not archive until that planting is
+      re-pointed or the archive is otherwise justified.
+    sql: |
+      SELECT 1 FROM plants
+       WHERE variety_id IN ('960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                             '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                             '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NULL AND archived_at IS NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_alaska_loser_archived
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id = 'f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7' AND deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # flip to true after prod apply
+
+  - name: post_alaska_survivor_alive
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id = 'a11dd600-84b4-4bd6-8611-f85336bc3c2e' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # flip to true after prod apply
+
+  - name: post_alaska_repoint_landed
+    sql: |
+      SELECT 1 FROM plants
+       WHERE id = '7ea304c4-5ae5-4408-94e5-546d706e3392'
+         AND variety_id = 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # flip to true after prod apply
+
+  - name: post_cw_archive_targets_archived
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id IN ('960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                     '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                     '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NOT NULL
+    expect: rowcount_gte
+    value: 3
+    continuous: false   # flip to true after prod apply
+
+  - name: post_emerald_green_untouched
+    note: Proves the keeper's name/live-state were not accidentally altered by this migration.
+    sql: |
+      SELECT 1 FROM plant_varieties
+       WHERE id = '7a6ab71f-4449-4740-8e4c-1947fa9da361'
+         AND lower(name) = 'emerald green' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # flip to true after prod apply
+
+  - name: post_no_orphaned_active_planting
+    note: Re-asserts the pre-apply safety invariant still holds after archiving.
+    sql: |
+      SELECT 1 FROM plants
+       WHERE variety_id IN ('f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7',
+                             '960c10f5-80e9-4a92-8e8c-da70f54c89f0',
+                             '750c8334-1aaa-493b-bcef-02d7a9378a39',
+                             '1eff5046-f6a1-4f5d-82df-85a35e890849')
+         AND deleted_at IS NULL AND archived_at IS NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false   # flip to true after prod apply
