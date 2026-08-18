@@ -152,6 +152,14 @@ describe('the POST write path', () => {
   });
 });
 
+/** The whole `sql`...`` template literal containing a marker — a statement, not a window. */
+function sqlTemplateContaining(marker) {
+  const i = SRC.indexOf(marker);
+  expect(i, `no statement containing ${marker}`).toBeGreaterThan(-1);
+  const start = SRC.lastIndexOf('sql`', i) + 4;
+  return SRC.slice(start, SRC.indexOf('`', start));
+}
+
 // There is MORE THAN ONE `UPDATE harvest_log h` in index.js — the soft-delete cascade and the
 // batch-undo both come first — so an indexOf() on the verb finds the wrong statement and every
 // assertion below then passes or fails for reasons unrelated to this ticket. Same trap
@@ -228,8 +236,13 @@ describe('the pick grain and the plant grain stay separated', () => {
     // A pick going wrong is NOT a plant dying: the fruit came off a planting that is still alive and
     // still has the same number of plants on it. If the harvest statements ever started moving those
     // counters, every "how much did I lose" answer would double-count a bad pick as a dead plant.
-    const post = SRC.slice(SRC.indexOf('INSERT INTO harvest_log'));
-    const postStmt = post.slice(0, post.indexOf('RETURNING') + 400);
+    //
+    // Scoped to the WHOLE `sql`` template each time, not to an offset window. The first draft sliced
+    // `indexOf('RETURNING') + 400` characters, which is an arbitrary window rather than a statement
+    // — mutation M20 landed a plant-counter reference in the same statement and SURVIVED, because it
+    // fell outside the 400. A guard that inspects a magic-number span of a file is not inspecting a
+    // statement.
+    const postStmt = sqlTemplateContaining('INSERT INTO harvest_log');
     for (const [label, stmt] of [['POST', postStmt], ['PUT', harvestUpdateStatement()]]) {
       expect(stmt, `${label} harvest statement writes qty_lost`).not.toMatch(/qty_lost/);
       expect(stmt, `${label} harvest statement writes qty_current`).not.toMatch(/qty_current/);
