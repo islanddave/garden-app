@@ -58,7 +58,9 @@ import PutUp from './pages/PutUp.jsx'
 import SpaceDetail from './pages/SpaceDetail.jsx'
 import VarietyEdit from './pages/VarietyEdit.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
+import { RouteSkeleton, NavSkeleton } from './components/BootSkeleton.jsx'
 import { dismissBootSplash } from './lib/bootSplash.js'
+import { BOTTOM_NAV_HEIGHT_PX } from './lib/constants.js'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
@@ -99,9 +101,21 @@ function RouteFallback({ error, retry } = {}) {
   )
 }
 
+// V4-PERFCLERK-001 C — the render gate is SPLIT from the fetch gate.
+//
+// It used to `return null` while auth resolved, which withheld the entire route tree for the ~2.5s
+// Clerk window (measured 2026-08-12: isLoaded at t=3376ms) to protect the subset that needs a token.
+// The FETCH gate is structural and is UNCHANGED: `children` is still not rendered while `loading`,
+// so no page component mounts, no useEffect fires, and no tokenless request reaches a
+// token-requiring endpoint. What changed is only what occupies the slot in the meantime — an
+// identity-free skeleton instead of nothing, so the shell around it is worth painting.
+//
+// The three states are kept distinct on purpose. `loading` is NOT "signed out": collapsing them is
+// what would redirect a signed-in user to /login mid-boot, and what made the header advertise
+// "Sign in" during the window.
 function Protected({ children }) {
   const { user, loading } = useAuth()
-  if (loading) return null
+  if (loading) return <RouteSkeleton />
   return user ? children : <Navigate to="/login" replace />
 }
 
@@ -150,7 +164,7 @@ export function OverlayHost({ ariaLabel, size = 'peek', children }) {
 // SAME element renders unwrapped (full page). Declaration order is preserved from the original for
 // reviewability; react-router v6 ranks by specificity, so order does not affect matching. The route
 // rationale comments that used to sit here live in git history (pre-Slice-1 App.jsx).
-export function renderRoutes({ overlay, user }) {
+export function renderRoutes({ overlay, user, loading }) {
   const routes = [
     { path: '/',              element: <Navigate to="/today" replace /> },
     { path: '/garden/:slug',  element: <ProjectPublic /> },
@@ -162,7 +176,13 @@ export function renderRoutes({ overlay, user }) {
     { path: '/garden',        element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Garden /></ErrorBoundary></Protected> },
     { path: '/feed',          element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><FeedPage /></ErrorBoundary></Protected> },
     { path: '/auth/callback', element: <AuthCallback /> },
-    { path: '/login',         element: user ? <Navigate to="/today" replace /> : <Login /> },
+    // V4-PERFCLERK-001 C — the INVERSE leak, and the one easiest to miss. Every other route is
+    // Protected, so `loading` is handled once inside <Protected>; /login is the only route whose
+    // element branches on `user` itself. Left as `user ? … : <Login/>` it would render the SIGN-IN
+    // PAGE to an already-signed-in user for the whole Clerk window and then yank it away — the
+    // signed-out-shell flash, just pointing the other way. Previously invisible because the splash
+    // covered it; now that the shell paints during the window it would be on screen.
+    { path: '/login',         element: loading ? <RouteSkeleton /> : (user ? <Navigate to="/today" replace /> : <Login />) },
     { path: '/dashboard',     element: <Protected><Dashboard /></Protected> },
     { path: '/locations',     element: <Protected><Locations /></Protected> },
     { path: '/locations/:id', element: <Protected><LocationDetail /></Protected> },
@@ -239,19 +259,25 @@ export function renderRoutes({ overlay, user }) {
 // The authenticated shell. Reads the effective PAGE location (background when an overlay is open,
 // else the real location) so the page tree and chrome stay on the background while the overlay tree
 // (if any) renders at the real URL. See OverlayContext.
-function AppShell({ user }) {
+function AppShell({ user, loading }) {
   const { pageLocation, overlayLocation, background } = useOverlay()
   return (
     <>
       <TopChrome />
       <div style={{
+        // The pending state reserves the nav's height from the CONSTANT rather than from
+        // --bottom-nav-height: that variable is written by BottomNav's layout effect and BottomNav is
+        // not mounted yet, so the var is unset and the whole calc() would be invalid (i.e. no
+        // padding, i.e. the skeleton nav covers the last row of the skeleton content).
         display: 'flex', flexDirection: 'column', minHeight: '100dvh',
-        paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' : 0,
+        paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))'
+          : loading ? `calc(${BOTTOM_NAV_HEIGHT_PX}px + env(safe-area-inset-bottom))`
+          : 0,
       }}>
         <div style={{ flex: 1 }}>
           {/* PAGE tree — renders at pageLocation (== the real location when flag off / no overlay). */}
           <Routes location={pageLocation}>
-            {renderRoutes({ overlay: false, user })}
+            {renderRoutes({ overlay: false, user, loading })}
           </Routes>
         </div>
       </div>
@@ -259,11 +285,16 @@ function AppShell({ user }) {
           Renders at the REAL location so overlay content reads the true URL (reads/writes aligned). */}
       {OVERLAY_ROUTES_ENABLED && background && (
         <Routes location={overlayLocation}>
-          {renderRoutes({ overlay: true, user })}
+          {renderRoutes({ overlay: true, user, loading })}
         </Routes>
       )}
       {user && <TodayBand />}
       {user && <BottomNav />}
+      {/* V4-PERFCLERK-001 C — the nav SLOT while identity is unresolved. Gated on `loading`, never on
+          `!user`, so it appears only in the pending window and never for a genuinely signed-out user
+          (who gets the login page, which has no nav). Mutually exclusive with <BottomNav> above:
+          loading true implies user null, and user non-null implies loading false. */}
+      {loading && <NavSkeleton />}
       {/* V4-CRITTERQUIET-001: the arrival animation is THE interrupt — it plays over whatever route
           Dave is on, mid-task. Gated at the mount site rather than inside the controller so quiet
           mode also stops the per-navigation /api/critters/active poll it exists to drive; nothing
@@ -278,7 +309,7 @@ function AppShell({ user }) {
 }
 
 function AppRoutes() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   return (
     <BrowserRouter>
       <ErrorBoundary scope="app" fallback={<AppFallback />}>
@@ -288,7 +319,7 @@ function AppRoutes() {
             a single Escape (later, a single Back) would resolve against whichever answered first. */}
         <DismissRegistryProvider>
           <OverlayProvider>
-            <AppShell user={user} />
+            <AppShell user={user} loading={loading} />
           </OverlayProvider>
         </DismissRegistryProvider>
       </ErrorBoundary>
@@ -309,10 +340,11 @@ export default function App() {
   // remains stable as zones change. Session-persistent via sessionStorage.
   return (
     <AuthProvider>
-      {/* V4-PERFTHEMEA-001: moved INSIDE AuthProvider. It now exits on readiness rather than on a
-          fixed timer, which means it has to be able to read `loading` — measured: it used to leave
-          ~850ms before Protected stopped returning null. Still a sibling overlay (position:fixed),
-          so it covers login and every route exactly as before. */}
+      {/* V4-PERFTHEMEA-001 moved this INSIDE AuthProvider so it could read `loading` and exit on
+          readiness. V4-PERFCLERK-001 C removed that coupling — Protected now paints a skeleton, so
+          the shell is behind the splash from the first commit and the brand hold is the exit again.
+          Left in place rather than hoisted: it is a sibling overlay (position:fixed) covering login
+          and every route, and moving it would change nothing except the diff. */}
       <SplashScreen />
       <ModeProvider>
         <ZoneProvider>

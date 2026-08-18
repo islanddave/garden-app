@@ -20,7 +20,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { P, APP_NAME } from '../lib/constants.js'
-import { getRouteClass, CAPTURE_TITLES } from '../lib/routeClass.js'
+import { getRouteClass, isRootTabPath, CAPTURE_TITLES } from '../lib/routeClass.js'
 import { pickBanner } from '../lib/pickBanner.js'
 import { BANNERS } from '../lib/bannerManifest.js'
 
@@ -106,7 +106,7 @@ function HeaderActions() {
 }
 
 export default function TopChrome() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   const { pathname } = useOverlayLocation()
   const navigate = useNavigate()
   const [dayKey, setDayKey] = useState(() => new Date().toDateString())
@@ -118,14 +118,19 @@ export default function TopChrome() {
   }, [])
   const banner = useMemo(() => pickBanner(new Date(dayKey), BANNERS), [dayKey])
 
-  const cls = getRouteClass(pathname, { user })
+  const cls = getRouteClass(pathname, { user, loading })
   if (cls === 'capture') return <CaptureBar title={CAPTURE_TITLES[pathname] ?? null} />
 
   const saveData = typeof navigator !== 'undefined' && navigator.connection?.saveData
   const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
   const showBanner = banner && !saveData
-  const scrim = cls === 'root' ? SCRIM : DIM_SCRIM
-  const barH = cls === 'root' ? 88 : 52
+  // A 'pending' header reserves the geometry the RESOLVED header will want, so the overwhelmingly
+  // common boot (signed in, landing on /today) hands over with no reflow. If auth resolves to
+  // signed-out instead, the 88->52 change rides along with a redirect to /login, i.e. it reads as
+  // navigation rather than as jank.
+  const rootShaped = cls === 'root' || (cls === 'pending' && isRootTabPath(pathname))
+  const scrim = rootShaped ? SCRIM : DIM_SCRIM
+  const barH = rootShaped ? 88 : 52
 
   const bannerLayers = showBanner ? (
     <>
@@ -155,6 +160,27 @@ export default function TopChrome() {
     backgroundColor: HEADER_BG,
     borderBottom: `1px solid ${HEADER_BORDER}`,
     boxSizing: 'border-box', overflow: 'hidden',
+  }
+
+  // V4-PERFCLERK-001 C — identity UNRESOLVED. Brand + banner only: no Sign in (a signed-out
+  // affordance), no search/Snap/Harvest (signed-in affordances whose targets are Protected), and no
+  // <Link> at all, so there is no navigation target to mis-fire during the window. The wordmark is a
+  // <span>, not a Link to /dashboard, for exactly that reason. The launcher-shaped bone is inert
+  // decoration that holds the 88px root layout; it carries no label and no href.
+  if (cls === 'pending') {
+    return (
+      <header data-app-chrome="top" data-chrome-state="pending" aria-busy="true"
+        style={{ ...base, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8 }}>
+        {bannerLayers}
+        <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ ...BRAND, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{APP_NAME}</span>
+        </div>
+        {rootShaped && (
+          <div aria-hidden="true" data-testid="topchrome-pending-launcher"
+            style={{ position: 'relative', zIndex: 1, height: 36, borderRadius: 20, border: '1px solid rgba(255,255,255,0.55)', boxSizing: 'border-box', ...FROST, opacity: 0.6 }} />
+        )}
+      </header>
+    )
   }
 
   if (cls === 'root') {

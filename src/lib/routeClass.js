@@ -24,14 +24,28 @@ export const CAPTURE_ROUTES = ['/capture', '/field']
 export const CAPTURE_TITLES = { '/capture': 'Snap' }
 
 // Public / logged-out routes -> minimal unified header variant (handled as 'unauth' via the user check below).
-const ROUTE_CLASSES = ['root', 'capture', 'detail', 'unauth']
+// V4-PERFCLERK-001 C: 'pending' is the THIRD identity state — auth has not resolved yet, so the app
+// knows neither that the user is signed in nor that they are signed out. It exists because `!user`
+// used to conflate the two: during the ~2.5s Clerk window `user` is null, so the header rendered the
+// signed-OUT variant ("Sign in") to a user who was very probably signed IN. That was invisible only
+// because SplashScreen covered it; now that the shell paints during the window, it would be a
+// visible wrong-identity flash. 'pending' renders brand + banner and nothing identity-bearing.
+const ROUTE_CLASSES = ['root', 'capture', 'detail', 'unauth', 'pending']
 export function isKnownClass(c) { return ROUTE_CLASSES.includes(c) }
 
 const matches = (patterns, pathname) =>
   patterns.some((p) => matchPath({ path: p, end: true }, pathname))
 
-// Resolve the header class for a pathname. `user` falsy => 'unauth'.
-export function getRouteClass(pathname, { user } = {}) {
+// Would this pathname carry the 88px root header IF the user turns out to be signed in? The pending
+// header uses it to reserve the height the resolved header will want, so the common case (signed in,
+// landing on /today) resolves with no layout shift.
+export function isRootTabPath(pathname) { return matches(ROOT_TABS, pathname) }
+
+// Resolve the header class for a pathname.
+// `loading` truthy => 'pending' (checked FIRST — an unresolved identity is not a signed-out one).
+// `user` falsy => 'unauth'.
+export function getRouteClass(pathname, { user, loading } = {}) {
+  if (loading) return 'pending'
   if (!user) return 'unauth'
   if (matches(CAPTURE_ROUTES, pathname)) return 'capture'
   if (matches(ROOT_TABS, pathname)) return 'root'
