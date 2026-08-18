@@ -168,9 +168,20 @@ export function micToggleBtnStyle(voiceState) {
   }
 }
 
+// BUG-PICKERUNDISMISSABLE-001 — the dismiss slot, APPENDED beyond ⌨/🎤 rather than inserted: the
+// two shipped slots must keep the positions a thumb already knows. It takes the OUTERMOST occupied
+// slot, so it sits at 88 alongside a mic and at 44 where speech is unsupported — a capability that
+// is fixed for the life of the mount, so the target still never moves mid-interaction.
+export function closeToggleBtnStyle(showMic) {
+  return { ...toggleBtnBase, right: showMic ? 88 : 44 }
+}
+
 // Input padding-right for the slots currently occupied: mic shown -> clear both slots (it sits
 // at 44..88 even when ⌨ is hidden); else ⌨ shown -> clear one; else the caller's default.
-export function toggleSlotsPaddingRight({ showKb, showMic }) {
+// `showClose` defaults false, so every surface that does not render the dismiss slot (VarietyPicker)
+// keeps its exact padding.
+export function toggleSlotsPaddingRight({ showKb, showMic, showClose = false }) {
+  if (showClose) return showMic ? 136 : 92
   if (showMic) return 92
   if (showKb) return 48
   return null

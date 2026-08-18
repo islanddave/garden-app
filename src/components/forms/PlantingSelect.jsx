@@ -35,9 +35,11 @@ import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 import { useInOverlaySurface } from '../../context/OverlayContext.jsx'
 import FilterChipRow from './FilterChipRow.jsx'
 import { readCropRank } from '../../lib/cropLogLedger.js'
+import { useDismissable } from '../../context/DismissRegistry.jsx'
+import { LAYER } from '../../lib/dismissLayers.js'
 import {
   useComboboxInput, looseIncludes,
-  kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingRight,
+  kbToggleBtnStyle, micToggleBtnStyle, closeToggleBtnStyle, toggleSlotsPaddingRight,
 } from '../../lib/comboboxInput.js'
 
 // Max rows rendered in the listbox — VarietyPicker precedent: cap VISIBLY (footer row), never
@@ -525,6 +527,27 @@ export default function PlantingSelect({
     setOpen(true)
   }, [autoOpen, disabled])
 
+  // BUG-PICKERUNDISMISSABLE-001 — the ONE close path, so every dismissal gesture agrees on what
+  // closing means. `touched` is set here rather than left to onBlur: a dismissal that correctly
+  // leaves focus where it was (Escape per APG, the Close control, Back) fires no blur, and without
+  // this the required-field error would stop appearing on exactly those paths.
+  const closePanel = useCallback(() => { setOpen(false); setTouched(true) }, [])
+
+  // BUG-PICKERUNDISMISSABLE-001 — Escape/Back arbitration through the shared registry, the same
+  // seam Sheet, Lightbox and the popovers use. Registering is what ARMS a history entry: with
+  // nothing armed the popstate listener returns early and Android Back is never routed here at all.
+  // On the harvest fast path that meant Back discarded the whole half-filled form, because the
+  // route-overlay Sheet hosting it is kind='route' and decideBack hands those to the router.
+  //
+  // layer SHEET, not something lower: the panel is a DESCENDANT of whatever surface hosts it, so it
+  // paints inside that surface's stacking context — at the host's level, above the host's content.
+  // The equal-layer tiebreak (later registration wins) is what puts it above the sheet it opened
+  // inside; any lower layer would make the sheet topmost and turn Back into a dead press that
+  // consumed the marker and did nothing. A true DIALOG over the form still outranks it.
+  const { registered: dismissRegistered } = useDismissable({
+    open: open && !disabled, onDismiss: closePanel, layer: LAYER.SHEET, armsBack: true,
+  })
+
   // V4-PICKERUX-001 — the single notification point for `open`. Keyed on `open` ONLY: keying it on
   // the callback identity would re-fire on every parent render (callers pass inline closures), and
   // an effect keyed on a per-render identity is exactly the BUG-SOWFOCUS-001 shape. Read through a
@@ -772,12 +795,16 @@ export default function PlantingSelect({
       //     dropped the TalkBack cursor to <body> and made "dismiss the list" indistinguishable
       //     from "leave the field entirely".
       if (open) {
+        // BUG-PICKERUNDISMISSABLE-001: when registered, the registry's single listener owns Escape
+        // — Sheet.jsx carries this same gate for this same reason. Handling it here as well would
+        // preventDefault the key the registry then deliberately bails on, so the panel would close
+        // by the legacy path and the arbitration would be dead code that never ran.
+        if (dismissRegistered) return
         e.preventDefault()
         e.stopPropagation()
-        setOpen(false)
-        // The blur we no longer fire was what marked the field touched (see onBlur). Set it here
-        // so the required-field error keeps its exact pre-change behaviour.
-        setTouched(true)
+        // The blur we no longer fire was what marked the field touched (see onBlur), which is why
+        // closePanel sets it.
+        closePanel()
       }
     } else if (e.key === 'Tab') {
       // Tab was unhandled, so focus left while the listbox stayed painted for the 150ms blur timer,
@@ -859,7 +886,11 @@ export default function PlantingSelect({
   const kbRaised = kbMode === 'text'
   const showKbBtn = open && !disabled
   const showMicBtn = open && !disabled && voiceSupported
-  const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn })
+  // BUG-PICKERUNDISMISSABLE-001 — present for the whole time the panel is, on every render site.
+  // Conditioning it on how the panel was opened would make the app's one shared picker behave two
+  // ways, which is the drift this component exists to end.
+  const showCloseBtn = open && !disabled
+  const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn, showClose: showCloseBtn })
 
   // V4-CROPFILTER-001 — the chip row sits INSIDE the floating panel but OUTSIDE the listbox role:
   // chips are never options and never keyboard-highlight targets (onKeyDown walks `visible` only).
@@ -1019,6 +1050,28 @@ export default function PlantingSelect({
           style={micToggleBtnStyle(voiceState)}
         >
           <span aria-hidden="true">🎤</span>
+        </button>
+      )}
+      {/* BUG-PICKERUNDISMISSABLE-001 — the visible exit. This panel has no backdrop, and on the
+          autoOpen path no focus either: the input is deliberately NOT focused (forcing it summons
+          the Android keyboard over the list the user came to read), so the blur that closes every
+          other open never fires, and Android has no Escape key. Choosing a planting was the only
+          way out of the app's most frequent form. Sheet §5.3's rule, applied here: an invisible
+          dismissal is not a discoverable exit, so this is a real 44px labelled control.
+          onMouseDown preventDefault is load-bearing twice over — it keeps focus wherever it already
+          is, so a focused input is not blurred into a second close, and an UNfocused one is not
+          given focus and made to raise the keyboard on the way out. */}
+      {showCloseBtn && (
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
+          onClick={closePanel}
+          aria-label="Close the planting list"
+          title="Close the list"
+          data-testid="ps-close"
+          style={closeToggleBtnStyle(showMicBtn)}
+        >
+          <span aria-hidden="true">✕</span>
         </button>
       )}
       {open && !disabled && (
@@ -1200,7 +1253,17 @@ function listboxStyle(placement, nested = false, floorRows = false) {
   }
   return {
     position: 'absolute',
-    zIndex: 30,
+    // BUG-PICKERUNDISMISSABLE-001 — Z.sheet, was 30. dismissLayers.js's whole premise is that the
+    // registered layer equals the painted one, and this panel now registers LAYER.SHEET, so the
+    // paint has to say the same thing (layerMatchesPaint.test.js re-derives both halves from
+    // source). Inert in every host: inside a Sheet or PhotoModal this value is scoped to that
+    // fixed+z-indexed ancestor's stacking context, and on a full page computePlacement already
+    // insets the panel clear of the nav — the two hosts that CAN paint into it (EventNew's sticky
+    // Save, PhotoLibrary's select bar) both hide themselves while the picker is open. Where it does
+    // change anything it is the unmeasured fallback, where the panel is now visible over app chrome
+    // instead of clipped under it. Literal rather than `Z.sheet` to match the other inventoried
+    // surfaces and the static gate's source scan.
+    zIndex: 200,
     ...(flip
       ? { bottom: '100%', top: 'auto', margin: '0 0 4px' }
       : { top: '100%', bottom: 'auto', margin: '4px 0 0' }),
@@ -1233,7 +1296,9 @@ function panelStyle(placement) {
   const flip = !!placement?.flip
   return {
     position: 'absolute',
-    zIndex: 30,
+    // Z.sheet — see the matching note in listboxStyle. The two must not drift: they are the same
+    // panel, one nested and one not.
+    zIndex: 200,
     ...(flip
       ? { bottom: '100%', top: 'auto', margin: '0 0 4px' }
       : { top: '100%', bottom: 'auto', margin: '4px 0 0' }),

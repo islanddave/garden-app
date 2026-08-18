@@ -35,6 +35,12 @@ const SURFACES = [
   { file: 'components/SpaceAttachPicker.jsx', layer: 'SHEET', paints: Z.sheet },
   { file: 'components/LoveMehPopover.jsx', layer: 'SHEET', paints: Z.sheet },
   { file: 'components/FacebookShareSheet.jsx', layer: 'OVERLAY', paints: Z.overlay },
+  // BUG-PICKERUNDISMISSABLE-001. The picker panel is a DESCENDANT of the surface hosting it, so it
+  // paints inside that surface's stacking context — level with the host, above the host's content.
+  // SHEET plus the equal-layer tiebreak (later registration wins) states exactly that, and it is
+  // what puts Back on the panel rather than on the route overlay it opened inside. Its painted
+  // value moved 30 -> 200 in the same change so the two halves agree.
+  { file: 'components/forms/PlantingSelect.jsx', layer: 'SHEET', paints: Z.sheet },
 ]
 
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8')
