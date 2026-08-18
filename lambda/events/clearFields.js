@@ -52,8 +52,13 @@ export const CLEARABLE_FIELDS = [
 //                     jsonb can say null on the wire directly; the clear:[] channel exists for
 //                     columns whose COALESCE grammar erases the null/absent distinction, and
 //                     routing metadata through it would add a second spelling for the same intent.
-//   quantity_numeric, No edit surface owns them.
-//   source
+//   quantity_numeric  DERIVED, not user-entered: it mirrors harvest_log.quantity per the
+//                     Lambda-enforced pairing invariant (migrations/v1-2a-2/0a-additive-ddl.sql
+//                     §3.2), so the PUT maintains it from the harvest block rather than exposing it
+//                     to this channel. Clearing it independently would BE the split brain
+//                     (BUG-QTYSPLITBRAIN-001). This line used to read "no edit surface owns them",
+//                     which is what let the edit path skip it for months.
+//   source            No edit surface owns it.
 export const CLEARABLE_SET = new Set(CLEARABLE_FIELDS);
 
 export const MAX_CLEAR_KEYS = 64;
