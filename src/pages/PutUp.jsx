@@ -122,6 +122,18 @@ function todayYMD() { return ymd(new Date()) }
 // the key silently orphans every draft already sitting in a user's sessionStorage.
 const DRAFT_KEY = 'put-up'
 
+// BUG-PUTUPSTASHHARVLINK-001 — the IDENTITY of the prefill context a mount is in, stamped into every
+// snapshot so a later mount can ask "is this the same context?" instead of only "is there a prefill
+// at all?". Covers all four fields PutUp() reads off location.state.prefill: arriving from a
+// DIFFERENT harvest, or from a crop-only prefill, is a different context and must not resume.
+// BARE_PREFILL_KEY (no prefill) is a value, not an absence, so it compares like any other context.
+// Falsy fields collapse to '' to keep this exactly as permissive as the truthiness test it replaced.
+export function prefillContextKey(prefill) {
+  const p = prefill || {}
+  return [p.crop_type_slug, p.variety_id, p.plant_id, p.harvest_log_id].map(v => (v ? String(v) : '')).join('|')
+}
+export const BARE_PREFILL_KEY = prefillContextKey({})
+
 function prettyDate(v) {
   const s = ymd(v)
   if (!s) return ''
@@ -132,7 +144,7 @@ function prettyDate(v) {
 export default function PutUp() {
   const location = useLocation()
   const prefill = (location.state && typeof location.state.prefill === 'object' && location.state.prefill) || {}
-  const hasPrefill = !!(prefill.crop_type_slug || prefill.variety_id || prefill.plant_id || prefill.harvest_log_id)
+  const hasPrefill = prefillContextKey(prefill) !== BARE_PREFILL_KEY
 
   // Adaptive default: a harvest-triggered open lands on the form; a bare "Put-Up" tap lands on the
   // inventory ("what have I got?") — the more common intent from the More menu.
@@ -239,7 +251,10 @@ function PutUpForm({ prefill, onLogged }) {
   // EventNew's showAddDetails) and stashedPlantId (an applySourceKind implementation detail
   // already implied by the sourceKind term below) are deliberately excluded from `dirty` — both
   // still ride in the snapshot so a restore stays byte-faithful.
-  const hasPrefill = !!(prefill.crop_type_slug || prefill.variety_id || prefill.plant_id || prefill.harvest_log_id)
+  // BUG-PUTUPSTASHHARVLINK-001 — this mount's prefill context, stamped into the snapshot below and
+  // re-checked on restore. See prefillContextKey.
+  const mountPrefillKey = prefillContextKey(prefill)
+  const hasPrefill = mountPrefillKey !== BARE_PREFILL_KEY
   // The put-up date defaults to the day the form OPENED, so that is what "unchanged" means. Calling
   // todayYMD() here instead re-read the wall clock on every render, and a form left open across
   // midnight went dirty with no user action — arming both guards on an untouched form.
@@ -282,10 +297,23 @@ function PutUpForm({ prefill, onLogged }) {
     (!prefill.plant_id && plantId)
   )
 
-  // §4 draft stash — restore a dismissed/abandoned form once, on mount. ONLY without a prefill: a
-  // harvest-triggered "preserve this?" navigation (line 9-10 above) is an explicit fresh intent
-  // and must win over a stale draft from an unrelated earlier session — the same rule EventNew and
-  // LogMany apply to their own seed/deep-link params.
+  // §4 draft stash — restore a dismissed/abandoned form once, on mount. A harvest-triggered
+  // "preserve this?" navigation (line 9-10 above) is an explicit fresh intent and must win over a
+  // stale draft from an UNRELATED earlier session — the same rule EventNew and LogMany apply to
+  // their own seed/deep-link params.
+  //
+  // BUG-PUTUPSTASHHARVLINK-001 — that rule used to be spelled `if (hasPrefill) return`, which asks
+  // whether a prefill EXISTS rather than whether it is the same one, and got both halves wrong:
+  //   - A BARE mount restored `harvestLogId` from a draft a PREFILLED mount had written, so a fresh
+  //     put-up logged from the More menu was silently attributed to an old harvest. Invisibly:
+  //     unlike plantId, which lands in the labelled "From which planting?" field where it can be
+  //     seen and cleared, harvest_log_id has NO control on this form at all. It reaches the wire and
+  //     nothing on screen ever said so.
+  //   - The SAME prefilled context could not resume at all. location.state survives both a
+  //     dismiss/re-open and an SW reload, so an interrupted harvest-triggered put-up came back with
+  //     the prefill re-seeded and everything typed since discarded — with the bytes sitting in
+  //     sessionStorage the whole time.
+  // The question is context IDENTITY, not context presence.
   //
   // LANDMINE CHECK (cf. EventNew's draftRestoredTypeRef fix, ~line 598/695/829 there): this form
   // has two places that derive state FROM other state — applySourceKind (clears
@@ -298,9 +326,15 @@ function PutUpForm({ prefill, onLogged }) {
   // cannot trip either one — unlike EventNew's type-change effect, which DOES fire reactively off
   // a restored field and needed the skip-ref guard. Checked; no guard needed here.
   useEffect(() => {
-    if (hasPrefill) return
     const draft = readDraft(DRAFT_KEY)
     if (!draft) return
+    // A pre-stamp draft (written before this fix shipped) has no key and is treated as an UNKNOWN
+    // context — never the same one — so it can neither resume a prefill nor hand its harvest link to
+    // a bare mount. `sameContext` on a bare mount means "this draft was also written bare".
+    const draftPrefillKey = typeof draft.prefillKey === 'string' ? draft.prefillKey : null
+    const sameContext = draftPrefillKey === mountPrefillKey
+    if (hasPrefill && !sameContext) return
+    const resumingPrefill = hasPrefill && sameContext
     if (typeof draft.cropSlug === 'string') setCropSlug(draft.cropSlug)
     if (typeof draft.qtyValue === 'string') setQtyValue(draft.qtyValue)
     if (typeof draft.qtyUnit === 'string') setQtyUnit(draft.qtyUnit)
@@ -314,8 +348,18 @@ function PutUpForm({ prefill, onLogged }) {
     if (typeof draft.packageCount === 'string') setPackageCount(draft.packageCount)
     if (typeof draft.notes === 'string') setNotes(draft.notes)
     if (draft.variety && typeof draft.variety === 'object') setVariety(draft.variety)
-    if (draft.plantId) setPlantId(draft.plantId)
-    if (draft.harvestLogId) setHarvestLogId(draft.harvestLogId)
+    // The two spine links. When resuming the SAME prefilled context the draft is authoritative
+    // INCLUDING its absences: a draft that flipped the source to a vendor cleared both links
+    // (applySourceKind), and leaving the prefill's useState seeds in place would resume the form
+    // re-asserting a garden harvest the user had already taken back — the "half-applied" shape
+    // V4-PUTUPPROV-001 (D2-c) calls out, and a pair the server rejects.
+    if (resumingPrefill) setPlantId(draft.plantId ?? null)
+    else if (draft.plantId) setPlantId(draft.plantId)
+    // The harvest link rehydrates ONLY into the prefilled context that produced it. A bare mount has
+    // no harvest to link to, so there is nothing here for it to be the resumption OF. Same invariant
+    // resetForNext() enforces one line at a time (see its comment): a harvest link belongs to the
+    // single put-up that came from that harvest.
+    if (resumingPrefill) setHarvestLogId(draft.harvestLogId ?? null)
     if (typeof draft.sourceKind === 'string') setSourceKind(draft.sourceKind)
     if (typeof draft.sourceLabel === 'string') setSourceLabel(draft.sourceLabel)
     if (draft.stashedPlantId) setStashedPlantId(draft.stashedPlantId)
@@ -347,10 +391,14 @@ function PutUpForm({ prefill, onLogged }) {
       cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, storageId,
       useByMode, useByDate, showMore, packageCount, notes,
       variety, plantId, harvestLogId, sourceKind, sourceLabel, stashedPlantId,
+      // BUG-PUTUPSTASHHARVLINK-001 — the context this snapshot was taken in. harvestLogId keeps
+      // riding along (the same-context resume above needs it); this is what stops it from being
+      // handed to a mount that is not that context.
+      prefillKey: mountPrefillKey,
     })
   }, [dirty, guardDirty, success, cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, storageId,
       useByMode, useByDate, showMore, packageCount, notes,
-      variety, plantId, harvestLogId, sourceKind, sourceLabel, stashedPlantId])
+      variety, plantId, harvestLogId, sourceKind, sourceLabel, stashedPlantId, mountPrefillKey])
 
   // The Sheet backdrop-tap guard (§4/§5.2) and the SW reload deferral (OPS-SWRELOADGUARD-001), both
   // fed by `guardDirty` — NOT by the broad stash predicate above. See its comment for what the two
