@@ -1,5 +1,11 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useId } from 'react'
 import { P } from '../lib/constants.js'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
+
+// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+const DRAFT_KEY = 'fieldnote'
 
 /**
  * src/components/TapCaptureFallback.jsx
@@ -29,12 +35,44 @@ export default function TapCaptureFallback({ onSubmit }) {
   const [text, setText] = useState('')
   const [justSubmitted, setJustSubmitted] = useState(false)
 
+  // V4-DIRTYGUARDSWEEP-001 — the dirty-guard contract lives HERE rather than on FieldCapture, which
+  // holds no user-authored state of its own: its queue is already durable in IndexedDB and the rest
+  // (depth, expandedId, tileSend) is view state. This textarea is the one place on that surface
+  // where typed content exists with no other home until Save to queue. Wiring the page instead would
+  // have meant inventing an onDirty prop and mirroring this string into a second copy upstream.
+  useEffect(() => {
+    const draft = readDraft(DRAFT_KEY)
+    if (typeof draft?.text === 'string') setText(draft.text)
+  }, [])
+
+  // STASH predicate — BROAD: any non-empty value, whitespace included. Over-capturing costs nothing,
+  // and a leading space is still a keystroke the user made.
+  useEffect(() => {
+    if (text !== '') writeDraft(DRAFT_KEY, { text })
+  }, [text])
+
+  // GUARD predicate — SEPARATE and narrower by exactly one step: trimmed. A stray space must not
+  // hold a service-worker update or deaden a sheet backdrop; the stash above is already keeping it.
+  const hasUnsavedInput = text.trim() !== ''
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /field-capture is not an overlayable route today, so the hook above is a strict no-op and the
+  // reload gate below is what actually protects this textarea. Per-instance key + BOOLEAN dep for
+  // the reasons EventNew.jsx:933-941 records.
+  const reloadGateKey = `field-note:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
+
   function handleSubmit(e) {
     if (e && e.preventDefault) e.preventDefault()
     const trimmed = text.trim()
     if (!trimmed) return
     onSubmit && onSubmit(trimmed)
     setText('')
+    clearDraft(DRAFT_KEY)   // the note is on the queue — the working draft is spent
     setJustSubmitted(true)
     // Inline ACK auto-clears after a short window. Not a celebration —
     // a functional confirmation that the queue accepted the entry.

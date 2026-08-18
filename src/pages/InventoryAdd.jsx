@@ -1,14 +1,24 @@
 import React from 'react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import { useToast } from '../context/ToastContext.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
 import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
+
+// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+const DRAFT_KEY = 'inventoryadd'
+
+// The free-text fields, named once. Consumed by the guard predicate only — the stash is broader and
+// takes the whole form object.
+const TEXT_FIELDS = ['name', 'brand', 'model', 'source', 'source_url', 'notes', 'location_text']
 
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function InventoryAdd() {
@@ -47,6 +57,46 @@ export default function InventoryAdd() {
   const [saving,        setSaving]        = useState(false)
   const [errors,        setErrors]        = useState({})
   const [typeWarning,   setTypeWarning]   = useState(false) // pending type switch
+
+  // V4-DIRTYGUARDSWEEP-001 — restore an interrupted draft, one-shot on mount. `showFull` rides along
+  // so a restored draft whose only content is inside the collapsed "Add more details" pane does not
+  // come back invisible (same failure EventNew guards with showAddDetails/showHarvestMore).
+  useEffect(() => {
+    const draft = readDraft(DRAFT_KEY)
+    if (!draft?.form) return
+    setForm(f => ({ ...f, ...draft.form }))
+    if (draft.showFull) setShowFull(true)
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // STASH predicate — BROAD, and unusually simple here because EVERY field of this form is empty on
+  // a pristine mount (19 keys: 18 empty strings and `variety: null`). Nothing is seeded, so "any
+  // field at all" is both the broadest and the narrowest honest predicate, and over-capturing costs
+  // nothing: handleSubmit clears the draft on success, so there is no stale post-save rewrite.
+  const hasDraftContent = Object.values(form).some(v => (v ?? '') !== '')
+
+  useEffect(() => {
+    if (hasDraftContent) writeDraft(DRAFT_KEY, { form, showFull })
+  }, [hasDraftContent, form, showFull])
+
+  // GUARD predicate — SEPARATE and NARROWER: free text plus the staged variety object. The enum
+  // pickers (type/category/unit/condition) and the numeric fields are excluded, not because losing
+  // them is fine but because the stash above already restores them and each extra term is another
+  // chance to hold a service-worker update for a user who only tapped "Consumable" and walked away.
+  // A false-positive guard costs a held update and a dead backdrop; that is the expensive direction.
+  const hasUnsavedInput = !!(
+    TEXT_FIELDS.some(k => (form[k] ?? '').trim()) || form.variety
+  )
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /inventory/add is not an overlayable route today, so the hook above is a strict no-op and the
+  // reload gate below is what actually protects this page. Per-instance key + BOOLEAN dep for the
+  // reasons EventNew.jsx:933-941 records.
+  const reloadGateKey = `inventory-add:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   const visibleCategories = (form.type
     ? CATEGORIES.filter(c => c.types.includes(form.type))
@@ -125,6 +175,8 @@ export default function InventoryAdd() {
         setErrors({ _form: error })
         return
       }
+
+      clearDraft(DRAFT_KEY)   // the item exists — the working draft is spent
 
       // Operational confirmation via the GLOBAL toast layer (2500ms), then navigate.
       show({ message: '✓ Item added' })

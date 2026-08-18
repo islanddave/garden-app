@@ -8,11 +8,14 @@
 // -> auto-use existing.id), then POST /api/inventory-items with a payload mirroring
 // InventoryAdd.buildPayload (server sets created_by — never sent from the client)
 // plus packet metadata. All state stays local to this page.
-import React, { useState, useMemo, useRef } from 'react'
+import React, { useState, useMemo, useRef, useEffect, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useVarieties } from '../hooks/useVarieties.js'
 import { useToast } from '../context/ToastContext.jsx'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { packetToVarietyCols } from '../lib/parseSowProfile.js'
 import { P } from '../lib/tokens.js'
 import { formatMoney } from '../lib/format.js'
@@ -24,6 +27,9 @@ import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 // Canvas downscale ceiling (Anthropic vision long-edge sweet spot) + JPEG quality.
 const MAX_LONG_EDGE = 1568
 const JPEG_QUALITY = 0.85
+
+// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+const DRAFT_KEY = 'addseeds'
 
 async function fileToJpegBase64(file) {
   const url = URL.createObjectURL(file)
@@ -127,6 +133,56 @@ export default function AddSeeds() {
   // state across awaits without re-subscribing.
   const rowsRef = useRef(rows)
   rowsRef.current = rows
+
+  // V4-DIRTYGUARDSWEEP-001 — restore an interrupted intake, one-shot on mount.
+  // `status: 'saving'` is downgraded to 'pending' on the way in: that value only ever exists mid-loop
+  // inside handleSaveAll, so a draft carrying it was written by a session that died during the save.
+  // Restoring it verbatim would render a row stuck on "Saving…" with no Edit control and no way to
+  // retry — the row would be un-saveable and un-editable for the rest of the session.
+  useEffect(() => {
+    const draft = readDraft(DRAFT_KEY)
+    if (!draft) return
+    if (typeof draft.mode === 'string') setMode(draft.mode)
+    if (typeof draft.pasteText === 'string') setPasteText(draft.pasteText)
+    if (Array.isArray(draft.rows)) {
+      setRows(draft.rows.map(r => (r.status === 'saving' ? { ...r, status: 'pending', error: null } : r)))
+    }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // STASH predicate — BROAD: the chooser mode rides along with the content, because restoring
+  // pasteText without mode='paste' would put the text back into a textarea that is not rendered.
+  // Over-capturing costs nothing; the draft is cleared at both spent moments (a clean Save all, and
+  // Start over) rather than by this effect, so a first-mount write can never race the restore above.
+  const hasDraftContent = !!mode || !!pasteText || Array.isArray(rows)
+
+  useEffect(() => {
+    if (hasDraftContent) writeDraft(DRAFT_KEY, { mode, pasteText, rows })
+  }, [hasDraftContent, mode, pasteText, rows])
+
+  // GUARD predicate — SEPARATE and NARROWER than the stash. Two terms only:
+  //   • typed/pasted order text, and
+  //   • an extracted review list with work still outstanding.
+  // `mode` alone is deliberately NOT counted: tapping "Paste an order" and typing nothing is a
+  // navigation act, and holding the service-worker reload for it would wedge updates for a user who
+  // merely looked at the chooser. `rows` IS counted even though it is not typed — it is the output
+  // of a paid extraction call plus a hand review pass, which is the most expensive state on this
+  // page to lose. The `status !== 'saved'` term makes the predicate self-clearing: once every packet
+  // has landed the hold releases with no post-save special case.
+  const hasUnsavedInput = !!(
+    pasteText.trim() ||
+    (Array.isArray(rows) && rows.some(r => r.status !== 'saved'))
+  )
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /inventory/add-seeds is not an overlayable route today, so the hook above is a strict no-op and
+  // the reload gate below is what actually protects this page. Per-instance key + BOOLEAN dep for
+  // the reasons EventNew.jsx:933-941 records.
+  const reloadGateKey = `add-seeds:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   // Exact case-insensitive variety-name index for auto-match chips.
   const varietyByLowerName = useMemo(() => {
@@ -246,6 +302,7 @@ export default function AddSeeds() {
     }
     setSavingAll(false)
     if (failed === 0) {
+      clearDraft(DRAFT_KEY)   // every packet is in the DB — the working draft is spent
       show({ message: `Saved ${saved} packet${saved === 1 ? '' : 's'}` })
     } else {
       show({ message: `Saved ${saved}, ${failed} failed — see rows below`, tone: 'error' })
@@ -332,7 +389,10 @@ export default function AddSeeds() {
               <div style={{ fontSize: '0.9rem', color: P.mid }}>
                 {rows.length} packet{rows.length === 1 ? '' : 's'} found — review, then save.
               </div>
-              <button type="button" onClick={() => { setRows(null); setMode(''); setBanner(null) }} style={linkBtn}>
+              {/* clearDraft here, not in the stash effect: an explicit Start over is the user
+                  discarding the extraction, so the stored copy must go with it — otherwise the next
+                  mount restores the list they just threw away. */}
+              <button type="button" onClick={() => { setRows(null); setMode(''); setBanner(null); clearDraft(DRAFT_KEY) }} style={linkBtn}>
                 Start over
               </button>
             </div>

@@ -10,7 +10,7 @@
 // fields + Back/Save/Next buttons use the canonical forms/ primitives (Field/Input/Select/
 // Button) instead of the old bespoke field/primaryBtn/ghostBtn/local <Label>. The photo
 // take/choose picker and the mode cards are distinct affordances and keep their own styling.
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useId } from 'react'
 import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import { SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import { useNavigate, Link } from 'react-router-dom'
@@ -42,6 +42,12 @@ import { PlantForm } from '../components/forms/index.js'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger write on the event save below.
 import { recordCropLog } from '../lib/cropLogLedger.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
+
+// V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
+const DRAFT_KEY = 'snap'
 
 // V4-SNAPDEST-001 (BD0806-08) — 'location' is the destination this row was actually missing. Snap
 // could only ever aim a photo at a PLANTING or an inventory item, so anything about the place itself
@@ -176,6 +182,80 @@ export default function CaptureFlow() {
     return () => { off = true }
   }, [fetch])
 
+  // V4-DIRTYGUARDSWEEP-001 — restore an interrupted capture's FIELDS ONLY, one-shot on mount.
+  // `step` and `file` are deliberately NOT restored, and that is the whole design of this stash: a
+  // File is not serialisable, so a draft that put the user back on step 'form' would hand them a
+  // filled-in form with file === null, and Save would call attach(null) — a broken save built out of
+  // a recovery feature. Landing on step 'photo' with the fields already populated is safe by
+  // construction: 'form' is reachable only through onPick(), which always sets a file.
+  useEffect(() => {
+    const draft = readDraft(DRAFT_KEY)
+    if (!draft) return
+    if (draft.plantForm) setPlantForm(f => ({ ...f, ...draft.plantForm }))
+    if (draft.evPlant)  setEvPlant(draft.evPlant)
+    if (draft.evType)   setEvType(draft.evType)
+    if (draft.evDate)   setEvDate(draft.evDate)
+    if (draft.locPlace) setLocPlace(draft.locPlace)
+    if (draft.locType)  setLocType(draft.locType)
+    if (draft.locDate)  setLocDate(draft.locDate)
+    if (draft.rpPlant)  setRpPlant(draft.rpPlant)
+    if (draft.invName)  setInvName(draft.invName)
+    if (draft.invType)  setInvType(draft.invType)
+    if (draft.invCat)   setInvCat(draft.invCat)
+    if (draft.invQty)   setInvQty(draft.invQty)
+    if (draft.invUnit)  setInvUnit(draft.invUnit)
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // STASH predicate — BROAD: any divergence from the seeds, picks included. Compared key-by-key
+  // against SNAP_PLANT_FORM rather than tested for truthiness, because six of these fields are
+  // seeded non-empty (quantity '1', status 'seedling', evType 'watering', locType 'observation',
+  // invType 'consumable', invCat 'other', invQty '1', invUnit 'each') and both dates are seeded to
+  // today. `!==` without a `?? ''` fallback is deliberate: `variety` seeds to null, and coercing it
+  // would report every pristine mount as touched.
+  const today = todayStr()
+  const plantFormTouched = Object.keys(SNAP_PLANT_FORM).some(k => plantForm[k] !== SNAP_PLANT_FORM[k])
+  const hasDraftContent = (
+    plantFormTouched ||
+    !!(evPlant || locPlace || rpPlant || invName) ||
+    evType !== 'watering' || locType !== 'observation' || evDate !== today || locDate !== today ||
+    invType !== 'consumable' || invCat !== 'other' || invQty !== '1' || invUnit !== 'each'
+  )
+
+  // step 'done' is excluded from the WRITE, not just from the guard. save() clears the draft, but
+  // it does not reset the fields (only Save & Next does), so without this the very next effect pass
+  // would re-write everything that was just saved — EventNew.jsx:849-855's stale-draft rewrite,
+  // rebuilt on a different page.
+  useEffect(() => {
+    if (!hasDraftContent || step === 'done') return
+    writeDraft(DRAFT_KEY, {
+      plantForm, evPlant, evType, evDate, locPlace, locType, locDate, rpPlant,
+      invName, invType, invCat, invQty, invUnit,
+    })
+  }, [hasDraftContent, step, plantForm, evPlant, evType, evDate, locPlace, locType, locDate, rpPlant,
+      invName, invType, invCat, invQty, invUnit])
+
+  // GUARD predicate — SEPARATE from the stash and deliberately ONE term, which is both necessary
+  // and sufficient here. A staged File is the only state on this page the stash cannot carry, and it
+  // is also the *gate* on every other piece: step 'form' — the only step with an editable field — is
+  // reachable only via onPick(), so `file` being set is implied by any typed content. Adding the
+  // typed fields would not widen the cover by a single real case, and WOULD make the page report
+  // dirty on a merely-opened mount right after the restore above refills them, holding a
+  // service-worker update for content the stash is already holding safely.
+  // The step !== 'done' term is the post-save release: after a successful save `file` is still set
+  // (only resetForNext clears it), and a save that has landed is nothing left to protect.
+  const hasUnsavedInput = step !== 'done' && !!file
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /snap is not an overlayable route today, so the hook above is a strict no-op and the reload gate
+  // below is what actually protects this page. Per-instance key + BOOLEAN dep for the reasons
+  // EventNew.jsx:933-941 records.
+  const reloadGateKey = `capture-flow:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
+
   function onPick(e) {
     const f = e.target.files?.[0]
     // Required BECAUSE the input is now permanently mounted (BUG-SNAPRETAKE-001). It used to live
@@ -206,6 +286,7 @@ export default function CaptureFlow() {
     // succeeded. The new link is withdrawn on the same flag, so leaving this would have made the
     // ruling's affordance vanish from every capture after the first undo. One line, same block.
     setUndone(false)
+    clearDraft(DRAFT_KEY)   // fields are back at their seeds — nothing left to resume
     setStep('photo')
   }
 
@@ -336,6 +417,7 @@ export default function CaptureFlow() {
           link: { to: `/inventory/${item.id}`, label: 'View item', name: item.name ?? invName.trim() },
           undo: () => fetch('/api/inventory-items/' + item.id, { method: 'DELETE' }) })
       }
+      clearDraft(DRAFT_KEY)   // the record exists — the working draft is spent
       setStep('done')
     } catch (e) {
       setErr(e?.message || 'Save failed')

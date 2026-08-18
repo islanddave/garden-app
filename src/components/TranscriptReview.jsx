@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import {
   setTranscript,
   incrementTranscribeAttempt,
@@ -65,6 +67,28 @@ export default function TranscriptReview({
   const [saving,      setSaving]      = useState(false)
   const [sending,     setSending]     = useState(false)
   const [sendStatus,  setSendStatus]  = useState(null)  // 'shared' | 'copied' | 'manual' | 'error'
+
+  // V4-DIRTYGUARDSWEEP-001 — guard only, no draft stash. The queue entry behind this editor is
+  // already durable in IndexedDB, so the only thing an SW reload can destroy is the UNSAVED EDIT;
+  // a per-entry sessionStorage record would add a keyed lifecycle for that narrow slice.
+  //
+  // DIVERGENCE, not truthiness. `draft` is seeded from entry.transcript, so `!!draft` would be true
+  // on every tile the user merely expanded — and FieldCapture renders a scrollable list of them, so
+  // that predicate would hold the service-worker reload for someone who did nothing but look.
+  // Trimmed on BOTH sides so a successful save reads clean: handleSave stores draft.trim(), and the
+  // parent's refresh feeds the saved text back as the new seed — an untrimmed compare would leave
+  // the hold pinned on a trailing space that no longer exists anywhere but in the textarea.
+  const hasUnsavedInput = draft.trim() !== seedTranscript.trim()
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // Keyed per ENTRY as well as per instance: reloadGate holds a Set, and two expanded tiles editing
+  // different captures must not be able to release each other's hold.
+  const reloadGateKey = `transcript-review:${entry?.id ?? 'none'}:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   const liveHandleRef = useRef(null)
   const audioUrlRef   = useRef(null)
