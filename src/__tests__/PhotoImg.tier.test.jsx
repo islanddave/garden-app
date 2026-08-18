@@ -223,16 +223,41 @@ describe('C. one photo id, two tiers, two cache slots', () => {
 
   it('C5 the elapsed gate reads the rendered tier\'s slot, not the other tier\'s', async () => {
     fetchSpy.mockResolvedValue({ view_url: THUMB_URL })
-    // FULL is fresh, THUMB is stale. A single-key cache sees "fresh" and skips the heal, leaving the
-    // tile on an expired presign — a permanent blank on resume, which is the failure PhotoImg exists
-    // to prevent.
-    __seedPhotoImgUrl(ID, FULL_URL, Date.now(), TIER.FULL)
+    // THUMB is stale, FULL is fresh — and FULL is seeded SECOND on purpose, so that a single-key
+    // cache ends up holding the FRESH stamp, sees "no heal needed" and leaves the tile on an expired
+    // presign: a permanent blank on resume, the failure PhotoImg exists to prevent.
     __seedPhotoImgUrl(ID, 'https://s3/expired.jpg', Date.now() - PRESIGN_TTL_MS - 1, TIER.THUMB)
+    __seedPhotoImgUrl(ID, FULL_URL, Date.now(), TIER.FULL)
     const { container } = render(<PhotoImg photoId={ID} mintTier={TIER.THUMB} hasFallback initialUrl="https://s3/expired.jpg" alt="tile" />)
     onScreen(img(container))
     foreground()
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
     expect(wireTier(requested()[0])).toBe('thumb')
+  })
+
+  // C1–C5 all read the cache. C6/C7 cover the WRITE that _seed performs at mount, which nothing
+  // else in the suite pins to a tier: a mutation making _seed stamp the full slot for a thumb
+  // instance passed all 59 pre-existing photo tests.
+  it('C6 a fresh THUMB mount is covered by the elapsed gate too (no flash-on-foreground)', async () => {
+    fetchSpy.mockResolvedValue({ view_url: 'https://s3/never.jpg' })
+    const { container } = render(<PhotoImg photoId="c6" mintTier={TIER.THUMB} initialUrl={THUMB_URL} alt="tile" />)
+    onScreen(img(container))
+    foreground()
+    await act(async () => {})
+    // If the mount stamp landed in the OTHER tier's slot this instance would look un-minted and
+    // re-fetch on every app switch — NEW-4's flash-on-foreground, restored for every tile in a grid.
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('C7 a rendered THUMB instance does not publish its URL as the answer for the FULL tier', async () => {
+    fetchSpy.mockResolvedValue({ view_url: FULL_URL })
+    render(<PhotoImg photoId={ID} mintTier={TIER.THUMB} initialUrl={THUMB_URL} alt="tile" />)   // _seed publishes
+    await act(async () => {})
+    expect(fetchSpy).not.toHaveBeenCalled()                                                     // the tile costs nothing
+    const f = render(<PhotoImg photoId={ID} mintTier={TIER.FULL} alt="lightbox" />)             // id-only → mount-fetch
+    await waitFor(() => expect(src(f.container)).toBe(FULL_URL))                                // minted its own
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(wireTier(requested()[0])).toBeNull()
   })
 })
 
