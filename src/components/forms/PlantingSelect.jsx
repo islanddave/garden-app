@@ -388,13 +388,22 @@ export default function PlantingSelect({
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const [touched, setTouched] = useState(false)
-  // BUG-POSTSAVEVALIDATION-001. Fires once on mount (a no-op — `touched` already starts false) and
-  // again on every host reset. When `resetNonce` is undefined the dep never changes, so the six
-  // other call sites see mount-only behaviour identical to before.
+  // BUG-POSTSAVEVALIDATION-001. Clears on every host reset. When `resetNonce` is undefined the
+  // comparison never trips, so the six other call sites see behaviour identical to before.
+  // RENDER-PHASE, not a passive effect — and that is the whole point. The effect version cleared
+  // `touched` one commit LATE, so the commit that carried the host's cleared value still rendered
+  // showBlankError: "Choose a planting." in red hit the DOM after every successful save and was
+  // painted before the effect wiped it. A one-frame red flash on a save that SUCCEEDED is the same
+  // defect BUG-POSTSAVEVALIDATION-001 exists to close, just shorter. React's documented
+  // adjust-state-on-prop-change pattern re-renders before the commit, so the node is never created.
   // V4-CROPFILTER-001: chipSelection is DELIBERATELY not cleared here — chip filter state must
   // survive the host's resetForNext/save within a mount (§1b adjudication; a 6-tomato burst taps
   // the Tomato chip once). It is filter state, not write-target state (§5.2).
-  useEffect(() => { setTouched(false) }, [resetNonce])
+  const [seenResetNonce, setSeenResetNonce] = useState(resetNonce)
+  if (resetNonce !== seenResetNonce) {
+    setSeenResetNonce(resetNonce)
+    setTouched(false)
+  }
   // V4-CROPFILTER-001 chip state: per-instance, session-ephemeral (never localStorage).
   const [chipSelection, setChipSelection] = useState(() => new Set())
   // Bumped by FilterChipRow's More-tray toggle so the placement effect re-measures the panel.
