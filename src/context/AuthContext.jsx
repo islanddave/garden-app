@@ -3,7 +3,7 @@
 // runtime throws "React is not defined" the moment a test mounts it. Every other rendered .jsx in
 // src/ already carries it; this one never did because nothing had mounted it until
 // clientPrefs.test.jsx. Inert in the production build, which uses the automatic runtime.
-import React, { createContext, useContext, useEffect } from 'react'
+import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useUser, useClerk } from '@clerk/react'
 import { invalidateAll as invalidateDataCache } from '../lib/dataCache.js'
 import { useCacheLifecycle } from '../hooks/useCacheLifecycle.js'
@@ -12,6 +12,22 @@ import { POST_LOGIN_ROUTE } from '../lib/constants.js'
 
 const AuthContext = createContext(null)
 
+// V4-COLDSTART-001 — the ceiling on the boot wait.
+//
+// 10 000 ms is Clerk's own number, not a tuned one: `@clerk/shared/dist/getToken.mjs:29-36` races
+// its ready-promise against exactly this and rejects with
+// ClerkRuntimeError('Timeout waiting for Clerk to load.', { code: 'clerk_runtime_load_timeout' }).
+// The app cannot use that helper (it wants a standalone Clerk instance, and `useUser` — not
+// getToken — is what the render gate reads), so the same bound is re-implemented here against the
+// hook. Matching the value means an app-level give-up can never fire BEFORE the library's own.
+//
+// It is a BACKSTOP, not the main path: a failed hot-load emits status 'error' within a second or so
+// and is caught by the status arm below. This covers the pathological case the status event cannot —
+// a captive portal or a black-holed TCP connect where nothing ever settles and nothing ever throws.
+// Measured reference for the healthy path: isLoaded at t=3376 ms on a real cold boot (bootPaint
+// test header), so 10 s leaves ~3x headroom before a working sign-in could be cut short.
+export const CLERK_LOAD_TIMEOUT_MS = 10000
+
 export function AuthProvider({ children }) {
   const { user: clerkUser, isSignedIn, isLoaded } = useUser()
   const clerk = useClerk()
@@ -19,6 +35,44 @@ export function AuthProvider({ children }) {
 
   const user = isSignedIn ? clerkUser : null
   const loading = !isLoaded
+
+  // V4-COLDSTART-001 — the bounded wait, and the third identity state it produces.
+  //
+  // THE HANG. clerk-js is hot-loaded from Clerk's CDN. Offline that load fails; IsomorphicClerk
+  // emits status 'error' and then RETURNS without calling emitLoaded (@clerk/react's ClerkProvider
+  // chunk, the catch around getClerkJsEntryChunk + clerk.load), so `clerk.loaded` stays false,
+  // useUser() keeps returning isLoaded:false (@clerk/shared react useUser: `user === undefined`
+  // ⇒ isLoaded:false), and `loading` above is true FOREVER. The render gate downstream paints a
+  // boot skeleton for as long as that holds: no error, no recovery, no way out but force-stopping
+  // the app. Dave gardens in rural dead zones on Chrome Android, so it is a routine condition.
+  //
+  // `unknown` is deliberately a SUBSET of `loading`, never a replacement for it. Two consequences,
+  // both load-bearing:
+  //   • every consumer that only knows the boolean keeps withholding exactly as it does today, so
+  //     this cannot leak by omission — the only surface that changes is the one explicitly taught
+  //     about `identity` (App.jsx's AppShell).
+  //   • an unresolved identity can never take the signed-OUT branch. Collapsing them would redirect
+  //     to /login, which is useless offline and reads as "you got signed out" — which is false.
+  //
+  // It is also NOT sticky: `identity` is recomputed from isLoaded on every render, so a Clerk that
+  // finally resolves at t=12s takes the normal path and the notice disappears on its own. That is
+  // why a timeout here cannot truncate a working sign-in — there is no expired flag to clear.
+  const [waitExpired, setWaitExpired] = useState(false)
+  useEffect(() => {
+    if (isLoaded) return undefined
+    const timer = setTimeout(() => setWaitExpired(true), CLERK_LOAD_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [isLoaded])
+
+  // `clerk.status` is reactive despite `useClerk()` returning a stable instance: ClerkContextProvider
+  // re-memoises the context value on clerkStatus (@clerk/shared react, `useMemo(..., [props.clerkStatus])`),
+  // so a status change re-renders consumers. Compared against 'error' specifically — 'loading' is the
+  // healthy boot state and treating anything-not-'ready' as unknown would fire on every cold start.
+  const clerkFailed = clerk?.status === 'error'
+  const identity = !loading
+    ? (user ? 'signed-in' : 'signed-out')
+    : (waitExpired || clerkFailed) ? 'unknown' : 'pending'
+
   const profile = clerkUser ? {
     id: clerkUser.id,
     display_name: clerkUser.fullName || clerkUser.firstName || clerkUser.emailAddresses?.[0]?.emailAddress || '',
@@ -64,7 +118,7 @@ export function AuthProvider({ children }) {
 
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, identity, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   )
@@ -80,5 +134,5 @@ export function useAuth() {
 // wants the current-user profile does not hard-require an <AuthProvider> in unit tests. In the real
 // app the provider is always mounted; without it this returns a null profile (feature no-ops).
 export function useAuthOptional() {
-  return useContext(AuthContext) ?? { user: null, profile: null, loading: false }
+  return useContext(AuthContext) ?? { user: null, profile: null, loading: false, identity: 'signed-out' }
 }

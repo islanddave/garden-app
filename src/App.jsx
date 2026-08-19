@@ -57,7 +57,7 @@ import PutUp from './pages/PutUp.jsx'
 import SpaceDetail from './pages/SpaceDetail.jsx'
 import VarietyEdit from './pages/VarietyEdit.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
-import { RouteSkeleton, NavSkeleton } from './components/BootSkeleton.jsx'
+import { RouteSkeleton, NavSkeleton, IdentityUnavailable } from './components/BootSkeleton.jsx'
 import { dismissBootSplash } from './lib/bootSplash.js'
 import { BOTTOM_NAV_HEIGHT_PX } from './lib/constants.js'
 import UpdateBanner from './components/UpdateBanner.jsx'
@@ -279,8 +279,24 @@ export function renderRoutes({ overlay, user, loading }) {
 // The authenticated shell. Reads the effective PAGE location (background when an overlay is open,
 // else the real location) so the page tree and chrome stay on the background while the overlay tree
 // (if any) renders at the real URL. See OverlayContext.
-function AppShell({ user, loading }) {
+function AppShell({ user, loading, identity }) {
   const { pageLocation, overlayLocation, background } = useOverlay()
+
+  // V4-COLDSTART-001 — the ONE place the `unknown` identity renders, and it renders INSTEAD OF the
+  // whole tree rather than inside a slot in it.
+  //
+  // Placing the gate here, above <TopChrome>, the <Routes>, <NavSkeleton>, <TodayBand>, <BottomNav>
+  // and the critter controller, is what makes the leak review a structural argument instead of an
+  // enumeration: in this state the app renders exactly one prop-less, context-free component and
+  // NOTHING else mounts, so there is no surface left to audit for a title, a count or a photo.
+  // Swapping only the route slot (the tempting smaller diff) would keep the pending chrome up and
+  // leave every future header/nav change needing to re-prove itself against this state.
+  //
+  // The providers ABOVE AppShell (Favorites/Zone/Mode/Toast) do still mount, but `unknown` is a
+  // subset of `loading` — they are in exactly the state authRenderGate property 3 already pins as
+  // issuing zero requests, and the new suite re-pins it for this state specifically.
+  if (identity === 'unknown') return <IdentityUnavailable />
+
   return (
     <>
       <TopChrome />
@@ -329,7 +345,7 @@ function AppShell({ user, loading }) {
 }
 
 function AppRoutes() {
-  const { user, loading } = useAuth()
+  const { user, loading, identity } = useAuth()
   return (
     <BrowserRouter>
       <ErrorBoundary scope="app" fallback={<AppFallback />}>
@@ -339,7 +355,7 @@ function AppRoutes() {
             a single Escape (later, a single Back) would resolve against whichever answered first. */}
         <DismissRegistryProvider>
           <OverlayProvider>
-            <AppShell user={user} loading={loading} />
+            <AppShell user={user} loading={loading} identity={identity} />
           </OverlayProvider>
         </DismissRegistryProvider>
       </ErrorBoundary>
