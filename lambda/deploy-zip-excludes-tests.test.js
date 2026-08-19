@@ -44,6 +44,12 @@ describe('deploy-lambda.yml — test files are excluded from every bundle', () =
     // The exclude proves the COMMAND; this proves the ARTIFACT. Without it, a pattern that silently
     // stopped matching (a reworded glob, a new test suffix) would ship tests with a green build.
     expect(WF).toContain('FATAL: test files present in');
-    expect(WF).toMatch(/unzip -l [^\n|]*\| grep -q '\\\.test\\\.js'/);
+    // ANCHORED (`$`). The original pin required the unanchored `grep -q '\.test\.js'`, and that is
+    // exactly what broke the first real deploy of this guard: `pg` vendors
+    // pg-protocol/dist/*.test.js.map, the unanchored grep matched those .map files, and since `pg`
+    // is a dependency of every function all 26 Lambda jobs failed identically. The check was BROADER
+    // than its own exclude, so it could never pass. Pin the anchored form so the assertion stays a
+    // strict subset of what the zip removes.
+    expect(WF).toMatch(/unzip -l [^\n|]*\| grep -qE '\\\.test\\\.js\$'/);
   });
 });
