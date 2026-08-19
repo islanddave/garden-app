@@ -22,6 +22,14 @@
 // tier is fed in as derived_anchor_date exactly as the backfill would persist it, and the sibling
 // restriction is applied by clearing sibling_first_pick_date on non-single rows — the same input the
 // restricted code path produces. So the numbers hold regardless of how the flags are currently set.
+//
+// ⚠ OPS-ANCHORMEASUREBASIS-001 — INSTRUMENT HAZARD, and the run now says so in its own output.
+// asCalendarFallback (below) stamps dtm_basis: 'from-transplant' onto EVERY derived row in order to
+// price the derived tier without flipping DERIVED_ANCHOR_ENABLED. The queue COUNTS are real — that
+// is the arithmetic the derived branch performs — but any statement about anchor BASIS taken from
+// configs C/D is an artefact of this harness, not a fact about the derived tier. The mechanism was
+// documented at the call site from the start; what was missing was a warning legible to someone who
+// did not already know it, which is precisely who a measurement script is written for.
 
 import { buildWatchList, WATCHED_HABITS, SIBLING_ANCHOR_HABITS } from '../lambda/harvests/watch.js';
 import {
@@ -111,6 +119,14 @@ const configs = [
 ];
 
 console.log('\nWATCH QUEUE EFFECT (real classifier, same live rows)\n');
+// OPS-ANCHORMEASUREBASIS-001. Printed rather than merely commented: this is the one section whose
+// rows were rewritten by the harness, and a reader who does not open the source has no other way to
+// know it. Guarded by scripts/measure-anchor-coverage.basis.test.js — the guard reds if the
+// dtm_basis rewrite is still present and this banner is not.
+console.log('  ⚠ BASIS HAZARD (OPS-ANCHORMEASUREBASIS-001): configs C/D reach the classifier through');
+console.log('    the calendar path, which stamps dtm_basis=from-transplant on every derived row.');
+console.log('    The counts below are real; do NOT quote anchor BASIS from this run — it is a');
+console.log('    harness artefact, not a property of the derived tier.\n');
 console.log('  config                        total  sibling-anchored  calendar  derived  no_anchor');
 for (const [label, fn, siblingHabits] of configs) {
   const { candidates, excluded } = buildWatchList(withEvents.map(fn), etToday, { nurseryOffsetDays, siblingHabits });
