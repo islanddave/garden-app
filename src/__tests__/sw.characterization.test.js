@@ -11,13 +11,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import vm from 'node:vm'
 import {
   readSwSource, loadServiceWorker, dispatchFetch, dispatchActivate,
-  makeFakeCaches, LAMBDA_URL, offlineError, abortError,
+  makeFakeCaches, LAMBDA_URL, offlineError, abortError, apiRequest,
 } from './helpers/swHarness.js'
 
 const CACHE_VERSION = 'v16-20260524'
-const API_CACHE = `api-${CACHE_VERSION}`
+// Slice 1 (V4-SWCACHEID-001) split the single API cache into one partition per subject. The
+// behaviours characterized below are unchanged by that split — but exercising them now requires an
+// IDENTIFIED request, because an unidentified one deliberately reaches no cache at all. Requests
+// here therefore carry SUB's bearer token, and the cache under test is SUB's partition.
+const SUB = 'user_2characterization'
+const API_CACHE = `api-${CACHE_VERSION}-u-${SUB}`
+const LEGACY_API_CACHE = `api-${CACHE_VERSION}`
 const STATIC_CACHE = `static-${CACHE_VERSION}`
 const IMAGE_CACHE = `images-${CACHE_VERSION}`
+/** Drive one API GET and settle the waitUntil'd cache write. */
+async function apiGet(sw, request) {
+  const { responded, waits } = dispatchFetch(sw, request)
+  const response = await responded
+  await Promise.all(waits)
+  return response
+}
 
 beforeEach(() => { vi.clearAllMocks() })
 
@@ -58,7 +71,7 @@ describe('harness integrity — these tests run public/sw.js, not a reimplementa
       caches,
       fetchImpl: vi.fn(async () => { throw offlineError() }),
     })
-    const { responded } = dispatchFetch(sw, new Request(url))
+    const { responded } = dispatchFetch(sw, apiRequest(SUB, '/api/plants'))
     const res = await responded
     expect(res.headers.get('X-From-Cache')).toBe('MUTATED')
   })
@@ -79,7 +92,7 @@ describe('networkFirst — failure branches (documented prior art, previously un
     // Mutation: drop the markFromCache() wrapper → header is null and the whole
     // api.js → dataCache `stale` → useCacheLifecycle B5/B6 chain silently stops working.
     const { sw } = withCachedBody(vi.fn(async () => { throw offlineError() }))
-    const res = await dispatchFetch(sw, new Request(url)).responded
+    const res = await dispatchFetch(sw, apiRequest(SUB, '/api/plants')).responded
     expect(res.status).toBe(200)
     expect(res.headers.get('X-From-Cache')).toBe('1')
     expect(await res.text()).toBe('{"cached":true}')
@@ -88,7 +101,7 @@ describe('networkFirst — failure branches (documented prior art, previously un
   it('OFFLINE with NOTHING cached → 503, and never a fabricated body', async () => {
     const caches = makeFakeCaches()
     const sw = loadServiceWorker({ caches, fetchImpl: vi.fn(async () => { throw offlineError() }) })
-    const res = await dispatchFetch(sw, new Request(url)).responded
+    const res = await dispatchFetch(sw, apiRequest(SUB, '/api/plants')).responded
     expect(res.status).toBe(503)
   })
 
@@ -99,7 +112,7 @@ describe('networkFirst — failure branches (documented prior art, previously un
     // Mutation: let the TimeoutError branch fall through to the offline branch → status becomes 200
     // and the cache-read assertion fails.
     const { caches, sw } = withCachedBody(vi.fn(async () => { throw abortError() }))
-    const res = await dispatchFetch(sw, new Request(url)).responded
+    const res = await dispatchFetch(sw, apiRequest(SUB, '/api/plants')).responded
     expect(res.status).toBe(504)
     const apiCache = caches.store.get(API_CACHE)
     expect(apiCache.match).not.toHaveBeenCalled()
@@ -121,8 +134,7 @@ describe('networkFirst — failure branches (documented prior art, previously un
     const sw = loadServiceWorker({
       caches, fetchImpl: vi.fn(async () => new Response('{"fresh":1}', { status: 200 })),
     })
-    await dispatchFetch(sw, new Request(url)).responded
-    await Promise.resolve(); await Promise.resolve()   // the put is fire-and-forget
+    await apiGet(sw, apiRequest(SUB, '/api/plants'))
     expect(caches.store.get(API_CACHE)?.entries.get(url)).toBeTruthy()
   })
 
@@ -133,8 +145,7 @@ describe('networkFirst — failure branches (documented prior art, previously un
     const sw = loadServiceWorker({
       caches, fetchImpl: vi.fn(async () => new Response('boom', { status: 500 })),
     })
-    await dispatchFetch(sw, new Request(url)).responded
-    await Promise.resolve(); await Promise.resolve()
+    await apiGet(sw, apiRequest(SUB, '/api/plants'))
     expect(caches.store.get(API_CACHE)?.entries.size ?? 0).toBe(0)
   })
 
@@ -144,7 +155,7 @@ describe('networkFirst — failure branches (documented prior art, previously un
     const sw = loadServiceWorker({
       fetchImpl: vi.fn(async () => new Response('{"fresh":1}', { status: 200 })),
     })
-    const res = await dispatchFetch(sw, new Request(url)).responded
+    const res = await dispatchFetch(sw, apiRequest(SUB, '/api/plants')).responded
     expect(res.headers.get('X-From-Cache')).toBeNull()
   })
 })
@@ -168,35 +179,36 @@ describe('fetch routing guards', () => {
     const sw = loadServiceWorker({
       caches, fetchImpl: vi.fn(async () => new Response('{"a":1}', { status: 200 })),
     })
-    await dispatchFetch(sw, new Request(LAMBDA_URL('/api/search?q=tomato'))).responded
-    await Promise.resolve(); await Promise.resolve()
+    await apiGet(sw, apiRequest(SUB, '/api/search?q=tomato'))
     expect(caches.store.has(STATIC_CACHE)).toBe(false)
     expect(caches.store.get(API_CACHE)?.entries.size).toBe(1)
   })
 })
 
-// ── activate purge: an exact-equality allowlist, which Slice 1 must replace ────────────────────
-describe('activate purge — CURRENT exact-equality allowlist', () => {
-  it('keeps exactly the three current caches and deletes everything else', async () => {
+// ── activate purge: a keepCacheKey predicate (Slice 1 replaced the exact-equality allowlist) ───
+describe('activate purge — keepCacheKey predicate', () => {
+  it('keeps this version\'s static/image caches and deletes everything else', async () => {
     const caches = makeFakeCaches({
-      [STATIC_CACHE]: {}, [API_CACHE]: {}, [IMAGE_CACHE]: {},
+      [STATIC_CACHE]: {}, [LEGACY_API_CACHE]: {}, [IMAGE_CACHE]: {},
       'api-v15-older': {}, 'garden-images': {},
     })
     const sw = loadServiceWorker({ caches })
     await dispatchActivate(sw)
-    expect([...caches.store.keys()].sort()).toEqual([API_CACHE, IMAGE_CACHE, STATIC_CACHE].sort())
+    // The bare LEGACY_API_CACHE is now purged too — it holds unsegmented, cross-identity bodies.
+    expect([...caches.store.keys()].sort()).toEqual([IMAGE_CACHE, STATIC_CACHE].sort())
   })
 
-  it('DELETES any per-sub API cache name — the hazard Slice 1 must fix before it can use one', async () => {
-    // This is the single highest-risk line for the planned change: a per-sub name never equals
-    // API_CACHE, so today's purge destroys it on every activation. Pinning it here means Slice 1's
-    // predicate rewrite has a red test to turn green rather than an unverified claim.
+  it('KEEPS a per-sub API cache name — the Slice-0 hazard, now fixed', async () => {
+    // Slice 0 pinned this RED on purpose: a per-sub name never equalled API_CACHE, so the old
+    // exact-equality allowlist destroyed it on every activation and segmentation could never have
+    // retained anything. Slice 1's predicate turns it green.
+    // Mutation: revert to the equality allowlist → the per-sub cache is deleted and this fails.
     const caches = makeFakeCaches({
-      [STATIC_CACHE]: {}, [API_CACHE]: {}, [IMAGE_CACHE]: {},
-      [`${API_CACHE}-u-user_2abc`]: {},
+      [STATIC_CACHE]: {}, [IMAGE_CACHE]: {},
+      [`api-${CACHE_VERSION}-u-user_2abc`]: {},
     })
     const sw = loadServiceWorker({ caches })
     await dispatchActivate(sw)
-    expect(caches.store.has(`${API_CACHE}-u-user_2abc`)).toBe(false)
+    expect(caches.store.has(`api-${CACHE_VERSION}-u-user_2abc`)).toBe(true)
   })
 })

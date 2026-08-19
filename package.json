@@ -13,6 +13,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
+    "gate:sw-mirror": "node scripts/check-sw-mirror.mjs",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
     "lint": "eslint .",

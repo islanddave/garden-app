@@ -4,7 +4,11 @@
 
 const CACHE_VERSION = 'v16-20260524' // base default — deploy workflows rewrite this to v{version}-{sha} per deploy for cache-busting (deploy.yml / deploy-staging.yml). Frozen value caused stale-footer bug (2.1.1 fix).
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
-const API_CACHE     = `api-${CACHE_VERSION}`
+// V4-SWCACHEID-001: the API cache is no longer ONE cache. It is one cache PER SIGNED-IN SUBJECT,
+// named by apiCacheNameFor() below, because a single shared `api-*` cache served the previous
+// user's bodies to whoever held the device next — including a signed-OUT device, which needs no
+// credential at all to read them. There is deliberately no API_CACHE constant any more: a single
+// name is the defect, and leaving one in scope invites a future edit to reach for it.
 // V4-PHOTOCDN-001 P2 (supersedes V3-CACHE-001): image cache is now VERSIONED and purged
 // on activate. The old unversioned garden-images cache persisted stale/poisoned entries forever
 // (excluded from purge), and per-request presigned URLs rotate the query string so entries
@@ -15,12 +19,64 @@ const MAX_IMAGE_ENTRIES = 150
 
 const LAMBDA_ORIGIN = 'lambda-url.us-east-1.on.aws'
 
+/* SW-MIRROR-START — byte-identical copy lives in public/sw.js; gate:sw-mirror enforces it */
+// Clerk subs are opaque `user_<base58>` strings. VALIDATE rather than sanitize-and-truncate:
+// truncation would let two distinct subs share a partition, and a sanitizer that rewrites a bad
+// sub into a valid-looking one fails TOWARD a shared partition. An unrecognised shape returns
+// null, and null means "no cache at all" (fail closed), never a shared 'anon' bucket.
+const SW_SUB_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
+
+// Extract the `sub` claim from an `Authorization: Bearer <jwt>` header. Total function: every
+// malformed input returns null rather than throwing, because this runs inside the fetch handler
+// and a throw there fails the request rather than falling back to the network.
+function subFromAuthHeader(header) {
+  if (typeof header !== 'string') return null
+  const match = /^Bearer\s+(\S+)$/.exec(header)
+  if (!match) return null
+  const parts = match[1].split('.')
+  if (parts.length !== 3) return null
+  let claims
+  try {
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    while (b64.length % 4) b64 += '='
+    const bin = atob(b64)
+    // Decode as UTF-8 rather than trusting atob's binary string: a non-ASCII claim elsewhere in
+    // the payload would otherwise corrupt JSON.parse and lose an otherwise-valid sub.
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    claims = JSON.parse(new TextDecoder().decode(bytes))
+  } catch { return null }
+  const sub = claims && claims.sub
+  if (typeof sub !== 'string' || !SW_SUB_PATTERN.test(sub)) return null
+  return sub
+}
+
+// null sub => null name => caller performs NO cache read and NO cache write.
+function apiCacheNameFor(version, sub) {
+  if (typeof version !== 'string' || !version) return null
+  if (typeof sub !== 'string' || !SW_SUB_PATTERN.test(sub)) return null
+  return `api-${version}-u-${sub}`
+}
+
+// Predicate replacing the old equality allowlist. The allowlist deleted every key not exactly
+// equal to the three constants, so any per-sub name self-destructed on every activation. Note the
+// BARE `api-${version}` is deliberately NOT kept: unsegmented entries must not survive the upgrade
+// that exists to remove them.
+function keepCacheKey(key, version) {
+  if (typeof key !== 'string' || typeof version !== 'string' || !version) return false
+  if (key === `static-${version}` || key === `images-${version}`) return true
+  const prefix = `api-${version}-u-`
+  if (key.startsWith(prefix)) return SW_SUB_PATTERN.test(key.slice(prefix.length))
+  return false
+}
+/* SW-MIRROR-END */
+
 // SW-STALEAPI-001. Header stamped on an API response served from the offline cache instead of the
 // network. Read by src/lib/api.js, which turns it into a marker on the parsed value; src/lib/dataCache.js
 // then commits the data WITHOUT advancing its freshness clock.
 //
 // WHY THIS EXISTS — do not "simplify" it away. Every /api/* route resolves to the Lambda origin and is
-// therefore in API_CACHE, so an offline API fetch does NOT surface as an error anywhere: networkFirst's
+// therefore in the API cache, so an offline API fetch does NOT surface as an error anywhere: networkFirst's
 // catch returned the cached body verbatim as a plain 200. That 200 passed api.js's `!res.ok` guard,
 // reached dataCache's success branch, and committed `at: Date.now()`. Two failures followed: a failed
 // refresh was indistinguishable from a successful one at every layer above this file, and the refreshed
@@ -87,10 +143,17 @@ self.addEventListener('install', (event) => {
 // per-entry one and is the only thing that cleans a client activating under an UNCHANGED name.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
+    // V4-SWCACHEID-001: keepCacheKey REJECTS the bare `api-${CACHE_VERSION}`, so the sweep itself
+    // removes the legacy unsegmented cache — including on a client whose deploy-time CACHE_VERSION
+    // rewrite never ran, which is the case the design worried about. Design V100 D5 also called for
+    // a separate unconditional one-shot delete of that name; it was written against the OLD
+    // exact-equality allowlist, which KEPT `api-${CACHE_VERSION}`. Under the predicate it is
+    // unreachable dead code — mutation testing confirmed removing it changed no observable
+    // behaviour — so it is deliberately not here. The purge below is the whole mechanism.
     caches.keys().then((keys) => {
       return Promise.all(
         keys
-          .filter(k => k !== STATIC_CACHE && k !== API_CACHE && k !== IMAGE_CACHE) // old garden-images + prior images-* caches purge here too
+          .filter(k => !keepCacheKey(k, CACHE_VERSION)) // old garden-images + prior images-* + every prior-version per-sub partition
           .map(k => caches.delete(k))
       )
     }).then(() => purgePoisonedImages()).then(() => self.clients.claim())
@@ -118,9 +181,16 @@ self.addEventListener('fetch', (event) => {
   // Skip browser-extension and non-http requests
   if (!url.protocol.startsWith('http')) return
 
-  // Network-first for Lambda API calls (never serve stale API responses)
+  // Network-first for Lambda API calls (never serve stale API responses).
+  // V4-SWCACHEID-001: the cache is chosen by the SUBJECT of this request's own bearer token, read
+  // off the request that is already in hand. Deriving it here — rather than from a sub pushed in
+  // by postMessage — is what makes it survive SW termination: module globals do not outlive an
+  // idle kill (~30s in Chromium, sooner under Android memory pressure), which is precisely the
+  // offline cold start where identity matters most. A null sub yields a null name, and a null name
+  // means no read and no write (fail closed) — never a shared bucket.
   if (url.hostname.includes(LAMBDA_ORIGIN)) {
-    event.respondWith(networkFirst(request, API_CACHE))
+    const sub = subFromAuthHeader(request.headers.get('Authorization'))
+    event.respondWith(networkFirst(request, apiCacheNameFor(CACHE_VERSION, sub), event))
     return
   }
 
@@ -288,15 +358,28 @@ async function navigationFallback(request) {
   }
 }
 
-async function networkFirst(request, cacheName) {
+// `cacheName` is NULL when the request carries no usable identity. Null means this function
+// degrades to a plain timed fetch: no cache read, no cache write, and 503 rather than someone
+// else's body on the offline branch. That is the whole control — see the fail-closed note below.
+async function networkFirst(request, cacheName, event) {
   try {
     // cache: 'no-store' bypasses browser HTTP disk cache — prevents stale 300/redirect
     // responses from reaching Lambda (root cause of photo gallery not refreshing)
     const networkReq = new Request(request, { cache: 'no-store' })
     const response = await fetchWithTimeout(networkReq, SW_TIMEOUT_MS)
-    if (response.ok) {
-      const cache = await caches.open(cacheName)
-      cache.put(request, response.clone())
+    if (response.ok && cacheName) {
+      // Keyed by request.URL, never by the Request itself: a Request key persists its
+      // `Authorization: Bearer <jwt>` into Cache Storage at rest, where it outlives the session and
+      // is readable by anything that can open the cache. Matching is symmetric (`cache.match` on
+      // the same URL string with ignoreVary), so this costs no hit rate — and ignoreVary is
+      // required precisely BECAUSE the stored key no longer carries the request's headers.
+      const copy = response.clone()
+      const write = caches.open(cacheName)
+        .then(cache => cache.put(request.url, copy))
+        // A QuotaExceededError here was previously an unhandled rejection on a floating promise —
+        // invisible on an Android PWA, where quota pressure is the expected failure, not the odd one.
+        .catch(() => {})
+      if (event && event.waitUntil) event.waitUntil(write)
     }
     return response
   } catch (e) {
@@ -323,8 +406,16 @@ async function networkFirst(request, cacheName) {
     //
     // Scoped to `cacheName` rather than the global caches.match(): an API request must only ever be
     // answered from the API cache, never from a same-URL entry in the static or image cache.
+    //
+    // V4-SWCACHEID-001 FAIL CLOSED: no identity, no read. This is the control, and it is the branch
+    // that closes the credential-less read — a signed-OUT device issues its API calls with no
+    // Authorization header at all (Clerk returns a null token rather than throwing when there is no
+    // session), so before this guard the offline branch handed the previous user's bodies to
+    // whoever picked the phone up next, with no credential required. Airplane mode was the whole
+    // exploit. Returning 503 here is a deliberate, bounded loss of offline for unauthenticated GETs.
+    if (!cacheName) return new Response('Offline', { status: 503 })
     const cache = await caches.open(cacheName)
-    const cached = await cache.match(request)
+    const cached = await cache.match(request.url, { ignoreVary: true })
     return cached ? markFromCache(cached) : new Response('Offline', { status: 503 })
   }
 }

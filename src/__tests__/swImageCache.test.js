@@ -16,9 +16,12 @@ describe('sw.js image cache (V4-PHOTOCDN-001 P2)', () => {
     expect(SRC).not.toMatch(/IMAGE_CACHE\s*=\s*'garden-images'/)
   })
   it('activate purge has no unversioned image-cache survivor', () => {
-    // the filter keeps only the three CURRENT versioned names; anything else purges
-    const m = SRC.match(/\.filter\(k => k !== STATIC_CACHE && k !== API_CACHE && k !== IMAGE_CACHE\)/)
-    expect(m).toBeTruthy()
+    // V4-SWCACHEID-001 replaced the exact-equality allowlist with the keepCacheKey predicate (the
+    // allowlist could not express a per-sub API name). The invariant this test guards is unchanged:
+    // anything not matched by the predicate purges, so no unversioned image cache survives.
+    // Behavioural coverage of the same purge lives in swCacheIdentity.test.js.
+    expect(SRC).toMatch(/\.filter\(k => !keepCacheKey\(k, CACHE_VERSION\)\)/)
+    expect(SRC).toMatch(/if \(key === `images-\$\{version\}`\) return true|key === `images-\$\{version\}`/)
     expect(SRC).not.toMatch(/'garden-images'/)
   })
   it('image responses are cached only when status 200 AND content-type image/*', () => {
