@@ -2,7 +2,7 @@
 // cultivars (the inline path covers new/edited varieties going forward). Idempotent, additive, COW-proven.
 import { neon } from '@neondatabase/serverless';
 import { writeFileSync } from 'node:fs';
-import { applyDerive } from '../tags/crop-derive.js';
+import { applyDerive } from '../lambda/tags/crop-derive.js';
 const sql = neon(process.env.PROD_URL);
 try {
   const totals = await applyDerive(sql, null);

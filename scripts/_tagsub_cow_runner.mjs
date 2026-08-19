@@ -1,7 +1,7 @@
 // EPHEMERAL COW dry-run for V4-TAGSUB-001 — runs applyDerive + the index.js revive-or-insert CTEs against a
 // throwaway Neon branch. Deleted after use. Not committed.
 import { neon } from '@neondatabase/serverless';
-import { applyDerive, computeDerivedTags } from '../tags/crop-derive.js';
+import { applyDerive, computeDerivedTags } from '../lambda/tags/crop-derive.js';
 
 const sql = neon(process.env.COW_URL);
 let fails = 0;
