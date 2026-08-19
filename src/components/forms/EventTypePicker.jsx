@@ -10,8 +10,10 @@
 // scope/exclusion checklist is a SEPARATE component (ScopeChecklist) — different
 // render tree + state model; they share primitives, not a `mode=` switch.
 import React, { useState, useMemo } from 'react'
-import { P } from '../../lib/constants.js'
-import { EVENT_TYPES, buildSecondaryGroups } from '../../lib/eventTypes.js'
+// V4-LOSSEVENT-001: SELECTABLE_EVENT_TYPES, not EVENT_TYPES — the CREATION list, which drops the
+// two plant-reduction types while their capture panel is unbuilt. See constants.js for the why.
+import { P, SELECTABLE_EVENT_TYPES } from '../../lib/constants.js'
+import { buildSecondaryGroups } from '../../lib/eventTypes.js'
 import Icon from '../Icon.jsx'
 
 // Primary quick-picks (V4-EVENTSEL-002, Dave 2026-07-07: first-class set reordered to
@@ -67,7 +69,7 @@ function TypeBtn({ type, selected, onSelect }) {
   )
 }
 
-export default function EventTypePicker({ value, onChange, primaries = EVENT_TYPES_UI, available = EVENT_TYPES }) {
+export default function EventTypePicker({ value, onChange, primaries = EVENT_TYPES_UI, available = SELECTABLE_EVENT_TYPES }) {
   const [showMore, setShowMore] = useState(false)
   // Secondary "More" groups: everything in `available` not shown as a primary tile, grouped by
   // EVENT_TYPE_META category. Defaults (primaries=EVENT_TYPES_UI, available=EVENT_TYPES) reproduce

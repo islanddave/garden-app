@@ -140,6 +140,11 @@ export function validatePostBody(body) {
   const metaErr = validateEventMetadata(body.metadata);
   if (metaErr) return metaErr;
 
+  // V4-LOSSEVENT-001 — the plant-reduction contract. Last, so a body that is wrong in a more basic
+  // way still gets the more basic message.
+  const redErr = validateReduction(body);
+  if (redErr) return redErr;
+
   return null;
 }
 
@@ -157,8 +162,17 @@ export function validatePostBody(body) {
 import {
   NON_REWARD_EVENT_TYPES, isRewardedEventType,
   WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES,
+  PLANT_REDUCTION_EVENT_TYPES, LOSS_REASONS, GIVEAWAY_REASONS,
+  REDUCTION_QTY_KEY, LOSS_REASON_KEY, GIVEAWAY_REASON_KEY,
+  REDUCTION_REASON_KEY_BY_TYPE, REDUCTION_REASONS_BY_KEY,
+  isPlantReductionEventType, accruesQtyLost,
 } from './eventTypes.generated.js';
 export { NON_REWARD_EVENT_TYPES, isRewardedEventType, WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES };
+export {
+  PLANT_REDUCTION_EVENT_TYPES, LOSS_REASONS, GIVEAWAY_REASONS,
+  REDUCTION_QTY_KEY, LOSS_REASON_KEY, GIVEAWAY_REASON_KEY,
+  isPlantReductionEventType, accruesQtyLost,
+};
 
 export const WATER_DEPTH_ERROR = `metadata.water_depth must be one of: ${WATER_DEPTH_CLASSES.join(', ')}`;
 export const WATER_DEPTH_SOURCE_ERROR = `metadata.water_depth_source must be one of: ${WATER_DEPTH_SOURCES.join(', ')}`;
@@ -191,6 +205,129 @@ export function validateEventMetadata(metadata) {
     return { status: 400, error: WATER_DEPTH_ORPHAN_ERROR };
   }
   return null;
+}
+
+// ── V4-LOSSEVENT-001 — plant-reduction ledger, wire contract ────────────────────────────────────
+// `failed` / `given_away` carry THREE metadata keys and this is the only place they are policed:
+//   qty_reduced     integer >= 1  — how many plants this reduction removed. REQUIRED on both types.
+//   loss_reason     LOSS_REASONS      — REQUIRED on `failed`, and legal NOWHERE else.
+//   giveaway_reason GIVEAWAY_REASONS  — REQUIRED on `given_away`, and legal NOWHERE else.
+//
+// EVERY EVENT CARRIES A QUANTITY, and that is the requirement rather than a nicety: without it,
+// losing one pepper is indistinguishable from losing nineteen, and `SUM` over the ledger — the only
+// way to answer "how many did I lose to pests this season" — degrades to `count(*)`, which in this
+// schema measures batches rather than plants.
+//
+// THE KEYS ARE FORBIDDEN ON EVERY OTHER TYPE, and this is where it diverges from the water_depth
+// precedent above, which deliberately does NOT forbid its keys elsewhere. water_depth is an
+// ANNOTATION on an event that happened; these three are LEDGER ENTRIES that an aggregate sums. A
+// `loss_reason` riding on a watering row is a loss nobody recorded, and it would decrement nothing
+// while still being counted — a fabricated number with a real-looking provenance.
+//
+// Deliberately NOT stored in event_log.quantity_numeric: BUG-QTYSPLITBRAIN-001 pins that column to
+// harvest_log.quantity, and V4-WATERMATH-001 F0 already ruled on this exact question for
+// water_depth ("structurally harvest-only ... would collide with real gallons later").
+// event_log.quantity is `text`, so it types nothing. jsonb with an edge validator is the shipped
+// house pattern for a small closed vocabulary, and it needs no DDL and therefore no deploy ordering.
+export const MAX_REDUCTION_QTY = 10000; // mirrors MAX_PLAUSIBLE.count — a shape bound, not a policy
+export const REDUCTION_KEYS = [REDUCTION_QTY_KEY, LOSS_REASON_KEY, GIVEAWAY_REASON_KEY];
+
+export const REDUCTION_PLANT_ERROR =
+  `plant_id is required for ${PLANT_REDUCTION_EVENT_TYPES.join(' / ')} (a reduction is arithmetic on one planting's count)`;
+export const REDUCTION_QTY_ERROR =
+  `metadata.${REDUCTION_QTY_KEY} must be an integer of at least 1`;
+export const REDUCTION_QTY_MAX_ERROR =
+  `metadata.${REDUCTION_QTY_KEY} exceeds ${MAX_REDUCTION_QTY}`;
+
+export function reductionReasonError(key) {
+  return `metadata.${key} must be one of: ${REDUCTION_REASONS_BY_KEY[key].join(', ')}`;
+}
+export function reductionKeyForbiddenError(key, eventType) {
+  return `metadata.${key} is not valid on event_type=${eventType}`;
+}
+
+// Returns null on success, or { status, error }. Safe to call for EVERY event type — the non-
+// reduction arm is the forbid check, so this cannot be forgotten for the types it does not name.
+export function validateReduction(body = {}) {
+  const eventType = body.event_type;
+  const meta = isPlainMetadataObject(body.metadata) ? body.metadata : {};
+
+  if (!isPlantReductionEventType(eventType)) {
+    for (const k of REDUCTION_KEYS) {
+      if (meta[k] != null) {
+        return { status: 400, error: reductionKeyForbiddenError(k, String(eventType)) };
+      }
+    }
+    return null;
+  }
+
+  // A planting-less reduction would insert an event row and silently decrement nothing, behind a
+  // 201. The client-side requiresPlanting() partition says the same thing, but it is feature-
+  // flagged and a stale service-worker bundle can outlive a flag flip (spec D7), so the server
+  // asserts it independently for these two types only.
+  if (!body.plant_id) return { status: 400, error: REDUCTION_PLANT_ERROR };
+
+  const qty = meta[REDUCTION_QTY_KEY];
+  // STRICT, no coercion, same call as validateQtyLost in lambda/plants/validate.js: `"3"` and
+  // `3.5` are client bugs, and a coerced number writes a count nobody chose onto a real planting.
+  if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) {
+    return { status: 400, error: REDUCTION_QTY_ERROR };
+  }
+  if (qty > MAX_REDUCTION_QTY) return { status: 400, error: REDUCTION_QTY_MAX_ERROR };
+
+  const wantKey = REDUCTION_REASON_KEY_BY_TYPE[eventType];
+  const otherKey = wantKey === LOSS_REASON_KEY ? GIVEAWAY_REASON_KEY : LOSS_REASON_KEY;
+  if (meta[otherKey] != null) {
+    return { status: 400, error: reductionKeyForbiddenError(otherKey, eventType) };
+  }
+  if (!REDUCTION_REASONS_BY_KEY[wantKey].includes(meta[wantKey])) {
+    return { status: 400, error: reductionReasonError(wantKey) };
+  }
+  return null;
+}
+
+// ── V4-LOSSEVENT-001 — the END-STATUS OFFER (Dave's ruling, 2026-08-18) ─────────────────────────
+// "OFFER it. Never automatic."
+//
+// AND THE REASONING IS THE DESIGN, not a preamble to it: reaching zero does NOT tell you which
+// ending it was. A planting reaches zero because it was harvested out — a good, successful season.
+// Or because it failed. Or because it was given away. Or through a MIX (harvested 5, pest took 3,
+// gave away 2). Assuming `failed` merely because a reduction triggered the prompt would mislabel a
+// successful season as a failure, which is precisely the error this whole ledger exists to avoid.
+//
+// So the server RANKS and the user CHOOSES. Ranking uses the composition of how the planting got to
+// zero, which is available without inference: qty_harvested is an existing column, qty_lost is this
+// ledger's own accrual, and the give-away total is a SUM over the ledger.
+//
+// TIES GO TO THE GENTLER READING. `failed` is never offered first unless losses strictly dominate —
+// a wrong "failed" is the costly error; a wrong "harvested" is a shrug and one tap.
+export const END_STATUS_OFFER = ['harvested', 'ended', 'failed'];
+
+// Returns the three candidate statuses, most-plausible first. Pure, so the ordering is testable
+// without a database; index.js supplies the three totals from one read.
+export function orderEndStatusOffer({ harvested = 0, lost = 0, given_away: givenAway = 0 } = {}) {
+  const h = Number(harvested) || 0;
+  const l = Number(lost) || 0;
+  const g = Number(givenAway) || 0;
+  // Strict `>` throughout: equality falls through to the next arm, so a tie never promotes `failed`.
+  if (l > h && l > g) return ['failed', 'ended', 'harvested'];
+  if (g > h && g >= l) return ['ended', 'harvested', 'failed'];
+  return END_STATUS_OFFER;
+}
+
+// The two numbers index.js binds. Returns null for a non-reduction event so the caller has one
+// branch rather than two, and the SQL below it stays no-op-by-predicate for every other type.
+export function readReductionPlan(body = {}) {
+  if (!isPlantReductionEventType(body.event_type)) return null;
+  const meta = isPlainMetadataObject(body.metadata) ? body.metadata : {};
+  const qty = meta[REDUCTION_QTY_KEY];
+  return {
+    qty,
+    // A give-away is a reduction, not a loss — the plant is alive somewhere else. Give-away totals
+    // are read off the ledger rather than getting a column of their own.
+    lostAccrual: accruesQtyLost(body.event_type) ? qty : 0,
+    reason: meta[REDUCTION_REASON_KEY_BY_TYPE[body.event_type]],
+  };
 }
 
 // BUG-HARVESTEDIT-001 — the harvest-field rules, extracted VERBATIM from validatePostBody so the
@@ -357,6 +494,13 @@ export function validateBatchBody(body) {
   // overrides keyed by plant_id. Both go through the SAME vocabulary check as the single POST.
   const batchMetaErr = validateEventMetadata(body.metadata);
   if (batchMetaErr) return batchMetaErr;
+  // V4-LOSSEVENT-001. BATCH_EVENT_TYPES already excludes `failed`/`given_away`, so this arm can
+  // only ever be the FORBID half — and that is exactly why it is here. The batch path fans one
+  // body out to up to 500 rows, so a reduction key riding on a legal type (a `watering` batch
+  // carrying loss_reason) would mint 500 losses that decremented nothing. Relying on the type
+  // allowlist alone would leave the keys unpoliced on every type it admits.
+  const batchRedErr = validateReduction({ event_type: body.event_type, metadata: body.metadata });
+  if (batchRedErr) return batchRedErr;
   if (body.plant_metadata != null) {
     if (!isPlainMetadataObject(body.plant_metadata)) {
       return { status: 400, error: 'plant_metadata must be an object keyed by plant_id' };
@@ -370,6 +514,8 @@ export function validateBatchBody(body) {
       }
       const perErr = validateEventMetadata(meta);
       if (perErr) return perErr;
+      const perRedErr = validateReduction({ event_type: body.event_type, metadata: meta });
+      if (perRedErr) return perRedErr;
     }
   }
   return null;

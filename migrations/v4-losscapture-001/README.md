@@ -43,10 +43,62 @@ already holding a negative `qty_lost` becomes **un-editable through the app** (t
 whole row; the CHECK rejects it). `pre_qty_lost_guard_is_deployed` (manual) refuses the apply until
 step 1 is verified.
 
-Only `chk_plants_qty_lost_nonneg` is genuinely blocked. `chk_plants_loss_cause` mirrors an allowlist
-the deployed Lambda has enforced since V1.2a-4 S1, and `chk_harvest_log_disposition` guards a column
-with no writer at all. All three are armed together anyway — one boundary is easier to operate than
-three staggered ones, and `0b`'s header records which is which.
+Only `chk_plants_qty_lost_nonneg` is genuinely blocked *in that direction*. `chk_harvest_log_disposition`
+guards a column with no writer at all. `chk_plants_loss_cause` is blocked in the **opposite**
+direction — see the next section, which supersedes the pre-2026-08-18 note that called it unordered.
+All three are armed together anyway — one boundary is easier to operate than three staggered ones,
+and `0b`'s header records which is which.
+
+### A FOURTH ordering constraint, and it points the other way: the loss_cause WIDENING (V4-LOSSEVENT-001)
+
+Two facts changed here on 2026-08-18, both measured read-only against live prod **and** staging.
+
+**Fact 1 — `plants.loss_cause` already has a live VALIDATED CHECK, and this bundle did not know it.**
+
+```
+conname                  convalidated  definition
+plants_loss_cause_check  true          CHECK ((loss_cause = ANY (ARRAY['pest','disease','weather',
+                                              'transplant_shock','unknown'])) OR (loss_cause IS NULL))
+```
+
+`0a`'s header says "The DB CHECK `loss_cause` never had is armed in `0b`". That is **false**. Nothing
+in this repo created that constraint — it is hand-applied, like the columns themselves — but it is
+live on both environments and it is enforced. The original `0b` therefore added a **second**
+constraint over one column under the house name, which is harmless while the two agree and is a trap
+the moment they do not: the narrow **validated** one keeps rejecting, so a widened
+`chk_plants_loss_cause` would be **purely cosmetic** while every gate in this file reported green.
+`0b` now **DROPs** the legacy constraint and consolidates; `0r` restores it; and
+`post_legacy_loss_cause_check_removed` is the gate that makes the vocabulary gate non-vacuous.
+
+**Fact 2 — the vocabulary is WIDENED to seven** (`+ animal_damage`, `+ culled`; Dave 2026-08-18),
+and a widening reverses the ordering rule:
+
+```
+narrowing (qty_lost >= 0)          CODE FIRST    guard live, THEN arm
+widening  (loss_cause + 2 values)  SCHEMA FIRST  apply 0b, THEN deploy the widened ALLOWED_LOSS
+```
+
+Reversed, the deployed plants Lambda accepts `culled` and the still-narrow live CHECK answers
+**23514**. The reverse mistake is cheap by comparison: a narrow writer against a widened database
+just 400s with a readable message. So:
+
+```
+1.  DEPLOY  plants Lambda with validateQtyLost      ← promote #1 (narrowing precondition)
+2.  0a / 0b / 0c   staging, then prod                ← 0b widens loss_cause AND arms qty_lost
+3.  DEPLOY  plants Lambda with the 7-value ALLOWED_LOSS  ← promote #2 (widening consequence)
+```
+
+**Steps 1 and 3 are already the same commit on this branch**, which would ship the widened
+`ALLOWED_LOSS` before step 2. That is safe **today, and only for a stated reason**: `loss_cause` has
+no SPA caller — nothing in `src/` has ever sent it, so the widened validator cannot be reached to
+produce a 23514. `lambda/plants/loss-cause-vocab.test.js` asserts that absence
+(`STILL no SPA caller sends loss_cause`), so it reds the day a capture UI for BUG-LOSSCAUSE-001 adds
+one — at which point this ordering becomes live and steps 2 and 3 must be separated. Same shape as
+the disposition writer's exemption below, and recorded for the same reason.
+
+**The event ledger is NOT subject to any of this.** `failed` / `given_away` store their reason in
+`event_log.metadata` (unconstrained `jsonb`, validated at the API edge), and `event_log.event_type`
+has no CHECK. That half ships in one promote with no DDL and no ordering.
 
 ### This cannot be done inside a single promote
 
@@ -63,6 +115,26 @@ three staggered ones, and `0b`'s header records which is which.
   sequence code-then-constraint inside one promote is not possible with this topology.
 - Steps 2 and 4 may run in the same operator session *after* step 1 has settled — the split exists
   to put a verifiable boundary between the code deploy and the constraint, not to add a wait.
+
+### A THIRD ordering constraint, in the opposite direction — the writer
+
+The two above are *code before schema*. The disposition writer is *schema before code*, and missing
+that inverts the hazard rather than avoiding it:
+
+```
+2.  0a      ADD COLUMN harvest_log.disposition
+5.  DEPLOY  any Lambda that SELECTs or writes harvest_log.disposition   ← never before step 2
+```
+
+A column reference is resolved at **parse time**, so a deployed writer naming `disposition` against
+a database where `0a` has not run raises **42703 on every request that touches it** — not on the
+ones that supply a value. This is the same parse-time fact that forced
+`sweep_no_out_of_vocab_disposition` out of the `pre` phase, and it is why the "no writer yet" gap
+below is *safe* today: nothing in the repo names the column, so the bundle can be applied in any
+order relative to a promote. That stops being true the moment a writer is written.
+
+`plants.loss_cause` has no equivalent constraint — the column already exists on both live
+environments and the deployed Lambda already reads and validates it.
 
 ### Runbook
 
@@ -129,14 +201,70 @@ statement about `0b` checked before `0c`, which is what the `sweep` phase is for
 Nothing in `pre` or `sweep` runs continuously (`gate-invariants.yml` passes `--phase post`), so the
 trap is post-only; the audit above covers every gate in the file.
 
+### The two vocabulary gates were self-arming but vacuous — fixed 2026-08-18
+
+`post_loss_cause_vocab_exact` and `post_disposition_vocab_exact` were written as a conjunction of
+`pg_get_constraintdef(oid) LIKE '%value%'` tests. That form is satisfied by any **superset** and by
+any value that merely *contains* the expected token, so the gate whose own comment says it exists to
+catch "a CHECK dropped and re-added with a **widened** ARRAY" could not catch one. Measured on a
+scratch PG 17.10 with `0a`+`0b` applied — rows returned, `0` = pass:
+
+| constraint state | old `LIKE` form | set-equality form |
+|---|---|---|
+| exact vocabulary | 0 — pass | 0 — pass |
+| widened with a sixth value `'sabotage'` | **0 — passes** | 1 — fails |
+| narrowed by dropping `'unknown'` | 1 — fails | 1 — fails |
+| renamed `pest`→`pest_damage`, `unknown`→`unknown_x` | **0 — passes** | 1 — fails |
+
+Both gates now extract the `ARRAY` literals from `pg_get_constraintdef` and assert **set equality**
+(`@>` **and** `<@`) — order- and collation-independent, so it does not depend on how the server
+renders or sorts. The regex requires the `::text` suffix, so it matches only the vocabulary literals.
+
+`lambda/plants/loss-cause-vocab.test.js` then pins the gate's hard-coded expectation to `0b`'s ARRAY,
+alongside the two `ALLOWED_LOSS` copies in `lambda/plants/index.js`. A set-equality gate is only
+worth having if the set it compares against is the migration's; without that test an edit to `0b`
+that `gates.yml` did not follow would leave the gate confidently asserting a vocabulary the database
+no longer has.
+
+**V4-LOSSEVENT-001 added two more pinned copies and closed a hole in the pinning.** The canonical
+vocabulary now has **five** homes, all asserted against `0b`'s ARRAY by that same test:
+`src/lib/eventTypes.js` `LOSS_REASONS` (new — the list the events Lambda validates a reduction's
+reason against, via the generated mirror), the two `ALLOWED_LOSS` literals, `gates.yml`'s
+set-equality pair, **and** `pre_no_out_of_vocab_loss_cause` — which was a *third* copy inside
+`gates.yml` written as `NOT IN (...)`, a form the parity parser could not see, so it could have kept
+the old five while everything else moved. Rewritten to `<> ALL (ARRAY[...])` for exactly that
+reason. Same semantics, now pinned.
+
+`0b`'s header also claimed byte-comparability with `lambda/events/validators.js`'s
+`ALLOWED_LOSS_CAUSES`. **No such constant exists or ever has** — the string occurred in exactly one
+place in the repo, and it was that comment. The header is corrected; the real twins are the two
+`ALLOWED_LOSS` literals in `lambda/plants/index.js`.
+
 ## Known gaps, recorded rather than hidden
 
-- **There is still no writer.** This bundle is DDL only. The `POST /api/events` loss path and the
-  disposition capture UI that `0a`'s original header described do not exist on this branch
-  (`grep -rn 'qty_lost\|disposition' lambda/events/ src/` finds nothing). Until they ship, `0c`
+- **UPDATE 2026-08-18 — the LOSS writer now exists; the disposition one still does not.**
+  V4-LOSSEVENT-001 shipped `POST /api/events` with `event_type` `failed` / `given_away`, which write
+  a per-reduction ledger row into `event_log` and decrement `plants.quantity` / `qty_current` (and
+  accrue `qty_lost` for losses) in the same transaction. **It deliberately never writes
+  `plants.loss_cause`** — a single scalar cannot hold "3 to pest, 2 culled", and a scalar that
+  disagrees with the ledger is the split-brain class this schema keeps paying for. So `loss_cause`
+  remains a hand-set column with one live row; this bundle widens its vocabulary but does not
+  populate it.
+- **There is still no disposition writer.** That half of the bundle is DDL only — the capture UI
+  `0a`'s original header described does not exist. Until it ships, `0c`
   validates a `disposition` column that is 100% NULL — a real but vacuous assertion, and exactly the
   V4-EVENTSOURCE-001 shape (DDL applied, backfill never ran) that `gate-invariants.yml` exists to
-  catch. The three ledger items are not closed by applying this bundle.
+  catch. The three ledger items are not closed by applying this bundle. The writer's own deploy
+  ordering is §"A THIRD ordering constraint" above; `loss-cause-vocab.test.js` reds the moment one
+  defines an allowlist, so the parity set gets extended rather than a fourth copy started.
+- **V4-LOSSEVENT-001 is not addressed by this bundle at all, and no file here can address it.**
+  Dave's 2026-07-28 decision was to add a **loss event type**. `EVENT_TYPES` carries 49 members
+  (verified against `lambda/events/eventTypes.generated.js` on this branch) and not one of them is a
+  loss, mortality, discard or spoilage type — `deadheaded` is the only near-miss and it is a pruning
+  action. The vocabulary's source of truth is `src/lib/eventTypes.js`, not the database, so closing
+  that item is a code change with a CI drift check (`npm run check:event-types`), not DDL. What this
+  bundle contributes to that item is `plants.qty_lost`'s guard and floor; the event type itself is
+  untouched work.
 - **`plants.loss_cause` and `plants.qty_lost` exist on prod and staging with no migration in the
   repo that created them.** Hand-applied, like `divergence_type` before V4-DIVERGENCEVOCAB-001.
   `0a` formalizes them; the provenance gap itself is not repaired by anything here.

@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, EVENT_TYPES } from '../lib/constants.js'
+import { P, SELECTABLE_EVENT_TYPES } from '../lib/constants.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
@@ -126,7 +126,7 @@ export default function FeedPage() {
           )}
           <select aria-label="Filter by event type" value={filters.event_type} onChange={set('event_type')} style={selStyle}>
             <option value="">All event types</option>
-            {EVENT_TYPES.map(t => <option key={t} value={t}>{prettyEventType(t)}</option>)}
+            {SELECTABLE_EVENT_TYPES.map(t => <option key={t} value={t}>{prettyEventType(t)}</option>)}
           </select>
           <label style={dateWrap}>From <input type="date" aria-label="From date" value={filters.from} onChange={set('from')} style={dateStyle} /></label>
           <label style={dateWrap}>To <input type="date" aria-label="To date" value={filters.to} onChange={set('to')} style={dateStyle} /></label>

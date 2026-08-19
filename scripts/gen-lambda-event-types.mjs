@@ -32,6 +32,10 @@ const {
   // V4-WATERMATH-001 F0. These three cross the same bundler-less boundary as the vocabulary and
   // for the same reason: validators.js enforces them at the API edge and CANNOT import src/lib/.
   NON_REWARD_EVENT_TYPES, WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES,
+  // V4-LOSSEVENT-001. Same boundary, same reason: validators.js enforces the reduction contract at
+  // the API edge and the events Lambda is a bundler-less zip, so it cannot import src/lib/.
+  PLANT_REDUCTION_EVENT_TYPES, LOSS_REASONS, GIVEAWAY_REASONS,
+  REDUCTION_QTY_KEY, LOSS_REASON_KEY, GIVEAWAY_REASON_KEY,
 } = canon
 
 function emit(arr) {
@@ -77,6 +81,38 @@ export function isRewardedEventType(eventType) {
 export const WATER_DEPTH_CLASSES = ${emit(WATER_DEPTH_CLASSES)}
 
 export const WATER_DEPTH_SOURCES = ${emit(WATER_DEPTH_SOURCES)}
+
+// V4-LOSSEVENT-001 — plant-reduction ledger. The two vocabularies are SEPARATE on purpose: a gift
+// is not a loss, and keeping loss_reason off given_away rows is what stops a loss aggregate from
+// counting one. See src/lib/eventTypes.js for the full contract.
+export const PLANT_REDUCTION_EVENT_TYPES = ${emit(PLANT_REDUCTION_EVENT_TYPES)}
+
+export const LOSS_REASONS = ${emit(LOSS_REASONS)}
+
+export const GIVEAWAY_REASONS = ${emit(GIVEAWAY_REASONS)}
+
+export const REDUCTION_QTY_KEY = '${REDUCTION_QTY_KEY}'
+export const LOSS_REASON_KEY = '${LOSS_REASON_KEY}'
+export const GIVEAWAY_REASON_KEY = '${GIVEAWAY_REASON_KEY}'
+
+export const REDUCTION_REASON_KEY_BY_TYPE = {
+  failed: LOSS_REASON_KEY,
+  given_away: GIVEAWAY_REASON_KEY,
+}
+
+export const REDUCTION_REASONS_BY_KEY = {
+  [LOSS_REASON_KEY]: LOSS_REASONS,
+  [GIVEAWAY_REASON_KEY]: GIVEAWAY_REASONS,
+}
+
+export function isPlantReductionEventType(eventType) {
+  return PLANT_REDUCTION_EVENT_TYPES.includes(eventType)
+}
+
+// Only a LOSS accrues into plants.qty_lost — a given-away plant is alive somewhere else.
+export function accruesQtyLost(eventType) {
+  return eventType === 'failed'
+}
 `
 
 const isCheck = process.argv.includes('--check')

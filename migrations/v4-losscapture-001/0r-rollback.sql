@@ -38,6 +38,24 @@ ALTER TABLE public.plants DROP CONSTRAINT IF EXISTS chk_plants_loss_cause;
 ALTER TABLE public.plants DROP CONSTRAINT IF EXISTS chk_plants_qty_lost_nonneg;
 -- plants.loss_cause / plants.qty_lost themselves are DELIBERATELY NOT DROPPED — see header.
 
+-- V4-LOSSEVENT-001 — RESTORE the legacy constraint 0b consolidated away. 0b DROPs
+-- `plants_loss_cause_check` (live and VALIDATED on prod and staging, five values) and replaces it
+-- with the seven-value `chk_plants_loss_cause`; dropping only the replacement above would leave
+-- loss_cause with NO database constraint at all, which is NOT the pre-migration state and is
+-- strictly worse than it. Re-added VALIDATED rather than NOT VALID because that is how it was
+-- found — and it is safe to validate here for a definitional reason, not a hopeful one: this is a
+-- rollback of a WIDENING, so the only rows that could violate the narrow set are rows written with
+-- one of the two new values while 0b was live. If any exist the ALTER raises and the rollback
+-- aborts loudly, which is correct: silently keeping a value the restored contract forbids is how
+-- a rollback becomes the next migration's mystery.
+--
+-- Byte-identical to the definition read off live prod 2026-08-18 (note the operand order — the
+-- original writes the NULL arm SECOND).
+ALTER TABLE public.plants ADD CONSTRAINT plants_loss_cause_check
+  CHECK (((loss_cause = ANY (ARRAY['pest'::text, 'disease'::text, 'weather'::text,
+                                   'transplant_shock'::text, 'unknown'::text]))
+          OR (loss_cause IS NULL)));
+
 DELETE FROM public.schema_version
  WHERE version IN ('4.25.0-losscapture-001',
                    '4.25.1-losscapture-001-checks',

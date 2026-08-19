@@ -13,6 +13,8 @@ import {
   PLANTING_REQUIRED_TYPES,
   PLANTING_EXEMPT_TYPES,
   requiresPlanting,
+  PLANT_REDUCTION_EVENT_TYPES,
+  SELECTABLE_EVENT_TYPES,
 } from '../lib/eventTypes.js';
 
 const isRaw = (s) => /^[a-z_]+$/.test(s);
@@ -67,12 +69,16 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
     );
   });
 
-  it('excludes exactly the 7 expected types (3 needs-input + 3 HS-1 + 1 non-reward; flowering+fruit_set freed)', () => {
+  it('excludes exactly the 9 expected types (3 needs-input + 3 HS-1 + 1 non-reward + 2 reduction)', () => {
     // V4-WATERMATH-001 F0 added moisture_check: a per-plant JUDGEMENT ("this one is still damp"),
     // the opposite of a scope-wide assertion. Bulk-logging "none of these 500 need water" without
     // touching them fabricates an observation and lets one tap suppress the whole water bar.
+    // V4-LOSSEVENT-001 added failed + given_away: each carries a PER-PLANTING quantity (harvest's
+    // disqualifier) and, worse, an invisible side effect — one "lost 3" across a 500-planting scope
+    // would decrement 500 plantings and accrue 1500 to qty_lost.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'moisture_check', 'photo'],
+      ['cutting_taken', 'divided', 'failed', 'first_harvest', 'given_away', 'hand_pollinated',
+        'harvest', 'moisture_check', 'photo'],
     );
   });
 
@@ -175,6 +181,32 @@ describe('V4-EVENTSEL-001 — taxonomy fix + explicit category order', () => {
     const order = buildSecondaryGroups(['watering']).map(([cat]) => cat);
     const expected = CATEGORY_ORDER.filter((c) => order.includes(c));
     expect(order).toEqual(expected);
+  });
+});
+
+describe('V4-LOSSEVENT-001 — the reduction types are gated OUT of creation pickers, not out of the vocabulary', () => {
+  it('both are real EVENT_TYPES values, so the API and the feed know them', () => {
+    expect(EVENT_TYPES).toContain('failed');
+    expect(EVENT_TYPES).toContain('given_away');
+  });
+
+  it('SELECTABLE_EVENT_TYPES omits exactly those two while the capture panel is unbuilt', () => {
+    // The API REQUIRES a quantity + reason on these and no capture panel collects either, so a
+    // picker entry would 400 every time — the CATCH_UP_EDITOR_SHIPPED failure shape.
+    expect(EVENT_TYPES.filter((t) => !SELECTABLE_EVENT_TYPES.includes(t)))
+      .toEqual(['failed', 'given_away']);
+    // Order and membership of everything else are untouched — this is a filter, not a re-list.
+    expect(SELECTABLE_EVENT_TYPES).toEqual(
+      EVENT_TYPES.filter((t) => !PLANT_REDUCTION_EVENT_TYPES.includes(t)),
+    );
+  });
+
+  it("'failed' the EVENT TYPE is not 'failed' the STATUS — nothing maps one onto the other", () => {
+    // plants.status already has a 'failed' member. The collision is real and Dave named the event
+    // type anyway; what makes it safe is that a reduction never writes status (asserted against
+    // the shipped SQL in lambda/events/plant-reduction.test.js) and that the two live in different
+    // vocabularies entirely. Recorded here so a future reader does not "unify" them.
+    expect(EVENT_TYPE_META.failed.label).not.toMatch(/status/i);
   });
 });
 

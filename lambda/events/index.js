@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
@@ -1379,6 +1379,25 @@ export const handler = async (event) => {
           });
         }
 
+        // V4-LOSSEVENT-001 — the same pairing guard, one table over, and refused for a stronger
+        // reason than harvest's. A reduction event is PAIRED WITH AN ARITHMETIC SIDE EFFECT on
+        // plants.quantity / qty_current / qty_lost that was applied at create time. Editing the
+        // quantity or the reason, or converting a row into or out of a reduction type, would move
+        // the ledger while leaving the rollup where it was — and unlike a status advance (forward-
+        // only, idempotent) a counter cannot re-derive itself. A diff-and-reapply edit path is
+        // buildable; it is not built, so the honest answer is to refuse rather than to write the
+        // half of it that silently desynchronises the two.
+        //
+        // Delete-and-relog IS a complete repair, because the DELETE arm reverses the counters.
+        const wasReduction = PLANT_REDUCTION_EVENT_TYPES.includes(existing.event_type);
+        const willBeReduction = PLANT_REDUCTION_EVENT_TYPES.includes(body.event_type);
+        if (wasReduction || willBeReduction) {
+          return resp(400, {
+            error: `${wasReduction ? existing.event_type : body.event_type} events cannot be edited because they changed a planting's count — delete this event and log a new one`,
+            code: 'REDUCTION_EVENT_IMMUTABLE',
+          });
+        }
+
         // BUG-EVENTEDITFIELDS-001. Three groups of columns were creatable but not editable, so
         // EventDetail could not edit what EventNew had just written. Added here with
         // preserve-on-absent + an explicit clear channel, NOT with the full-replace grammar the
@@ -2082,6 +2101,9 @@ export const handler = async (event) => {
         // (its own comment anticipates exactly this change), so nothing below needed to move.
         const owned = await sql`
           SELECT el.id, el.project_id, el.event_type, el.plant_id,
+                 -- V4-LOSSEVENT-001: the reduction this row applied, so the delete can reverse it.
+                 -- Free — this SELECT already runs and already reads this row.
+                 el.metadata,
                  pp.created_by AS project_owner_id,
                  pn.created_by AS plant_owner_id
           FROM event_log el
@@ -2099,12 +2121,46 @@ export const handler = async (event) => {
         if (!isEventOwned(owned[0], householdIds)) return resp(404, { error: 'Not found' });
         const projectId = owned[0].project_id;
         const plantId = owned[0].plant_id;
+        // V4-LOSSEVENT-001 — reverse the counter half. Read from the STORED row, never from a
+        // request body: a delete carries no body, and the row is the only record of what was
+        // applied. readReductionPlan returns null for every non-reduction type, so the UPDATE below
+        // stays no-op-by-predicate for the other 49.
+        //
+        // WHY THIS EXISTS AT ALL, when no other side effect in this file is reversed on delete:
+        // the status advances and the germinated_at stamp are forward-only and idempotent, so a
+        // deleted event leaves them defensibly where they are. A counter is not — delete a
+        // "lost 3" and the planting stays three plants short with nothing left in the ledger
+        // saying why. That is silent, permanent data loss, and it is the first accumulating
+        // writer in this schema, so there was no precedent to inherit.
+        const undoReduction = readReductionPlan({
+          event_type: owned[0].event_type, metadata: owned[0].metadata,
+        });
+        const undoQty = undoReduction ? undoReduction.qty : 0;
+        const undoLost = undoReduction ? undoReduction.lostAccrual : 0;
         const stmts = [
           sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
               WHERE id = ${eventId} AND deleted_at IS NULL`,
           sql`UPDATE harvest_log SET deleted_at = NOW(), updated_at = NOW()
               WHERE event_id = ${eventId} AND deleted_at IS NULL`,
+          // qty_lost floors at 0 rather than going negative: chk_plants_qty_lost_nonneg is armed by
+          // migrations/v4-losscapture-001 and a negative would 23514 -> abort this whole delete.
+          // It can only under-run if the counter was hand-edited between the create and the delete,
+          // which is a pre-existing hand-set value, not this ledger's arithmetic.
+          sql`
+            UPDATE public.garden_node p
+               SET quantity    = p.quantity + ${undoQty}::int,
+                   qty_current = COALESCE(p.qty_current, p.quantity::int) + ${undoQty}::int,
+                   qty_lost    = GREATEST(COALESCE(p.qty_lost, 0) - ${undoLost}::int, 0),
+                   updated_at  = NOW()
+             WHERE ${undoQty}::int > 0
+               AND p.id = ${plantId}
+               AND p.deleted_at IS NULL
+               AND ( EXISTS (SELECT 1 FROM public.container pp
+                              WHERE pp.id = p.container_id
+                                AND pp.created_by = ANY(${householdIds}))
+                     OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+          `,
           // Re-parent FROM the event row rather than from JS locals. The old reason given here —
           // that the neon driver cannot type a NULL bound param even with an explicit ::uuid cast —
           // is false; see the correction above (probed on 0.10.4 against prod). The real reason is
@@ -2513,6 +2569,73 @@ export const handler = async (event) => {
         }
       }
 
+      // ── Step 0b: V4-LOSSEVENT-001 plant-reduction headroom read ──────────────────────────────
+      // Runs AFTER the ownership gate above (never leak a count for a planting the caller does not
+      // own) and only for the two reduction types — every other event pays nothing for it.
+      //
+      // WHY A PRE-READ AND NOT PURE SQL. Two things need deciding before the transaction opens, and
+      // inside sql.transaction([...]) there is no branch: an over-reduction has to be refused
+      // rather than raise 23514 and surface as a 500, and the end-status OFFER has to be composed
+      // from the planting's pre-write totals.
+      //
+      // OVER-REDUCTION IS REFUSED, NOT CLAMPED. "I lost 6" against 5 remaining is not a smaller
+      // loss — clamping to 5 would satisfy the arithmetic while discarding the caller's claim, and
+      // the ledger row it wrote would be indistinguishable afterwards from a correct one. Same call
+      // validateQtyLost made in lambda/plants/validate.js.
+      //
+      // REACHING ZERO IS ALLOWED AND RECORDED. Dave's ruling (2026-08-18): OFFER the ending, never
+      // apply it. Refusing the reduction instead would lose the record of WHY the last plants went,
+      // which is the entire requirement. So the ledger row is always written and the response
+      // carries `plant_reduction.offer_end_status` — RANKED, never applied. See
+      // orderEndStatusOffer in validators.js for why the ranking cannot be "it hit zero, so
+      // failed": a planting also reaches zero by being harvested out, which is a good season.
+      const reduction = readReductionPlan(body);
+      let reductionOffer = null;
+      if (reduction) {
+        const cur = await sql`
+          SELECT quantity::int AS qty,
+                 COALESCE(qty_harvested, 0)::int AS harvested,
+                 COALESCE(qty_lost, 0)::int      AS lost,
+                 COALESCE((
+                   SELECT SUM((el.metadata->>'qty_reduced')::int)
+                     FROM event_log el
+                    WHERE el.plant_id = ${body.plant_id}
+                      AND el.deleted_at IS NULL
+                      AND el.event_type = 'given_away'
+                 ), 0)::int AS given_away
+            FROM public.garden_node
+           WHERE id = ${body.plant_id}
+             AND deleted_at IS NULL
+        `;
+        // The ownership loader above already proved this row exists and is visible; an empty read
+        // here would mean it vanished between two statements, which is a conflict, not a 404.
+        const available = cur.length ? cur[0].qty : 0;
+        if (reduction.qty > available) {
+          return resp(409, {
+            error: `this planting has ${available} left, so ${reduction.qty} cannot be removed`,
+            code: 'REDUCTION_EXCEEDS_REMAINING',
+            available,
+          });
+        }
+        if (reduction.qty === available) {
+          // Totals AFTER this write, so the ranking sees the reduction that emptied the planting.
+          const composition = {
+            harvested: cur[0].harvested,
+            lost: cur[0].lost + reduction.lostAccrual,
+            given_away: cur[0].given_away + (reduction.lostAccrual ? 0 : reduction.qty),
+          };
+          reductionOffer = {
+            emptied: true,
+            composition,
+            offer_end_status: orderEndStatusOffer(composition),
+          };
+        }
+      }
+      // Bound for every event type so the reduction UPDATE below can be an unconditional member of
+      // the transaction array, no-op by predicate — the same shape the three status advances use.
+      const reductionQty = reduction ? reduction.qty : 0;
+      const reductionLost = reduction ? reduction.lostAccrual : 0;
+
       // ── Step 1: pre-fetch user_timezone (COALESCE to America/New_York) ───────────────────────
       const tzRows = await sql`
         SELECT COALESCE(
@@ -2764,6 +2887,55 @@ export const handler = async (event) => {
              AND p.id = ${body.plant_id ?? null}
              AND p.deleted_at IS NULL
              AND p.status = ANY(${HARVESTED_SOURCE_STATUSES})
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+        `,
+        // V4-LOSSEVENT-001 — the counter half of the plant-reduction ledger. The event row above is
+        // the HISTORY (one row per reduction, each with its own quantity, reason and date); this is
+        // the ROLLUP. Same transaction, so the two can never disagree.
+        //
+        // IT DOES NOT TOUCH `status`, AND THAT IS THE REQUIREMENT, not an omission. Dave's case is
+        // ten lettuce taken to five between seedling and plant-out: the planting is alive and
+        // healthy, just smaller. Every other plant-mutating statement in this transaction is a
+        // status advance; this one is deliberately the exception, and plant-reduction.test.js
+        // fails if `status` ever appears in it.
+        //
+        // WHICH COLUMN IS THE LIVE COUNT — measured on live prod 2026-08-18, read-only, rather than
+        // assumed. `plants.quantity` is it: PlantingDetail renders it as "Quantity ×N" against
+        // qty_initial's "Started with ×N", and 31 live plantings ALREADY carry quantity < qty_initial
+        // (Megatron Jalapeños 6 of 10, Serranos 5 of 11, Sweet Basil 15 of 30) — Dave has been
+        // hand-editing this exact number down for a season with no way to record why. qty_current is
+        // a fourth spelling with 48/262 populated, ZERO readers anywhere in src/, and live drift
+        // (one planting reads quantity 57 / qty_current 54). It is written here as an exact MIRROR of
+        // quantity so the drift stops growing; it should be retired, not fed.
+        //
+        // THE TWO COLUMNS DIVERGE BY ONE, ONCE, AND ONLY WHEN THE PLANTING IS EMPTIED — and that is
+        // forced by the schema rather than chosen. chk_plants_quantity (quantity >= 1) is VALIDATED
+        // on live prod, so `quantity` physically cannot express zero; qty_current is a plain
+        // nullable integer with no CHECK, so it can. Dave ruled that reaching zero must still be
+        // RECORDED (the offer is the response's job, not this statement's), so the honest reading
+        // is qty_current, and `quantity = 1 AND qty_current = 0` IS the "this planting is empty"
+        // signal until the offered end-status is applied. Everywhere else the two are identical.
+        // Relaxing the CHECK to >= 0 would remove the divergence and is a separate, ordered change.
+        //
+        // GREATEST on qty_current is belt-and-braces for the race between the headroom read above
+        // and this statement; the over-reduction refusal is the 409, not this floor.
+        //
+        // Ownership uses the two-arm predicate (container's owner, or the planting's own created_by
+        // when it has no container) for the same reason the status advances do: garden_node has no
+        // RLS (L-087) and an inner join silently drops the 4 live container-less plantings
+        // (BUG-STATUSADVNOPROJ-001).
+        sql`
+          UPDATE public.garden_node p
+             SET quantity    = GREATEST(p.quantity - ${reductionQty}::int, 1),
+                 qty_current = GREATEST(p.quantity::int - ${reductionQty}::int, 0),
+                 qty_lost    = COALESCE(p.qty_lost, 0) + ${reductionLost}::int,
+                 updated_at  = NOW()
+           WHERE ${eventType}::text = ANY(${PLANT_REDUCTION_EVENT_TYPES})
+             AND p.id = ${body.plant_id ?? null}
+             AND p.deleted_at IS NULL
              AND ( EXISTS (SELECT 1 FROM public.container pp
                             WHERE pp.id = p.container_id
                               AND pp.created_by = ANY(${householdIds}))
@@ -3298,6 +3470,18 @@ export const handler = async (event) => {
         level: levelAfter,
         leveled_up: levelAfter != null && achievementResult.level_before != null
           && levelAfter > achievementResult.level_before,
+        // V4-LOSSEVENT-001 — Dave's ruling, 2026-08-18: OFFER the ending, never apply it. Present
+        // ONLY when this reduction took the planting to zero; null on every other event, including
+        // every partial reduction (which is the common case and must stay a silent one-tap log).
+        //
+        // The write has already committed by the time this is read — the planting IS empty and the
+        // reason IS recorded. Nothing here is conditional on the client acting: ignoring the offer
+        // leaves a correct ledger and an unchanged status, which is the right default for a user
+        // who is not sure yet. Applying a choice is an ordinary plants PUT with `status`; this
+        // endpoint deliberately does not do it, because "it reached zero" does not say WHICH
+        // ending it was (harvested out, failed, or given away — often a mix), and guessing
+        // `failed` would mislabel a successful season as a failure.
+        plant_reduction: reductionOffer,
       });
     }
 

@@ -92,13 +92,18 @@ describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
     BATCH_EVENT_TYPES.forEach(t => expect(master.has(t), t).toBe(true));
   });
 
-  it('excludes exactly the 7 expected types (3 needs-input + 3 HS-1 + 1 non-reward; flowering+fruit_set freed)', () => {
+  it('excludes exactly the 9 expected types (3 needs-input + 3 HS-1 + 1 non-reward + 2 reduction)', () => {
     // V4-WATERMATH-001 F0 added moisture_check — see the same guard in src/__tests__/eventTypes.js
     // and the exclusion rationale in src/lib/eventTypes.js. This is the LAMBDA-side mirror: it
     // reads the GENERATED copy, so it also proves codegen carried the exclusion across the
     // bundler-less boundary rather than the Lambda silently keeping the old allowlist.
+    // V4-LOSSEVENT-001 added failed + given_away, and the mirror matters more for these two than
+    // for any earlier entry: the batch INSERT writes no plants counters, so a reduction type that
+    // leaked into the Lambda's allowlist would fan ledger rows across a whole scope while
+    // decrementing nothing — a loss recorded on 500 plantings that never lost anything.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'moisture_check', 'photo'],
+      ['cutting_taken', 'divided', 'failed', 'first_harvest', 'given_away', 'hand_pollinated',
+        'harvest', 'moisture_check', 'photo'],
     );
   });
 });
