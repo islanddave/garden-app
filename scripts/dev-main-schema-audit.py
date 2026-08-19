@@ -16,7 +16,8 @@ Two phases (both run; failure in either fails the audit):
 
   Phase 3 - soft-delete column presence (added 2026-05-22, L-096).\n    Every table soft-deleted via `UPDATE <table> SET ... deleted_at` must have a\n    deleted_at column in prod. Catches the project_types.deleted_at class that\n    Phases 1/2 miss (SET/WHERE refs). Narrow by design (UPDATE write target only).\n\n  Phase 2 - INSERT column lists (added 2026-05-19, local_ba595ceb).
     Every column named in an `INSERT INTO <table> ( ... ) VALUES|SELECT`
-    column list across `lambda/**/index.js` must exist in prod. This is the
+    column list across `lambda/**/*.js` (excluding node_modules and *.test.js)
+    must exist in prod. Widened from index.js-only 2026-08-19. This is the
     write-path blind spot Phase 1 missed: PATCH/POST handlers that INSERT into
     a column the prod schema lacks would 500 (or violate a constraint) with no
     select-columns.test.js coverage. Scope is deliberately limited to the
@@ -243,12 +244,24 @@ def main() -> int:
     test_files = sorted(
         glob.glob(str(repo / "lambda" / "**" / "select-columns.test.js"), recursive=True)
     )
+    # Phase 2 globbed ONLY `index.js` until 2026-08-19, which made every INSERT in a non-index
+    # handler module invisible to this audit — `lambda/harvests/watch-route.js` writes to
+    # `watch_exclusion`, a table that does not exist in prod at all, and the audit reported GREEN.
+    # A wholly missing table being invisible is the worst shape of blind spot, because the audit's
+    # whole purpose is catching a write path that outruns the schema.
+    # Widened to every non-test .js under lambda/, excluding node_modules (vendored code is not our
+    # write path and would swamp the scan: 103 extra files, of which 12 carry an INSERT column list).
+    # Blast radius MEASURED against live prod before widening, not assumed: the 12 newly-visible
+    # files reference 19 tables, of which 18 verify clean and exactly 1 reports — `watch_exclusion`,
+    # the true positive above. It clears when v4-watchexcluded-001 applies to prod.
     handler_files = sorted(
-        glob.glob(str(repo / "lambda" / "**" / "index.js"), recursive=True)
+        f
+        for f in glob.glob(str(repo / "lambda" / "**" / "*.js"), recursive=True)
+        if "node_modules" not in f and not f.endswith((".test.js", ".spec.js"))
     )
     if not test_files and not handler_files:
         print(
-            f"FAIL: no select-columns.test.js or index.js files under {repo}/lambda",
+            f"FAIL: no select-columns.test.js or handler .js files under {repo}/lambda",
             file=sys.stderr,
         )
         return 2
@@ -257,7 +270,7 @@ def main() -> int:
         print(f"# repo: {repo}")
         print(f"# env:  {env_path}")
         print(f"# Phase 1: {len(test_files)} select-columns.test.js file(s)")
-        print(f"# Phase 2: {len(handler_files)} handler index.js file(s)")
+        print(f"# Phase 2: {len(handler_files)} handler .js file(s)")
         print()
 
     conn = psycopg2.connect(neon_url)
