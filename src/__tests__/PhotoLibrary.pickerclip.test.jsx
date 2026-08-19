@@ -93,7 +93,10 @@ describe('BUG-PICKERCLIP-001 — PhotoModal must not clip the planting listbox',
   async function openTagModal() {
     await mount({ photos: [PHOTO] })
     fetchSpy.mockResolvedValueOnce([PLANT])   // /api/plants?project_id=proj-1 (modal effect)
-    await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: /Garden photo/i })[0]) })
+    // findAllBy for the same reason as in the sibling describe below: the tiles are fetched, so a
+    // synchronous getAllBy is a load-dependent flake rather than a real assertion.
+    const tile = (await screen.findAllByRole('button', { name: /Garden photo/i }))[0]
+    await act(async () => { fireEvent.click(tile) })
     await waitFor(() => expect(document.getElementById('pl-modal-plant')).toBeTruthy())
     return screen.getByTestId('pl-modal-card')
   }
@@ -130,7 +133,12 @@ describe('BUG-PICKERCLIP-001 — the z150 selection bar must not cover the uploa
     vi.stubEnv('VITE_API_FACEBOOK_SHARE', 'https://example.invalid/share')
     await mount({ photos: [PHOTO] })
     fireEvent.click(screen.getByText('Select'))
-    fireEvent.click(screen.getAllByRole('button', { name: /Garden photo/i })[0])
+    // findAllBy, not getAllBy: the photo tiles arrive from an async fetch, so a SYNCHRONOUS query
+    // here throws "Unable to find an accessible element" whenever the grid has not painted yet.
+    // That is load-dependent, so it passes in isolation (678ms) and fails intermittently under a
+    // full-suite run — observed 2026-08-19. A flaky test in a REQUIRED check is expensive well
+    // beyond the annoyance: one spurious red on CI costs a whole re-push and five workflow runs.
+    fireEvent.click((await screen.findAllByRole('button', { name: /Garden photo/i }))[0])
     fireEvent.click(screen.getByText('+ Upload'))
     fetchSpy.mockResolvedValueOnce([PLANT])   // /api/plants?project_id=proj-1 (upload effect)
     await act(async () => {
