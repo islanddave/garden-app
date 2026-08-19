@@ -506,9 +506,16 @@ export async function mergeCore(sql, {
     sql`UPDATE watch_impression SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE harvest_watch_dismissal SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
 
-    // Supersede rather than repoint (uq_plant_anchor_derivation_live).
-    sql`UPDATE plant_anchor_derivation SET superseded_at = now()
-         WHERE plant_id = ANY(${loserIds}) AND superseded_at IS NULL`,
+    // Supersede rather than repoint (uq_plant_anchor_derivation_live). OPS-MERGERETIREPROV-001 —
+    // attributed, not a bare timestamp: a retirement carrying superseded_at alone is indistinguishable
+    // from an observed-anchor one downstream, so the calibration extract would count a merge artefact
+    // as a (guess, later truth) pair. The reason is deliberately NOT 'observed_anchor' — nothing was
+    // observed here; the row is retired for a structural reason (one live row per plant).
+    sql`UPDATE plant_anchor_derivation d
+           SET superseded_at = now(),
+               superseded_by = 'merge_loser',
+               updated_at    = now()
+         WHERE d.plant_id = ANY(${loserIds}) AND d.superseded_at IS NULL`,
     // Derived state: delete, never merge. The inference job recomputes the winner's.
     sql`DELETE FROM entity_memory WHERE plant_id = ANY(${loserIds})`,
   ]

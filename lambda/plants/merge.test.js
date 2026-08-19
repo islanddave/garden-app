@@ -485,6 +485,26 @@ describe('mergeCore', () => {
     expect(sql.calls.filter((c) => c.transaction)).toHaveLength(1)
   })
 
+  it('attributes the losers anchor retirement instead of stamping a bare timestamp', async () => {
+    // OPS-MERGERETIREPROV-001. Retiring on superseded_at alone is unattributable after the fact: the
+    // calibration extract reads superseded_by to tell a merge artefact apart from a (guess, later
+    // truth) pair, and six of the eight rows retired on prod carry NULL because this statement wrote
+    // none. Asserted against the statement the batch actually issues, not against source text — the
+    // sibling winner retire (predicated on EXISTS, scoped to a single id) would satisfy a text match.
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const sql = mockSql(baseResponses(plants))
+    await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const retire = sql.lastTransaction()
+      .filter((t) => /UPDATE plant_anchor_derivation/.test(t))
+      .find((t) => /ANY\(\$\d+\)/.test(t))
+    expect(retire, 'the losers anchor retire is not in the cutover batch').toBeTruthy()
+    expect(retire).toMatch(/superseded_by\s*=\s*'merge_loser'/)
+    expect(retire).toMatch(/updated_at\s*=\s*now\(\)/)
+    // The re-run guard and the merge/observation distinction both survive the added columns.
+    expect(retire).toMatch(/superseded_at IS NULL/)
+    expect(retire).not.toMatch(/'observed_anchor'/)
+  })
+
   it('scopes every repoint to the loser set', async () => {
     const plants = [plantRow(WINNER), plantRow(LOSER1), plantRow(LOSER2)]
     const sql = mockSql(baseResponses(plants))
@@ -529,7 +549,7 @@ describe('source guards', () => {
   })
 
   it('supersedes anchors rather than repointing them', () => {
-    expect(SRC).toMatch(/UPDATE plant_anchor_derivation SET superseded_at = now\(\)/)
+    expect(SRC).toMatch(/UPDATE plant_anchor_derivation d\s+SET superseded_at = now\(\)/)
     expect(SRC).not.toMatch(/UPDATE plant_anchor_derivation\s+SET plant_id =/)
   })
 
