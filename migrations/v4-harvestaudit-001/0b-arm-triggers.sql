@@ -65,7 +65,14 @@ CREATE TRIGGER trg_audit_harvest_log_upd
   EXECUTE FUNCTION public.audit_stmt_update(
     'project_id', 'event_id', 'quantity', 'unit',
     'weight_grams', 'weight_estimated', 'weight_basis',
-    'deleted_at', 'created_by', 'created_at'
+    'deleted_at', 'created_by', 'created_at',
+    -- disposition arrives in the SAME fleet, from v4-losscapture-001/0a. This bundle's watched list
+    -- was authored against a schema that did not yet have the column, so it was neither watched nor
+    -- in gates.yml's `ignored` set — post_column_classification_is_complete caught it on the staging
+    -- apply (1 row: harvest_log|disposition). Watched, not ignored: it is classificatory data a user
+    -- sets and can change (dropped|culled|aborted|damaged), not an annotation like notes or
+    -- quality_rating, and a silent edit to it changes what a pick MEANS without changing its total.
+    'disposition'
   );
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────

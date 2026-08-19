@@ -54,6 +54,13 @@ const PROD_COLUMNS = {
   harvest_log: [
     'id', 'event_id', 'project_id', 'quantity', 'unit', 'quality_rating', 'notes', 'created_by',
     'created_at', 'updated_at', 'deleted_at', 'weight_grams', 'weight_estimated', 'weight_basis',
+    // Added DELIBERATELY, per the note above. `disposition` is not on prod as of 2026-08-18 — it
+    // arrives in the SAME fleet from v4-losscapture-001/0a, so by the time this bundle is applied to
+    // prod the column exists and this list is again a true prod snapshot. Discovered exactly as the
+    // note predicts: post_column_classification_is_complete FAILED on the staging apply (1 row,
+    // harvest_log|disposition) because this bundle's watched list was authored pre-disposition.
+    // It is WATCHED in 0b, not ignored — see the rationale there.
+    'disposition',
   ],
 };
 
