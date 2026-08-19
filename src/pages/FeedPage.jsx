@@ -3,6 +3,12 @@
 // filterable history. Raw events come from /api/events/feed (offset paginated); we accumulate and
 // collapse the whole set each render so a Log-Many batch never splits across a page boundary.
 // Critters earned at logging time surface inline (the seed of the V4 social-feed vision).
+//
+// V4-BATCHUNDO-001 — this page is also where a bulk log becomes DURABLY undoable. LogMany's undo has
+// always lived inside its success block, so leaving that screen made a mis-scoped 30-to-157-row
+// batch unrecoverable. The feed is the right home for the durable half and needed almost nothing to
+// become it: feed.js already collapses a batch into ONE entry carrying batch_id and the exact
+// item_count, so the row that needs the affordance already exists and already knows its batch.
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -13,6 +19,9 @@ import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { collapseFeed, dedupeById, relativeTime, prettyEventType } from '../lib/feed.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
+import BatchUndoConfirm from '../components/BatchUndoConfirm.jsx'
+import { BATCHES_PATH, batchUndoPath, undoableById, undoRowCount } from '../lib/batches.js'
+import { invalidatePrefix } from '../lib/dataCache.js'
 
 const PAGE = 30
 // V4-SCROLLRESTORE-001 — how deep a back-navigation will re-request in ONE round trip. The server
@@ -20,6 +29,15 @@ const PAGE = 30
 // value; it covers three "Load more" presses. Past that the restore lands the user at the bottom of
 // what did come back and they press Load more again, which is strictly better than page 1.
 const MAX_RESTORED_ROWS = 90
+
+// V4-BATCHUNDO-001 — every cached read the undo can falsify. The DELETE does far more than remove
+// rows: inside one transaction it cascades harvest_log, re-parents photos and RECOMPUTES
+// entity_memory's recency + next_water_at for every affected project AND planting. So a Today page
+// still holding a cached daily plan would keep saying "watered yesterday" about a watering that no
+// longer exists, and the next-water date it derives from it would be wrong in the direction that
+// costs a plant. Prefix invalidation only — dataCache keys are `${identity}|${path}`, and the
+// undo's blast radius is per-route, not per-key.
+const UNDO_INVALIDATE_PREFIXES = ['/api/events', '/api/dashboard', '/api/daily-plan', '/api/harvests', '/api/plants']
 
 export default function FeedPage() {
   const { fetch } = useApiFetch()
@@ -31,12 +49,37 @@ export default function FeedPage() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState(null)
+  // V4-BATCHUNDO-001 state. `undoable` is a Map id -> batch built from GET /api/events/batches, and
+  // it is the ONLY undoability test available to the client: the endpoint already filters to the
+  // viewer's own, not-yet-undone, complete batches and caps at ten, so a batch missing from it would
+  // 404 on the DELETE. Rendering the affordance from "this row has a batch_id" instead would put a
+  // button that cannot work on every historical batch in the feed.
+  const [undoable, setUndoable] = useState(() => new Map())
+  const [batchesState, setBatchesState] = useState('loading') // 'loading' | 'ready' | 'error'
+  const [undoTarget, setUndoTarget] = useState(null)          // { batch, count } — the confirm's subject
+  const [undoBusy, setUndoBusy] = useState(false)
+  const [undoError, setUndoError] = useState(null)
 
   useEffect(() => {
     let on = true
     fetch('/api/projects')
       .then(d => { if (on) setProjects(d ?? []) })
       .catch(() => {})
+    return () => { on = false }
+  }, [fetch])
+
+  // The undoable set. Fetched ONCE per mount and deliberately not refetched on filter changes — the
+  // set is scoped to the viewer, not to the filtered view, and re-requesting it every time a date
+  // input changes would be three round trips for an answer that did not move. A failure here must
+  // NOT be swallowed the way the projects fetch above swallows its own: silently rendering no Undo
+  // buttons is indistinguishable from "nothing is undoable", which is a lie the user cannot see
+  // through. It sets 'error' and the notice below says so.
+  useEffect(() => {
+    let on = true
+    setBatchesState('loading')
+    fetch(BATCHES_PATH)
+      .then(d => { if (on) { setUndoable(undoableById(d)); setBatchesState('ready') } })
+      .catch(() => { if (on) { setUndoable(new Map()); setBatchesState('error') } })
     return () => { on = false }
   }, [fetch])
 
@@ -107,11 +150,65 @@ export default function FeedPage() {
   const anyFilter = filters.project_id || filters.event_type || filters.from || filters.to
   const set = (k) => (e) => setFilters(f => ({ ...f, [k]: e.target.value }))
 
+  // V4-BATCHUNDO-001 — the honest states, and each one is gated on RELEVANCE. A feed with no batch
+  // rows on screen gets no notice at all: a line about bulk logs above a list containing none is
+  // noise on a browse surface. When batch rows ARE visible, the absence of Undo buttons has three
+  // different causes and the user cannot tell them apart from the absence itself, so name it.
+  const hasBatchRow = useMemo(() => items.some(ev => (ev.batch_count ?? 1) > 1 && ev.batch_id), [items])
+  const undoNotice = !hasBatchRow ? null
+    : batchesState === 'loading' ? 'Checking which bulk logs can still be undone…'
+    : batchesState === 'error' ? 'Couldn’t check which bulk logs can be undone — reload to try again.'
+    // Ten is the server's cap, not a total, so this says "your last ten" rather than implying the
+    // feature only ever had these to offer.
+    : undoable.size === 0 ? 'None of the bulk logs below can still be undone — only your last ten can be.'
+    : null
+
+  async function confirmUndo() {
+    const target = undoTarget
+    if (!target || undoBusy) return
+    setUndoBusy(true)
+    setUndoError(null)
+    try {
+      await fetch(batchUndoPath(target.batch.id), { method: 'DELETE' })
+      // Drop the batch's rows locally rather than refetching — the server answer IS the confirmation,
+      // and a refetch would fight the accumulated "Load more" pages. Offset moves with them: the
+      // server's list no longer contains these rows, so leaving offset where it was would make the
+      // next page start N rows deeper and silently skip that many.
+      let removed = 0
+      setRawEvents(prev => {
+        const kept = prev.filter(r => String(r?.batch_id ?? '') !== target.batch.id)
+        removed = prev.length - kept.length
+        return kept
+      })
+      setOffset(o => Math.max(0, o - removed))
+      setUndoable(prev => { const m = new Map(prev); m.delete(target.batch.id); return m })
+      for (const prefix of UNDO_INVALIDATE_PREFIXES) invalidatePrefix(prefix)
+      setUndoTarget(null)
+    } catch (err) {
+      // The sheet STAYS OPEN and the row STAYS PUT. An optimistic removal here would show the user
+      // exactly what a successful undo looks like while the entries are still in the database —
+      // the one outcome this feature must never produce. 404 is the expected, explicable failure
+      // (already undone elsewhere, or aged past the server's ten), so it gets its own sentence
+      // instead of the Lambda's bare "Not found".
+      setUndoError(err?.status === 404
+        ? 'That bulk log can’t be undone any more — it may already have been undone.'
+        : (err?.message || 'That didn’t go through — the entries are still there.'))
+    } finally {
+      setUndoBusy(false)
+    }
+  }
+
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 80px' }}>
         <Breadcrumb path={[{ label: 'Home', href: '/dashboard' }, { label: 'Activity', href: null }]} />
         <h1 style={{ margin: '0 0 16px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Activity</h1>
+
+        {undoNotice && (
+          <div data-testid="batch-undo-notice" style={{ margin: '-8px 0 14px', fontSize: '0.8rem', color: batchesState === 'error' ? P.terra : P.light }}>
+            {undoNotice}
+          </div>
+        )}
 
         {/* Filters */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
@@ -155,6 +252,9 @@ export default function FeedPage() {
               {items.map((ev, i) => {
                 const isBatch = (ev.batch_count ?? 1) > 1
                 const species = ev.critter_species_id ? SPECIES_BY_ID[ev.critter_species_id] : null
+                // Membership in the server's set, not "looks like a batch" — see the state comment.
+                const undoBatch = isBatch && ev.batch_id ? undoable.get(String(ev.batch_id)) : null
+                const undoCount = undoBatch ? undoRowCount(undoBatch, ev.batch_count) : null
                 // V4-PROJHIDE-001: drop the project_name row label when projects aren't user-facing —
                 // prefer a planting name (forward-compatible if the feed adds one), else a neutral em
                 // dash. Flag OFF keeps the exact prior project_name label.
@@ -175,6 +275,21 @@ export default function FeedPage() {
                         <span title={`Spotted ${species.name}`} aria-label={`Spotted ${species.name}`} style={critterChip}>🦋 {species.name}</span>
                       )}
                       <span style={{ fontSize: '0.75rem', color: P.light, whiteSpace: 'nowrap' }}>{relativeTime(ev.created_at)}</span>
+                      {/* V4-BATCHUNDO-001 — opens the confirm; it never deletes on its own tap. 44px
+                          minimum on both axes: this sits at the right edge of a 390px row where the
+                          thumb already is, so an undersized target here is a mis-tap generator on
+                          the one control in this page that removes data. */}
+                      {undoBatch && (
+                        <button
+                          type="button"
+                          data-testid={`batch-undo-open-${undoBatch.id}`}
+                          onClick={() => { setUndoError(null); setUndoTarget({ batch: undoBatch, count: undoCount }) }}
+                          aria-label={`Undo this bulk log of ${undoCount ?? ev.batch_count} entries`}
+                          style={undoBtn}
+                        >
+                          Undo
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
@@ -194,6 +309,20 @@ export default function FeedPage() {
           </>
         )}
       </div>
+
+      {/* Rendered at PAGE level, not inside the row: a fly-up nested in the list would sit inside
+          the list container's stacking and overflow context, which is how a sheet ends up clipped
+          (BUG-PICKERCLIP-001). Sheet returns null when closed, so the body unmounts on Cancel and
+          no stale count can survive into the next batch's confirm. */}
+      <BatchUndoConfirm
+        open={!!undoTarget}
+        batch={undoTarget?.batch ?? null}
+        count={undoTarget?.count ?? null}
+        busy={undoBusy}
+        error={undoError}
+        onCancel={() => { if (!undoBusy) { setUndoTarget(null); setUndoError(null) } }}
+        onConfirm={confirmUndo}
+      />
     </div>
   )
 }
@@ -205,3 +334,6 @@ const clearBtn = { padding: '8px 12px', borderRadius: 8, border: `1px solid ${P.
 const typeBadge = { fontSize: '0.72rem', fontWeight: 600, color: P.green, backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '2px 9px', flexShrink: 0, whiteSpace: 'nowrap' }
 const critterChip = { fontSize: '0.7rem', fontWeight: 600, color: '#8a6d1f', backgroundColor: '#faf3da', border: '1px solid #e7d9a8', borderRadius: 10, padding: '2px 8px', whiteSpace: 'nowrap' }
 const moreBtn = { padding: '10px 24px', borderRadius: 8, border: `1px solid ${P.greenLight}`, background: P.white, color: P.green, fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
+// Quiet chrome on purpose — this is a browse surface, and a red button on ten rows of a scrolling
+// list reads as an alarm. The weight belongs in the confirm, which is where the number is.
+const undoBtn = { minWidth: 44, minHeight: 44, padding: '0 12px', borderRadius: 8, border: `1px solid ${P.border}`, background: P.white, color: P.mid, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }
