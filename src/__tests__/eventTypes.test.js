@@ -184,21 +184,31 @@ describe('V4-EVENTSEL-001 — taxonomy fix + explicit category order', () => {
   });
 });
 
-describe('V4-LOSSEVENT-001 — the reduction types are gated OUT of creation pickers, not out of the vocabulary', () => {
+describe('V4-LOSSUI-001 — the reduction types are SELECTABLE now that the capture panel exists', () => {
   it('both are real EVENT_TYPES values, so the API and the feed know them', () => {
     expect(EVENT_TYPES).toContain('failed');
     expect(EVENT_TYPES).toContain('given_away');
   });
 
-  it('SELECTABLE_EVENT_TYPES omits exactly those two while the capture panel is unbuilt', () => {
-    // The API REQUIRES a quantity + reason on these and no capture panel collects either, so a
-    // picker entry would 400 every time — the CATCH_UP_EDITOR_SHIPPED failure shape.
-    expect(EVENT_TYPES.filter((t) => !SELECTABLE_EVENT_TYPES.includes(t)))
-      .toEqual(['failed', 'given_away']);
-    // Order and membership of everything else are untouched — this is a filter, not a re-list.
-    expect(SELECTABLE_EVENT_TYPES).toEqual(
-      EVENT_TYPES.filter((t) => !PLANT_REDUCTION_EVENT_TYPES.includes(t)),
-    );
+  // V4-LOSSUI-001 — INVERTED, WITH REASONING, NOT DELETED.
+  //
+  // V4-LOSSEVENT-001 asserted the opposite: `SELECTABLE_EVENT_TYPES omits exactly those two while
+  // the capture panel is unbuilt`. That test was correct for its premise, and the premise has a
+  // name — "no capture panel collects the required quantity + reason, so a picker entry would 400
+  // every time" (the CATCH_UP_EDITOR_SHIPPED shape). The panel now exists
+  // (components/PlantReductionFields.jsx, wired into EventNew as a REQUIRED panel that gates Save),
+  // so the premise is gone and the assertion has to move with it.
+  //
+  // What it must NOT become is nothing. Deleting it would leave the app free to drift back to a
+  // creation list that silently drops a type. So it keeps asserting the same PROPERTY — that the
+  // creation list and the vocabulary agree — from the other side, and it is paired with a render
+  // assertion in EventNew.reduction.test.jsx that the panel is actually there for both types
+  // (selectability without a panel is exactly the state this file used to forbid).
+  it('SELECTABLE_EVENT_TYPES no longer drops anything — the creation list IS the vocabulary', () => {
+    expect(EVENT_TYPES.filter((t) => !SELECTABLE_EVENT_TYPES.includes(t))).toEqual([]);
+    expect(SELECTABLE_EVENT_TYPES).toEqual(EVENT_TYPES);
+    // Named explicitly, because these two are the ones the gate was ever about.
+    for (const t of PLANT_REDUCTION_EVENT_TYPES) expect(SELECTABLE_EVENT_TYPES).toContain(t);
   });
 
   it("'failed' the EVENT TYPE is not 'failed' the STATUS — nothing maps one onto the other", () => {

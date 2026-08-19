@@ -343,10 +343,17 @@ export const LOSS_REASONS = [
 // The reason vocabulary for `given_away`. Dave confirmed this is the PLANT being given away, not
 // the produce (produce disposition is harvest_log.disposition, V4-HARVDISPOSITION-001 — a third
 // and unrelated vocabulary that happens to share the token 'culled'; do not merge them).
-// 'sold' and 'traded' are plausible and are NOT here: they were proposed rather than approved,
-// and an unapproved value in a closed vocabulary is indistinguishable from an approved one once
-// rows exist.
-export const GIVEAWAY_REASONS = ['friend', 'donated', 'plant_swap']
+//
+// 'sold', 'traded' and 'community' were APPROVED by Dave 2026-08-18 (the predecessor lane left the
+// first two proposed-but-unshipped precisely so an unapproved value could not become
+// indistinguishable from an approved one once rows carried it — the approval is what unblocks them).
+// Unlike LOSS_REASONS this list is in NO migration CHECK, so widening it carries no deploy ordering.
+//
+// 'community' is the deliberate broad non-friend option — neighbours, a local group, a roadside
+// free stand, school or church — and it doubles as the CATCH-ALL, because a give-away has no
+// natural 'unknown'-style floor the way a loss does. Its label is warm on purpose; see
+// REDUCTION_REASON_LABELS.
+export const GIVEAWAY_REASONS = ['friend', 'donated', 'plant_swap', 'sold', 'traded', 'community']
 
 // Deliberate vs accidental, DERIVED FROM THE REASON VALUE ALONE — no `intentional` column. A
 // stored boolean alongside the reason is a second source of truth for one fact, and the pair drifts
@@ -377,6 +384,44 @@ export const REDUCTION_REASONS_BY_KEY = {
   [GIVEAWAY_REASON_KEY]: GIVEAWAY_REASONS,
 }
 
+// V4-LOSSUI-001 — the chip captions. Lives HERE, beside the vocabularies, so a value can never be
+// added to a list without a reader noticing it has no label: `reductionReasonLabel` falls back to
+// the un-snaked token, which is legible but obviously unstyled, and the panel's render test walks
+// both vocabularies rather than a hand-listed set.
+//
+// The two catch-alls are worded as invitations rather than as shrugs. 'unknown' -> "Not sure"
+// because "unknown" reads like a data-entry failure and the honest answer ("plants died and I never
+// found out why") is the single most common one. 'community' -> "Shared locally" per Dave: warm,
+// not clinical, and broad enough to cover the neighbour, the local group, the roadside free stand
+// and the school or church without naming any of them on a 44px chip.
+export const REDUCTION_REASON_LABELS = {
+  pest: 'Pest',
+  disease: 'Disease',
+  weather: 'Weather',
+  transplant_shock: 'Transplant shock',
+  unknown: 'Not sure',
+  animal_damage: 'Animals',
+  culled: 'Culled / thinned',
+  friend: 'A friend',
+  donated: 'Donated',
+  plant_swap: 'Plant swap',
+  sold: 'Sold',
+  traded: 'Traded',
+  community: 'Shared locally',
+}
+
+// The one-line expansion each catch-all needs and neither chip has room for. Rendered as help text
+// under the chip row (NOT on the chip — at seven chips a per-chip caption doubles the block height
+// on the fast path, which is the trade WaterDepthChips could afford at three and this cannot).
+export const REDUCTION_REASON_HINTS = {
+  unknown: 'they died and you never found out why — a real answer, not a gap',
+  community: 'neighbours, a local group, a free stand, school or church — and anything else',
+}
+
+export function reductionReasonLabel(reason) {
+  return REDUCTION_REASON_LABELS[reason] ?? String(reason ?? '').replace(/_/g, ' ')
+}
+
 export function isPlantReductionEventType(eventType) {
   return PLANT_REDUCTION_EVENT_TYPES.includes(eventType)
 }
@@ -391,24 +436,23 @@ export function accruesQtyLost(eventType) {
 
 // The list every EVENT-CREATION picker renders, as opposed to the vocabulary the API accepts.
 //
-// `failed` / `given_away` are real, first-class, API-accepted EVENT_TYPES values — but the API
-// REQUIRES a quantity and a reason on them and no capture panel exists to collect either. Offered in
-// a picker as things stand they would be a visible option that 400s every time: the
-// CATCH_UP_EDITOR_SHIPPED failure shape (a badge linking to an editor nobody built). WHEN THE
-// CAPTURE PANEL SHIPS, change the filter below to `EVENT_TYPES` and nothing else has to move.
+// V4-LOSSUI-001 — THE GATE IS OPEN. This was `EVENT_TYPES.filter(t => !PLANT_REDUCTION_EVENT_TYPES
+// .includes(t))` while the two reduction types had a complete API write path and NO capture panel:
+// the API REQUIRES a quantity and a reason on them, so a picker entry would have been a visible
+// option that 400s every time — the CATCH_UP_EDITOR_SHIPPED failure shape (a badge linking to an
+// editor nobody built). V4-LOSSEVENT-001 deliberately left the re-opening as this ONE line.
 //
-// DERIVED HERE RATHER THAN BEHIND A featureFlags.js CONST, which was the first shape of this and is
-// where the house "hidden until it ships" flags live. Measured instead of assumed: 78 test files
-// `vi.mock('../lib/featureFlags.js', ...)` with a partial factory, and vitest THROWS on reading an
-// export a mock factory omits — so routing four widely-imported surfaces (EventTypePicker,
-// CaptureFlow, ProjectDetail, FeedPage) through that module reds unrelated suites on a name they
-// have no reason to know about. This file has zero imports by design and already owns every other
-// derived list (BATCH_EVENT_TYPES, PLANTING_EXEMPT_TYPES), so the derivation belongs here.
+// The panel now exists: components/PlantReductionFields.jsx, rendered by EventNew as a REQUIRED
+// panel beside the harvest / treatment / severity ones, gating Save on both fields client-side
+// before the POST is ever attempted (EventNew.jsx handleSubmit). So the filter is retired and the
+// creation list is the vocabulary again.
 //
-// The BATCH picker needs no gating: BATCH_EVENT_TYPES already excludes both for its own reasons.
-export const SELECTABLE_EVENT_TYPES = EVENT_TYPES.filter(
-  (t) => !PLANT_REDUCTION_EVENT_TYPES.includes(t),
-)
+// The alias is KEPT rather than replaced at the five call sites. It is not redundant: it is the
+// named seam that made the gating a one-line change in both directions, and one of its five
+// consumers (FeedPage) is a READ filter over the feed, where the two types must appear the moment
+// rows carrying them exist — a distinction that is invisible if every site just imports
+// EVENT_TYPES. Re-narrowing a future panel-less type is one line here again.
+export const SELECTABLE_EVENT_TYPES = EVENT_TYPES
 
 // ── Derived batch allowlist (NEVER hand-listed) ─────────────────────
 // The server (validateBatchBody) and the LogMany picker both consume this.

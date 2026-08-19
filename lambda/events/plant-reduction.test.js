@@ -60,12 +60,24 @@ describe('the two vocabularies stay apart', () => {
     ]);
   });
 
-  it("GIVEAWAY_REASONS is the three Dave named, and 'sold'/'traded' are NOT in it", () => {
-    // Proposed in the lane report, not shipped. An unapproved value in a closed vocabulary is
-    // indistinguishable from an approved one once rows carry it.
-    expect([...GIVEAWAY_REASONS].sort()).toEqual(['donated', 'friend', 'plant_swap']);
-    expect(GIVEAWAY_REASONS).not.toContain('sold');
-    expect(GIVEAWAY_REASONS).not.toContain('traded');
+  // V4-LOSSUI-001 — UPDATED, WITH REASONING. This asserted the three-value list AND that
+  // 'sold'/'traded' were absent, because at the time they were PROPOSED and not approved, and an
+  // unapproved value in a closed vocabulary is indistinguishable from an approved one once rows
+  // carry it. That is a statement about APPROVAL, and the approval landed: Dave ratified 'sold',
+  // 'traded' and 'community' on 2026-08-18. So the assertion is re-pointed at the new list rather
+  // than deleted — it still fails the day someone adds a seventh value without asking.
+  //
+  // No deploy ordering is implicated: unlike LOSS_REASONS, this list appears in NO migration CHECK
+  // (giveaway_reason lives only in unconstrained event_log.metadata jsonb), so the widened validator
+  // and the widened picker can ship in one promote.
+  it("GIVEAWAY_REASONS is the six Dave has approved — the original three plus sold / traded / community", () => {
+    expect([...GIVEAWAY_REASONS].sort()).toEqual([
+      'community', 'donated', 'friend', 'plant_swap', 'sold', 'traded',
+    ]);
+    // 'community' is the deliberate broad non-friend option AND the catch-all: a give-away has no
+    // natural 'unknown'-style floor the way a loss does, so without it every neighbour, free stand
+    // and school donation would land on whichever of the other five felt closest.
+    expect(GIVEAWAY_REASONS).toContain('community');
   });
 
   it('no reason means both "lost" and "given away"', () => {
@@ -153,9 +165,19 @@ describe('validateReduction — the wire contract', () => {
     expect(validateReduction(failedBody({
       metadata: { [REDUCTION_QTY_KEY]: 3, [LOSS_REASON_KEY]: 'sabotage' },
     }))?.status).toBe(400);
+    // V4-LOSSUI-001: 'sold' was the out-of-vocabulary probe here and is now an APPROVED value, so
+    // it would no longer prove anything. Re-pointed at a token that is still outside the list —
+    // and deliberately at one that is plausible-but-unapproved rather than nonsense, since that is
+    // the case the closed vocabulary exists to refuse.
     expect(validateReduction(giftBody({
-      metadata: { [REDUCTION_QTY_KEY]: 2, [GIVEAWAY_REASON_KEY]: 'sold' },
+      metadata: { [REDUCTION_QTY_KEY]: 2, [GIVEAWAY_REASON_KEY]: 'bartered' },
     }))?.status).toBe(400);
+    // ...and the newly-approved values are ACCEPTED, which the assertion above cannot show.
+    for (const r of ['sold', 'traded', 'community']) {
+      expect(validateReduction(giftBody({
+        metadata: { [REDUCTION_QTY_KEY]: 2, [GIVEAWAY_REASON_KEY]: r },
+      })), r).toBeNull();
+    }
   });
 
   it('refuses a give-away reason on a loss, and vice versa', () => {

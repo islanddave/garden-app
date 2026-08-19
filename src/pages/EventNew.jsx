@@ -6,8 +6,8 @@ import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
-import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
+import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, BOTTOM_NAV_HEIGHT_PX, statusLabel } from '../lib/constants.js'
+import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
@@ -56,6 +56,12 @@ import {
   WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
+// V4-LOSSUI-001 — the plant-reduction capture panel (a REQUIRED panel, so it sits with harvest /
+// treatment / severity and NOT in EVENT_METADATA_FIELDS, whose disclosure is optional-only), plus
+// the end-status offer the 201 may carry back. See src/lib/plantReduction.js for the wire contract.
+import PlantReductionFields from '../components/PlantReductionFields.jsx'
+import EndStatusOffer from '../components/EndStatusOffer.jsx'
+import { validateReductionInput, buildReductionMetadata } from '../lib/plantReduction.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
 // (single source of truth). Re-exported here so existing importers from
@@ -204,6 +210,15 @@ function readLastPlantId() {
 function friendlyError(err) {
   const raw = (err && err.message) ? String(err.message) : ''
   const status = err && err.status
+  // V4-LOSSUI-001 — over-reduction. The events Lambda REFUSES "7 against 5 remaining" with a 409
+  // rather than clamping (a clamped row is indistinguishable from a correct one afterwards), and it
+  // sends back a sentence already written for a human: "this planting has 5 left, so 7 cannot be
+  // removed". Passed through VERBATIM, capitalised only — the generic 4xx line below would drop the
+  // two numbers that make the message actionable, and re-wording it here would put the same
+  // sentence in two places and let them drift. Keyed on the machine `code`, not on the prose.
+  if (err?.body?.code === 'REDUCTION_EXCEEDS_REMAINING' && raw) {
+    return raw.charAt(0).toUpperCase() + raw.slice(1) + '.'
+  }
   if (/exceeds max for unit/i.test(raw)) {
     return 'Quantity is unusually high — double-check?'
   }
@@ -610,6 +625,15 @@ export default function EventNew() {
   const [issueChoice, setIssueChoice] = useState('')
   const [issueOther, setIssueOther] = useState('')
 
+  // V4-LOSSUI-001: plant-reduction capture (failed / given_away). BOTH fields are required by the
+  // API, so this is panel state and not metadataState — the latter feeds the optional "More details"
+  // disclosure, whose entire contract is that a save works with it untouched.
+  const [reduction, setReduction] = useState({ qty: '', reason: '' })
+  const [reductionError, setReductionError] = useState(null)
+  // The 201's `plant_reduction` payload, held ONLY while the offer sheet is up. Captured with the
+  // planting it refers to, because resetForNext() clears form.plant_id in the same tick.
+  const [endStatusOffer, setEndStatusOffer] = useState(null)
+
   // V1.2a-2 Wave 3: non-fatal notice (e.g. deep-link project not found).
   const [notice, setNotice] = useState(null)
 
@@ -710,6 +734,11 @@ export default function EventNew() {
     setPreserveCtx(null)
     // V4-WATERMATH-001 F0: a type change is a fresh entry — back to the preselected default.
     setWaterDepth(WATER_DEPTH_DEFAULT); waterDepthTouchedRef.current = false
+    // V4-LOSSUI-001: same reason the treatment reset above exists. A quantity typed against
+    // `failed` must not survive a switch to `given_away` — the two are different questions with
+    // different vocabularies, and a carried-over count would be a number the user never chose for
+    // the type that ends up being saved.
+    setReduction({ qty: '', reason: '' }); setReductionError(null)
   }, [form.event_type])
 
   // V4-TREATLOG-001: lazy-load treatment-relevant inventory the first time a treatment event is
@@ -911,7 +940,11 @@ export default function EventNew() {
     Object.keys(metadataState).length ||
     treatment.pest_target || treatment.product_id || treatment.product_text || treatment.category || treatment.amount ||
     container.type || container.size.trim() ||
-    issueOther
+    issueOther ||
+    // V4-LOSSUI-001: a typed quantity or a tapped reason is exactly the "typed content a dismissal
+    // would destroy" this predicate asks about — and unlike most panels here these two are REQUIRED,
+    // so losing them to a stray backdrop tap costs the whole entry, not an optional detail.
+    reduction.qty || reduction.reason
   )
 
   useReportOverlayDirty(hasUnsavedInput)
@@ -1166,6 +1199,10 @@ export default function EventNew() {
     // planting — the same class of defect the treatment reset above exists to close — and it
     // would also corrupt the annotation-rate signal by inflating one deliberate tap into N.
     setWaterDepth(WATER_DEPTH_DEFAULT); waterDepthTouchedRef.current = false
+    // V4-LOSSUI-001: cleared here as well as on type change, because keepMode:'type' PRESERVES
+    // event_type — so the type-change effect never fires on a burst and a carried-over "lost 3"
+    // would silently ride onto the NEXT planting. Exactly the treatment.* defect recorded above.
+    setReduction({ qty: '', reason: '' }); setReductionError(null)
     clearPhoto()
     setShowAddDetails(EVENTNEW_ADD_DETAILS_EXPANDED)
     setShowPrivate(false)
@@ -1218,6 +1255,21 @@ export default function EventNew() {
       setHarvestError(null)
     }
 
+    // V4-LOSSUI-001: the plant-reduction gate. BOTH fields are required by the events validator, and
+    // its 400s flatten through friendlyError() to "Something didn't look right" — useless beside a
+    // form with two empty fields. Refusing here puts the message on the panel instead. Mirrors the
+    // harvest gate directly above, deliberately: same shape, same inline surfacing, same position.
+    //
+    // Over-reduction is NOT gated here. That refusal is the server's 409 (see the reduction branch
+    // of friendlyError) because only the server knows the live count — pre-refusing on a plants list
+    // fetched at mount would block a legitimate save on stale data, and clamping is what
+    // V4-LOSSEVENT-001 expressly refused.
+    if (isPlantReductionEventType(form.event_type)) {
+      const rErr = validateReductionInput(form.event_type, reduction)
+      if (rErr) { setReductionError(rErr); return }
+      setReductionError(null)
+    }
+
     // V4-FLAG-001: flag-mode gates — a flag must target a specific planting (so DrG surfaces it)
     // and must carry a severity (required by the events validator + drives DrG urgency).
     if (form.event_type === 'flag_issue') {
@@ -1242,7 +1294,11 @@ export default function EventNew() {
     const depthMeta = isWaterDepthType(form.event_type)
       ? waterDepthMetadata(waterDepth, waterDepthTouchedRef.current)
       : {}
-    const mergedMeta = { ...metadataState, ...depthMeta, ...(isFlag && issueLabel ? { issue_label: issueLabel } : {}) }
+    // V4-LOSSUI-001: qty_reduced + the type's reason key. {} for every other type, so this spreads
+    // unconditionally — and the events validator FORBIDS these keys on other types, which is what
+    // makes "no-op by predicate" the only safe shape here rather than merely the tidy one.
+    const reductionMeta = buildReductionMetadata(form.event_type, reduction)
+    const mergedMeta = { ...metadataState, ...depthMeta, ...reductionMeta, ...(isFlag && issueLabel ? { issue_label: issueLabel } : {}) }
     const metadata = Object.keys(mergedMeta).length > 0 ? mergedMeta : null
     const flagPayload = isFlag ? { flagged_as_issue: true, severity } : {}
 
@@ -1421,6 +1477,18 @@ export default function EventNew() {
     // the POST response. null → literal-noun "View planting" fallback; never fetched.
     const plantName = form.plant_id ? (plantsForProject.find(p => p.id === form.plant_id)?.name ?? null) : null
 
+    // V4-LOSSUI-001 — the end-status OFFER, captured BEFORE resetForNext() clears form.plant_id for
+    // the same reason plantName is.
+    //
+    // PRESENT ONLY WHEN THIS REDUCTION EMPTIED THE PLANTING. The events Lambda sends
+    // plant_reduction: null on every other event, INCLUDING every partial reduction — which is the
+    // common case ("10 → 8, pest") and must stay a silent one-tap log. So this is a pass-through of
+    // the server's own decision, never a client-side "did it look empty?" inference: the client
+    // cannot know the live count, and a second surface guessing at emptiness is the split-brain
+    // class this whole feature exists to avoid.
+    const reductionOffer = result?.plant_reduction ?? null
+    const offerPlantId = result?.plant_id ?? form.plant_id ?? null
+
     // V4-HARVESTCENTER-001 (L9): capture the "preserve this?" prefill BEFORE resetForNext clears
     // form.plant_id. Provenance is best-effort — crop/variety resolve off the selected planting's
     // variety_ref; harvest_log_id off the events response's harvest row. At least one of {crop,
@@ -1455,6 +1523,13 @@ export default function EventNew() {
       : null
 
     resetForNext(keepMode)
+    // V4-LOSSUI-001: raise the offer AFTER the reset, so the sheet is the only thing asking for
+    // attention and the form underneath is already clean for the next entry. Requires a plant id —
+    // there is nothing to PUT a status onto without one, and an offer with no apply path is worse
+    // than no offer.
+    if (reductionOffer && offerPlantId) {
+      setEndStatusOffer({ ...reductionOffer, plantId: offerPlantId, plantName })
+    }
     // V4-HARVPOSTSAVESCROLL-001 (BD-017): keepMode 'type' clears plant_id and the confirmation
     // says "pick the next plant" — while the picker itself is left above the fold, so the next
     // planting costs a manual scroll up. Send the user where the copy just told them to go.
@@ -1902,6 +1977,38 @@ export default function EventNew() {
                 Relative to what this plant needs — Normal is already picked.
               </p>
             </Section>
+          )
+  )
+
+          /* ── V4-LOSSUI-001: plant-reduction capture (failed / given_away) ──
+             REQUIRED, so it is a plain visible Section like Harvest * and What happened? *, NOT an
+             EVENT_METADATA_FIELDS entry — that registry feeds the collapsed "More details"
+             disclosure whose contract is that everything inside it is optional.
+
+             POSITIONED AFTER the planting picker, which is where this diverges from
+             TreatmentDetails and WaterDepthChips (both sit directly under the type picker). The
+             question this panel asks is "how many of THESE did you lose", and it can only show the
+             live count once a planting is chosen — same reason containerBlock above sits here. The
+             panel itself does NOT gate on plant_id, though: hiding a required field until another
+             field is filled is how a user reaches Save without knowing what is still missing.
+
+             `remaining` is INFORMATION ONLY (see lib/plantReduction.js): the over-reduction refusal
+             is the server's 409, never a client-side clamp. ── */
+  const reductionBlock = (
+          isPlantReductionEventType(form.event_type) && (
+            <PlantReductionFields
+              eventType={form.event_type}
+              qty={reduction.qty}
+              reason={reduction.reason}
+              onQty={v => { setReduction(r => ({ ...r, qty: v })); if (reductionError) setReductionError(null) }}
+              onReason={v => { setReduction(r => ({ ...r, reason: v })); if (reductionError) setReductionError(null) }}
+              error={reductionError}
+              remaining={
+                form.plant_id
+                  ? (plantsForProject.find(p => p.id === form.plant_id)?.quantity ?? null)
+                  : null
+              }
+            />
           )
   )
 
@@ -2415,6 +2522,7 @@ export default function EventNew() {
               {projectBlock}
               {plantingBlock}
               {containerBlock}
+              {reductionBlock}
               {metadataBlock}
               {harvestBlock}
               {addDetailsBlock}
@@ -2610,6 +2718,33 @@ export default function EventNew() {
 
 
         </form>
+
+        {/* ── V4-LOSSUI-001 — the end-status offer ──
+            OUTSIDE the form element deliberately: it is a post-save decision about the PLANTING,
+            not a field of the event being logged, and the form underneath has already been reset
+            for the next entry. Dismissal runs through the shared Sheet primitive and therefore
+            through DismissRegistry — Escape, the Android Back gesture, the backdrop and the two
+            labelled decline controls all resolve through the one arbiter, and NONE writes a status.
+            (Prose here deliberately avoids the literal angle-bracketed Sheet tag: modalSurfaceFreeze
+            .static.test.js scans source text for render sites and its own header warns that padding
+            the frozen list with files that merely MENTION a modal is how the freeze stops meaning
+            anything. EventNew renders no sheet of its own.) */}
+        <EndStatusOffer
+          offer={endStatusOffer}
+          plantName={endStatusOffer?.plantName}
+          onDismiss={() => setEndStatusOffer(null)}
+          onApply={async (status) => {
+            // The ORDINARY plants PUT — the same endpoint the container capture above uses. The
+            // events endpoint deliberately never writes status (mutation-proved server-side), so
+            // this explicit user tap is the only thing in the system that can.
+            await apiFetch('/api/plants/' + endStatusOffer.plantId, {
+              method: 'PUT',
+              body: JSON.stringify({ status }),
+            })
+            setEndStatusOffer(null)
+            showToast({ message: `Planting set to ${statusLabel(status)}` })
+          }}
+        />
       </div>
     </div>
   )
