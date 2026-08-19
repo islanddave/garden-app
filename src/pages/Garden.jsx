@@ -383,6 +383,20 @@ export default function Garden() {
   //
   // `full.id` is checked, not truthiness: the unknown-id case must still strip the param and open
   // nothing, and an empty array is truthy.
+  //
+  // The scroll-into-view timer below is held in a ref rather than an effect-local, and cleared on
+  // UNMOUNT, not on every effect re-run. Both halves matter. Unowned it outlived the component and
+  // fired against a torn-down environment — observed 2026-08-19 as
+  // `ReferenceError: document is not defined ❯ Timeout._onTimeout src/pages/Garden.jsx:398:11`,
+  // a non-failing unhandled error in a full-suite run that would not reproduce in isolation. And
+  // clearing it in THIS effect's cleanup would silently kill the scroll instead: the strip above
+  // hands back a fresh `searchParams` object, so the effect re-runs (and cleans up) on the very
+  // re-render that setEditor triggers, well before 60ms elapse. Component-lifetime ownership is
+  // the only version that both cancels on teardown and still scrolls. Same shape as
+  // InactiveProjects' dismissTimerRef.
+  const editorScrollTimerRef = useRef(null)
+  useEffect(() => () => clearTimeout(editorScrollTimerRef.current), [])
+
   useEffect(() => {
     const editId = searchParams.get('edit')
     if (!editId || loading) return
@@ -394,7 +408,12 @@ export default function Garden() {
       .then(full => {
         if (!on || !full?.id) return
         setEditor({ mode: 'edit', plant: full })
-        setTimeout(() => {
+        clearTimeout(editorScrollTimerRef.current)
+        editorScrollTimerRef.current = setTimeout(() => {
+          editorScrollTimerRef.current = null
+          // Belt to the unmount cleanup's braces, matching EventNew's anchorSectionToTop: a handler
+          // that does run detached is inert rather than fatal.
+          if (typeof document === 'undefined') return
           document.getElementById('planting-editor')?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
         }, 60)
       })
