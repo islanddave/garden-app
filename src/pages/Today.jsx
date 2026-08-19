@@ -147,7 +147,18 @@ export default function Today() {
           harvestWindows.json with it" reason was FALSE — HarvestReadyBand.jsx never imports
           harvestWindows; HarvestWatchBand.jsx:111 and planting/CropCard.jsx:181 each lazy-import
           lib/harvestWindows.js independently. V4-READYDISMISS-001 is `dropped`, so that re-open
-          gate is closed too. The ONLY live reason to keep this file is cheap re-mountability. */}
+          gate is closed too.
+          VERDICT 2026-08-18 — KEEP, and the deadness is now measured rather than asserted. The
+          component is unreachable in production at BOTH levels: `rg -uuu` over the whole tree finds
+          its only import statements and only JSX render sites in src/__tests__/HarvestReadyBand
+          .test.jsx and src/__tests__/AmbientBandFetch.test.jsx (every other mention, including this
+          one, is a comment), and a `npm run build` bundle contains neither "Due for a pick" nor
+          "more in the garden" while the mounted watch band's "Worth checking soon" IS present —
+          Rolldown tree-shakes the whole file out. What keeps it is no longer "cheap re-mountability"
+          in the abstract: V4-HARVFROMBAND-001 is still `planned` and names a ready-band row as the
+          harvest-form entry point it pre-scopes from. Delete only after that row resolves (or is
+          re-pointed at HarvestWatchBand) — deleting now strands an open row and reverses Dave's own
+          08-13 hide-not-delete call. */}
 
       {/* V4-HARVSURFACE-001 Slice 1 — Section 2 of the two-section harvest surface: the "worth
           checking" watch list — since BD-008 the one harvest band on Today. A plan surface

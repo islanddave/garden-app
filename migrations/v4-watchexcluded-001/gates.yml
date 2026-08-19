@@ -1,0 +1,131 @@
+# gates.yml
+# V4-WATCHEXCLUDEDLOG-001 — public.watch_exclusion (the watch-surface exclusion log).
+#
+# STATUS AT AUTHORING (2026-08-18): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
+# prod. The authoring lane executed no DDL anywhere.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING
+#
+#   staging apply -> rehearse 0r-rollback -> re-apply to staging -> PROD apply -> dev push -> promote
+#
+# The DDL must reach STAGING BEFORE THE DEV PUSH: CI's integration job branches off staging and does
+# NOT apply migrations, so a missing relation there presents as an infra flake, gets retried green,
+# and stays hidden. It must ALSO reach PROD before the promote — the writer is non-fatal by
+# construction (a failed exclusion insert logs a warning and never affects the GET response), so a
+# late migration breaks nothing, but every request served before it lands is a day of the declined
+# set that no backfill can reconstruct (see 0r-rollback.sql).
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * `continuous` DEFAULTS TO TRUE, so every post gate below states `continuous: false` EXPLICITLY
+#     while the migration is unapplied — the scheduled sweep runs post gates against LIVE prod and
+#     would otherwise report a standing red until the apply.
+#   * The SCHEMA-SHAPE gates (table / columns / constraints / index / FK) stay true forever once
+#     applied: flip those to `continuous: true` AFTER the prod apply.
+#   * post_starts_empty is PERMANENTLY window-scoped — NEVER flip it. It is an L-369 category-1
+#     emptiness assert: the watch GET writer populates this table from the first request after the
+#     deploy, so a sweep asserting emptiness would go red the moment the feature works.
+pre:
+  - name: pre_plants_present
+    note: FK target. watch_exclusion.plant_id references public.plants(id).
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+  - name: pre_plants_has_primary_key
+    note: >
+      A REFERENCES clause needs a unique constraint on the target. Reads pg_catalog, NOT
+      information_schema.table_constraints — that view is privilege-filtered to the table owner and
+      returns zero rows for garden_ro while the PK sits there perfectly healthy (measured on live
+      prod 2026-08-12, v4-weatherdaily-001 note).
+    sql: |
+      SELECT 1 FROM pg_class t
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_index i ON i.indrelid = t.oid AND i.indisprimary
+       WHERE n.nspname='public' AND t.relname='plants'
+    expect: rowcount_eq
+    value: 1
+  - name: pre_table_absent
+    note: Greenfield. If this returns a row, someone already applied 0a — stop and diff before re-running.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='watch_exclusion'
+    expect: rowcount_eq
+    value: 0
+post:
+  - name: post_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='watch_exclusion'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+  - name: post_all_columns_present
+    note: All 6 declared columns plus the identity PK. A silently-missing column would present as a
+      dropped batch in the writer's warning log, not as a failure anyone would see.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='watch_exclusion'
+         AND column_name IN ('id','user_id','plant_id','evaluated_on','reason',
+                             'model_version','created_at')
+    expect: rowcount_eq
+    value: 7
+    continuous: false
+  - name: post_dedupe_constraint_present
+    note: >
+      uq_watch_exclusion_day is the writer's ON CONFLICT target. Without it every Today open mints
+      another row and "exclusions per day" measures phone-checking frequency. Read from pg_catalog,
+      not information_schema, for the garden_ro privilege-filter reason above.
+    sql: |
+      SELECT 1 FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='watch_exclusion'
+         AND c.conname='uq_watch_exclusion_day' AND c.contype='u'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+  - name: post_reason_check_present
+    note: >
+      The closed vocabulary from watch.js classifyWatchCandidate. Its absence would let a renamed
+      reason land silently, which is exactly the day the log would most need to be trustworthy.
+    sql: |
+      SELECT 1 FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='watch_exclusion'
+         AND c.conname='watch_exclusion_reason_chk' AND c.contype='c'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+  - name: post_plant_fk_present
+    sql: |
+      SELECT 1 FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='watch_exclusion' AND c.contype='f'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+  - name: post_plant_day_index_present
+    note: The refit's read shape — every day planting P was declined. One secondary index, by design.
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='watch_exclusion'
+         AND indexname='idx_watch_exclusion_plant_day'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+  - name: post_starts_empty
+    note: >
+      WINDOW-SCOPED, NEVER CONTINUOUS. True only between the DDL apply and the first watch GET
+      served by a deploy carrying the writer. A sweep asserting this would go red the moment the
+      feature starts working — L-369 category 1.
+    sql: |
+      SELECT 1 FROM public.watch_exclusion
+    expect: rowcount_eq
+    value: 0
+    continuous: false
