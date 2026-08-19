@@ -26,13 +26,35 @@
 --       cluster mixes both because Dave was writing both into harvest-event notes for lack of
 --       anywhere else to put either one.
 --
--- NULL SEMANTICS: NULL on both new/formalized vocab columns means "not categorized" — the vast
---   majority of harvests are normal picks and must never be nagged for a disposition value; NULL on
---   loss_cause already meant "not recorded" prior to this file and is unchanged. 'unknown' remains a
---   real, DISTINCT, user-chosen vocabulary member on loss_cause (not folded into NULL) — the
---   divergencevocab-001 migration's own comment draws this exact line ("loss_cause's 'unknown' ...
---   is not the same shape" as a nullable column with no sentinel), and that reasoning is why 0b's
---   CHECK keeps 'unknown' rather than dropping it the way divergence_type's CHECK does.
+-- NULL SEMANTICS — THE TWO COLUMNS DIFFER, and an earlier draft of this header blurred them by
+--   calling both "not categorized" while the disposition note 30 lines down said "NULL = normal
+--   pick". Those are opposite claims (not-recorded vs not-applicable), and a column whose NULL is
+--   ambiguous cannot be aggregated. Resolved by V4-HARVDISPOSITION-001, which had to answer it to
+--   write the column at all:
+--
+--   * harvest_log.disposition -> NULL means NOT-APPLICABLE: THIS WAS A NORMAL PICK. It is not an
+--     unanswered question and nothing should ever prompt for it. Measured read-only on prod
+--     2026-08-18: of 707 live harvests, 8 carry any free text and only 4 of those describe a
+--     non-normal outcome ("Unripe abort", "Very early aborts", "Knocked off plant, very green",
+--     "Fell off plant with major blotch"). 0.57%. A fifth "normal" vocabulary value, or a NOT NULL,
+--     would put a required field on 703 picks to record 4 — and would blur the "something went
+--     wrong" signal the other four values exist to carry. So: nullable, defaultless, and
+--     `count(*) FILTER (WHERE disposition IS NOT NULL)` is a COMPLETE count of bad picks.
+--     THE ONE EXCEPTION, stated because a silent one is the defect: for the 707 rows written BEFORE
+--     the writer deployed, NULL means not-RECORDED — they could not have carried a value. That
+--     boundary is finite, stops accruing the moment the writer ships, and is machine-recoverable —
+--     `harvest_log.created_at < (SELECT applied_at FROM schema_version WHERE
+--     version='4.25.0-losscapture-001')` separates the two populations exactly. The 4 rows above are
+--     the entire known backfill candidate set; backfilling them is a data write and is Dave-gated,
+--     NOT part of this migration.
+--
+--   * plants.loss_cause -> NULL already meant "not recorded" before this file and is unchanged.
+--     'unknown' remains a real, DISTINCT, user-chosen vocabulary member (not folded into NULL) — the
+--     divergencevocab-001 migration's own comment draws this exact line ("loss_cause's 'unknown' ...
+--     is not the same shape" as a nullable column with no sentinel), and that reasoning is why 0b's
+--     CHECK keeps 'unknown' rather than dropping it the way divergence_type's CHECK does. That
+--     column has a sentinel for the unanswered question; disposition deliberately does not, because
+--     for a pick there IS no unanswered question — a pick that went fine is a fact, not a gap.
 --
 -- WHY THE CHECKS ARE NOT IN THIS FILE — THE ORDERING FIX (2026-08-18 review).
 --   The first draft added the columns AND all three CHECKs here. Those are two different kinds of

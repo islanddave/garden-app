@@ -169,11 +169,18 @@ sweep:
   # until 0a, and a column reference is resolved at parse time, so no EXISTS/self-arming guard can
   # make this query safe against a pre-0a database. It would raise 42703, not fail cleanly. Sweep is
   # the earliest phase where it is well-formed. Full table, no deleted_at filter, same outage class.
+  #
+  # V4-HARVDISPOSITION-001: rewritten from `NOT IN (...)` to `<> ALL (ARRAY[...])`. Semantically
+  # identical to Postgres, but loss-cause-vocab.test.js's parity parser only reads ARRAY literals, so
+  # in the NOT IN spelling this THIRD copy of the vocabulary was invisible to the guard that keeps
+  # the other copies in agreement — it could have kept the original four while 0b moved. Exactly the
+  # defect V4-LOSSEVENT-001 fixed on pre_no_out_of_vocab_loss_cause; the disposition half was left
+  # behind, and now that a Lambda writer exists it is one more way for the vocabulary to fork.
   - name: sweep_no_out_of_vocab_disposition
     sql: |
       SELECT 1 FROM public.harvest_log
        WHERE disposition IS NOT NULL
-         AND disposition NOT IN ('dropped','culled','aborted','damaged')
+         AND disposition <> ALL (ARRAY['dropped','culled','aborted','damaged'])
     expect: rowcount_eq
     value: 0
 

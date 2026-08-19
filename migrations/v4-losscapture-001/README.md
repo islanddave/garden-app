@@ -129,9 +129,37 @@ that inverts the hazard rather than avoiding it:
 A column reference is resolved at **parse time**, so a deployed writer naming `disposition` against
 a database where `0a` has not run raises **42703 on every request that touches it** — not on the
 ones that supply a value. This is the same parse-time fact that forced
-`sweep_no_out_of_vocab_disposition` out of the `pre` phase, and it is why the "no writer yet" gap
-below is *safe* today: nothing in the repo names the column, so the bundle can be applied in any
-order relative to a promote. That stops being true the moment a writer is written.
+`sweep_no_out_of_vocab_disposition` out of the `pre` phase.
+
+**UPDATE 2026-08-18 — THE WRITER NOW EXISTS, so this constraint is LIVE, not hypothetical.**
+V4-HARVDISPOSITION-001 shipped it in the **events** Lambda, and the escape clause this section used
+to rely on ("nothing in the repo names the column, so the bundle can be applied in any order
+relative to a promote") **no longer holds**. Two statements now name `harvest_log.disposition`:
+
+| site | route | blast radius against a pre-`0a` database |
+|---|---|---|
+| `INSERT INTO harvest_log (…, disposition)` | `POST /api/events` | **every** harvest create, including the 703-of-707 that carry no disposition |
+| `UPDATE harvest_log h SET … disposition = …` | `PUT /api/events/:id` | **every** harvest edit, including a bare quality-star tap |
+
+Neither degrades gracefully — a 42703 is a 500 on the app's most-used write. So:
+
+```
+6.  0a APPLIED to prod AND staging   ← BOTH; deploy-lambda ships one artifact against both
+7.  DEPLOY the events Lambda carrying the disposition writer
+```
+
+Deploying `7` before `6` is the one mistake in this bundle with no cheap failure mode. The reverse
+order is free: `0a` against a Lambda that does not yet name the column is a plain additive column.
+
+Enforcement, so this is not tribal knowledge:
+- **`lambda/events/harvest-disposition.test.js`** ENUMERATES the two SQL sites (not just counts
+  them) and asserts `0a` still adds the column, nullable and defaultless. A third site fails the
+  test by name and sends its author here.
+- **`L-081 Schema Audit (dev)`** (`.github/workflows/schema-audit.yml`) reads INSERT column lists out
+  of `lambda/**/index.js` and checks them against **prod's** `information_schema` on every push to
+  `dev`. It therefore goes RED on the disposition writer until `0a` is applied to prod — a real,
+  prod-anchored signal, though **advisory**: it fails the workflow, nothing gates on it, and it
+  does **not** see the `UPDATE` arm (Phase 3 parses only `deleted_at` soft-deletes).
 
 `plants.loss_cause` has no equivalent constraint — the column already exists on both live
 environments and the deployed Lambda already reads and validates it.
@@ -250,13 +278,18 @@ place in the repo, and it was that comment. The header is corrected; the real tw
   disagrees with the ledger is the split-brain class this schema keeps paying for. So `loss_cause`
   remains a hand-set column with one live row; this bundle widens its vocabulary but does not
   populate it.
-- **There is still no disposition writer.** That half of the bundle is DDL only — the capture UI
-  `0a`'s original header described does not exist. Until it ships, `0c`
-  validates a `disposition` column that is 100% NULL — a real but vacuous assertion, and exactly the
-  V4-EVENTSOURCE-001 shape (DDL applied, backfill never ran) that `gate-invariants.yml` exists to
-  catch. The three ledger items are not closed by applying this bundle. The writer's own deploy
-  ordering is §"A THIRD ordering constraint" above; `loss-cause-vocab.test.js` reds the moment one
-  defines an allowlist, so the parity set gets extended rather than a fourth copy started.
+- **UPDATE 2026-08-18 — the disposition WRITER now exists; the CAPTURE UI does not.**
+  V4-HARVDISPOSITION-001 shipped the backend half in the events Lambda: `harvest.disposition` is
+  accepted and vocabulary-checked on `POST /api/events` and `PUT /api/events/:id`, written to
+  `harvest_log.disposition`, returned to the client, and — because a pick the app has itself marked
+  atypical must not teach the cultivar calibration what a typical fruit weighs — suppressed from
+  `record_harvest_weight_sample` (and an existing sample RETIRED if a disposition is added on a later
+  edit). **Nothing in `src/` sends the field yet**, so applying this bundle still yields a 100% NULL
+  column until a capture surface ships; that surface is deliberately out of that lane's scope
+  (sibling lane `lossui` owns the event-capture panel). The parity set in
+  `loss-cause-vocab.test.js` has been extended to the new constant rather than a fourth copy started,
+  and the writer's deploy ordering is now ENFORCED, not just documented — see §"A THIRD ordering
+  constraint" above.
 - **V4-LOSSEVENT-001 is not addressed by this bundle at all, and no file here can address it.**
   Dave's 2026-07-28 decision was to add a **loss event type**. `EVENT_TYPES` carries 49 members
   (verified against `lambda/events/eventTypes.generated.js` on this branch) and not one of them is a

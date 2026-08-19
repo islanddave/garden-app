@@ -45,6 +45,40 @@ export function toGrams(weight, unit) {
   return weight * (WEIGHT_UNIT_GRAMS[unit ?? 'g'] ?? 1);
 }
 
+// ── V4-HARVDISPOSITION-001 — the outcome of a pick ──────────────────────────────────────────────
+//
+// THE FIFTH HAND-MAINTAINED COPY OF THIS VOCABULARY, and the first one in code. The canonical list
+// is the ARRAY in migrations/v4-losscapture-001/0b-arm-checks.sql's chk_harvest_log_disposition;
+// this literal, the two gates in that bundle's gates.yml, and the rollback are all pinned against it
+// by lambda/plants/loss-cause-vocab.test.js. Never hand-edit one without the others — three
+// unpinned copies of one vocabulary is BUG-DIVERGENCEVOCAB-001, which this bundle has already been
+// bitten by once.
+//
+// PLANT GRAIN vs PICK GRAIN — these are NOT the same vocabulary and must never be merged.
+// LOSS_REASONS (src/lib/eventTypes.js, V4-LOSSEVENT-001) describes plants that produced no pick at
+// all and decrements plants.quantity/qty_lost. A disposition describes ONE PICK THAT WAS STILL
+// LOGGED AS A HARVEST and touches no plant counter whatsoever. 'culled' appears in both lists
+// because culling a plant and culling a fruit are both real; they are separate facts on separate
+// tables and the overlap is harmless precisely because neither writer ever reads the other's column.
+export const ALLOWED_DISPOSITION = ['dropped', 'culled', 'aborted', 'damaged'];
+export const DISPOSITION_ERROR =
+  `harvest.disposition must be one of: ${ALLOWED_DISPOSITION.join(', ')}`;
+
+// A pick whose disposition is set is the app's own declaration that this pick was NOT typical, so
+// its weight must not teach the cultivar calibration what a typical fruit weighs. Measured on prod:
+// three of the four disposition-bearing harvests in the entire history already became
+// cultivar_weight_sample rows, and two of them are the SOLE sample for their cultivar — Pumpkin
+// Jalapeno derives 0.50 g/fruit from "Very early aborts", Habanero 2.0 g/fruit from "Unripe abort".
+// Both are still `provisional`, so resolve_harvest_weight's corroboration predicate (confidence in
+// high/medium OR independent_n >= 5) is not yet using them — but aborts are correlated and
+// repeatable, so five more of them PROMOTE the wrong number rather than diluting it.
+// Uniform across all four values, deliberately: 'aborted' is systematically light, 'damaged' and
+// 'dropped' are picked-by-accident rather than picked-when-ready, and 'culled' is off-spec by
+// definition. A per-value exception list would be a sixth vocabulary to keep in sync.
+export function seedsWeightCalibration(disposition) {
+  return disposition == null;
+}
+
 // V4-HARVDUAL-001 Slice C — did the USER type this row's weight, as opposed to it being derived?
 //
 // harvest_log.weight_estimated=false has TWO causes and they are not interchangeable:
@@ -353,6 +387,20 @@ export function validateHarvestFields(h) {
   }
   if (h.quality_rating != null && ![1, 2, 3, 4, 5].includes(h.quality_rating)) {
     return { status: 400, error: 'harvest.quality_rating must be 1-5' };
+  }
+
+  // V4-HARVDISPOSITION-001. Same three-intent shape as `weight` below, and for the same reason:
+  //   disposition: <value>  -> this pick went wrong in that way.
+  //   disposition: null     -> the user CLEARED it; it was a normal pick after all.
+  //   disposition absent    -> untouched. EventDetail sends the whole harvest object on every save
+  //                            and does not know this key yet, so "absent means clear" would wipe a
+  //                            recorded disposition on an unrelated quality-star tap — the exact
+  //                            silent-nulling shape BUG-TREATMENTPRODUCT-001 cost a season of
+  //                            fertilizing product text.
+  // Checked BEFORE it can reach chk_harvest_log_disposition, which 0c VALIDATEs: an out-of-vocab
+  // value that got as far as the database would surface as an opaque 500, not a readable 400.
+  if (h.disposition != null && !ALLOWED_DISPOSITION.includes(h.disposition)) {
+    return { status: 400, error: DISPOSITION_ERROR };
   }
 
   // V4-HARVDUAL-001 Slice A — OPTIONAL measured weight alongside the count ("5 tomatoes, 337 g").
