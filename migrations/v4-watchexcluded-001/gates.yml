@@ -19,11 +19,18 @@
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 # GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
 #
-#   * `continuous` DEFAULTS TO TRUE, so every post gate below states `continuous: false` EXPLICITLY
-#     while the migration is unapplied — the scheduled sweep runs post gates against LIVE prod and
-#     would otherwise report a standing red until the apply.
-#   * The SCHEMA-SHAPE gates (table / columns / constraints / index / FK) stay true forever once
-#     applied: flip those to `continuous: true` AFTER the prod apply.
+#   * `continuous` DEFAULTS TO TRUE. The scheduled sweep runs post gates against LIVE prod, so a
+#     bare shape assert would report a standing red until the prod apply.
+#   * The SCHEMA-SHAPE gates (columns / constraints / index / FK) are therefore SELF-ARMING and
+#     `continuous: true`: each is violation-shaped (`SELECT … WHERE <armed> AND NOT <the fact>`,
+#     rowcount_eq 0) with the arming conjunct being the EXISTENCE OF public.watch_exclusion. On
+#     prod today the arm is false, so they return 0 rows and pass vacuously; the instant 0a lands
+#     they begin asserting the real shape with NO human flip. This bundle writes no schema_version
+#     receipt (and cannot retro-add one — 0a is already applied to staging, so editing it would
+#     desync the two environments), which is why the table's own existence is the arming predicate.
+#     OPS-WATCHEXCLGATEARM-001, replacing an unenforced manual obligation.
+#   * post_table_present stays `continuous: false` — arming a table-exists assert on table-existence
+#     is tautological, so it cannot self-arm. Flip it after the prod apply.
 #   * post_starts_empty is PERMANENTLY window-scoped — NEVER flip it. It is an L-369 category-1
 #     emptiness assert: the watch GET writer populates this table from the first request after the
 #     deploy, so a sweep asserting emptiness would go red the moment the feature works.
@@ -64,61 +71,85 @@ post:
     value: 1
     continuous: false
   - name: post_all_columns_present
-    note: All 6 declared columns plus the identity PK. A silently-missing column would present as a
-      dropped batch in the writer's warning log, not as a failure anyone would see.
+    note: >
+      All 6 declared columns plus the identity PK. A silently-missing column would present as a
+      dropped batch in the writer's warning log, not as a failure anyone would see. Self-armed on
+      table existence; each returned row NAMES a missing column rather than reporting a count short.
     sql: |
-      SELECT 1 FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='watch_exclusion'
-         AND column_name IN ('id','user_id','plant_id','evaluated_on','reason',
-                             'model_version','created_at')
+      SELECT c.column_name
+        FROM (VALUES ('id'),('user_id'),('plant_id'),('evaluated_on'),('reason'),
+                     ('model_version'),('created_at')) AS c(column_name)
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='watch_exclusion')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='watch_exclusion'
+                            AND column_name = c.column_name)
     expect: rowcount_eq
-    value: 7
-    continuous: false
+    value: 0
+    continuous: true
   - name: post_dedupe_constraint_present
     note: >
       uq_watch_exclusion_day is the writer's ON CONFLICT target. Without it every Today open mints
       another row and "exclusions per day" measures phone-checking frequency. Read from pg_catalog,
-      not information_schema, for the garden_ro privilege-filter reason above.
+      not information_schema, for the garden_ro privilege-filter reason above. Self-armed on table
+      existence.
     sql: |
-      SELECT 1 FROM pg_constraint c
-        JOIN pg_class t ON t.oid = c.conrelid
-        JOIN pg_namespace n ON n.oid = t.relnamespace
-       WHERE n.nspname='public' AND t.relname='watch_exclusion'
-         AND c.conname='uq_watch_exclusion_day' AND c.contype='u'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='watch_exclusion')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='watch_exclusion'
+                            AND c.conname='uq_watch_exclusion_day' AND c.contype='u')
     expect: rowcount_eq
-    value: 1
-    continuous: false
+    value: 0
+    continuous: true
   - name: post_reason_check_present
     note: >
       The closed vocabulary from watch.js classifyWatchCandidate. Its absence would let a renamed
       reason land silently, which is exactly the day the log would most need to be trustworthy.
+      Self-armed on table existence.
     sql: |
-      SELECT 1 FROM pg_constraint c
-        JOIN pg_class t ON t.oid = c.conrelid
-        JOIN pg_namespace n ON n.oid = t.relnamespace
-       WHERE n.nspname='public' AND t.relname='watch_exclusion'
-         AND c.conname='watch_exclusion_reason_chk' AND c.contype='c'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='watch_exclusion')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='watch_exclusion'
+                            AND c.conname='watch_exclusion_reason_chk' AND c.contype='c')
     expect: rowcount_eq
-    value: 1
-    continuous: false
+    value: 0
+    continuous: true
   - name: post_plant_fk_present
+    note: Self-armed on table existence.
     sql: |
-      SELECT 1 FROM pg_constraint c
-        JOIN pg_class t ON t.oid = c.conrelid
-        JOIN pg_namespace n ON n.oid = t.relnamespace
-       WHERE n.nspname='public' AND t.relname='watch_exclusion' AND c.contype='f'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='watch_exclusion')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='watch_exclusion'
+                            AND c.contype='f')
     expect: rowcount_eq
-    value: 1
-    continuous: false
+    value: 0
+    continuous: true
   - name: post_plant_day_index_present
-    note: The refit's read shape — every day planting P was declined. One secondary index, by design.
+    note: >
+      The refit's read shape — every day planting P was declined. One secondary index, by design.
+      Self-armed on table existence.
     sql: |
-      SELECT 1 FROM pg_indexes
-       WHERE schemaname='public' AND tablename='watch_exclusion'
-         AND indexname='idx_watch_exclusion_plant_day'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='watch_exclusion')
+         AND NOT EXISTS (SELECT 1 FROM pg_indexes
+                          WHERE schemaname='public' AND tablename='watch_exclusion'
+                            AND indexname='idx_watch_exclusion_plant_day')
     expect: rowcount_eq
-    value: 1
-    continuous: false
+    value: 0
+    continuous: true
   - name: post_starts_empty
     note: >
       WINDOW-SCOPED, NEVER CONTINUOUS. True only between the DDL apply and the first watch GET
