@@ -1,0 +1,341 @@
+# OPS-HARVESTAUDIT-001 — gates for the audit_events triggers on harvest_log + event_log.
+#
+# ═══ SELF-ARMING, AND WHY EVERY ASSERTING POST GATE HERE IS VIOLATION-SHAPED ═══
+# gate-invariants.yml runs `--all --phase post --continuous-only` on every push to dev, and there is
+# no skip-if-unapplied logic in gate_runner.py. A post gate asserting this migration's own effect
+# would therefore go red the moment this directory reaches the branch and stay red until Dave applies
+# it. Every asserting post gate below is SELF-ARMING on the schema_version row of the phase that
+# establishes the fact: vacuously true before that phase, a real permanent invariant after it.
+#
+# The polarity trap (see migrations/v4-losscapture-001/gates.yml, which states it well): a bare
+# `AND EXISTS (schema_version ...)` conjunct only self-arms correctly for VIOLATION-shaped gates that
+# expect 0 rows. Every gate here is a PRESENCE assertion ("the trigger exists", "the handler is
+# there"), so each is re-expressed as a violation — `SELECT 1 WHERE <armed> AND NOT <the fact>`,
+# expecting rowcount 0. Same self-arming property, correct polarity.
+#
+# ═══ WHAT THESE GATES CAN AND CANNOT DO ═══
+# A gate is a read-only SELECT, so this file can prove the triggers EXIST and are correctly SHAPED.
+# It cannot prove they CAPTURE — a gutted trigger body would keep every gate below green. The
+# behavioural half is 0c-verify-triggers.sql (a fixture + assertions + ROLLBACK, runnable on prod)
+# and migrations/v4-harvestaudit-001/audit-triggers.test.js.
+#
+# ═══ PHASE OWNERSHIP ═══
+#   pre    before 0a. Preconditions on audit_events itself, plus the statement of the defect.
+#   sweep  apply-window receipts. continuous:false — true only once the phase has run.
+#   post   after 0b. The permanent invariants, all self-armed on the 0b schema_version row.
+
+pre:
+  # audit_events must already exist with the shape 0a's functions write. It has been live since
+  # 2026-05-11 (1,872 rows, all plant_varieties) and NO migration in this repo created it — it is
+  # hand-applied, like plants_loss_cause_check. So its presence is a precondition to CHECK, never
+  # something to assume.
+  - name: pre_audit_events_has_expected_columns
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'audit_events'
+         AND column_name IN ('id','table_name','row_id','action',
+                             'actor_clerk_sub','before_jsonb','after_jsonb','ts')
+    expect: rowcount_eq
+    value: 8
+    note: >
+      All eight columns 0a's INSERT targets. A missing one would surface as a swallowed WARNING at
+      runtime rather than a failed apply, because the audit INSERT is inside an exception handler —
+      which is exactly why it is checked up front instead.
+
+  # actor_clerk_sub NOT NULL with no default is the reason 0a coalesces to 'system'. If that ever
+  # gains a default or becomes nullable the coalesce is merely redundant, not wrong — but the fact
+  # is load-bearing enough to pin.
+  - name: pre_audit_events_actor_is_not_null
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'audit_events'
+         AND column_name = 'actor_clerk_sub' AND is_nullable = 'NO'
+    expect: rowcount_eq
+    value: 1
+
+  # The three actions 0a writes must all be admitted by audit_events_action_check. A value outside
+  # the CHECK would 23514 inside the exception handler and vanish as a WARNING.
+  - name: pre_audit_events_check_admits_our_actions
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'audit_events_action_check'
+         AND pg_get_constraintdef(oid) LIKE '%DELETE%'
+         AND pg_get_constraintdef(oid) LIKE '%SOFT_DELETE%'
+         AND pg_get_constraintdef(oid) LIKE '%RESTORE%'
+    expect: rowcount_eq
+    value: 1
+
+  # THE DEFECT, stated as a gate. This is what OPS-HARVESTAUDIT-001 was filed for: zero audit
+  # coverage on either table, so a hard delete leaves no trace. Passes (0 rows) only while the
+  # defect is present; after 0b it is expected to stop passing, which is why it lives in `pre`.
+  - name: pre_targets_have_no_audit_coverage
+    sql: |
+      SELECT t.tgname FROM pg_trigger t
+       WHERE NOT t.tgisinternal
+         AND t.tgrelid IN ('public.event_log'::regclass, 'public.harvest_log'::regclass)
+         AND t.tgfoid IN (
+               SELECT oid FROM pg_proc WHERE proname IN ('audit_stmt_delete','audit_stmt_update'))
+    expect: rowcount_eq
+    value: 0
+
+  # A resumed run would otherwise re-enter the sequence with the earlier phase's gates already
+  # invalidated. Fail loudly and let a human pick the phase to resume at.
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version IN ('4.36.0-harvestaudit-001','4.36.0-harvestaudit-001-fn')
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  - name: sweep_schema_version_0a_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001-fn'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+    note: Apply-window receipt for 0a. Not a continuous invariant.
+
+  - name: sweep_schema_version_0b_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+    note: Apply-window receipt for 0b. Not a continuous invariant.
+
+post:
+  # ── existence and shape ─────────────────────────────────────────────────────────────────────────
+  - name: post_all_four_audit_triggers_present
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND (SELECT count(*) FROM pg_trigger
+               WHERE NOT tgisinternal
+                 AND tgname IN ('trg_audit_event_log_del','trg_audit_event_log_upd',
+                                'trg_audit_harvest_log_del','trg_audit_harvest_log_upd')) <> 4
+    expect: rowcount_eq
+    value: 0
+    note: >
+      Two per table — a DELETE arm and an UPDATE arm. Named exactly, so renaming one out of existence
+      fails here rather than silently reducing coverage.
+
+  # STATEMENT-level is not a stylistic choice, it is the write-amplification design: event_log takes
+  # bursts of up to 157 rows in one second, and the hard-delete path (archive_plant_events) is a
+  # single `DELETE ... WHERE id = ANY(v_ids)`. tgtype bit 0 set = FOR EACH ROW.
+  - name: post_audit_triggers_are_statement_level
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger
+                WHERE tgname IN ('trg_audit_event_log_del','trg_audit_event_log_upd',
+                                 'trg_audit_harvest_log_del','trg_audit_harvest_log_upd')
+                  AND (tgtype & 1) <> 0)
+    expect: rowcount_eq
+    value: 0
+
+  # A statement-level trigger without transition tables sees no rows at all and would write nothing,
+  # while every existence gate above stayed green. This is the specific vacuity this gate closes.
+  - name: post_audit_triggers_have_transition_tables
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t
+                WHERE t.tgname IN ('trg_audit_event_log_del','trg_audit_harvest_log_del')
+                  AND pg_get_triggerdef(t.oid) NOT LIKE '%REFERENCING OLD TABLE AS old_rows%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_update_triggers_have_both_transition_tables
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t
+                WHERE t.tgname IN ('trg_audit_event_log_upd','trg_audit_harvest_log_upd')
+                  AND (pg_get_triggerdef(t.oid) NOT LIKE '%OLD TABLE AS old_rows%'
+                    OR pg_get_triggerdef(t.oid) NOT LIKE '%NEW TABLE AS new_rows%'))
+    expect: rowcount_eq
+    value: 0
+
+  # ── the safety property: the audit can never abort the write it audits ──────────────────────────
+  # audit_events.actor_clerk_sub is NOT NULL, so an unhandled failure in these functions would kill a
+  # user's write — including a V4-LOSSEVENT-001 reduction, whose counter update on plants is in the
+  # same transaction. Gutting the handler is the single most dangerous edit possible to this
+  # migration and it would leave every other gate green.
+  - name: post_audit_functions_cannot_abort_the_write
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001-fn')
+         AND EXISTS (
+               SELECT 1 FROM pg_proc
+                WHERE proname IN ('audit_stmt_delete','audit_stmt_update')
+                  AND (prosrc NOT LIKE '%WHEN OTHERS THEN%'
+                    OR prosrc NOT LIKE '%RAISE WARNING%'))
+    expect: rowcount_eq
+    value: 0
+
+  # ...but cancellation must still propagate. Swallowing query_canceled would make these triggers
+  # un-cancellable and turn a runaway statement into an unkillable one.
+  - name: post_audit_functions_reraise_cancellation
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001-fn')
+         AND EXISTS (
+               SELECT 1 FROM pg_proc
+                WHERE proname IN ('audit_stmt_delete','audit_stmt_update')
+                  AND prosrc NOT LIKE '%query_canceled%')
+    expect: rowcount_eq
+    value: 0
+
+  # SECURITY DEFINER + a pinned search_path. Because the INSERT is inside an exception handler, a
+  # missing grant would degrade to a swallowed WARNING rather than an error — an invisible audit gap.
+  # Running as owner removes that failure mode; the pinned search_path is what makes it safe.
+  - name: post_audit_functions_are_security_definer_with_pinned_path
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001-fn')
+         AND EXISTS (
+               SELECT 1 FROM pg_proc
+                WHERE proname IN ('audit_stmt_delete','audit_stmt_update')
+                  AND (prosecdef IS NOT TRUE
+                    OR NOT (proconfig::text LIKE '%search_path=pg_catalog, public%')))
+    expect: rowcount_eq
+    value: 0
+
+  # ── the column classification, which is what keeps the design honest ────────────────────────────
+  # Every watched name must be a REAL column. audit_watched_slice projects a missing key to JSON
+  # null on both sides of the comparison, so a typo'd or dropped column stops being watched in
+  # complete silence — no error, no warning, just a hole. This is the allowlist's vacuity mode.
+  - name: post_every_watched_column_actually_exists
+    sql: |
+      WITH targs AS (
+        SELECT c.relname AS tbl, btrim(x, ' ''') AS col
+          FROM pg_trigger t
+          JOIN pg_class c ON c.oid = t.tgrelid
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(t.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE t.tgname IN ('trg_audit_event_log_upd','trg_audit_harvest_log_upd')
+      )
+      SELECT 1 FROM targs
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND col <> ''
+         AND NOT EXISTS (
+               SELECT 1 FROM information_schema.columns ic
+                WHERE ic.table_schema = 'public' AND ic.table_name = targs.tbl
+                  AND ic.column_name = targs.col)
+    expect: rowcount_eq
+    value: 0
+
+  # THE ANTI-SILENT-GAP GATE. The watched list is an allowlist, so a quantity-bearing column added
+  # later would be unaudited and nothing would say so. This gate fails when any column of either
+  # table is neither watched (read live from the trigger arguments) nor named in the ignored list
+  # below — forcing a human decision on every future ALTER TABLE ... ADD COLUMN instead of a quiet
+  # hole. The ignored list is the ONLY hardcoded half; watched is read from the live triggers, so
+  # the two cannot drift.
+  #
+  # Ignored, with the reason each is not forensically material:
+  #   id                     the primary key; it IS audit_events.row_id
+  #   updated_at             set by set_updated_at on EVERY update; watching it audits everything
+  #   source                 target of 4.21.3-eventsource-001-backfill (11,201 rows in one statement)
+  #   title/notes/private_notes/quality_rating   annotations, not part of any total
+  #   flagged_as_issue/severity/resolved_at/resolved_by   issue workflow state
+  #   treatment_*/pest_target  treatment dosing, not a harvest total
+  - name: post_column_classification_is_complete
+    sql: |
+      WITH targs AS (
+        SELECT c.relname AS tbl, btrim(x, ' ''') AS col
+          FROM pg_trigger t
+          JOIN pg_class c ON c.oid = t.tgrelid
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(t.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE t.tgname IN ('trg_audit_event_log_upd','trg_audit_harvest_log_upd')
+      ), ignored(tbl, col) AS (
+        SELECT 'event_log', unnest(ARRAY[
+                 'id','title','notes','private_notes','updated_at','flagged_as_issue','severity',
+                 'resolved_at','resolved_by','treatment_product_id','treatment_product_text',
+                 'treatment_category','treatment_amount','pest_target','source'])
+        UNION ALL
+        SELECT 'harvest_log', unnest(ARRAY['id','quality_rating','notes','updated_at'])
+      )
+      SELECT ic.table_name, ic.column_name
+        FROM information_schema.columns ic
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND ic.table_schema = 'public'
+         AND ic.table_name IN ('event_log','harvest_log')
+         AND NOT EXISTS (SELECT 1 FROM targs   t WHERE t.tbl = ic.table_name AND t.col = ic.column_name)
+         AND NOT EXISTS (SELECT 1 FROM ignored g WHERE g.tbl = ic.table_name AND g.col = ic.column_name)
+    expect: rowcount_eq
+    value: 0
+
+  # deleted_at is tested on its own in audit_stmt_update, so SOFT_DELETE/RESTORE survive even a bad
+  # edit to the watched list — but it is also IN both watched lists, and that belt-and-braces is
+  # deliberate. Pin it, so removing it is a deliberate act rather than a tidy-up.
+  - name: post_deleted_at_is_watched_on_both_tables
+    sql: |
+      WITH targs AS (
+        SELECT c.relname AS tbl, btrim(x, ' ''') AS col
+          FROM pg_trigger t
+          JOIN pg_class c ON c.oid = t.tgrelid
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(t.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE t.tgname IN ('trg_audit_event_log_upd','trg_audit_harvest_log_upd')
+      )
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND (SELECT count(*) FROM targs WHERE col = 'deleted_at') <> 2
+    expect: rowcount_eq
+    value: 0
+
+  # event_log.metadata carries V4-LOSSEVENT-001's qty_reduced/loss_reason, which drive the counters
+  # on plants and are reversed from the stored row on delete. An unaudited metadata edit is precisely
+  # the shape that turns into an unexplainable number, which is the whole reason this lane exists.
+  - name: post_event_log_metadata_and_quantities_are_watched
+    sql: |
+      WITH targs AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger t
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(t.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE t.tgname = 'trg_audit_event_log_upd'
+      )
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND (SELECT count(*) FROM targs
+               WHERE col IN ('metadata','quantity','quantity_numeric','event_type','plant_id')) <> 5
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_harvest_log_weight_and_quantity_are_watched
+    sql: |
+      WITH targs AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger t
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(t.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE t.tgname = 'trg_audit_harvest_log_upd'
+      )
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND (SELECT count(*) FROM targs
+               WHERE col IN ('quantity','unit','weight_grams','weight_basis','weight_estimated')) <> 5
+    expect: rowcount_eq
+    value: 0
+
+  # No INSERT arm, deliberately (README §What was deliberately not built): an INSERT audit row is
+  # redundant with the live row's own created_at and with the DELETE pre-image, and INSERT is where
+  # 100% of the batch amplification lives. Pin the decision so re-adding it is a considered change
+  # with the amplification re-measured, not a drive-by "for completeness".
+  - name: post_no_insert_arm_was_added
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.36.0-harvestaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t
+                JOIN pg_proc p ON p.oid = t.tgfoid
+                WHERE p.proname IN ('audit_stmt_delete','audit_stmt_update')
+                  AND (t.tgtype & 4) <> 0)
+    expect: rowcount_eq
+    value: 0
