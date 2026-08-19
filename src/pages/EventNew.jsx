@@ -52,6 +52,8 @@ import { sendReadyImpressions } from '../lib/readyImpressions.js'
 // V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
 // for the metadata contract with the events Lambda and why it is NOT quantity_numeric.
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
+// V4-HARVDISPOSITION-001 — the optional "what went wrong with this pick" chip row.
+import HarvestDispositionChips from '../components/HarvestDispositionChips.jsx'
 import {
   WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
@@ -131,6 +133,10 @@ const freshHarvest = () => ({
   quality_rating: null,
   weight:         '',
   weight_unit:    readLastWeightUnit(),
+  // V4-HARVDISPOSITION-001: null = a normal pick, and 703 of 707 live harvests are. Deliberately
+  // NOT sticky like the two units — a disposition describes ONE pick, and remembering "aborted"
+  // onto the next one would silently mislabel the following harvest.
+  disposition:    null,
 })
 
 // V4-STICKY-001: remember the last chosen project across sessions, mirroring
@@ -861,6 +867,9 @@ export default function EventNew() {
         quantity:       typeof h.quantity === 'string' ? h.quantity : cur.quantity,
         weight:         typeof h.weight === 'string' ? h.weight : cur.weight,
         quality_rating: h.quality_rating ?? cur.quality_rating,
+        // V4-HARVDISPOSITION-001: same `??` shape as quality_rating — a draft that never carried
+        // one leaves the fresh null alone rather than writing undefined over it.
+        disposition:    h.disposition ?? cur.disposition,
         // Units restore only when the draft carried them, so a stale draft can never downgrade the
         // crop-aware default a fresh mount just computed.
         unit:           h.unit || cur.unit,
@@ -890,7 +899,10 @@ export default function EventNew() {
   useEffect(() => {
     const dirty = !!(
       form.notes || form.private_notes || form.quantity ||
-      harvest.quantity || harvest.weight || harvest.quality_rating != null
+      harvest.quantity || harvest.weight || harvest.quality_rating != null ||
+      // V4-HARVDISPOSITION-001: counts for the same reason quality_rating does — a tapped chip is a
+      // deliberate entry, and freshHarvest() seeds null so a pristine mount still reads clean.
+      harvest.disposition != null
     )
     if (!dirty) return
     const snap = {}
@@ -904,6 +916,7 @@ export default function EventNew() {
         quantity: harvest.quantity,
         weight: harvest.weight,
         quality_rating: harvest.quality_rating,
+        disposition: harvest.disposition,
         unit: harvest.unit,
         weight_unit: harvest.weight_unit,
         unitTouched: unitTouchedRef.current,
@@ -1316,6 +1329,13 @@ export default function EventNew() {
             ...(harvest.weight !== ''
               ? { weight: Number(harvest.weight), weight_unit: harvest.weight_unit }
               : {}),
+            // V4-HARVDISPOSITION-001: the key is OMITTED for a normal pick, matching the weight
+            // idiom above — 703 of 707 harvests take this branch, so the create body stays
+            // byte-identical to before the feature for the overwhelming majority. On CREATE absent
+            // and null are equivalent to the server; keeping one shape for both paths avoids
+            // teaching the client a false equivalence it would then carry to the EDIT path, where
+            // absent means "untouched" and null means "cleared".
+            ...(harvest.disposition != null ? { disposition: harvest.disposition } : {}),
           },
         }
       : {}
@@ -2223,6 +2243,16 @@ export default function EventNew() {
                 )}
               </div>
               )}
+
+              {/* V4-HARVDISPOSITION-001 — LAST in the panel, and collapsed, on purpose. It asks
+                  about the exception (4 of 707 live picks), so it must never sit between the user
+                  and Save on the fast path. Not gated by HARVEST_QUALITY_HIDDEN: quality rates a
+                  good pick 1-5, this records that a pick went wrong — different questions, and the
+                  flag that retired one says nothing about the other. */}
+              <HarvestDispositionChips
+                value={harvest.disposition}
+                onChange={v => setHarvest(h => ({ ...h, disposition: v }))}
+              />
             </Section>
           )
   )

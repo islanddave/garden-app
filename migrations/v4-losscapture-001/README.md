@@ -134,14 +134,23 @@ ones that supply a value. This is the same parse-time fact that forced
 **UPDATE 2026-08-18 — THE WRITER NOW EXISTS, so this constraint is LIVE, not hypothetical.**
 V4-HARVDISPOSITION-001 shipped it in the **events** Lambda, and the escape clause this section used
 to rely on ("nothing in the repo names the column, so the bundle can be applied in any order
-relative to a promote") **no longer holds**. Two statements now name `harvest_log.disposition`:
+relative to a promote") **no longer holds**. Three statements now name `harvest_log.disposition`:
 
 | site | route | blast radius against a pre-`0a` database |
 |---|---|---|
 | `INSERT INTO harvest_log (…, disposition)` | `POST /api/events` | **every** harvest create, including the 703-of-707 that carry no disposition |
 | `UPDATE harvest_log h SET … disposition = …` | `PUT /api/events/:id` | **every** harvest edit, including a bare quality-star tap |
+| `SELECT h.id, …, h.disposition` (harvest sub-object) | `GET /api/events/:id` | **every event detail fetch of any type** — the widest of the three |
 
-Neither degrades gracefully — a 42703 is a 500 on the app's most-used write. So:
+**UPDATE 2026-08-19 — the READ site is new (V4-HARVDISPOSITION-001 capture half).** The capture UI
+made it mandatory: `EventDetail` sends `harvest.disposition` explicitly on every save, so a form that
+could not seed the column would blank a recorded value on the next unrelated edit — the
+`treatment_product_text` failure this repo already paid for once. **It adds no new precondition** (the
+two write sites already made `0a`-before-deploy mandatory) but it widens the cost of violating the
+existing one from the harvest form to the whole event detail page. Being a `SELECT`, it is the one
+site **Phase 1** of `scripts/dev-main-schema-audit.py` can see, which is a net gain in enforcement.
+
+None of the three degrades gracefully — a 42703 is a 500 on the app's most-used write. So:
 
 ```
 6.  0a APPLIED to prod AND staging   ← BOTH; deploy-lambda ships one artifact against both
@@ -152,14 +161,16 @@ Deploying `7` before `6` is the one mistake in this bundle with no cheap failure
 order is free: `0a` against a Lambda that does not yet name the column is a plain additive column.
 
 Enforcement, so this is not tribal knowledge:
-- **`lambda/events/harvest-disposition.test.js`** ENUMERATES the two SQL sites (not just counts
-  them) and asserts `0a` still adds the column, nullable and defaultless. A third site fails the
-  test by name and sends its author here.
-- **`L-081 Schema Audit (dev)`** (`.github/workflows/schema-audit.yml`) reads INSERT column lists out
-  of `lambda/**/index.js` and checks them against **prod's** `information_schema` on every push to
-  `dev`. It therefore goes RED on the disposition writer until `0a` is applied to prod — a real,
-  prod-anchored signal, though **advisory**: it fails the workflow, nothing gates on it, and it
-  does **not** see the `UPDATE` arm (Phase 3 parses only `deleted_at` soft-deletes).
+- **`lambda/events/harvest-disposition.test.js`** ENUMERATES the three SQL sites (not just counts
+  them) and asserts `0a` still adds the column, nullable and defaultless. A fourth site fails the
+  test by name and sends its author here — which is exactly how the READ site above got added, on
+  purpose, with the cost written down.
+- **`L-081 Schema Audit (dev)`** (`.github/workflows/schema-audit.yml`) reads SELECT and INSERT
+  column lists out of `lambda/**/index.js` and checks them against **prod's** `information_schema` on
+  every push to `dev`. It therefore goes RED on the disposition writer until `0a` is applied to prod
+  — a real, prod-anchored signal, though **advisory**: it fails the workflow and nothing gates on it.
+  It sees the `INSERT` (Phase 2) and now the `SELECT` (Phase 1); it does **not** see the `UPDATE` arm
+  (Phase 3 parses only `deleted_at` soft-deletes).
 
 `plants.loss_cause` has no equivalent constraint — the column already exists on both live
 environments and the deployed Lambda already reads and validates it.

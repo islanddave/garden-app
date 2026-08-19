@@ -201,6 +201,28 @@ describe('V4-HARVDISPOSITION-001 disposition vocabulary parity', () => {
     expect(sorted(quoted(m[1]))).toEqual(sorted(DISPOSITION));
   });
 
+  it('the SPA capture vocabulary in src/lib is the SAME SET, and its chips cover it', () => {
+    // THE SIXTH HOME, registered on the day it was created (V4-HARVDISPOSITION-001 capture half).
+    // The writer lane predicted this one: "the vocabulary needs an src/lib/ home when the UI ships,
+    // and when it lands it must join the parity set — a sixth copy started outside that set is the
+    // BUG-DIVERGENCEVOCAB-001 shape all over again." Read as SOURCE TEXT like every other copy
+    // here, so a re-export or an alias cannot satisfy it by accident.
+    const src = decomment(
+      readFileSync(resolve(__dirname, '../../src/lib/harvestDisposition.js'), 'utf8'),
+    );
+    const m = src.match(/HARVEST_DISPOSITION_VALUES\s*=\s*\[([^\]]*)\]/);
+    expect(m, 'HARVEST_DISPOSITION_VALUES not found in src/lib/harvestDisposition.js').toBeTruthy();
+    expect(sorted(quoted(m[1]))).toEqual(sorted(DISPOSITION));
+
+    // And the RENDERED set, separately: the chip table is what the user can actually reach, so a
+    // value present in the constant but missing a chip is a value the UI can never write. Parsed
+    // from the `value:` keys rather than the whole block, which also carries prose anchors.
+    const chips = src.match(/HARVEST_DISPOSITION_CHIPS\s*=\s*\[([\s\S]*?)\n\]/);
+    expect(chips, 'HARVEST_DISPOSITION_CHIPS not found').toBeTruthy();
+    const rendered = [...chips[1].matchAll(/value:\s*'([^']+)'/g)].map((x) => x[1]);
+    expect(sorted(rendered)).toEqual(sorted(DISPOSITION));
+  });
+
   it('NULL stays legal, so a normal pick is never nagged for a value', () => {
     expect(ARM_SQL).toMatch(/disposition IS NULL/);
   });

@@ -31,6 +31,9 @@ import {
 // BUG-HARVESTEDIT-001: the SAME constants the create form uses. The unit list also mirrors
 // harvest_log_unit_check in the database, so an option here that Postgres would reject cannot exist.
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
+// V4-HARVDISPOSITION-001 — the optional pick-outcome chip row, shared verbatim with EventNew.
+import HarvestDispositionChips from '../components/HarvestDispositionChips.jsx'
+import { readHarvestDisposition } from '../lib/harvestDisposition.js'
 
 
 // V4-HARVWEIGHTREAD-001: the copy map and its deliberate fallback moved to src/lib/harvestWeight.js so
@@ -182,6 +185,11 @@ export default function EventDetail() {
         ? String(event.harvest.weight_grams) : '',
       // stored grams are canonical; the unit the user originally typed is not persisted
       harvest_weight_unit: 'g',
+      // V4-HARVDISPOSITION-001: seeded from the SAVED row, which is the whole reason the GET now
+      // projects h.disposition. Seeding a blind null here while the save below sends the key
+      // EXPLICITLY would null a recorded disposition on the next unrelated edit — BUG-TREATMENTPRODUCT-001
+      // verbatim, and invisible, because the value would never have been on screen to miss.
+      harvest_disposition: readHarvestDisposition(event.harvest?.disposition),
       // BUG-EVENTEDITFIELDS-001 slice 2. These were creatable and not editable: the PUT never
       // wrote them and, for the five treatment columns, the GET never even returned them. Seeded
       // from the SAVED row so an unrelated edit round-trips them unchanged.
@@ -304,6 +312,13 @@ export default function EventDetail() {
             // would mean "leave whatever is there", which is the opposite of what clearing looks like.
             weight:         form.harvest_weight === '' ? null : Number(form.harvest_weight),
             weight_unit:    form.harvest_weight_unit,
+            // V4-HARVDISPOSITION-001. Sent EXPLICITLY, including null, for the same reason `weight`
+            // is: this object states the user's FULL intent for the row, so a cleared chip must
+            // mean "this was a normal pick after all" and not "leave whatever is there". The server
+            // reads absent-vs-null as distinct intents (`'disposition' in body.harvest`), so
+            // omitting the key here is what would make a value set at create UNREACHABLE forever —
+            // the server preserves it correctly and the UI simply never sends anything else.
+            disposition:    form.harvest_disposition,
           } } : {}),
         }),
       })
@@ -568,6 +583,16 @@ export default function EventDetail() {
                   {estimateSourceCopy(event.harvest?.weight_basis)} Enter a real weight to replace it.
                 </p>
               )}
+
+              {/* V4-HARVDISPOSITION-001 — the SAME component the create form renders, so the two
+                  surfaces cannot drift in vocabulary or in copy. It force-opens itself when the row
+                  already carries a value, which is what makes a stored disposition visible here
+                  rather than hidden behind a collapsed summary the user has no reason to tap. */}
+              <HarvestDispositionChips
+                value={form.harvest_disposition}
+                onChange={v => setForm(f => ({ ...f, harvest_disposition: v }))}
+                idPrefix="ev-harvest-disposition"
+              />
             </div>
           )}
 
