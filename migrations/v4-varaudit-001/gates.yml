@@ -1,0 +1,344 @@
+# OPS-VARAUDIT-001 — gates for the hardened audit triggers on plant_varieties.
+#
+# ═══ SELF-ARMING, AND WHY EVERY ASSERTING POST GATE HERE IS VIOLATION-SHAPED ═══
+# gate-invariants.yml runs `--all --phase post --continuous-only` on every push to dev, and
+# gate_runner.py has no skip-if-unapplied logic. A post gate asserting this migration's own effect
+# would go red the moment this directory reaches the branch and stay red until Dave applies it. Every
+# asserting post gate below is SELF-ARMING on the schema_version row of the phase that establishes
+# the fact: vacuously true before that phase, a real permanent invariant after it.
+#
+# The polarity trap: a bare `AND EXISTS (schema_version ...)` conjunct only self-arms correctly for
+# VIOLATION-shaped gates that expect 0 rows. Every gate below is a presence assertion ("the handler
+# is there", "the trigger is statement-level"), so each is re-expressed as a violation —
+# `SELECT 1 WHERE <armed> AND NOT <the fact>`, expecting rowcount 0.
+#
+# ═══ WHAT THESE GATES CAN AND CANNOT DO ═══
+# A gate is a read-only SELECT, so this file proves the triggers EXIST and are correctly SHAPED. It
+# cannot prove they CAPTURE, and it cannot prove the recorded trail is unchanged — a gutted body
+# would keep every gate below green. That half is 0c-verify-triggers.sql (a fixture, 11 assertions
+# and a ROLLBACK, runnable on prod) and varaudit-triggers.test.js.
+#
+# ═══ PHASE OWNERSHIP ═══
+#   pre    before 0a. Preconditions on audit_events, plus the defect stated as a gate.
+#   sweep  apply-window receipts. continuous:false — true only once the phase has run.
+#   post   after 0b. Permanent invariants, all self-armed on a schema_version row.
+
+pre:
+  # audit_events has been live since 2026-05-11 (1,872 rows, all plant_varieties) and no migration in
+  # this repo created it — it is hand-applied. Its presence is a precondition to CHECK, never assume.
+  - name: pre_audit_events_has_expected_columns
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'audit_events'
+         AND column_name IN ('id','table_name','row_id','action',
+                             'actor_clerk_sub','before_jsonb','after_jsonb','ts')
+    expect: rowcount_eq
+    value: 8
+
+  # actor_clerk_sub NOT NULL with no default is why 0a coalesces to 'system'.
+  - name: pre_audit_events_actor_is_not_null
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'audit_events'
+         AND column_name = 'actor_clerk_sub' AND is_nullable = 'NO'
+    expect: rowcount_eq
+    value: 1
+
+  # All five actions the hardened functions can write must be admitted by the CHECK. A value outside
+  # it would raise 23514 INSIDE the new exception handler and vanish as a WARNING — the one way this
+  # migration could turn a loud failure into a silent one.
+  - name: pre_audit_events_check_admits_all_five_actions
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'audit_events_action_check'
+         AND pg_get_constraintdef(oid) LIKE '%''INSERT''%'
+         AND pg_get_constraintdef(oid) LIKE '%''UPDATE''%'
+         AND pg_get_constraintdef(oid) LIKE '%''DELETE''%'
+         AND pg_get_constraintdef(oid) LIKE '%''SOFT_DELETE''%'
+         AND pg_get_constraintdef(oid) LIKE '%''RESTORE''%'
+    expect: rowcount_eq
+    value: 1
+
+  # THE DEFECT, stated as a gate: the live audit writer is row-level AND its function has no
+  # exception handler, so an audit failure aborts the user's plant_varieties write. Passes (1 row)
+  # only while the defect is present; after 0b it stops passing, which is why it lives in `pre`.
+  - name: pre_live_audit_trigger_is_row_level_and_unguarded
+    sql: |
+      SELECT t.tgname FROM pg_trigger t
+       JOIN pg_proc p ON p.oid = t.tgfoid
+       WHERE NOT t.tgisinternal
+         AND t.tgname = 'trg_audit_plant_varieties'
+         AND (t.tgtype & 1) <> 0
+         AND p.prosrc NOT LIKE '%EXCEPTION%'
+    expect: rowcount_eq
+    value: 1
+
+  # plant_varieties.id must be the primary key: audit_pv_stmt_update joins old_rows to new_rows on
+  # it, and a non-unique join column would silently multiply or drop audit rows.
+  - name: pre_plant_varieties_id_is_primary_key
+    sql: |
+      SELECT 1 FROM pg_constraint c
+       WHERE c.conrelid = 'public.plant_varieties'::regclass
+         AND c.contype = 'p'
+         AND c.conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                                WHERE attrelid = 'public.plant_varieties'::regclass
+                                  AND attname = 'id')]
+    expect: rowcount_eq
+    value: 1
+
+  # A resumed run would otherwise re-enter the sequence with the earlier phase's gates invalidated.
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version IN ('4.38.0-varaudit-001','4.38.0-varaudit-001-fn')
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  - name: sweep_schema_version_0a_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001-fn'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+    note: Apply-window receipt for 0a. Not a continuous invariant.
+
+  - name: sweep_schema_version_0b_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+    note: Apply-window receipt for 0b. Not a continuous invariant.
+
+post:
+  # ── existence and shape ─────────────────────────────────────────────────────────────────────────
+  - name: post_all_three_audit_triggers_present
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND (SELECT count(*) FROM pg_trigger
+               WHERE NOT tgisinternal
+                 AND tgrelid = 'public.plant_varieties'::regclass
+                 AND tgname IN ('trg_audit_plant_varieties_ins','trg_audit_plant_varieties_upd',
+                                'trg_audit_plant_varieties_del')) <> 3
+    expect: rowcount_eq
+    value: 0
+    note: >
+      One per event. Postgres refuses transition tables on a multi-event trigger, so covering the
+      same three events at statement level requires exactly three triggers.
+
+  # THE COVERAGE GATE. The three triggers existing does not by itself prove the three EVENTS are
+  # covered — three DELETE triggers would pass the gate above. tgtype bit 2 = INSERT, 3 = DELETE,
+  # 4 = UPDATE; each must be armed by exactly one of the three.
+  - name: post_all_three_events_are_covered
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND (SELECT count(*) FROM pg_trigger
+               WHERE NOT tgisinternal
+                 AND tgrelid = 'public.plant_varieties'::regclass
+                 AND tgname IN ('trg_audit_plant_varieties_ins','trg_audit_plant_varieties_upd',
+                                'trg_audit_plant_varieties_del')
+                 AND (tgtype & 4) <> 0) <> 1
+    expect: rowcount_eq
+    value: 0
+    note: Exactly one INSERT arm. The INSERT arm is a deliberate carry-over — 426 audit rows depend on it.
+
+  - name: post_delete_and_update_arms_are_each_present_once
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND ((SELECT count(*) FROM pg_trigger
+                WHERE NOT tgisinternal AND tgrelid = 'public.plant_varieties'::regclass
+                  AND tgname LIKE 'trg\_audit\_plant\_varieties\_%' AND (tgtype & 8)  <> 0) <> 1
+           OR (SELECT count(*) FROM pg_trigger
+                WHERE NOT tgisinternal AND tgrelid = 'public.plant_varieties'::regclass
+                  AND tgname LIKE 'trg\_audit\_plant\_varieties\_%' AND (tgtype & 16) <> 0) <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  # Statement-level is the write-amplification design: prod has taken single UPDATE statements of
+  # 338 and 326 rows. tgtype bit 0 set = FOR EACH ROW.
+  - name: post_audit_triggers_are_statement_level
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger
+                WHERE tgname IN ('trg_audit_plant_varieties_ins','trg_audit_plant_varieties_upd',
+                                 'trg_audit_plant_varieties_del')
+                  AND (tgtype & 1) <> 0)
+    expect: rowcount_eq
+    value: 0
+
+  # A statement-level trigger without transition tables sees NO rows and writes nothing, while every
+  # existence gate above stays green. This is the specific vacuity that gate closes.
+  - name: post_audit_triggers_have_transition_tables
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t
+                WHERE t.tgname = 'trg_audit_plant_varieties_ins'
+                  AND pg_get_triggerdef(t.oid) NOT LIKE '%NEW TABLE AS new_rows%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_delete_trigger_has_old_transition_table
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t
+                WHERE t.tgname = 'trg_audit_plant_varieties_del'
+                  AND pg_get_triggerdef(t.oid) NOT LIKE '%OLD TABLE AS old_rows%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_update_trigger_has_both_transition_tables
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t
+                WHERE t.tgname = 'trg_audit_plant_varieties_upd'
+                  AND (pg_get_triggerdef(t.oid) NOT LIKE '%OLD TABLE AS old_rows%'
+                    OR pg_get_triggerdef(t.oid) NOT LIKE '%NEW TABLE AS new_rows%'))
+    expect: rowcount_eq
+    value: 0
+
+  # ── the swap actually happened ──────────────────────────────────────────────────────────────────
+  # 0b leaves audit_plant_varieties_trigger() ON the database so 0r can re-attach the original
+  # object. That makes re-arming it a one-line accident, which would restore the unguarded row-level
+  # writer alongside the hardened ones and double every audit row. Pin that it stays DETACHED.
+  - name: post_old_row_level_trigger_is_detached
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger
+                WHERE NOT tgisinternal AND tgname = 'trg_audit_plant_varieties')
+    expect: rowcount_eq
+    value: 0
+
+  # No OTHER trigger on plant_varieties may point at the old unguarded function under a new name —
+  # the gate above matches on name, and a rename would slip past it.
+  - name: post_no_trigger_uses_the_unguarded_audit_function
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t
+                JOIN pg_proc p ON p.oid = t.tgfoid
+                WHERE NOT t.tgisinternal
+                  AND p.proname = 'audit_plant_varieties_trigger')
+    expect: rowcount_eq
+    value: 0
+
+  # ── the safety property: the audit can never abort the write it audits ──────────────────────────
+  # Gutting the handler is the single most dangerous edit possible to this migration and would leave
+  # every other gate green. Checked per function, so removing it from ONE cannot hide behind the
+  # other two.
+  - name: post_audit_functions_cannot_abort_the_write
+    sql: |
+      SELECT p.proname FROM pg_proc p
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001-fn')
+         AND p.proname IN ('audit_pv_stmt_insert','audit_pv_stmt_update','audit_pv_stmt_delete')
+         AND (p.prosrc NOT LIKE '%WHEN OTHERS THEN%' OR p.prosrc NOT LIKE '%RAISE WARNING%')
+    expect: rowcount_eq
+    value: 0
+
+  # All three must exist. The gate above is satisfied vacuously if a function is missing entirely.
+  - name: post_all_three_audit_functions_exist
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001-fn')
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname IN ('audit_pv_stmt_insert','audit_pv_stmt_update','audit_pv_stmt_delete')) <> 3
+    expect: rowcount_eq
+    value: 0
+
+  # ...but cancellation must still propagate, or a runaway audit write becomes un-cancellable.
+  # Both conditions are checked: an edit that dropped admin_shutdown alone would pass a
+  # query_canceled-only check.
+  - name: post_audit_functions_reraise_cancellation
+    sql: |
+      SELECT p.proname FROM pg_proc p
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001-fn')
+         AND p.proname IN ('audit_pv_stmt_insert','audit_pv_stmt_update','audit_pv_stmt_delete')
+         AND (p.prosrc NOT LIKE '%query_canceled%' OR p.prosrc NOT LIKE '%admin_shutdown%')
+    expect: rowcount_eq
+    value: 0
+
+  # SECURITY DEFINER + a pinned search_path. Because the INSERT is now inside an exception handler, a
+  # missing grant would degrade to a swallowed WARNING rather than an error — an invisible audit gap.
+  # This is a strict upgrade on the live function, which is SECURITY INVOKER with no proconfig.
+  - name: post_audit_functions_are_security_definer_with_pinned_path
+    sql: |
+      SELECT p.proname FROM pg_proc p
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001-fn')
+         AND p.proname IN ('audit_pv_stmt_insert','audit_pv_stmt_update','audit_pv_stmt_delete')
+         AND (p.prosecdef IS NOT TRUE
+           OR NOT (p.proconfig::text LIKE '%search_path=pg_catalog, public%'))
+    expect: rowcount_eq
+    value: 0
+
+  # ── the recorded trail is unchanged ─────────────────────────────────────────────────────────────
+  # THE NO-SCOPING GATE. This lane deliberately did NOT adopt the sibling's watched-column list:
+  # 97.1% of the 1,427 existing UPDATE audit rows record a real column change, so scoping would
+  # suppress 2.9% of rows at the cost of a permanent discontinuity in a trail running since
+  # 2026-05-11. A later edit that adds a WHERE clause or a TG_ARGV watched list to the UPDATE
+  # function would quietly start dropping rows the trail has always contained. Pin the decision so
+  # re-scoping is a considered change with the volumes re-measured, not a drive-by tidy-up.
+  - name: post_update_audit_is_not_column_scoped
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001-fn')
+         AND EXISTS (
+               SELECT 1 FROM pg_proc
+                WHERE proname = 'audit_pv_stmt_update'
+                  AND (prosrc LIKE '%TG_ARGV%' OR prosrc LIKE '%audit_watched_slice%'))
+    expect: rowcount_eq
+    value: 0
+
+  # The UPDATE trigger must carry NO arguments. A watched list would arrive as trigger arguments even
+  # if the function body were left alone, and tgnargs is where that shows up.
+  - name: post_update_trigger_takes_no_watched_column_arguments
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_audit_plant_varieties_upd' AND tgnargs <> 0)
+    expect: rowcount_eq
+    value: 0
+
+  # No WHEN clause either — a `WHEN (...)` on the trigger would filter rows before the function ever
+  # ran, achieving column scoping without touching prosrc or tgnargs.
+  - name: post_audit_triggers_have_no_when_clause
+    sql: |
+      SELECT t.tgname FROM pg_trigger t
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001')
+         AND t.tgname IN ('trg_audit_plant_varieties_ins','trg_audit_plant_varieties_upd',
+                          'trg_audit_plant_varieties_del')
+         AND pg_get_triggerdef(t.oid) LIKE '%WHEN (%'
+    expect: rowcount_eq
+    value: 0
+
+  # The existing 1,872-row trail must remain readable as one series: every historical action value
+  # must still be one the hardened functions can produce. If a future edit dropped the RESTORE or
+  # SOFT_DELETE branch, this fails on the trail's own history rather than waiting for the next
+  # restore to go unrecorded.
+  - name: post_every_historical_action_is_still_producible
+    sql: |
+      SELECT DISTINCT a.action
+        FROM public.audit_events a
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.38.0-varaudit-001-fn')
+         AND a.table_name = 'plant_varieties'
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_proc p
+                WHERE p.proname IN ('audit_pv_stmt_insert','audit_pv_stmt_update','audit_pv_stmt_delete')
+                  AND p.prosrc LIKE '%''' || a.action || '''%')
+    expect: rowcount_eq
+    value: 0
