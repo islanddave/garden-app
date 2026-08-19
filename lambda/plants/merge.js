@@ -212,7 +212,7 @@ export function planDedup(events) {
   for (const e of ordered) {
     const batchId = e.metadata?.batch_id ?? null
     if (batchId == null) { survivors.push(e); continue }
-    const key = `${e.event_type} ${batchId}`
+    const key = `${e.event_type}\x00${batchId}`
     if (seenBatch.has(key)) droppedBatch.push(e.id)
     else { seenBatch.set(key, e); survivors.push(e) }
   }

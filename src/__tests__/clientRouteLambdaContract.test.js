@@ -272,7 +272,7 @@ function matchRoute(lambda, path) {
 
 // Which Lambda serves this client path? Executes the REAL resolveUrl against a probe table so the
 // prefix table's first-match ordering is exercised rather than re-implemented.
-const PROBE_URLS = Object.fromEntries(Object.keys(FUNCTION_URLS).map((k) => [k, ` ${k} `]))
+const PROBE_URLS = Object.fromEntries(Object.keys(FUNCTION_URLS).map((k) => [k, `\x00${k}\x00`]))
 function lambdaFor(path, base) {
   if (base) {
     if (!ENV_TO_LAMBDA[base]) return { error: `client base ${base} is not mapped to a Lambda` }
@@ -280,7 +280,7 @@ function lambdaFor(path, base) {
   }
   let resolved
   try { resolved = resolveUrl(path.replace(/:p/g, PROBE), PROBE_URLS) } catch (e) { return { error: e.message } }
-  const prefix = resolved.split(' ')[1]
+  const prefix = resolved.split('\x00')[1]
   const dir = PREFIX_TO_LAMBDA[prefix]
   if (!dir) return { error: `prefix ${prefix} has no Lambda mapping` }
   return { dir, via: prefix }
