@@ -1,5 +1,5 @@
 import { neon } from '@neondatabase/serverless';
-import { applyDerive } from '../tags/crop-derive.js';
+import { applyDerive } from '../lambda/tags/crop-derive.js';
 const sql = neon(process.env.COW_URL);
 let fails = 0;
 const check = (n, c, e='') => { console.log(`${c?'PASS':'FAIL'}  ${n}${e?' :: '+e:''}`); if(!c) fails++; };
