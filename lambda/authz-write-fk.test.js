@@ -256,9 +256,17 @@ const pairsOnDisk = () => {
 // Pairs with NO ownership gate, each one a recorded decision rather than an oversight. Grouped by
 // WHY. An entry here is not a safety claim about the handler; it is a claim that the pair was
 // looked at and found not to need a household ownership gate for the stated reason.
+// OPS-DASHSCRATCHMJS-001 removed two entries that were never about a handler at all.
+// `dashboard::crop_type_slug` and `dashboard::owner_id` were contributed SOLELY by
+// lambda/dashboard/_tagsub_cow_runner{,2}.mjs — dead V4-TAGSUB-001 scratch runners with zero
+// importers, which the walker below could not tell apart from a handler because it scans every
+// non-test module in the directory. So the sweep carried two phantom pairs, and this list carried
+// two ownership decisions about a production write surface that does not exist. Moving the runners
+// to scripts/ took the corpus from 114 pairs to 112; `dashboard::user_id` and `dashboard::project_id`
+// remain and both come from handlers.js, which is real.
 const NOT_IN_SITES = [
   // ── Shared/global vocabulary: gating these would break the catalogue every household reads. ──
-  'dashboard::crop_type_slug', 'preservation::crop_type_slug', 'varieties::crop_type_slug',
+  'preservation::crop_type_slug', 'varieties::crop_type_slug',
   'critter::species_id', 'events::species_id',
   'inventory-items::variety_id', 'plants::cultivar_id', 'plants::variety_id',
   'preservation::variety_id', 'tags::cultivar_id',
@@ -286,7 +294,7 @@ const NOT_IN_SITES = [
   // read back off the database — the same two-arm shape plants/anchorCreate.js records, and the same
   // class as harvests::user_id.
   'daily-plan::plant_id',
-  'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::owner_id', 'dashboard::user_id',
+  'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::user_id',
   'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
   'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',
   'projects::workspace_id', 'shared-state::workspace_id', 'storage-location::user_id',
@@ -403,7 +411,12 @@ describe('BUG-AUTHZFKENUM-001: every FK-shaped column a handler writes is gated 
     expect(pairs).toContain('evidence-ingest::entity_id');
     // …and the non-`_id` FK, and a dir reached only by walking a non-index module.
     expect(pairs).toContain('varieties::crop_type_slug');
-    expect(pairs).toContain('dashboard::crop_type_slug');
+    // dashboard/index.js contributes ZERO FK columns — every dashboard pair comes from
+    // handlers.js — so this still proves the walk does not stop at index.js. It used to assert
+    // `dashboard::crop_type_slug`, which OPS-DASHSCRATCHMJS-001 showed was contributed by a dead
+    // _tagsub scratch runner rather than by any handler: the control was real but its exemplar was
+    // a file that never shipped a write. This one is handlers.js, which does.
+    expect(pairs).toContain('dashboard::user_id');
   });
 
   it('no FK-shaped written column exists that is neither in SITES nor explicitly listed', () => {
