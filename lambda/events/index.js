@@ -2024,8 +2024,18 @@ export const handler = async (event) => {
             -- this the client cannot render the real quantity/unit at all — it only ever saw
             -- event_log.quantity, a free-text field that is not what the Harvests totals read.
             -- LEFT JOIN, not INNER: a non-harvest event must still return, with harvest null.
+            -- V4-HARVDISPOSITION-001 (capture half): h.disposition is projected here because the
+            -- edit form sends the key EXPLICITLY, and a form that cannot SEED a column it always
+            -- writes will blank it on the next unrelated save. That is the treatment_product_text
+            -- failure directly above, restated: read and write ship together, in one commit.
+            -- ⚠ THIS IS THE THIRD SQL SITE naming the column, and the only one on a READ path — so
+            -- against a pre-0a database it 42703s EVERY event GET, not only harvest writes. It does
+            -- not add a new precondition (the INSERT/UPDATE sites already made 0a-before-deploy
+            -- mandatory), it widens the blast radius of violating the existing one. Enumerated in
+            -- harvest-disposition.test.js and caught by dev-main-schema-audit.py Phase 1.
             (SELECT row_to_json(x) FROM (
-               SELECT h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated, h.weight_basis
+               SELECT h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated, h.weight_basis,
+                      h.disposition
                  FROM harvest_log h
                 WHERE h.event_id = e.id AND h.deleted_at IS NULL
                 LIMIT 1

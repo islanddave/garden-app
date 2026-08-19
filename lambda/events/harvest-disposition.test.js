@@ -285,14 +285,27 @@ describe('V4-HARVDISPOSITION-001 — SCHEMA FIRST, and the sites are enumerated'
   const EXPECTED_SQL_SITES = [
     'INSERT INTO harvest_log',   // POST column list + bound value + RETURNING
     'UPDATE harvest_log h',      // PUT SET + RETURNING
+    // V4-HARVDISPOSITION-001 capture half — THE TRIPWIRE ABOVE FIRED AND THIS IS THE DELIBERATE
+    // DECISION IT DEMANDED. The GET /api/events/:id harvest sub-object now projects the column so
+    // EventDetail's edit form can SEED it. Without this the form would send an explicit null over a
+    // stored value on the next unrelated save (BUG-TREATMENTPRODUCT-001), and every client-only test
+    // would still pass because the value was never on screen to miss.
+    //
+    // THE COST, STATED PLAINLY: this is a READ site, so pre-0a it 42703s EVERY event detail fetch,
+    // not only harvest creates and edits. The precondition is unchanged — 0a must reach staging AND
+    // prod before this Lambda deploys, exactly as the two write sites already required — but the
+    // consequence of getting it wrong is now the whole event detail page rather than the harvest
+    // form. Phase 1 of scripts/dev-main-schema-audit.py parses SELECT column lists and will name
+    // this line on every push to dev until 0a is applied.
+    'SELECT h.id, h.quantity',   // GET /api/events/:id harvest sub-object (READ)
   ];
 
-  it('exactly two SQL statements in this Lambda name harvest_log.disposition', () => {
+  it('exactly three SQL statements in this Lambda name harvest_log.disposition', () => {
     const stmts = [...SRC.matchAll(/sql`([\s\S]*?)`/g)].map((m) => m[1]);
     const naming = stmts.filter((s) => /\bdisposition\b/.test(s));
     const found = naming.map((s) => EXPECTED_SQL_SITES.find((k) => s.includes(k)) ?? s.slice(0, 60).trim());
     expect([...new Set(found)].sort()).toEqual([...EXPECTED_SQL_SITES].sort());
-    expect(naming).toHaveLength(2);
+    expect(naming).toHaveLength(3);
   });
 
   it('0a is the migration that must precede the deploy, and it is still in the bundle', () => {
