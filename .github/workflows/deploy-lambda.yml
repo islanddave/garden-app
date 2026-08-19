@@ -93,12 +93,28 @@ jobs:
           npm run gen:event-types
           npm run check:event-types
 
+      # OPS-LAMBDATESTZIP-001: `zip -r .` shipped every *.test.js into the deployed bundle across all
+      # 26 functions — wasted bytes on a cold-start-sensitive path (garden-daily-plan-read measured a
+      # 42.9% cold-start rate), and internal test fixtures and mock shapes handed to production.
+      #
+      # `-x '*.test.js'` — zip wildcards SPAN `/`, so one pattern covers every depth, including
+      # nested cases like findings/engine/persist.test.js. It also reaches node_modules; verified
+      # safe by measurement rather than assumption — across the union of all 10 Lambda prod deps the
+      # tree carries exactly ONE such file (@stablelib/base64/lib/base64.test.js) and NOTHING in the
+      # vendor tree or in lambda/ resolves a .test path via require/import.
+      #
+      # The assert is the point: an exclude that silently stops matching (a reworded pattern, a new
+      # test suffix) would go back to shipping tests with a green build. Same shape as the
+      # photocdn-derivative sharp assert below — prove the bundle, don't trust the command.
       - name: Build and zip ${{ matrix.function }}
         if: matrix.function != 'photocdn-derivative'
         run: |
           cd lambda/${{ matrix.function }}
           npm install --omit=dev
-          zip -r ../${{ matrix.function }}.zip .
+          zip -r ../${{ matrix.function }}.zip . -x '*.test.js'
+          if unzip -l ../${{ matrix.function }}.zip | grep -q '\.test\.js'; then
+            echo "FATAL: test files present in ${{ matrix.function }}.zip — the -x exclude stopped matching"; exit 1
+          fi
 
       # V4-PHOTOCDN-001: photocdn-derivative is nodejs22.x/arm64 and depends on `sharp` (native).
       # The GHA runner is x86_64, so a plain `npm install` would package the x64 sharp binary -> a
@@ -110,7 +126,7 @@ jobs:
           node -v && npm -v
           cd lambda/photocdn-derivative
           npm install --omit=dev --os=linux --cpu=arm64 --include=optional
-          zip -r ../photocdn-derivative.zip .
+          zip -r ../photocdn-derivative.zip . -x '*.test.js'   # OPS-LAMBDATESTZIP-001, same rule as the generic step
           if ! unzip -l ../photocdn-derivative.zip | grep -q 'sharp-linux-arm64'; then
             echo "FATAL: linux-arm64 sharp binary missing from zip — refusing to deploy an x64 build to an arm64 Lambda"; exit 1
           fi
