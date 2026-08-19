@@ -118,10 +118,10 @@ const CORPUS = Object.entries(ROOTS)
   .flatMap(([root, keep]) => walk(resolve(REPO, root), root, keep, []))
   .sort(([a], [b]) => a.localeCompare(b))
 
-// merge.js writes the relation UNQUALIFIED while every other site schema-qualifies it, and its loser
-// statement carries no alias at all, so both are optional here. A discovery regex that required
-// `public.` or a `d` alias would understate the set by exactly the statements it is least likely to
-// be looking for.
+// merge.js writes the relation UNQUALIFIED while every other site schema-qualifies it, and a site is
+// free to carry no alias at all, so both are optional here. A discovery regex that required `public.`
+// or a `d` alias would understate the set by exactly the statements it is least likely to be looking
+// for.
 const RETIRE_RE_G = /update\s+(?:public\.)?plant_anchor_derivation\b/gi
 const DELETE_RE = /delete\s+from\s+(?:public\.)?plant_anchor_derivation\b/i
 
@@ -205,19 +205,26 @@ describe('the supersede rule is identical at every site that writes it', () => {
   // apart rather than dropped from the scan: it retires for a structural reason (one live row per
   // plant), not because an anchor was observed. Recording it as 'observed_anchor' would file a merge
   // artefact as a (guess, later truth) pair and bias the only accuracy measurement tier 3 produces.
-  // Narrow on purpose — a later `superseded_by = 'merged'` is an improvement and must not red.
+  // It must still record SOME reason (OPS-MERGERETIREPROV-001): retiring on superseded_at alone left
+  // six of the eight retired rows on prod carrying superseded_by IS NULL, which is unattributable
+  // after the fact. The token itself is unpinned — a later `superseded_by = 'merged'` is an
+  // improvement and must not red — so only the two ends are asserted: a reason exists, and it does
+  // not claim an observation.
   it.each(withRule('merge_loser'))('%s retires without claiming an observed anchor', (_label, rel, i) => {
     const block = blockAt(rel, i)
     expect(/superseded_at\s+is\s+null/i.test(block), `${rel} #${i + 1} lost its re-run guard`).toBe(true)
+    expect(/superseded_by\s*=/i.test(block),
+      `${rel} #${i + 1} retires without recording why — an unattributable retirement`).toBe(true)
     expect(/superseded_by\s*=\s*'observed_anchor'/i.test(block),
       `${rel} #${i + 1} files a merge retirement as an observed anchor`).toBe(false)
   })
 
   // The re-derivation retire is the inverse predicate, so it is exempt from the observed-column gate
   // above by classification rather than by an allowlist. What it is NOT exempt from: the re-run guard,
-  // and recording SOME reason. The latter is not hypothetical — merge.js's loser statement retires with
-  // superseded_at alone, and all six retired rows on prod carry superseded_by IS NULL as a result, which
-  // is exactly the provenance hole that makes a retirement unattributable after the fact.
+  // and recording SOME reason. The latter is not hypothetical — merge.js's loser statement retired with
+  // superseded_at alone until OPS-MERGERETIREPROV-001, and the six rows it retired on prod still carry
+  // superseded_by IS NULL, which is exactly the provenance hole that makes a retirement unattributable
+  // after the fact. All three rules now demand a reason; only this one leaves the token unpinned.
   it.each(withRule('rederive'))('%s retires idempotently and records a reason that is not an observation',
     (_label, rel, i) => {
       const block = blockAt(rel, i)
