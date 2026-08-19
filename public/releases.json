@@ -83,7 +83,6 @@
       "Skipping a care item now sticks. It used to be forgotten as soon as the tab closed, so you would skip watering something, come back a few minutes later, and find it asking again. Skips now also follow you between your phone and your laptop.",
       "Log Many remembers whether you like everything pre-selected — per person, not per device. Dave and Jen can finally disagree about it on the same phone.",
       "The What's New dot clears everywhere once you've read the notes, instead of following you to your other device.",
-      "The app opens faster: about 48 KB less to download before anything appears, by loading the critter facts only when you actually open one.",
       "Four cold-hardy salad greens are now proper crop types you can plant: Mache (Corn Salad), Claytonia (Miner's Lettuce), Tatsoi and Mizuna — each with its own harvest style, so the app knows Mache is picked once and Claytonia keeps regrowing.",
       "Estimated harvest windows no longer carry the · site-calibrated tag. The maths behind the dates is unchanged; the label was advertising a precision you weren't asking for.",
       "The \"Last 7 days\" harvest number was wrong, and badly — it read 50 when you had actually picked 163. It was counting only the newest page of records, which covered about three and a half days, and the top-crop line beside it came from that same short slice. Both now count the whole week.",
