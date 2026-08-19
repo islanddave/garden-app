@@ -227,7 +227,19 @@ post:
                               -- have. They REFUSE deletes; they never modify a row, so they cannot
                               -- defuse this migration's RESTRICTs. Read-only-ness is asserted by
                               -- v4-entitytagorphan-001 post_guard_function_is_read_only.
-                              'trg_guard_entity_tag_plant','trg_guard_entity_tag_location')
+                              'trg_guard_entity_tag_plant','trg_guard_entity_tag_location',
+                              -- Added 2026-08-19 by OPS-HARVESTAUDIT-001 (v4-harvestaudit-001):
+                              -- AFTER UPDATE/DELETE ... FOR EACH STATEMENT audit triggers. They
+                              -- cannot defuse this migration's guarantees for three reasons, each
+                              -- structural rather than incidental: they fire AFTER, so they cannot
+                              -- alter the row the statement writes; they are FOR EACH STATEMENT and
+                              -- their only write is an INSERT into audit_events, never a touch of
+                              -- event_log; and audit_stmt_update/_delete wrap that INSERT in an
+                              -- EXCEPTION handler, so an audit failure cannot abort the originating
+                              -- statement either. Detected by this gate failing on the staging apply
+                              -- (rowcount=2) -- the allow-list working exactly as its note above
+                              -- describes, reddening when an undeclared trigger APPEARS.
+                              'trg_audit_event_log_upd','trg_audit_event_log_del')
     expect: rowcount_eq
     value: 0
 

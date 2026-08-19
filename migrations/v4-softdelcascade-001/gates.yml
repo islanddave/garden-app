@@ -518,7 +518,18 @@ post:
                               -- cannot have. It REFUSES deletes and never modifies a row, so it
                               -- cannot defuse this migration's RESTRICTs. Read-only-ness is
                               -- asserted by v4-entitytagorphan-001 post_guard_function_is_read_only.
-                              'trg_guard_entity_tag_project')
+                              'trg_guard_entity_tag_project',
+                              -- Added 2026-08-19 by OPS-HARVESTAUDIT-001 (v4-harvestaudit-001):
+                              -- AFTER UPDATE/DELETE ... FOR EACH STATEMENT audit triggers on
+                              -- event_log and harvest_log, both of which this gate covers. They
+                              -- cannot defuse this migration's soft-delete cascade: they fire AFTER
+                              -- so they cannot alter the written row, their only write is an INSERT
+                              -- into audit_events, and audit_stmt_update/_delete wrap that INSERT in
+                              -- an EXCEPTION handler so an audit failure cannot abort the
+                              -- originating statement. Detected by this gate failing on the staging
+                              -- apply (rowcount=4) -- the allow-list doing its job.
+                              'trg_audit_event_log_upd','trg_audit_event_log_del',
+                              'trg_audit_harvest_log_upd','trg_audit_harvest_log_del')
     expect: rowcount_eq
     value: 0
 

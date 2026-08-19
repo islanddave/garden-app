@@ -193,8 +193,22 @@ describe('OPS-ARCHRESTORE-001 — archive -> unarchive is a true round trip', ()
     const rows = await directSql`
       SELECT t.tgname, t.tgtype FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
        WHERE c.relname = 'event_log' AND NOT t.tgisinternal ORDER BY t.tgname`
-    expect(rows).toHaveLength(2)
-    for (const r of rows) expect(r.tgtype, `${r.tgname} must be BEFORE UPDATE ROW only`).toBe(19)
+    // v4-harvestaudit-001 adds trg_audit_event_log_upd/_del (AFTER ... FOR EACH STATEMENT) to this
+    // table, so a bare count of 2 no longer holds. Asserting 4 instead would only move the same
+    // brittleness one bundle along, so pin the two row-level triggers this test is ABOUT by name and
+    // then assert the actual hazard directly against every trigger present, whatever arrives later.
+    const byName = Object.fromEntries(rows.map(r => [r.tgname, r.tgtype]))
+    for (const n of ['prevent_ownership_transfer', 'set_updated_at']) {
+      expect(byName[n], `${n} must still exist on event_log`).toBeDefined()
+      expect(byName[n], `${n} must be BEFORE UPDATE ROW only`).toBe(19)
+    }
+    // The hazard, stated once and checked against ALL triggers: nothing on event_log may fire BEFORE
+    // INSERT, which would rewrite a restored row while every other assertion here still passed.
+    // tgtype bits: 0x01 ROW, 0x02 BEFORE, 0x04 INSERT, 0x08 DELETE, 0x10 UPDATE.
+    for (const r of rows) {
+      const beforeInsert = (r.tgtype & 0x02) === 0x02 && (r.tgtype & 0x04) === 0x04
+      expect(beforeInsert, `${r.tgname} must not fire BEFORE INSERT`).toBe(false)
+    }
 
     const [e] = await directSql`SELECT updated_at, created_by FROM event_log WHERE id = ${eventRichId}`
     expect(e.updated_at.toISOString()).toBe(new Date('2026-06-02T00:00:00Z').toISOString())
