@@ -27,6 +27,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
+import { currentGrowYear } from '../lib/growYear.js'
 import Icon from './Icon.jsx'
 import { shareEntity } from '../lib/shareEntity.js'
 import {
@@ -67,7 +68,10 @@ export default function ComposeHarvestBand() {
     const since = new Date(Date.now() - LOG_WINDOW_MS).toISOString()
     // entries are narrowed to recent LOGGING activity; aggregates deliberately are not, so the season
     // chips come from the full-range totals rather than from whatever fits on one page of entries.
-    const qs = `?include=entries,aggregates&timeframe=season&created_since=${encodeURIComponent(since)}`
+    // The year is REQUIRED: parseTimeframe only matches /^season:(\d{4})$/, so a bare `season` returns
+    // null and the endpoint 400s — which the catch below swallowed, so the band silently never
+    // rendered from ~v4.10.0 until this line was fixed.
+    const qs = `?include=entries,aggregates&timeframe=season:${currentGrowYear(new Date())}&created_since=${encodeURIComponent(since)}`
     fetch('/api/harvests' + qs)
       .then((d) => setData({
         entries: Array.isArray(d?.entries) ? d.entries : [],

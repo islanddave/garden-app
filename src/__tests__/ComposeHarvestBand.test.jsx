@@ -20,6 +20,7 @@ vi.mock('../context/AuthContext.jsx', () => ({
 }))
 
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
+import { currentGrowYear } from '../lib/growYear.js'
 
 // The line picker is collapsed by default on purpose: rendering at 390px showed 17 rows pushing the
 // post and its only action ~1.8 screens down. Tests that touch individual lines open it explicitly,
@@ -110,6 +111,21 @@ describe('ComposeHarvestBand', () => {
     // created_since filters on created_at, so a backdated harvest logged tonight is still included.
     expect(url).toMatch(/created_since=/)
     expect(url).toMatch(/include=entries,aggregates/)
+  })
+
+  it('BUG-COMPOSESEASON-001: asks for the season by YEAR — a bare `season` is a 400', async () => {
+    // parseTimeframe (lambda/harvests/aggregate.js) matches only /^season:(\d{4})$/. Anything else
+    // returns null and index.js answers 400, which this component's catch swallows — so the band
+    // just never rendered, silently, for 28 releases. The original URL test asserted created_since
+    // and include= but deliberately not the timeframe, which is exactly why nothing caught it.
+    payload(BATCH)
+    render(<ComposeHarvestBand />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const url = fetchMock.mock.calls[0][0]
+    expect(url).toMatch(new RegExp(`timeframe=season:${currentGrowYear(new Date())}(&|$)`))
+    // The negative arm matters as much: `toContain('timeframe=season')` passes against the broken
+    // string, so pin that the param does NOT end right after `season`.
+    expect(url).not.toMatch(/timeframe=season(&|$)/)
   })
 
   it('swallows a fetch error rather than surfacing it onto Today', async () => {
