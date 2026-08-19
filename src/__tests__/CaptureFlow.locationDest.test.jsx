@@ -5,12 +5,19 @@
 // it got logged against whichever planting happened to be nearby. That is not a missing convenience;
 // it is a photo filed against a plant it is not a photo of.
 //
-// The three assertions that matter here are the ones a reviewer would otherwise have to take on
-// trust: that the POST carries location_id with plant_id AND project_id explicitly null (the events
-// Lambda requires only event_type and ownership-checks location_id, so this shape is supported, not
-// a hole); that the photo's linkage carries the location as well as the event; and that 'inventory'
+// BUG-LOCEVENT400-001 CORRECTION. This file used to assert that the destination POSTs an event with
+// location_id set and plant_id AND project_id both null, on the stated grounds that "the events
+// Lambda requires only event_type … so this shape is supported, not a hole". That was FALSE, and
+// this file's fetch mock — which resolved POST /api/events to { id: 'ev-loc' } — is what made the
+// falsehood invisible: validatePostBody rejects a parentless body outright, and prod's
+// event_log_has_anchor CHECK has no location arm either, so every save 400'd from the day it
+// shipped. The destination now writes the photo straight onto the location, which
+// photos_must_have_parent admits as a parent in its own right and which LocationDetail already reads
+// via /api/photos?location_id=. The client↔server join is pinned in CaptureFlow.eventContract.test.jsx,
+// which runs the real validator over the bodies this component actually sends; this file keeps the
+// destination's own behaviour (which places are offered, where the photo lands, and that 'inventory'
 // is still the LAST destination, because the same ledger row that asked for this one also asked for
-// Add Inventory to sit at the bottom and a naive append would have undone it.
+// Add Inventory to sit at the bottom and a naive append would have undone it).
 // No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -85,30 +92,29 @@ describe('CaptureFlow — log on a location (V4-SNAPDEST-001)', () => {
     expect(opts).not.toContain('Old nursery row')
   })
 
-  it('POSTs a place-scoped event: location_id set, plant_id and project_id explicitly null', async () => {
+  it('writes no event at all — there is no parent the server would accept', async () => {
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-location')
     await act(async () => { fireEvent.change(screen.getByTestId('cap-locplace'), { target: { value: 'loc-1' } }) })
     await act(async () => { fireEvent.click(screen.getByTestId('cap-save')) })
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/events', expect.objectContaining({ method: 'POST' })))
-    const body = postBody('/api/events')
-    expect(body.location_id).toBe('loc-1')
-    // NULL, not absent: the whole point is that this event belongs to a place and to no planting.
-    expect(body.plant_id).toBeNull()
-    expect(body.project_id).toBeNull()
-    expect(body.event_type).toBe('observation')
+    await waitFor(() => expect(uploadSpy).toHaveBeenCalled())
+    // The save DID land (uploadSpy fired), so this is an absence with a save behind it, not a save
+    // that silently never happened.
+    expect(fetchSpy.mock.calls.some(([p, o]) => p === '/api/events' && o?.method === 'POST')).toBe(false)
   })
 
-  it('attaches the photo to the event AND carries the location on the linkage', async () => {
+  it('attaches the photo to the LOCATION, which is a parent in its own right', async () => {
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-location')
     await act(async () => { fireEvent.change(screen.getByTestId('cap-locplace'), { target: { value: 'loc-2' } }) })
     await act(async () => { fireEvent.click(screen.getByTestId('cap-save')) })
     await waitFor(() => expect(uploadSpy).toHaveBeenCalled())
     const [, opts] = uploadSpy.mock.calls[0]
-    // event_id is the photos_must_have_parent parent; location_id is what the photo is OF.
-    expect(opts.linkage).toEqual({ event_id: 'ev-loc', location_id: 'loc-2' })
-    expect(opts.keyPrefix).toBe('events')
+    // location_id satisfies photos_must_have_parent on its own, and /api/photos?location_id= — the
+    // grid LocationDetail already renders — is what makes the row readable once written.
+    expect(opts.linkage).toEqual({ location_id: 'loc-2' })
+    expect(opts.keyPrefix).toBe('locations')
+    expect(opts.parentId).toBe('loc-2')
   })
 
   it('refuses to save with no location picked — and posts nothing', async () => {

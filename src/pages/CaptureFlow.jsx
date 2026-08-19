@@ -17,7 +17,6 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { EVENT_TYPE_META, creatableEventTypes } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import { INVENTORY_TYPES, INVENTORY_CATEGORIES, INVENTORY_UNITS } from '../lib/inventoryEnums.js'
 import { P } from '../lib/constants.js'
 import Field from '../components/forms/Field.jsx'
@@ -61,18 +60,10 @@ const EVENT_DEST_TYPES = creatableEventTypes({
   capturePanels: false, plantScoped: true,
 })
 
-// The location destination POSTs plant_id: null BY CONSTRUCTION — the place is the subject, and the
-// submit branch says so in its own comment. So every type in the D2 predication partition
-// (PLANTING_REQUIRED_TYPES) is unloggable here: there is no planting for the event to predicate on.
-//
-// Gated on PLANTING_REQUIRED_ENABLED like every other requiresPlanting() call site
-// (EventNew.handleSubmit, ProjectDetail.handleLogEvent). That flag is the rollback lever for the
-// whole D2 rule, and a consequence of the rule that does not roll back with it is a lever that only
-// half works. Flag OFF leaves the capture-panel arm, which is unconditional because the SERVER
-// enforces those three regardless of any client flag.
-const LOCATION_DEST_TYPES = creatableEventTypes({
-  capturePanels: false, plantScoped: !PLANTING_REQUIRED_ENABLED,
-})
+// V4-LOCEVENT-001 removed LOCATION_DEST_TYPES with the location destination's Event/Date fields:
+// event_log_has_anchor has no location arm, so the POST those fields fed never lands. The D2
+// predication rule still applies wherever an event IS written — EventNew, ProjectDetail,
+// EventTypePicker — each of which calls creatableEventTypes itself.
 
 // V4-SNAPDEST-001 (BD0806-08) — 'location' is the destination this row was actually missing. Snap
 // could only ever aim a photo at a PLANTING or an inventory item, so anything about the place itself
@@ -176,12 +167,10 @@ export default function CaptureFlow() {
   const [evPlant, setEvPlant] = useState('')
   const [evType, setEvType]   = useState('watering')
   const [evDate, setEvDate]   = useState(todayStr())
-  // V4-SNAPDEST-001: own state, deliberately NOT shared with the event destination's. Reusing
-  // evType/evDate would make a half-filled planting log leak into the location log and back on every
-  // Back tap, and the two destinations do not even offer the same event vocabulary.
+  // V4-SNAPDEST-001: own state, deliberately NOT shared with the event destination's.
+  // BUG-LOCEVENT400-001 removed this destination's locType/locDate: it no longer writes an event, so
+  // an event vocabulary and an event date had nothing to land in. See the save() branch.
   const [locPlace, setLocPlace] = useState('')
-  const [locType, setLocType]   = useState('observation')
-  const [locDate, setLocDate]   = useState(todayStr())
   const [rpPlant, setRpPlant] = useState('')
   const [invName, setInvName] = useState('')
   const [invType, setInvType] = useState('consumable')
@@ -221,8 +210,6 @@ export default function CaptureFlow() {
     if (draft.evType)   setEvType(draft.evType)
     if (draft.evDate)   setEvDate(draft.evDate)
     if (draft.locPlace) setLocPlace(draft.locPlace)
-    if (draft.locType)  setLocType(draft.locType)
-    if (draft.locDate)  setLocDate(draft.locDate)
     if (draft.rpPlant)  setRpPlant(draft.rpPlant)
     if (draft.invName)  setInvName(draft.invName)
     if (draft.invType)  setInvType(draft.invType)
@@ -233,16 +220,16 @@ export default function CaptureFlow() {
 
   // STASH predicate — BROAD: any divergence from the seeds, picks included. Compared key-by-key
   // against SNAP_PLANT_FORM rather than tested for truthiness, because six of these fields are
-  // seeded non-empty (quantity '1', status 'seedling', evType 'watering', locType 'observation',
-  // invType 'consumable', invCat 'other', invQty '1', invUnit 'each') and both dates are seeded to
-  // today. `!==` without a `?? ''` fallback is deliberate: `variety` seeds to null, and coercing it
-  // would report every pristine mount as touched.
+  // seeded non-empty (quantity '1', status 'seedling', evType 'watering', invType 'consumable',
+  // invCat 'other', invQty '1', invUnit 'each') and evDate is seeded to today. `!==` without a
+  // `?? ''` fallback is deliberate: `variety` seeds to null, and coercing it would report every
+  // pristine mount as touched.
   const today = todayStr()
   const plantFormTouched = Object.keys(SNAP_PLANT_FORM).some(k => plantForm[k] !== SNAP_PLANT_FORM[k])
   const hasDraftContent = (
     plantFormTouched ||
     !!(evPlant || locPlace || rpPlant || invName) ||
-    evType !== 'watering' || locType !== 'observation' || evDate !== today || locDate !== today ||
+    evType !== 'watering' || evDate !== today ||
     invType !== 'consumable' || invCat !== 'other' || invQty !== '1' || invUnit !== 'each'
   )
 
@@ -253,10 +240,10 @@ export default function CaptureFlow() {
   useEffect(() => {
     if (!hasDraftContent || step === 'done') return
     writeDraft(DRAFT_KEY, {
-      plantForm, evPlant, evType, evDate, locPlace, locType, locDate, rpPlant,
+      plantForm, evPlant, evType, evDate, locPlace, rpPlant,
       invName, invType, invCat, invQty, invUnit,
     })
-  }, [hasDraftContent, step, plantForm, evPlant, evType, evDate, locPlace, locType, locDate, rpPlant,
+  }, [hasDraftContent, step, plantForm, evPlant, evType, evDate, locPlace, rpPlant,
       invName, invType, invCat, invQty, invUnit])
 
   // GUARD predicate — SEPARATE from the stash and deliberately ONE term, which is both necessary
@@ -398,30 +385,42 @@ export default function CaptureFlow() {
           link: { to: `/plantings/${pl.id}`, label: 'View planting', name: pl.name },
           undo: () => fetch('/api/events/' + eventId, { method: 'DELETE' }) })
       } else if (mode === 'location') {
-        // No plant_id and no project_id, deliberately. The events Lambda requires only event_type and
-        // ownership-validates location_id (lambda/events/index.js), so a place-scoped event is a
-        // supported shape, not a hole — the same plant_id-NULL family the integrity check already
-        // classifies as "a shipped intentional path" rather than an orphan.
+        // BUG-LOCEVENT400-001 — THIS BRANCH NO LONGER WRITES AN EVENT, and must not be changed back.
+        //
+        // It used to POST /api/events with project_id null AND plant_id null, on the stated grounds
+        // that "the events Lambda requires only event_type". That was false twice over, and the
+        // destination 400'd on every single save from the day it shipped:
+        //   1. validatePostBody (lambda/events/validators.js) rejects a body with neither parent —
+        //      unconditionally, with no location bypass.
+        //   2. Even with that relaxed, prod's own CHECK event_log_has_anchor is
+        //      (plant_id IS NOT NULL OR project_id IS NOT NULL) — two-way, no location arm. It is
+        //      NOT VALID, which suppresses back-validation but NOT enforcement on INSERT, so the
+        //      row would be refused by Postgres as 23514 and surface as an opaque 500.
+        // There is no honest parent to supply either: picking a planting under the bed is precisely
+        // the "logged against whichever planting happened to be nearby" lie this destination exists
+        // to stop. And a parentless event would be invisible even if it were writable — every
+        // GET /api/events branch filters on project_id or plant_id, there is no ?location_id branch,
+        // and GET /api/events/:id's ownership predicate resolves false for both-null, so the row
+        // would 404 to its own author.
+        //
+        // So the photo goes STRAIGHT ONTO THE PLACE, which is the shape the schema actually supports
+        // and the shape this card's own copy promises ("Attach this photo to a bed…"):
+        // photos_must_have_parent lists location_id as a parent in its own right, POST /api/photos
+        // accepts and ownership-gates it, and LocationDetail already renders exactly this grid via
+        // /api/photos?location_id=. Written, then readable — the pair the old branch never had.
         //
         // recordCropLog is NOT called here, unlike the planting branch: it ranks crop chips by recent
-        // logging, and a location event has no crop to rank. Feeding it a blank slug would be a
-        // silent no-op today and a wrong ranking the moment that ledger learns to accept one.
+        // logging, and a place has no crop to rank. Feeding it a blank slug would be a silent no-op
+        // today and a wrong ranking the moment that ledger learns to accept one.
         if (!locPlace) throw new Error('Pick a location')
         const place = locations.find(l => l.id === locPlace)
-        const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify({
-          project_id: null, plant_id: null, location_id: locPlace,
-          event_type: locType, event_date: locDate, is_public: true,
-        }) })
-        const eventId = res?.eventId ?? res?.id
-        // location_id rides the linkage too: the event is the photo's parent for the CHECK, but the
-        // place is what the photo is OF, and the photo surfaces filter on location_id directly.
-        await attach({ event_id: eventId, location_id: locPlace }, 'events', eventId)
-        // V4-SNAPTOAST-001: "View planting" is not merely wrong here, it is unbuildable — this event
-        // carries plant_id null by design. The place is the subject, so the link is the place.
-        setResult({ kind: 'event', id: eventId,
-          label: `${EVENT_TYPE_META[locType]?.label ?? locType} logged on ${place?.full_path ?? 'location'}`,
+        const photo = await attach({ location_id: locPlace }, 'locations', locPlace)
+        // V4-SNAPTOAST-001: "View planting" is not merely wrong here, it is unbuildable — nothing
+        // about this capture names a planting. The place is the subject, so the link is the place.
+        setResult({ kind: 'location', id: photo.id,
+          label: `Photo added to ${place?.full_path ?? 'location'}`,
           link: { to: `/locations/${locPlace}`, label: 'View location', name: place?.full_path ?? 'location' },
-          undo: () => fetch('/api/events/' + eventId, { method: 'DELETE' }) })
+          undo: () => fetch('/api/photos/' + photo.id, { method: 'DELETE' }) })
       } else if (mode === 'replace') {
         const pl = plantings.find(p => p.id === rpPlant)
         if (!pl) throw new Error('Pick a planting')
@@ -627,9 +626,13 @@ export default function CaptureFlow() {
                 </Field>
               </>
             )}
-            {/* V4-SNAPDEST-001. Mirrors the event destination's three fields in the same order, so
-                the two "log something" destinations are muscle-memory identical — only the first
-                field differs (a place instead of a planting). */}
+            {/* V4-SNAPDEST-001, narrowed by BUG-LOCEVENT400-001 to the ONE field that has somewhere
+                to land. This used to mirror the event destination's three fields for muscle memory,
+                but the Event and Date selects fed a POST /api/events that the server rejects 100% of
+                the time (see the save() branch) — and with no event written there is no event
+                vocabulary to choose and no event_date to set. `taken_at` already carries when the
+                shot was taken, read from the file's own EXIF. Two fields that decide nothing are
+                worse than absent on a flow whose whole promise is type-nothing-and-Save. */}
             {mode === 'location' && (
               <>
                 <Field label="Location">
@@ -640,16 +643,8 @@ export default function CaptureFlow() {
                     ))}
                   </Select>
                 </Field>
-                <Field label="Event">
-                  <Select data-testid="cap-loctype" value={locType} onChange={e => setLocType(e.target.value)}>
-                    {LOCATION_DEST_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
-                  </Select>
-                </Field>
-                <Field label="Date">
-                  <Input type="date" value={locDate} onChange={e => setLocDate(e.target.value)} />
-                </Field>
                 {locations.length === 0 && (
-                  <Note>No locations yet — add one in Garden first, then this photo can log against it.</Note>
+                  <Note>No locations yet — add one in Garden first, then this photo can go on it.</Note>
                 )}
               </>
             )}
