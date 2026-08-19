@@ -16,9 +16,10 @@ import { SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
-import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import { EVENT_TYPE_META, creatableEventTypes } from '../lib/eventTypes.js'
+import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import { INVENTORY_TYPES, INVENTORY_CATEGORIES, INVENTORY_UNITS } from '../lib/inventoryEnums.js'
-import { P, SELECTABLE_EVENT_TYPES } from '../lib/constants.js'
+import { P } from '../lib/constants.js'
 import Field from '../components/forms/Field.jsx'
 import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
@@ -48,6 +49,30 @@ import { setReloadBlocked } from '../lib/reloadGate.js'
 
 // V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
 const DRAFT_KEY = 'snap'
+
+// V4-PICKERGATE-001 — the two event destinations offer only what they can actually POST.
+//
+// Neither carries a capture panel: both submit branches build a flat body with no `harvest` key and
+// no `metadata` key (see submit()), so harvest / failed / given_away were guaranteed 400s here.
+// Snap is the fast path — photo first, three fields, save — and a required-field panel is exactly
+// what it is not; the surface that owns those types is Log Event, which has them.
+const EVENT_DEST_TYPES = creatableEventTypes({
+  // The event destination always has a planting: submit() throws 'Pick a planting' without one.
+  capturePanels: false, plantScoped: true,
+})
+
+// The location destination POSTs plant_id: null BY CONSTRUCTION — the place is the subject, and the
+// submit branch says so in its own comment. So every type in the D2 predication partition
+// (PLANTING_REQUIRED_TYPES) is unloggable here: there is no planting for the event to predicate on.
+//
+// Gated on PLANTING_REQUIRED_ENABLED like every other requiresPlanting() call site
+// (EventNew.handleSubmit, ProjectDetail.handleLogEvent). That flag is the rollback lever for the
+// whole D2 rule, and a consequence of the rule that does not roll back with it is a lever that only
+// half works. Flag OFF leaves the capture-panel arm, which is unconditional because the SERVER
+// enforces those three regardless of any client flag.
+const LOCATION_DEST_TYPES = creatableEventTypes({
+  capturePanels: false, plantScoped: !PLANTING_REQUIRED_ENABLED,
+})
 
 // V4-SNAPDEST-001 (BD0806-08) — 'location' is the destination this row was actually missing. Snap
 // could only ever aim a photo at a PLANTING or an inventory item, so anything about the place itself
@@ -594,7 +619,7 @@ export default function CaptureFlow() {
                 </Field>
                 <Field label="Event">
                   <Select value={evType} onChange={e => setEvType(e.target.value)}>
-                    {SELECTABLE_EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
+                    {EVENT_DEST_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
                   </Select>
                 </Field>
                 <Field label="Date">
@@ -617,7 +642,7 @@ export default function CaptureFlow() {
                 </Field>
                 <Field label="Event">
                   <Select data-testid="cap-loctype" value={locType} onChange={e => setLocType(e.target.value)}>
-                    {SELECTABLE_EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
+                    {LOCATION_DEST_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
                   </Select>
                 </Field>
                 <Field label="Date">
