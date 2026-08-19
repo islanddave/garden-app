@@ -74,6 +74,11 @@ beforeEach(() => {
   window.history.replaceState({ key: 'feed-entry' }, '')
   fetchSpy.mockImplementation((url) => {
     if (url === '/api/projects') return Promise.resolve([])
+    // V4-BATCHUNDO-001: FeedPage also asks the server which bulk logs are still undoable. This mock
+    // used to classify "not /api/projects" as "a feed page request", which was exhaustive when it
+    // was written and is not any more — every assertion below counts feed PAGES, so the batches
+    // request has to be routed explicitly rather than counted as one.
+    if (url.startsWith('/api/events/batches')) return Promise.resolve({ batches: [] })
     feedCalls.push(url)
     const u = new URL(url, 'https://x')
     const limit = Number(u.searchParams.get('limit'))

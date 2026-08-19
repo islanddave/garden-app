@@ -106,8 +106,16 @@ const DIALOG_SURFACES = {
 // `busy={applying}` blocks dismissal while the status PUT is in flight. armsBack is load-bearing
 // rather than decorative here: declining is the DEFAULT outcome and Dave's device is Chrome on
 // Android, where Back is the decline gesture he will actually reach for.
+// V4-BATCHUNDO-001: components/BatchUndoConfirm.jsx is a DELIBERATE addition, the same shape as
+// PhotoDeleteConfirm. The durable batch undo removes up to 157 event rows in one irreversible
+// transaction, so it needs a confirm that can state the exact count and disclose that nothing
+// restores it — neither fits in window.confirm. It renders the shared <Sheet armsBack>, so the
+// registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed; `busy` blocks
+// dismissal while the DELETE is in flight. armsBack is load-bearing, not decorative: backing out is
+// the outcome this sheet exists to make easy, and Back is that gesture on Chrome/Android.
 const SHEET_SITES = [
   'App.jsx',
+  'components/BatchUndoConfirm.jsx',
   'components/BottomNav.jsx',
   'components/EndStatusOffer.jsx',
   'components/HarvestExportSheet.jsx',
