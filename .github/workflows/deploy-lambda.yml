@@ -106,13 +106,20 @@ jobs:
       # The assert is the point: an exclude that silently stops matching (a reworded pattern, a new
       # test suffix) would go back to shipping tests with a green build. Same shape as the
       # photocdn-derivative sharp assert below — prove the bundle, don't trust the command.
+      #
+      # The assert MUST stay a subset of the exclude or it can never pass. Its first deploy run
+      # (2026-08-19) failed all 26 functions on a false positive: the unanchored `\.test\.js` also
+      # matches `.test.js.map`, and pg (every function's dep) vendors two orphaned source maps,
+      # node_modules/pg-protocol/dist/{inbound-parser,outbound-serializer}.test.js.map, whose `.js`
+      # siblings the exclude had correctly removed. Anchored to `$` the check now matches only real
+      # test files, and the maps are excluded too — dead weight once their source is gone.
       - name: Build and zip ${{ matrix.function }}
         if: matrix.function != 'photocdn-derivative'
         run: |
           cd lambda/${{ matrix.function }}
           npm install --omit=dev
-          zip -r ../${{ matrix.function }}.zip . -x '*.test.js'
-          if unzip -l ../${{ matrix.function }}.zip | grep -q '\.test\.js'; then
+          zip -r ../${{ matrix.function }}.zip . -x '*.test.js' '*.test.js.map'
+          if unzip -l ../${{ matrix.function }}.zip | grep -qE '\.test\.js$'; then
             echo "FATAL: test files present in ${{ matrix.function }}.zip — the -x exclude stopped matching"; exit 1
           fi
 
@@ -126,7 +133,7 @@ jobs:
           node -v && npm -v
           cd lambda/photocdn-derivative
           npm install --omit=dev --os=linux --cpu=arm64 --include=optional
-          zip -r ../photocdn-derivative.zip . -x '*.test.js'   # OPS-LAMBDATESTZIP-001, same rule as the generic step
+          zip -r ../photocdn-derivative.zip . -x '*.test.js' '*.test.js.map'   # OPS-LAMBDATESTZIP-001, same rule as the generic step
           if ! unzip -l ../photocdn-derivative.zip | grep -q 'sharp-linux-arm64'; then
             echo "FATAL: linux-arm64 sharp binary missing from zip — refusing to deploy an x64 build to an arm64 Lambda"; exit 1
           fi
