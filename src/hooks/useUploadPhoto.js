@@ -30,8 +30,9 @@ import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
 import { downscaleWithThumb } from '../lib/imageDownscale.js';
 import { readCaptureMeta } from '../lib/imagePipeline.js';
-import { stripImageFile } from '../lib/imageMetadataStrip.js';
+import { stripImageFile, stripImageFileStrict } from '../lib/imageMetadataStrip.js';
 import { putWithProgress } from '../lib/uploadPut.js';
+import { PHOTO_STRIP_STRICT_UPLOAD } from '../lib/featureFlags.js';
 
 // Step 2b only. The thumb is ~50KB; if it has not landed in 10s it is not going to, and it must
 // never be the reason a save hangs (see the bounded-PUT note at its call site).
@@ -213,8 +214,18 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // contract note. A photo whose bytes cannot be read fails the save and costs a retry; it is
       // never uploaded unstripped. Sequential rather than parallel so only one copy of a
       // multi-megabyte original is held at a time (imagePipeline rule 3's memory class).
-      upFile = await stripImageFile(upFile);
-      if (thumb) thumb = await stripImageFile(thumb);
+      //
+      // BUG-HEICEXIFPASSTHRU-001 — "never uploaded unstripped" holds for an unreadable blob but NOT
+      // for a container the stripper has no walker for. HEIC/AVIF are ISOBMFF; they pass straight
+      // through and land in S3 byte-identical to the camera original, GPS included, with nothing
+      // but a console.warn. Refusing them is a user-visible regression on a path that succeeds
+      // today, so it is Dave's call and it is parked OFF behind PHOTO_STRIP_STRICT_UPLOAD. The seam
+      // is here rather than inside the stripper so both arms stay one const apart and both stay
+      // covered. The SHARE layer (harvestPostPhotos.js) is fail-closed unconditionally — no flag,
+      // because there the cost is one photo missing from a post, not the user losing the photo.
+      const strip = PHOTO_STRIP_STRICT_UPLOAD ? stripImageFileStrict : stripImageFile;
+      upFile = await strip(upFile);
+      if (thumb) thumb = await strip(thumb);
 
       // Set up preview eagerly — caller may want to render before upload completes.
       // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.

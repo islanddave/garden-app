@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import exifr from 'exifr/dist/full.esm.mjs';
 import {
   stripJpegBytes, stripPngBytes, stripWebpBytes, stripImageBytes, stripImageFile,
+  stripImageFileStrict, UnstrippableFormatError,
   isJpeg, isPng, isWebp,
 } from '../lib/imageMetadataStrip.js';
 
@@ -46,6 +47,14 @@ const parse = (b) => exifr.parse(b instanceof Uint8Array ? b : new Uint8Array(b)
 
 const bytes = (s) => new Uint8Array([...s].map((c) => c.charCodeAt(0)));
 const text = (b) => Buffer.from(b).toString('latin1');
+
+// FileReader, not arrayBuffer(): jsdom's Blob has neither, per the header note.
+const readFile = (blob) => new Promise((resolve, reject) => {
+  const fr = new FileReader();
+  fr.onload = () => resolve(new Uint8Array(fr.result));
+  fr.onerror = () => reject(fr.error);
+  fr.readAsArrayBuffer(blob);
+});
 
 function concat(...parts) {
   const flat = parts.map((p) => (p instanceof Uint8Array ? p : new Uint8Array(p)));
@@ -556,5 +565,84 @@ describe('stripImageFile — the File-level contract', () => {
   it('returns the input unchanged when there was nothing to drop', async () => {
     const f = new File([CLEAN_JPEG], 'clean.jpg', { type: 'image/jpeg' });
     expect(await stripImageFile(f)).toBe(f);
+  });
+});
+
+// BUG-HEICEXIFPASSTHRU-001 — the two entry points, on containers with no walker.
+//
+// The fixtures are REAL ISOBMFF, not a 12-byte `ftyp` stub: `sips -s format heic|avif` over
+// synthetic-gps.jpg, which carries the same fabricated Greenwich fix through the conversion (macOS
+// preserves the EXIF item). A stub would prove the format sniff and nothing else — these prove
+// exifr can read a real location out of the bytes, which is what makes the after-assertions mean
+// something. Still Greenwich, still safe for a public repo.
+describe('stripImageFile vs stripImageFileStrict — unstrippable containers', () => {
+  const HEIC = load('synthetic-gps.heic');
+  const AVIF = load('synthetic-gps.avif');
+  const fourcc = (b) => String.fromCharCode(...b.subarray(4, 12));
+
+  it('the fixtures are real ISOBMFF AND really carry a fix', async () => {
+    expect(fourcc(HEIC)).toBe('ftypheic');
+    expect(fourcc(AVIF)).toBe('ftypavif');
+    expect((await parse(HEIC)).latitude).toBeCloseTo(51.4778, 3);
+    expect((await parse(AVIF)).latitude).toBeCloseTo(51.4778, 3);
+    expect((await parse(HEIC)).Make).toBe('TestCam');
+  });
+
+  // Characterization, not aspiration: this pins what the primitive DOES so the two policy guards
+  // below rest on a stated contract rather than an assumption.
+  it('stripImageBytes cannot strip either one, and reports format:null', () => {
+    for (const b of [HEIC, AVIF]) {
+      expect(stripImageBytes(b)).toMatchObject({
+        changed: false, format: null, reason: 'unsupported-format',
+      });
+    }
+  });
+
+  it('LENIENT stripImageFile passes a real HEIC through with its GPS intact', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = new File([HEIC], 'shot.heic', { type: 'image/heic' });
+    const out = await stripImageFile(f);
+    expect(out).toBe(f);
+    // The point of the assertion: the bytes that would leave the device still name the location.
+    expect((await parse(await readFile(out))).latitude).toBeCloseTo(51.4778, 3);
+    warn.mockRestore();
+  });
+
+  it('STRICT stripImageFileStrict THROWS on a real HEIC rather than returning bytes', async () => {
+    const f = new File([HEIC], 'shot.heic', { type: 'image/heic' });
+    await expect(stripImageFileStrict(f)).rejects.toThrow(UnstrippableFormatError);
+    await expect(stripImageFileStrict(f)).rejects.toMatchObject({ format: 'image/heic', userFacing: true });
+  });
+
+  it('STRICT throws on a real AVIF too', async () => {
+    const f = new File([AVIF], 'shot.avif', { type: 'image/avif' });
+    await expect(stripImageFileStrict(f)).rejects.toThrow(UnstrippableFormatError);
+  });
+
+  // format:null is the predicate, not !changed. A clean JPEG also reports changed:false, and if
+  // strict keyed off that it would reject every already-stripped photo — i.e. everything the canvas
+  // downscale path produces, which is the common path.
+  it('STRICT does NOT throw on a clean JPEG that simply had nothing to drop', async () => {
+    const f = new File([CLEAN_JPEG], 'clean.jpg', { type: 'image/jpeg' });
+    expect(await stripImageFileStrict(f)).toBe(f);
+  });
+
+  it('STRICT still strips a GPS-bearing JPEG normally', async () => {
+    const f = new File([GPS_JPEG], 'garden.jpg', { type: 'image/jpeg' });
+    const out = await stripImageFileStrict(f);
+    expect(out).not.toBe(f);
+    expect(await parse(await readFile(out))).toBeUndefined();
+  });
+
+  it('STRICT throws for a non-Blob rather than handing it back unexamined', async () => {
+    await expect(stripImageFileStrict(null)).rejects.toThrow(UnstrippableFormatError);
+    await expect(stripImageFileStrict({ type: 'image/jpeg' })).rejects.toThrow(UnstrippableFormatError);
+  });
+
+  it('the thrown message is fit to show a user verbatim (useUploadPhoto surfaces err.message)', () => {
+    const e = new UnstrippableFormatError('image/heic');
+    expect(e.message).toContain('image/heic');
+    expect(e.message).toMatch(/location data/i);
+    expect(e.message).toMatch(/JPEG/);
   });
 });

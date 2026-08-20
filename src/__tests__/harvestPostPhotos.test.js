@@ -308,4 +308,69 @@ describe('fetchPostPhotos — a shared photo never carries the garden home addre
     expect(r.failed).toBe(1)
     expect(fetchBlob).toHaveBeenCalledTimes(2)   // one retry, then counted failed
   })
+
+  // BUG-HEICEXIFPASSTHRU-001. The test above covered the UNREADABLE blob only, and that is exactly
+  // the gap the bug lived in: "cannot strip" has a second case — a container with no walker — and
+  // for that one loadOne used to return the photo. Measured before the fix, on this same fixture:
+  // items:1, failed:0, file `harvest-photo-1.heic`, exifr reading 51.4778/-0.0015 straight off the
+  // File that goes to navigator.share.
+  //
+  // ASSERTED ON BYTES, NOT ON A COUNT. r.items being empty is necessary but not sufficient — a
+  // count can go to zero for the wrong reason. The load-bearing assertion is that no File anywhere
+  // in the result carries the fix.
+  describe('a container the stripper cannot walk is NOT shared', () => {
+    const HEIC = new Uint8Array(
+      readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'synthetic-gps.heic')),
+    )
+    const AVIF = new Uint8Array(
+      readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'synthetic-gps.avif')),
+    )
+
+    it('the HEIC fixture really carries a fix before we touch it', async () => {
+      expect(String.fromCharCode(...HEIC.subarray(4, 12))).toBe('ftypheic')
+      expect((await parse(HEIC)).latitude).toBeCloseTo(51.4778, 3)
+    })
+
+    it('NO GPS-BEARING BYTES REACH THE SHARE SHEET for a HEIC', async () => {
+      const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
+      const fetchBlob = vi.fn(async () => new Blob([HEIC], { type: 'image/heic' }))
+      const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
+
+      // The property that matters: nothing handed onward names the location.
+      for (const item of r.items) {
+        expect(await parse(await readBytes(item.file))).toBeUndefined()
+      }
+      expect(r.items).toHaveLength(0)
+      expect(r.failed).toBe(1)
+      expect(fetchBlob).toHaveBeenCalledTimes(2)   // retried once, then counted failed
+    })
+
+    it('NO GPS-BEARING BYTES REACH THE SHARE SHEET for an AVIF', async () => {
+      const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
+      const fetchBlob = vi.fn(async () => new Blob([AVIF], { type: 'image/avif' }))
+      const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
+      for (const item of r.items) {
+        expect(await parse(await readBytes(item.file))).toBeUndefined()
+      }
+      expect(r.items).toHaveLength(0)
+      expect(r.failed).toBe(1)
+    })
+
+    // PARTIAL IS THE CORRECT OUTCOME (header note). One unstrippable photo must not take the post
+    // down with it, or the fail-closed change trades a privacy leak for a dead feature.
+    it('drops only the unstrippable one and still shares the strippable JPEG beside it', async () => {
+      const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
+      const fetchBlob = vi.fn(async (url) => (String(url).includes('p1')
+        ? new Blob([HEIC], { type: 'image/heic' })
+        : backfilled()))
+      const r = await fetchPostPhotos(
+        [{ photoId: 'p1', eventId: 'e1' }, { photoId: 'p2', eventId: 'e2' }],
+        { mint, fetchBlob },
+      )
+      expect(r.items).toHaveLength(1)
+      expect(r.items[0].photoId).toBe('p2')
+      expect(r.failed).toBe(1)
+      expect(await parse(await readBytes(r.items[0].file))).toBeUndefined()
+    })
+  })
 })

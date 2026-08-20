@@ -66,6 +66,21 @@ function wireApi({ entries = BATCH, mintFails = [] } = {}) {
   })
 }
 
+// A REAL JPEG of exactly `size` bytes — the same helper, for the same reason, as
+// harvestPostPhotos.test.js next door. fetchPostPhotos runs the V4-PHOTOEXIFSTRIP-001 strip over
+// what it fetches and the strip sniffs MAGIC BYTES, not the declared MIME type, so a zero-filled
+// Uint8Array labelled image/jpeg is not a container it recognizes. This file used filler until
+// BUG-HEICEXIFPASSTHRU-001 made an unrecognized container fail closed, at which point every photo
+// here started failing to load — i.e. these assertions had been running against the passthrough
+// hole rather than against the path production takes. The padding sits INSIDE the entropy-coded
+// scan and is never 0xFF, so the strip is a byte-for-byte no-op and sizes stay exact.
+const jpegOf = (size) => {
+  if (size <= 0) return new Uint8Array(0)
+  const head = [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x03, 0x01]   // SOI + a minimal SOS header
+  const scan = Math.max(0, size - head.length - 2)
+  return new Uint8Array([...head, ...new Array(scan).fill(0x5A), 0xFF, 0xD9])
+}
+
 // The presigned GET is a bare cross-origin fetch, NOT useApiFetch — an Authorization header would
 // make S3 reject the signature. So it is window.fetch that gets stubbed here, not fetchMock.
 function wireS3({ fail = [], bytes = 4096 } = {}) {
@@ -74,7 +89,7 @@ function wireS3({ fail = [], bytes = 4096 } = {}) {
     const id = String(url).split('/')[3].split('?')[0]
     calls.push(id)
     if (fail.includes(id)) return { ok: false, status: 403, blob: async () => null }
-    return { ok: true, status: 200, blob: async () => new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }) }
+    return { ok: true, status: 200, blob: async () => new Blob([jpegOf(bytes)], { type: 'image/jpeg' }) }
   })
   return calls
 }
@@ -220,7 +235,7 @@ describe('ComposeHarvestBand — partial and excluded', () => {
     const gate = new Promise((r) => { release = r })
     globalThis.fetch = vi.fn(async () => {
       await gate
-      return { ok: true, status: 200, blob: async () => new Blob([new Uint8Array(64)], { type: 'image/jpeg' }) }
+      return { ok: true, status: 200, blob: async () => new Blob([jpegOf(64)], { type: 'image/jpeg' }) }
     })
     const user = userEvent.setup()
     render(<ComposeHarvestBand />)
