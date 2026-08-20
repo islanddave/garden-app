@@ -83,6 +83,46 @@ post:
     expect: scalar_eq
     value: 0
 
+  # THE DRIFT GUARD (added 2026-08-20, same item). The three deliberate-NULL lists in
+  # src/data/harvest-attributes-v1.json are pure documentation: harvestAttributesSync.test.js binds
+  # only by_crop_type <-> 0b-data.sql and never looks at them, so nothing has ever noticed a newly
+  # minted crop type that no list explains. That has now happened three times — aloe/calibrachoa/
+  # lantana (caught 2026-08-17), dogwood (caught 2026-08-20, minted by v4-croptypedogwood-001 the
+  # same week), and twelve never-grown perennial fruit slugs that were on no list at all since the
+  # vocabulary was minted. A recurring omission needs an invariant, not a fourth patch.
+  #
+  # Asserts the whole point of this ledger item: after the flip, EVERY remaining NULL habit is a
+  # recorded decision rather than a gap. The slug list is the union of not_harvest_tracked.slugs +
+  # unseeded_vocabulary.slugs + establishing_not_yet_harvestable.entries, and
+  # src/__tests__/harvestNullHabitCoverage.test.js fails if this list and that union ever diverge —
+  # the same JSON->SQL projection binding harvestAttributesSync.test.js applies to the seed.
+  #
+  # SELF-ARMING on this migration's schema_version, for the same reason as
+  # post_bee_balm_is_cut_and_come_again_14: bee_balm is seeded in by_crop_type and so is deliberately
+  # NOT on the list, which makes this gate red on any environment that still has it NULL. Verified
+  # 2026-08-20 against both live environments: after the flip prod has 75 NULL habits and staging 40,
+  # and every one of them is on the list — 0 violations in both. Before the flip it is inert.
+  - name: post_every_null_habit_is_a_recorded_decision
+    sql: |
+      SELECT count(*) FROM public.crop_types c
+       WHERE c.deleted_at IS NULL
+         AND c.harvest_habit IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.35.0-harvhabitgap-001')
+         AND c.slug NOT IN (
+           'aloe','althaea','apple','apricot','artichoke','avocado','begonia','blackberry_lily',
+           'bok_choy','borage','brussels_sprouts','cactus','calibrachoa','carnation','carrot',
+           'celery','cherry','christmas_cactus','chrysanthemum','cobaea','coleus','columbine',
+           'cranberry','crown_of_thorns','delphinium','dogwood','dracaena','echeveria','edelweiss',
+           'elderberry','fittonia','flower_mix','four_o_clock','foxglove','geranium','ginger',
+           'grape','haworthia','helichrysum','hibiscus','hollyhock','hosta','jade','japanese_maple',
+           'lantana','lithops','luffa','marigold','milkweed','money_plant','morning_glory','mustard',
+           'nectarine','parsnip','pear','perilla','petunia','pineapple','plum','poppy','pothos',
+           'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
+           'spinach','stock','succulent','sunflower','thunbergia','torenia','tradescantia','tweedia',
+           'vietnamese_coriander','viola')
+    expect: scalar_eq
+    value: 0
+
   # env:prod, and scripted. On prod the row exists, so this is the only gate that can tell an applied
   # migration from one that matched nothing — post_bee_balm_is_cut_and_come_again_14 shares its slug
   # predicate with the UPDATE and so passes vacuously where the row is absent.
