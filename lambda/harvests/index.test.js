@@ -158,6 +158,35 @@ describe('computeAggregates', () => {
     const fpPl2 = agg.first_pick.find((f) => f.plant_id === 'pl2');
     expect(fpPl2.first_pick_date).toBe('2026-07-20'); // 07-20 orphan earlier than 07-22 quantified
   });
+  // V4-HARVCROPTABLE-001 — first_pick[] rows now carry their planting's per-unit totals, which is
+  // where the crop-detail table's Count column comes from. ADDITIVE, same {unit, unit_key, total,
+  // count} shape serializeUnits() produces everywhere else, so unitsLine() renders it unchanged.
+  describe('first_pick[].units (per-planting Count column)', () => {
+    it('sums a planting across its rows, case-insensitive unit key like every other level', () => {
+      const fpPl1 = agg.first_pick.find((f) => f.plant_id === 'pl1');
+      expect(fpPl1.units).toEqual([{ unit: 'cup', unit_key: 'cup', total: 4, count: 2 }]); // 2.5 + 1.5
+      expect(fpPl1.unquantified).toBe(0);
+    });
+    it('an EARLIER row arriving late moves the date without restarting the sum', () => {
+      // pl2's rows are (07-22, 3 cup) then (07-20, orphan) — the minimum arrives SECOND. The
+      // predecessor re-created the whole entry on a new minimum, which would drop the 3 cups on the
+      // floor; the accumulate is why that branch now only moves the date-derived fields.
+      const fpPl2 = agg.first_pick.find((f) => f.plant_id === 'pl2');
+      expect(fpPl2.first_pick_date).toBe('2026-07-20');
+      expect(fpPl2.units).toEqual([{ unit: 'cup', unit_key: 'cup', total: 3, count: 1 }]);
+      expect(fpPl2.unquantified).toBe(1); // the 07-20 orphan is counted, never summed
+    });
+    it('every planting carries the key, and its units reconcile with its crop total', () => {
+      const zu = agg.first_pick.find((f) => f.plant_id === 'pl3');
+      expect(zu.units).toEqual([{ unit: 'count', unit_key: 'count', total: 4, count: 1 }]);
+      // blueberry's two plantings sum to the crop's cup total (7) — the table cannot under-report it
+      const bbCups = agg.first_pick
+        .filter((f) => f.crop_type_slug === 'blueberry')
+        .reduce((s, f) => s + (f.units.find((u) => u.unit_key === 'cup')?.total ?? 0), 0);
+      expect(bbCups).toBe(agg.crops.find((c) => c.crop_type_slug === 'blueberry').units.find((u) => u.unit_key === 'cup').total);
+    });
+  });
+
   it('distinct crop list feeds the picker (attributed crops only, sorted)', () => {
     expect(agg.crop_list).toEqual([
       { crop_type_slug: 'blueberry', display_name: 'Blueberry' },

@@ -16,7 +16,7 @@ import { useHarvests } from '../hooks/useHarvests.js'
 import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
-import { fmtQuantity, unitLabel, formatEntry, unitsLine, fmtFirstPick, addDays, etDay } from '../lib/harvestSummary.js'
+import { fmtQuantity, unitLabel, formatEntry, unitsLine, fmtFirstPick, isMassUnit, addDays, etDay } from '../lib/harvestSummary.js'
 import { describeHarvestWeight, weightBasisLabel, formatGrams, weightParts, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { currentGrowYear, growYearOfDayKey, growYearSpan, growYearOptions, HARVEST_TZ } from '../lib/growYear.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
@@ -622,10 +622,12 @@ function HarvestEntry({ entry: e }) {
   )
 }
 
-// ── Totals (S3-a: per-crop rows expand IN PLACE — variety sub-rows, first-pick dates, unquantified
-// count, "See in log →". Global sparkline + independent year selector = S3-b/S3-c.) ────────────────
+// ── Totals (S3-a: per-crop rows expand IN PLACE — variety sub-rows, the per-planting first-pick
+// table, unquantified count, "See in log →". Global sparkline + year selector = S3-b/S3-c.) ────────
 // (S5: fmtFirstPick + unitsLine + weightParts moved to src/lib — the Totals EXPORT renders the same
-// strings from the same code, which is the only way "the export reconciles with the page" stays true.)
+// strings from the same code, which is the only way "the export reconciles with the page" stays true.
+// V4-HARVCROPTABLE-001 re-shaped the page's first-pick block into a table but kept it sourced from
+// these same helpers, so the claim still holds: same date string, same count string, both surfaces.)
 
 // V4-HARVESTVIEW-001 S4 (sparkline): map a crop's ADDITIVE weekly[] field to bare Sparkline values.
 // Absent field (older Lambda — the frontend deploys ahead and a rollback must hold) -> null, render
@@ -695,7 +697,7 @@ function TotalsView({ aggregates, onSeeInLog, timeframe, sortMode }) {
 }
 
 // One expandable crop total. Collapsed = crop name + per-unit season total + unquantified count.
-// Expanded (in place) adds variety sub-rows, first-pick date per planting, and the See-in-log jump.
+// Expanded (in place) adds variety sub-rows, the per-planting first-pick table, and the See-in-log jump.
 function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog, sortMode }) {
   const varieties = Array.isArray(c.varieties) ? c.varieties : []
   // A single unnamed variety is just the crop total again — only surface sub-rows when they add info.
@@ -753,23 +755,7 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
               ))}
             </div>
           )}
-          {firstPicks.length > 0 && (
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {firstPicks.map((f) => (
-                <div key={f.plant_id} style={{ fontSize: '0.8rem', color: P.mid }}>
-                  First pick {fmtFirstPick(f.first_pick_date, new Date().getFullYear())}{f.planting_name ? ` · ${f.planting_name}` : ''}
-                  {/* V4-HARVGRAIN-001: per-planting grams, from the (crop, cultivar, planting)
-                      grouping set. This line already identifies the planting, so the weight rides
-                      it rather than minting a second per-planting list beside it. */}
-                  {f.weight?.grams > 0 && (
-                    <span data-testid="planting-weight" style={{ color: P.light }}>
-                      {' · '}{f.weight.estimated > 0 ? `≈ ${formatGrams(f.weight.grams)}` : formatGrams(f.weight.grams)}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {firstPicks.length > 0 && <PlantingTable rows={firstPicks} />}
           <button
             type="button"
             onClick={() => onSeeInLog?.(c.crop_type_slug, c.crop_name)}
@@ -779,6 +765,91 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// V4-HARVCROPTABLE-001 — the per-planting block inside an expanded crop, as Dave specified it:
+// Planting | Count | Total weight | First pick, ONE row per planting, weight visually dominant,
+// no borders. It replaces a run of "First pick {date} · {planting} · ≈ {weight}" sentences.
+//
+// Still a FIRST-PICK table, not a totals table. The date shipped briefly as a dropped column and
+// Dave put it back: it is the answer to "did this planting produce before frost", it is what the
+// Totals export prints, and the two surfaces are meant to agree. What IS gone is the ≈ /
+// "26 weighed · 1 estimated" provenance wording — "Dave knows the weight is estimated in some way
+// and does not need it surfaced". That qualifier still rides the crop row and the variety sub-rows,
+// whose ORDER is the weight, so a modelled ranking there is never read as a measured finding.
+//
+// Count is the quantity picked (units[].total), not the number of picks — the page already calls
+// that key "By picks", and a Count beside a Total weight is only useful if the two reconcile.
+// Passed with a null noun so a 'count' unit renders bare ("65"): the crop name is already the card
+// title. See countCell() for the unit rule; the short version is that this column only ever holds
+// things you can count.
+//
+// '—' rather than a blank or a zero in any cell. formatGrams() returns null for absent input by
+// design (0 g is missing data, never a measurement), and units[] is absent entirely on an older
+// Lambda — a dash says "nothing to show" without claiming a measured nothing.
+//
+// 390px (Dave is Android/Chrome): the name cell wraps at any character and the other three are
+// nowrap, so min-content stays under the viewport and the page never scrolls sideways even at four
+// columns. The overflowX container is the backstop for a pathological name — it scrolls the TABLE,
+// not the page. Sentence case, not the uppercase letterspaced micro-label a table like this usually
+// gets: Dave wrote the headers himself and asked for human reading over a data grid.
+
+// A 1.5 under a header that says "Count" is a lie, and that is what a pounds-logged planting used to
+// render. The column means "how many did I pick", so a mass unit gets the same dash a no-data row
+// gets and the poundage speaks for itself one column over in Total weight — nothing is lost.
+// isMassUnit is the codebase's OWN class boundary (g/kg/lb/oz) rather than a new taxonomy invented
+// here, which matters because cup/bunch/head must keep rendering their totals: those are, in that
+// file's words, "discrete or volumetric", and blueberries are logged in cups. Tested against
+// unit_key (serializeUnits' trimmed lowercase form), never the dominant raw spelling.
+function countCell(units) {
+  if (!Array.isArray(units)) return '—'
+  return unitsLine(units.filter((u) => !isMassUnit(u.unit_key)), null) || '—'
+}
+
+const PT_HEAD = { fontSize: '0.72rem', fontWeight: 600, color: P.light, padding: '0 0 4px', border: 'none' }
+const PT_CELL = { border: 'none', verticalAlign: 'baseline' }
+function PlantingTable({ rows }) {
+  const currentYear = new Date().getFullYear()
+  return (
+    <div style={{ marginTop: 10, overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', border: 'none' }}>
+        <thead>
+          <tr>
+            <th scope="col" style={{ ...PT_HEAD, textAlign: 'left' }}>Planting</th>
+            <th scope="col" style={{ ...PT_HEAD, textAlign: 'right', whiteSpace: 'nowrap', paddingRight: 8 }}>Count</th>
+            {/* This ONE header is allowed to wrap. At 390px with four columns "Total weight" nowrap
+                is the widest thing in its column — wider than "8.23 kg" — so it was setting the
+                column width and starving the planting names, which then wrapped to three and four
+                lines. A header that breaks once at the top costs less than every name breaking. */}
+            <th scope="col" style={{ ...PT_HEAD, textAlign: 'right', paddingRight: 8 }}>Total weight</th>
+            <th scope="col" style={{ ...PT_HEAD, textAlign: 'right', whiteSpace: 'nowrap' }}>First pick</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((f) => (
+            <tr key={f.plant_id}>
+              <td style={{ ...PT_CELL, fontSize: '0.83rem', color: P.mid, padding: '4px 8px 4px 0', overflowWrap: 'anywhere' }}>
+                {f.planting_name || 'Unnamed planting'}
+              </td>
+              <td data-testid="planting-count" style={{ ...PT_CELL, fontSize: '0.83rem', color: P.mid, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 8px 4px 0' }}>
+                {countCell(f.units)}
+              </td>
+              <td data-testid="planting-weight" style={{ ...PT_CELL, fontSize: '0.95rem', fontWeight: 700, color: P.dark, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 8px 4px 0' }}>
+                {formatGrams(f.weight?.grams) || '—'}
+              </td>
+              {/* Supporting fact, deliberately the quietest column: the weight has to stay the one
+                  the eye lands on, and this sits to its right where it would otherwise win. The
+                  0.72rem is width as much as hierarchy — a prior-season date is "Sep 30, 2024",
+                  the widest string in the table, and at 390px those pixels come off the names. */}
+              <td data-testid="planting-first-pick" style={{ ...PT_CELL, fontSize: '0.72rem', color: P.light, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 0' }}>
+                {f.first_pick_date ? fmtFirstPick(f.first_pick_date, currentYear) : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

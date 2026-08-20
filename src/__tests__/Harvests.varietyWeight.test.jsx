@@ -132,20 +132,159 @@ describe('variety sub-rows carry weight', () => {
   })
 })
 
-describe('per-planting weight on the first-pick lines', () => {
-  it('shows the planting’s own grams beside its first-pick date', async () => {
+// V4-HARVCROPTABLE-001 — Dave's own design: "a clean ... table - Planting | Count | Total weight -
+// ONE row per planting. Drop all weighed-vs-estimated wording ... show only the total weight, and
+// make the weight the visually dominant column." First pick returned as a 4th column on his ruling:
+// the block stays a FIRST-PICK table rather than becoming a totals table, and it keeps the page and
+// the Totals export saying the same thing.
+//
+// The provenance drop is scoped to THIS block and nowhere else: the variety sub-rows above still
+// carry "≈ 8.23 kg · 26 weighed · 1 estimated" (the describes above pin that), because those rows can
+// be ORDERED by grams and a modelled ranking rendered bare reads as a measured finding. A planting
+// row is not ranked, and Dave already knows the number is inferred.
+const plantingRow = (name) => screen.getByText(name).closest('tr')
+const cellsOf = (name) => [...plantingRow(name).cells].map((c) => c.textContent)
+
+// The component year-qualifies a date only when it is NOT the current year, and it reads that year
+// off the real clock. A hardcoded '2026-…' fixture would therefore pass this year and start
+// rendering "Jul 4, 2026" in January — the dates are built from the clock for that reason.
+const CUR_YEAR = new Date().getFullYear()
+
+describe('the per-planting table (V4-HARVCROPTABLE-001)', () => {
+  const MOSKVICH_FP = {
+    plant_id: 'gn-1', planting_name: 'Moskvich bed', crop_type_slug: 'tomato', first_pick_date: `${CUR_YEAR}-07-04`,
+    units: [{ unit: 'count', unit_key: 'count', total: 65, count: 27 }], unquantified: 0, weight: MOSKVICH,
+  }
+
+  it('renders Planting | Count | Total weight | First pick, one row per planting, with the live tomato numbers', async () => {
     await renderTotals({
-      first_pick: [{ plant_id: 'gn-1', planting_name: 'Moskvich bed', crop_type_slug: 'tomato', first_pick_date: '2026-07-04', weight: MOSKVICH }],
+      first_pick: [MOSKVICH_FP, {
+        plant_id: 'gn-2', planting_name: 'Cherry Falls bed', crop_type_slug: 'tomato', first_pick_date: `${CUR_YEAR}-07-11`,
+        units: [{ unit: 'count', unit_key: 'count', total: 128, count: 36 }], unquantified: 0, weight: CHERRY_FALLS,
+      }],
     })
-    expect(screen.getByTestId('planting-weight').textContent).toBe(' · ≈ 8.23 kg')
+    expect([...screen.getByRole('table').tHead.rows[0].cells].map((c) => c.textContent))
+      .toEqual(['Planting', 'Count', 'Total weight', 'First pick'])
+    expect(cellsOf('Moskvich bed')).toEqual(['Moskvich bed', '65', '8.23 kg', 'Jul 4'])
+    expect(cellsOf('Cherry Falls bed')).toEqual(['Cherry Falls bed', '128', '763 g', 'Jul 11'])
+    expect(screen.getByRole('table').tBodies[0].rows.length).toBe(2)
   })
 
-  it('stays silent for a planting with no derivable weight', async () => {
+  // The date is rendered by the SAME src/lib helper the Totals export calls, which is what "the
+  // export reconciles with the page" rests on. fmtFirstPick appends the year only when it differs
+  // from the current one — a prior-season planting must not read as this year's.
+  it('renders the first-pick date through fmtFirstPick, year-qualifying a prior season', async () => {
+    const priorYear = CUR_YEAR - 2
     await renderTotals({
-      first_pick: [{ plant_id: 'gn-3', planting_name: 'Volunteer', crop_type_slug: 'tomato', first_pick_date: '2026-07-04', weight: w({ unweighed: 2 }) }],
+      first_pick: [{ ...MOSKVICH_FP, first_pick_date: `${priorYear}-07-04` }],
     })
-    expect(screen.queryByTestId('planting-weight')).toBeNull()
-    expect(screen.getByText(/First pick/)).toBeTruthy()
+    expect(screen.getByTestId('planting-first-pick').textContent).toBe(`Jul 4, ${priorYear}`)
+  })
+
+  it('drops the ≈ and the weighed/estimated counts — the weight only', async () => {
+    // Moskvich is 26 weighed + 1 estimated, so the OLD render was ' · ≈ 8.23 kg' and the variety row
+    // above it still says so. This cell must be the bare number and nothing else.
+    await renderTotals({ first_pick: [MOSKVICH_FP] })
+    const cell = screen.getByTestId('planting-weight')
+    expect(cell.textContent).toBe('8.23 kg')
+    expect(cell.textContent).not.toContain('≈')
+    expect(cell.textContent).not.toContain('weighed')
+    expect(cell.textContent).not.toContain('estimated')
+  })
+
+  it('makes the weight the visually dominant column', async () => {
+    await renderTotals({ first_pick: [MOSKVICH_FP] })
+    const [nameCell, countCell, weightCell] = plantingRow('Moskvich bed').cells
+    expect(weightCell.style.fontWeight).toBe('700')
+    expect(parseFloat(weightCell.style.fontSize)).toBeGreaterThan(parseFloat(countCell.style.fontSize))
+    expect(parseFloat(weightCell.style.fontSize)).toBeGreaterThan(parseFloat(nameCell.style.fontSize))
+  })
+
+  it('carries no borders and scrolls inside its own container, not the page (390px)', async () => {
+    await renderTotals({ first_pick: [MOSKVICH_FP] })
+    const table = screen.getByRole('table')
+    // jsdom DISCARDS `border: none` (it serializes to an empty cssText), so asserting the declared
+    // value would pass on any markup at all. Assert the falsifiable thing instead: nothing in the
+    // table declares a border rule. jsdom does keep real values — a `1px solid` added to the table
+    // or any cell serializes into cssText and turns this red.
+    const declared = [table, ...table.querySelectorAll('th,td')]
+      .flatMap((el) => el.style.cssText.split(';').map((d) => d.trim()).filter(Boolean))
+      .filter((d) => d.startsWith('border') && !d.startsWith('border-collapse'))
+    expect(declared).toEqual([])
+    // A 390px Chrome/Android viewport: the name cell wraps at any character and the number cells are
+    // nowrap, so nothing forces the PAGE sideways; the wrapper is the backstop if it ever did.
+    expect(table.parentElement.style.overflowX).toBe('auto')
+    const cells = plantingRow('Moskvich bed').cells
+    expect(cells[0].style.overflowWrap).toBe('anywhere')
+    // All THREE trailing columns must be nowrap, not just the two — a wrapping 4th column is what
+    // would push the min-content width past the viewport at 390px.
+    expect([cells[1], cells[2], cells[3]].map((c) => c.style.whiteSpace)).toEqual(['nowrap', 'nowrap', 'nowrap'])
+  })
+
+  it('dashes a planting with no derivable weight rather than printing a zero', async () => {
+    await renderTotals({
+      first_pick: [{
+        plant_id: 'gn-3', planting_name: 'Volunteer', crop_type_slug: 'tomato', first_pick_date: `${CUR_YEAR}-07-04`,
+        units: [], unquantified: 2, weight: w({ unweighed: 2 }),
+      }],
+    })
+    expect(cellsOf('Volunteer')).toEqual(['Volunteer', '—', '—', 'Jul 4'])
+  })
+
+  it('an older Lambda (no units key on a first_pick row) dashes the count, not a zero', async () => {
+    // The SPA and the harvests Lambda deploy on separate legs and a rollback must hold: "this API
+    // does not compute planting counts" must not render as "this planting produced 0".
+    await renderTotals({
+      first_pick: [{ plant_id: 'gn-1', planting_name: 'Moskvich bed', crop_type_slug: 'tomato', first_pick_date: `${CUR_YEAR}-07-04`, weight: MOSKVICH }],
+    })
+    expect(cellsOf('Moskvich bed')).toEqual(['Moskvich bed', '—', '8.23 kg', 'Jul 4'])
+  })
+
+  // A 1.5 under a header that says "Count" is a lie. Dave's ruling: a mass unit gets the same dash a
+  // no-data row gets, so the column always means one thing; the poundage is already one column over.
+  describe('Count holds only countable units', () => {
+    const beans = (unit, total) => ({
+      plant_id: 'gn-4', planting_name: 'Bush beans row', crop_type_slug: 'tomato', first_pick_date: `${CUR_YEAR}-07-04`,
+      units: [{ unit, unit_key: unit, total, count: 3 }], unquantified: 0,
+      weight: w({ grams: 680, measured_grams: 680, measured: 3 }),
+    })
+
+    it('dashes a WEIGHT-unit planting — and the same row still shows its weight', async () => {
+      await renderTotals({ first_pick: [beans('lb', 1.5)] })
+      expect(cellsOf('Bush beans row')).toEqual(['Bush beans row', '—', '680 g', 'Jul 4'])
+      expect(screen.getByTestId('planting-count').textContent).not.toContain('lb')
+    })
+
+    // isMassUnit's whole class — a per-unit special case for lb would leave the others lying.
+    it.each(['g', 'kg', 'lb', 'oz'])('dashes the %s unit, not just lb', async (u) => {
+      await renderTotals({ first_pick: [beans(u, 2)] })
+      expect(screen.getByTestId('planting-count').textContent).toBe('—')
+    })
+
+    it('still shows the NUMBER for countable units — the reconciliation case', async () => {
+      // The reason Count is quantity-not-picks in the first place: 65 fruit -> 8.23 kg reconciles.
+      await renderTotals({ first_pick: [MOSKVICH_FP] })
+      expect(screen.getByTestId('planting-count').textContent).toBe('65')
+    })
+
+    // NOT collateral damage of the dash rule: blueberries are logged in cups, and dashing them would
+    // empty the column for a crop this surface exists to summarise. harvestSummary calls these
+    // "discrete or volumetric" and keeps them out of the mass class for exactly this reason.
+    it.each([['cup', '4 cups'], ['bunch', '4 bunches'], ['head', '4 heads']])(
+      '%s is countable and keeps its total', async (u, expected) => {
+        await renderTotals({ first_pick: [beans(u, 4)] })
+        expect(screen.getByTestId('planting-count').textContent).toBe(expected)
+      })
+
+    it('a MIXED-unit planting keeps the countable part and drops only the mass part', async () => {
+      await renderTotals({
+        first_pick: [{
+          ...beans('lb', 1.5),
+          units: [{ unit: 'count', unit_key: 'count', total: 12, count: 4 }, { unit: 'lb', unit_key: 'lb', total: 1.5, count: 3 }],
+        }],
+      })
+      expect(screen.getByTestId('planting-count').textContent).toBe('12')
+    })
   })
 })
 
