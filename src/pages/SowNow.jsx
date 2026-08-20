@@ -110,6 +110,10 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   // details and can never land orphaned (BUG-ORPHANNAV-001, the old mini-form's project_id:null).
   const [sowTarget, setSowTarget] = useState(null)
   // V4-BACKNAV-001 Slice P (extended) — the sow sheet closes in place (setSowTarget(null)).
+  // V4-PLANTEDITORWIRE-001: mirror of the embedded editor's own clean/dirty state, reported through
+  // its `onDirty` prop. This is the ONLY thing this page can know about content typed INSIDE the
+  // sheet — `sowTarget` says which packet is being sown, never whether anything has been entered.
+  const [editorDirty, setEditorDirty] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -149,14 +153,24 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   // busy), or a post-save confirmation cache (sownIds) — none of it is unsaved input, and the
   // per-candidate windowLabel/daysLeft annotations are computed by sowEngine and always regenerable
   // from fresh candidates, never something a reload could "lose". PlantingEditor owns its own field
-  // state (place/quantity/notes) internally with no callback to observe it, so this predicate — like
-  // the stash and the checked-for-landmine restore below — recovers WHICH packet was mid-sow, not
-  // what was typed into the sheet itself.
+  // state (place/quantity/notes) internally, so this predicate — like the stash and the
+  // checked-for-landmine restore below — recovers WHICH packet was mid-sow, not what was typed into
+  // the sheet itself.
   //
   // Hoisted to a named value (not inlined per-consumer) for the same reason EventNew's
   // hasUnsavedInput is: it feeds three channels below (draft persist, the overlay-dirty report, the
   // reload gate) and letting them drift to slightly different predicates is how one ends up defended
   // and the others not.
+  //
+  // V4-PLANTEDITORWIRE-001 — `editorDirty` is deliberately NOT a term here, and the reason is
+  // arithmetic rather than taste: PlantingEditor is rendered ONLY inside `{sowTarget && …}` and its
+  // unmount releases, so editorDirty ⟹ sowTarget and `dirty || editorDirty` is exactly `dirty`. A
+  // term that cannot change the value of the expression it is in cannot be tested, and an untestable
+  // OR is how a predicate ends up looking guarded while proving nothing. Nor is the editor's signal
+  // used to NARROW this to `sowTarget && editorDirty`: the stash restores the open sheet on a packet
+  // the user chose, and that choice is worth holding a deploy for whether or not a field is filled.
+  // The place the editor's signal is genuinely load-bearing is the Sheet's backdrop guard below,
+  // which is the one discard path on this page that `dirty` never covered.
   const dirty = !!sowTarget
 
   // Restore a dismissed/reloaded Sow sheet, once candidates have loaded. Gated on `buckets` rather
@@ -193,12 +207,14 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   //
   // WHAT THIS RECOVERS, PRECISELY: the inventory_item_id, i.e. WHICH packet was mid-sow, and
   // nothing else. It does NOT preserve anything typed or picked inside the sheet — place/project,
-  // location, quantity, planting notes, dates — because PlantingEditor owns that state internally
-  // and exposes no onChange/onDirty prop for SowNow to observe. So a mid-sheet SW reload that beats
-  // the gate re-opens the right packet on an EMPTY form. Closing that gap needs a change to
-  // PlantingEditor's own interface (filed separately), not a bigger payload here: there is no way
-  // from this file to read the fields, and a stash that claims to restore a form it cannot read
-  // would be worse than one that honestly restores only the target.
+  // location, quantity, planting notes, dates — because PlantingEditor owns that state internally.
+  // So a mid-sheet SW reload that beats the gate re-opens the right packet on an EMPTY form.
+  //
+  // V4-PLANTEDITORWIRE-001 did NOT change that, and it is worth being precise about why: `onDirty`
+  // reports a BOOLEAN — that unsaved work exists — not the values, so it lets this page DEFEND the
+  // fields (backdrop guard below) but still gives it nothing to write down. A stash that claimed to
+  // restore a form it cannot read would be worse than one that honestly restores only the target.
+  // Widening the payload needs a values-level channel on PlantingEditor, which does not exist.
   useEffect(() => {
     if (!dirty) return
     writeDraft(DRAFT_KEY, { inventoryItemId: sowTarget.candidate.inventory_item_id })
@@ -470,6 +486,17 @@ export default function SowNow({ todayISO = localTodayISO() }) {
         armsBack
         open={!!sowTarget}
         onClose={closeSowSheet}
+        // V4-PLANTEDITORWIRE-001 — the guard the reload gate above could not give this page. A
+        // backdrop tap is the one exit that is neither deliberate nor deferrable: Sheet no-ops it
+        // while dirty (Sheet.jsx §5.2) and leaves Escape and the labelled Close live, which is
+        // exactly right here — a stray tap beside a half-filled sow form must not discard it, but a
+        // user who means to leave still has two ways out and needs no confirm dialog to use them.
+        // Gated on the EDITOR's signal, not on `dirty` (= sheet-open): passing sheet-open would make
+        // the backdrop inert for every sow, including the far more common one where the sheet was
+        // opened by mistake and holds nothing. It also registers with the DismissRegistry, where
+        // `confirmOnDirty` is still off by default (dismissLayers.js) — forward-compat for the
+        // ConfirmSheet primitive, inert for Back/Escape today.
+        dirty={editorDirty}
         title={sowTarget ? `Sow ${sowTarget.candidate.variety_name || sowTarget.candidate.item_name}` : undefined}
       >
         {sowTarget && (
@@ -487,6 +514,10 @@ export default function SowNow({ todayISO = localTodayISO() }) {
                 closeSowSheet()
               }}
               onClose={closeSowSheet}
+              // V4-PLANTEDITORWIRE-001. The setter itself, not an inline arrow — PlantingEditor
+              // keeps `onDirty` behind a ref so an unstable prop cannot fire a spurious release,
+              // and a stable identity means this page never has to rely on that.
+              onDirty={setEditorDirty}
             />
           </div>
         )}

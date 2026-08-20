@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
 import { loadGroupsExpanded, saveGroupsExpanded } from '../lib/projectTree.js'
 import { Link, useSearchParams, useLocation } from 'react-router-dom'
-import { OverlayLink } from '../context/OverlayContext.jsx'
+import { OverlayLink, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { P } from '../lib/constants.js'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import Icon from '../components/Icon.jsx'
@@ -207,6 +208,10 @@ export default function Garden() {
   const sourceInventoryItemId = searchParams.get('source_inventory_item_id') || null
   const queryVarietyId        = searchParams.get('variety_id') || null
   const [editor, setEditor] = useState(null)
+  // V4-PLANTEDITORWIRE-001: mirror of the embedded editor's own clean/dirty state, reported through
+  // its `onDirty` prop. Garden owns none of the form's field state, so this boolean is the ONLY
+  // thing this page can know about typed content inside it — see hasUnsavedInput below.
+  const [editorDirty, setEditorDirty] = useState(false)
   // V3-GARDEN-001: transient id of the just-created planting. Drives an ambient in-row
   // highlight/fade so the new row is acknowledged WITHOUT a toast/modal/banner (reward-UX
   // ambient rule). Cleared ~1200ms after create (matches the @keyframes duration below).
@@ -430,6 +435,44 @@ export default function Garden() {
       setSearchParams(next, { replace: true, state: location.state })
     }
   }, [searchParams, setSearchParams, sourceInventoryItemId, queryVarietyId])
+
+  // ---- V4-PLANTEDITORWIRE-001 — the dirty contract over the embedded PlantingEditor ----
+  //
+  // /garden had NO guard of any kind before this: not the reload gate, not the overlay report. The
+  // gap was never a judgement that the page holds nothing precious — it is that the one region that
+  // does hold typed content is a child component that owned its field state privately and exposed
+  // no way to observe it. `onDirty` (V4-PLANTEDITORDIRTY-001) is that way, and this is the consumer.
+  //
+  // THE EDITOR IS THE WHOLE PREDICATE, and the exclusions are deliberate rather than an oversight:
+  // `projects`/`plants`/`locations`/`critters`/`prefs` are fetched, `expanded`/`groupBy`/`careLens`
+  // are view state that already round-trips through localStorage and the prefs API (a reload
+  // restores them, so a reload cannot lose them), `popover`/`flashId` are ambient chrome, and
+  // `archiveUndo` is a post-save undo window — the PATCH already landed server-side, so nothing
+  // there is unsaved INPUT. Widening this to any of them would hold a deploy for someone merely
+  // scrolling the garden, which is BUG-STALECLIENT-001's shape with extra steps.
+  const hasUnsavedInput = editorDirty
+
+  // Forward-compat, and honestly inert TODAY: App.jsx registers /garden as a plain route with no
+  // `overlayable` flag, so no OverlayDirtyProvider is ever mounted above this page and this reports
+  // into nothing. Kept so the page carries the standard shape and adding `overlayable` later needs
+  // no follow-up here — the guard that actually runs on this surface is the reload gate below.
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // V4-RELOADGATEWIRE-001 shape, per EventNew.jsx:985-991: per-instance key (reloadGate holds a
+  // Set, and a shared literal would let one instance's unmount release another's hold) and a
+  // BOOLEAN dep (the cleanup release NOTIFIES registerSW's listeners, so a dep that changes
+  // mid-form would fire a reload the user is still typing under).
+  //
+  // No `editor &&` term guarding this. It is tempting — PlantingEditor's unmount release lands one
+  // commit after `editor` goes null — but that term cannot be made to fail a test: React flushes
+  // the child's cleanup and the resulting re-render inside the same act(), so both spellings
+  // release together. An unkillable term is indistinguishable from a decorative one, and the child
+  // genuinely does release on unmount (PlantingEditor.dirty.test.jsx pins it).
+  const reloadGateKey = `garden:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   // V3-IA photo restore + V3-GARDEN-001 logging-loop fix: refetch the full /api/plants list.
   // Declared ABOVE the create/update/delete handlers so they can call it to re-hydrate rows.
@@ -704,6 +747,10 @@ export default function Garden() {
           onDeleted={onPlantDeleted}
           onArchived={onPlantArchived}
           onClose={closeEditor}
+          // V4-PLANTEDITORWIRE-001. The setter itself, NOT an inline arrow: PlantingEditor keeps
+          // `onDirty` out of its effect deps behind a ref precisely so an unstable prop cannot fire
+          // a spurious release, and a stable identity means this page never depends on that.
+          onDirty={setEditorDirty}
         />
       )}
 

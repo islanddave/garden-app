@@ -340,3 +340,141 @@ describe('Garden — the planting editor can actually clear a field', () => {
     expect(body.clear).not.toContain('status')
   })
 })
+
+// ── V4-PLANTEDITORWIRE-001 — the dirty contract over the embedded PlantingEditor ─────────────────
+//
+// /garden carried NO guard at all before this: the one region on the page that holds typed content
+// is a child component that owns its field state privately, and until V4-PLANTEDITORDIRTY-001 gave
+// it `onDirty` there was nothing for the page to observe. These tests prove the whole chain — a
+// keystroke inside PlantingEditor reaching the REAL reloadGate — not just that Garden passes a prop.
+//
+// Nothing spies on setReloadBlocked. A spy proves a call happened, not that the gate ends up held,
+// and that exact blind spot is how the gate primitive shipped with zero callers and a green suite.
+//
+// The NEGATIVE cases carry the weight. Over-reporting here is not a cosmetic defect: it holds a
+// service-worker update (BUG-STALECLIENT-001's shape, deferred rather than cancelled precisely so
+// it cannot recur) for a user who only opened a form and typed nothing. Three separate ways to get
+// that wrong are pinned below — a merely-opened add form, an edit form seeded from a planting that
+// already HAS a name and notes, and a packet deep-link that fills the Name box by machine.
+import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
+
+describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-001)', () => {
+  beforeEach(() => { clearReloadBlocks() })
+
+  it('holds nothing while the garden is merely being browsed', async () => {
+    primeFetch()
+    await renderGarden()
+    expect(screen.queryByLabelText(/Name/i)).toBeNull()
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // ★ The nag case. An editor the user opened and has not typed into is not unsaved work, and a
+  // guard that fired here would hold a deploy for every FAB tap on the page.
+  it('does NOT hold when the add editor is merely opened', async () => {
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeFetch()
+    await renderGarden()
+    expect(screen.getByLabelText(/Name/i)).toBeDefined()
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('holds the reload on the first keystroke in the add editor', async () => {
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeFetch()
+    await renderGarden()
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+  })
+
+  // A pick is not a keystroke and travels a different path into the form (VarietyPicker's onChange,
+  // not a DOM change event on an <input>), so it gets its own assertion rather than being assumed.
+  it('holds the reload for a VARIETY PICK, not just typed text', async () => {
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeFetch()
+    await renderGarden()
+    expect(isReloadBlocked()).toBe(false)
+    await act(async () => { fireEvent.click(screen.getByTestId('vp-pick-black-krim')) })
+    expect(screen.getByTestId('vp-value').textContent).toBe('Black Krim')
+    expect(isReloadBlocked()).toBe(true)
+  })
+
+  // ★ The predicate an "any value is non-empty" version fails. Every box in this form arrives
+  // filled — name, variety, quantity, status — because it is seeded FROM the planting being edited.
+  it('does NOT hold when the EDIT editor opens prefilled from a real planting', async () => {
+    searchParamsRef.current = new URLSearchParams('edit=plant-2')
+    primeFetch()
+    await renderGarden()
+    await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
+    // The seed genuinely landed — otherwise this asserts nothing about prefilled fields.
+    expect(screen.getByLabelText(/Name/i).value).toBe('Krim Plant')
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('holds once the prefilled edit form is actually changed', async () => {
+    searchParamsRef.current = new URLSearchParams('edit=plant-2')
+    primeFetch()
+    await renderGarden()
+    await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: 'potted on' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+  })
+
+  // ★ Machine-seeded fields are not the user's unsaved work. This is the deep link
+  // InventoryDetail's "Plant this" opens: /garden?source_inventory_item_id=…&variety_id=…, which
+  // fetches the packet and writes the Name box itself.
+  it('does NOT hold for a packet deep-link prefill', async () => {
+    searchParamsRef.current = new URLSearchParams('source_inventory_item_id=item-seed-1&variety_id=var-1')
+    primeFetch()
+    await renderGarden()
+    await waitFor(() => expect(screen.getByLabelText(/Name/i).value).toBe('Black Krim seed packet'))
+    await waitFor(() => expect(screen.getByTestId('vp-value').textContent).toBe('Black Krim'))
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('releases when a dirty editor is CANCELLED — a closed form must not wedge updates', async () => {
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeFetch()
+    await renderGarden()
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Cancel$/i })) })
+    expect(screen.queryByLabelText(/Name/i)).toBeNull()
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('releases on a successful save — the save is what makes the typing safe', async () => {
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeFetch()
+    await renderGarden()
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
+    })
+    await waitFor(() => expect(isReloadBlocked()).toBe(false))
+  })
+
+  // The other half of BUG-STALECLIENT-001's lesson: a hold that outlives its form can never be
+  // resolved by the user, because there is no form left on screen to clean or close.
+  it('releases when Garden itself unmounts with a dirty editor open', async () => {
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeFetch()
+    let view
+    await act(async () => { view = render(<Garden />) })
+    await screen.findByText(/Log many/)
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+    act(() => { view.unmount() })
+    expect(isReloadBlocked()).toBe(false)
+  })
+})
