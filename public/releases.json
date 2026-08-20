@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.41.0",
+    "date": "2026-08-20",
+    "highlights": [
+      "Care, privacy and access: edits to an event or a plant merge now record who made them, so your changes and Jen's can be told apart. A photo whose location data cannot be removed is no longer shared. The photo library remembers which location you were filtering by. The photo buttons can be reached and used from a keyboard. And an event now always belongs to the same project as its planting."
+    ]
+  },
+  {
     "version": "4.40.0",
     "date": "2026-08-20",
     "highlights": [
