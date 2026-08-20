@@ -66,7 +66,12 @@ live AS (
          cv.id AS variety_id, cv.crop_type_slug,
          cv.days_to_maturity_min, cv.days_to_maturity_max,
          ct.display_name AS crop_display_name,
-         ct.harvest_habit, ct.dtm_basis, ct.set_to_first_pick_days
+         -- V4-MATURITYBASIS-001. Mirrors the COALESCE in lambda/harvests/watch-route.js. This query
+         -- exists to measure what that route does, so reading the crop basis here while the route
+         -- reads the resolved one would make the measurement disagree with its subject.
+         ct.harvest_habit,
+         COALESCE(cv.dtm_basis, ct.dtm_basis) AS dtm_basis,
+         ct.set_to_first_pick_days
     FROM plants gn
     JOIN plant_projects pj ON pj.id = gn.project_id
     JOIN plant_varieties cv ON cv.id = gn.variety_id AND cv.deleted_at IS NULL

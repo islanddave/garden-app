@@ -182,7 +182,20 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
              cv.crop_type_slug,
              cv.days_to_maturity_min, cv.days_to_maturity_max,
              ct.display_name  AS crop_display_name,
-             ct.harvest_habit, ct.dtm_basis, ct.set_to_first_pick_days
+             -- V4-MATURITYBASIS-001. dtm_basis resolves cultivar-first, crop as fallback — the same
+             -- COALESCE lambda/plants/index.js applies to all 3 variety_ref blocks and that
+             -- v_sow_candidates already bakes in. V4-DTMBASISVAR-001 promoted the column to
+             -- plant_varieties precisely because a cultivar can be quoted on a different basis than
+             -- its crop, and this route was the one reader left reading the crop value alone: live
+             -- prod Rapini (crop_type 'broccoli' from-transplant, cultivar from-sow, direct-sown
+             -- 2026-07-30) arrived here labelled from-transplant, so calendarAnchor fell through
+             -- BASIS_PREFERENCE to sown_at and flagged basis_shifted on a row that had not shifted.
+             -- The reverse pairing is the one that moves a DATE: a from-sow cultivar known only by
+             -- its transplant date earns the nursery-offset subtraction (31d fallback), which the
+             -- crop-level 'from-transplant' suppressed entirely.
+             ct.harvest_habit,
+             COALESCE(cv.dtm_basis, ct.dtm_basis) AS dtm_basis,
+             ct.set_to_first_pick_days
         FROM garden_node gn
         -- BUG-ANCHORNOPROJ-001. A planting may have NO project (container_id IS NULL) — prod has 4
         -- live ones. An INNER JOIN here dropped every one of them from the watch list entirely, so
