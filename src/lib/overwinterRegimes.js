@@ -37,7 +37,10 @@ export const OVERWINTER_REGIME_OPTIONS = [
     value: 'protected_quiescent',
     icon: '🪴',
     label: 'Cold and resting',
-    description: 'Fig or fuchsia in a cold garage. Check every 30 days — barely damp; wet plus cold is what rots these.',
+    // V4-OVERWINTERCARDNOISE-001 (2): "barely damp" was the second of two set-points the engine
+    // guidance also carried, and the picker is where Dave forms the mental model. Both surfaces now
+    // state the SAME single rule — lift it — so the choice and the card cannot disagree.
+    description: 'Fig or fuchsia in a cold garage. Check every 30 days — lift the pot, water only if it feels light.',
   },
 ]
 
