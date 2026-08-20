@@ -129,14 +129,21 @@ describe('Garden — per-planting photo uploader (V3-IA restore)', () => {
     await act(async () => { fireEvent.change(input, { target: { files: [file] } }) })
 
     // Step 1: presign keyed under plants/<plantId>/.
-    const presignCall = fetchMock.mock.calls.find(([u]) => typeof u === 'string' && u.startsWith('/api/photos/upload-url'))
-    expect(presignCall).toBeDefined()
-    expect(decodeURIComponent(presignCall[0])).toContain('key=plants/p1/')
+    // waitFor for the same reason step 3 below already needs one, one step earlier: V4-PHOTOEXIFSTRIP-001
+    // put a metadata strip between the downscale and the presign, and reading the bytes to strip them
+    // goes through FileReader under jsdom (Blob has no arrayBuffer here), which settles on a task
+    // rather than a microtask. This test drives the input without awaiting the upload promise, so it
+    // is again the one place that notices. The contract asserted is unchanged.
+    const findPresign = () => fetchMock.mock.calls.find(([u]) => typeof u === 'string' && u.startsWith('/api/photos/upload-url'))
+    await waitFor(() => expect(findPresign()).toBeDefined())
+    expect(decodeURIComponent(findPresign()[0])).toContain('key=plants/p1/')
 
     // Step 2: direct S3 PUT of the file — via the watchdog XHR transport (BUG-PHOTOUPLOADHANG-001).
     const put = FakeXHR.instances.find(x => x.url === 'https://s3.test/put')
     expect(put).toBeDefined()
     expect(put.method).toBe('PUT')
+    // Still the SAME File object: 'x' is not a JPEG, so the strip finds no container it can parse
+    // and returns the input untouched rather than re-wrapping it.
     expect(put.body).toBe(file)
 
     // Step 3: POST /api/photos with linkage {plant_id, project_id} — featured/primary

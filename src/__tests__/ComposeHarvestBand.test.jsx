@@ -12,7 +12,9 @@ import userEvent from '@testing-library/user-event'
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }) }))
 const shareMock = vi.fn()
-vi.mock('../lib/shareEntity.js', () => ({ shareEntity: (...a) => shareMock(...a) }))
+// canShareFiles is stubbed false here because none of these fixtures carry photos; the photo path has
+// its own file (ComposeHarvestBand.photos.test.jsx) where the probe is driven both ways.
+vi.mock('../lib/shareEntity.js', () => ({ shareEntity: (...a) => shareMock(...a), canShareFiles: () => false }))
 vi.mock('../components/Icon.jsx', () => ({ default: () => null }))
 const profileRef = { current: { id: 'user_dave' } }
 vi.mock('../context/AuthContext.jsx', () => ({

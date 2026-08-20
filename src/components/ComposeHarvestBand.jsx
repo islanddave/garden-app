@@ -29,11 +29,14 @@ import { useAuthOptional } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
 import { currentGrowYear } from '../lib/growYear.js'
 import Icon from './Icon.jsx'
-import { shareEntity } from '../lib/shareEntity.js'
+import { shareEntity, canShareFiles } from '../lib/shareEntity.js'
+import { mintUrl } from './PhotoImg.jsx'
+import { TIER } from '../lib/photoModel.js'
 import {
   detectLastBatch, toLines, buildPostModel, renderPost, leadFacts, seasonCountsByCrop,
   LINE_SOFT_CAP, MIN_POST_LINES,
 } from '../lib/harvestPost.js'
+import { collectBatchPhotos, fetchPostPhotos, MAX_POST_PHOTOS } from '../lib/harvestPostPhotos.js'
 
 // A batch older than this is history, not "tonight" — offering it invites a post that describes the
 // wrong evening. 18h covers a late-night pick read the next morning without reaching back a full day.
@@ -42,6 +45,25 @@ const MAX_BATCH_AGE_MS = 18 * 60 * 60 * 1000
 // tonight is still included; 24h comfortably covers the 18h freshness window above, and the busiest
 // observed logging day (32 picks) sits well inside the endpoint's 50-row page.
 const LOG_WINDOW_MS = 24 * 60 * 60 * 1000
+
+// The ONLY thing this feature says while it works, and it is deliberately a line of grey text under
+// the button rather than a spinner, a modal, a toast, a banner or a buzz (Reward-UX V102: ambient and
+// in-context only). It is also the honesty surface: what will attach, what did not load, and what was
+// left out are all stated BEFORE Dave taps, not discovered afterwards in the Facebook composer.
+export function photoNote(photos, attachCount, canAttach) {
+  if (!photos.total || photos.status === 'idle' || photos.status === 'none') return ''
+  if (photos.status === 'loading') {
+    return photos.total === 1 ? 'Getting the photo…' : `Getting ${photos.total} photos…`
+  }
+  if (!attachCount) {
+    return photos.failed ? 'Photos didn’t load — the words will still go.' : ''
+  }
+  if (!canAttach) return 'This browser can’t attach photos — the words will go on their own.'
+  const parts = [`${attachCount} ${attachCount === 1 ? 'photo' : 'photos'} will go with it`]
+  if (photos.failed) parts.push(`${photos.failed} didn’t load`)
+  if (photos.skipped) parts.push(`${photos.skipped} left out (${MAX_POST_PHOTOS} max)`)
+  return parts.join(' · ')
+}
 
 function ageLabel(iso, now = Date.now()) {
   const t = new Date(iso).getTime()
@@ -124,15 +146,74 @@ export default function ComposeHarvestBand() {
 
   const postText = dirty ? draft : generated
 
+  // ── Photos (V4-HARVPOSTPHOTOS-001) ──────────────────────────────────────────────────────────────
+  // Fetched when the composer OPENS, never inside the share handler: navigator.share needs transient
+  // user activation, Chrome Android drops it across an await, and a handler that fetched five photos
+  // first would find the activation gone. The minutes Dave spends writing his lead ARE the prefetch
+  // window. Nothing runs until he taps "Compose post" — the band stays ambient on Today, and a batch
+  // with no photos costs no requests at all.
+  const [photos, setPhotos] = useState(() => ({ status: 'idle', items: [], failed: 0, skipped: 0, total: 0 }))
+  const photoRunRef = useRef(null)
+  const photoAbortRef = useRef(null)
+  // Unmount-only. Deliberately NOT tied to `open`: aborting when the composer collapses would strand
+  // a half-fetched set that the run guard then refuses to restart on reopen.
+  useEffect(() => () => photoAbortRef.current?.abort(), [])
+
+  useEffect(() => {
+    if (!open || !batch) return
+    const runKey = batch.endedAt
+    if (photoRunRef.current === runKey) return
+    photoRunRef.current = runKey
+    const { photos: refs, total, dropped } = collectBatchPhotos(batch.items)
+    if (!refs.length) { setPhotos({ status: 'none', items: [], failed: 0, skipped: 0, total }); return }
+    const ac = new AbortController()
+    photoAbortRef.current = ac
+    setPhotos({ status: 'loading', items: [], failed: 0, skipped: dropped, total: refs.length })
+    fetchPostPhotos(refs, {
+      mint: (id) => mintUrl(id, fetch, TIER.FULL),
+      signal: ac.signal,
+      onProgress: ({ failed }) => setPhotos((p) => (p.status === 'loading' ? { ...p, failed } : p)),
+    })
+      .then((r) => setPhotos({ status: 'ready', items: r.items, failed: r.failed, skipped: dropped + r.skipped, total: refs.length }))
+      // fetchPostPhotos absorbs per-photo failures itself, so reaching here means the whole run threw.
+      .catch(() => setPhotos({ status: 'ready', items: [], failed: refs.length, skipped: dropped, total: refs.length }))
+  }, [open, batch, fetch])
+
+  // Photos follow the SAME exclusion the lines do — one control, not two. Leaving the cucumbers out
+  // of the words leaves the picture of them out too.
+  const attachFiles = useMemo(
+    () => photos.items.filter((p) => !excluded.has(p.eventId)).map((p) => p.file),
+    [photos.items, excluded],
+  )
+  const canAttach = useMemo(() => canShareFiles(attachFiles), [attachFiles])
+
   const onShare = useCallback(async () => {
     // Held in a local const BEFORE any await: Chrome Android drops transient user activation across
-    // an await, and both navigator.share and the clipboard fallback then reject silently.
+    // an await, and both navigator.share and the clipboard fallback then reject silently. `files` is
+    // read here for the same reason — and it is already bytes, so nothing is fetched on this path.
     const text = postText
     if (!text.trim()) return
-    const result = await shareEntity({ text })
-    setStatus(result === 'shared' ? 'Sent to your share sheet.'
+    const files = attachFiles
+    const n = canShareFiles(files) ? files.length : 0
+    const result = await shareEntity({ text, files })
+    setStatus(result === 'shared'
+      ? (n ? `Sent to your share sheet with ${n} ${n === 1 ? 'photo' : 'photos'}.` : 'Sent to your share sheet.')
       : result === 'copied' ? 'Copied — paste it into your post.'
       : 'Select the text above and copy it.')
+  }, [postText, attachFiles])
+
+  // Straight to the clipboard, never through shareEntity: on Chrome Android shareEntity always takes
+  // the navigator.share leg and its clipboard branch is unreachable, so a Copy wired through it opens
+  // the share sheet and never copies (HarvestExportSheet header, landmine 1). This is the recovery for
+  // an Android share target that keeps the images and discards EXTRA_TEXT — the words stay one tap away.
+  const onCopyText = useCallback(() => {
+    const text = postText
+    if (!text.trim()) return
+    try {
+      const r = navigator?.clipboard?.writeText?.(text)
+      if (!r) { setStatus('Select the text above and copy it.'); return }
+      Promise.resolve(r).then(() => setStatus('Copied.')).catch(() => setStatus('Select the text above and copy it.'))
+    } catch { setStatus('Select the text above and copy it.') }
   }, [postText])
 
   if (!batch) return null
@@ -291,7 +372,18 @@ export default function ComposeHarvestBand() {
               <Icon name="action.share" size={14} decorative surface="inverse" style={{ marginRight: 5, verticalAlign: '-0.1em' }} />
               Send to Facebook
             </button>
+            {/* Never disabled while photos load: a share tapped early sends the words, which is
+                exactly today's behaviour, and the note below says so before he taps. */}
+            <button type="button" style={S.ghost} onClick={onCopyText} data-testid="compose-copy"
+              disabled={!postText.trim()}>
+              Copy the words
+            </button>
             {status && <span style={{ fontSize: '0.78rem', color: P.mid }}>{status}</span>}
+          </div>
+
+          <div aria-live="polite" data-testid="compose-photo-note"
+            style={{ fontSize: '0.76rem', color: P.light, minHeight: 16, marginTop: -6 }}>
+            {photoNote(photos, attachFiles.length, canAttach)}
           </div>
         </div>
       )}
