@@ -20,6 +20,15 @@ import { resolveRipenessCues } from '../../lib/ripenessCues.js'
 // Module-scope cache: once the chunk lands, later mounts resolve synchronously at first render.
 let hwModule = null
 
+// V4-PLANTINGMETA-001 — created_at is a full timestamp (not the length-10 date string the lifecycle
+// columns carry), so it is parsed plainly. Same "Mon D, YYYY" shape as plantingMaturity's window
+// dates, so the two dates in this band read as one set rather than as two different kinds of thing.
+function fmtAdded(value) {
+  if (!value) return null
+  const d = new Date(value)
+  return isNaN(d.getTime()) ? null : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function Attr({ label, value }) {
   if (value == null || value === '') return null
   return (
@@ -206,6 +215,8 @@ export default function CropCard({ planting, onUpdated }) {
     : null
 
   const hasMaturity = m.ageDays != null || m.harvestWindowLabel
+  // V4-PLANTINGMETA-001 — see the render site below for why this is display-only and conditional.
+  const addedDate = fmtAdded(planting?.created_at)
   const hasChips = Array.isArray(projected) && projected.length > 0
   // V4-RIPECUE-001: a sourced cue is enough on its own to earn the card. Without this a planting
   // whose cultivar carries no DTM/sun/yield prose renders no card at all, which would silently drop
@@ -258,6 +269,25 @@ export default function CropCard({ planting, onUpdated }) {
               <div style={{ width: `${Math.round(m.pctToMaturity * 100)}%`, height: '100%', backgroundColor: P.green }} />
             </div>
           )}
+        </div>
+      )}
+
+      {/* V4-PLANTINGMETA-001 (BD-029) — with no sown_at, transplanted_at OR planted_out_at,
+          garden_node.created_at is the only date the record carries, and it is a within-days proxy
+          for when the plant arrived: a planting is added when it goes in. Sugar Rush Peach is the
+          live case — both dates NULL, so the band above renders the set-at-transplant prompt and no
+          date at all, and nothing anywhere on the page says the plant has been here since spring.
+          DISPLAY ONLY, and that is the point. computeMaturity refuses to project a window off a
+          guessed anchor (design D3, because start_indoor_weeks is populated for well under half the
+          affected plantings), and this must not smuggle one back in: it is labelled as the app-added
+          date, never as "sown"/"transplanted", and feeds no computation.
+          Two deliberate limits. It renders ONLY when m.anchorDate is null, so a planting with any
+          real lifecycle date gains nothing. And it is NOT in the hasMaturity/early-return test above
+          — created_at is non-null on every row, so earning the card on it would put a card on every
+          sparse planting in the garden, which is the exact thing that early return exists to stop. */}
+      {m.anchorDate == null && addedDate && (
+        <div data-testid="planting-added-date" style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.5 }}>
+          Added to the app {addedDate}
         </div>
       )}
 
