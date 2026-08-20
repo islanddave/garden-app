@@ -316,3 +316,31 @@ export function splitContainersBeds(rows) {
   for (const r of (rows || [])) (isBedRow(r) ? beds : containers).push(r)
   return { beds, containers }
 }
+
+// V4-DORMANTRESUME-001 — the dormant bucket, which the engine has always emitted and no surface has
+// ever read. Deliberately NOT part of buildCareNeeded: dormancy carries no action, so folding it
+// into the actionable list would put a row on the care list that nothing can be logged against.
+// It is a separate ambient list instead — the point is that a dormant planting is otherwise hidden
+// from every arm of the app, so an overwintered crop that wakes up has nowhere to be seen.
+//
+// `resumable` gates the Resume action and is fail-CLOSED on the dangerous direction. Only
+// reason==='status' resumes: that status was set by a human tap and no automation ever clears it
+// (the one-way trap overwinter.js:203 names). reason==='profile' is the Lithops cadence flag — it
+// has no status to clear and its whole purpose is "watering now = rot/death", so offering to end
+// its dormancy is the one thing this list must never do. A plan stored BEFORE the engine shipped
+// `reason` carries neither value: those rows still LIST (visibility is the SPA's half of the fix
+// and needs no Lambda) but stay un-resumable until the discriminator is live, rather than guessing
+// from the note string. Pure; preserves engine order.
+export function dormantRows(plan) {
+  const items = (plan && Array.isArray(plan.dormant)) ? plan.dormant : []
+  return items.filter(Boolean).map(it => ({
+    key: it.id + ':dormant',
+    plantingId: it.id,
+    name: it.name || it.crop || 'Planting',
+    crop: it.crop || null,
+    project: it.project || null,
+    projectId: it.project_id || null,
+    note: it.note || null,
+    resumable: it.reason === 'status',
+  }))
+}

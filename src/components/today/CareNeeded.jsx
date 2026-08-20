@@ -11,7 +11,7 @@ import Icon from '../Icon.jsx'
 import PhotoImg from '../PhotoImg.jsx'
 import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
-  bulkWaterNote,
+  bulkWaterNote, dormantRows,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
 } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
@@ -496,6 +496,10 @@ export default function CareNeeded({ plan }) {
         </>
       )}
 
+      {/* Outside the ternary on purpose: a dormant planting is hidden whether or not anything else
+          needs care today, so it must render in the empty state too. */}
+      <DormantList plan={plan} />
+
       {/* V4-BACKNAV-001 Slice P (extended) — close-in-place: setBulkType(null) never navigates. */}
       <Sheet armsBack open={!!bulkType} onClose={() => setBulkType(null)} busy={!!bulkProgress} title={bulkType ? 'Log all ' + bulkLabel(bulkType) : ''}>
         {bulkType && (
@@ -534,6 +538,72 @@ function bulkLabel(etype) {
   if (etype === 'observation') return 'checks'
   if (etype === 'brought_inside') return 'protection'
   return 'care'
+}
+
+// V4-DORMANTRESUME-001 — the dormant plantings the engine emits and nothing has ever rendered.
+// Ambient, like RainNote: dormancy is not work, so this is never a card and never an interrupt.
+// It exists because dormant is excluded from the care engine AND from every dashboard arm, which
+// left an overwintered crop with no surface at all — and no way back, since nothing but a human
+// tap clears the status.
+//
+// Resume writes through the SAME endpoint and payload as the hero StatusPicker
+// (PUT /api/plants/:id {status}), so there is one status write path in the app, not two.
+// Target is 'vegetative': the canonical growing-but-not-yet-flowering state, which is where garlic,
+// asparagus, strawberry and a Christmas cactus all actually restart. Anything more specific the
+// gardener can still set on the planting itself.
+function DormantList({ plan }) {
+  const { fetch } = useApiFetch()
+  const toast = useOptionalToast()
+  const [resumed, setResumed] = useState(() => new Set())
+  const [pending, setPending] = useState(() => new Set())
+  const rows = useMemo(() => dormantRows(plan).filter(r => !resumed.has(r.plantingId)), [plan, resumed])
+  if (rows.length === 0) return null
+
+  async function resume(row) {
+    if (pending.has(row.plantingId)) return
+    setPending(prev => new Set(prev).add(row.plantingId))
+    try {
+      await fetch('/api/plants/' + row.plantingId, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'vegetative' }),
+      })
+      setResumed(prev => new Set(prev).add(row.plantingId))
+      toast?.show?.({ message: row.name + ' is growing again', tone: 'success' })
+    } catch {
+      // Never optimistic: a failed resume must leave the row where it was, or the planting goes
+      // back to being invisible while still dormant — the exact state this list exists to end.
+      toast?.show?.({ message: 'Couldn’t resume ' + row.name, tone: 'error' })
+    } finally {
+      setPending(prev => { const n = new Set(prev); n.delete(row.plantingId); return n })
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+      <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dormant</h3>
+      <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
+        Resting — no routine care. Resume one when it starts growing again.
+      </div>
+      {rows.map(row => (
+        <div key={row.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 8, flexWrap: 'wrap', minHeight: 44 }}>
+          <Link to={'/plantings/' + row.plantingId} style={{ fontSize: '0.85rem', color: P.dark,
+            textDecoration: 'none', flex: '1 1 auto', minWidth: 0 }}>
+            {row.name}
+          </Link>
+          {row.resumable && (
+            <button type="button" onClick={() => resume(row)} disabled={pending.has(row.plantingId)}
+              aria-label={'Resume ' + row.name}
+              style={{ minHeight: 32, padding: '5px 12px', borderRadius: 12, border: '1px solid ' + P.border,
+                backgroundColor: P.white, color: P.dark, fontSize: '0.78rem', fontWeight: 600,
+                cursor: 'pointer', opacity: pending.has(row.plantingId) ? 0.6 : 1, flex: '0 0 auto' }}>
+              Resume
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 // Ambient rain-credit note (DRG-WATERCREDIT-001) — quiet, never a card/interrupt.
