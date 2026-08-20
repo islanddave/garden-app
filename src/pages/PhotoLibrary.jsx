@@ -123,6 +123,10 @@ export default function PhotoLibrary() {
   const [selected,    setSelected]    = useState(() => new Set())
   const [shareOpen,   setShareOpen]   = useState(false)
   const [sharePhotos, setSharePhotos] = useState([])
+  // The share sheet composes up to 5000 chars in its OWN state, so this page cannot see it. Reported
+  // out through onDirtyChange and folded into the reload gate below. The setter is passed straight
+  // through — it is referentially stable, so the sheet's effect only re-fires on a real flip.
+  const [shareDirty,  setShareDirty]  = useState(false)
 
   // BUG-PICKERCLIP-001 (V4-PICKERUX-001 P0 idiom, EventNew's sticky Save) — select-mode and the
   // upload form are NOT mutually exclusive: enterSelectMode() closes the form, but the "+ Upload"
@@ -367,9 +371,9 @@ export default function PhotoLibrary() {
 
   // ---- V4-DIRTYGUARDSWEEP-001 — the reload gate ----
   //
-  // This page has two independent editable regions and they compose as a union, because both can
-  // hold content at once: enterSelectMode() collapses the upload form without clearing it, and the
-  // tag modal opens over whatever the form is holding.
+  // This page has three independent editable regions and they compose as a union, because they can
+  // hold content at once: enterSelectMode() collapses the upload form without clearing it, the tag
+  // modal opens over whatever the form is holding, and the share sheet opens over either.
   //
   // 1. UPLOAD FORM — `stagedFile` is the whole point of BUG-PHOTOFIRST-001: the file is picked
   //    FIRST and sits in memory while the user works out where it goes, so the pick→send gap is a
@@ -398,6 +402,13 @@ export default function PhotoLibrary() {
   //    a snapshot): four fields, one `?? ''` each, and `modal` is literally the row — the seed
   //    below must keep mirroring openModal() above, which is four lines apart.
   //
+  // 3. SHARE SHEET — V4-FBCAPTIONDIRTY-001. Up to 5000 chars of free text composed inside
+  //    FacebookShareSheet's own state, which nothing on this page can read, so it takes a reported
+  //    boolean. NOT `shareOpen`: a merely-opened sheet holds no content, and that false positive
+  //    would defer a deploy for anyone who tapped "Post to Facebook" to see what it does. The sheet
+  //    owns the predicate because it owns the caption — see its comment for why `open` is a term
+  //    there and `showUpload` is not one here.
+  //
   // Excluded, on purpose: `selected` / `selectMode` (a selection is view state — the page itself
   // throws it away on any filter change, so it is not treated as precious by its own author),
   // `deleteTarget` / `deleting` (a confirm, not input), the filters and `shown` (view state, and
@@ -409,7 +420,7 @@ export default function PhotoLibrary() {
     tagForm.caption     !== (modal.caption     ?? '')
   ))
 
-  const hasUnsavedInput = !!(stagedFile || uploadForm.caption.trim() || modalDirty)
+  const hasUnsavedInput = !!(stagedFile || uploadForm.caption.trim() || modalDirty || shareDirty)
 
   useReportOverlayDirty(hasUnsavedInput)
 
@@ -937,6 +948,7 @@ export default function PhotoLibrary() {
         photos={sharePhotos}
         onClose={() => setShareOpen(false)}
         onPosted={() => exitSelectMode()}
+        onDirtyChange={setShareDirty}
       />
     </div>
   )

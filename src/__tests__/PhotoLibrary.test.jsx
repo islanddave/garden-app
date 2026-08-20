@@ -644,4 +644,93 @@ describe('PhotoLibrary — reload gate (V4-DIRTYGUARDSWEEP-001)', () => {
     cleanup()
     expect(isReloadBlocked()).toBe(false)
   })
+
+  // ── V4-FBCAPTIONDIRTY-001 — the third region ───────────────────────────────────────────────────
+  //
+  // FacebookShareSheet composes up to 5000 chars in its own state and reports a boolean out through
+  // onDirtyChange. Its own suite proves the predicate; these prove the WIRING — that the reported
+  // boolean actually reaches the real reloadGate through this page, and that it unions with the
+  // other two regions instead of replacing them.
+  describe('share sheet caption', () => {
+    beforeEach(() => { vi.stubEnv('VITE_API_FACEBOOK_SHARE', 'https://example.invalid/share') })
+
+    async function openShareSheet(photo) {
+      await act(async () => { fireEvent.click(screen.getByText('Select')) })
+      await act(async () => { fireEvent.click(screen.getByAltText(photo.caption).closest('button')) })
+      await act(async () => { fireEvent.click(screen.getByText('Post to Facebook')) })
+      return document.getElementById('fb-caption')
+    }
+
+    const typeShareCaption = async (value) => {
+      await act(async () => { fireEvent.change(document.getElementById('fb-caption'), { target: { value } }) })
+    }
+
+    // ★ THE over-broad case, and the reason the page does not simply hold on `shareOpen`. Opening
+    // the sheet holds no content; a `shareOpen` term would defer a deploy for anyone who tapped
+    // "Post to Facebook" to see what it does.
+    it('does NOT hold the reload for a merely-opened share sheet', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      const caption = await openShareSheet(TAGGED_PHOTO)
+      expect(screen.getByRole('dialog', { name: /share to facebook/i })).toBeDefined()
+      expect(caption.value).toBe('')
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    it('holds the reload while a share caption is being composed', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('First ripe tomato of the year')
+      expect(isReloadBlocked()).toBe(true)
+    })
+
+    it('releases the hold when the share caption is cleared back to empty', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('First ripe tomato of the year')
+      expect(isReloadBlocked()).toBe(true)
+      await typeShareCaption('')
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    // The sheet wipes its composer on every open, so a dismissed draft is already unreachable —
+    // holding for it would wedge updates over text nobody can get back to. Both halves asserted.
+    it('releases when the sheet is closed on a half-written caption, and the draft is gone', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('half-written thought')
+      expect(isReloadBlocked()).toBe(true)
+
+      await act(async () => { fireEvent.click(screen.getByLabelText('Close')) })
+      expect(isReloadBlocked()).toBe(false)
+
+      await act(async () => { fireEvent.click(screen.getByText('Post to Facebook')) })
+      expect(document.getElementById('fb-caption').value).toBe('')
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    // A union, not a replacement: the staged blob survives enterSelectMode() collapsing the form
+    // (that is why region 1 carries no `showUpload` term), so clearing the caption must NOT release
+    // a hold the staged file is still entitled to.
+    it('unions with the staged-photo hold rather than replacing it', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openUploadForm()
+      await stageAPhoto()
+      expect(isReloadBlocked()).toBe(true)
+
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('Two holds at once')
+      expect(isReloadBlocked()).toBe(true)
+      await typeShareCaption('')
+      expect(isReloadBlocked()).toBe(true)   // still staged
+    })
+
+    it('releases the hold when the page unmounts with a share caption composed', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('unmounting with this held')
+      expect(isReloadBlocked()).toBe(true)
+      cleanup()
+      expect(isReloadBlocked()).toBe(false)
+    })
+  })
 })
