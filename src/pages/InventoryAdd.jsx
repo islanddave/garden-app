@@ -1,5 +1,5 @@
 import React from 'react'
-import { useState, useEffect, useId } from 'react'
+import { useState, useEffect, useId, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
@@ -98,6 +98,14 @@ export default function InventoryAdd() {
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, hasUnsavedInput])
 
+  // BUG-INVADDNAVLEAK-001 — the post-toast navigate is component-lifetime-owned, same shape as
+  // Garden.jsx's editorScrollTimerRef. `useNavigate()`'s function dispatches through the router's
+  // shared history and does NOT care whether this component is still mounted, so an uncleared timer
+  // does not warn or throw — it silently yanks the user back to /inventory 2.5s after they tapped
+  // away from the toast, which is exactly the freedom a non-blocking toast is supposed to buy them.
+  const navTimerRef = useRef(null)
+  useEffect(() => () => clearTimeout(navTimerRef.current), [])
+
   const visibleCategories = (form.type
     ? CATEGORIES.filter(c => c.types.includes(form.type))
     : CATEGORIES
@@ -180,7 +188,8 @@ export default function InventoryAdd() {
 
       // Operational confirmation via the GLOBAL toast layer (2500ms), then navigate.
       show({ message: '✓ Item added' })
-      setTimeout(() => {
+      navTimerRef.current = setTimeout(() => {
+        navTimerRef.current = null
         navigate('/inventory')
       }, 2500)
     } catch (err) {
