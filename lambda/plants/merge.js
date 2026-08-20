@@ -300,6 +300,41 @@ export async function mergeCore(sql, {
   const winner = plants.find((p) => p.id === winnerId)
   const losers = plants.filter((p) => p.id !== winnerId)
 
+  // 2b. BUG-EVENTPROJPLANTPAIR-001 — SIBLINGS ONLY. Every planting in the group must sit in the
+  //     same project as the winner.
+  //
+  //     WHY THIS IS THE FIX AND NOT A `SET project_id` ON THE REPOINT. The repoint
+  //     (plantMemoryRepoint.js) moves a loser's whole event history onto the winner by rewriting
+  //     plant_id and nothing else. Take a loser L in project X and a winner W in project Y:
+  //       · every one of L's events is anchored (X, L) and AGREES with its planting;
+  //       · after the repoint each is (X, W), and W lives in Y — so a merge across projects mints
+  //         a fresh disagreeing row out of every previously-correct one. That is the "LIVE, and it
+  //         does so BY DESIGN" writer in the ticket.
+  //     Same-project is the case that is already safe, and provably so: X === Y, so an event that
+  //     agreed with L still agrees with W, and one that disagreed is left exactly as it was —
+  //     no new mismatch either way. (Pre-existing bad rows are deliberately NOT repaired here; that
+  //     is the repair phase's job, and doing it as a side effect of a merge would hide it.)
+  //
+  //     Carrying project_id forward instead would ALSO break the contract documented at
+  //     plantMemoryRepoint.js §"Only the plant-keyed arm is rebuilt" — that rebuild is sound only
+  //     because a repoint leaves event_log.project_id untouched, so no project's surviving event
+  //     set changes and no project-keyed entity_memory row can drift. Refusing keeps that true
+  //     rather than trading this bug for a cache-drift one.
+  //
+  //     Not a capability regression in practice: merge is "combine N SIBLING plantings" per the
+  //     header, and no client calls this route (grep '/merge' under src/ finds only the unrelated
+  //     tags endpoint) — it is an API/ops surface. A cross-project merge is a re-home wearing a
+  //     merge's clothes, and nothing in this repo re-homes a planting (lambda/plants/index.js
+  //     claim 3). Refused explicitly rather than half-performed.
+  const offProject = losers.filter((p) => p.project_id !== winner.project_id)
+  if (offProject.length) {
+    return { status: 400, body: {
+      error: 'Every planting in a merge must be in the same project as the winner',
+      winner_project_id: winner.project_id,
+      offenders: offProject.map((p) => ({ id: p.id, name: p.name, project_id: p.project_id })),
+    } }
+  }
+
   // 3. Set-level concurrency guard (see header note 2).
   const liveFp = await readFingerprint(sql, groupIds)
   if (fingerprint) {

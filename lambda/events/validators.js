@@ -97,6 +97,41 @@ export function isUserSuppliedWeight(harvestRow) {
   return Number(harvestRow.weight_grams) > 0;
 }
 
+// BUG-EVENTPROJPLANTPAIR-001 — the anchor pair is DERIVED, never taken on the client's word.
+//
+// event_log carries BOTH project_id and plant_id, and every writer used to bind them from two
+// independent request fields. Nothing reconciled them, so a body naming plant P (which lives in
+// project X) alongside project_id Y wrote the pair (Y, P) — a row that disagrees with its own
+// planting. 43 such rows exist on prod (39 live), the newest minted 2026-08-14, so this is an open
+// wound rather than history.
+//
+// THE RULE: when an event has a planting, that planting owns the project. The request's project_id
+// is then advisory at best and wrong at worst — it is the field the client gets stale. Only a
+// planting-less event may take project_id from the body, because then there is nothing to disagree
+// with. This is the same derivation the batch path has always done in SQL (`SELECT p.container_id
+// ... FROM garden_node p`, index.js POST /api/events/batch), lifted into one testable function so
+// the single-POST and PUT arms cannot drift from it or from each other.
+//
+// DERIVING TO NULL IS DELIBERATE AND IS NOW SAFE. A project-less planting is a supported state
+// (V3-CAPTURE-001; validatePostBody below admits plant_id with no project_id), so a plant with no
+// project yields an event with no project. `event_log_has_anchor` is still satisfied by plant_id.
+// clearFields.js's "THE INNER-JOIN TRAP" note argues the opposite — that a NULL project_id makes a
+// row permanently un-editable and un-deletable — but that note is STALE: the PUT's ownership
+// SELECT, the PUT's UPDATE and the DELETE route have all since been rewritten to the two-arm
+// `(project_id IS NOT NULL AND pp...) OR (project_id IS NULL AND pn...)` predicate, so such rows
+// are fully reachable. Verified against origin/dev before relying on it. That note governs the
+// `body.clear` channel, which is a different question and is untouched here.
+//
+// Callers pass the planting's CURRENT project, read in a query they were already running — see the
+// two call sites in index.js. Both are read in the same request as the write, and no application
+// path re-homes a planting (lambda/plants/index.js claim 3: container_id is absent from the PUT
+// SET-list and `plants_project_id_fkey` is ON DELETE RESTRICT), so there is no TOCTOU window worth
+// closing with a subquery.
+export function deriveEventProjectId({ plantId, plantProjectId, requestedProjectId }) {
+  if (plantId == null) return requestedProjectId ?? null;
+  return plantProjectId ?? null;
+}
+
 // F22 event_date bounds. Tolerates clock-skew + small client lag.
 const PAST_BOUND_MS = 5 * 365 * 24 * 3600 * 1000;
 const FUTURE_BOUND_MS = 3600 * 1000;

@@ -44,7 +44,12 @@ describe('events POST — household ownership gate on body-supplied parent ids',
     // project_id and plant_id are the assessment's finding; location_id is inserted on the same
     // path with no check either and is the same class. Gating two of three would have left the
     // pattern open in the same handler.
-    expect(SRC).toMatch(/loadOwnedProject\(sql, projectId, householdIds\)/);
+    // BUG-EVENTPROJPLANTPAIR-001 renamed the POST's binding from `projectId` to
+    // `requestedProjectId` — the gate must keep running on WHAT THE CALLER SENT, not on the value
+    // derived from the planting, or "you don't own that project" becomes a silent success.
+    // Asserting the requested-* spelling is what pins that down.
+    expect(SRC).toMatch(/loadOwnedProject\(sql, requestedProjectId, householdIds\)/);
+    expect(SRC).not.toMatch(/loadOwnedProject\(sql, projectId, householdIds\)/);
     expect(SRC).toMatch(/loadOwnedPlantingRef\(sql, body\.plant_id, householdIds\)/);
     expect(SRC).toMatch(/loadOwnedLocation\(sql, body\.location_id, householdIds\)/);
   });

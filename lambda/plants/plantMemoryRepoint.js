@@ -79,6 +79,15 @@ export function buildPlantMemoryRecompute(sql, plantId) {
 // Only the plant-keyed arm is rebuilt, and that is not an omission: a repoint rewrites plant_id and
 // leaves event_log.project_id untouched, so no project's surviving event set changes and no
 // project-keyed cache row can have drifted.
+//
+// THAT ARGUMENT NOW HAS A PRECONDITION, AND IT IS ENFORCED ELSEWHERE (BUG-EVENTPROJPLANTPAIR-001).
+// Leaving project_id untouched is only CORRECT while every planting in the group shares one
+// project: if the winner sat in a different project from a loser, this statement would move that
+// loser's events onto a planting whose project disagrees with the project_id they keep — minting a
+// mismatched pair out of every previously-correct row. merge.js step 2b refuses that group up
+// front, which is what keeps both this rebuild's scope AND the untouched project_id sound. If a
+// cross-project repoint is ever wanted, it owes a project-keyed rebuild for BOTH the vacated and
+// the destination project; do not add `SET project_id` here without it.
 export function buildPlantEventRepoint(sql, { fromPlantIds, toPlantId }) {
   return Object.freeze({
     repoint: sql`UPDATE event_log SET plant_id = ${toPlantId} WHERE plant_id = ANY(${fromPlantIds})`,

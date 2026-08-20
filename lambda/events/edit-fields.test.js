@@ -415,12 +415,20 @@ describe('slice 3: the re-anchor maintains the cache on BOTH anchors', () => {
     // about the destination. Without these three gates a caller can move their own event onto
     // another household's planting. Generic message either way — found-vs-forbidden is a leak.
     for (const [field, loader] of [['project_id', 'loadOwnedProject'],
-                                   ['plant_id', 'loadOwnedPlantingRef'],
                                    ['location_id', 'loadOwnedLocation']]) {
       expect(SRC, `${field} must be gated through ${loader}`)
         .toMatch(new RegExp(`body\\.${field} != null && !await ${loader}\\(sql, body\\.${field}, householdIds\\)`));
       expect(SRC).toMatch(new RegExp(`error: 'Invalid ${field}'`));
     }
+    // plant_id is gated in TWO halves since BUG-EVENTPROJPLANTPAIR-001: the loader call moved up to
+    // where the anchor-pair derivation needs its result, and the rejection stayed here. Both halves
+    // are asserted — the load alone would let a foreign planting through, and the rejection alone
+    // could be checking a ref that nothing ever populated from the tight predicate.
+    expect(SRC, 'plant_id must still be loaded through the tight loadOwnedPlantingRef predicate')
+      .toMatch(/const newPlantRef = body\.plant_id != null\s*\?\s*await loadOwnedPlantingRef\(sql, body\.plant_id, householdIds\)/);
+    expect(SRC, 'and an unowned planting must still be refused')
+      .toMatch(/body\.plant_id != null && !newPlantRef/);
+    expect(SRC).toMatch(/error: 'Invalid plant_id'/);
   });
 
   it('a re-anchor that would strip both anchors is a 400, not a 23514', () => {
