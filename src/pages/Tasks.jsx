@@ -21,8 +21,10 @@ import { P } from '../lib/constants.js'
 // Restore by: export default TasksV2 (replace export above)
 // ============================================================
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useId } from 'react'
 import { TASK_PRIORITIES } from '../lib/constants.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 
 const OVERDUE_DISPLAY_CAP = 3
 
@@ -51,6 +53,29 @@ export default function TasksV2() {
   }, [statusFilter])
 
   useEffect(() => { load() }, [load])
+
+  // V4-DIRTYGUARDSWEEP-001 — free text in the open "New task" form, and nothing else.
+  // `priority` seeds to 'normal', so it is truthy on a pristine open; due_date/location_id/project_id
+  // are pickers, one tap to redo, and counting any of them would hold a deploy for a user who only
+  // set a date. (due_time is in the form object but no input renders it.)
+  // The showForm term is what makes this "is the form on screen": the +Add button only renders under
+  // the 'pending' filter, but the form itself renders on any filter, so showForm — not the filter —
+  // is the honest test.
+  // KNOWN AND DELIBERATE: handleCreate below is a stub that cannot save (the /api/tasks Lambda is
+  // not deployed), so this hold releases only on unmount or on the text being cleared. That is the
+  // correct reading of the predicate — the text genuinely never becomes saved — but it does mean the
+  // gate here protects content the app currently refuses to accept. Revisit when the route lands.
+  const hasUnsavedInput = !!(showForm && (form.title.trim() || form.description.trim()))
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /tasks is not an overlayable route today, so the hook above is a strict no-op and the gate below
+  // is what protects this page. Per-instance key + BOOLEAN dep per EventNew.jsx:985-991.
+  const reloadGateKey = `tasks:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   async function handleCreate(e) {
     e.preventDefault()

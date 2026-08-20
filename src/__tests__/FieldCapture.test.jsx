@@ -61,6 +61,7 @@ if (!global.URL.createObjectURL) global.URL.createObjectURL = () => 'blob:fake'
 if (!global.URL.revokeObjectURL) global.URL.revokeObjectURL = () => {}
 
 import FieldCapture from '../pages/FieldCapture.jsx'
+import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 
 function renderAt(initialMode, opts = {}) {
   if (!('initialList' in opts) || opts.initialList !== undefined) {
@@ -348,5 +349,106 @@ describe('FieldCapture (Inc 2 Bite 7 — one-pass capture tile UX)', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('field-queue-item-send')); await Promise.resolve(); await Promise.resolve() })
     expect(mockMarkHandedOff).not.toHaveBeenCalled()
     expect(screen.getByTestId('field-queue-item-send-status').textContent).toMatch(/Could not share or copy/)
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // V4-DIRTYGUARDSWEEP-001 — the SW reload gate over a live recording.
+  //
+  // Driven against the REAL reloadGate, never a spy on setReloadBlocked: the bug this row closes is
+  // "the primitive shipped with no callers", and a spy proves only that a call was made, not that
+  // the gate ends up held. Every assertion below reads isReloadBlocked().
+  //
+  // The false-positive half is load-bearing. A recording is the ONLY in-memory state this page owns
+  // — the queue is IndexedDB, and the two typed surfaces guard themselves — so a guard that fired on
+  // a merely-visited /field would hold every deploy for a user with nothing at risk.
+  describe('dirty guard — live recording holds the SW reload', () => {
+    const startRecording = async () => {
+      fireEvent.click(screen.getByTestId('mic-capture-button'))
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    }
+    const stopRecording = async () => {
+      fireEvent.click(screen.getByTestId('mic-capture-button'))
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    }
+
+    beforeEach(() => { clearReloadBlocks() })
+
+    it('a merely-VISITED page does not hold the gate; tapping record does', async () => {
+      renderAt(MODE.FIELD)
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByTestId('field-capture-page')).toBeDefined()
+      expect(isReloadBlocked(), 'a merely-visited /field must not hold a deploy').toBe(false)
+      // Paired with the flip in the SAME test on purpose: a lone "does not hold" assertion also
+      // passes when nothing is wired at all, so on its own it discriminates nothing.
+      await startRecording()
+      expect(screen.getByTestId('mic-capture-root').dataset.state).toBe('recording')
+      expect(isReloadBlocked()).toBe(true)
+    })
+
+    it('stopping the recording releases the hold once the blob is queued', async () => {
+      renderAt(MODE.FIELD)
+      await act(async () => { await Promise.resolve() })
+      await startRecording()
+      expect(isReloadBlocked()).toBe(true)
+      await stopRecording()
+      expect(mockEnqueueRecording).toHaveBeenCalledTimes(1)
+      expect(isReloadBlocked(), 'a queued recording has nothing left to protect').toBe(false)
+    })
+
+    it('the hold spans the ENQUEUE, not just the recording', async () => {
+      // The gap this covers: maybeEmit() flips the recorder to idle and only then calls onRecorded,
+      // so between "idle" and captureQueue owning the bytes the blob is still memory-only. Without
+      // the enqueueing term the gate would be open for exactly that window — and on a phone writing
+      // an audio blob to IndexedDB it is not a short one.
+      // Asserted with the enqueue held open on purpose: the earlier tests flush recording→idle→
+      // queued in one act() and cannot see the dip, so they pass with the term deleted.
+      let release
+      mockEnqueueRecording.mockImplementationOnce(
+        () => new Promise((resolve) => { release = () => resolve({ id: 'audio-held' }) }))
+      renderAt(MODE.FIELD)
+      await act(async () => { await Promise.resolve() })
+      await startRecording()
+      await stopRecording()
+      expect(screen.getByTestId('mic-capture-root').dataset.state).toBe('idle')
+      expect(isReloadBlocked(), 'recorder idle but the blob is still only in memory').toBe(true)
+      await act(async () => { release(); await Promise.resolve(); await Promise.resolve() })
+      expect(isReloadBlocked(), 'queued — nothing left to protect').toBe(false)
+    })
+
+    it('a FAILED enqueue still releases — never wedge updates', async () => {
+      // The blob is gone either way; keeping the hold after the banner is up would park the SW
+      // update forever, which is BUG-STALECLIENT-001's failure mode and the reason this is a
+      // deferral rather than a cancellation.
+      mockEnqueueRecording.mockImplementationOnce(async () => { throw 'quota' })
+      renderAt(MODE.FIELD)
+      await act(async () => { await Promise.resolve() })
+      await startRecording()
+      expect(isReloadBlocked()).toBe(true)
+      await stopRecording()
+      expect(screen.getByTestId('field-error-banner').textContent).toMatch(/Storage is full/)
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    it('unmounting mid-recording releases the hold', async () => {
+      const { unmount } = renderAt(MODE.FIELD)
+      await act(async () => { await Promise.resolve() })
+      await startRecording()
+      expect(isReloadBlocked()).toBe(true)
+      unmount()
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    it('typing in the tap fallback and expanding a tile are separately guarded, not by this page', async () => {
+      // Regression fence for the predicate's exclusions. expandedId is navigation and must never
+      // hold; the textarea DOES hold, but via TapCaptureFallback's own key — so the page-level
+      // predicate staying narrow does not leave the typed note undefended.
+      const seed = [{ id: 't-1', kind: 'text', text: 'note one', capturedAt: '2026-05-29T12:00:00.000Z', status: 'queued' }]
+      renderAt(MODE.FIELD, { initialList: seed })
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      fireEvent.click(screen.getByTestId('field-queue-item-toggle'))
+      expect(isReloadBlocked(), 'expanding a queued tile must not hold a deploy').toBe(false)
+      fireEvent.change(screen.getByTestId('tap-capture-textarea'), { target: { value: 'aphids' } })
+      expect(isReloadBlocked()).toBe(true)
+    })
   })
 })

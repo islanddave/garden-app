@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useId } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
 import { Field, Input, Select, Button, ErrorBanner } from '../components/forms'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 
 const LEVEL_LABELS = ['Zone', 'Area', 'Section', 'Sub-Section']
 const LEVEL_ACCENTS = [P.green, P.greenLight, P.gold, P.terra]
@@ -55,6 +57,42 @@ export default function Locations() {
   }, [fetch])
 
   useEffect(() => { load() }, [load])
+
+  // V4-DIRTYGUARDSWEEP-001 — this page carries THREE independent forms that can all be open at once,
+  // so the guard is their union. Each asks a different question, because each is seeded differently.
+  //
+  // The inline EDIT form is seeded from its row (LocationCard's onEdit below), so every field is
+  // non-empty the instant it opens and truthiness is meaningless here. The only honest test is
+  // "does it still match the row" — which also gives the right behaviour on a reverted edit: type,
+  // undo, and the hold releases. Seed shape MUST mirror the setEditForm call that fills it; drift
+  // between the two would read as permanently dirty.
+  const editingLoc = editingId ? locations.find(l => l.id === editingId) : null
+  const editDirty = !!editingLoc && (
+    editForm.name        !== editingLoc.name ||
+    editForm.type_label  !== (editingLoc.type_label || '') ||
+    editForm.sort_order  !== String(editingLoc.sort_order ?? 0) ||
+    editForm.description !== (editingLoc.description || '')
+  )
+
+  // The two ADD forms start empty, so `name` is the whole of their typed content: `slug` is derived
+  // from name by the same onChange (never typed independently), type_label/parent_id are Selects
+  // (one tap to redo — counting a pick is the false positive this row exists to avoid), sort_order
+  // seeds to '0', and neither add form renders a description input at all.
+  const hasUnsavedInput = !!(
+    (showAddForm && form.name.trim()) ||
+    (addChildTo && addChildForm.name?.trim()) ||
+    editDirty
+  )
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /locations is not an overlayable route today, so the hook above is a strict no-op and the gate
+  // below is what protects this page. Per-instance key + BOOLEAN dep per EventNew.jsx:985-991.
+  const reloadGateKey = `locations:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   function inferLevel(parentId) {
     if (!parentId) return 0
