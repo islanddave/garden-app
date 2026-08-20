@@ -1,9 +1,10 @@
 // src/components/forms/ChoiceGrid.jsx
 // V4-FORMSYS-CHOICEGRID-001 — canonical single-select card/list picker. Replaces the bespoke
-// TypeCard (InventoryAdd) + ZoneCard (ZonePicker) selectors with ONE grammar: selected =
-// greenPale fill + green 2px border + check; error = terra border. Two layouts preserve current
-// looks: 'grid' (icon over label, N columns — InventoryAdd) | 'list' (icon left, label+description,
-// check right, full-width — ZonePicker). Real radio semantics: role=radiogroup/radio + aria-checked
+// TypeCard (InventoryAdd) + ZoneCard (ZonePicker, since deleted) selectors with ONE grammar:
+// selected = greenPale fill + green 2px border + check; error = terra border. Two layouts preserve
+// current looks: 'grid' (icon over label, N columns — InventoryAdd) | 'list' (icon left,
+// label+description, check right, full-width — originally ZonePicker, now OverwinterPrompt/AddSeeds;
+// the layout outlived the page). Real radio semantics: role=radiogroup/radio + aria-checked
 // + roving tabindex + arrow-key nav (the bespoke originals were plain buttons with no a11y).
 import React, { useRef } from 'react'
 import { P } from '../../lib/constants.js'
