@@ -213,6 +213,14 @@ export function renderRoutes({ overlay, user, loading }) {
       { path: '/space/:spaceId',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SpaceDetail /></ErrorBoundary></Protected> },
     ] : []),
     { path: '/tasks',         element: <Navigate to="/today" replace /> },
+    // UNLINKED ON PURPOSE (Dave directive 2026-05-22), and this comment is now the ONLY record of
+    // that: the entry point was TopBar's zone pill, and its "TO RESTORE: uncomment this block" note
+    // died with TopBar.jsx in V4-APPBAR-003. The reason still holds — picking a zone is a no-op.
+    // ZoneContext.activeZone has no consumer that filters anything (Dashboard destructures it and
+    // never reads it; ScopeChecklist's activeZoneId is an unrelated local), and it is session-only
+    // state, so a pick does not survive a reload. The page says so on screen. Re-link when
+    // zone-scoped filtering actually ships — and note the More menu's "Zones" row already points at
+    // /locations, so a second entry would need a different name to not read as a duplicate door.
     { path: '/zone',          element: <Protected><ZonePicker /></Protected> },
     // V4-PROJHIDE-001: the /projects tree is no longer a user-facing view — redirect its index to
     // /garden when hidden. Every other project route (new/:id/inactive/project-types/scoped shims/
@@ -220,6 +228,10 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/projects',      element: PROJECTS_HIDDEN ? <Navigate to="/garden" replace /> : <Protected><ProjectList /></Protected> },
     { path: '/projects/new',  element: <Protected><ProjectNew /></Protected> },
     { path: '/projects/:id',  element: <Protected><ProjectDetail /></Protected> },
+    // Unlinked per the PROJHIDE note above, but flipping that flag back does NOT restore its entry
+    // point: Dashboard gates the link on `!PROJECTS_HIDDEN && inactiveCount > 0`, and the count
+    // counts containers in status harvested/ended — of which prod had ZERO on 2026-08-20 (as it has
+    // zero dismissals ever recorded). The surface works; nothing currently qualifies to appear on it.
     { path: '/inactive',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected> },
     { path: '/inventory',     element: <Protected><Inventory /></Protected> },
     { path: '/inventory/add', element: <Protected><InventoryAdd /></Protected> },
