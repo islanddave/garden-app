@@ -11,8 +11,14 @@ import { LAYER } from '../lib/dismissLayers.js'
 // in the thumb zone.
 const HASHTAG = '#GardensAtMathews'
 const MAX_CAPTION = 5000
+// The three states that REPLACE the composer with <Blocked>. Named once because the reload-gate
+// predicate below and the render branch have to agree on "is the caption still on screen".
+const BLOCKED_STATES = ['forbidden', 'token_invalid', 'disabled']
 
-export default function FacebookShareSheet({ open, photos = [], onClose, onPosted }) {
+// Props:
+//   - open, photos, onClose, onPosted
+//   - onDirtyChange(bool)  optional; fires on every clean↔dirty flip of the caption
+export default function FacebookShareSheet({ open, photos = [], onClose, onPosted, onDirtyChange }) {
   const { state, result, error, share, reset } = useShareToFacebook()
   const [caption, setCaption] = useState('')
 
@@ -20,6 +26,42 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   useEffect(() => {
     if (open) { reset(); setCaption('') }
   }, [open, reset])
+
+  const done = state === 'success'
+  const blocked = BLOCKED_STATES.includes(state)
+  // Whether the caption is still live, authored, and unsent — i.e. whether a service-worker reload
+  // would DESTROY something. Up to 5000 chars of free text that exists nowhere but this state.
+  //
+  // Reported out rather than derived: `caption` is internal and the sheet is opened by a page that
+  // holds the reload gate, so PhotoLibrary cannot see this without being told (V4-DIRTYGUARDSWEEP-001,
+  // same shape as MicCaptureButton's onRecordingChange).
+  //
+  // `open &&` IS load-bearing, and for the OPPOSITE reason to PhotoLibrary's staged file, which is
+  // deliberately NOT gated on its form being visible: there the blob survives a collapse and comes
+  // back on re-open, so releasing would drop a live hold. Here the effect above wipes the caption on
+  // every open, so a dismissed draft is ALREADY unreachable — holding for it would wedge updates over
+  // text the user cannot get back to (BUG-STALECLIENT-001's shape). A test pins both halves: the hold
+  // releases on close, AND the text really is gone on re-open.
+  //
+  // `!done` because a posted caption is saved, not unsaved — nothing clears `caption` on success, so
+  // without this term the Success screen would hold a deploy until someone tapped Done. `!blocked`
+  // for the same unreachability reason as `open`: those screens replace the composer and only offer
+  // Close, so the caption is gone either way. `posting` and `error` deliberately stay dirty — the
+  // composer is still on screen with the text in it, and `error` offers Retry.
+  //
+  // Truthiness, not a seed comparison: this composer has no seed to differ from (`useState('')` +
+  // the reset above), so trimmed-non-empty IS "differs from what the sheet put there". The `+ #tag`
+  // button counts — it writes into the authored field, and unlike the pickers PhotoLibrary excludes,
+  // there is no separate control to redo it from.
+  const dirty = !!(open && !done && !blocked && caption.trim())
+  useEffect(() => {
+    if (!onDirtyChange) return
+    onDirtyChange(dirty)
+    // Release on unmount. PhotoLibrary renders this sheet unconditionally so only the page's own
+    // unmount reaches here (and its gate effect releases the key anyway), but a future caller that
+    // mounts it conditionally would otherwise strand a permanent hold in the parent.
+    return () => onDirtyChange(false)
+  }, [dirty, onDirtyChange])
 
   // V4-BACKNAV-001 Slice 2 — this surface had NO Escape handler at all, so registering ADDS
   // Escape-to-close. `busy: posting` is load-bearing: this is the one surface in the app with a
@@ -32,7 +74,6 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
 
   const count = photos.length
   const posting = state === 'posting'
-  const done = state === 'success'
   const closable = !posting
 
   async function handlePost() {
@@ -70,7 +111,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
 
         {done ? (
           <Success result={result} onClose={onClose} />
-        ) : state === 'forbidden' || state === 'token_invalid' || state === 'disabled' ? (
+        ) : blocked ? (
           <Blocked state={state} message={error} onClose={onClose} />
         ) : (
           <div style={{ padding: '4px 18px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>

@@ -19,8 +19,8 @@
  */
 
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 
 const { fetchSpy, photoUploadProps } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -416,5 +416,321 @@ describe('PhotoLibrary — V3-PHOTODBG-001 visible load-failure state', () => {
     // …and the page chrome (header) is NOT taken down by the fault (boundary contained it).
     expect(screen.getByRole('heading', { name: 'Photos' })).toBeDefined()
     errSpy.mockRestore()
+  })
+})
+
+// ── V4-DIRTYGUARDSWEEP-001 — the service-worker reload gate ──────────────────────────────────────
+//
+// Every assertion drives the REAL reloadGate and reads isReloadBlocked(). Nothing spies on
+// setReloadBlocked: a spy proves a call happened, not that the gate ends up held, and that blind
+// spot is how V4-RELOADGATEWIRE-001 shipped a primitive with zero callers and a green suite.
+//
+// This page composes TWO independent editable regions, so the suite covers each on its own AND the
+// two boundary cases that a copied predicate gets wrong: the staged blob surviving a form collapse
+// (a `showUpload &&` term would silently drop it), and the tag modal opening pre-filled from its
+// photo (a truthiness term would hold a deploy for anyone who tapped a photo to look at it).
+import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
+
+describe('PhotoLibrary — reload gate (V4-DIRTYGUARDSWEEP-001)', () => {
+  const TAGGED_PHOTO = {
+    id: 'photo-9', caption: 'tag me', view_url: 'https://example/p.jpg',
+    project_id: 'proj-1', location_id: null, plant_id: null,
+  }
+
+  beforeEach(() => { clearReloadBlocks() })
+  afterEach(() => { vi.unstubAllEnvs() })
+
+  async function mount({ photos = [] } = {}) {
+    primeMount({ photos })
+    const view = render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
+    return view
+  }
+
+  async function openUploadForm() {
+    await act(async () => { fireEvent.click(screen.getByText('+ Upload')) })
+  }
+
+  async function stageAPhoto() {
+    const file = new File(['x'], 'bed.jpg', { type: 'image/jpeg' })
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('pl-staged-input'), { target: { files: [file] } })
+    })
+    return file
+  }
+
+  // openModal() seeds tagForm.project_id from the photo, which fires the modal's
+  // plants-for-project effect — prime that fetch, as the tag tests above do.
+  async function openTagModal(photo) {
+    fetchSpy.mockResolvedValueOnce([])
+    await act(async () => {
+      fireEvent.click(screen.getByAltText(photo.caption).closest('button'))
+    })
+  }
+
+  it('holds nothing while photos are merely being browsed', async () => {
+    await mount({ photos: [TAGGED_PHOTO] })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('does NOT hold the reload when the upload form is merely opened', async () => {
+    await mount()
+    await openUploadForm()
+    expect(screen.getByTestId('photo-library-upload-form')).toBeDefined()
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // BUG-PHOTOFIRST-001 made the pick→send gap a deliberate, user-length window: the file sits in
+  // memory while the user works out where it goes. That is the window a deploy reload lands in.
+  it('holds the reload while a photo is staged and unsent', async () => {
+    await mount()
+    await openUploadForm()
+    await stageAPhoto()
+    expect(screen.getByTestId('pl-staged-preview')).toBeDefined()
+    expect(isReloadBlocked()).toBe(true)
+  })
+
+  it('releases the hold when the staged photo is removed', async () => {
+    await mount()
+    await openUploadForm()
+    await stageAPhoto()
+    await act(async () => { fireEvent.click(screen.getByTestId('pl-stage-clear')) })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // ★ The reason this page's predicate carries NO `showUpload` term. Collapsing the form does not
+  // clear the staged file — the toggle only flips visibility, and enterSelectMode() flips it as a
+  // side effect of tapping "Select". A `showUpload &&` predicate would release the hold here while
+  // a real, un-dismissed blob is still pending and about to reappear.
+  it('keeps holding after the upload form is collapsed with a photo still staged', async () => {
+    await mount()
+    await openUploadForm()
+    await stageAPhoto()
+    expect(isReloadBlocked()).toBe(true)
+    await act(async () => { fireEvent.click(screen.getByText('Cancel')) })
+    expect(screen.queryByTestId('photo-library-upload-form')).toBeNull()
+    expect(isReloadBlocked()).toBe(true)
+    // …and it really is still pending: re-opening shows the same staged photo.
+    await act(async () => { fireEvent.click(screen.getByText('+ Upload')) })
+    expect(screen.getByTestId('pl-staged-preview')).toBeDefined()
+  })
+
+  it('holds the reload for a typed caption with nothing staged yet', async () => {
+    await mount()
+    await openUploadForm()
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText('What are you seeing?'), { target: { value: 'aphids on the kale' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+  })
+
+  it('does not hold the reload for a whitespace-only caption', async () => {
+    await mount()
+    await openUploadForm()
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText('What are you seeing?'), { target: { value: '   ' } })
+    })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // ★ The pickers are deliberately OUT. A project is one tap to redo, and it is only meaningful
+  // alongside a staged file — which holds the gate on its own. Counting it would hold a deploy for
+  // a user who opened the form, tapped a project, and walked away.
+  it('does NOT hold the reload for a picked project alone', async () => {
+    await mount()
+    await openUploadForm()
+    fetchSpy.mockResolvedValueOnce([]) // plants-for-project effect
+    await act(async () => {
+      fireEvent.change(screen.getByText('— Select project —').closest('select'), { target: { value: 'proj-1' } })
+    })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // The staged term has to span the SEND too, not just the staging: uploadStaged() only clears
+  // stagedFile in handleUploadComplete(), so the bytes are still RAM-only for the whole request.
+  // Held open with a deferred, because a resolve-immediately upload cannot observe the window.
+  it('the hold spans the SEND, then releases when the upload completes', async () => {
+    await mount()
+    await openUploadForm()
+    await stageAPhoto()
+    fetchSpy.mockResolvedValueOnce([]) // plants-for-project effect
+    await act(async () => {
+      fireEvent.change(screen.getByText('— Select project —').closest('select'), { target: { value: 'proj-1' } })
+    })
+
+    let settle
+    uploadResultRef.current = new Promise(res => { settle = res })
+    await act(async () => { fireEvent.click(screen.getByTestId('pl-staged-upload')) })
+    expect(screen.getByTestId('pl-staged-upload').textContent).toMatch(/Uploading/i)
+    expect(isReloadBlocked()).toBe(true)
+
+    fetchSpy.mockResolvedValueOnce([]) // handleUploadComplete -> loadPhotos()
+    await act(async () => { settle({ photo: { id: 'new-photo' } }); await Promise.resolve() })
+    await waitFor(() => expect(isReloadBlocked()).toBe(false))
+  })
+
+  // ★ THE false-positive case for the modal. openModal() pre-fills every field from the photo, so a
+  // truthiness predicate would report dirty for any photo that already has a caption or a parent —
+  // i.e. for tapping a photo to look at it.
+  it('does NOT hold the reload when a tagged photo is opened and nothing is changed', async () => {
+    await mount({ photos: [TAGGED_PHOTO] })
+    await openTagModal(TAGGED_PHOTO)
+    expect(document.getElementById('pl-modal-caption').value).toBe('tag me')
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('holds the reload when the modal caption is edited', async () => {
+    await mount({ photos: [TAGGED_PHOTO] })
+    await openTagModal(TAGGED_PHOTO)
+    await act(async () => {
+      fireEvent.change(document.getElementById('pl-modal-caption'), { target: { value: 'tag me properly' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+  })
+
+  it('releases the hold when the modal edit is reverted to the saved value', async () => {
+    await mount({ photos: [TAGGED_PHOTO] })
+    await openTagModal(TAGGED_PHOTO)
+    const cap = document.getElementById('pl-modal-caption')
+    await act(async () => { fireEvent.change(cap, { target: { value: 'tag me properly' } }) })
+    expect(isReloadBlocked()).toBe(true)
+    await act(async () => { fireEvent.change(cap, { target: { value: 'tag me' } }) })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // The `modal` term. Closing leaves tagForm populated, but re-opening re-seeds from the next
+  // photo, so a dismissed edit is unreachable — holding for it would wedge updates forever.
+  it('releases the hold when the modal is closed on a dirty edit', async () => {
+    await mount({ photos: [TAGGED_PHOTO] })
+    await openTagModal(TAGGED_PHOTO)
+    await act(async () => {
+      fireEvent.change(document.getElementById('pl-modal-caption'), { target: { value: 'tag me properly' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+    await act(async () => { fireEvent.click(screen.getByText('✕')) })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('releases the hold after the tag edit is saved', async () => {
+    await mount({ photos: [TAGGED_PHOTO] })
+    await openTagModal(TAGGED_PHOTO)
+    await act(async () => {
+      fireEvent.change(document.getElementById('pl-modal-caption'), { target: { value: 'tag me properly' } })
+    })
+    expect(isReloadBlocked()).toBe(true)
+    fetchSpy.mockResolvedValueOnce({ id: 'photo-9' })
+    await act(async () => { fireEvent.click(screen.getByText('Save tags')) })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // The exclusion, pinned. A selection is view state — this page throws it away on any filter
+  // change (BUG-PHOTOSELSTALE-001), so counting it would hold a deploy for the whole of a browse.
+  it('does NOT hold the reload for a multi-select selection', async () => {
+    vi.stubEnv('VITE_API_FACEBOOK_SHARE', 'https://example.invalid/share')
+    await mount({ photos: [TAGGED_PHOTO] })
+    await act(async () => { fireEvent.click(screen.getByText('Select')) })
+    await act(async () => { fireEvent.click(screen.getByAltText('tag me').closest('button')) })
+    expect(screen.getByTestId('pl-select-bar')).toBeDefined()
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // The cleanup release. A staged blob that navigates away still holding its key would wedge
+  // updates forever — BUG-STALECLIENT-001, which is why this is a deferral, not a cancellation.
+  it('releases the hold when the page unmounts with a photo staged', async () => {
+    await mount()
+    await openUploadForm()
+    await stageAPhoto()
+    expect(isReloadBlocked()).toBe(true)
+    cleanup()
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // ── V4-FBCAPTIONDIRTY-001 — the third region ───────────────────────────────────────────────────
+  //
+  // FacebookShareSheet composes up to 5000 chars in its own state and reports a boolean out through
+  // onDirtyChange. Its own suite proves the predicate; these prove the WIRING — that the reported
+  // boolean actually reaches the real reloadGate through this page, and that it unions with the
+  // other two regions instead of replacing them.
+  describe('share sheet caption', () => {
+    beforeEach(() => { vi.stubEnv('VITE_API_FACEBOOK_SHARE', 'https://example.invalid/share') })
+
+    async function openShareSheet(photo) {
+      await act(async () => { fireEvent.click(screen.getByText('Select')) })
+      await act(async () => { fireEvent.click(screen.getByAltText(photo.caption).closest('button')) })
+      await act(async () => { fireEvent.click(screen.getByText('Post to Facebook')) })
+      return document.getElementById('fb-caption')
+    }
+
+    const typeShareCaption = async (value) => {
+      await act(async () => { fireEvent.change(document.getElementById('fb-caption'), { target: { value } }) })
+    }
+
+    // ★ THE over-broad case, and the reason the page does not simply hold on `shareOpen`. Opening
+    // the sheet holds no content; a `shareOpen` term would defer a deploy for anyone who tapped
+    // "Post to Facebook" to see what it does.
+    it('does NOT hold the reload for a merely-opened share sheet', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      const caption = await openShareSheet(TAGGED_PHOTO)
+      expect(screen.getByRole('dialog', { name: /share to facebook/i })).toBeDefined()
+      expect(caption.value).toBe('')
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    it('holds the reload while a share caption is being composed', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('First ripe tomato of the year')
+      expect(isReloadBlocked()).toBe(true)
+    })
+
+    it('releases the hold when the share caption is cleared back to empty', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('First ripe tomato of the year')
+      expect(isReloadBlocked()).toBe(true)
+      await typeShareCaption('')
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    // The sheet wipes its composer on every open, so a dismissed draft is already unreachable —
+    // holding for it would wedge updates over text nobody can get back to. Both halves asserted.
+    it('releases when the sheet is closed on a half-written caption, and the draft is gone', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('half-written thought')
+      expect(isReloadBlocked()).toBe(true)
+
+      await act(async () => { fireEvent.click(screen.getByLabelText('Close')) })
+      expect(isReloadBlocked()).toBe(false)
+
+      await act(async () => { fireEvent.click(screen.getByText('Post to Facebook')) })
+      expect(document.getElementById('fb-caption').value).toBe('')
+      expect(isReloadBlocked()).toBe(false)
+    })
+
+    // A union, not a replacement: the staged blob survives enterSelectMode() collapsing the form
+    // (that is why region 1 carries no `showUpload` term), so clearing the caption must NOT release
+    // a hold the staged file is still entitled to.
+    it('unions with the staged-photo hold rather than replacing it', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openUploadForm()
+      await stageAPhoto()
+      expect(isReloadBlocked()).toBe(true)
+
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('Two holds at once')
+      expect(isReloadBlocked()).toBe(true)
+      await typeShareCaption('')
+      expect(isReloadBlocked()).toBe(true)   // still staged
+    })
+
+    it('releases the hold when the page unmounts with a share caption composed', async () => {
+      await mount({ photos: [TAGGED_PHOTO] })
+      await openShareSheet(TAGGED_PHOTO)
+      await typeShareCaption('unmounting with this held')
+      expect(isReloadBlocked()).toBe(true)
+      cleanup()
+      expect(isReloadBlocked()).toBe(false)
+    })
   })
 })
