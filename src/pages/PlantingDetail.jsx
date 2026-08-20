@@ -77,6 +77,25 @@ function fmtDate(value) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+// V4-PLANTINGRAWDETAIL-001 — the raw value cell for the All-fields tab.
+// A null is STATED, never dropped. The curated row arrays all end in `.filter(([, v]) => v)`, and a
+// completeness surface that inherited that filter would answer "is germinated_at recorded on this
+// planting?" with silence — indistinguishable from the column not existing, which is the one answer
+// this tab exists to replace. That same filter is why `false` must survive: sown_at_approx is a real
+// boolean column and a falsy-filtered surface would hide every un-approximated date.
+// Objects and arrays go through JSON so variety_ref/metadata read as data instead of "[object
+// Object]", and an empty string is shown AS an empty string rather than folded into the null copy —
+// on a raw surface "" and NULL are different facts and a blank cell is indistinguishable from a bug.
+// Nothing else is formatted: the tab's promise is completeness, and per-field prettying here would
+// just be a second curated list wearing a different hat.
+const RAW_NOT_RECORDED = 'Not recorded'
+function rawFieldValue(value) {
+  if (value === null || value === undefined) return RAW_NOT_RECORDED
+  if (typeof value === 'object') return JSON.stringify(value)
+  const s = String(value)
+  return s === '' ? '""' : s
+}
+
 export default function PlantingDetail() {
   const { id: projectId, plantingId } = useParams()
   const { fetch } = useApiFetch()
@@ -568,15 +587,34 @@ export default function PlantingDetail() {
     ['First harvest', fmtDate(firstHarvest)],
   ].filter(([, v]) => v)
 
+  // V4-PLANTINGRAWDETAIL-001 (BD-030) — the read-side counterpart to V4-EDITCOMPLETE-001's all-fields
+  // rule, which covered EDIT forms only. Basics/Care/More are CURATED: three hand-written arrays that
+  // between them name about twenty of the forty-plus columns GET /api/plants/:id returns, so everything
+  // outside them (germinated_at, planted_out_at, qty_current/harvested/lost, loss_cause, the four
+  // *_approx flags, acquired_mature_*, divergence_type, succession_*, workspace_id, version, metadata)
+  // reaches this page and is displayed by nothing. Curation is also why the gap regrows: a column added
+  // server-side is invisible until someone remembers to hand-add a row here.
+  //
+  // So this tab is deliberately NOT a fourth curated list. It iterates the fetched record itself, which
+  // is what makes it self-maintaining — a new column shows up the day the API starts returning it, with
+  // no edit to this file and no way for the list to drift out of date. Field names render RAW
+  // ("sown_at_approx", not "Sown approx.") on purpose: the raw name is what ties a value on this screen
+  // to its column, its edit-form field and the ledger row that talks about it.
+  const allRows = Object.keys(pl).sort().map(k => [k, rawFieldValue(pl[k])])
+
   // BUG-CADENCESIZE-001: computed from the REAL rows ONLY — vesselGapRows are deliberately excluded.
   // That exclusion is what preserves the "No additional details recorded yet." empty state on a planting
   // with nothing recorded: the render below checks tabsEmpty BEFORE activeRows, so gap copy alone can
   // never make an empty planting look populated. Adding vesselGapRows to this expression would turn that
   // clean empty state into two rows both reading "Not recorded" — pinned by a guard in
-  // PlantingDetail.vesselGaps.test.jsx.
+  // PlantingDetail.vesselGaps.test.jsx. allRows is excluded for the same reason and one more: it is
+  // never empty, so folding it in would delete that empty state outright.
   const tabsEmpty = basicsRows.length === 0 && careRows.length === 0 && moreRows.length === 0
-  const activeRows = tab === 'basics' ? [...basicsRows, ...vesselGapRows] : tab === 'care' ? careRows : moreRows
-  const tabLabel = tab === 'basics' ? 'Basics' : tab === 'care' ? 'Care' : 'More'
+  const activeRows = tab === 'basics' ? [...basicsRows, ...vesselGapRows]
+    : tab === 'care' ? careRows
+      : tab === 'more' ? moreRows
+        : allRows
+  const tabLabel = tab === 'basics' ? 'Basics' : tab === 'care' ? 'Care' : tab === 'more' ? 'More' : 'All fields'
 
   // PLANTING-PAGER swipe (Pointer Events only — iOS Safari ≥13 / Chrome Android both support them;
   // gated to pointerType 'touch' so a desktop mouse-drag never pages). touch-action:pan-y on the
@@ -993,18 +1031,26 @@ export default function PlantingDetail() {
           history entry is always consumed on close. */}
       <Sheet open={detailsOpen} title="Details" onClose={() => setDetailsOpen(false)} armsBack>
         <div style={{ padding: '0 24px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* V4-PLANTINGRAWDETAIL-001 — "All" is last and reads as the escape hatch it is: the three
+              curated tabs stay the everyday surface, and nothing about them moves. The label is one
+              word so four segments still fit a 390px sheet without the inline-flex row overflowing. */}
           <SegmentedControl
             options={[
               { value: 'basics', label: 'Basics' },
               { value: 'care', label: 'Care' },
               { value: 'more', label: 'More' },
+              { value: 'all', label: 'All' },
             ]}
             value={tab}
             onChange={setTab}
             ariaLabel="Detail sections"
           />
           <div role="group" aria-label={tabLabel}>
-            {tabsEmpty ? (
+            {/* V4-PLANTINGRAWDETAIL-001: the empty state is a CURATED-tab answer. allRows is built from
+                the record itself and always has rows, so answering the All tab with "No additional
+                details recorded yet." would hide the raw record on precisely the sparse planting whose
+                raw record you opened this tab to read. */}
+            {tabsEmpty && tab !== 'all' ? (
               <p style={{ margin: 0, color: P.light, fontSize: '0.88rem' }}>No additional details recorded yet.</p>
             ) : activeRows.length === 0 ? (
               <p style={{ margin: 0, color: P.light, fontSize: '0.88rem' }}>Nothing recorded yet.</p>
@@ -1015,7 +1061,10 @@ export default function PlantingDetail() {
                     <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       {label}
                     </div>
-                    <div style={{ fontSize: '0.9rem', color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }}>{value}</div>
+                    {/* Raw values go monospace at a smaller size: it signals "this is the record, not
+                        a presentation of it", and it keeps a 60-character uuid or a JSON blob legible.
+                        wordBreak carries the long ones — the sheet must never push the PAGE sideways. */}
+                    <div style={tab === 'all' ? rawValueStyle : detailValueStyle}>{value}</div>
                   </div>
                 ))}
               </div>
@@ -1209,6 +1258,13 @@ function Shell({ children }) {
 
 const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24 }
 const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, display: 'inline-block' }
+// V4-PLANTINGRAWDETAIL-001 — the Details value cell, hoisted out of the JSX now that the All tab
+// needs a second variant. detailValueStyle is byte-identical to the inline object it replaces.
+const detailValueStyle = { fontSize: '0.9rem', color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }
+const rawValueStyle = {
+  ...detailValueStyle, fontSize: '0.8rem',
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+}
 const pagerBar = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, margin: '0 0 12px' }
 const pagerBtn = {
   width: 44, height: 44, minWidth: 44, borderRadius: 8, border: `1px solid ${P.greenLight}`,
