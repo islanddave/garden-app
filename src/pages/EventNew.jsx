@@ -846,8 +846,22 @@ export default function EventNew() {
   // beats blocking on mobile anyway). Same key both surfaces, so a draft typed on one resumes on the
   // other. ONLY without a seed deep-link (a bare "Log an event" tap): a deep-link's params express an
   // explicit fresh intent and must win over a stale draft. Restores `form` fields only (see key doc).
+  // BUG-SESSIONDRAFTRESTORE-001: ?session=harvest is a seed too, and it is the ONE that cannot
+  // survive being overridden. It pins event_type at mount (see the useState seed above) but locks
+  // the picker away, so a restored draft's event_type wrote over the pin with no way back — while
+  // `inHarvestSession` reads the URL, not the form, so the lock strip kept claiming "every save logs
+  // a harvest" over a form with no harvest panel, and Save POSTed the draft's type instead. Every
+  // shipped handleSubmit call site passes keepMode:'type', which PRESERVES event_type, so one bad
+  // restore mis-typed the whole burst; `sessionRow` is gated on isHarvest, so none of it reached the
+  // ledger either. All three entry points (Harvests CTA, TopChrome Basket, PWA shortcut) send the
+  // bare url, so all three landed here — the retired shortcut url only escaped because its
+  // ?event_type=harvest satisfied this predicate. Refuse the restore rather than coercing the draft
+  // to harvest: coercion would carry a watering's notes and plant_id onto a harvest row, which is
+  // the silent-misattribution class BUG-LOGTARGETREQ-001 exists to stop. Uses the raw PARAM, not
+  // `inHarvestSession`: the event_type pin above is param-level and overlay-agnostic, so the seed
+  // predicate that protects it has to be too.
   useEffect(() => {
-    const hasSeed = !!(preselectedProjectId || preselectedEventType || preselectedPlantId || resolveEventId || fromQuick)
+    const hasSeed = !!(preselectedProjectId || preselectedEventType || preselectedPlantId || resolveEventId || fromQuick || harvestSessionParam)
     if (hasSeed) return
     const draft = readDraft(EVENTNEW_DRAFT_KEY)
     if (!draft || !draft.form) return
