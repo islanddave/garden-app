@@ -37,7 +37,13 @@ def vitest_min_threshold():
     keys = ["lines", "functions", "branches", "statements"]
     vals = []
     for k in keys:
-        m = re.search(rf"{k}:\s*(\d+)", text)
+        # Anchored to a line start (OPS-COVRATCHETREGEX-001): unanchored, re.search scans the
+        # whole file and returns the FIRST `<key>:<digits>` anywhere — so a comment above the
+        # block ("aiming for branches: 99") is read as the threshold and the gate greens on a
+        # real regression, with no error. ^\s* also rejects keys that merely END in a real one
+        # ('sublines:'). Provably equivalent on a well-formed config: the four live keys each
+        # start their own line.
+        m = re.search(rf"^\s*{k}:\s*(\d+)", text, re.MULTILINE)
         if not m:
             print(f"FATAL: could not parse '{k}' threshold from vitest.config.ts", file=sys.stderr)
             sys.exit(2)
