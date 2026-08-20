@@ -58,6 +58,7 @@ import EventNew from '../pages/EventNew.jsx'
 import Harvests from '../pages/Harvests.jsx'
 import TopChrome from '../components/TopChrome.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { OverlaySurfaceProvider } from '../context/OverlayContext.jsx'
 import { writeDraft, readDraft } from '../lib/draftStash.js'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
@@ -161,11 +162,12 @@ const HARVEST_DRAFT = {
   harvest: { quantity: '7', weight: '', quality_rating: null, disposition: null, unit: 'cup', weight_unit: 'g', unitTouched: true },
 }
 
-async function mountAt(url) {
+async function mountAt(url, { overlaySurface = false } = {}) {
+  const tree = <ToastProvider><EventNew /></ToastProvider>
   const utils = render(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
-        <Route path="/log" element={<ToastProvider><EventNew /></ToastProvider>} />
+        <Route path="/log" element={overlaySurface ? <OverlaySurfaceProvider>{tree}</OverlaySurfaceProvider> : tree} />
       </Routes>
     </MemoryRouter>
   )
@@ -262,6 +264,18 @@ describe('BUG-SESSIONDRAFTRESTORE-001 controls — the draft stash is untouched 
     // Read before anything is typed: the persist effect rewrites this key on the first dirty
     // keystroke (single-key stash, same as every other seeded arrival). Arrival itself must not.
     expect(readDraft(EVENTNEW_DRAFT_KEY)?.form?.notes).toBe('half a can on the peppers')
+  })
+
+  // Pins the TERM, not just the behavior. `inHarvestSession` (= param && !inOverlay) would satisfy
+  // every case above and read the wrong way here: the event_type pin at mount is param-level and
+  // overlay-agnostic, so an overlay arrival carrying ?session=harvest is ALSO pinned to harvest and
+  // must not have that pin overwritten by a stale draft. The lock-strip assertion is the posture
+  // control — a red here means "the restore fired", never "the session engaged".
+  it('an OVERLAY arrival carrying ?session=harvest refuses the restore too', async () => {
+    writeDraft(EVENTNEW_DRAFT_KEY, WATERING_DRAFT)
+    await mountAt(ENTRY_POINTS[0][1], { overlaySurface: true })
+    expect(screen.queryByTestId('harvest-session-lock')).toBeNull()
+    expect(screen.getByLabelText('Harvest quantity')).toBeTruthy()
   })
 
   it('an unrelated ?session= value is not a seed — the restore still fires', async () => {
