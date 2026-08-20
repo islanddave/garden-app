@@ -13,8 +13,8 @@
     {
       "name": "Log a harvest",
       "short_name": "Harvest",
-      "description": "Jump straight into the harvest log with the type already chosen",
-      "url": "/log?event_type=harvest&fromquick=1",
+      "description": "Open the weigh-in session — pick a planting, weigh, save, repeat",
+      "url": "/log?session=harvest",
       "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {

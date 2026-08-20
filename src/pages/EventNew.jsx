@@ -710,6 +710,11 @@ export default function EventNew() {
   // HarvestReadyTile.jsx (`/log?project=…&event_type=harvest`) and the installed-PWA manifest shortcut
   // (`/log?event_type=harvest&fromquick=1`) — neither of which design §1c scoped this to. The FAB row
   // passes NO params but event_type, so it is unaffected.
+  // V4-PWAHARVSHORTCUT-001: the manifest shortcut is repointed at `/log?session=harvest`, which
+  // carries NO event_type, so it no longer reaches this predicate at all (the session's ranked ready
+  // tray is the picker there). The ?project= guard still has to hold for HarvestReadyTile — and for
+  // the OLD shortcut url, which keeps launching from Dave's home screen until Chrome re-reads the
+  // manifest (launcher-cached, days, unforceable). Keep this listing historical, not current.
   const [harvestFabAutoOpen] = useState(() => (
     preselectedEventType === 'harvest' && !preselectedPlantId && !preselectedProjectId &&
     !readDraft(EVENTNEW_DRAFT_KEY)?.form
@@ -815,6 +820,11 @@ export default function EventNew() {
     // invalidation), so a manifest edit would leave the defect live on Dave's device meanwhile and
     // its acceptance criterion unverifiable. `fromquick` in the manifest is now inert for harvest;
     // drop it there only if that file is being edited for some other reason.
+    // V4-PWAHARVSHORTCUT-001 took that permission: the shortcut is now `/log?session=harvest` and the
+    // manifest is NO LONGER a `fromquick` producer — QuickActions.jsx:124 is the only one left. This
+    // guard is NOT dead and must not be narrowed to that one producer: the same launcher-cache that
+    // motivated the bundle-side fix means the retired url keeps arriving from Dave's home screen for
+    // days after deploy, and the harvest cases in PhotoEventRequiresPhoto.test.jsx pin it for them.
     if (!fromQuick || preselectedEventType !== 'photo') return
     const f = takePendingCapture()
     if (f) { setPhotoFile(f); setPhotoPreview(URL.createObjectURL(f)) }
