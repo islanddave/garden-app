@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.39.2",
+    "date": "2026-08-20",
+    "highlights": [
+      "Dormant plants no longer clutter Log Many. Christmas cactus, Cavendish strawberries, wild wineberry, asparagus and garlic were all still turning up in bulk logging while fully dormant and needing nothing. They now drop off routine care lists — but stay in the Harvests tab, keep their own planting page, and can be brought back with a Resume button when they wake up.",
+      "Half-typed entries survive a reload. Every form in the app — planting editor, field capture, locations, tasks, project types, photo library, event detail, and the Facebook caption box — now holds on to what you were typing instead of losing it if the page reloads.",
+      "Harvest crop totals now show a count and a first-pick date beside the weight, so 65 fruit and 8.23 kg sit on the same line. Plantings logged by weight show a dash rather than a misleading number.",
+      "Tapping Harvest anywhere — the header or your home-screen shortcut — now opens the weigh-in session instead of the single-entry form.",
+      "Fixes: the Today watch list read the wrong days-to-maturity basis for cultivars that disagree with their crop; a timer on Add Inventory could fire after you left the page; and the coverage safety check could silently pass a real regression."
+    ]
+  },
+  {
     "version": "4.39.1",
     "date": "2026-08-19",
     "highlights": [
