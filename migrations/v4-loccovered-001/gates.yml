@@ -1,0 +1,175 @@
+# gates.yml
+# V4-COVEREDNOTMODELLED-001 — public.locations.covered (the editable coverage flag).
+#
+# STATUS AT AUTHORING (2026-08-20): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
+# prod. The authoring lane executed no DDL anywhere.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING
+#
+#   staging apply (0a+0b) -> rehearse 0r -> re-apply 0a+0b to staging -> PROD apply (0a+0b)
+#   -> dev push (handler.js + locations Lambda + Locations.jsx) -> promote
+#
+# The DDL must reach STAGING BEFORE THE DEV PUSH. integration-test.yml forks its ephemeral Neon
+# branch from the staging branch and does NOT apply migrations, so a handler that names l.covered
+# against an unmigrated staging schema fails at parse time in every integration test — and that
+# check is required by promote-gate.yml, so it blocks the WHOLE FLEET's promote, not just this row.
+# It must ALSO reach PROD before the promote, for the harder reason: unlike a non-fatal writer, this
+# column has a READER on the nightly critical path. daily-plan/handler.js builds Today from one
+# query; a missing column there is not a degraded plan, it is no plan.
+#
+# 0a and 0b are ONE step. Never apply 0a alone — see 0b-data.sql.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * `continuous` DEFAULTS TO TRUE, and gate-invariants.yml runs `--phase post --continuous-only`
+#     against BOTH live prod AND live staging on every migrations/** push. So every gate below that
+#     is continuous had to be checked to PASS ON BOTH ENVIRONMENTS TODAY, pre-apply. Verified
+#     2026-08-20 by direct query: prod has 21 live locations, staging 13; neither has a `covered`
+#     column; both have a live location named 'Stable' and one named 'House'.
+#
+#   * The TRIPWIRE pair is armed on the column's ABSENCE, which is the inverse of the usual pattern
+#     and is deliberate. While the legacy name-match is still the live derivation, renaming Stable
+#     or House silently reclassifies 22 live plantings as outdoor — they start taking rain credit
+#     under a roof and drop out of the frost pass's covered exclusion, with nothing logged and
+#     nothing 500ing. That window is open RIGHT NOW and stays open until this bundle applies, so the
+#     tripwire is the one part of this row that carries value before the migration does. The instant
+#     0a lands the arm goes false and both gates pass vacuously forever, which is correct: the
+#     reader no longer consults the name, so the name is no longer care-critical.
+#
+#   * The SHAPE gates (nullable, no-CHECK) need no explicit arm — each is violation-shaped over the
+#     column's OWN catalog row, so with no column there are no rows and they pass vacuously by
+#     construction rather than by a bolted-on EXISTS.
+#
+#   * The BACKFILL gates are `continuous: false` — apply-window receipts, not standing invariants.
+#     Parity with the name-match is exactly what Dave is expected to break the first time he ticks
+#     the box on a low tunnel; asserting it forever would turn the feature working into a red.
+
+pre:
+  - name: pre_column_absent
+    note: >
+      Greenfield. If this returns a row, someone already applied 0a — stop and diff before
+      re-running. 0a is IF NOT EXISTS and 0b is WHERE covered IS NULL, so a re-run is safe, but a
+      column that arrived by some OTHER route is a different situation and wants eyes on it.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='locations' AND column_name='covered'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_backfill_inputs_present
+    note: >
+      0b's TRUE arms are only meaningful if the rows they name are here. Returns one row per
+      expected-present name that is MISSING, so a failure names the input rather than reporting a
+      count short. Both present on prod and on staging as of 2026-08-20.
+    sql: |
+      SELECT n.name
+        FROM (VALUES ('Stable'),('House')) AS n(name)
+       WHERE NOT EXISTS (SELECT 1 FROM public.locations l
+                          WHERE l.name = n.name AND l.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_tripwire_stable_not_renamed
+    note: >
+      ARMED ON THE COLUMN'S ABSENCE — see the header. Until this bundle applies, the live coverage
+      derivation is `l.name in ('Stable','House')`, and Stable carries the largest covered planting
+      count on prod. Renaming it is a legitimate-looking edit with a silent care consequence, and
+      locations/index.js's BUG-BLANKNAME-001 guard deliberately does NOT close it ("a rename is a
+      legitimate edit whose care consequence is the name-matching predicate's fault"). This is that
+      separate tracking. Auto-disarms on apply.
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='locations'
+                            AND column_name='covered')
+         AND NOT EXISTS (SELECT 1 FROM public.locations
+                          WHERE name='Stable' AND deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_tripwire_house_not_renamed
+    note: Second half of the tripwire pair. Same arming, same auto-disarm.
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='locations'
+                            AND column_name='covered')
+         AND NOT EXISTS (SELECT 1 FROM public.locations
+                          WHERE name='House' AND deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_covered_is_nullable_with_no_default
+    note: >
+      The additive property, made executable. A later NOT NULL or a DEFAULT would both break the
+      three-state: NULL is a MEANING here ("not stated" -> reader falls back to type_label), not an
+      absence to be tidied away, and a DEFAULT false would assert every unstated location is open to
+      the sky. Violation-shaped over the column's own catalog row, so it is vacuous pre-apply with
+      no explicit arm.
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='locations' AND column_name='covered'
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL OR data_type <> 'boolean')
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_no_check_constraint_over_covered
+    note: >
+      Arming a CHECK over a column only the NEW writer sets breaks the still-deployed OLD writer —
+      that is a deploy, not a migration, and it is how harvest logging went down on 2026-08-03. A
+      boolean has no vocabulary to police, so there is no legitimate CHECK to add here and this gate
+      is a permanent no. Reads pg_catalog rather than information_schema.table_constraints, which is
+      privilege-filtered to the table owner and returns nothing for garden_ro. Naturally vacuous
+      pre-apply: no column, no pg_attribute row, no join.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE n.nspname='public' AND t.relname='locations'
+         AND c.contype='c' AND a.attname='covered'
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_backfill_reproduces_the_name_match
+    note: >
+      THE BEHAVIOUR-PRESERVATION RECEIPT. Every row's covered must equal what the name-match
+      computes for it, so the reader returns byte-identical classifications on day one. IS DISTINCT
+      FROM, not <>, so the NULL type_label case compares correctly rather than vanishing. Returns
+      one row per divergent location, naming it. continuous: FALSE — this is true in the apply
+      window and is EXPECTED to become false the first time Dave ticks the box on a bed the name
+      never described, which is the entire feature.
+    sql: |
+      SELECT id, name, type_label, covered
+        FROM public.locations
+       WHERE covered IS DISTINCT FROM (CASE
+               WHEN name IN ('Stable','House')            THEN true
+               WHEN type_label IN ('shelf','rack','tray') THEN true
+               WHEN type_label IS NULL                    THEN NULL
+               ELSE false
+             END)
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_backfill_left_no_unstated_rows
+    note: >
+      0b leaves covered NULL only where type_label IS NULL. Neither environment has such a row
+      (prod 21/21 and staging 13/13 carry a type_label as of 2026-08-20), so a NULL here means the
+      UPDATE did not reach every row — a partial apply, which is resumable by re-running 0b.
+      continuous: FALSE for the same reason as above: a location created after the apply and not yet
+      classified is legitimately NULL.
+    sql: |
+      SELECT id, name FROM public.locations
+       WHERE covered IS NULL AND type_label IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
