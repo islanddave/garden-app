@@ -4,6 +4,10 @@
 // lost to make room for one, a batch that downloads 60MB onto a phone, or a single failed fetch that
 // takes the whole post down with it.
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import exifr from 'exifr/dist/full.esm.mjs'
 import {
   collectBatchPhotos, fetchPostPhotos, MAX_POST_PHOTOS, MAX_POST_PHOTO_BYTES,
 } from '../lib/harvestPostPhotos.js'
@@ -13,7 +17,18 @@ const entry = (eventId, photoIds) => ({
   photos: photoIds.map((id) => ({ id, caption: null, taken_at: null })),
 })
 
-const blob = (bytes, type = 'image/jpeg') => new Blob([new Uint8Array(bytes)], { type })
+// A REAL JPEG of exactly `bytes` bytes. It has to be a real one now that fetchPostPhotos runs the
+// V4-PHOTOEXIFSTRIP-001 strip over what it fetches — filler bytes are not a container the strip
+// recognizes, which would leave every assertion here running against a path production never takes.
+// The padding lives INSIDE the entropy-coded scan (and is never 0xFF, which would read as a marker),
+// so the strip is a byte-for-byte no-op on it and the byte-budget arithmetic below stays exact.
+const jpegOf = (size) => {
+  if (size <= 0) return new Uint8Array(0)
+  const head = [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x03, 0x01]   // SOI + a minimal SOS header
+  const scan = Math.max(0, size - head.length - 2)
+  return new Uint8Array([...head, ...new Array(scan).fill(0x5A), 0xFF, 0xD9])
+}
+const blob = (bytes, type = 'image/jpeg') => new Blob([jpegOf(bytes)], { type })
 
 // mint resolves a URL per id; fetchBlob resolves a blob per URL. Both injected, so nothing here
 // touches the network or React.
@@ -205,5 +220,92 @@ describe('fetchPostPhotos — abort and progress', () => {
       { done: 1, failed: 0, total: 2 },
       { done: 2, failed: 0, total: 2 },
     ])
+  })
+})
+
+// V4-PHOTOEXIFSTRIP-001 LAYER 2 — the layer that protects photos ALREADY in S3.
+//
+// 913 photos were backfilled before any downscale or strip existed, so they are camera originals
+// with GPS at Dave's house sitting in the bucket right now. Nothing done on the upload path reaches
+// them. This is what stops those exact bytes going to the Android share sheet, and therefore to
+// Facebook, SMS, Drive or wherever else the sheet points — without rewriting a single stored object.
+//
+// Fixture is synthetic-gps.jpg (GPS at Greenwich; garden-app is a PUBLIC repo, so Dave's real
+// coordinates are never committed). exifr reads the File that would have been handed to
+// navigator.share — the assertion is on the outgoing bytes, not on a spy.
+describe('fetchPostPhotos — a shared photo never carries the garden home address', () => {
+  const GPS_BYTES = new Uint8Array(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'synthetic-gps.jpg')),
+  )
+  const parse = (b) => exifr.parse(b instanceof Uint8Array ? b : new Uint8Array(b), {
+    tiff: true, exif: true, gps: true, ifd0: true, translateValues: false,
+  })
+  const readBytes = (b) => new Promise((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(new Uint8Array(fr.result))
+    fr.onerror = () => reject(fr.error)
+    fr.readAsArrayBuffer(b)
+  })
+  // A backfilled original: full camera EXIF, and a Samsung-style trailer past the EOI carrying the
+  // SIM country code and the on-device capture path — neither of which is EXIF at all.
+  const backfilled = () => new Blob([
+    GPS_BYTES,
+    new TextEncoder().encode('Image_UTC_Data1676097711091MCC_Data311PhotoEditor_Re_Edit_Data'
+      + '{"originalPath":"/storage/emulated/0/DCIM/Camera/20230211_014150.jpg"}'),
+  ], { type: 'image/jpeg' })
+
+  const gpsRig = () => ({
+    mint: vi.fn(async (id) => `https://s3.example/${id}?sig`),
+    fetchBlob: vi.fn(async () => backfilled()),
+  })
+
+  it('the fixture really carries a fix before we touch it', async () => {
+    expect((await parse(GPS_BYTES)).latitude).toBeCloseTo(51.4778, 3)
+  })
+
+  it('STRIPS THE GPS out of a backfilled original on its way to the share sheet', async () => {
+    const { mint, fetchBlob } = gpsRig()
+    const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
+    expect(r.items).toHaveLength(1)
+
+    const sent = await readBytes(r.items[0].file)
+    const after = await parse(sent)
+    expect(after?.latitude).toBeUndefined()
+    expect(after?.Make).toBeUndefined()
+    expect(after?.DateTimeOriginal).toBeUndefined()
+  })
+
+  it('removes the trailer metadata that is not EXIF and that dropping APP1 would miss', async () => {
+    const { mint, fetchBlob } = gpsRig()
+    const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
+    const text = Buffer.from(await readBytes(r.items[0].file)).toString('latin1')
+    expect(text).not.toContain('MCC_Data')
+    expect(text).not.toContain('originalPath')
+    expect(text).not.toContain('DCIM')
+  })
+
+  it('still hands back a decodable JPEG under the neutral filename', async () => {
+    const { mint, fetchBlob } = gpsRig()
+    const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
+    const sent = await readBytes(r.items[0].file)
+    expect([sent[0], sent[1]]).toEqual([0xFF, 0xD8])
+    expect([sent[sent.length - 2], sent[sent.length - 1]]).toEqual([0xFF, 0xD9])
+    expect(r.items[0].file.name).toBe('harvest-photo-1.jpg')
+    expect(r.items[0].file.type).toBe('image/jpeg')
+  })
+
+  it('counts a photo it cannot strip as FAILED rather than sharing it unstripped', async () => {
+    const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
+    // A blob whose bytes cannot be read: the strip throws, loadOne retries once, then gives up.
+    const unreadable = {
+      size: 100,
+      type: 'image/jpeg',
+      arrayBuffer: () => Promise.reject(new Error('NotReadableError')),
+    }
+    const fetchBlob = vi.fn(async () => unreadable)
+    const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
+    expect(r.items).toHaveLength(0)
+    expect(r.failed).toBe(1)
+    expect(fetchBlob).toHaveBeenCalledTimes(2)   // one retry, then counted failed
   })
 })

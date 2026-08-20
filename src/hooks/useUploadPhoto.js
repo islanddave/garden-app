@@ -30,6 +30,7 @@ import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
 import { downscaleWithThumb } from '../lib/imageDownscale.js';
 import { readCaptureMeta } from '../lib/imagePipeline.js';
+import { stripImageFile } from '../lib/imageMetadataStrip.js';
 import { putWithProgress } from '../lib/uploadPut.js';
 
 // Step 2b only. The thumb is ~50KB; if it has not landed in 10s it is not going to, and it must
@@ -177,7 +178,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // BUG-PHOTOUPLOADHANG-001: raced against DOWNSCALE_DEADLINE_MS — a decode that never
       // settles must not wedge the save; the module's own fail-safe (original file, no thumb)
       // is applied by deadline.
-      const { file: upFile, thumb } = await new Promise((resolve) => {
+      let { file: upFile, thumb } = await new Promise((resolve) => {
         const timer = setTimeout(() => {
           console.warn(`downscaleWithThumb did not settle in ${DOWNSCALE_DEADLINE_MS}ms — uploading the original`);
           resolve({ file, thumb: null });
@@ -187,6 +188,33 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
           () => { clearTimeout(timer); resolve({ file, thumb: null }); },
         );
       });
+
+      // V4-PHOTOEXIFSTRIP-001 — nothing reaches S3 carrying the camera's capture metadata. Dave's
+      // garden IS his home, so a GPS tag is his home address (measured on his own originals:
+      // 42.5087 / -72.6470, the house).
+      //
+      // PLACED AFTER THE DOWNSCALE ON PURPOSE. The canvas path already emits a bare EXIF-free JPEG,
+      // so on the common path this is a cheap no-op. It exists for the FIVE paths that hand back
+      // the ORIGINAL camera file: under MIN_BYTES, an undecodable codec, no usable canvas, a
+      // re-encode that grew — all four of imageDownscale's fail-safe returns — plus the
+      // DOWNSCALE_DEADLINE_MS timeout immediately above. Those are exactly the paths that skip
+      // processing, which is why they are the ones that leak.
+      //
+      // PLACED BEFORE ext/mime/key/preview/PUT so every derived value, the preview the user sees,
+      // and every byte that leaves the device all describe the stripped file — including
+      // file_size_bytes below and the relay-upload fallback, which re-reads these same variables.
+      //
+      // readCaptureMeta ABOVE IS UNAFFECTED and must stay that way (imagePipeline rule 1): it was
+      // handed the original `file` and started before this line, so taken_at/gps_lat still land in
+      // the household-scoped DB row. This removes metadata from the bytes we PUBLISH, not from the
+      // record we keep.
+      //
+      // NOT FAIL-SAFE, deliberately unlike the downscale above — see imageMetadataStrip.js's
+      // contract note. A photo whose bytes cannot be read fails the save and costs a retry; it is
+      // never uploaded unstripped. Sequential rather than parallel so only one copy of a
+      // multi-megabyte original is held at a time (imagePipeline rule 3's memory class).
+      upFile = await stripImageFile(upFile);
+      if (thumb) thumb = await stripImageFile(thumb);
 
       // Set up preview eagerly — caller may want to render before upload completes.
       // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.

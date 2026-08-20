@@ -25,6 +25,8 @@
 // A presigned S3 GET is fetched with credentials omitted: the signature is in the query string, and
 // attaching the app's Authorization header (i.e. going through useApiFetch) makes S3 reject it.
 
+import { stripImageFile } from './imageMetadataStrip.js'
+
 // Measured on prod (2026-08-20, 106 logging batches by the harvestPost.js 45-minute rule): 29 batches
 // carry photos, distributed 1x13, 2x2, 3x4, 5x2, 8x2, 9, 11, 13, 14, 16, 30. A cap of 10 covers 24 of
 // those 29 whole; the tail is bulk-import evenings, not posts. 10 is also where a Facebook post stops
@@ -91,9 +93,20 @@ async function loadOne(ref, { mint, fetchBlob, signal, index }) {
       const blob = await fetchBlob(url, { signal })
       if (!blob || !blob.size) throw new Error('empty photo body')
       const type = blob.type || 'image/jpeg'
+      // V4-PHOTOEXIFSTRIP-001 LAYER 2 — strip here as well as on upload, because this is the only
+      // layer that protects the 913 photos ALREADY in S3. They were backfilled before any downscale
+      // or strip existed, so they are camera originals with GPS at Dave's house, and nothing about
+      // stripping on upload reaches them. Doing it here needs no bulk rewrite of stored objects:
+      // the share sheet only ever sees the bytes we hand it. Upload-side strip fixes the future,
+      // this fixes the present.
+      //
+      // A THROW IS THE CORRECT OUTCOME. It lands in the catch below, which retries the whole
+      // (mint, fetch, strip) once and then counts the photo failed — so the composer says
+      // "1 didn't load" and the post goes without it. A photo we cannot strip is not shared.
+      const clean = await stripImageFile(blob)
       // A neutral filename: it rides into the share sheet and on to whatever app receives it, so it
       // must not carry a caption, a variety name or a UUID.
-      return new File([blob], `harvest-photo-${index + 1}.${extForType(type)}`, { type })
+      return new File([clean], `harvest-photo-${index + 1}.${extForType(type)}`, { type })
     } catch (err) {
       if (aborted(signal, err)) return null
     }
