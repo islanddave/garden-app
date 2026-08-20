@@ -215,12 +215,20 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/tasks',         element: <Navigate to="/today" replace /> },
     // UNLINKED ON PURPOSE (Dave directive 2026-05-22), and this comment is now the ONLY record of
     // that: the entry point was TopBar's zone pill, and its "TO RESTORE: uncomment this block" note
-    // died with TopBar.jsx in V4-APPBAR-003. The reason still holds — picking a zone is a no-op.
-    // ZoneContext.activeZone has no consumer that filters anything (Dashboard destructures it and
-    // never reads it; ScopeChecklist's activeZoneId is an unrelated local), and it is session-only
-    // state, so a pick does not survive a reload. The page says so on screen. Re-link when
-    // zone-scoped filtering actually ships — and note the More menu's "Zones" row already points at
-    // /locations, so a second entry would need a different name to not read as a duplicate door.
+    // died with TopBar.jsx in V4-APPBAR-003. The reason still holds — picking a zone here is a no-op.
+    // ZoneContext.activeZone has ZERO readers anywhere (V4-ZONEDECIDE-001 removed the last one, a
+    // dead destructure in Dashboard), and it is session-only state, so a pick does not survive a
+    // reload. The page says so on screen.
+    //
+    // NOT to be confused with the zone filtering that DOES ship: Log Many's "By zone" scope
+    // (ScopeChecklist.jsx tier-1 chips -> POST /api/events/batch `scope.type:'space'`, cascading
+    // through the location subtree). That mechanism is per-invocation and does not touch
+    // ZoneContext — so this page is not the thing keeping zone filtering alive, and retiring it
+    // would not remove any working filter. Dave 2026-08-20 chose to KEEP zone filtering; this
+    // picker stays parked, unlinked, pending a decision about an ambient app-wide zone.
+    // Re-link only when such a zone actually filters something — and note the More menu's "Zones"
+    // row already points at /locations, so a second entry would need a different name to not read
+    // as a duplicate door.
     { path: '/zone',          element: <Protected><ZonePicker /></Protected> },
     // V4-PROJHIDE-001: the /projects tree is no longer a user-facing view — redirect its index to
     // /garden when hidden. Every other project route (new/:id/inactive/project-types/scoped shims/

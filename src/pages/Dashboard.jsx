@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
-import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { useToast } from '../context/ToastContext.jsx'
@@ -76,7 +75,6 @@ const ATTENTION_LIST_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 export default function Dashboard() {
   const { profile }       = useAuth()
   const { fetch: apiFetch } = useApiFetch()
-  const { activeZone }    = useZone()
   const location          = useLocation()
   const navigate          = useNavigate()
   const { showUndo }      = useToast()

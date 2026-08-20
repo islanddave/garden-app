@@ -17,10 +17,9 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
-const { fetchSpy, authMock, zoneMock, locationRef, navigateSpy } = vi.hoisted(() => ({
+const { fetchSpy, authMock, locationRef, navigateSpy } = vi.hoisted(() => ({
   fetchSpy:    vi.fn(),
   authMock:    { profile: { display_name: 'Dave Nichols' } },
-  zoneMock:    { activeZone: null },
   locationRef: { pathname: '/dashboard', state: null },
   navigateSpy: vi.fn(),
 }))
@@ -43,7 +42,6 @@ vi.mock('react-router-dom', () => ({
 }))
 
 vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => authMock }))
-vi.mock('../context/ZoneContext.jsx', () => ({ useZone: () => zoneMock }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
 
 vi.mock('../components/HarvestReadyTile.jsx', () => ({
@@ -79,7 +77,6 @@ function primeDash(overrides = {}) {
 beforeEach(() => {
   fetchSpy.mockReset()
   authMock.profile = { display_name: 'Dave Nichols' }
-  zoneMock.activeZone = null
   locationRef.state = null
 })
 
