@@ -128,6 +128,9 @@ describe('V4-HARVFAB-001 — the harvest arrival opens the picker itself', () =>
 // and the installed-PWA manifest shortcut (`?event_type=harvest&fromquick=1`). Neither was in design
 // §1c's scope, and neither was reviewed for an auto-opening picker. The FAB row carries no params but
 // event_type, so the ?project= guard separates them exactly.
+// V4-PWAHARVSHORTCUT-001: the shortcut is now `?session=harvest`, which carries no event_type and so
+// never reaches this predicate — but it stays listed here because the launcher caches the old url for
+// days after a manifest edit. HarvestReadyTile is the one that keeps this guard permanently live.
 describe('V4-HARVFAB-001 — auto-open is scoped to the FAB arrival, not every harvest deep link', () => {
   it('does NOT auto-open for the Harvest-ready tile arrival (?project= present)', async () => {
     renderEventNew('project=proj-B&event_type=harvest')
