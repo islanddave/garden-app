@@ -51,7 +51,8 @@
             "name": "Dormant Fig",
             "note": "Dormant — skip routine care",
             "project": "Garden",
-            "project_id": "pj1"
+            "project_id": "pj1",
+            "reason": "status"
           }
         ],
         "fertilize": [],
