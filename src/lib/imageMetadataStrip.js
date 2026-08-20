@@ -44,6 +44,18 @@
 // still gets every segment we positively identified dropped (we bail to copying the remainder
 // verbatim rather than abandoning the strip).
 //
+// TWO ENTRY POINTS, TWO POLICIES — BUG-HEICEXIFPASSTHRU-001. The clause above ("returns the input
+// unchanged ... for a format with no strip implementation") is a hole a caller can be wrong about,
+// and one was: harvestPostPhotos stated "a photo we cannot strip is not shared" while calling the
+// LENIENT entry point, so a HEIC went to the Android share sheet with its GPS intact. Measured on
+// a real macOS-encoded HEIC/AVIF carrying exifr-readable GPS: byte-identical passthrough on both
+// the upload PUT and the share File. So the policy is now named at the call site rather than
+// assumed:
+//   stripImageFile        — LENIENT. Unstrippable container passes through, console.warn only.
+//   stripImageFileStrict  — FAIL CLOSED. Unstrippable container throws UnstrippableFormatError.
+// Neither is "the safe one" in the abstract: fail-closed on SHARE costs one photo missing from a
+// post, fail-closed on UPLOAD costs the user their photo entirely. Pick per path, deliberately.
+//
 // Server-side lambda/facebook-share/exif.js is a separate, narrower denylist strip on the Graph
 // upload path. It is defence-in-depth on a path this module does not reach; left alone on purpose.
 
@@ -345,11 +357,38 @@ function readBytes(blob) {
 }
 
 /**
- * Metadata-free bytes for a File or Blob, preserving name/type/lastModified.
+ * Thrown by stripImageFileStrict for a container this module has no walker for (HEIC, AVIF, or
+ * anything whose magic bytes match nothing). `message` is written to be shown to a user as-is,
+ * because useUploadPhoto surfaces err.message verbatim.
+ */
+export class UnstrippableFormatError extends Error {
+  constructor(type) {
+    super(`${type || 'This image format'} can't have its location data removed on this device, so it was not sent. Set the camera to JPEG and try again.`);
+    this.name = 'UnstrippableFormatError';
+    this.format = type || null;
+    this.userFacing = true;
+  }
+}
+
+function rewrap(fileOrBlob, r) {
+  if (!r.changed) return fileOrBlob;
+  const type = fileOrBlob.type || '';
+  if (typeof File === 'function' && typeof fileOrBlob.name === 'string') {
+    return new File([r.out], fileOrBlob.name, { type, lastModified: fileOrBlob.lastModified ?? Date.now() });
+  }
+  return new Blob([r.out], { type });
+}
+
+/**
+ * Metadata-free bytes for a File or Blob, preserving name/type/lastModified. LENIENT.
  *
  * Returns the INPUT UNCHANGED when the format has no strip implementation or nothing needed
  * dropping. THROWS if the bytes cannot be read — see the contract note in the header: this is a
  * privacy control, so "could not strip" must not silently become "uploaded the original".
+ *
+ * The unstrippable-container case is the ONE hole left open here, and it is only safe on a path
+ * that has consciously accepted it. If your caller's comment says the bytes are guaranteed clean,
+ * you want stripImageFileStrict.
  */
 export async function stripImageFile(fileOrBlob) {
   if (!fileOrBlob || typeof fileOrBlob.size !== 'number') return fileOrBlob;
@@ -361,11 +400,28 @@ export async function stripImageFile(fileOrBlob) {
     }
     return fileOrBlob;
   }
-  const type = fileOrBlob.type || '';
-  if (typeof File === 'function' && typeof fileOrBlob.name === 'string') {
-    return new File([r.out], fileOrBlob.name, { type, lastModified: fileOrBlob.lastModified ?? Date.now() });
+  return rewrap(fileOrBlob, r);
+}
+
+/**
+ * Metadata-free bytes, FAIL CLOSED. Identical to stripImageFile except that a container with no
+ * strip implementation throws UnstrippableFormatError instead of passing through.
+ *
+ * `format === null` is the predicate, NOT `!changed`: a JPEG that had nothing to drop also reports
+ * changed:false, and rejecting it would fail every already-clean photo. format is set to null only
+ * by the unsupported-container return in stripImageBytes and by the not-a-JPEG/PNG/WebP guards.
+ *
+ * A non-Blob input throws too. Where stripImageFile hands it back untouched, this one cannot say
+ * the bytes are clean, and "cannot say" is the whole thing this variant refuses to be quiet about.
+ */
+export async function stripImageFileStrict(fileOrBlob) {
+  if (!fileOrBlob || typeof fileOrBlob.size !== 'number') {
+    throw new UnstrippableFormatError(fileOrBlob?.type);
   }
-  return new Blob([r.out], { type });
+  const bytes = await readBytes(fileOrBlob);
+  const r = stripImageBytes(bytes);
+  if (r.format === null) throw new UnstrippableFormatError(fileOrBlob.type);
+  return rewrap(fileOrBlob, r);
 }
 
 export const __testing__ = { readOrientation, buildOrientationApp1, scanEntropy, KEEP_APP, KEEP_PNG, KEEP_WEBP };

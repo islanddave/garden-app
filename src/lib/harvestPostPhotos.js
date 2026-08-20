@@ -25,7 +25,7 @@
 // A presigned S3 GET is fetched with credentials omitted: the signature is in the query string, and
 // attaching the app's Authorization header (i.e. going through useApiFetch) makes S3 reject it.
 
-import { stripImageFile } from './imageMetadataStrip.js'
+import { stripImageFileStrict } from './imageMetadataStrip.js'
 
 // Measured on prod (2026-08-20, 106 logging batches by the harvestPost.js 45-minute rule): 29 batches
 // carry photos, distributed 1x13, 2x2, 3x4, 5x2, 8x2, 9, 11, 13, 14, 16, 30. A cap of 10 covers 24 of
@@ -103,7 +103,15 @@ async function loadOne(ref, { mint, fetchBlob, signal, index }) {
       // A THROW IS THE CORRECT OUTCOME. It lands in the catch below, which retries the whole
       // (mint, fetch, strip) once and then counts the photo failed — so the composer says
       // "1 didn't load" and the post goes without it. A photo we cannot strip is not shared.
-      const clean = await stripImageFile(blob)
+      //
+      // BUG-HEICEXIFPASSTHRU-001 — the sentence above used to be FALSE, and it was false in the
+      // exact place it was written. This called the LENIENT stripImageFile, which throws on an
+      // unreadable blob but RETURNS THE INPUT for a container it has no walker for. Measured on a
+      // real HEIC: fetchPostPhotos returned it as harvest-photo-1.heic, failed:0, GPS intact, and
+      // handed it to the share sheet. Strict is what makes the comment true — the FB Lambda's
+      // isJpeg reject (lambda/facebook-share/index.js) was the only enforcement, and the share
+      // sheet does not go through the Lambda.
+      const clean = await stripImageFileStrict(blob)
       // A neutral filename: it rides into the share sheet and on to whatever app receives it, so it
       // must not carry a caption, a variety name or a UUID.
       return new File([clean], `harvest-photo-${index + 1}.${extForType(type)}`, { type })

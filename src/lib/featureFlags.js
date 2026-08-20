@@ -287,3 +287,30 @@ export const SAVE_TO_DEVICE_HIDDEN = true
 // back is a one-line revert + rebuild — it is a compile-time const, NOT a runtime toggle, so it
 // still needs a deploy; what the flag buys is that the loud arm never rots.
 export const CRITTERS_QUIET = true
+
+// BUG-HEICEXIFPASSTHRU-001 — should an UPLOAD be REFUSED when we cannot strip its metadata?
+//
+// ⚠️ PENDING DAVE. This is the one half of that bug that is a policy call, not a defect fix, and it
+// is deliberately parked OFF so the shipped behaviour is unchanged until he rules. The SHARE half
+// needs no flag and is already fail-closed unconditionally (harvestPostPhotos.js) — that one only
+// made the code do what its own comment already claimed.
+//
+// WHAT IS BEING ASKED. v4.40.0 strips capture metadata on upload and on share, on Dave's verbatim
+// "strip always". The stripper walks JPEG/PNG/WebP; HEIC and AVIF are ISOBMFF and it has no walker
+// for them, so today they pass through BOTH layers untouched. Measured on a real macOS-encoded
+// HEIC carrying GPS: the S3 PUT body was byte-identical to the camera original, GPS readable off
+// the wire. Failing closed here means the upload is REJECTED with a user-facing error — which is a
+// user-visible regression on a path that succeeds today, and therefore his call and not a lane's.
+//
+// FALSE (today, shipped): a HEIC/AVIF uploads and lands in S3 with its GPS. console.warn only.
+// TRUE:                   a HEIC/AVIF upload FAILS with UnstrippableFormatError's message, which
+//                         useUploadPhoto surfaces verbatim ("...Set the camera to JPEG and try
+//                         again."). Nothing is uploaded; the user loses the photo until they
+//                         change one camera setting. JPEG/PNG/WebP are unaffected either way.
+//
+// EXPOSURE, measured 2026-08-20 on prod Neon: 1,282 photo rows, 100% .jpg, one creator (Dave, on a
+// Pixel, which shoots JPEG). Zero HEIC has ever been uploaded. So TRUE currently costs nothing and
+// FALSE currently leaks nothing — but that is a property of the CORPUS, not of the code, and it
+// changes the day a camera setting changes or Jen's device differs. Both arms are covered by tests
+// so neither rots; flipping is a one-line compile-time change plus a deploy.
+export const PHOTO_STRIP_STRICT_UPLOAD = false

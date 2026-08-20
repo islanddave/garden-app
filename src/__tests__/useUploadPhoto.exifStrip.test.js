@@ -253,3 +253,36 @@ describe('useUploadPhoto — the record we keep is not the record we publish', (
     expect(FakeXHR.instances.find((x) => x.method === 'PUT')).toBeFalsy();
   });
 });
+
+// BUG-HEICEXIFPASSTHRU-001 — the SIXTH bypass, and the one none of the five above reaches.
+//
+// Bypasses 1-5 all hand the ORIGINAL FILE to a stripper that CAN walk it, so each ends with clean
+// bytes on the wire. This one hands it to a stripper that CANNOT: HEIC/AVIF are ISOBMFF and
+// imageMetadataStrip walks JPEG/PNG/WebP only, so the file goes to S3 exactly as the camera wrote
+// it. Chrome cannot decode HEIC either, so createImageBitmap throws and the downscale bypasses as
+// well — two bypasses stacked on one file, which is why this is the leakiest class of the six.
+//
+// THIS PINS THE SHIPPED BEHAVIOUR; IT DOES NOT ENDORSE IT. Refusing the upload is a user-visible
+// regression on a path that succeeds today, so it is Dave's call and it is parked OFF behind
+// PHOTO_STRIP_STRICT_UPLOAD. The flag-ON arm is useUploadPhoto.heicStrict.test.js — a separate file
+// because the flag is a compile-time const and vi.mock is module-scoped. If this test goes red
+// because the upload now fails, that is the flag being flipped, not a break.
+describe('useUploadPhoto — the bypass with no walker (PHOTO_STRIP_STRICT_UPLOAD off)', () => {
+  const HEIC = new Uint8Array(readFileSync(join(HERE, 'fixtures', 'synthetic-gps.heic')));
+
+  it('the HEIC fixture is real ISOBMFF and really carries a fix', async () => {
+    expect(String.fromCharCode(...HEIC.subarray(4, 12))).toBe('ftypheic');
+    expect((await parse(HEIC)).latitude).toBeCloseTo(51.4778, 3);
+  });
+
+  it('BYPASS 6 — a HEIC reaches S3 byte-identical, GPS and all', async () => {
+    bitmapState.mode = 'throw';                        // Chrome cannot decode HEIC
+    mockUploadOk();
+    const result = await upload(new File([HEIC], 'shot.heic', { type: 'image/heic' }));
+
+    expect(result.current.error).toBeNull();
+    const sent = await putBody();
+    expect(sent.length).toBe(HEIC.length);
+    expect((await parse(sent)).latitude).toBeCloseTo(51.4778, 3);
+  });
+});
