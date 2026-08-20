@@ -37,6 +37,7 @@ import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcr
  * Props:
  *   - onRecorded({blob, mime, durationMs, transcript, transcriptSource})
  *   - onError(code)
+ *   - onRecordingChange(bool)  fires on every idle↔recording flip
  *   - queuedCount   number
  *   - oldestAgeMs   number | null
  *   - disabled      boolean
@@ -63,6 +64,7 @@ const RECOGNIZER_FLUSH_CAP_MS = 1500
 export default function MicCaptureButton({
   onRecorded,
   onError,
+  onRecordingChange,
   queuedCount = 0,
   oldestAgeMs = null,
   disabled = false,
@@ -91,6 +93,16 @@ export default function MicCaptureButton({
   useEffect(() => {
     if (!isAudioCaptureSupported()) setState('unsupported')
   }, [])
+
+  // V4-DIRTYGUARDSWEEP-001 — report idle↔recording out to the page. A live recording exists ONLY
+  // inside this component: nothing reaches captureQueue until maybeEmit fires onRecorded, so the
+  // hosting page cannot hold the SW reload gate over it without being told. Reported rather than
+  // derived because `state` is internal — the alternative is the page reading data-state off the
+  // DOM. No cleanup-to-false: FieldCapture renders this unconditionally, so the only unmount is the
+  // page's own, and its gate effect releases the key there anyway.
+  useEffect(() => {
+    if (onRecordingChange) onRecordingChange(state === 'recording')
+  }, [state, onRecordingChange])
 
   // Recording elapsed-time ticker.
   useEffect(() => {

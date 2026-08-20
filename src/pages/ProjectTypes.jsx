@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { PROJECT_CATEGORY_OPTIONS } from '../lib/dropdownRegistry.js'
 import { Field, Input, Select, Button } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
@@ -30,6 +32,27 @@ export default function ProjectTypes() {
   }
 
   useEffect(() => { load() }, [fetch])
+
+  // V4-DIRTYGUARDSWEEP-001 — free text in the open "New type" form, and nothing else.
+  // `category` seeds to 'garden' and `icon` seeds to '🌱', so both are truthy on a pristine open and
+  // a truthiness guard over them would hold a deploy for anyone who merely tapped "+ New type".
+  // `icon` stays out even under a differs-from-seed test: the 16-chip grid and the free-text box
+  // write the SAME field, so counting it would make a chip tap hold the gate — the exact
+  // false-positive ProjectNew's sibling wiring documents as the failure to avoid — and a redone
+  // emoji costs one tap either way.
+  // The showForm term matters because Cancel only collapses the form, it does not clear it: without
+  // it, text the user dismissed off-screen would keep holding a deploy they cannot see or resolve.
+  const hasUnsavedInput = !!(showForm && (form.name.trim() || form.description.trim()))
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /project-types is not an overlayable route today, so the hook above is a strict no-op and the
+  // gate below is what protects this page. Per-instance key + BOOLEAN dep per EventNew.jsx:985-991.
+  const reloadGateKey = `project-types:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   async function handleCreate(e) {
     e.preventDefault()

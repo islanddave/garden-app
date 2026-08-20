@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useId, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useMode, MODE } from '../lib/mode.js'
 import { P } from '../lib/constants.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import MicCaptureButton from '../components/MicCaptureButton.jsx'
 import TapCaptureFallback from '../components/TapCaptureFallback.jsx'
 import TranscriptReview from '../components/TranscriptReview.jsx'
@@ -44,6 +46,9 @@ export default function FieldCapture() {
   const [loading,     setLoading]     = useState(true)
   const [expandedId,  setExpandedId]  = useState(null)
   const [tileSend,    setTileSend]    = useState(null)  // { id, status, msg }
+  // V4-DIRTYGUARDSWEEP-001 — the two in-memory-only windows this page owns. See hasUnsavedInput.
+  const [recording,   setRecording]   = useState(false)
+  const [enqueueing,  setEnqueueing]  = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -80,12 +85,43 @@ export default function FieldCapture() {
     return onReconnect(() => { refresh() })
   }, [mode, refresh])
 
+  // V4-DIRTYGUARDSWEEP-001 — this page's unsaved state is the LIVE RECORDING, and only that.
+  // Everything else here is already durable or already defended: the queue is IndexedDB
+  // (captureQueue.js), and the two typed surfaces — TapCaptureFallback's textarea and
+  // TranscriptReview's draft — hold the gate themselves. A recording is the opposite: the blob
+  // exists nowhere but inside MicCaptureButton until onRecorded fires, so a deploy reload mid-note
+  // destroys it with nothing to restore from, and this is the one screen built to be used at the
+  // plant with the phone coming out of a pocket (the exact visibilitychange→update path
+  // reloadGate.js exists for). The enqueueing term covers the await between the recorder going idle
+  // and captureQueue owning the bytes — a gap the recording flag alone leaves open.
+  // Deliberately EXCLUDES expandedId (navigation), errorBanner (transient), loading, and tileSend
+  // (a failed share is one re-tap; the entry itself is already durable). Each of those is true on
+  // paths where nothing is at risk, and a guard that fires there holds a deploy for a user who has
+  // nothing to lose — the false-positive failure this row exists to avoid.
+  const hasUnsavedInput = recording || enqueueing
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /field is not an overlayable route, so the hook above is a strict no-op today and the gate below
+  // is what actually protects this page. Per-instance key and a BOOLEAN dep for the reasons
+  // EventNew.jsx records: a shared literal key lets one unmount release another instance's hold, and
+  // a non-boolean dep would let the cleanup release mid-recording (a release NOTIFIES, and
+  // registerSW reloads on that notification).
+  const reloadGateKey = `field-capture:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
+
   if (mode !== MODE.FIELD) {
     return <Navigate to="/dashboard" replace />
   }
 
   async function handleRecorded({ blob, mime, durationMs, transcript, transcriptSource }) {
     setErrorBanner(null)
+    // MicCaptureButton has already flipped itself to idle by the time it calls this, so the
+    // recording flag is down while the blob is still only in memory. Hold across the write.
+    setEnqueueing(true)
     try {
       // Bite 7: transcript captured one-pass alongside the recording (may be
       // empty if Web Speech was unsupported / silently failed — recording still
@@ -98,6 +134,10 @@ export default function FieldCapture() {
       setErrorBanner(code === 'quota'
         ? 'Storage is full. Your recording was not saved.'
         : 'Could not save your recording.')
+    } finally {
+      // finally, not the try tail: a failed enqueue means the blob is gone either way, and keeping
+      // the hold after the banner is up would wedge updates for a page the user can only leave.
+      setEnqueueing(false)
     }
   }
 
@@ -211,6 +251,7 @@ export default function FieldCapture() {
         <MicCaptureButton
           onRecorded={handleRecorded}
           onError={handleMicError}
+          onRecordingChange={setRecording}
           queuedCount={depth}
           oldestAgeMs={oldestAgeMs}
           disabled={loading}
