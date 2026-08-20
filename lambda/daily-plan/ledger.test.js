@@ -20,15 +20,17 @@ const WSTART = addDays(TODAY, -30);            // 2026-07-13
 const NOW = etMidnightMs(TODAY) + 2 * H;       // the 02:00 nightly slot
 const at = (d, h, m = 0) => etMidnightMs(d) + h * H + m * 60000;
 
-// Flat 30-day weather: every settled day's ET0 equals its month's fixed reference -> ratio exactly
-// 1.0; with a trough (class 1.0) at 5 gal (mid bucket 1.0) demand is exactly 1.0 cadence-day per
-// calendar day, so every expected D below is hand-computable calendar arithmetic.
-function flatWeather({ et0ByMonth = { 7: LP.ET0_REF_MONTHLY[7], 8: LP.ET0_REF_MONTHLY[8] }, tmax = 75,
+// Flat 30-day weather: every settled day's ET0 equals the ONE site reference -> ratio exactly 1.0;
+// with a trough (class 1.0) at 5 gal (mid bucket 1.0) demand is exactly 1.0 cadence-day per calendar
+// day, so every expected D below is hand-computable calendar arithmetic. `et0` is a scalar, not a
+// per-month map — BUG-ETNOAMPLITUDE-001 retired the per-month denominator, and a per-month fixture
+// knob would let the same defect back in through the test data.
+function flatWeather({ et0 = LP.ET0_REF_PEAK, tmax = 75,
   precipOn = {}, from = WSTART, to = addDays(TODAY, -1), skip = [] } = {}) {
   const rows = [];
   for (let d = from; d <= to; d = addDays(d, 1)) {
     if (skip.includes(d)) continue;
-    rows.push({ date: d, et0_in: et0ByMonth[+d.slice(5, 7)], tmax_f: precipOn[d + '_tmax'] ?? tmax,
+    rows.push({ date: d, et0_in: et0, tmax_f: precipOn[d + '_tmax'] ?? tmax,
       tmin_f: 60, precip_in: precipOn[d] ?? 0 });
   }
   return rows;
@@ -196,13 +198,13 @@ describe('demand (through the fold)', () => {
     expect(f.overdueBy).toBe(30);                       // floor((D-thr)/1.0) — integer calendar days
     expect(Number.isInteger(f.overdueBy)).toBe(true);
   });
-  it('(e) fixed monthly reference: day 14 of a flat >=88F heat wave STILL reads demand > 1', () => {
+  it('(e) fixed site reference: day 14 of a flat >=88F heat wave STILL reads demand > 1', () => {
     // The rolling-median failure mode this design killed: by day ~7-10 a rolling ref re-centers and
     // demand collapses to 1.0. The fixed ref keeps the whole wave elevated.
     const hot = flatWeather().map((r) => ({ ...r, et0_in: 0.30, tmax_f: 92 }));
     const f = mk({ weather: hot, todayEt0: 0.30, todayTmax: 92 });
     const ratio = f.drivers.find((d) => d.factor === 'et0_ratio').value;
-    expect(ratio).toBeCloseTo(0.30 / LP.ET0_REF_MONTHLY[8], 2);
+    expect(ratio).toBeCloseTo(0.30 / LP.ET0_REF_PEAK, 2);
     expect(ratio).toBeGreaterThan(1.5);
     expect(f.demandToday).toBeGreaterThan(1);
   });
@@ -213,10 +215,10 @@ describe('demand (through the fold)', () => {
   it('(f) missing weather days -> demand exactly 1.0 for those days, never NaN', () => {
     // All present days at ratio 2.0; three days missing. The gap days must contribute 1.0/day,
     // so D differs from the no-gap fold by exactly 3 x (2.0 - 1.0).
-    const hot = { et0ByMonth: { 7: LP.ET0_REF_MONTHLY[7] * 2, 8: LP.ET0_REF_MONTHLY[8] * 2 } };
-    const full = mk({ weather: flatWeather(hot), todayEt0: LP.ET0_REF_MONTHLY[8] * 2 });
+    const hot = { et0: LP.ET0_REF_PEAK * 2 };
+    const full = mk({ weather: flatWeather(hot), todayEt0: LP.ET0_REF_PEAK * 2 });
     const gappy = mk({ weather: flatWeather({ ...hot, skip: ['2026-08-05', '2026-08-06', '2026-08-07'] }),
-      todayEt0: LP.ET0_REF_MONTHLY[8] * 2 });
+      todayEt0: LP.ET0_REF_PEAK * 2 });
     expect(full.d - gappy.d).toBeCloseTo(3, 2);
     expect(Number.isFinite(gappy.d)).toBe(true);
     expect(gappy.drivers.find((d) => d.factor === 'weather_missing_days').value).toBe(3);
@@ -229,7 +231,11 @@ describe('demand (through the fold)', () => {
     expect(f.demandToday).toBe(1.0);
     expect(f.drivers.some((d) => d.factor === 'weather_degraded')).toBe(true);
   });
-  it('winter mode: ref below 0.04 pins the ratio at the clamp floor instead of dividing', () => {
+  it('winter: a real December ET0 reaches the clamp floor from the physics, no special-case branch', () => {
+    // Was "winter mode: ref below 0.04 pins the ratio". BUG-ETNOAMPLITUDE-001 deleted that branch
+    // along with the per-month table it keyed on; under ONE reference a December day divides like
+    // any other and lands on the floor by itself (0.01/0.1775 = 0.056 -> 0.5). Same observable
+    // outcome, one fewer special case — and a freak-warm winter day is no longer pinned.
     const dec = [];
     for (let d = '2026-11-15'; d <= '2026-12-14'; d = addDays(d, 1)) {
       dec.push({ date: d, et0_in: 0.01, tmax_f: 35, tmin_f: 20, precip_in: 0 });
@@ -246,10 +252,76 @@ describe('demand (through the fold)', () => {
     expect(covered.demandToday).toBeGreaterThan(1.5);   // the most under-warned class if modeled flat
   });
   it('establishment x1.3 for 14 days after a real transplant', () => {
-    const f = mk({ events: [], transplantAt: addDays(TODAY, -5), todayEt0: LP.ET0_REF_MONTHLY[8] });
+    const f = mk({ events: [], transplantAt: addDays(TODAY, -5), todayEt0: LP.ET0_REF_PEAK });
     expect(f.drivers.find((d) => d.factor === 'stage').value).toBe(LP.STAGE.establishmentFactor);
-    const done = mk({ events: [], transplantAt: addDays(TODAY, -20), todayEt0: LP.ET0_REF_MONTHLY[8] });
+    const done = mk({ events: [], transplantAt: addDays(TODAY, -20), todayEt0: LP.ET0_REF_PEAK });
     expect(done.drivers.find((d) => d.factor === 'stage')).toBeUndefined();
+  });
+});
+
+// ── SEASONAL AMPLITUDE — the F2 flip-gate criterion that did not exist ────────────────────────────
+// BUG-ETNOAMPLITUDE-001. The pre-fix denominator was a per-MONTH table whose May-Aug entries were
+// that month's own measured mean, so every month re-centered on 1.0 and the model carried no
+// seasonal signal at all. Nothing caught it: every demand test above feeds ET0 == the reference
+// (ratio 1.0 by construction), the engine acceptance tests all sit on 2026-08-12, and the shadow
+// soak diffs a 30-day window — none of them can see a curve that is only wrong ACROSS months. These
+// four are that missing criterion. They are deliberately expressed as relations BETWEEN dates, not
+// as pinned values, so they survive a retune of the reference and fail only if the seasonal shape
+// dies again.
+describe('seasonal amplitude (BUG-ETNOAMPLITUDE-001)', () => {
+  // Observed site climatology for the one live Space (42.5087,-72.6471): mean ET0_FAO in/day for
+  // the named half-month, Open-Meteo ERA5 archive 2015-01-01..2025-12-31 (n=4018 days), same
+  // endpoint/fields/units as scripts/backfill-weather-daily.mjs. TEST INPUT ONLY — deliberately not
+  // exported from ledgerParams, because a per-period ET0 table reachable from the fold is precisely
+  // the defect these tests exist to prevent.
+  const CLIM = [
+    ['2026-06-15', 0.1678], ['2026-07-15', 0.1770], ['2026-08-25', 0.1460],
+    ['2026-09-05', 0.1238], ['2026-09-25', 0.1049], ['2026-10-15', 0.0625],
+  ];
+  // demand for one day at a given ET0, through the real fold. mk()'s trough/5gal is class 1.0 x size
+  // 1.0 and there is no transplant, so demandToday IS the ET multiplier.
+  function demandAt(day, et0) {
+    const rows = [];
+    for (let d = addDays(day, -30); d < day; d = addDays(d, 1)) {
+      rows.push({ date: d, et0_in: et0, tmax_f: 70, tmin_f: 55, precip_in: 0 });
+    }
+    return mk({ today: day, nowMs: etMidnightMs(day) + 2 * H, weather: rows, todayEt0: et0, events: [] }).demandToday;
+  }
+
+  it('ONE site-wide reference: the SAME ET0 yields the SAME multiplier in July and in October', () => {
+    // The defect stated at its root. A per-month denominator makes the multiplier a function of the
+    // calendar as well as the weather; a site reference makes it a function of the weather alone.
+    expect(demandAt('2026-10-15', 0.15)).toBeCloseTo(demandAt('2026-07-15', 0.15), 6);
+  });
+
+  it('midsummer demands at least 1.8x mid-autumn on real site climatology', () => {
+    const jul = demandAt('2026-07-15', 0.1770);   // 11y mean 0.1770 in/day
+    const oct = demandAt('2026-10-15', 0.0625);   // 11y mean 0.0625 in/day — 35% of July
+    expect(jul / oct).toBeGreaterThanOrEqual(1.8);
+  });
+
+  it('crossing into September LENGTHENS intervals — it must never shorten them', () => {
+    // The pre-fix model raised the multiplier from late-Aug 0.853 to early-Sep 1.054 in 11 of 11
+    // archive years, i.e. it watered MORE often as evapotranspiration fell. Fall watering advice
+    // was actively inverted, and the flip would have shipped it.
+    expect(demandAt('2026-09-05', 0.1238)).toBeLessThan(demandAt('2026-08-25', 0.1460));
+  });
+
+  it('the multiplier never rises from one climatological period to a drier later one', () => {
+    const seq = CLIM.map(([d, et0]) => [d, demandAt(d, et0)]);
+    for (let i = 1; i < seq.length; i++) {
+      if (CLIM[i][1] >= CLIM[i - 1][1]) continue;                 // only assert on a genuine ET0 drop
+      expect(seq[i][1], `${seq[i - 1][0]} -> ${seq[i][0]}`).toBeLessThanOrEqual(seq[i - 1][1]);
+    }
+  });
+
+  it('reference canary: ET0_REF_PEAK is a scalar pinned to its measured provenance', () => {
+    // Fires on any retune. Moving it is legitimate — a fresh archive pull, or a level correction the
+    // shadow soak asked for — but it is a decision, not a drive-by: re-derive from the query in
+    // ledgerParams and re-run the soak. Also pins the SHAPE: a table here is the defect returning.
+    expect(typeof LP.ET0_REF_PEAK).toBe('number');
+    expect(LP.ET0_REF_PEAK).toBe(0.1775);
+    expect(LP.ET0_REF_MONTHLY).toBeUndefined();
   });
 });
 
