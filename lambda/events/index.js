@@ -333,10 +333,32 @@ export const handler = async (event) => {
       }
 
       // (2) Resolve scope server-side → owner-scoped, alive plantings (never trust a client list).
+      // BUG-DORMANTLISTS-001: this resolver filtered deleted_at/archived_at/ownership and NOTHING
+      // else, so every `dormant` planting landed in Log Many's scope — measured against live prod,
+      // all 5 (Cavendish Strawberry, Christmas Cactus, Wild Wineberry, Asparagus, Garlic) resolved
+      // into the "all" scope even though the UI labels that scope "all active plantings". Dormant
+      // is the one status that means "needs no routine care": every other care surface already
+      // excludes it (daily-plan handler.js:426, dashboard queryWaterDue/HeadsUp/GiveAttention,
+      // findings/index.js:103, harvests/watch-route.js:202, harvest-readiness at :1050 below), and
+      // Log Many was the last routine-care list still carrying it.
+      //
+      // DORMANT ONLY — deliberately NOT the ('failed','ended','dormant') triple the care queries
+      // use. Log Many is a LOGGING surface, not a care recommendation: bulk-logging a cleanup or a
+      // final observation across an ended bed is a real workflow, and dropping `ended` here would
+      // also silently pull the deliberately-unmanaged legacy perennials out of a path Dave still
+      // uses. Dormancy is different — it is a human-set pause on care that a human clears, so a
+      // dormant row in a bulk-care batch is always noise.
+      //
+      // Reachability is preserved by construction, not by luck: harvest/first_harvest never reach
+      // this route (HARVEST_ROUTE_TYPES in LogMany.jsx routes them to the single-event flow), the
+      // Harvests tab (lambda/harvests/index.js) filters no status at all, GET /api/plants and
+      // searchPlantings stay unfiltered, and the single-planting POST /api/events path is
+      // untouched — so a dormant planting is still fully loggable, just not in bulk.
       const resolved = await sql`
         SELECT p.id AS plant_id, p.display_name AS plant_name
         FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
         WHERE p.deleted_at IS NULL AND pp.deleted_at IS NULL AND p.archived_at IS NULL
+          AND (p.status IS NULL OR p.status <> 'dormant')
           AND pp.created_by = ANY(${householdIds})
           AND CASE ${scopeType}
                 WHEN 'all'     THEN true
