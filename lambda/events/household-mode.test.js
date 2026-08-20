@@ -88,8 +88,16 @@ describe('events Lambda — Household Mode surgical widening', () => {
     //   inside its EXISTS. These two are the first statements in this file to change a COUNTER
     //   rather than a status or a date, so the household scope is what stops one member's log from
     //   decrementing another household's planting.
+    // + BUG-GERMDATEBATCH-001 germination-anchor CORRECTION on the PUT (2026-08-20): ONE site,
+    //   23 -> 24. Same class as the germination forward writes above and scoped the SAME way, by
+    //   the container join rather than the two-arm predicate — deliberately, because the join is
+    //   the scope of the two writes that create the anchors this statement is entitled to move, so
+    //   it contributes exactly one pp.created_by predicate from the join's WHERE. A container-less
+    //   planting was never stamped from an event, so its germinated_at can only be a human's, and
+    //   declining to touch it is the correct behaviour rather than the BUG-ANCHORNOPROJ-001 blind
+    //   spot. That is also why the container-less-arm census below does NOT move.
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(23);
+    expect(matches.length).toBe(24);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
     const localAuthz = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);

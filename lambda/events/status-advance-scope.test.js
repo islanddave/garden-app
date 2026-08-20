@@ -56,7 +56,14 @@ describe('planting status-advance UPDATEs — container-less ownership scope', (
     // writes are NOT in this census and must not be: they target public.plant_anchor_derivation,
     // not garden_node. They read garden_node through an EXISTS aliased `gp`, which the anchor in
     // this regex (`UPDATE public.garden_node p`) correctly declines to match.
-    expect(STATEMENTS.length).toBe(12);
+    //
+    // + 1 germination-anchor CORRECTION on the PUT (2026-08-20, BUG-GERMDATEBATCH-001), 12 -> 13.
+    // It is the first garden_node write in this file that deliberately does NOT carry a set-once /
+    // forward-only predicate: its whole purpose is to move an anchor a previous write already set,
+    // guarded instead on the stored value still equalling that event's own pre-edit date. It is
+    // therefore also not a transition, so this file's per-status loop below correctly skips it and
+    // lambda/events/germination-anchor-correction.test.js owns its predicates.
+    expect(STATEMENTS.length).toBe(13);
   });
 
   for (const [status, count, guard] of TRANSITIONS) {
