@@ -97,8 +97,20 @@ const ACTION_CIRCLE = {
 }
 
 // Snap is a PAGE (route class 'capture' swaps the whole header for CaptureBar), so a plain Link.
-// Harvest is an OverlayLink to the SAME target the FAB row used — /log?event_type=harvest, exact
-// string — so the fast path transfers byte-for-byte when V4-HARVFABREMOVE-001 pulls that row.
+//
+// V4-WEIGHINCTA-001 (CHECKIN PLAN B5, Dave GO 2026-08-18) — Harvest now opens the WEIGH-IN SESSION
+// full-page (/log?session=harvest), not the single-event overlay it carried from the retired FAB row.
+// Both halves of that change are load-bearing and neither works alone:
+//   - the TARGET, because B5's done-criterion is "session <=1 tap"; this circle is on every content
+//     surface, so it is the only doorway that buys one tap from anywhere.
+//   - the POSTURE, because session mode is full-page ONLY — EventNew gates every session behavior on
+//     `harvestSessionParam && !inOverlay`, so an OverlayLink here would degrade to the plain
+//     ?event_type=harvest form and the session would silently never engage. A Link, deliberately.
+// What this gives up: the overlay used to preserve your place on the page behind it. That loss is
+// bounded to the GLOBAL action, which never carried ?plant= or ?project= and so was always "start a
+// harvest from scratch" — the case the session's ready-planting tray is built for. Every CONTEXTUAL
+// harvest entry (HarvestWatchBand, HarvestReadyTile, HarvestReadyBand) still deep-links
+// ?plant=&event_type=harvest through an overlay and is untouched here.
 // V4-HEADERPARITY-001: Search moved IN here rather than being copied into the root variant. The
 // three circles are now one definition with one call site per header, which is the only structure
 // in which root and detail cannot drift apart on what actions they carry. Search stays LAST — it is
@@ -111,9 +123,9 @@ function HeaderActions() {
       <Link to="/capture" aria-label="Snap a photo" data-testid="topchrome-snap" style={ACTION_CIRCLE}>
         <Camera />
       </Link>
-      <OverlayLink to="/log?event_type=harvest" aria-label="Log a harvest" data-testid="topchrome-harvest" style={ACTION_CIRCLE}>
+      <Link to="/log?session=harvest" aria-label="Log a harvest" data-testid="topchrome-harvest" style={ACTION_CIRCLE}>
         <Basket />
-      </OverlayLink>
+      </Link>
       <OverlayLink to="/search" aria-label="Search your garden" data-testid="topchrome-search" style={ACTION_CIRCLE}>
         <Magnifier size={18} />
       </OverlayLink>
