@@ -1,0 +1,37 @@
+-- 0r-rollback.sql
+-- V4-COVEREDNOTMODELLED-001 — drop locations.covered.
+--
+-- REHEARSED ON STAGING ONLY, between the staging apply and the prod apply. Never run on prod once
+-- the reader has shipped: daily-plan/handler.js's cov lateral names l.covered, so dropping the
+-- column under a deployed reader is not a rollback, it is an outage — every nightly plan fails on a
+-- missing column and Today serves the previous day's stored plan until someone notices.
+--
+-- CORRECT PROD ROLLBACK ORDER, if it is ever needed:
+--   1. revert the reader (promote a main that predates the handler.js change), THEN
+--   2. run this file.
+-- In the other order the garden loses its plan.
+--
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
+-- WHAT IS UNRECOVERABLE
+--
+-- Everything Dave has typed. 0b can reconstruct the name-match state from name/type_label at any
+-- time, so the BACKFILLED value is not lost by this drop. But the entire point of the column is the
+-- values that DIVERGE from the name-match — "this bed is under a low tunnel" is a fact that exists
+-- nowhere else in the database, is not derivable from the name, and is gone the moment this runs.
+-- If any row's covered has diverged from the 0b expression, snapshot it first:
+--
+--   SELECT id, name, type_label, covered FROM public.locations
+--    WHERE covered IS DISTINCT FROM (CASE
+--            WHEN name IN ('Stable','House')            THEN true
+--            WHEN type_label IN ('shelf','rack','tray') THEN true
+--            WHEN type_label IS NULL                    THEN NULL
+--            ELSE false END);
+--
+-- On a freshly-applied branch that query returns 0 rows by construction, which is what makes the
+-- rehearsal on staging cost nothing.
+--
+-- IF EXISTS so a rehearsal that is run twice, or run against a branch where 0a never landed, is a
+-- no-op rather than an error.
+
+ALTER TABLE public.locations
+  DROP COLUMN IF EXISTS covered;
