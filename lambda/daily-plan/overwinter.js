@@ -53,6 +53,20 @@ const PERSEPHONE_HOURS = 10;
 // an unbounded reminder is just the one-way trap wearing a different hat.
 const EXIT_NOTICE_DAYS = 14;
 
+// V4-OVERWINTERCARDNOISE-001 (3) — the two conditions under which a field_hardy card cannot be acted
+// on, so firing it only spends the user's attention. Both are deliberately coarse and both fail OPEN.
+//
+// FREEZE_F: you cannot water ground that is frozen through the whole day. The daily high, not the
+// overnight low, is the right test — a 22F night that reaches 40F by noon IS a workable day, and it is
+// exactly the "thaw day" the protected_productive guidance already tells Dave to wait for.
+const FREEZE_F = 32;
+// FIELD_HARDY_WET_IN: field_hardy is the ONE regime rain reaches, so measured precipitation is a real
+// answer to the check, not a coincidence. Inherited from the engine's own "soil is wet, skip outdoor
+// watering" callout bar rather than invented here — a plant with near-zero winter transpiration needs
+// less than an active summer bed, so re-using the summer number is the conservative direction (it
+// suppresses LESS often than a winter-specific bar would).
+const FIELD_HARDY_WET_IN = 0.4;
+
 // Extra days the two manual-exit regimes hold past the daylength return. Dave physically moves those
 // plants (fig out of the garage, ginger off the windowsill), and resuming full summer cadence on a
 // still-quiescent potted plant is the rot direction. Four weeks past the light return puts the
@@ -71,11 +85,19 @@ const MANUAL_EXIT_LAG_DAYS = 28;
 //                        transpiration, and wet + cold is the rot mode that kills these. 30d matches
 //                        the standard "barely damp, roughly monthly" overwintering guidance and is
 //                        the LONGEST interval here for exactly that reason.
+//                        V4-OVERWINTERCARDNOISE-001 (2): the guidance used to state TWO set-points —
+//                        "keep the medium BARELY damp" AND "water only if the medium is dry well
+//                        below the surface" — which are different moisture states, and a gardener
+//                        standing in a cold garage cannot act on both. Collapsed to ONE rule, and the
+//                        one that can actually be executed in the dark on a leafless pot: LIFT IT.
+//                        Weight integrates the whole root ball; a finger reads the top inch only, and
+//                        on a quiescent pot the top inch is dry long before the core is.
 //  field_hardy           garlic, unprotected mache, established perennials. Rain and snowmelt supply
 //                        nearly everything. NOT a skip: a snowless dry cold snap desiccates crowns and
 //                        heaves shallow roots, which is a real and locally common loss mode. 21d is
 //                        the compromise — enough to surface a dry December, sparse enough to stay
-//                        quiet in a normal one.
+//                        quiet in a normal one. The TRIGGER is gated separately — see
+//                        fieldHardyActionable below.
 //  tender_indoors        ginger, tropicals held above their chilling floor indoors. Heated indoor air
 //                        plus a pot with no rain at all: the FASTEST-drying of the four despite being
 //                        the least active, so it gets the SHORTEST interval, 7d. It is the only one of
@@ -94,7 +116,7 @@ const OVERWINTER_REGIMES = {
   protected_productive: { check_interval_days: 14, protected: true,  harvestable: true,  auto_exit: true,
     guidance: 'Under cover — the cover sheds rain, so check the soil on a thaw day and water only if it is dry below the top inch. Vent on a sunny day above freezing. Harvest at midday, never at dawn while the leaves are frozen.' },
   protected_quiescent:  { check_interval_days: 30, protected: true,  harvestable: false, auto_exit: false,
-    guidance: 'Cold and quiescent — keep the medium BARELY damp and no more; wet plus cold is what rots these. Check monthly, water only if the medium is dry well below the surface. Keep it dark and cold; do not feed.' },
+    guidance: 'Cold and quiescent — one rule: LIFT THE POT. Water only if it feels light, and then only enough to take the lightness off; wet plus cold is what rots these. Keep it dark and cold; do not feed.' },
   field_hardy:          { check_interval_days: 21, protected: false, harvestable: false, auto_exit: true,
     guidance: 'Hardy in the ground — rain and snowmelt do the work. Check only during a snowless dry cold snap: desiccation and frost heave, not cold, are what take these. Do not feed until spring.' },
   tender_indoors:       { check_interval_days: 7,  protected: true,  harvestable: false, auto_exit: false,
@@ -173,6 +195,10 @@ function overwinterProfile(p, c) {
     check_interval_days: spec.check_interval_days,
     auto_exit: spec.auto_exit,
     harvestable: spec.harvestable,
+    // V4-OVERWINTERCARDNOISE-001 (1). Derived from `protected` rather than stored per regime, because
+    // it IS the same fact: a low tunnel, a cold garage and a windowsill are all places rain does not
+    // land. Read by lastTouch — see the note there for why this is a correctness fix and not a tidy-up.
+    rain_counts: !spec.protected,
     guidance: typeof o.note === 'string' && o.note ? o.note : spec.guidance,
     from: typeof o.from === 'string' ? o.from.slice(-5) : null,   // 'MM-DD' or the tail of an ISO date
     until: typeof o.until === 'string' ? o.until.slice(-5) : null,
@@ -232,11 +258,55 @@ function overwinterState(p, c, today, lat = SITE_LAT) {
 // the nag-extinction pattern V4-TROPICALCOLD-001 solved for the bring-indoors card by threading
 // last_brought_inside through the same way. Both inputs are 'YYYY-MM-DD' UTC strings from the
 // handler, so a lexicographic max IS a chronological one.
-function lastTouch(p) {
-  const w = p && p.last_water, m = p && p.last_moisture_check;
+//
+// V4-OVERWINTERCARDNOISE-001 (1) — RAIN ONLY COUNTS WHERE RAIN REACHES THE PLANT. handler.js's
+// `last_water` is max(event_date) over event_type IN ('watering','rain'), so before this a logged rain
+// event cleared the check card for a low tunnel, a cold garage and a windowsill alike — the three
+// places whose defining property is that rain does NOT land there. A cover shedding rain is the entire
+// reason protected_productive exists (module header), so crediting rain to it inverted the feature: the
+// wetter the week, the longer a covered bed went unchecked. `last_hand_water` is the same subquery
+// narrowed to event_type='watering', and the protected regimes read that instead.
+//
+// FAIL-OPEN: if last_hand_water is absent (an older handler, or a caller that does not select it) a
+// protected planting whose only touch was rain reads as never-touched and CARDS. Losing a plant is
+// worse than one extra card, so the missing-data direction is "ask", not "assume damp".
+function lastTouch(p, state) {
+  const rainCounts = !state || state.rain_counts !== false;
+  const w = p && (rainCounts ? p.last_water : p.last_hand_water);
+  const m = p && p.last_moisture_check;
   if (!w) return m || null;
   if (!m) return w;
   return m > w ? m : w;
+}
+
+// V4-OVERWINTERCARDNOISE-001 (3) — is a field_hardy check WORTH FIRING TODAY?
+//
+// The trigger was unconditional: every field_hardy planting carded every 21 days from Nov 7 to Feb 3
+// regardless of the weather, which the 0818 crucible measured at roughly 109 non-actionable cards per
+// winter. That is the alert-fatigue path — a card the user learns to dismiss trains them to dismiss the
+// one that matters. The regime's OWN guidance already names the condition ("check only during a
+// snowless dry cold snap"); this makes the trigger obey it with the signals the plan run actually has.
+//
+// NOT A SKIP AND NOT A RESET. A deferred check writes nothing, so `lastTouch` is untouched and the card
+// re-appears in full on the first workable day. The check SLIPS; it is never cancelled.
+//
+// WHAT THIS CANNOT SEE: snow cover is not in the plan's weather payload at all, and hydrology carries
+// only D-2+D-1 actual precipitation, so a wet fortnight followed by two dry days still reads as dry.
+// Both gaps make this gate suppress LESS than it should, never more. The separate charge that the whole
+// Nov-Feb WINDOW is aimed at the wrong months belongs to V4-FIELDHARDYWINDOW-001 and is not touched here.
+//
+// Returns { actionable, blocked_by } — blocked_by names WHICH condition held, so a plan run can be
+// explained without re-deriving it.
+function fieldHardyActionable(weather, hydrology) {
+  const high = weather && weather.highToday;
+  if (high != null && high < FREEZE_F) return { actionable: false, blocked_by: 'frozen' };
+  // Measured only. today_precip_in is gauge-driven since BUG-RAINACTUAL-001, but a FORECAST must never
+  // satisfy a check — "it is supposed to rain" is not water in the ground.
+  const wet = hydrology
+    ? (hydrology.recent_precip_in || 0) + (hydrology.today_observed_in ?? hydrology.today_precip_in ?? 0)
+    : null;
+  if (wet != null && wet >= FIELD_HARDY_WET_IN) return { actionable: false, blocked_by: 'recent_precip' };
+  return { actionable: true, blocked_by: null };
 }
 
 // The reduced cadence, as an interval in days.
@@ -252,6 +322,7 @@ function checkIntervalFor(state, baseIntervalDays) {
 
 module.exports = {
   OVERWINTER_REGIMES, DEFAULT_REGIME, SITE_LAT, PERSEPHONE_HOURS, EXIT_NOTICE_DAYS, MANUAL_EXIT_LAG_DAYS,
+  FREEZE_F, FIELD_HARDY_WET_IN,
   daylengthHours, persephoneDates, overwinterProfile, overwinterState, checkIntervalFor, lastTouch,
-  inWrappedWindow,
+  fieldHardyActionable, inWrappedWindow,
 };

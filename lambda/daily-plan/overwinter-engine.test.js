@@ -40,6 +40,16 @@ const planFor = (plantings, today = WINTER) => generatePlan({
   ownerFallback: 'dave',
 }).users.dave;
 
+// Same real path, with the weather and hydrology payloads OPENED UP — V4-OVERWINTERCARDNOISE-001 (3)
+// gates the field_hardy trigger on both, so a fixed-weather helper cannot exercise it. Defaults match
+// planFor exactly (thaw day, bone dry) so a case that overrides neither is the pre-change situation.
+const planWith = ({ plantings, today = WINTER, weather, hydrology }) => generatePlan({
+  plantings, cadence: cad, fertModel: fm, today,
+  weather: { tonightLow: 22, highToday: 34, unit: 'F', ...(weather || {}) },
+  hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, ...(hydrology || {}) },
+  ownerFallback: 'dave',
+}).users.dave;
+
 const inAnyWaterList = (u, id) =>
   [...u.tasks.water_due, ...u.tasks.no_history, ...u.tasks.rain_skipped].some((r) => r.id === id);
 // The two overwintering keys are spread CONDITIONALLY (absent, not zero, when nothing overwinters), so
@@ -48,7 +58,13 @@ const inAnyWaterList = (u, id) =>
 const owRows = (u) => u.tasks.overwintering || [];
 const owHeld = (u) => u.counts.overwinter_held || 0;
 
-const owned = (kale) => P({ id: 'k1', name: 'Winterbor Kale', status: 'vegetative', last_water: '2026-11-16', db_cadence: { ...KALE, overwintering: kale } });
+// PROD COLUMN SHAPE (V4-OVERWINTERCARDNOISE-001): handler selects last_water from
+// event_type IN ('watering','rain') and last_hand_water from event_type='watering' alone, so a real
+// hand watering lands in BOTH columns and a rain event lands in last_water ONLY. Verified against prod
+// 2026-08-20: 698 rain rows, all carrying plant_id. Setting only last_water — as this fixture did
+// before — therefore models RAIN, not watering, which is precisely the case the fix now distinguishes.
+const owned = (kale) => P({ id: 'k1', name: 'Winterbor Kale', status: 'vegetative',
+  last_water: '2026-11-16', last_hand_water: '2026-11-16', db_cadence: { ...KALE, overwintering: kale } });
 
 describe('overwintering holds a planting out of the summer cadence', () => {
   // THE HEADLINE BEHAVIOUR. Mutation: delete the `else if(_ow && _ow.active)` branch from engine.js and
@@ -206,6 +222,114 @@ describe('the exit', () => {
   });
 });
 
+// ── V4-OVERWINTERCARDNOISE-001 — what the cards say, and when they fire ───────────────────────────
+// The 0818 boss pass left 14/30/21/7 alone and charged the TRIGGERS and the COPY instead. These are
+// the two trigger fixes on the real generatePlan path.
+
+// A garlic bed: field_hardy is the one regime the weather can reach, so it is the only one gated.
+const GARLIC = {
+  _seeded: true, crop: 'garlic', water_interval_days_container: 3, water_interval_days_inground: 4,
+  water_method: 'deep_even', soil_moisture_target: 'evenly_moist', drought_tolerance: 'medium',
+  fertilize_interval_days: 14,
+};
+const garlic = (o) => P({ id: 'g1', name: 'Music Garlic', status: 'vegetative', covered: false,
+  container_type: 'raised_bed', db_cadence: { ...GARLIC, overwintering: { regime: 'field_hardy' } }, ...o });
+
+describe('(1) rain does not clear a check under a cover', () => {
+  // THE DEFECT, on the real path. handler's last_water is max(event_date) over ('watering','rain'), so
+  // a logged rain event used to reset the check clock for a low tunnel — the one structure whose entire
+  // job is to keep rain OFF the bed. The two fixtures differ ONLY in which column holds 2027-01-14.
+  // Mutation: drop the `_ow` second argument from `ow.lastTouch(p,_ow)` in engine.js and the first
+  // assertion goes red (the covered kale silently reads as watered yesterday and no card is emitted).
+  it('cards a covered bed whose only recent water was rain', () => {
+    const rained = P({ id: 'c1', name: 'Tunnel Kale', status: 'vegetative',
+      last_water: '2027-01-14', last_hand_water: null,
+      db_cadence: { ...KALE, overwintering: { regime: 'protected_productive' } } });
+    const u = planFor([rained]);
+    expect(owRows(u).map((r) => r.id)).toEqual(['c1']);
+    expect(owRows(u)[0].never).toBe(true);        // rain is not a touch here, so nothing has touched it
+  });
+
+  // ...and the gate is not simply "always card": real hand watering still clears it, on the same day.
+  // Mutation: make lastTouch ignore last_hand_water entirely and this goes red.
+  it('goes quiet when the covered bed was actually hand watered', () => {
+    const watered = P({ id: 'c2', name: 'Tunnel Kale', status: 'vegetative',
+      last_water: '2027-01-14', last_hand_water: '2027-01-14',
+      db_cadence: { ...KALE, overwintering: { regime: 'protected_productive' } } });
+    const u = planFor([watered]);
+    expect(owRows(u)).toHaveLength(0);
+    expect(owHeld(u)).toBe(1);                     // held, just not due
+  });
+
+  // REGIME-SCOPED, not blanket. Rain DOES reach open ground, so distrusting it for garlic would be a
+  // new defect in the other direction. Mutation: hard-code rain_counts:false for every regime and this
+  // goes red — the garlic starts carding one day after a rain that genuinely watered it.
+  it('still accepts rain for the one regime rain reaches', () => {
+    const u = planFor([garlic({ last_water: '2027-01-14', last_hand_water: null })]);
+    expect(owRows(u)).toHaveLength(0);
+    expect(owHeld(u)).toBe(1);
+  });
+});
+
+describe('(3) the field_hardy card only fires on a day it can be acted on', () => {
+  // 60 days since anything, so the 21-day check is unambiguously DUE in every case below — the only
+  // variable is the weather. Pre-change, all four of these emitted a card.
+  const DUE = { last_water: '2026-11-16', last_hand_water: '2026-11-16' };
+
+  // Mutation: delete the `_actOw` branch from engine.js (restoring the unconditional push) and both
+  // frozen/wet cases go red. This is the ~109-cards-per-winter alert-fatigue path.
+  it('defers on a day that never gets above freezing', () => {
+    const u = planWith({ plantings: [garlic(DUE)], weather: { tonightLow: 12, highToday: 28 } });
+    expect(owRows(u)).toHaveLength(0);
+    expect(u.counts.overwinter_deferred).toBe(1);
+    expect(u.counts.overwinter_held).toBe(1);      // still HELD out of the summer cadence, just not carded
+    expect(inAnyWaterList(u, 'g1')).toBe(false);
+  });
+
+  it('defers when measured rain has already answered the check', () => {
+    const u = planWith({ plantings: [garlic(DUE)], weather: { highToday: 46 },
+      hydrology: { recent_precip_in: 0.6 } });
+    expect(owRows(u)).toHaveLength(0);
+    expect(u.counts.overwinter_deferred).toBe(1);
+  });
+
+  // THE SLIP PROPERTY — the whole reason a deferral is safe. Nothing is written when a check is
+  // deferred, so lastTouch is untouched and the card returns AT FULL OVERDUE on the first workable day.
+  // Mutation: reset/advance the touch date on deferral and days_since goes to 0 here — red.
+  it('slips the check rather than cancelling it', () => {
+    const frozen = planWith({ plantings: [garlic(DUE)], weather: { highToday: 28 } });
+    expect(owRows(frozen)).toHaveLength(0);
+    const thaw = planWith({ plantings: [garlic(DUE)], weather: { highToday: 40 } });
+    expect(owRows(thaw)).toHaveLength(1);
+    expect(owRows(thaw)[0].days_since).toBe(60);
+    expect(owRows(thaw)[0].overdue_by).toBe(39);   // 60 - 21, i.e. nothing was forgiven by the deferral
+    expect(thaw.counts.overwinter_deferred).toBe(0);
+  });
+
+  // The gate is field_hardy ONLY. A cold frame is workable on a frozen day (that is what the cover is
+  // for) and an indoor pot has no weather at all, so gating them on outdoor temperature would silence
+  // the fastest-drying regimes in exactly the conditions that dry them. Mutation: drop the
+  // `_ow.regime==='field_hardy'` predicate and both of these go red.
+  it('does not gate the protected regimes on outdoor weather', () => {
+    const frozen = { tonightLow: 5, highToday: 20 };
+    const tunnel = planWith({ weather: frozen, plantings: [P({ id: 'c3', name: 'Tunnel Kale', status: 'vegetative',
+      ...DUE, db_cadence: { ...KALE, overwintering: { regime: 'protected_productive' } } })] });
+    expect(owRows(tunnel).map((r) => r.id)).toEqual(['c3']);
+    const indoors = planWith({ weather: frozen, hydrology: { recent_precip_in: 2.0 },
+      plantings: [P({ id: 'c4', name: 'Ginger', status: 'vegetative', ...DUE,
+        db_cadence: { ...KALE, overwintering: { regime: 'tender_indoors' } } })] });
+    expect(owRows(indoors).map((r) => r.id)).toEqual(['c4']);
+  });
+
+  // The new count stays inside the SAME conditional spread as the other two, so the inert payload is
+  // still byte-identical for a garden with no overwintering plantings. Mutation: emit
+  // overwinter_deferred unconditionally and this goes red (along with 14 parity goldens).
+  it('adds no count key when nothing overwinters', () => {
+    const u = planFor([P({ id: 'n4', name: 'Plain', status: 'vegetative', last_water: '2026-06-01', db_cadence: KALE })]);
+    expect(Object.keys(u.counts)).not.toContain('overwinter_deferred');
+  });
+});
+
 // ── the handler seam ──────────────────────────────────────────────────────────────────────────────
 // handler.js imports @neondatabase/serverless + @aws-sdk/*, none of which CI installs per-Lambda, so
 // no test can import it and every guard on it is source-text — the same constraint doneEvents.js
@@ -231,5 +355,26 @@ describe('handler supplies last_moisture_check', () => {
     const line = src.split('\n').find((l) => l.includes('as last_moisture_check'));
     expect(line).toMatch(/to_char\(/);
     expect(line).toMatch(/time zone 'UTC','YYYY-MM-DD'/);
+  });
+
+  // V4-OVERWINTERCARDNOISE-001 (1). The engine cannot distinguish rain from hand watering unless the
+  // handler hands it a rain-free column, and lastTouch FAILS OPEN on a missing one — so an absent
+  // last_hand_water does not crash, it quietly cards every protected planting nightly. Mutation:
+  // rename the alias, or widen the subquery back to IN ('watering','rain'), and this goes red.
+  it('selects a rain-free last_hand_water', () => {
+    const line = src.split('\n').find((l) => l.includes('as last_hand_water'));
+    expect(line, "handler.js must alias a watering-only max(event_date) to last_hand_water").toBeTruthy();
+    expect(line).toMatch(/e\.event_type\s*=\s*'watering'/);
+    expect(line).not.toMatch(/'rain'/);            // the whole point of the column
+    expect(line).toMatch(/deleted_at is null/);
+    expect(line).toMatch(/time zone 'UTC','YYYY-MM-DD'/);
+  });
+
+  // ...and last_water itself must KEEP the rain arm — field_hardy and every non-overwintering planting
+  // still read it, so narrowing it in place would have been a silent behaviour change for the whole
+  // garden. Mutation: drop 'rain' from last_water and this goes red.
+  it('leaves last_water unioned with rain for everyone else', () => {
+    const line = src.split('\n').find((l) => l.includes('as last_water'));
+    expect(line).toMatch(/e\.event_type\s+in\s*\('watering',\s*'rain'\)/);
   });
 });

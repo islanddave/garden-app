@@ -760,6 +760,13 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- last_brought_inside. Same to_char/UTC shape; engine.overwinter.lastTouch takes the later of
            -- the two as plain 'YYYY-MM-DD' strings.
            to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='moisture_check' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_moisture_check,
+           -- V4-OVERWINTERCARDNOISE-001 (1): last_water above deliberately unions 'watering' WITH 'rain',
+           -- which is right for an open bed and wrong for every PROTECTED overwintering regime — a low
+           -- tunnel, a cold garage and a windowsill are defined by rain NOT reaching them, so a logged
+           -- rain event was clearing the very check card the cover makes necessary. This is the same
+           -- subquery narrowed to hand watering only; engine.overwinter.lastTouch picks this column
+           -- instead of last_water when the regime's rain_counts is false. Same to_char/UTC shape.
+           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='watering' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_hand_water,
            -- V4-TROPICALCOLD-001: the indoors/outdoors toggle engine.coldFor reads to keep the
            -- bring-indoors card a ONE-TIME task instead of a nightly nag. doneEvents retires a cold
            -- task for the calendar day only, so a plant already on the windowsill would otherwise be

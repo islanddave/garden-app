@@ -10,7 +10,7 @@ import ow from './overwinter.js';
 const {
   OVERWINTER_REGIMES, DEFAULT_REGIME, SITE_LAT, PERSEPHONE_HOURS, EXIT_NOTICE_DAYS,
   daylengthHours, persephoneDates, overwinterProfile, overwinterState, checkIntervalFor, lastTouch,
-  inWrappedWindow,
+  fieldHardyActionable, inWrappedWindow,
 } = ow;
 
 describe('daylength model', () => {
@@ -186,6 +186,99 @@ describe('lastTouch', () => {
     expect(lastTouch({ last_moisture_check: '2026-12-01' })).toBe('2026-12-01');
     expect(lastTouch({ last_water: '2026-12-01' })).toBe('2026-12-01');
     expect(lastTouch({})).toBeNull();
+  });
+
+  // V4-OVERWINTERCARDNOISE-001 (1). handler's last_water unions 'watering' WITH 'rain', so under a
+  // cover it answers a question nobody asked. The two fixtures differ ONLY in which column carries the
+  // date, and they must resolve differently. Mutation: make lastTouch ignore its `state` argument and
+  // the first two assertions go red — i.e. a rained-on cold frame reads as watered again.
+  it('ignores rain-bearing last_water for a regime rain cannot reach', () => {
+    const rainedOn = { last_water: '2026-12-20', last_hand_water: '2026-12-01' };
+    expect(lastTouch(rainedOn, { rain_counts: false })).toBe('2026-12-01');
+    expect(lastTouch({ last_water: '2026-12-20' }, { rain_counts: false })).toBeNull();
+    expect(lastTouch(rainedOn, { rain_counts: true })).toBe('2026-12-20');
+    expect(lastTouch(rainedOn)).toBe('2026-12-20');            // no state at all = unchanged behaviour
+  });
+
+  // A soil check still clears a protected regime — the honest "I felt it, still damp" answer must not
+  // become unusable as a side effect of distrusting rain. Mutation: drop last_moisture_check from the
+  // protected branch and this goes red.
+  it('still accepts a soil check under a cover', () => {
+    expect(lastTouch({ last_water: '2026-12-20', last_moisture_check: '2027-01-04' }, { rain_counts: false }))
+      .toBe('2027-01-04');
+  });
+
+  // The four regimes must partition into "rain reaches it" and "rain does not", and the derivation is
+  // from `protected` — three of four are protected. Mutation: set rain_counts: true unconditionally and
+  // the three protected cases go red; set it false unconditionally and field_hardy goes red.
+  it('derives rain_counts from the regime, protected=false only for field_hardy', () => {
+    const of = (regime) => overwinterProfile({}, { overwintering: { regime } }).rain_counts;
+    expect(of('protected_productive'), 'protected_productive').toBe(false);
+    expect(of('protected_quiescent'), 'protected_quiescent').toBe(false);
+    expect(of('tender_indoors'), 'tender_indoors').toBe(false);
+    expect(of('field_hardy'), 'field_hardy').toBe(true);
+  });
+});
+
+describe('the field_hardy trigger gate', () => {
+  const DRY = { recent_precip_in: 0, today_precip_in: 0 };
+
+  // The card exists for a snowless dry cold snap, so a day that is frozen from end to end is one you
+  // cannot act on — there is no watering frozen ground. Mutation: delete the FREEZE_F branch and the
+  // first two go red; raise FREEZE_F to 40 and the 33F case goes red instead.
+  it('blocks on a day that never gets above freezing', () => {
+    expect(fieldHardyActionable({ tonightLow: 10, highToday: 28 }, DRY))
+      .toEqual({ actionable: false, blocked_by: 'frozen' });
+    expect(fieldHardyActionable({ tonightLow: 10, highToday: 31 }, DRY).actionable).toBe(false);
+    expect(fieldHardyActionable({ tonightLow: 10, highToday: 33 }, DRY).actionable).toBe(true);
+  });
+
+  // field_hardy is the ONE regime rain reaches, so measured precipitation is a real answer to the
+  // check. Mutation: delete the wet branch and the 0.5" case goes red; drop the `>=` to `>` and the
+  // exactly-at-threshold case goes red.
+  it('blocks on measured recent precipitation, at or over the bar', () => {
+    expect(fieldHardyActionable({ highToday: 44 }, { recent_precip_in: 0.5, today_precip_in: 0 }))
+      .toEqual({ actionable: false, blocked_by: 'recent_precip' });
+    expect(fieldHardyActionable({ highToday: 44 }, { recent_precip_in: 0.4, today_precip_in: 0 }).actionable).toBe(false);
+    expect(fieldHardyActionable({ highToday: 44 }, { recent_precip_in: 0.39, today_precip_in: 0 }).actionable).toBe(true);
+    // Today's own gauge counts toward the bar; 0.2 + 0.25 clears it while neither term does alone.
+    expect(fieldHardyActionable({ highToday: 44 }, { recent_precip_in: 0.2, today_observed_in: 0.25 }).actionable).toBe(false);
+  });
+
+  // "It is supposed to rain" is not water in the ground. Mutation: add tomorrow_precip_in to the `wet`
+  // sum and this goes red — and the live consequence is a check silently skipped on a forecast that
+  // then misses, which is the exact failure the F0 rain-credit work already had to unwind once.
+  it('does not let a forecast answer the check', () => {
+    const forecastOnly = { recent_precip_in: 0, today_precip_in: 0, tomorrow_precip_in: 2.0, tomorrow_pop: 95, upcoming_precip_in: 2.0 };
+    expect(fieldHardyActionable({ highToday: 44 }, forecastOnly).actionable).toBe(true);
+  });
+
+  // FAIL OPEN. Missing weather or missing hydrology must fire the card, never suppress it: an
+  // unchecked crown in a dry January is a dead crown, and one surplus card is not. Mutation: default
+  // either missing signal to "blocked" and these go red.
+  it('fires when it cannot tell', () => {
+    expect(fieldHardyActionable(null, null).actionable).toBe(true);
+    expect(fieldHardyActionable({ tonightLow: 10, highToday: null }, DRY).actionable).toBe(true);
+    expect(fieldHardyActionable({ highToday: 44 }, { recent_precip_in: null }).actionable).toBe(true);
+  });
+});
+
+describe('protected_quiescent states exactly one moisture rule', () => {
+  // V4-OVERWINTERCARDNOISE-001 (2). The guidance used to carry BOTH "keep the medium BARELY damp" and
+  // "water only if the medium is dry well below the surface" — two different moisture states on one
+  // card, and a gardener cannot act on both. Mutation: restore either phrase and this goes red.
+  it('names the weight test and no competing set-point', () => {
+    const g = OVERWINTER_REGIMES.protected_quiescent.guidance;
+    expect(g).toMatch(/lift the pot/i);
+    expect(g).toMatch(/feels light/i);
+    expect(g).not.toMatch(/barely damp/i);
+    expect(g).not.toMatch(/below the surface/i);
+  });
+
+  // The rot warning is the REASON the rule is "light, not dry", so collapsing the set-points must not
+  // drop it. Mutation: delete the wet-plus-cold clause and this goes red.
+  it('keeps the reason the rule is a floor and not a target', () => {
+    expect(OVERWINTER_REGIMES.protected_quiescent.guidance).toMatch(/wet plus cold/i);
   });
 });
 

@@ -586,7 +586,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[];
-  let overwinterHeld=0;
+  let overwinterHeld=0, overwinterDeferred=0;
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
   const hotForBag=high!=null&&high>=BAG_HEAT_GATE_F;   // DRG-WATERCREDIT-004 fabric-bag heat-gate signal
@@ -628,12 +628,20 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       // dies of a dry freeze. The item asks Dave to feel the soil, never to water unconditionally.
       overwinterHeld++;
       const _wiOw = ow.checkIntervalFor(_ow, (likelyInGround(p,c) ? c.water_interval_days_inground : c.water_interval_days_container) ?? c.water_interval_days_container ?? cad.default.water_interval_days_container);
-      const _touch = ow.lastTouch(p);
+      // V4-OVERWINTERCARDNOISE-001 (1): _ow carries rain_counts, so a covered/indoor regime reads
+      // last_hand_water and a logged rain no longer clears its check. Passing _ow is load-bearing —
+      // dropping the second argument silently restores the rain credit for all three protected regimes.
+      const _touch = ow.lastTouch(p,_ow);
       const _dOw = daysBetween(today,_touch);
       // dW==null (never watered, never checked) is DUE: an untouched pot through a winter is the case
       // most worth surfacing, and "no history" is not evidence of a damp medium.
       const _dueOw = _dOw==null || _dOw>=_wiOw;
-      if(_dueOw){
+      // V4-OVERWINTERCARDNOISE-001 (3): due is not the same as WORTH FIRING. field_hardy alone is
+      // weather-gated (it is the only regime the weather can reach); the card SLIPS to the next
+      // workable day rather than being cancelled, because nothing here writes to lastTouch.
+      const _actOw = _dueOw && _ow.regime==='field_hardy' ? ow.fieldHardyActionable(weather,hydrology) : null;
+      if(_dueOw && _actOw && !_actOw.actionable){ overwinterDeferred++; }
+      else if(_dueOw){
         overwintering.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,
           regime:_ow.regime,interval:_wiOw,days_since:_dOw,overdue_by:_dOw==null?null:_dOw-_wiOw,
           never:_dOw==null,exit_due:false,harvestable:_ow.harvestable,window_until:_ow.until,
@@ -829,7 +837,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
   // shape is already used for hydrology.today_observed_in a few lines below, for the same reason.
   const _owOn = overwinterHeld>0 || overwintering.length>0;
   return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length,dormancy_suppressed:waterSuppressed.length,
-      ...(_owOn?{overwintering:overwintering.length,overwinter_held:overwinterHeld}:{})},
+      ...(_owOn?{overwintering:overwintering.length,overwinter_held:overwinterHeld,overwinter_deferred:overwinterDeferred}:{})},
     substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant,rain_skipped:rainSkipped,dormancy_suppressed:waterSuppressed,
       ...(_owOn?{overwintering}:{})}};
 }
