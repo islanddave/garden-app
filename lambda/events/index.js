@@ -336,29 +336,59 @@ export const handler = async (event) => {
       // BUG-DORMANTLISTS-001: this resolver filtered deleted_at/archived_at/ownership and NOTHING
       // else, so every `dormant` planting landed in Log Many's scope — measured against live prod,
       // all 5 (Cavendish Strawberry, Christmas Cactus, Wild Wineberry, Asparagus, Garlic) resolved
-      // into the "all" scope even though the UI labels that scope "all active plantings". Dormant
-      // is the one status that means "needs no routine care": every other care surface already
-      // excludes it (daily-plan handler.js:426, dashboard queryWaterDue/HeadsUp/GiveAttention,
-      // findings/index.js:103, harvests/watch-route.js:202, harvest-readiness at :1050 below), and
-      // Log Many was the last routine-care list still carrying it.
+      // into the "all" scope even though the UI labels that scope "all active plantings"
+      // (LogMany.jsx:355). Every other care surface already excluded them.
       //
-      // DORMANT ONLY — deliberately NOT the ('failed','ended','dormant') triple the care queries
-      // use. Log Many is a LOGGING surface, not a care recommendation: bulk-logging a cleanup or a
-      // final observation across an ended bed is a real workflow, and dropping `ended` here would
-      // also silently pull the deliberately-unmanaged legacy perennials out of a path Dave still
-      // uses. Dormancy is different — it is a human-set pause on care that a human clears, so a
-      // dormant row in a bulk-care batch is always noise.
+      // BUG-LOGMANYSTATUS-001 (2026-08-20, hours later) extends that to the full LIVE-PLANTING
+      // triple. The dormant fix shipped with a comment here arguing `ended`/`failed` should STAY,
+      // on two grounds. Both were measured against live prod and both are false:
+      //
+      //   "bulk-logging a cleanup across an ended bed is a real workflow" — no such batch exists in
+      //   the data. Of the 4 in-scope ended/failed plantings, Red Raspberries (ended 08-12) and
+      //   Yukon Gold (ended 08-17) have received ZERO events since their transition. What the leak
+      //   actually produced is the opposite of a cleanup: Strawberries, ended 2026-06-25, took 31
+      //   further batch events across 23 distinct watering runs, 5 fertilizings, 2 doctorings and a
+      //   rain — through 08-19 — and Emerald Green took a bulk watering on 08-19, the day after
+      //   Dave marked it FAILED. 32 phantom care events on plantings he had already closed out.
+      //
+      //   "dropping `ended` pulls the deliberately-unmanaged legacy perennials out of a path Dave
+      //   still uses" — of the five (raspberry, peach, blackberry, blueberry, wineberry), Peach tree
+      //   is `fruiting` and Blackberry/Blueberries are `harvested`: all three stay in scope either
+      //   way. Wild Wineberry is `dormant` and that same fix had ALREADY removed it. The argument
+      //   reduces to one planting, Red Raspberries, with zero activity since it ended.
+      //
+      // The review list is why unchecking is not the answer: ScopeChecklist renders {id, name} and
+      // no status, so an ended row is visually identical to a live one and defaults to selected.
+      // Dave cannot see what he would have to uncheck, and across 23 batches did not.
+      //
+      // ROOTING STAYS IN, deliberately. `rooting` is a cutting striking roots in water or medium —
+      // the life stage with the LEAST drought tolerance in the whole vocabulary, since it has no
+      // root system to buffer with. Prod agrees: the one `rooting` row (Geranium Cutting) took 14
+      // waterings in 90 days. So the predicate here is the LIVE-planting triple
+      // ('failed','ended','dormant'), byte-identical to daily-plan/handler.js:426, the
+      // harvest-readiness SELECT at :1072 below and harvests/watch-route.js:215 — NOT the wider
+      // ('dormant','ended','failed','rooting') that dashboard/handlers.js and findings/index.js use.
+      // That fourth term is a separate open question about the DASHBOARD (a cutting Dave waters
+      // fortnightly never appears in Water Due), not a reason for a third vocabulary here.
+      //
+      // All five LIVE sites are pinned against drift by lambda/live-planting-predicate-sync.test.js
+      // rather than by a shared constant. A constant IS expressible (anchorCreate.js binds
+      // ${DEAD_STATUSES}::text[] through `= ANY`, since a bare `NOT IN (${LIST})` would collapse to
+      // one bound parameter under neon 0.10.x) — it just does not converge anything: deploy-lambda
+      // zips each function from its own directory, so the constant would have to be copied per-dir
+      // and pinned by a sync test regardless. See that file for the full argument.
       //
       // Reachability is preserved by construction, not by luck: harvest/first_harvest never reach
       // this route (HARVEST_ROUTE_TYPES in LogMany.jsx routes them to the single-event flow), the
       // Harvests tab (lambda/harvests/index.js) filters no status at all, GET /api/plants and
       // searchPlantings stay unfiltered, and the single-planting POST /api/events path is
-      // untouched — so a dormant planting is still fully loggable, just not in bulk.
+      // untouched — so an excluded planting is still fully loggable, just not in bulk. Over-
+      // application is the worse bug of the two and the integration arms hold that line.
       const resolved = await sql`
         SELECT p.id AS plant_id, p.display_name AS plant_name
         FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
         WHERE p.deleted_at IS NULL AND pp.deleted_at IS NULL AND p.archived_at IS NULL
-          AND (p.status IS NULL OR p.status <> 'dormant')
+          AND (p.status IS NULL OR p.status NOT IN ('failed', 'ended', 'dormant'))
           AND pp.created_by = ANY(${householdIds})
           AND CASE ${scopeType}
                 WHEN 'all'     THEN true
