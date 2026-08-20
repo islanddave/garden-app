@@ -21,6 +21,10 @@ import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
 
+// Device-local memory of the zone filter, mirroring LogMany.jsx's SCOPE_KEY ('quicklog.lastScope').
+// Same namespaced-by-surface shape, same write-on-change / validate-on-restore contract.
+const LOC_FILTER_KEY = 'photos.lastLocationFilter'
+
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
 // tag / un-tag photos against projects, locations, and plants.
@@ -81,6 +85,22 @@ export default function PhotoLibrary() {
   const [filterProject,  setFilterProject]  = useState('')
   const [filterLocation, setFilterLocation] = useState('')  // V4-PHOTOLOCFIND-001: space filter (server-side subtree)
   const [filterMode,     setFilterMode]     = useState('all')
+
+  // V4-AMBIENTZONE-001 — the zone filter REMEMBERS itself, deliberately in Log Many's idiom rather
+  // than a second one. This was the only zone control in the app the user had to re-pick on every
+  // visit (Log Many persists `quicklog.lastScope`, Garden persists its group-by and care lens); the
+  // ambient app-wide zone that would have covered it was rejected as a third competing memory of
+  // "which zone" layered over two that already work.
+  //
+  // NOT restored at first render, on purpose. A saved id is applied only AFTER it has been checked
+  // against the live location list below — a zone that has since been deleted or deactivated would
+  // otherwise fire `?location_id=<dead>`, and the server answers that with an empty set, so the user
+  // would land on an empty library with a filter chip they never chose. Validate first, then apply.
+  const restoredFilterRef = useRef(false)
+  const selectLocationFilter = useCallback(id => {
+    setFilterLocation(id)
+    try { localStorage.setItem(LOC_FILTER_KEY, id) } catch (e) {}
+  }, [])
 
   const [showUpload,     setShowUpload]     = useState(false)
   const [uploadForm,     setUploadForm]     = useState({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
@@ -205,8 +225,28 @@ export default function PhotoLibrary() {
       apiFetch('/api/projects'),
       apiFetch('/api/locations/with-path'),
     ]).then(([proj, locs]) => {
+      const live = (locs ?? []).filter(l => l.is_active)
       setProjects(proj ?? [])
-      setLocations((locs ?? []).filter(l => l.is_active))
+      setLocations(live)
+      // V4-AMBIENTZONE-001 — restore the saved zone filter, but ONLY if it still names a live zone.
+      // `live` is the exact list the <select> renders, so a saved id that survives this check is
+      // guaranteed to have an <option>; one that does not is dropped silently and the user gets the
+      // unfiltered library, which is the correct degradation (see the setter above).
+      try {
+        const saved = localStorage.getItem(LOC_FILTER_KEY)
+        if (!restoredFilterRef.current && saved && live.some(l => String(l.id) === saved)) {
+          // ONE-SHOT. This effect re-runs whenever `apiFetch` changes identity (and twice on mount
+          // under StrictMode); re-restoring would re-null the ref below without a matching state
+          // change, and the next REAL filter change would then wrongly read as the first one.
+          restoredFilterRef.current = true
+          // Rewind the filter-change ref to its pre-mount value so the effect above classifies the
+          // restore as the page's FIRST filter state, not a change. Without this the restore runs
+          // `setShown(PAGE)` and collapses the window V4-SCROLLRESTORE-001 restored at first render
+          // — i.e. remembering the filter would have broken remembering the scroll position.
+          lastFiltersRef.current = null
+          setFilterLocation(saved)
+        }
+      } catch (e) {}
     }).catch(() => {})
   }, [apiFetch])
 
@@ -779,7 +819,7 @@ export default function PhotoLibrary() {
             return (
               <button
                 key={mode}
-                onClick={() => { setFilterMode(mode); setFilterProject(''); setFilterLocation('') }}
+                onClick={() => { setFilterMode(mode); setFilterProject(''); selectLocationFilter('') }}
                 style={{
                   padding: '6px 14px', borderRadius: 20, fontSize: '0.82rem', fontWeight: 600,
                   cursor: 'pointer',
@@ -798,7 +838,7 @@ export default function PhotoLibrary() {
           {!PROJECTS_HIDDEN && (
           <select
             value={filterProject}
-            onChange={e => { setFilterProject(e.target.value); setFilterLocation(''); setFilterMode('all') }}
+            onChange={e => { setFilterProject(e.target.value); selectLocationFilter(''); setFilterMode('all') }}
             style={{
               ...selectStyle,
               fontSize: '0.82rem', padding: '6px 30px 6px 10px',
@@ -815,7 +855,7 @@ export default function PhotoLibrary() {
               descendants' photos). Mutually exclusive with the project filter, like the mode chips. */}
           <select
             value={filterLocation}
-            onChange={e => { setFilterLocation(e.target.value); setFilterProject(''); setFilterMode('all') }}
+            onChange={e => { selectLocationFilter(e.target.value); setFilterProject(''); setFilterMode('all') }}
             style={{
               ...selectStyle,
               fontSize: '0.82rem', padding: '6px 30px 6px 10px',
