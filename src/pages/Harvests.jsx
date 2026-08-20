@@ -565,6 +565,9 @@ function HarvestEntry({ entry: e }) {
             <span
               data-testid="harvest-weight"
               title={wt.sourceCopy ?? 'Weighed.'}
+              // role="img" (V4-A11YGATE-001) — role=generic cannot be named, so this label never
+              // reached AT and the row read "≈ 900 g" with the ≈ unexplained.
+              role="img"
               aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
               style={{ fontSize: '0.74rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
             >
@@ -590,8 +593,10 @@ function HarvestEntry({ entry: e }) {
             no weight yet
           </span>
         )}
+        {/* role="img" (V4-A11YGATE-001) — without it the label is dropped and the chip reads as
+            the camera emoji plus a bare digit. */}
         {Array.isArray(e.photos) && e.photos.length > 0 && (
-          <span style={{ fontSize: '0.74rem', color: P.light }} aria-label={`${e.photos.length} photo${e.photos.length === 1 ? '' : 's'}`}>📷 {e.photos.length}</span>
+          <span role="img" style={{ fontSize: '0.74rem', color: P.light }} aria-label={`${e.photos.length} photo${e.photos.length === 1 ? '' : 's'}`}>📷 {e.photos.length}</span>
         )}
       </div>
       {(unassigned || removed) && (
@@ -899,6 +904,8 @@ function TotalsWeight({ weight }) {
       {text ? (
         <div
           data-testid="totals-weight"
+          // role="img" (V4-A11YGATE-001) — see the harvest-weight row above; same discarded label.
+          role="img"
           aria-label={`${weight.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${text}`}
           style={{ fontSize: '1.05rem', fontWeight: 700, color: P.green, marginTop: 2 }}
         >

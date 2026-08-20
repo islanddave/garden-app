@@ -24,8 +24,9 @@
 //   errorMode     : 'surface' | 'swallow' — passed to useUploadPhoto
 //   mode          : 'single' (default) | 'both'
 //   buttonLabel   : single-mode trigger content (default 'Add Photo'); may be a node (e.g. an Icon)
-//   ariaLabel     : single-mode accessible name on the visible <label> control — REQUIRED when
-//                   buttonLabel is icon-only/decorative (else the control has no accessible name). No-op in both mode.
+//   ariaLabel     : single-mode accessible name — REQUIRED when buttonLabel is icon-only/decorative
+//                   (else the control has no accessible name). Lands on the file <input>, not on the
+//                   <label>: a <label> has no ARIA role and silently discards aria-label. No-op in both mode.
 //   takeLabel     : both-mode camera trigger text (default '📷 Take photo')
 //   chooseLabel   : both-mode library trigger text (default '🖼️ Choose photo')
 //   showPreview   : default true
@@ -181,7 +182,7 @@ export function PhotoUpload({
           />
         </>
       ) : (
-        <label htmlFor={resolvedId} style={labelStyle} aria-label={ariaLabel || undefined}>
+        <label htmlFor={resolvedId} style={labelStyle}>
           {isUploading ? busyLabel : buttonLabel}
           <input
             ref={inputRef}
@@ -191,6 +192,11 @@ export function PhotoUpload({
             {...captureProps}
             onChange={handleChange}
             disabled={busy}
+            // V4-A11YGATE-001: ariaLabel used to sit on the <label>. <label> has no ARIA role, so
+            // aria-label there is prohibited and dropped — and with an icon-only buttonLabel the
+            // label element has no text either, so the whole control was nameless (axe: violation,
+            // not merely "needs review"). The name belongs on the control the label points at.
+            aria-label={ariaLabel || undefined}
             style={{ display: 'none' }}
             data-testid="photo-upload-input"
           />

@@ -229,15 +229,22 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
               // Tile style note: `padding: 0` must come BEFORE paddingBottom — a trailing shorthand
               // would reset the aspect-ratio padding to 0 and collapse every tile to a 1px line.
               return (
+                // V4-A11YGATE-001: role="listitem" used to sit ON the button. That overrode the
+                // button role outright (so 6 toggles announced as static list items) AND made
+                // aria-pressed invalid — listitem does not support it — so the selected state was
+                // dropped too. axe: 236 aria-allowed-attr violations, the repo's largest. The list
+                // structure is real and worth keeping, so listitem moves to a wrapper, matching
+                // forms/TileGrid.jsx. The wrapper is now the grid item, so the button needs an
+                // explicit width:100% to keep filling its cell (global box-sizing is border-box,
+                // main.jsx, so the 1–2px border stays inside the column).
+                <div role="listitem" key={photo.id} style={{ minWidth: 0 }}>
                 <button
-                  key={photo.id}
                   type="button"
-                  role="listitem"
                   aria-pressed={isSel}
                   aria-label={`${isSel ? 'Deselect' : 'Select'} ${photo.caption || 'photo'}${didFail ? ' — failed to attach' : ''}`}
                   onClick={() => toggle(photo.id)}
                   disabled={saving}
-                  style={{ position: 'relative', padding: 0, height: 0, paddingBottom: '100%',
+                  style={{ position: 'relative', padding: 0, width: '100%', height: 0, paddingBottom: '100%',
                     background: P.photoPlaceholder, borderRadius: 8, overflow: 'hidden',
                     border: didFail ? `2px solid ${P.terra}` : isSel ? `2px solid ${P.green}` : `1px solid ${P.border}`,
                     cursor: saving ? 'not-allowed' : 'pointer' }}
@@ -259,6 +266,7 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
                     {isSel ? '✓' : ''}
                   </span>
                 </button>
+                </div>
               )
             })}
           </div>

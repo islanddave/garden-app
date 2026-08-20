@@ -271,8 +271,11 @@ export default function FeedPage() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {/* role="img" (V4-A11YGATE-001): a role-less span drops the aria-label, so
+                          this chip announced the raw "🦋 {name}" — emoji-first, and the "Spotted"
+                          verb absent. */}
                       {species && (
-                        <span title={`Spotted ${species.name}`} aria-label={`Spotted ${species.name}`} style={critterChip}>🦋 {species.name}</span>
+                        <span role="img" title={`Spotted ${species.name}`} aria-label={`Spotted ${species.name}`} style={critterChip}>🦋 {species.name}</span>
                       )}
                       <span style={{ fontSize: '0.75rem', color: P.light, whiteSpace: 'nowrap' }}>{relativeTime(ev.created_at)}</span>
                       {/* V4-BATCHUNDO-001 — opens the confirm; it never deletes on its own tap. 44px

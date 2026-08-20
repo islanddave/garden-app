@@ -393,6 +393,10 @@ export default function MicCaptureButton({
       {hasQueue && (
         <div
           data-testid="mic-queued-count"
+          // role="img" (V4-A11YGATE-001) — a role-less div is role=generic and drops the label, so
+          // this badge announced the bare count. Deliberately NOT role="status": a live region here
+          // would interrupt on every queue change, which is the opposite of what this UI wants.
+          role="img"
           aria-label={`${queuedCount} ${queuedCount === 1 ? 'capture' : 'captures'} queued`}
           style={{
             position: 'absolute', top: -4, right: -4,

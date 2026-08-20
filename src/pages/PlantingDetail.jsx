@@ -1191,6 +1191,9 @@ function HarvestWeightChip({ entry }) {
       <span
         data-testid="harvest-weight"
         title={wt.sourceCopy ?? 'Weighed.'}
+        // role="img" (V4-A11YGATE-001) — role=generic cannot hold a name; the comment above says
+        // "title/aria-label keep the FULL sentence", and this is what makes the aria half true.
+        role="img"
         aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
         style={{ fontSize: '0.72rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
       >
@@ -1227,6 +1230,8 @@ function PlantingWeightTotal({ total }) {
       {anyWeight ? (
         <div
           data-testid="planting-weight-total"
+          // role="img" (V4-A11YGATE-001) — same discarded-label class as the row above.
+          role="img"
           aria-label={`${total.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${total.text}`}
           style={{ fontSize: '0.95rem', fontWeight: 700, color: P.green }}
         >
