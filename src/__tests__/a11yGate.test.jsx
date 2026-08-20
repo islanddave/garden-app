@@ -101,6 +101,15 @@ const SURFACES = [
 describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001)', () => {
   it.each(SURFACES)('%s is clean under the gate rule set', async (label, el) => {
     const { container } = render(el)
+    // An empty render passes axe trivially. Several components here early-return null on a missing
+    // or malformed prop (TagChip on !tag, the badges on !status, CropWeightLine on an absent
+    // weight), so a fixture that drifts out of shape would go green over nothing at all.
+    // This catches "rendered nothing"; it does NOT catch "rendered, but without the element the row
+    // exists to cover" — that needs a positive name assertion, and the block further down is where
+    // those live. That case is not hypothetical either: the PlantingTile row was first written with
+    // a `photoCount` prop the component never reads (it reads planting.photo_count), so the badge
+    // row rendered a tile with no badge in it.
+    expect(container.querySelectorAll('*').length, `${label} rendered nothing`).toBeGreaterThan(0)
     await expectNoA11yViolations(container, { label })
   })
 
