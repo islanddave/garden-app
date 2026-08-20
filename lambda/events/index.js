@@ -1156,7 +1156,15 @@ export const handler = async (event) => {
         // §2.3 — single-statement UPDATE with auth via plant_projects join.
         // F8 NOW()-relative achievement gate in RETURNING (not preserved resolved_at).
         // F26 resolved_by COALESCE preserves first-resolver on idempotent re-PATCH.
-        const updated = await sql`
+        // BUG-EVENTAUDITACTOR-001 — PRE-EMPTIVE, not a live defect. resolved_at / resolved_by /
+        // updated_at are none of them in trg_audit_event_log_upd's watch list and deleted_at is
+        // unchanged, so the trigger's row filter drops this UPDATE and it writes no audit row
+        // today. It is wired anyway because the day resolved_by joins that list — the obvious next
+        // addition, it is literally an actor column — this becomes a silent 'system' attribution
+        // with nothing in the diff to point at. Same grouping requirement as the PUT below.
+        const [, updated] = await sql.transaction([
+          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`
           UPDATE event_log el
           SET resolved_at = COALESCE(el.resolved_at, NOW()),
               resolved_by = COALESCE(el.resolved_by, ${userId}),
@@ -1172,7 +1180,8 @@ export const handler = async (event) => {
             el.id, el.project_id, el.event_type, el.flagged_as_issue,
             el.severity, el.resolved_at, el.resolved_by, el.created_at,
             (NOW() >= el.created_at + INTERVAL '24 hours') AS qualifies_for_achievement
-        `;
+        `,
+        ]);
         if (!updated.length) return resp(404, { error: 'Not found' });
         const row = updated[0];
 
@@ -1579,7 +1588,21 @@ export const handler = async (event) => {
         const editsHarvest = body.harvest != null && hasHarvestRow;
         const hq = editsHarvest ? body.harvest.quantity : null;
 
-        const updatedRows = await sql`
+        // BUG-EVENTAUDITACTOR-001. trg_audit_event_log_upd resolves its actor from the
+        // app.actor_clerk_sub GUC and substitutes the literal 'system' when it is unset; this
+        // statement writes 9 of the 13 columns that trigger watches, so every event edit was
+        // auditing as 'system' and the two people who use this app were indistinguishable in
+        // their own audit trail. The GUC MUST ride inside the SAME sql.transaction([...]) as the
+        // UPDATE — it CANNOT be a statement placed before it. The neon HTTP driver runs one
+        // implicit transaction per bare `await sql``` (the cachegate note further down says so,
+        // and it is measurable: now() differs across two bare calls and is identical across two
+        // statements of one transaction), so a set_config(..., true) issued on its own commits and
+        // is discarded before this UPDATE ever opens. Transaction-local `true` and ${userId} from
+        // the verified JWT, matching the four sibling sites at 456 / 851 / 2297 / 2819.
+        // Statement 0 is the set_config; statement 1 is the UPDATE, hence the leading hole.
+        const [, updatedRows] = await sql.transaction([
+          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`
           UPDATE event_log el
              SET event_type    = ${body.event_type},
                  event_date    = COALESCE(${eventDate}::timestamptz, el.event_date),
@@ -1662,7 +1685,8 @@ export const handler = async (event) => {
                     -- whole event state from this response (setEvent), so a response without the
                     -- column blanks the Details block on every save even when the row kept it.
                     el.metadata
-        `;
+        `,
+        ]);
         if (!updatedRows.length) return resp(404, { error: 'Not found' });
 
         let harvestRow = null;
@@ -1701,7 +1725,17 @@ export const handler = async (event) => {
           // `!== undefined` so an explicit `disposition: undefined` still reads as absent.
           const hTouchDisposition = 'disposition' in body.harvest;
           const hDisposition = body.harvest.disposition ?? null;
-          const updatedHarvest = await sql`
+          // BUG-EVENTAUDITACTOR-001, same shape as the event_log UPDATE above and for the same
+          // reason: harvest_log carries its own trg_audit_harvest_log_upd, and this statement
+          // writes six of the eleven columns it watches (quantity, unit, weight_grams,
+          // weight_estimated, weight_basis, disposition). Deliberately its OWN transaction rather
+          // than folded into the one above — the 404 early-return and the editsHarvest gate sit
+          // between them, and merging them would newly make a harvest failure roll back the event
+          // edit. Same round-trip count as before: the set_config rides in this batch, not a
+          // second request.
+          const [, updatedHarvest] = await sql.transaction([
+            sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+            sql`
             UPDATE harvest_log h
                SET quantity         = ${hq}::numeric,
                    unit             = ${hu},
@@ -1791,7 +1825,8 @@ export const handler = async (event) => {
                AND h.deleted_at IS NULL
                AND ne.id = h.event_id
             RETURNING h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated, h.weight_basis, h.disposition
-          `;
+          `,
+          ]);
           harvestRow = updatedHarvest[0] ?? null;
 
           // V4-HARVDUAL-001 Slice C — keep the calibration sample in step with the edit. Called
@@ -2034,6 +2069,14 @@ export const handler = async (event) => {
             `);
           }
           if (reanchor.length) {
+            // BUG-EVENTAUDITACTOR-001. The harvest_log re-anchor arm above writes project_id,
+            // which trg_audit_harvest_log_upd watches, and this array had no actor statement at
+            // all. Unshifted HERE rather than seeded at `const reanchor = []` so the guard above
+            // still counts ARMS — seeding it would make reanchor.length 1 on a cacheDirty edit
+            // that produced no arms and issue a transaction that does nothing. Element 0 by
+            // construction, and index-safe: the result of this transaction is never read
+            // positionally (or at all).
+            reanchor.unshift(sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`);
             try {
               await sql.transaction(reanchor);
             } catch (e) {

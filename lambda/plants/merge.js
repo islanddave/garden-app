@@ -468,6 +468,14 @@ export async function mergeCore(sql, {
   const memory = buildPlantEventRepoint(sql, { fromPlantIds: loserIds, toPlantId: winnerId })
 
   const stmts = [
+    // BUG-EVENTAUDITACTOR-001. Element 0, and it must stay element 0. This transaction makes TWO
+    // writes that trg_audit_event_log_upd watches — memory.repoint below rewrites event_log.plant_id,
+    // and archive_events_subset further down sets deleted_at on the drop set — and the file carried
+    // no set_config at all, so every merge audited as 'system'. The GUC has to be IN this array
+    // rather than awaited before it: the neon HTTP driver auto-commits each bare statement, so a
+    // transaction-local GUC set outside is discarded before this array runs. Index-safe against the
+    // prepend: the result is read as res[res.length - 1], from the END.
+    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
     sql`DELETE FROM favorites l
          WHERE l.entity_id = ANY(${loserIds})
            AND EXISTS (SELECT 1 FROM favorites w
