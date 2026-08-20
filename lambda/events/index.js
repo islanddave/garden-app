@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
@@ -1408,7 +1408,16 @@ export const handler = async (event) => {
                  (SELECT h.id FROM harvest_log h
                    WHERE h.event_id = el.id AND h.deleted_at IS NULL LIMIT 1) AS harvest_log_id,
                  pp.created_by AS project_owner_id,
-                 pn.created_by AS plant_owner_id
+                 pn.created_by AS plant_owner_id,
+                 -- BUG-EVENTPROJPLANTPAIR-001: the CURRENT planting's project, for the arm where
+                 -- the body does not move plant_id and there is therefore no loadOwnedPlantingRef
+                 -- call to read it from. A scalar subquery rather than pn.container_id because
+                 -- the pn join carries AND pn.deleted_at IS NULL, and 39 live household events
+                 -- are anchored to a SOFT-DELETED planting — reading through pn would hand those
+                 -- edits a NULL and silently clear a project_id that is not wrong. The pair
+                 -- invariant is about the planting row, which outlives its own soft delete.
+                 (SELECT gn2.container_id FROM public.garden_node gn2
+                   WHERE gn2.id = el.plant_id) AS plant_project_id
             FROM event_log el
             LEFT JOIN public.container pp ON pp.id = el.project_id AND pp.deleted_at IS NULL
             LEFT JOIN public.garden_node pn ON pn.id = el.plant_id AND pn.deleted_at IS NULL
@@ -1478,10 +1487,27 @@ export const handler = async (event) => {
         // The OLD anchors come from `existing` because the UPDATE below overwrites them.
         const oldProjectId  = existing.project_id;
         const oldPlantId    = existing.plant_id;
-        // project_id may be CHANGED but never CLEARED — see clearFields.js. `?? old` enforces it
-        // structurally: there is no body that produces null here.
-        const newProjectId  = body.project_id ?? oldProjectId;
         const newPlantId    = body.plant_id ?? oldPlantId;
+        // BUG-EVENTPROJPLANTPAIR-001. WAS: `const newProjectId = body.project_id ?? oldProjectId`,
+        // bound into the UPDATE independently of newPlantId with nothing reconciling the two — so
+        // a re-anchor that moved the planting but not the project, or a body naming both and
+        // getting one of them stale, wrote a row that disagreed with its own planting.
+        //
+        // The planting now decides. The ref is loaded here rather than at the ownership gate ~50
+        // lines below because projectChanged/cacheDirty are computed in between; the gate itself
+        // still runs there, in its original order, so which parent answers 400 first is unchanged.
+        // A null ref means an invalid plant_id, which that gate turns into a 400 before any write.
+        const newPlantRef = body.plant_id != null
+          ? await loadOwnedPlantingRef(sql, body.plant_id, householdIds)
+          : null;
+        const requestedProjectId = body.project_id ?? oldProjectId;
+        const newProjectId  = deriveEventProjectId({
+          plantId: newPlantId,
+          plantProjectId: body.plant_id != null
+            ? (newPlantRef?.project_id ?? null)
+            : (existing.plant_project_id ?? null),
+          requestedProjectId,
+        });
         const newLocationId = body.location_id ?? existing.location_id;
 
         const projectChanged = newProjectId !== oldProjectId;
@@ -1526,7 +1552,9 @@ export const handler = async (event) => {
           warnRejectedFk(userId, 'event_log', 'project_id', body.project_id);
           return resp(400, { error: 'Invalid project_id' });
         }
-        if (body.plant_id != null && !await loadOwnedPlantingRef(sql, body.plant_id, householdIds)) {
+        // BUG-EVENTPROJPLANTPAIR-001: same predicate, same generic 400, same ordering — the call
+        // itself simply moved up to where the derivation needs it (newPlantRef above).
+        if (body.plant_id != null && !newPlantRef) {
           warnRejectedFk(userId, 'event_log', 'plant_id', body.plant_id);
           return resp(400, { error: 'Invalid plant_id' });
         }
@@ -2674,7 +2702,11 @@ export const handler = async (event) => {
       const eventType = body.event_type;
       // BUG-CAPTUREFLOW400-001: normalize absent -> NULL. validatePostBody now admits a body with
       // plant_id and no project_id, so this is genuinely nullable rather than validator-guaranteed.
-      const projectId = body.project_id ?? null;
+      // BUG-EVENTPROJPLANTPAIR-001: this is what the CLIENT ASKED FOR, which is not the same thing
+      // as what gets written. It still feeds the ownership gate below — a foreign project_id must
+      // keep answering 400 rather than being silently discarded — and the effective value is then
+      // derived from the planting (see `projectId` after that gate).
+      const requestedProjectId = body.project_id ?? null;
       const metadata = body.metadata ?? null;
       // B8 — normalize flagged_as_issue ONCE; use throughout SQL bindings.
       const flagged = body.flagged_as_issue === true;
@@ -2734,14 +2766,19 @@ export const handler = async (event) => {
       // location). All are parents soft-deleted AFTER their event was written, and only 9 live
       // single-path events carry a location_id at all. No client sends a foreign id. Per the
       // assessment this should ship on its own, not folded into a feature promote.
-      if (projectId) {
-        if (!await loadOwnedProject(sql, projectId, householdIds)) {
-          warnRejectedFk(userId, 'event_log', 'project_id', projectId);
+      if (requestedProjectId) {
+        if (!await loadOwnedProject(sql, requestedProjectId, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'project_id', requestedProjectId);
           return resp(400, { error: 'Invalid project_id' });
         }
       }
+      // BUG-EVENTPROJPLANTPAIR-001: the ref is KEPT now instead of being thrown away for its
+      // truthiness. It carries the planting's project_id, which is the value the event is written
+      // with — same query, same round trip, one more column.
+      let plantRef = null;
       if (body.plant_id) {
-        if (!await loadOwnedPlantingRef(sql, body.plant_id, householdIds)) {
+        plantRef = await loadOwnedPlantingRef(sql, body.plant_id, householdIds);
+        if (!plantRef) {
           warnRejectedFk(userId, 'event_log', 'plant_id', body.plant_id);
           return resp(400, { error: 'Invalid plant_id' });
         }
@@ -2774,6 +2811,18 @@ export const handler = async (event) => {
           return resp(400, { error: 'Invalid treatment_product_id' });
         }
       }
+
+      // ── Step 0a: BUG-EVENTPROJPLANTPAIR-001 — the anchor pair, DERIVED ───────────────────────
+      // Every downstream use of `projectId` (the event INSERT, and the project-keyed entity_memory
+      // upsert with its `IS NOT NULL` guard) now reads the planting's project rather than the
+      // body's. Placed AFTER the whole ownership gate on purpose: the gate's 400 contract is about
+      // what the caller SENT, and deriving first would turn "you don't own that project" into a
+      // silent success. Rationale for the rule itself is on deriveEventProjectId in validators.js.
+      const projectId = deriveEventProjectId({
+        plantId: body.plant_id ?? null,
+        plantProjectId: plantRef?.project_id ?? null,
+        requestedProjectId,
+      });
 
       // ── Step 0b: V4-LOSSEVENT-001 plant-reduction headroom read ──────────────────────────────
       // Runs AFTER the ownership gate above (never leak a count for a planting the caller does not

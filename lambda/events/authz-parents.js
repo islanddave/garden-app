@@ -71,10 +71,15 @@ export async function loadOwnedProject(sql, projectId, householdIds) {
 // conjunct (`gn.created_by = ANY(h) OR pp.created_by = ANY(h)`) and is therefore strictly looser.
 // This is the stricter, canonical form; the looser one is the outlier and should be reconciled to
 // this in the consolidating sweep (lambda/preservation is its remaining consumer).
+// `project_id` is returned (BUG-EVENTPROJPLANTPAIR-001) because the planting owns the project on
+// every row that has one: event_log's writers derive their project_id from this column rather than
+// from the request body. It costs nothing — this query already runs and already reads this row —
+// and returning it here is what lets the derivation happen WITHOUT a second round trip. Callers
+// that only need the ownership verdict keep ignoring the extra column.
 export async function loadOwnedPlantingRef(sql, plantId, householdIds) {
   if (!UUID_RE.test(String(plantId))) return null;
   const rows = await sql`
-    SELECT gn.id, gn.name
+    SELECT gn.id, gn.name, gn.project_id
     FROM public.plants gn
     LEFT JOIN public.plant_projects pp ON pp.id = gn.project_id
     WHERE gn.id = ${plantId}

@@ -304,6 +304,61 @@ describe('mergeCore', () => {
     expect(sql.calls.some((c) => c.transaction)).toBe(false)   // refuses BEFORE any write
   })
 
+  // ── BUG-EVENTPROJPLANTPAIR-001 — siblings only ────────────────────────────────────────────
+  // The repoint moves a loser's whole event history onto the winner by rewriting plant_id ALONE.
+  // Across projects that turns every previously-correct row into a disagreeing one: L's events are
+  // anchored (X, L), and after the repoint they are (X, W) while W lives in Y. This is one of the
+  // three live writers in the ticket, and the only one that mints mismatches in bulk.
+  const PROJ_X = '9d2f9f6e-0000-4000-8000-00000000000a'
+  const PROJ_Y = '9d2f9f6e-0000-4000-8000-00000000000b'
+
+  it('400s a merge whose loser sits in a DIFFERENT project from the winner', async () => {
+    const plants = [
+      plantRow(WINNER, { project_id: PROJ_Y }),
+      plantRow(LOSER1, { project_id: PROJ_X }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toMatch(/same project as the winner/)
+    expect(r.body.offenders.map((o) => o.id)).toEqual([LOSER1])
+    expect(r.body.winner_project_id).toBe(PROJ_Y)
+    expect(sql.calls.some((c) => c.transaction)).toBe(false)   // refuses BEFORE any write
+  })
+
+  it('400s when the winner has a project and the loser has none', async () => {
+    // The Bucket B shape, arriving through merge: NULL !== PROJ_Y, so every repointed event would
+    // land on a planting in PROJ_Y while still claiming nothing. Not a special case — same rule.
+    const plants = [
+      plantRow(WINNER, { project_id: PROJ_Y }),
+      plantRow(LOSER1, { project_id: null }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(400)
+    expect(r.body.offenders.map((o) => o.id)).toEqual([LOSER1])
+  })
+
+  it('lets a genuine sibling merge THROUGH — the guard is not a blanket refusal', async () => {
+    // Non-vacuity: same fixture shape, same non-null project on both, and the run must get past
+    // step 2b. If this ever starts returning the sibling-scope 400, the guard has over-fired.
+    const plants = [
+      plantRow(WINNER, { project_id: PROJ_Y }),
+      plantRow(LOSER1, { project_id: PROJ_Y }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.body?.error ?? '').not.toMatch(/same project as the winner/)
+  })
+
+  it('the repoint still leaves project_id alone — the refusal is what keeps that sound', () => {
+    // Carrying project_id forward instead would silently invalidate plantMemoryRepoint's stated
+    // scope (plant-keyed rebuild only, justified by no project's event set changing). If a future
+    // edit adds `SET project_id` here, it owes a project-keyed rebuild for BOTH projects.
+    expect(REPOINT_SRC).toMatch(/UPDATE event_log SET plant_id = \$\{toPlantId\} WHERE plant_id = ANY/)
+    expect(REPOINT_SRC).not.toMatch(/UPDATE event_log SET plant_id = \$\{toPlantId\},\s*project_id/)
+  })
+
   it('proceeds once the human supplies an override for the divergent column', async () => {
     const plants = [
       plantRow(WINNER, { container_type: 'whiskey_barrel' }),
