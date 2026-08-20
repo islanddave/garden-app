@@ -587,8 +587,11 @@ function DormantList({ plan }) {
       {rows.map(row => (
         <div key={row.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           gap: 8, flexWrap: 'wrap', minHeight: 44 }}>
+          {/* Same name treatment as Row above: minWidth:0 + ellipsis is what keeps an unbreakable
+              long name from widening the page at 390px rather than shrinking. */}
           <Link to={'/plantings/' + row.plantingId} style={{ fontSize: '0.85rem', color: P.dark,
-            textDecoration: 'none', flex: '1 1 auto', minWidth: 0 }}>
+            textDecoration: 'none', flex: '1 1 auto', minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {row.name}
           </Link>
           {row.resumable && (
