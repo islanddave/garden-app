@@ -132,20 +132,103 @@ describe('variety sub-rows carry weight', () => {
   })
 })
 
-describe('per-planting weight on the first-pick lines', () => {
-  it('shows the planting’s own grams beside its first-pick date', async () => {
+// V4-HARVCROPTABLE-001 — Dave's own design, verbatim: "a clean 3-column table - Planting | Count |
+// Total weight - ONE row per planting. Drop all weighed-vs-estimated wording ... show only the total
+// weight, and make the weight the visually dominant column."
+//
+// The provenance drop is scoped to THIS block and nowhere else: the variety sub-rows above still
+// carry "≈ 8.23 kg · 26 weighed · 1 estimated" (the describes above pin that), because those rows can
+// be ORDERED by grams and a modelled ranking rendered bare reads as a measured finding. A planting
+// row is not ranked, and Dave already knows the number is inferred.
+const plantingRow = (name) => screen.getByText(name).closest('tr')
+const cellsOf = (name) => [...plantingRow(name).cells].map((c) => c.textContent)
+
+describe('the per-planting table (V4-HARVCROPTABLE-001)', () => {
+  const MOSKVICH_FP = {
+    plant_id: 'gn-1', planting_name: 'Moskvich bed', crop_type_slug: 'tomato', first_pick_date: '2026-07-04',
+    units: [{ unit: 'count', unit_key: 'count', total: 65, count: 27 }], unquantified: 0, weight: MOSKVICH,
+  }
+
+  it('renders Planting | Count | Total weight, one row per planting, with the live tomato numbers', async () => {
+    await renderTotals({
+      first_pick: [MOSKVICH_FP, {
+        plant_id: 'gn-2', planting_name: 'Cherry Falls bed', crop_type_slug: 'tomato', first_pick_date: '2026-07-11',
+        units: [{ unit: 'count', unit_key: 'count', total: 128, count: 36 }], unquantified: 0, weight: CHERRY_FALLS,
+      }],
+    })
+    expect([...screen.getByRole('table').tHead.rows[0].cells].map((c) => c.textContent))
+      .toEqual(['Planting', 'Count', 'Total weight'])
+    expect(cellsOf('Moskvich bed')).toEqual(['Moskvich bed', '65', '8.23 kg'])
+    expect(cellsOf('Cherry Falls bed')).toEqual(['Cherry Falls bed', '128', '763 g'])
+    expect(screen.getByRole('table').tBodies[0].rows.length).toBe(2)
+  })
+
+  it('drops the ≈ and the weighed/estimated counts — the weight only', async () => {
+    // Moskvich is 26 weighed + 1 estimated, so the OLD render was ' · ≈ 8.23 kg' and the variety row
+    // above it still says so. This cell must be the bare number and nothing else.
+    await renderTotals({ first_pick: [MOSKVICH_FP] })
+    const cell = screen.getByTestId('planting-weight')
+    expect(cell.textContent).toBe('8.23 kg')
+    expect(cell.textContent).not.toContain('≈')
+    expect(cell.textContent).not.toContain('weighed')
+    expect(cell.textContent).not.toContain('estimated')
+  })
+
+  it('makes the weight the visually dominant column', async () => {
+    await renderTotals({ first_pick: [MOSKVICH_FP] })
+    const [nameCell, countCell, weightCell] = plantingRow('Moskvich bed').cells
+    expect(weightCell.style.fontWeight).toBe('700')
+    expect(parseFloat(weightCell.style.fontSize)).toBeGreaterThan(parseFloat(countCell.style.fontSize))
+    expect(parseFloat(weightCell.style.fontSize)).toBeGreaterThan(parseFloat(nameCell.style.fontSize))
+  })
+
+  it('carries no borders and scrolls inside its own container, not the page (390px)', async () => {
+    await renderTotals({ first_pick: [MOSKVICH_FP] })
+    const table = screen.getByRole('table')
+    // jsdom DISCARDS `border: none` (it serializes to an empty cssText), so asserting the declared
+    // value would pass on any markup at all. Assert the falsifiable thing instead: nothing in the
+    // table declares a border rule. jsdom does keep real values — a `1px solid` added to the table
+    // or any cell serializes into cssText and turns this red.
+    const declared = [table, ...table.querySelectorAll('th,td')]
+      .flatMap((el) => el.style.cssText.split(';').map((d) => d.trim()).filter(Boolean))
+      .filter((d) => d.startsWith('border') && !d.startsWith('border-collapse'))
+    expect(declared).toEqual([])
+    // A 390px Chrome/Android viewport: the name cell wraps at any character and the number cells are
+    // nowrap, so nothing forces the PAGE sideways; the wrapper is the backstop if it ever did.
+    expect(table.parentElement.style.overflowX).toBe('auto')
+    expect(plantingRow('Moskvich bed').cells[0].style.overflowWrap).toBe('anywhere')
+    expect(plantingRow('Moskvich bed').cells[1].style.whiteSpace).toBe('nowrap')
+    expect(plantingRow('Moskvich bed').cells[2].style.whiteSpace).toBe('nowrap')
+  })
+
+  it('dashes a planting with no derivable weight rather than printing a zero', async () => {
+    await renderTotals({
+      first_pick: [{
+        plant_id: 'gn-3', planting_name: 'Volunteer', crop_type_slug: 'tomato', first_pick_date: '2026-07-04',
+        units: [], unquantified: 2, weight: w({ unweighed: 2 }),
+      }],
+    })
+    expect(cellsOf('Volunteer')).toEqual(['Volunteer', '—', '—'])
+  })
+
+  it('an older Lambda (no units key on a first_pick row) dashes the count, not a zero', async () => {
+    // The SPA and the harvests Lambda deploy on separate legs and a rollback must hold: "this API
+    // does not compute planting counts" must not render as "this planting produced 0".
     await renderTotals({
       first_pick: [{ plant_id: 'gn-1', planting_name: 'Moskvich bed', crop_type_slug: 'tomato', first_pick_date: '2026-07-04', weight: MOSKVICH }],
     })
-    expect(screen.getByTestId('planting-weight').textContent).toBe(' · ≈ 8.23 kg')
+    expect(cellsOf('Moskvich bed')).toEqual(['Moskvich bed', '—', '8.23 kg'])
   })
 
-  it('stays silent for a planting with no derivable weight', async () => {
+  it('renders a non-count unit with its unit word', async () => {
+    // Native units are never converted, so a pounds planting reads "1.5 lb" under Count.
     await renderTotals({
-      first_pick: [{ plant_id: 'gn-3', planting_name: 'Volunteer', crop_type_slug: 'tomato', first_pick_date: '2026-07-04', weight: w({ unweighed: 2 }) }],
+      first_pick: [{
+        plant_id: 'gn-4', planting_name: 'Bush beans row', crop_type_slug: 'tomato', first_pick_date: '2026-07-04',
+        units: [{ unit: 'lb', unit_key: 'lb', total: 1.5, count: 3 }], unquantified: 0, weight: w({ grams: 680, measured_grams: 680, measured: 3 }),
+      }],
     })
-    expect(screen.queryByTestId('planting-weight')).toBeNull()
-    expect(screen.getByText(/First pick/)).toBeTruthy()
+    expect(cellsOf('Bush beans row')).toEqual(['Bush beans row', '1.5 lb', '680 g'])
   })
 })
 

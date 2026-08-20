@@ -140,21 +140,35 @@ export function computeAggregates(rows) {
     weekly.set(wk, (weekly.get(wk) ?? 0) + 1);
     if (r.crop_slug) cropList.set(r.crop_slug, r.crop_name ?? r.crop_slug);
 
+    const q = r.quantity == null ? null : Number(r.quantity);
+    const hasQty = r.harvest_log_id != null && q != null && !Number.isNaN(q);
+    if (!hasQty) unquantifiedTotal += 1;
+
+    // V4-HARVCROPTABLE-001: first_pick[] rows now also carry their planting's per-unit totals, so the
+    // crop-detail table's Count column comes off the SAME planting-grain rowset that already carries
+    // the name and the weight. Purely additive, and computed here from the fetched rows — the weight
+    // GROUPING SETS pass is untouched. The accumulate can no longer live inside the earlier-date
+    // branch (that re-created the entry and would restart the sum at every new minimum), so the entry
+    // is created once and only the date-derived fields move when an earlier row arrives.
     if (r.plant_id != null && r.gn_id != null) {
-      const fp = firstPick.get(r.plant_id);
-      if (!fp || r.day_key < fp.first_pick_date) {
-        firstPick.set(r.plant_id, {
+      let fp = firstPick.get(r.plant_id);
+      if (!fp) {
+        fp = {
           plant_id: r.plant_id,
           planting_name: r.planting_name ?? null,
           crop_type_slug: r.crop_slug ?? null,
           first_pick_date: r.day_key,
-        });
+          units: new Map(),
+          unquantified: 0,
+        };
+        firstPick.set(r.plant_id, fp);
+      } else if (r.day_key < fp.first_pick_date) {
+        fp.planting_name = r.planting_name ?? null;
+        fp.crop_type_slug = r.crop_slug ?? null;
+        fp.first_pick_date = r.day_key;
       }
+      if (hasQty) addUnit(fp.units, r.unit, q); else fp.unquantified += 1;
     }
-
-    const q = r.quantity == null ? null : Number(r.quantity);
-    const hasQty = r.harvest_log_id != null && q != null && !Number.isNaN(q);
-    if (!hasQty) unquantifiedTotal += 1;
 
     if (r.crop_slug) {
       let c = crops.get(r.crop_slug);
@@ -191,7 +205,14 @@ export function computeAggregates(rows) {
       project_id: o.project_id, project_name: o.project_name, units: serializeUnits(o.units), unquantified: o.unquantified,
     })).sort((a, b) => String(a.project_name ?? '').localeCompare(String(b.project_name ?? ''))),
     weekly: [...weekly.entries()].map(([week_start, count]) => ({ week_start, count })).sort((a, b) => a.week_start.localeCompare(b.week_start)),
-    first_pick: [...firstPick.values()].sort((a, b) => a.first_pick_date.localeCompare(b.first_pick_date)),
+    first_pick: [...firstPick.values()].map((f) => ({
+      plant_id: f.plant_id,
+      planting_name: f.planting_name,
+      crop_type_slug: f.crop_type_slug,
+      first_pick_date: f.first_pick_date,
+      units: serializeUnits(f.units),
+      unquantified: f.unquantified,
+    })).sort((a, b) => a.first_pick_date.localeCompare(b.first_pick_date)),
     crop_list: [...cropList.entries()].map(([crop_type_slug, display_name]) => ({ crop_type_slug, display_name })).sort((a, b) => a.display_name.localeCompare(b.display_name)),
     unquantified_total: unquantifiedTotal,
   };

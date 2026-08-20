@@ -184,7 +184,7 @@ describe('Harvests page', () => {
     await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
   })
 
-  it('expands a Totals crop row in place to show varieties + first pick', async () => {
+  it('expands a Totals crop row in place to show varieties + the planting table', async () => {
     const crops = [{
       crop_type_slug: 'tomato', crop_name: 'Tomato',
       units: [{ unit: 'count', unit_key: 'count', total: 6, count: 2 }], unquantified: 1,
@@ -193,7 +193,14 @@ describe('Harvests page', () => {
         { variety_id: 'v2', variety_name: 'Brandywine', units: [{ unit: 'count', unit_key: 'count', total: 2, count: 1 }], unquantified: 0 },
       ],
     }]
-    const firstPick = [{ plant_id: 'p1', planting_name: 'Bed A tomato', crop_type_slug: 'tomato', first_pick_date: '2026-06-14' }]
+    // V4-HARVCROPTABLE-001: the block is a Planting | Count | Total weight table now. The date is
+    // still on the wire (the season universe derives from it) — it is just no longer a column.
+    const firstPick = [{
+      plant_id: 'p1', planting_name: 'Bed A tomato', crop_type_slug: 'tomato', first_pick_date: '2026-06-14',
+      units: [{ unit: 'count', unit_key: 'count', total: 6, count: 2 }],
+      unquantified: 0,
+      weight: { grams: 1400, measured_grams: 1400, estimated_grams: 0, measured: 2, estimated: 0, unweighed: 0 },
+    }]
     mockRoutes({ entries: [TWO_CROPS[0]], crops, firstPick })
     render(<Harvests />)
     // S4: arrival IS Totals now — wait on the crop row directly (setup simplified, assertions intact)
@@ -202,7 +209,10 @@ describe('Harvests page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Tomato/ }))
     expect(screen.getByText('Brandywine')).toBeTruthy() // expanded variety sub-row
-    expect(screen.getByText(/First pick Jun 14/)).toBeTruthy()
+    expect(screen.getByText('Bed A tomato')).toBeTruthy()
+    expect(screen.getByTestId('planting-count').textContent).toBe('6')
+    expect(screen.getByTestId('planting-weight').textContent).toBe('1.4 kg')
+    expect(screen.queryByText(/First pick/)).toBeNull()
     expect(screen.getByText(/See in log/)).toBeTruthy()
   })
 
