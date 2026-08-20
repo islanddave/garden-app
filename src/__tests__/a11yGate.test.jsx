@@ -76,7 +76,7 @@ const SURFACES = [
   ['CropWeightLine estimated',    <CropWeightLine weight={w({ grams: 2400, measured_grams: 400, estimated_grams: 2000, measured: 3, estimated: 12 })} />],
   ['CropWeightLine measured',     <CropWeightLine weight={w({ grams: 900, measured_grams: 900, measured: 2 })} />],
   ['CropWeightLine unweighed',    <CropWeightLine weight={w({ unweighed: 2 })} />],
-  ['PlantingTile with photos',    <PlantingTile planting={PLANTING} photoCount={3} />],
+  ['PlantingTile with photos',    <PlantingTile planting={{ ...PLANTING, photo_count: 3 }} />],
   ['PlantingTile no photos',      <PlantingTile planting={PLANTING} />],
   // PhotoUpload: the icon-only single mode is the case that was a hard violation — the <label> had
   // an aria-label it could not carry AND no text of its own, so the control was nameless.
@@ -121,6 +121,47 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
     )
     await screen.findByRole('list', { name: 'Photos you can add' })
     await expectNoA11yViolations(container, { label: 'SpaceAttachPicker' })
+  })
+
+  // axe going quiet proves the label is no longer PROHIBITED. It does not prove the label now
+  // ARRIVES. These do — by role+name, which is the real contract (getByLabelText matches the
+  // attribute and passes on a silent element; that is precisely how the WATERWHY blackout stayed
+  // invisible). Each line is also the before/after of what a screen reader says.
+  describe('the re-roled surfaces are actually NAMED now, not merely un-flagged', () => {
+    it.each([
+      // [what, was announced BEFORE the fix, role, name announced NOW, element]
+      ['PlantStatusBadge', 'Growing', 'img', 'Status: Growing', <PlantStatusBadge status="growing" />],
+      ['ProjectStatusBadge', 'Planning', 'img', 'Status: Planning', <ProjectStatusBadge status="planning" />],
+      ['CropWeightLine', '900 g', 'img', 'Total harvest weight: 900 g', <CropWeightLine weight={w({ grams: 900, measured_grams: 900, measured: 2 })} />],
+      ['PlantingTile photo count', '3', 'img', '3 photos', <PlantingTile planting={{ ...PLANTING, photo_count: 3 }} />],
+      ['TagChip', 'Basil', 'group', 'type: Basil', <TagChip tag={{ facet: 'type', slug: 'basil', label: 'Basil' }} />],
+    ])('%s announced "%s", now announces %s "%s"', (_what, _before, role, name, el) => {
+      render(el)
+      expect(screen.getByRole(role, { name })).toBeTruthy()
+    })
+
+    it('PhotoUpload icon-only: the name is on the file input, and the label no longer claims it', () => {
+      const { container } = render(
+        <PhotoUpload keyPrefix="standalone" buttonLabel={<Icon name="action.camera" decorative />} ariaLabel="Add photo" />
+      )
+      // Before: <label aria-label="Add photo"> with an icon-only body — label has no ARIA role, so
+      // nothing carried the name and the control was anonymous.
+      expect(container.querySelector('label').hasAttribute('aria-label')).toBe(false)
+      expect(screen.getByLabelText('Add photo').tagName).toBe('INPUT')
+    })
+
+    it('GardenActivity-style decorative markers stay out of the tree rather than double-announcing', () => {
+      // The canary line's only fact ("canary at N%") is printed unconditionally as visible text
+      // beside it, so aria-hidden is the correct treatment, not a second role="img" announcement.
+      const { container } = render(
+        <div>
+          <div aria-hidden="true" data-testid="canary" />
+          <p>52% accepted (13/25) · canary at 40%</p>
+        </div>
+      )
+      expect(screen.getByTestId('canary').getAttribute('aria-hidden')).toBe('true')
+      expect(container.textContent).toContain('canary at 40%')
+    })
   })
 
   it('the rule set is pinned — widening or narrowing it is a deliberate act, not a drift', () => {
