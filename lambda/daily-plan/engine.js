@@ -598,7 +598,14 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     const c=resolveCadence(p, cad);
     if(c.exclude) continue;
     const ph=feedPhase(weeksSince(today,p.substrate_start)); phaseCounts[ph]=(phaseCounts[ph]||0)+1;
-    if(p.status==='dormant' || c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,note:c.dormant_skip?c.notes:'Dormant — skip routine care'}); continue; }
+    // V4-DORMANTRESUME-001: `reason` discriminates the two unrelated causes this bucket merges.
+    // 'status' = the planting carries status='dormant', which a human set and only a human clears —
+    // resumable. 'profile' = the cadence flag (dormant_skip, Lithops only), which is care DATA, not
+    // status: clearing a status it never had is meaningless and the flag exists because watering it
+    // now rots it. Consumers previously had to compare the `note` string to tell them apart. Same
+    // dormant_skip-wins precedence as `note`, so the two fields cannot disagree. Additive key;
+    // PLAN_SCHEMA_VERSION deliberately NOT bumped (readers select named keys).
+    if(p.status==='dormant' || c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,reason:c.dormant_skip?'profile':'status',note:c.dormant_skip?c.notes:'Dormant — skip routine care'}); continue; }
     // DRG-NOCALWATER-001: profile-declared calendar-watering suppression. Evaluated BEFORE any watering
     // computation and BEFORE any flag fork, so it binds identically with todayAware/rainCredit/rainMaxDays
     // on or off. Suppressed plantings get NO water_due/no_history/rain_skipped item — they land LOUDLY on
