@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useId } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { shareEntity } from '../lib/shareEntity.js'
 import Icon from '../components/Icon.jsx'
 import SeverityBadge from '../components/SeverityBadge.jsx'
@@ -127,6 +129,14 @@ export default function EventDetail() {
   const [error, setError] = useState(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState(null)
+  // V4-DIRTYGUARDSWEEP-001 — the exact object startEdit() seeded `form` with. See the guard below:
+  // every field on this form arrives pre-filled from the saved row, so "is it dirty" can only be
+  // asked as "does it still equal what it opened with", and the snapshot is the only spelling of
+  // that which cannot drift away from the 20-field seed sitting a few lines down.
+  const [formSeed, setFormSeed] = useState(null)
+  // True only while <PhotoUpload> below has a file on the wire. Fed by its EXISTING callbacks — no
+  // new props on a component with nine call sites.
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -159,7 +169,7 @@ export default function EventDetail() {
   }, [eventId, projectId, fetch])
 
   function startEdit() {
-    setForm({
+    const seeded = {
       event_type:    event.event_type,
       event_date:    event.event_date ? new Date(event.event_date).toISOString().split('T')[0] : '',
       title:         event.title ?? '',
@@ -207,10 +217,60 @@ export default function EventDetail() {
       // written before capture shipped) seeds to the default — the same value the engine fold
       // already assumes for it — so opening the editor never silently reclassifies anything.
       water_depth: readWaterDepth(event.metadata),
-    })
+    }
+    setForm(seeded)
+    // Same object into both — the guard below compares by value, and every field here is a
+    // primitive (string / boolean / number / null; readWaterDepth and readHarvestDisposition both
+    // return codes, not objects), so sharing the reference cannot alias a later edit into the seed.
+    setFormSeed(seeded)
     setSaveErr(null)
     setEditing(true)
   }
+
+  // V4-DIRTYGUARDSWEEP-001 — the dirty predicate for this page, and it is NOT a truthiness test.
+  //
+  // startEdit() fills all 20 fields from the SAVED row, so on a pristine open almost every one of
+  // them is already non-empty: `form.notes || form.title || …` would report dirty the instant the
+  // user tapped Edit and would hold a deploy for anyone merely READING an event in the editor. The
+  // only honest question is "does the form still equal what it opened with", which also gives the
+  // right behaviour on a revert — type, undo, and the hold releases.
+  //
+  // Compared against a SNAPSHOT rather than re-derived from `event`, unlike the sibling wiring on
+  // Locations. Locations' inline edit has four fields with a one-line seed each; this seed is 20
+  // fields and three of them are non-obvious (the conditional weight seeding, readWaterDepth's
+  // default, readHarvestDisposition's null-unless-valid). Hand-mirroring that would be 20 chances
+  // for the guard to drift into reporting permanently-dirty on a row nobody has opened in a year.
+  // The snapshot cannot drift: it IS the seed.
+  //
+  // The `editing` term is load-bearing. Cancel is `setEditing(false)` and does NOT clear `form` —
+  // but re-opening runs startEdit() again and re-seeds from the row, so a cancelled edit's text is
+  // already unreachable. Holding the gate for it would wedge updates over content the user cannot
+  // get back to, which is the BUG-STALECLIENT-001 shape reloadGate exists to avoid rebuilding.
+  //
+  // No `saving` term is needed: the PUT only clears the dirty state via setEvent+setEditing on
+  // success, so the whole in-flight window is already covered by the comparison above.
+  const editDirty = !!(
+    editing && form && formSeed &&
+    Object.keys(formSeed).some(k => form[k] !== formSeed[k])
+  )
+
+  // A photo is on the wire. <PhotoUpload> holds no staged file — it uploads inside the picker's
+  // onChange — so the only RAM-only window is the upload itself, and a reload aborts it: on Android
+  // a `capture` shot need not have been persisted to the gallery, so "just pick it again" is not
+  // guaranteed to be available. Bounded to seconds and released on BOTH outcomes (errorMode
+  // 'swallow' makes useUploadPhoto return {photo} or {error} and never throw, so exactly one of the
+  // two callbacks always fires), so this can never become a standing hold.
+  const hasUnsavedInput = editDirty || uploadingPhoto
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /events/:eventId is not an overlayable route today, so the hook above is a strict no-op and the
+  // gate below is what protects this page. Per-instance key + BOOLEAN dep per EventNew.jsx:985-991.
+  const reloadGateKey = `event-detail:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   // BUG-HARVESTEDIT-001: the edit form's harvest section keys off the event's PERSISTED type, not
   // the dropdown's current value. The server refuses an event_type change that would break the
@@ -717,6 +777,12 @@ export default function EventDetail() {
             errorMode="swallow"
             mode="both"
             inputId={`event-photo-${event.id}`}
+            // V4-DIRTYGUARDSWEEP-001: these three props already existed and this page passed none
+            // of them. They are the only signal the component gives that bytes are in flight — see
+            // the uploadingPhoto term in the guard above for why that window counts.
+            onUploadStart={() => setUploadingPhoto(true)}
+            onUploadComplete={() => setUploadingPhoto(false)}
+            onUploadError={() => setUploadingPhoto(false)}
           />
         </div>
       )}

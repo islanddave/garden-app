@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useId } from 'react'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import PhotoView from '../components/photo/PhotoView.jsx'
 import { toPhoto, TIER } from '../lib/photoModel.js'
 import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js'
@@ -362,6 +364,62 @@ export default function PhotoLibrary() {
     })
     setTagErr(null)
   }
+
+  // ---- V4-DIRTYGUARDSWEEP-001 — the reload gate ----
+  //
+  // This page has two independent editable regions and they compose as a union, because both can
+  // hold content at once: enterSelectMode() collapses the upload form without clearing it, and the
+  // tag modal opens over whatever the form is holding.
+  //
+  // 1. UPLOAD FORM — `stagedFile` is the whole point of BUG-PHOTOFIRST-001: the file is picked
+  //    FIRST and sits in memory while the user works out where it goes, so the pick→send gap is a
+  //    deliberate, user-length window and a reload lands squarely in it. `caption` is free text
+  //    with nowhere else to live.
+  //    Deliberately NOT gated on `showUpload`. That term is right on ProjectTypes, where collapsing
+  //    hides the only copy of some text; here it would be actively wrong, because enterSelectMode()
+  //    sets showUpload=false as a SIDE EFFECT of tapping "Select" — so a `showUpload &&` predicate
+  //    would silently drop the hold on a live staged blob the user never dismissed and will see
+  //    again the moment they reopen the form.
+  //    Also NOT counting the three pickers: a project/space/planting is one tap to redo, and they
+  //    are only meaningful alongside a staged file, which already holds the gate on its own. That
+  //    is the false positive the sibling wiring on Locations' add form documents. `is_public` has
+  //    had no control since V4-PUBHIDE-001 — it is a constant here.
+  //    No `uploading` term: uploadStaged() clears `stagedFile` only in handleUploadComplete(), so
+  //    the staged term already spans the entire in-flight upload.
+  //
+  // 2. TAG MODAL — seeded from the photo by openModal() just above, so every field is pre-filled
+  //    and a truthiness test would report dirty for any photo that already has a caption or a
+  //    parent. Differs-from-the-row is the only honest question, and it releases on a revert.
+  //    The `modal` term IS load-bearing: closing sets modal=null and leaves tagForm populated, but
+  //    re-opening re-seeds from the next photo, so a dismissed edit is already unreachable and
+  //    holding a deploy for it would wedge updates (BUG-STALECLIENT-001's shape). No `tagging`
+  //    term — handleTag only clears the dirty state via setModal(null) on success.
+  //    Compared against `modal` directly rather than a snapshot (EventDetail's 20-field editor uses
+  //    a snapshot): four fields, one `?? ''` each, and `modal` is literally the row — the seed
+  //    below must keep mirroring openModal() above, which is four lines apart.
+  //
+  // Excluded, on purpose: `selected` / `selectMode` (a selection is view state — the page itself
+  // throws it away on any filter change, so it is not treated as precious by its own author),
+  // `deleteTarget` / `deleting` (a confirm, not input), the filters and `shown` (view state, and
+  // `shown` is already restored from sessionStorage across a reload by useScrollRestore).
+  const modalDirty = !!(modal && (
+    tagForm.project_id  !== (modal.project_id  ?? '') ||
+    tagForm.location_id !== (modal.location_id ?? '') ||
+    tagForm.plant_id    !== (modal.plant_id    ?? '') ||
+    tagForm.caption     !== (modal.caption     ?? '')
+  ))
+
+  const hasUnsavedInput = !!(stagedFile || uploadForm.caption.trim() || modalDirty)
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // /photos is not an overlayable route today, so the hook above is a strict no-op and the gate
+  // below is what protects this page. Per-instance key + BOOLEAN dep per EventNew.jsx:985-991.
+  const reloadGateKey = `photo-library:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   async function handleTag(e) {
     e.preventDefault()
