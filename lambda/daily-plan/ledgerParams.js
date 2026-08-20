@@ -11,25 +11,57 @@
 // to GLOBAL_NORMALIZATION alone), never a hunt through the fold.
 
 // ── Demand family ────────────────────────────────────────────────────────────────────────────────
-// ET0_ref(month): FIXED monthly climatological reference, inches/day, for the one live Space
+// ET0_REF_PEAK: ONE site-wide climatological reference, inches/day, for the one live Space
 // (42.5087,-72.6471, W. MA). NEVER a rolling median — canon Decision 2: a rolling median is a
 // high-pass filter that re-centers onto a heat wave by day ~7-10 (demand -> 1.0 exactly in the lethal
-// window) and deletes the fall decline. Provenance:
-//   May-Aug: measured means from live weather_daily (90-day Open-Meteo archive backfill,
-//            v4-weatherdaily-001, queried 2026-08-12: May 0.160 n=18 / Jun 0.202 n=30 /
-//            Jul 0.190 n=31 / Aug 0.174 n=11).
-//   Sep-Apr: FAO-56 climatological estimates for 42.5N humid-continental; the archive does not cover
-//            them yet. Refresh yearly from weather_daily once each month has a measured season
-//            (canon: "derived once from the archive at migration, refreshed yearly").
-// Months with ref < WINTER_REF_MIN never compute the ratio at all (winter mode pins it at the clamp
-// floor), so the Nov-Feb estimates are gate inputs, not modelling inputs.
-const ET0_REF_MONTHLY = {
-  1: 0.02, 2: 0.03, 3: 0.06, 4: 0.11,
-  5: 0.160, 6: 0.202, 7: 0.190, 8: 0.174,
-  9: 0.12, 10: 0.07, 11: 0.03, 12: 0.02,
-};
-const WINTER_REF_MIN = 0.04;                 // ref below this -> "winter mode": ratio pinned at DEMAND_CLAMP.min
-const DEMAND_CLAMP = { min: 0.5, max: 2.0 }; // clamp bounds on ET0(day)/ET0_ref(month)
+// window) and deletes the fall decline.
+//
+// BUG-ETNOAMPLITUDE-001 (2026-08-20) — WHY THIS IS A SCALAR AND MUST STAY ONE.
+// Until this fix the denominator was a TWELVE-ENTRY table, ET0_REF_MONTHLY, whose May-Aug entries
+// were literally the measured mean of that same month (0.160/0.202/0.190/0.174 vs prod weather_daily
+// means 0.1602/0.2019/0.1898/0.1729 — equal to three decimals). Dividing each day's ET0 by its own
+// month's mean is a per-month self-reference: it re-centers every month on 1.0 and subtracts the
+// entire seasonal signal, which is the SAME high-pass defect Decision 2 rejected, just precomputed
+// annually instead of rolling. Measured over 11 years of site archive, the monthly-mean multiplier
+// under that table spanned only 0.879..1.048 across May-Oct while actual ET0 fell 0.1775 -> 0.0714
+// (2.5x), and the curve INVERTED: October (1.048) and March (1.182) both read HOTTER than July
+// (0.948). Crossing into September the multiplier ROSE in 11 of 11 years (late-Aug 0.853 ->
+// early-Sep 1.054, +24%), i.e. the model SHORTENED fall watering intervals as evapotranspiration
+// fell. The soak's own maintenance step ("ET0_ref Sep/Oct refresh as those months accrue",
+// scripts/f2-shadow-soak.sh) would have driven Sep/Oct to exactly 1.0 and made it worse.
+// A single denominator is the fix: the multiplier is then ET0(day)/ET0(peak season), which carries
+// the full seasonal amplitude by construction and cannot be re-centered by a later retune.
+//
+// PROVENANCE — MEASURED, not estimated. 0.1775 in/day = the mean of every July day, 2015-01-01..
+// 2025-12-31 (n=341), from the Open-Meteo ERA5 archive at the Space's exact coordinates, via the
+// SAME endpoint/fields/units scripts/backfill-weather-daily.mjs writes weather_daily from:
+//   https://archive-api.open-meteo.com/v1/archive?latitude=42.508744987687344
+//     &longitude=-72.64706648619953&start_date=2015-01-01&end_date=2025-12-31
+//     &daily=et0_fao_evapotranspiration&temperature_unit=fahrenheit&precipitation_unit=inch
+//     &timezone=America/New_York
+// July is the annual peak (11y monthly means: Jan .031 Feb .043 Mar .070 Apr .103 May .145 Jun .173
+// Jul .1775 Aug .154 Sep .114 Oct .071 Nov .046 Dec .028). Per-year July means run 0.132 (2021) to
+// 0.213 (2022); that spread is weather, and the daily ET0 numerator is what carries it — the
+// reference is a climatological anchor, not a forecast.
+//
+// ⚠ FOR DAVE — the LEVEL is a tuning choice, the AMPLITUDE is not.
+// Any single denominator restores the same seasonal SHAPE; the choice of value only sets where 1.0
+// sits. Peak-season was chosen because it holds the summer level almost exactly where both the
+// legacy engine and the pre-fix ledger already put it: over the live 98-day prod window the mean
+// multiplier moves 1.016 -> 1.058, +4.1%, inside the flip gate's +-10% band, so this patch changes
+// autumn without silently re-tuning summer. The May-Sep growing-season mean (0.1528) was the other
+// candidate and would have shifted the same window +20%. If the shadow soak says the level is wrong,
+// move GLOBAL_NORMALIZATION — never this constant, and never back to a per-period table.
+const ET0_REF_PEAK = 0.1775;
+// Clamp bounds on ET0(day)/ET0_REF_PEAK. The floor is what caps the autumn stretch at 2x the
+// researched interval and it now binds from roughly Oct 1 onward (11y: 68% of October days, 98% of
+// November, 100% of Dec-Jan) — which is also what retired the old `ref < WINTER_REF_MIN` winter-mode
+// branch. That branch pinned Nov-Feb at exactly this floor without dividing; under one reference the
+// floor delivers the identical value from the physics, and an anomalously warm November day now
+// reads above 0.5 instead of being pinned, which is the "err toward watering" direction. The ceiling
+// is now a true outlier guard rather than a routine operator (11y: it binds on <1% of days; the
+// hottest day in the live prod window, 0.288, reaches 1.62).
+const DEMAND_CLAMP = { min: 0.5, max: 2.0 };
 // The flip gate's single lever (canon Part 5): if the shadow diff shows a median effective-interval
 // shift per crop class > +-10%, ONE multiplier is applied here — never hand-edits to 159 profiles.
 // Multiplies the whole demand term: >1 shortens effective intervals, <1 lengthens them.
@@ -212,7 +244,7 @@ const CONFIDENCE = {
 const WINDOW_DAYS = 30;      // fold lookback; MUST equal handler.WEATHER_DAILY_WINDOW_DAYS (pinned by test)
 
 module.exports = {
-  ET0_REF_MONTHLY, WINTER_REF_MIN, DEMAND_CLAMP, GLOBAL_NORMALIZATION,
+  ET0_REF_PEAK, DEMAND_CLAMP, GLOBAL_NORMALIZATION,
   VESSEL_CLASS_FACTOR, VESSEL_UNKNOWN_FACTOR, FABRIC_BAG, TRAY_TYPES, TRAY_WI_CAP_DAYS, SIZE_BUCKETS,
   STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, RAIN_DEPTH_TIERS, RAIN_DEPTH_CLASSES,
   TRANSPLANT_CARVEOUT_DAYS,

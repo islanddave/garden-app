@@ -24,19 +24,21 @@ const P = (o) => withCoverFlags({ id: 'p', name: 'X', variety: 'v', genus: 'g', 
   project: 'P', project_id: 'pp', container_type: 'trough', container_size: '5 gal', covered: false,
   last_water: ago(2), substrate_start: ago(81), transplant_at: ago(400), db_cadence: SEED({}), ...o });
 
-// Flat weather: each settled day's ET0 = its month's fixed reference -> ratio exactly 1.0.
-const REF = { 7: 0.190, 8: 0.174 };                             // mirrors ledgerParams.ET0_REF_MONTHLY
+// Flat weather: each settled day's ET0 = the site reference -> ratio exactly 1.0. ONE value for
+// every date (BUG-ETNOAMPLITUDE-001 retired the per-month table); imported rather than mirrored so a
+// retune of the reference cannot leave these fixtures silently off-ratio.
+const REF = require('./ledgerParams').ET0_REF_PEAK;
 function weatherDaily({ et0 = null, tmax = 75, precipOn = {}, days = 30 } = {}) {
   const rows = [];
   for (let d = ledger.addDays(TODAY, -days); d < TODAY; d = ledger.addDays(d, 1)) {
-    rows.push({ date: d, et0_in: et0 ?? REF[+d.slice(5, 7)], tmax_f: precipOn[d + '_tmax'] ?? tmax,
+    rows.push({ date: d, et0_in: et0 ?? REF, tmax_f: precipOn[d + '_tmax'] ?? tmax,
       tmin_f: 60, precip_in: precipOn[d] ?? 0 });
   }
   return rows;
 }
 const WX = { tonightLow: 62, highToday: 82 };
 const HY = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0,
-  tomorrow_precip_in: 0, tomorrow_pop: 0, today_et0_in: 0.174, today_tmax_f: 82 };
+  tomorrow_precip_in: 0, tomorrow_pop: 0, today_et0_in: REF, today_tmax_f: 82 };
 const w = (d, h, depth, id) => ({ id, t: at(d, h), type: 'watering', depth });
 
 // Every scenario: { name, note, input } where input is a complete generatePlan argument bag MINUS

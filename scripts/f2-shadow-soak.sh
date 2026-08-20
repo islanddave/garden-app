@@ -25,7 +25,18 @@
 #      ledgerParams.GLOBAL_NORMALIZATION — if the soak shows a median effective-interval shift
 #      per crop class beyond +-10%, that ONE constant moves; never hand-edits to per-crop profiles.
 #   4. Pre-flip checks owed elsewhere: shared-vessel sibling verify query; event-window query cost
-#      in CloudWatch during the soak; ET0_ref Sep/Oct refresh as those months accrue.
+#      in CloudWatch during the soak.
+#
+# WHAT THIS SOAK STRUCTURALLY CANNOT SEE (BUG-ETNOAMPLITUDE-001, 2026-08-20). Every sample diffs a
+# 30-day window, so a demand curve that is only wrong ACROSS months is invisible to it, at any
+# sample count. That is how the ET denominator shipped as a per-MONTH self-reference — each month
+# divided by its own mean, multiplier ~1.0 year-round, September actually SHORTENING intervals in
+# 11 of 11 archive years — with the flip gate showing green. The seasonal criterion now lives where
+# it can execute: ledger.test.js `describe('seasonal amplitude')`. This item previously read
+# "ET0_ref Sep/Oct refresh as those months accrue", which was the defect's own maintenance step —
+# refreshing Sep/Oct to their measured means would have driven those months to exactly 1.0. There
+# is no per-month reference left to refresh; ledgerParams.ET0_REF_PEAK is one site-wide constant
+# and the only legitimate reason to move it is a fresh multi-year archive pull.
 #
 # SCHEDULING: running this nightly is a SEPARATE ops decision, deliberately NOT made here.
 # This script produces one soak sample per run and installs nothing anywhere.

@@ -6,7 +6,7 @@
 //
 // THE MODEL. Replace `dW >= wi` with a continuous depletion score D in CADENCE-DAYS, recomputed
 // STATELESSLY per run from the 30-day event window:
-//   demand(day) = NORM x clamp(ET0(day)/ET0_ref(month), 0.5, 2.0) x vesselFactor(day) x stageFactor(day)
+//   demand(day) = NORM x clamp(ET0(day)/ET0_REF_PEAK, 0.5, 2.0) x vesselFactor(day) x stageFactor(day)
 //   due  <=>  D >= dueThreshold = wi_eff x (drought high ? 1.15 : 1.0)
 // Today's model is the DEGENERATE CASE (all factors 1.0, all amounts Normal) and every data gap
 // falls back to it — never to NaN (canon Decision 3; clamp(NaN) is unreachable by construction).
@@ -56,7 +56,6 @@ function addDays(dateStr, n) {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
-function monthOf(dateStr) { return +dateStr.slice(5, 7); }
 // Calendar days between two 'YYYY-MM-DD' labels (b - a), pure UTC date math like engine.daysBetween.
 function calDays(a, b) { return Math.floor((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / DAY); }
 
@@ -214,11 +213,11 @@ function foldLedger(ctx) {
     const isToday = dayStr === todayStr;
     const et0 = row ? row.et0_in : (isToday ? todayEt0 : null); // D0 has no settled row by design; live forecast covers it
     const tmax = row ? row.tmax_f : (isToday ? todayTmax : null);
-    const ref = P.ET0_REF_MONTHLY[monthOf(dayStr)];
+    // ONE site-wide denominator, never a per-period one (BUG-ETNOAMPLITUDE-001: a per-month
+    // reference is a self-reference and cancels the season — see the ledgerParams block).
     let ratio;
-    if (ref == null || ref < P.WINTER_REF_MIN) ratio = P.DEMAND_CLAMP.min;      // winter mode: pin, never divide
-    else if (et0 == null) { ratio = 1.0; if (!row && !isToday) weatherMissDays++; } // missing day -> degenerate ratio
-    else ratio = clamp(et0 / ref, P.DEMAND_CLAMP.min, P.DEMAND_CLAMP.max);
+    if (et0 == null) { ratio = 1.0; if (!row && !isToday) weatherMissDays++; }   // missing day -> degenerate ratio
+    else ratio = clamp(et0 / P.ET0_REF_PEAK, P.DEMAND_CLAMP.min, P.DEMAND_CLAMP.max);
     const vf = (vessel.isFabric
       ? P.FABRIC_BAG.base + P.FABRIC_BAG.rampGain * ramp(tmax, P.FABRIC_BAG.rampLoF, P.FABRIC_BAG.rampHiF)
       : vessel.classFactor) * vessel.sizeFactor;
