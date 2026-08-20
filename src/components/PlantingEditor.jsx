@@ -5,7 +5,7 @@
 // V3-EDIT-001 affordance). Owns the /api/plants wire contract previously in Plants.jsx:
 // dual-write variety (variety_id canonical + flat text), COALESCE-merge PUT, '' -> null
 // coercions for source/status, source_inventory_item_id passthrough on POST.
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { P } from '../lib/constants.js'
 import { formatQty } from '../lib/format.js'
 import ProjectOptions from './ProjectOptions.jsx'
@@ -70,6 +70,7 @@ export default function PlantingEditor({
   onDeleted,
   onArchived,
   onClose,
+  onDirty,                       // V4-PLANTEDITORDIRTY-001: (bool) => void, fires on every clean↔dirty flip
 }) {
   const isEdit = mode === 'edit'
   const [form, setForm] = useState(() => isEdit && plant
@@ -81,6 +82,34 @@ export default function PlantingEditor({
   const [archiving, setArchiving] = useState(false)
   const [sourcePacket, setSourcePacket] = useState(null)
   const [locations, setLocations] = useState([])
+
+  // V4-PLANTEDITORDIRTY-001 — every other callback on this component is lifecycle-COMPLETION
+  // (onCreated/onDeleted/…), so a host could learn the editor had finished but never that it was
+  // mid-edit. SowNow's stash records only WHICH packet is being sown for exactly that reason, and
+  // everything typed in here dies on an exit the reload gate would otherwise have deferred. This is
+  // the continuous signal that lets a host join the 3-piece dirty contract (EventNew.jsx:950-991).
+  //
+  // Latched off PlantForm's onChange, which is the ONLY user-input path into `form`: PlantForm's
+  // `set` is called from DOM change handlers and VarietyPicker selection alone, never on mount.
+  // The two prefill effects below also setForm, and they deliberately do NOT latch — a packet or
+  // variety deep-link seeding fields the user never touched is not unsaved work, and counting it
+  // would hold a deploy for anyone who merely opened /garden?source_inventory_item_id=…
+  //
+  // A latch, not a differs-from-seed diff: it can only over-report, and for a data-loss guard
+  // over-reporting costs a deferred update while under-reporting costs the user's typing. Typing a
+  // character and deleting it therefore still reads dirty, which is the safe direction.
+  const [dirty, setDirty] = useState(false)
+
+  // Reported through a ref rather than straight from the effect deps because this is a shared
+  // component and a host may well pass an inline arrow, whose identity changes every render. With
+  // `onDirty` in the deps the cleanup would fire onDirty(false) on EVERY render — and a release is
+  // not inert: it NOTIFIES reloadGate's listeners, which is what registerSW reloads on.
+  const onDirtyRef = useRef(onDirty)
+  useEffect(() => { onDirtyRef.current = onDirty })
+  useEffect(() => { onDirtyRef.current?.(dirty) }, [dirty])
+  // Unmount is the ordinary close path here (hosts render this conditionally), so without a release
+  // a Cancel would strand the host holding the gate with no form left to resolve it.
+  useEffect(() => () => { onDirtyRef.current?.(false) }, [])
 
   useEffect(() => {
     let mounted = true
@@ -155,6 +184,7 @@ export default function PlantingEditor({
     if (sourceInventoryItemId) payload.source_inventory_item_id = sourceInventoryItemId
     try {
       const data = await fetch('/api/plants', { method: 'POST', body: JSON.stringify(payload) })
+      setDirty(false)   // saved — nothing left for a reload to destroy, even if the host keeps us mounted
       const proj = projects.find(p => p.id === form.project_id)
       onCreated?.({ ...data, project_name: data.project_name ?? proj?.name })
       onClose?.()
@@ -199,6 +229,7 @@ export default function PlantingEditor({
           ...clearPatch(PLANT_FORM_FIELDS, form, plant, { allowed: SERVER_CLEARABLE.plants }),
         }),
       })
+      setDirty(false)   // saved — see handleAdd
       onUpdated?.({ ...data, project_name: data.project_name ?? plant.project_name })
       onClose?.()
     } catch (error) {
@@ -265,7 +296,7 @@ export default function PlantingEditor({
       )}
       <PlantForm
         value={form}
-        onChange={patch => setForm(f => ({ ...f, ...patch }))}
+        onChange={patch => { setForm(f => ({ ...f, ...patch })); setDirty(true) }}
         locations={locations}
         onSubmit={isEdit ? handleEdit : handleAdd}
         submitting={saving}
