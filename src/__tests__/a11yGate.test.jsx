@@ -21,14 +21,16 @@
 // A finding is a finding whether axe calls it a violation or "incomplete" — see helpers/axe.js.
 import React from 'react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, cleanup } from '@testing-library/react'
+import { render, screen, cleanup } from '@testing-library/react'
+
+const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn(() => Promise.resolve(null)) }))
 
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
 vi.mock('../lib/api.js', () => ({
-  useApiFetch: () => ({ fetch: () => Promise.resolve(null), getToken: () => Promise.resolve('t') }),
-  apiFetch: () => Promise.resolve(null),
+  useApiFetch: () => ({ fetch: fetchSpy, getToken: () => Promise.resolve('t') }),
+  apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({ upload: () => Promise.resolve(null), isUploading: false, error: null }),
@@ -49,6 +51,7 @@ import PhotoUpload from '../components/PhotoUpload.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import Icon from '../components/Icon.jsx'
 import WeatherWidget from '../components/today/WeatherWidget.jsx'
+import SpaceAttachPicker from '../components/SpaceAttachPicker.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -99,6 +102,25 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
   it.each(SURFACES)('%s is clean under the gate rule set', async (label, el) => {
     const { container } = render(el)
     await expectNoA11yViolations(container, { label })
+  })
+
+  // Needs an async render + a wired list, so it does not fit the it.each table above. It is here
+  // because it is the surface that carried the repo's largest finding (236 aria-allowed-attr) and
+  // Layer 1 is blind to it — that class has nothing to do with aria naming.
+  it('SpaceAttachPicker tile grid is clean under the gate rule set', async () => {
+    fetchSpy.mockImplementation((path) => (
+      path.startsWith('/api/photos?')
+        ? Promise.resolve([
+            { id: 'p1', caption: 'wide shot', thumb_url: 'https://x/1.jpg', space_id: null },
+            { id: 'p2', caption: 'drive', thumb_url: 'https://x/2.jpg', space_id: null },
+          ])
+        : Promise.resolve(null)
+    ))
+    const { container } = render(
+      <SpaceAttachPicker spaceId="space-1" spaceName="Gardens at Mathews Ridge" onClose={() => {}} onAttached={() => {}} />
+    )
+    await screen.findByRole('list', { name: 'Photos you can add' })
+    await expectNoA11yViolations(container, { label: 'SpaceAttachPicker' })
   })
 
   it('the rule set is pinned — widening or narrowing it is a deliberate act, not a drift', () => {
