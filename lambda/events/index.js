@@ -2023,6 +2023,79 @@ export const handler = async (event) => {
           }
         }
 
+        // ── BUG-GERMDATEBATCH-001: the germination anchor FOLLOWS ITS OWN EVENT ────────────────
+        //
+        // THE MISSING HALF. germinated_at is set-once (`AND p.germinated_at IS NULL` on both
+        // forward writes), and NOTHING in this file ever moved it afterwards: the DELETE path
+        // deliberately leaves it ("forward-only and idempotent", ~40 lines below), and this PUT
+        // re-anchored entity_memory and harvest_log but never the lifecycle date. So a germination
+        // logged on the wrong day was PERMANENT. EventDetail has shipped a working date field on
+        // this route since BUG-HARVESTEDIT-001 — a user could already correct the event, watch the
+        // Event log show the new date, and have the Life Story milestone and the V4-CAL2GERM-001
+        // calibration input keep the old one, with no error and no way to tell.
+        //
+        // WHY THE EVENT AND NOT A DIRECT plants PUT. plants carries no audit trigger; event_log
+        // carries two (trg_audit_event_log_upd watches event_date explicitly, writing before/after
+        // JSON into audit_events with the actor). Routing the correction through the event keeps
+        // the whole history — what it said, what it says, who changed it — instead of overwriting
+        // a date with a date. It is also the surface the user already has.
+        //
+        // THE ANTI-CLOBBER GUARD IS `p.germinated_at = <this event's PRE-EDIT date>`, and it is
+        // what makes this a correction rather than a second writer. germinated_at has another
+        // author — the plants PUT, which a human drives — and the transplant anchor beside this one
+        // records at length why an automatic writer must never outrank a human's answer. Requiring
+        // the stored anchor to still EQUAL the date this very event put there proves this event is
+        // the anchor's source. If it doesn't match, the anchor came from somewhere else and this
+        // edit is a no-op on it, exactly as today. That is also why `germinated_at IS NULL` is
+        // deliberately ABSENT here and must stay absent: it is the predicate this statement exists
+        // to step around, and re-adding it would make the whole thing silently vacuous.
+        //
+        // SCOPE, stated so the gaps are choices and not oversights:
+        //   * type changed away from / into germination -> NOT handled. Same call the DELETE path
+        //     makes: retyping an event is a re-decision, not a correction, and re-deriving on it
+        //     would let an unrelated retype clear or invent an anchor.
+        //   * plant_id changed -> NOT handled, for the same reason (it is a MOVE, and the
+        //     destination planting's own set-once anchor is its own question).
+        //   * the container join, rather than the two-arm container-less predicate the transplant
+        //     anchor uses, is kept ON PURPOSE: it is the scope of the two forward germination
+        //     writes, so it is exactly the population that can hold an anchor this statement is
+        //     entitled to move. A container-less planting was never stamped from an event, so its
+        //     germinated_at can only be a human's, which the guard above already protects.
+        //     (That the forward writes still carry the narrower join is recorded, not fixed here —
+        //     see household-mode.test.js, which excludes them from its container-less census.)
+        //
+        // Timezone handling is IDENTICAL to the forward writes on both sides of the comparison —
+        // a bare ${...}::timestamptz assignment into the DATE column, and ::timestamptz::date for
+        // the prior value — so the guard can never disagree with the write that created the row.
+        // Deriving the two sides differently is the one change here that would fail silently.
+        if (existing.event_type === 'germination' && body.event_type === 'germination'
+            && dateChanged && !plantChanged && oldPlantId != null) {
+          // Normalised in JS, not bound raw: the driver hands event_date back as a Date or a
+          // string depending on version, and toISOString() makes the bind deterministic.
+          const priorGerminatedAt = new Date(existing.event_date).toISOString();
+          try {
+            await sql`
+              UPDATE public.garden_node p
+                 SET germinated_at = ${eventDate}::timestamptz,
+                     germinated_at_approx = false,
+                     updated_at = NOW()
+                FROM public.container pp
+               WHERE p.id = ${oldPlantId}
+                 AND p.container_id = pp.id
+                 AND pp.created_by = ANY(${householdIds})
+                 AND p.deleted_at IS NULL
+                 AND p.germinated_at = ${priorGerminatedAt}::timestamptz::date
+            `;
+          } catch (e) {
+            // Same non-atomicity as the care-cache block above: event_log has already committed,
+            // so a failure here leaves the event corrected and the anchor stale. Greppable rather
+            // than invisible, and rethrown so the caller still gets its 500.
+            console.error('[germdate] germination anchor re-derive FAILED after the event committed',
+              JSON.stringify({ eventId, plantId: oldPlantId, error: e?.message }));
+            throw e;
+          }
+        }
+
         return resp(200, { ...updatedRows[0], harvest: harvestRow });
       }
 
