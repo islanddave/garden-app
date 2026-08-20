@@ -385,9 +385,11 @@ function isContainer(p) {
   return !!(t && String(t).trim() && String(t).trim().toLowerCase() !== 'in_ground');
 }
 
-// D6 covered-exclusion: the daily-plan query resolves coverage from the planting's location
-// (locations.type_label in (shelf,rack,tray) OR locations.name in (Stable,House)). 19 at-risk
-// plantings live indoors today and would otherwise be named on every frost night for no action.
+// D6 covered-exclusion: the daily-plan query resolves coverage from the planting's location.
+// V4-COVEREDNOTMODELLED-001: that is now the editable locations.covered flag, falling back to
+// locations.type_label in (shelf,rack,tray) for a location created since and not yet classified.
+// The locations.name in (Stable,House) arm this note used to describe is GONE. 19 at-risk plantings
+// live indoors today and would otherwise be named on every frost night for no action.
 //
 // BUG-NOLOCOUTDOOR-001: reads frost_covered_resolved (`state IS TRUE`) rather than the raw boolean.
 // This consumer's fail-safe runs OPPOSITE to rain credit's: excluding a planting here SUPPRESSES its

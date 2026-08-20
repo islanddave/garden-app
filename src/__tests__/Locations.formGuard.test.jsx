@@ -9,9 +9,13 @@
 //   • Add location   — starts empty          → typed name is the signal
 //   • Add child      — starts empty          → typed name is the signal
 //   • Inline edit    — SEEDED FROM THE ROW   → only "differs from the row" means anything
-// The edit form is the sharpest false-positive case anywhere in the sweep: every one of its four
-// fields is non-empty the instant it opens, so a truthiness guard would hold a service-worker update
+// The edit form is the sharpest false-positive case anywhere in the sweep: its four original fields
+// are all non-empty the instant it opens, so a truthiness guard would hold a service-worker update
 // for anyone who tapped ✏️ Edit and changed nothing.
+// V4-COVEREDNOTMODELLED-001 added a fifth, `covered`, which cuts the OTHER way: it seeds EMPTY on any
+// row nobody has classified. So the two naive guards now fail in opposite directions on the same
+// form — truthiness holds the gate on a pristine open, and emptiness would ignore a real edit that
+// changes a bed from unstated to under-cover. Only "differs from the row" is right for both.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -136,11 +140,34 @@ describe('Locations ↔ dirty guard — inline edit form', () => {
       ['inline-edit-type', 'bed',      'area'],
       ['inline-edit-sort', '7',        '3'],
       ['inline-edit-desc', 'rebuilt',  'the old horse barn'],
+      // V4-COVEREDNOTMODELLED-001. Seeds to '' here because ZONE carries no `covered` key at all —
+      // the shape a client cached before that column joined the GET projection. Marking a bed as
+      // under cover is the single highest-consequence edit on this form (it stops the watering model
+      // counting rainfall for everything in it), so a reload silently reverting it is the worst
+      // instance of exactly what this gate exists to prevent.
+      ['inline-edit-covered', 'true',  ''],
     ]) {
       fireEvent.change(byId(id), { target: { value: dirty } })
       expect(isReloadBlocked(), `${id} must hold the gate`).toBe(true)
       fireEvent.change(byId(id), { target: { value: seed } })
       expect(isReloadBlocked(), `${id} must release on revert`).toBe(false)
+    }
+  })
+
+  it('V4-COVEREDNOTMODELLED-001: cover seeds as a TRI-state, and "not stated" is not "not covered"', async () => {
+    // The reason this control is a <select> and not a checkbox. A checkbox has two renderings for a
+    // three-valued column, so it must show an unstated bed as unchecked — a positive claim that rain
+    // reaches it, made by the UI on Dave's behalf about a bed nobody has classified. Here the three
+    // states are distinguishable on sight, and only the two Dave picked are ever sent.
+    for (const [covered, expected] of [[true, 'true'], [false, 'false'], [null, ''], [undefined, '']]) {
+      clearReloadBlocks()
+      locations.current = [{ ...ZONE, covered }]
+      const { unmount } = await renderPage()
+      await openMenuItem(/Edit/)
+      expect(byId('inline-edit-covered').value, `covered=${covered} must seed as '${expected}'`).toBe(expected)
+      // And seeding must never be mistaken for editing, whichever of the three it seeded to.
+      expect(isReloadBlocked(), `a pristine open on covered=${covered} must not hold the gate`).toBe(false)
+      unmount()
     }
   })
 

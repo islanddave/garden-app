@@ -71,7 +71,12 @@ export default function Locations() {
     editForm.name        !== editingLoc.name ||
     editForm.type_label  !== (editingLoc.type_label || '') ||
     editForm.sort_order  !== String(editingLoc.sort_order ?? 0) ||
-    editForm.description !== (editingLoc.description || '')
+    editForm.description !== (editingLoc.description || '') ||
+    // V4-COVEREDNOTMODELLED-001. Same `== null ? '' : String(...)` shape as the seed below, per this
+    // block's own rule: drift between the two reads as permanently dirty. `== null` catches both
+    // null and undefined, which matters because the GET omitted this column until this row shipped
+    // and a cached client can still be holding a row that has no `covered` key at all.
+    editForm.covered     !== (editingLoc.covered == null ? '' : String(editingLoc.covered))
   )
 
   // The two ADD forms start empty, so `name` is the whole of their typed content: `slug` is derived
@@ -142,6 +147,12 @@ export default function Locations() {
           is_active:   loc.is_active,
           sort_order:  parseInt(editForm.sort_order) || 0,
           description: editForm.description.trim() || null,
+          // V4-COVEREDNOTMODELLED-001. Tri-state carried through the form as a STRING, because a
+          // <select> value is a string and '' is the only honest rendering of "not stated". Mapped
+          // back to a real boolean here; '' sends null, which the server's COALESCE treats as absent
+          // — so a location nobody has classified stays unclassified rather than being asserted
+          // open-to-the-sky by the act of editing its name.
+          covered:     editForm.covered === '' ? null : editForm.covered === 'true',
           // BUG-COALESCECLEAR-001. `|| null` above is the bug: the server binds these through
           // COALESCE, where null and absent are one token, so emptying the description box
           // returned 200 and kept the old text. `clear` is the only way to say NULL.
@@ -385,7 +396,7 @@ function LocationCard({ loc, depth, hasChildren,
                 canAddChild={loc.level < 3}
                 onEdit={() => {
                   setEditingId(loc.id)
-                  setEditForm({ name: loc.name, type_label: loc.type_label || '', sort_order: String(loc.sort_order ?? 0), description: loc.description || '' })
+                  setEditForm({ name: loc.name, type_label: loc.type_label || '', sort_order: String(loc.sort_order ?? 0), description: loc.description || '', covered: loc.covered == null ? '' : String(loc.covered) })
                   setMenuOpenId(null)
                 }}
                 onAddChild={() => {
@@ -506,6 +517,33 @@ function InlineEditForm({ form, setForm, onSave, onCancel }) {
             placeholder="Optional"
           />
         </Field>
+      </div>
+      {/* V4-COVEREDNOTMODELLED-001 — the rain-shelter flag the care engine reads.
+          A SELECT and not a checkbox, because the value is a TRI-state: a checkbox can only render
+          two of the three, and it would render "not stated" as unchecked — a positive claim that the
+          bed is open to the sky, which is exactly the wrong thing to assert on a bed nobody has
+          classified. Deliberately plain and unadorned: this is an operational property of a bed,
+          not a reward surface.
+          Edit-only, not on either ADD form. A location's cover is something Dave knows after he has
+          built the bed, and adding a third decision to the create path to save one later tap is a bad
+          trade — a new location's NULL resolves through the type_label heuristic exactly as it did
+          before this row. */}
+      <div style={{ marginBottom: 12 }}>
+        <Field label="Rain shelter" htmlFor="inline-edit-covered">
+          <Select
+            id="inline-edit-covered"
+            value={form.covered}
+            onChange={e => setForm(f => ({ ...f, covered: e.target.value }))}
+            placeholder="— not set —"
+            options={[
+              { value: 'true',  label: 'Under cover — rain does not reach it' },
+              { value: 'false', label: 'Open to the sky — gets the rain' },
+            ]}
+          />
+        </Field>
+        <div style={{ fontSize: '0.71rem', color: P.light, marginTop: 4 }}>
+          Under cover means watering never counts rainfall here — a low tunnel, a cold frame, a shelf indoors.
+        </div>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <Button

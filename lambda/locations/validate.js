@@ -18,13 +18,14 @@ export const CLEARABLE_FIELDS = [
 ];
 
 // ─── DELIBERATELY EXCLUDED, each for its own reason ──────────────────────────────────────────────
-//   name              NOT NULL (hard 23502) — AND itself a care-engine input: the coverage
-//                     derivation reads l.name in ('Stable','House'), which is how 26 more live
-//                     plantings resolve as covered (Stable 20, House 6). Doubly excluded. Note the
-//                     RENAME hazard is NOT closed by this list or by BUG-BLANKNAME-001's '' guard:
-//                     renaming Stable to anything else still resolves to a confident, WRONG
-//                     `false`. Name-matching is the actual defect; the durable fix is the explicit
-//                     editable locations.covered boolean that handler.js already names as V1.1.
+//   name              NOT NULL (hard 23502). It USED to be a care-engine input as well — the
+//                     coverage derivation read l.name in ('Stable','House'), which is how 22 live
+//                     plantings resolved as covered (Stable 16, House 6), so a rename resolved to a
+//                     confident WRONG `false` that neither this list nor BUG-BLANKNAME-001's ''
+//                     guard closed. V4-COVEREDNOTMODELLED-001 built the durable fix this note called
+//                     for: handler.js now reads the editable locations.covered flag and the name arm
+//                     is gone, so the RENAME hazard is closed and `name` is excluded here on the
+//                     NOT NULL ground alone.
 //   type_label        THE COVERAGE INPUT. Live: area 9, zone 6, shelf 5, rack 1; 21 of 21 non-NULL,
 //                     so NULL has never occurred in prod. Clearing it on Shelf 4 (15 live
 //                     plantings) or Shelf 2 (1) reclassifies 16 plantings in a single PUT.

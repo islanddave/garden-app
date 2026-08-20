@@ -55,8 +55,18 @@ describe('locations Lambda — Household Mode scope widening', () => {
 
   it('INSERT now binds created_by = ${userId} (was missing pre-household)', () => {
     const insIdx = SRC.indexOf('INSERT INTO locations');
-    const block = SRC.slice(insIdx, insIdx + 400);
-    expect(block).toMatch(/sort_order, description, created_by/);
+    // Bounded by the statement's own RETURNING rather than a magic character count. The old +400
+    // window was already within ~90 characters of clipping ${userId}, and V4-COVEREDNOTMODELLED-001's
+    // one extra column pushed it past the edge — at which point this guard stops covering the
+    // binding it is named for while still looking like it does.
+    const retIdx = SRC.indexOf('RETURNING', insIdx);
+    expect(retIdx, 'no RETURNING after the INSERT — the block bound has gone blind').toBeGreaterThan(insIdx);
+    const block = SRC.slice(insIdx, retIdx);
+    // V4-COVEREDNOTMODELLED-001 inserted `covered` ahead of created_by. Still pinned as a contiguous
+    // tail rather than loosened to a bare /created_by/, because the point of the assertion is that
+    // created_by is IN the column list at all — a regex that matched it anywhere in the block would
+    // also match the RETURNING clause and go quietly vacuous.
+    expect(block).toMatch(/sort_order, description, covered, created_by/);
     expect(block).toMatch(/\$\{userId\}/);
     expect(block).not.toMatch(/householdIds/);
   });

@@ -37,9 +37,16 @@ const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 const AUDIT_TABLES = ['locations'];
 
 // The GET list projection (SELECT ... FROM locations).
+//
+// V4-COVEREDNOTMODELLED-001 added `covered`. NOTE FOR WHOEVER APPLIES THAT MIGRATION: this array IS
+// the L-081 audit contract, and dev-main-schema-audit.py Phase 1 checks every entry against PROD's
+// information_schema — so this line asserts that locations.covered EXISTS ON PROD. It does not yet
+// (verified 2026-08-20). That is deliberate rather than an oversight: the audit going red is the
+// intended signal if this code somehow reaches prod ahead of migrations/v4-loccovered-001, and it is
+// one more reason the apply must precede the promote rather than follow it.
 const LIST_COLUMNS = [
   'id', 'name', 'slug', 'level', 'type_label', 'parent_id', 'sort_order',
-  'description', 'is_active', 'created_at',
+  'description', 'is_active', 'covered', 'created_at',
 ];
 
 // Predicate + ownership columns. Unselected but load-bearing: if `deleted_at` vanished from prod,
@@ -67,7 +74,7 @@ describe('locations SELECT-column contract (L-081 Phase 1)', () => {
   });
 
   it('pins the GET list projection', () => {
-    const m = /SELECT id, name, slug, level, type_label, parent_id, sort_order,\s*\n\s*description, is_active, created_at\s*\n\s*FROM locations\b/.exec(SRC);
+    const m = /SELECT id, name, slug, level, type_label, parent_id, sort_order,\s*\n\s*description, is_active, covered, created_at\s*\n\s*FROM locations\b/.exec(SRC);
     expect(m).not.toBeNull();
   });
 

@@ -698,10 +698,13 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- bean/cucurbits on a 30°F night). Additive SELECT only: engine.generatePlan copies named keys,
            -- so this never enters the stored plan payload.
            pv.crop_type_slug,
-           -- DRG-WATERCREDIT-001 V1: 'covered' (under cover -> no rain credit) is location-derived from Dave's
-           -- classification (2026-06-21): the Stable potting shed + the House + indoor shelves/racks/trays are
-           -- covered; all other locations (and no-location) are outdoor. V1.1 replaces this with an editable
-           -- locations.covered flag so new indoor spots are Dave-settable, not name-matched here.
+           -- DRG-WATERCREDIT-001 V1: 'covered' (under cover -> no rain credit) is location-derived. It began as
+           -- Dave's 2026-06-21 classification hard-coded as a NAME MATCH (the Stable potting shed + the House +
+           -- indoor shelves/racks/trays), which meant renaming a location silently reclassified every planting
+           -- in it with nothing logged and nothing 500ing.
+           -- V4-COVEREDNOTMODELLED-001 built the V1.1 this comment used to promise: an editable
+           -- locations.covered flag, backfilled from the name-match so the swap changed no behaviour, so a new
+           -- covered spot (a low tunnel, a cold frame) is Dave-settable instead of needing the right name.
            -- DRG-WXCOVERLOC-001: resolved from the PLANTING's own location (see the join below), NOT the
            -- project's — 78/250 active plantings sit in a location different from their project's, so the
            -- project-derived flag mis-credited both directions (11 wrongly covered, 15 wrongly outdoor).
@@ -731,7 +734,8 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            --
            -- type_label IS NULL is also unknown, not outdoor: it is the same defect reached through a
            -- populated location (clearing type_label on Shelf 4 would otherwise flip 15 plantings).
-           -- l.name is NOT NULL, so the Stable/House arm is always decisive when a location exists.
+           -- V4-COVEREDNOTMODELLED-001 narrowed how far that can reach: l.covered is decisive whenever it
+           -- is stated, so type_label only classifies a location created since the migration and left blank.
            --
             -- The three-state is computed ONCE in the cov lateral below and split here, so the two
            -- flags cannot drift apart under a later edit to one of them.
@@ -797,9 +801,16 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     left join locations       l  on l.id=coalesce(p.location_id, pj.location_id)
     -- BUG-NOLOCOUTDOOR-001: the coverage three-state, evaluated once. NULL = unknown, and the two
     -- resolved flags in the SELECT read it with IS FALSE / IS TRUE — deliberately not complements.
+    -- V4-COVEREDNOTMODELLED-001: l.covered — the editable flag — WINS, and the name-matching arm it
+    -- replaces is GONE. migrations/v4-loccovered-001/0b backfilled every location that existed at
+    -- apply time with exactly what the old name-match computed for it, so this returns byte-identical
+    -- state for all 21 live prod locations on day one; the only rows that can reach the arms below
+    -- are locations created AFTER the apply and not yet stated. Tested with IS NOT NULL and never for
+    -- truthiness: covered=false is a real answer (open to the sky), not an absence, and a truthiness
+    -- test would drop it through to the type_label heuristic instead of honouring Dave's answer.
     left join lateral (select case
              when l.id is null                            then null
-             when l.name in ('Stable','House')            then true
+             when l.covered is not null                   then l.covered
              when l.type_label in ('shelf','rack','tray') then true
              when l.type_label is null                    then null
              else false

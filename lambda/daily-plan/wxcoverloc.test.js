@@ -77,9 +77,38 @@ describe('DRG-WXCOVERLOC-001: covered is derived from the planting\'s own locati
     // Guards the other half: the join can be correct while the derivation drifts off the alias.
     // BUG-NOLOCOUTDOOR-001 replaced the single coalesce(...) with a three-state CASE in the `cov`
     // lateral. Anchored on the alias-bearing arms so a drift off `l` still reds.
-    expect(FLAT).toMatch(/when l\.name in \('Stable','House'\)\s*then true/);
+    // V4-COVEREDNOTMODELLED-001 replaced the `l.name in ('Stable','House')` arm this line used to
+    // pin with the editable flag. The name arm must be GONE, not merely joined by the flag: leaving
+    // both would keep the rename hazard alive for every location Dave has not yet stated, which is
+    // the whole defect. type_label survives as the not-yet-stated default and is still pinned.
+    expect(FLAT).toMatch(/when l\.covered is not null\s*then l\.covered/);
+    expect(FLAT).not.toMatch(/when l\.name in \('Stable','House'\)/);
     expect(FLAT).toMatch(/when l\.type_label in \('shelf','rack','tray'\)\s*then true/);
     expect(FLAT).toMatch(/when l\.id is null\s*then null/);
+  });
+
+  it('orders the cov arms so the editable flag outranks the type_label heuristic', () => {
+    // Precedence is the entire point and it is positional in a CASE, so pinning that both arms
+    // EXIST proves nothing — swapping them would leave every assertion above green while silently
+    // restoring heuristic-wins behaviour, so a shelf Dave has explicitly marked open-to-the-sky
+    // would go on being denied rain credit forever with no way to correct it from the app.
+    const flagAt = FLAT.search(/when l\.covered is not null/);
+    const typeAt = FLAT.search(/when l\.type_label in \('shelf','rack','tray'\)/);
+    const nullAt = FLAT.search(/when l\.id is null/);
+    expect(flagAt, 'the covered arm is missing entirely').toBeGreaterThan(-1);
+    expect(typeAt).toBeGreaterThan(flagAt);
+    // And the un-located arm stays FIRST — it is the BUG-NOLOCOUTDOOR-001 fail-safe, and a row with
+    // no location has no flag to read, so any arm placed above it would dereference l.* on a NULL
+    // row and resolve unknown to something confident.
+    expect(nullAt).toBeGreaterThan(-1);
+    expect(flagAt).toBeGreaterThan(nullAt);
+  });
+
+  it('reads the flag with IS NOT NULL, never as a truthiness test', () => {
+    // `when l.covered then true` would look equivalent and would silently drop covered=false into
+    // the type_label heuristic — so a bed Dave explicitly marked open-to-the-sky would be reclassified
+    // by its type_label instead of by his answer. false is an ANSWER here, not an absence.
+    expect(FLAT).not.toMatch(/when l\.covered\s+then/);
   });
 
   it('does NOT collapse an unknown location to outdoor (the pre-fix bug)', () => {

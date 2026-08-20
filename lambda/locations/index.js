@@ -275,15 +275,17 @@ export const handler = async (event) => {
         // An emptied box therefore sends '', which is not NULL, sails past both the COALESCE and
         // the NOT NULL constraint, and overwrites the name with an empty string.
         //
-        // On THIS table that is a care regression, not just cosmetics: daily-plan/handler.js
-        // derives `covered` partly from `l.name in ('Stable','House')`. Stable carries 20 live
-        // plantings and House 6, so blanking (or renaming) either one silently reclassifies 26
-        // plantings as OUTDOOR — they start taking rain credit under a roof and drop out of the
-        // frost pass's covered exclusion. Reachable from the edit form today; 0 blank rows on prod.
+        // This USED to be a care regression too, not just cosmetics: daily-plan/handler.js derived
+        // `covered` partly from `l.name in ('Stable','House')`, so blanking (or renaming) either one
+        // silently reclassified 22 plantings as OUTDOOR — taking rain credit under a roof and
+        // dropping out of the frost pass's covered exclusion.
         //
-        // Renaming remains possible and is not guarded here — a rename is a legitimate edit whose
-        // care consequence is the name-matching predicate's fault, tracked separately. Blanking is
-        // never legitimate. varieties/validate.js:54 already refuses exactly this shape.
+        // V4-COVEREDNOTMODELLED-001 removed that coupling: coverage now reads the editable
+        // locations.covered flag, so neither blanking nor renaming touches the care engine any more,
+        // and the rename hazard this note flagged as "tracked separately" is closed. The guard stays
+        // regardless — a blank name is never legitimate on its own terms, it is reachable from the
+        // edit form, and varieties/validate.js:54 already refuses exactly this shape.
+        // 0 blank rows on prod.
         //
         // Deliberately NOT `!body.name` and NOT hasOwnProperty-alone: `name: null` and an absent
         // key are the EXISTING no-op grammar of this COALESCE PUT, and every current caller relies
@@ -309,6 +311,14 @@ export const handler = async (event) => {
             sort_order  = COALESCE(${body.sort_order ?? null}, sort_order),
             description = CASE WHEN ${clear} @> ARRAY['description'] THEN NULL ELSE COALESCE(${body.description ?? null}, description) END,
             is_active   = COALESCE(${body.is_active ?? null}, is_active),
+            -- V4-COVEREDNOTMODELLED-001. COALESCE handles a false correctly (it skips NULL, not
+            -- falsiness), so both directions are settable and an absent key stays a no-op — the same
+            -- grammar is_active has relied on since this PUT was written.
+            -- DELIBERATELY NOT in CLEARABLE_FIELDS: covered is a care-engine input on the nightly
+            -- critical path, and clearing it back to NULL would hand a bed Dave has already
+            -- classified back to the type_label heuristic. Setting it wrong is one more tap to fix;
+            -- there is no operation "I no longer know whether this bed is under cover".
+            covered     = COALESCE(${body.covered ?? null}, covered),
             featured_photo_id = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE featured_photo_id
@@ -372,7 +382,7 @@ export const handler = async (event) => {
       const [locRows, pathRows] = await Promise.all([
         sql`
           SELECT id, name, slug, level, type_label, parent_id, sort_order,
-                 description, is_active, created_at
+                 description, is_active, covered, created_at
           FROM locations
           WHERE deleted_at IS NULL AND created_by = ANY(${householdIds})
           ORDER BY level, sort_order, name
@@ -421,7 +431,7 @@ export const handler = async (event) => {
 
       const rows = await sql`
         INSERT INTO locations
-          (name, slug, level, type_label, parent_id, sort_order, description, created_by)
+          (name, slug, level, type_label, parent_id, sort_order, description, covered, created_by)
         VALUES (
           ${body.name},
           ${slug},
@@ -430,6 +440,11 @@ export const handler = async (event) => {
           ${body.parent_id ?? null},
           ${body.sort_order ?? 0},
           ${body.description ?? null},
+          -- V4-COVEREDNOTMODELLED-001. Defaults to NULL = "not stated", NOT to false. A new location
+          -- is genuinely unclassified, and the reader resolves NULL through the type_label heuristic
+          -- rather than asserting the bed is open to the sky. Writing false here would be a claim
+          -- nobody made.
+          ${body.covered ?? null},
           ${userId}
         )
         RETURNING *
