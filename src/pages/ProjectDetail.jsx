@@ -210,6 +210,8 @@ export default function ProjectDetail() {
   // Partial photo-delete failure report (continue-and-report; see confirmEventDelete).
   const [deleteErr, setDeleteErr] = useState(null)
   const logFormRef = useRef(null)
+  // BUG-PHOTOUPLOADKBD-001: the mini-logger's photo trigger is a <button> that clicks this input.
+  const miniPhotoInputRef = useRef(null)
 
   // V2-PHOTO-F1 Session 2: staged photo for inline mini-event-logger. Mirrors
   // EventNew's pattern — file selected first, uploaded after event POST so the
@@ -1272,23 +1274,40 @@ export default function ProjectDetail() {
                     }}>✕</button>
                 </div>
               ) : (
-                <label
-                  data-testid="mini-photo-label"
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-                    padding: '14px 12px', border: `2px dashed ${P.border}`, borderRadius: 8,
-                    cursor: 'pointer', backgroundColor: P.cream, color: P.mid, fontSize: '0.85rem',
-                  }}>
-                  <Icon name="media.camera" decorative size={20} />
-                  <span>Tap to take or choose a photo</span>
+                // BUG-PHOTOUPLOADKBD-001: was a <label> wrapping the display:none input — no
+                // tabindex, no role, and the input out of the tab order, so the only way to stage a
+                // photo here was a pointer. Now a real <button> that clicks the input. The wrapper
+                // <div> is load-bearing: Field clones only its FIRST element child and silently
+                // DROPS any later one (Field.jsx:63-83), so button+input must arrive as one child.
+                // aria-label rather than the visible copy: "Tap to…" is wrong for a keyboard user.
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => miniPhotoInputRef.current?.click()}
+                    aria-label="Take or choose a photo"
+                    data-testid="mini-photo-trigger"
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                      width: '100%', boxSizing: 'border-box',
+                      padding: '14px 12px', border: `2px dashed ${P.border}`, borderRadius: 8,
+                      cursor: 'pointer', backgroundColor: P.cream, color: P.mid, fontSize: '0.85rem',
+                      fontFamily: 'inherit', fontWeight: 'inherit', lineHeight: 'inherit',
+                      margin: 0, appearance: 'none', WebkitAppearance: 'none',
+                    }}>
+                    <Icon name="media.camera" decorative size={20} />
+                    <span>Tap to take or choose a photo</span>
+                  </button>
                   <input
+                    ref={miniPhotoInputRef}
                     type="file"
                     accept="image/*"
                     onChange={handleMiniPhotoChange}
+                    aria-hidden="true"
+                    tabIndex={-1}
                     style={{ display: 'none' }}
                     data-testid="mini-photo-input"
                   />
-                </label>
+                </div>
               )}
             </Field>
 

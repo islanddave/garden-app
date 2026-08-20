@@ -149,14 +149,17 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
       expect(screen.getByRole(role, { name })).toBeTruthy()
     })
 
-    it('PhotoUpload icon-only: the name is on the file input, and the label no longer claims it', () => {
+    it('PhotoUpload icon-only: the name is on the trigger button, and no <label> claims it', () => {
       const { container } = render(
         <PhotoUpload keyPrefix="standalone" buttonLabel={<Icon name="action.camera" decorative />} ariaLabel="Add photo" />
       )
-      // Before: <label aria-label="Add photo"> with an icon-only body — label has no ARIA role, so
-      // nothing carried the name and the control was anonymous.
-      expect(container.querySelector('label').hasAttribute('aria-label')).toBe(false)
-      expect(screen.getByLabelText('Add photo').tagName).toBe('INPUT')
+      // Two eras of this bug. V4-A11YGATE-001: <label aria-label="Add photo"> with an icon-only body
+      // — label has no ARIA role, so nothing carried the name and the control was anonymous; the fix
+      // moved the name to the file input. BUG-PHOTOUPLOADKBD-001: that input is display:none, which
+      // is out of the tab order AND out of the a11y tree, so the name landed somewhere no user could
+      // reach. The trigger is now a <button>, which both carries a name and is focusable.
+      expect(container.querySelector('label')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Add photo' })).toBeTruthy()
     })
 
     it('GardenActivity-style decorative markers stay out of the tree rather than double-announcing', () => {

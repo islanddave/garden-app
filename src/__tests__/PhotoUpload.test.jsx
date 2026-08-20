@@ -6,6 +6,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 const { uploadSpy, stateRef } = vi.hoisted(() => ({
   uploadSpy: vi.fn(),
@@ -175,6 +176,83 @@ describe('PhotoUpload — visual state', () => {
   it('disables input when prop disabled=true', () => {
     render(<PhotoUpload disabled />);
     expect(screen.getByTestId('photo-upload-input').disabled).toBe(true);
+  });
+});
+
+// BUG-PHOTOUPLOADKBD-001 — the single-mode trigger was a <label> wrapping a display:none <input>.
+// display:none removes the input from the tab order AND the accessibility tree, and a <label> has no
+// tabindex and no role, so the control was operable by pointer only.
+//
+// WHY THESE ASSERTIONS AND NOT AN AXE CASE. a11yGate.test.jsx already renders this component's
+// icon-only single mode through axe (a11yGate.test.jsx:83) and was green on the defective markup.
+// Measured on the pre-fix tree: axe returns ZERO findings — not merely zero violations — for the
+// gate's rule set AND for axe's full default rule set. It cannot see this class at all: a
+// display:none subtree is excluded from the audit outright, and a <label> is not an interactive
+// element, so no rule has anything to fire on. Only focus + activation are observable, so those are
+// what these assert. document.activeElement rather than a matcher: this file loads no jest-dom.
+describe('PhotoUpload — single-mode keyboard reachability (BUG-PHOTOUPLOADKBD-001)', () => {
+  it('the trigger is in the tab order', async () => {
+    const user = userEvent.setup();
+    render(<PhotoUpload buttonLabel="Add Photo" />);
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add Photo' }));
+  });
+
+  it('an icon-only trigger is reachable and named by ariaLabel', async () => {
+    const user = userEvent.setup();
+    render(<PhotoUpload buttonLabel={<span aria-hidden="true">📷</span>} ariaLabel="Add photo" />);
+    await user.tab();
+    // The high-traffic call sites (PlantingTile, ProjectDetail per-plant) are all this shape.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add photo' }));
+  });
+
+  it('Enter on the focused trigger opens the file picker', async () => {
+    const user = userEvent.setup();
+    render(<PhotoUpload buttonLabel="Add Photo" />);
+    const clickSpy = vi.spyOn(screen.getByTestId('photo-upload-input'), 'click');
+    await user.tab();
+    await user.keyboard('{Enter}');
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('Space on the focused trigger opens the file picker', async () => {
+    const user = userEvent.setup();
+    render(<PhotoUpload buttonLabel="Add Photo" />);
+    const clickSpy = vi.spyOn(screen.getByTestId('photo-upload-input'), 'click');
+    await user.tab();
+    await user.keyboard(' ');
+    // Enter AND Space, separately: a focusable <label> with tabIndex={0} — the tempting cheap fix —
+    // would satisfy the tab-order test above and forward neither key to its control.
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('the hidden input stays out of the tab order and the a11y tree', () => {
+    render(<PhotoUpload buttonLabel="Add Photo" />);
+    const input = screen.getByTestId('photo-upload-input');
+    expect(input.getAttribute('tabindex')).toBe('-1');
+    expect(input.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('a busy trigger does not open the picker', async () => {
+    const user = userEvent.setup();
+    stateRef.current = { isUploading: true, error: null, photo: null, preview: null };
+    render(<PhotoUpload buttonLabel="Add Photo" />);
+    const clickSpy = vi.spyOn(screen.getByTestId('photo-upload-input'), 'click');
+    await user.click(screen.getByRole('button', { name: 'Uploading…' }));
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  it('opening the picker leaves single-mode capture as the JSX set it', async () => {
+    const user = userEvent.setup();
+    render(<PhotoUpload buttonLabel="Add Photo" />);
+    const input = screen.getByTestId('photo-upload-input');
+    vi.spyOn(input, 'click');
+    await user.click(screen.getByRole('button', { name: 'Add Photo' }));
+    // openPicker is shared with both mode, where it SETS/REMOVES capture per choice. Single mode's
+    // capture is a prop-driven static, so it must pass no argument and openPicker must test for an
+    // explicit boolean — a truthy test would strip capture="environment" on every open and silently
+    // kill camera invocation on Android.
+    expect(input.getAttribute('capture')).toBe('environment');
   });
 });
 
