@@ -27,6 +27,12 @@ export default function PlantStatusBadge({ status, size = 'sm' }) {
   return (
     <span
       // aria-label folds the glyph out and reads just "Status: <label>" to AT.
+      // role="img" is what MAKES that true (V4-A11YGATE-001): a role-less span is role=generic,
+      // generic cannot be named, and the label was being discarded in favour of the visible text —
+      // so this read "Growing", not "Status: Growing", for as long as the comment above claimed
+      // otherwise. img also folds the glyph + text into one atomic announcement, which is the
+      // stated intent. Children are already presentational (Icon is decorative).
+      role="img"
       aria-label={`Status: ${statusLabel(status)}`}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,

@@ -148,8 +148,12 @@ function M3Panel({ m3 }) {
         {available && (
           <div style={{ height: '100%', width: `${pct}%`, background: rate >= canary ? '#4a7c59' : '#b94a3a', transition: 'width 200ms ease' }} />
         )}
-        {/* 40% canary line always drawn */}
-        <div aria-label={`canary line ${Math.round(canary * 100)}%`}
+        {/* 40% canary line always drawn. V4-A11YGATE-001: this carried a bare aria-label, which on a
+            role-less (role=generic) div is discarded — and the div has no text, so it announced
+            NOTHING (axe: violation; the WATERWHY shape exactly). Marked decorative rather than
+            re-roled to img, because the <p> below unconditionally prints "· canary at N%": the fact
+            is already in text, and a second announcement of it is noise, not access. */}
+        <div aria-hidden="true"
              style={{ position: 'absolute', top: 0, bottom: 0, left: `${Math.round(canary * 100)}%`, width: 2, background: '#c0392b' }} />
       </div>
       <p style={{ margin: '6px 0 0', fontSize: '0.82rem', color: '#666' }}>

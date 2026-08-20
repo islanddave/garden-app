@@ -44,6 +44,10 @@ export default function CropWeightLine({ weight }) {
     <>
       <span
         data-testid="crop-weight"
+        // role="img" (V4-A11YGATE-001): a role-less span is role=generic and cannot hold a name, so
+        // this label was discarded and AT read the raw "≈ 2.4 kg" — the ≈ being exactly the glyph
+        // the label exists to spell out. img names the number+qualifier as one unit.
+        role="img"
         aria-label={`${weight.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${text}`}
         style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: P.green, marginTop: 2 }}
       >

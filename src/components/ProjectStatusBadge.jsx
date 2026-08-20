@@ -15,6 +15,10 @@ export default function ProjectStatusBadge({ status, style }) {
   const sc = getStatusColors(status)
   return (
     <span
+      // role="img" is load-bearing, not decoration (V4-A11YGATE-001): without it this span is
+      // role=generic, which cannot carry a name, so the aria-label was dropped and AT read the
+      // bare label text — see the header note above, which described the intent, not the behavior.
+      role="img"
       aria-label={`Status: ${statusLabel(status)}`}
       style={{
         display: 'inline-flex', alignItems: 'center',

@@ -218,10 +218,16 @@ function DesktopOnlyPlacard() {
   )
 }
 
+// V4-A11YGATE-001: the bar was a bare <div aria-label>. A role-less div is role=generic, generic
+// cannot be named, and the bar has no text of its own — so it announced NOTHING at all (axe:
+// violation, the same shape as the WATERWHY blackout). progressbar is the honest role and carries
+// the numbers as state rather than baking them into a string.
 function ProgressBar({ n, total }) {
   const pct = total > 0 ? Math.round((n / total) * 100) : 0
   return (
-    <div aria-label={`progress ${n} of ${total}`}
+    <div role="progressbar"
+         aria-valuenow={n} aria-valuemin={0} aria-valuemax={total}
+         aria-label={`progress ${n} of ${total}`}
          style={{ height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden', marginTop: 8 }}>
       <div style={{ height: '100%', width: `${pct}%`, background: '#4a7c59', transition: 'width 200ms ease' }} />
     </div>

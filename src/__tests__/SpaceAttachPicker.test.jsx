@@ -59,7 +59,11 @@ function wireFetch({ list = LIST, failIds = new Set(), listError = null } = {}) 
   })
 }
 
-const tile = (caption) => screen.getByRole('listitem', { name: new RegExp(caption) })
+// V4-A11YGATE-001: the tile is a BUTTON inside a listitem wrapper, not a listitem pretending to be
+// a button. Selecting it by its button role is what keeps this helper honest — under the old markup
+// `getByRole('listitem', { name })` matched a role that cannot be named, and the mirror assertion
+// `queryByRole('listitem', { name: /already here/ })` below would have passed vacuously.
+const tile = (caption) => screen.getByRole('button', { name: new RegExp(caption) })
 
 beforeEach(() => { fetchSpy.mockReset(); document.body.innerHTML = '' })
 
@@ -70,8 +74,11 @@ describe('candidate set', () => {
     wireFetch()
     mount()
     await screen.findByRole('list', { name: 'Photos you can add' })
-    expect(screen.queryByRole('listitem', { name: /already here/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /already here/ })).toBeNull()
     expect(screen.getAllByRole('listitem')).toHaveLength(3)
+    // The tiles are real toggles again: button role + a valid aria-pressed (V4-A11YGATE-001).
+    expect(screen.getAllByRole('button', { name: /^Select / })).toHaveLength(3)
+    expect(tile('wide shot').getAttribute('aria-pressed')).toBe('false')
   })
 
   it('distinguishes "you have no photos" from "they are all already here"', async () => {

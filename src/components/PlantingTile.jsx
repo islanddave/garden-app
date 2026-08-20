@@ -180,6 +180,9 @@ export default function PlantingTile({
 
         {photoCount != null && photoCount > 0 && (
           <span
+            // role="img" (V4-A11YGATE-001) — without it the span is role=generic, the label is
+            // discarded, and this badge announced the bare digit "3" with no noun attached.
+            role="img"
             aria-label={`${photoCount} ${photoCount === 1 ? 'photo' : 'photos'}`}
             style={{
               position: 'absolute', left: 6, bottom: 6,

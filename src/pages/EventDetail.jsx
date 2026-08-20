@@ -908,6 +908,9 @@ function HarvestReadout({ harvest }) {
         <div style={{ marginTop: 6 }}>
           <div
             data-testid="event-harvest-weight"
+            // role="img" (V4-A11YGATE-001) — role-less div is role=generic, which cannot be named,
+            // so this label was dropped and the ≈ prefix carried the estimate disclosure alone.
+            role="img"
             aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
             style={{ fontSize: '0.9rem', fontWeight: 600, color: wt.estimated ? P.light : P.green }}
           >
