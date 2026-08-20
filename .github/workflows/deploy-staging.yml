@@ -684,12 +684,12 @@ jobs:
         with:
           ref: ${{ inputs.dev_sha || github.sha }}
 
-      - name: Install postgresql-client
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client
-
       - name: Run schema integrity check
+        # OPS-SCHEMACHECKAPT-001: no postgresql-client install step. ubuntu-24.04 (pinned
+        # above, so the version cannot drift under us) ships psql 16.14 on PATH, and
+        # check-schema.sh only ever runs psql — which, unlike pg_dump/pg_restore, has no
+        # major-version match requirement against the PG 17 staging Neon branch. The apt
+        # fetch was a ship-time network dependency for a binary already on the runner.
         run: bash tests/schema/check-schema.sh
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -798,6 +798,12 @@ jobs:
         # widened with an event_id-scoped predicate matching both event_log sweep shapes. 0-row
         # no-op against staging today (zero smoke photos carry an event_id, verified in the
         # pre-apply audit) — latent-correctness edit, same class as the 2026-08-04 additions.
+        #
+        # 2026-08-20 (OPS-SCHEMACHECKAPT-001): the two apt-get lines that used to open this
+        # sweep are gone. ubuntu-24.04 (pinned on this job) ships psql 16.14 on PATH and the
+        # sweep is psql-only, so there is nothing to install — psql, unlike pg_dump/pg_restore,
+        # carries no major-version match requirement against the PG 17 staging branch. They
+        # were also `>/dev/null 2>&1`-silenced, so an apt flake failed this step with no output.
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -806,8 +812,6 @@ jobs:
             echo "⚠ NEON_STAGING_URL secret not set — skipping L-058 cleanup"
             exit 0
           fi
-          sudo apt-get update -qq >/dev/null 2>&1
-          sudo apt-get install -y -qq postgresql-client >/dev/null 2>&1
           echo "🧹 L-058 cleanup sweep starting against staging Neon (FK-safe order)..."
           psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \
             -c "DELETE FROM harvest_log    WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \

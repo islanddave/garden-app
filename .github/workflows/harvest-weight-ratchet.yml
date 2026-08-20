@@ -50,10 +50,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install psql client
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-
       - name: Run the ratchet
+        # OPS-SCHEMACHECKAPT-001: no psql install step. The ubuntu runner image ships a
+        # postgresql client on PATH (16.14 on ubuntu-24.04, 18.4 on 26.04), and this job
+        # only ever runs psql — which, unlike pg_dump/pg_restore, has no major-version
+        # match requirement against the PG 17 Neon server. Fetching one from apt was a
+        # ship-time network dependency for a binary already on the box.
         id: run
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
