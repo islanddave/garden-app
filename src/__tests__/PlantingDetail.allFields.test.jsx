@@ -197,6 +197,40 @@ describe('PlantingDetail — All-fields tab (read-side counterpart to V4-EDITCOM
     expect(screen.getByText('variety_ref').parentElement.textContent).toContain('"species":"Capsicum annuum"')
   })
 
+  // Length elision. featured_photo_view_url is a presigned S3 URL ~700 chars long; rendering it whole
+  // put a time-limited credential on screen as readable text and buried the row on a 390px phone,
+  // while adding nothing (the same URL is already the <img src>). The rule is by LENGTH, not by field
+  // name — a per-field carve-out would be the "second curated list wearing a different hat" this
+  // tab exists to avoid. Completeness survives: the row is still present and still reports true size.
+  it('elides an over-long value to its head plus a true character count', async () => {
+    const signature = 'f'.repeat(600)
+    const presigned = `https://garden-photos.s3.amazonaws.com/photos/abc123.jpg?X-Amz-Signature=${signature}`
+    PLANTING = { ...FULL, featured_photo_view_url: presigned }
+    await openTab('All')
+    const row = screen.getByText('featured_photo_view_url').parentElement
+    expect(row.textContent).toBe(
+      `featured_photo_view_url${presigned.slice(0, 60)}… (${presigned.length} chars)`,
+    )
+    // The point of the change: the credential itself never reaches the DOM.
+    expect(row.textContent).not.toContain(signature)
+  })
+
+  // Boundary pinned from both sides so the threshold cannot drift silently: 120 renders whole, 121
+  // elides. Without the at-limit case, raising RAW_MAX_CHARS would leave every test green.
+  it('renders an at-limit value whole and elides one character past it', async () => {
+    PLANTING = { ...FULL, lineage_note: 'x'.repeat(120) }
+    await openTab('All')
+    expect(screen.getByText('lineage_note').parentElement.textContent)
+      .toBe(`lineage_note${'x'.repeat(120)}`)
+  })
+
+  it('elides at one character past the limit', async () => {
+    PLANTING = { ...FULL, lineage_note: 'y'.repeat(121) }
+    await openTab('All')
+    expect(screen.getByText('lineage_note').parentElement.textContent)
+      .toBe(`lineage_note${'y'.repeat(60)}… (121 chars)`)
+  })
+
   // The sparse planting is the one whose raw record is most worth reaching. The curated tabs keep
   // their empty state (asserted here so the carve-out cannot be "fixed" by deleting one side of it).
   it('shows the raw record on a planting the curated tabs call empty', async () => {

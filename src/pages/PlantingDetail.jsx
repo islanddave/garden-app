@@ -89,11 +89,20 @@ function fmtDate(value) {
 // Nothing else is formatted: the tab's promise is completeness, and per-field prettying here would
 // just be a second curated list wearing a different hat.
 const RAW_NOT_RECORDED = 'Not recorded'
+// Length elision, NOT per-field formatting — the distinction matters and is why this does not
+// contradict the note above. featured_photo_view_url is a presigned S3 URL ~700 chars long: dumping
+// it whole is a wall of text on a 390px screen and puts a time-limited credential on screen as
+// readable text, while adding nothing (the same URL is already the <img src> below). Eliding by
+// LENGTH keeps the tab's completeness promise — the field is still listed, still distinguishes ""
+// from NULL, still shows its head and its true size — without a rule that knows about any one field.
+const RAW_MAX_CHARS = 120
+const RAW_HEAD_CHARS = 60
 function rawFieldValue(value) {
   if (value === null || value === undefined) return RAW_NOT_RECORDED
   if (typeof value === 'object') return JSON.stringify(value)
   const s = String(value)
-  return s === '' ? '""' : s
+  if (s === '') return '""'
+  return s.length > RAW_MAX_CHARS ? `${s.slice(0, RAW_HEAD_CHARS)}… (${s.length} chars)` : s
 }
 
 export default function PlantingDetail() {
