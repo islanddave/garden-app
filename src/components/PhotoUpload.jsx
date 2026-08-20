@@ -25,8 +25,8 @@
 //   mode          : 'single' (default) | 'both'
 //   buttonLabel   : single-mode trigger content (default 'Add Photo'); may be a node (e.g. an Icon)
 //   ariaLabel     : single-mode accessible name — REQUIRED when buttonLabel is icon-only/decorative
-//                   (else the control has no accessible name). Lands on the file <input>, not on the
-//                   <label>: a <label> has no ARIA role and silently discards aria-label. No-op in both mode.
+//                   (else the control has no accessible name). Lands on the trigger <button>, which
+//                   has a role that can carry it. No-op in both mode.
 //   takeLabel     : both-mode camera trigger text (default '📷 Take photo')
 //   chooseLabel   : both-mode library trigger text (default '🖼️ Choose photo')
 //   showPreview   : default true
@@ -50,6 +50,24 @@ const DEFAULT_BTN_STYLE = {
   fontWeight: 500,
   textAlign: 'center',
   userSelect: 'none',
+};
+
+// BUG-PHOTOUPLOADKBD-001: the single-mode trigger was a <label> wrapping a display:none <input>.
+// display:none takes the input out of the tab order AND the a11y tree, and a <label> has neither a
+// tabindex nor a role, so the control was pointer-only — unreachable by keyboard at all. It is now a
+// real <button> that clicks the hidden input, the pattern both mode has always used. A <button>
+// carries UA form-control defaults a <label> does not (system font, line-height:normal, native
+// chrome); this reset goes UNDER the caller's style so the re-roled trigger renders identically.
+const TRIGGER_RESET = {
+  fontFamily: 'inherit',
+  fontSize: 'inherit',
+  fontWeight: 'inherit',
+  lineHeight: 'inherit',
+  letterSpacing: 'inherit',
+  textAlign: 'inherit',
+  margin: 0,
+  appearance: 'none',
+  WebkitAppearance: 'none',
 };
 
 const CHOICE_BTN_STYLE = {
@@ -129,11 +147,14 @@ export function PhotoUpload({
 
   // both-mode: toggle the capture attribute imperatively, then open the picker within the
   // user gesture so iOS/Android open the camera (capture) vs the photo library (no capture).
+  // Tri-state, not truthy: single mode calls this with NO argument, and its `capture` is a
+  // prop-driven static (captureProps below), so the attribute must be left exactly as the JSX
+  // set it — a truthy test would strip capture="environment" on every single-mode open.
   const openPicker = useCallback((useCamera) => {
     const el = inputRef.current;
     if (!el || busy) return;
-    if (useCamera) el.setAttribute('capture', 'environment');
-    else el.removeAttribute('capture');
+    if (useCamera === true) el.setAttribute('capture', 'environment');
+    else if (useCamera === false) el.removeAttribute('capture');
     el.click();
   }, [busy]);
 
@@ -142,9 +163,9 @@ export function PhotoUpload({
 
   const choiceStyle = (buttonStyle ?? CHOICE_BTN_STYLE);
   const choiceStyleBusy = busy ? { ...choiceStyle, opacity: 0.6, cursor: 'not-allowed' } : choiceStyle;
-  const labelStyle = busy
-    ? { ...(buttonStyle ?? DEFAULT_BTN_STYLE), opacity: 0.6, cursor: 'not-allowed' }
-    : (buttonStyle ?? DEFAULT_BTN_STYLE);
+  const triggerStyle = busy
+    ? { ...TRIGGER_RESET, ...(buttonStyle ?? DEFAULT_BTN_STYLE), opacity: 0.6, cursor: 'not-allowed' }
+    : { ...TRIGGER_RESET, ...(buttonStyle ?? DEFAULT_BTN_STYLE) };
 
   return (
     <div className="photo-upload" data-testid="photo-upload">
@@ -182,8 +203,22 @@ export function PhotoUpload({
           />
         </>
       ) : (
-        <label htmlFor={resolvedId} style={labelStyle}>
-          {isUploading ? busyLabel : buttonLabel}
+        <>
+          {/* V4-A11YGATE-001 history: ariaLabel used to sit on the <label>, which has no ARIA role
+              and so dropped it. BUG-PHOTOUPLOADKBD-001 retires the <label> entirely — the name now
+              rides the <button>, whose role can carry it, and which is in the tab order. The input
+              keeps id={resolvedId}: the plant-list-photo-<id> / plant-photo-<id> / project-photo-<id>
+              contract is driven by automated bulk-attach sessions outside the app. */}
+          <button
+            type="button"
+            onClick={() => openPicker()}
+            disabled={busy}
+            aria-label={ariaLabel || undefined}
+            data-testid="photo-upload-trigger"
+            style={triggerStyle}
+          >
+            {isUploading ? busyLabel : buttonLabel}
+          </button>
           <input
             ref={inputRef}
             id={resolvedId}
@@ -192,15 +227,12 @@ export function PhotoUpload({
             {...captureProps}
             onChange={handleChange}
             disabled={busy}
-            // V4-A11YGATE-001: ariaLabel used to sit on the <label>. <label> has no ARIA role, so
-            // aria-label there is prohibited and dropped — and with an icon-only buttonLabel the
-            // label element has no text either, so the whole control was nameless (axe: violation,
-            // not merely "needs review"). The name belongs on the control the label points at.
-            aria-label={ariaLabel || undefined}
+            aria-hidden="true"
+            tabIndex={-1}
             style={{ display: 'none' }}
             data-testid="photo-upload-input"
           />
-        </label>
+        </>
       )}
 
       {showPreview && preview && (
