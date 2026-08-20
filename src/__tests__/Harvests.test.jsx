@@ -193,10 +193,11 @@ describe('Harvests page', () => {
         { variety_id: 'v2', variety_name: 'Brandywine', units: [{ unit: 'count', unit_key: 'count', total: 2, count: 1 }], unquantified: 0 },
       ],
     }]
-    // V4-HARVCROPTABLE-001: the block is a Planting | Count | Total weight table now. The date is
-    // still on the wire (the season universe derives from it) — it is just no longer a column.
+    // V4-HARVCROPTABLE-001: the block is a Planting | Count | Total weight | First pick table now.
+    // Date built off the clock — the component year-qualifies anything that is not the current year,
+    // so a hardcoded '2026-06-14' would silently start rendering "Jun 14, 2026" next January.
     const firstPick = [{
-      plant_id: 'p1', planting_name: 'Bed A tomato', crop_type_slug: 'tomato', first_pick_date: '2026-06-14',
+      plant_id: 'p1', planting_name: 'Bed A tomato', crop_type_slug: 'tomato', first_pick_date: `${new Date().getFullYear()}-06-14`,
       units: [{ unit: 'count', unit_key: 'count', total: 6, count: 2 }],
       unquantified: 0,
       weight: { grams: 1400, measured_grams: 1400, estimated_grams: 0, measured: 2, estimated: 0, unweighed: 0 },
@@ -212,7 +213,7 @@ describe('Harvests page', () => {
     expect(screen.getByText('Bed A tomato')).toBeTruthy()
     expect(screen.getByTestId('planting-count').textContent).toBe('6')
     expect(screen.getByTestId('planting-weight').textContent).toBe('1.4 kg')
-    expect(screen.queryByText(/First pick/)).toBeNull()
+    expect(screen.getByTestId('planting-first-pick').textContent).toBe('Jun 14')
     expect(screen.getByText(/See in log/)).toBeTruthy()
   })
 
