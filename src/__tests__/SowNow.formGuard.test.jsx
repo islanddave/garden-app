@@ -4,8 +4,10 @@
 // SowNow's own local state carries no typed text — the only thing here a reload/dismiss could
 // destroy is WHICH packet the Sow sheet is open on (`sowTarget`), set from either an ordinary Sow
 // tap or the "Sow anyway" engine-override tap on a gated hold. PlantingEditor owns its own field
-// state (place/quantity/notes) with no callback SowNow can observe, so the stash recovers the
-// packet, not the sheet's contents — see the reasoning comment on `dirty` in SowNow.jsx itself.
+// state (place/quantity/notes) and reports only a BOOLEAN out of it (`onDirty`), so the stash
+// recovers the packet, not the sheet's contents — see the reasoning comment on `dirty` in SowNow.jsx
+// itself, and the V4-PLANTEDITORWIRE-001 describe at the bottom of this file for what that boolean
+// IS wired to: the Sheet's backdrop guard.
 //
 // THE STASH IS ABNORMAL-EXIT-ONLY HERE, and that is the one place this page's contract diverges
 // from EventNew/LogMany. Restoring `sowTarget` re-OPENS a modal; restoring their drafts refills
@@ -21,7 +23,7 @@
 // Harness mirrors SowNow.test.jsx (real sowEngine, fixed today=2026-07-10, same fetch routing shape).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, within, act } from '@testing-library/react'
+import { render, screen, fireEvent, within, act, waitFor } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
 installStoragePolyfill()
@@ -405,5 +407,132 @@ describe('SowNow ↔ registerSW, end to end (V4-RELOADGATEWIRE-001)', () => {
     env.sw.dispatchEvent(new Event('controllerchange'))
     expect(env.reload).toHaveBeenCalledTimes(1)
     teardown()
+  })
+})
+
+// ── V4-PLANTEDITORWIRE-001 — the embedded editor's dirty signal reaches the Sheet ────────────────
+//
+// The reload gate above holds on `!!sowTarget`, so it already covers everything the editor could be
+// holding — editorDirty ⟹ sowTarget, and an OR of the two is arithmetically the same predicate.
+// What `!!sowTarget` never covered is the BACKDROP: Sheet no-ops a backdrop tap only while `dirty`,
+// and this page passed no `dirty` at all, so until now a stray tap beside a half-filled sow form
+// discarded every field in it with no confirmation and nothing stashed to recover them from.
+//
+// So these tests run in BOTH directions on purpose. An always-dirty sheet is not the safe failure
+// here — it makes the dominant mobile dismissal gesture silently inert for every sow, including the
+// far more common one where the sheet was opened by mistake and holds nothing. The pair
+// "untouched → backdrop closes" / "typed → backdrop no-ops" is the whole contract, and either one
+// alone passes for a constant.
+describe('SowNow — Sheet backdrop guard over the embedded editor (V4-PLANTEDITORWIRE-001)', () => {
+  // The backdrop is the fixed div rendered immediately before the panel (Sheet.jsx), matched by
+  // position rather than by a style-substring query: this page renders other fixed elements and
+  // `container.querySelector('div[style*="position: fixed"]')` would be a lottery among them.
+  const backdrop = () => screen.getByRole('dialog').previousElementSibling
+
+  async function openSheet() {
+    await act(async () => {
+      fireEvent.click(await screen.findByLabelText('Sow Spacemaster 80'))
+    })
+    const dialog = await screen.findByRole('dialog')
+    // The packet/variety prefill has landed — so "untouched" below really means untouched-with-
+    // fields-already-filled, which is the state a truthiness predicate would misread as dirty.
+    await waitFor(() => expect(within(dialog).getByLabelText(/Name/i).value).toBe('Spacemaster 80 Cucumber Seeds'))
+    return dialog
+  }
+
+  async function typeInEditor(dialog) {
+    await act(async () => {
+      fireEvent.change(within(dialog).getByLabelText('Quantity'), { target: { value: '6' } })
+    })
+    expect(within(dialog).getByLabelText('Quantity').value).toBe('6')
+  }
+
+  // ★ The over-broad killer. Machine-prefilled name + variety, user typed nothing: the backdrop
+  // must still dismiss, or every mis-tapped Sow becomes a sheet you cannot tap your way out of.
+  it('a backdrop tap CLOSES an untouched sow sheet, prefilled fields and all', async () => {
+    routeFetch()
+    await renderSowNow()
+    await openSheet()
+    await act(async () => { fireEvent.click(backdrop()) })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  // ★ The guard. Same sheet, one field changed inside the child component.
+  it('a backdrop tap does NOT close once something has been typed into the editor', async () => {
+    routeFetch()
+    await renderSowNow()
+    const dialog = await openSheet()
+    await typeInEditor(dialog)
+    await act(async () => { fireEvent.click(backdrop()) })
+    expect(screen.getByRole('dialog')).toBeDefined()
+    expect(within(screen.getByRole('dialog')).getByLabelText('Quantity').value).toBe('6')
+  })
+
+  // Sheet's contract is that ONLY the backdrop consults dirty (§5.2). A dirty sheet with no way out
+  // would be a trap, and this page has no confirm dialog to offer instead.
+  it('the labelled Close still closes a dirty sheet — the backdrop is the only guarded exit', async () => {
+    routeFetch()
+    await renderSowNow()
+    const dialog = await openSheet()
+    await typeInEditor(dialog)
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('Escape still closes a dirty sheet', async () => {
+    routeFetch()
+    await renderSowNow()
+    const dialog = await openSheet()
+    await typeInEditor(dialog)
+    await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  // The signal must RESET with the editor it came from. A page-level flag that survived the close
+  // would leave the next sow sheet born backdrop-proof, which is the stuck-guard shape that made
+  // OverlayDirtyWiring's "content unmount resets the host" assertion necessary.
+  it('a sheet re-opened after a dirty close is backdrop-dismissable again', async () => {
+    routeFetch()
+    await renderSowNow()
+    const dialog = await openSheet()
+    await typeInEditor(dialog)
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await openSheet()
+    await act(async () => { fireEvent.click(backdrop()) })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  // A dirty backdrop must not become a blocked SAVE. The create path closes the sheet itself
+  // (onCreated → closeSowSheet), which never routes through the backdrop guard.
+  it('a dirty sheet still sows — the guard defends the fields, it does not trap them', async () => {
+    routeFetch()
+    await renderSowNow()
+    const dialog = await openSheet()
+    await typeInEditor(dialog)
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Add planting/i }))
+    })
+    await screen.findByText(/Sown/)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    const post = fetchSpy.mock.calls.find((c) => c[0] === '/api/plants' && c[1]?.method === 'POST')
+    expect(JSON.parse(post[1].body).quantity).toBe(6)
+  })
+
+  // Pins the decision NOT to narrow the reload gate to the editor's signal. The stash restores a
+  // sheet on a packet the user chose, and that choice is worth deferring a deploy for whether or not
+  // a field has been filled — so an untouched sheet must STILL hold the gate.
+  it('an untouched sheet still holds the reload gate — the editor signal narrows nothing', async () => {
+    routeFetch()
+    await renderSowNow()
+    await openSheet()
+    expect(isReloadBlocked()).toBe(true)
+    await act(async () => { fireEvent.click(backdrop()) })
+    expect(isReloadBlocked()).toBe(false)
   })
 })
