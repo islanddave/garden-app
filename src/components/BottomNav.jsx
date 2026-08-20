@@ -321,7 +321,8 @@ export default function BottomNav() {
           </SheetRowLink>
         )}
         {/* V4-PHOTOLOCFIND-001 — /locations previously had ZERO nav entries (reachable only
-            from Search/Favorites/ProjectNew/ZonePicker), which is half of why only 5 of 913 photos
+            from Search/Favorites/ProjectNew/ZonePicker — the last since deleted, V4-AMBIENTZONE-001),
+            which is half of why only 5 of 913 photos
             carried a location. Emoji glyph mirrors Harvests/Put-Up (avoids the icon-completeness
             harness for a new row).
             V4-SPACECLIENTGAP-001 (Dave 2026-08-02): the label is now UNCONDITIONALLY "Zones", not

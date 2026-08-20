@@ -18,7 +18,6 @@ import { render, screen } from '@testing-library/react'
 import Home from '../pages/Home.jsx'
 import Tasks from '../pages/Tasks.jsx'
 import Footer from '../components/Footer.jsx'
-import { ZoneProvider } from '../context/ZoneContext.jsx'
 
 function Probe() {
   return <div data-testid="inline-probe">inline</div>
@@ -31,10 +30,16 @@ describe('JSX automatic runtime (vitest.config.ts esbuild block)', () => {
   })
 
   // The three src/ modules that render standalone with no provider or network scaffolding. The
-  // other seven latent files (Achievements, AuthCallback, Inventory, Login, ZonePicker,
-  // FavoritesContext, ProjectTypes) need Clerk/AuthContext/data mocks to reach their JSX at all,
-  // so a render here would be testing the mocks, not the transform. They are covered by the same
-  // one config switch — the transform is repo-wide, not per file.
+  // other latent files (Achievements, AuthCallback, Inventory, Login, FavoritesContext,
+  // ProjectTypes) need Clerk/AuthContext/data mocks to reach their JSX at all, so a render here
+  // would be testing the mocks, not the transform. They are covered by the same one config switch
+  // — the transform is repo-wide, not per file.
+  //
+  // A fourth specimen (ZoneContext.jsx's provider) lived here until V4-AMBIENTZONE-001 deleted that
+  // file. It was NOT replaced: the only other context with no React import is FavoritesContext,
+  // whose provider calls useAuth()/useApiFetch() and so needs the very mocks that would make the
+  // render test the scaffolding instead of the transform. Three specimens still fail loudly on the
+  // repo-wide switch, which is what this file guards.
   it('renders src/pages/Home.jsx — no React import in the file', () => {
     render(<Home />)
     expect(screen.getByText(/Garden at the Ridge/)).toBeTruthy()
@@ -48,10 +53,5 @@ describe('JSX automatic runtime (vitest.config.ts esbuild block)', () => {
   it('renders src/components/Footer.jsx — no React import in the file', () => {
     const { container } = render(<Footer />)
     expect(container.textContent.length).toBeGreaterThan(0)
-  })
-
-  it('renders src/context/ZoneContext.jsx\'s provider — no React import in the file', () => {
-    render(<ZoneProvider><span data-testid="zone-child">child</span></ZoneProvider>)
-    expect(screen.getByTestId('zone-child').textContent).toBe('child')
   })
 })

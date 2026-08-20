@@ -42,12 +42,17 @@ describe('App route table (single source of truth)', () => {
     // 51 → 52: W-RESTORE adds /photos/deleted — the Recently deleted surface the photo-delete
     // confirm's "recoverable from Recently deleted" copy names. It is NOT flag-gated: the copy
     // promising it ships unconditionally, so the destination must too.
-    const paths = pagePaths()
-    // 53 since BUG-VOICEDUPE-002 added /admin/voice-debug (unlinked, Protected, admin-only
+    // 52 → 53: BUG-VOICEDUPE-002 added /admin/voice-debug (unlinked, Protected, admin-only
     // raw Web Speech capture). Registered exactly once in App.jsx — the uniqueness assert below
     // is what proves a count bump is a new route rather than a duplicate registration.
-    expect(paths).toHaveLength(53)
-    expect(new Set(paths).size).toBe(53)
+    // 53 → 52: V4-AMBIENTZONE-001 DELETES /zone. The route registered ZonePicker, whose pick wrote
+    // ZoneContext.activeZone — a value with ZERO readers anywhere in the tree — so the page was
+    // both unreachable (no `to="/zone"` in src) and inert. Context, page and route went together.
+    // This is the first DECREMENT in this ledger; the uniqueness assert below cannot catch a
+    // deletion, so the count is the only mechanical proof the route actually left the table.
+    const paths = pagePaths()
+    expect(paths).toHaveLength(52)
+    expect(new Set(paths).size).toBe(52)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

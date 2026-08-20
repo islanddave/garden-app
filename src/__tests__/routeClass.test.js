@@ -12,7 +12,7 @@ const APP_ROUTES = [
   '/inventory', '/inventory/add', '/inventory/abc',
   '/projects', '/projects/new', '/projects/abc',
   '/projects/abc/plantings/xyz', '/projects/abc/events/xyz',
-  '/locations', '/locations/abc', '/zone', '/project-types',
+  '/locations', '/locations/abc', '/project-types',
   '/plants/catch-up', '/achievements', '/collection', '/helper',
   '/settings', '/settings/notifications', '/about', '/releases',
   '/admin/classify', '/admin/garden-activity', '/admin/voice-debug', '/inactive', '/feed',

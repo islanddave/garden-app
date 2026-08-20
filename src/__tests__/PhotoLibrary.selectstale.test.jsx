@@ -84,6 +84,12 @@ const ALL = Array.from({ length: 12 }, (_, i) => photo(i + 1))
 
 beforeEach(() => {
   fetchSpy.mockReset()
+  // V4-AMBIENTZONE-001: the zone filter is now persisted to localStorage, so the tests below that
+  // change it leave a memory behind. Without this clear, every later mount() restores that zone and
+  // issues an extra `/api/photos?location_id=…` the mockResolvedValueOnce queue has no answer for —
+  // the grid never renders and the whole file after the first filter change goes red. Isolation the
+  // suite should always have had (LogMany.zoneScope.test.jsx clears for the same reason).
+  localStorage.clear()
   if (typeof URL.createObjectURL !== 'function') URL.createObjectURL = vi.fn(() => 'blob:stub')
   if (typeof URL.revokeObjectURL !== 'function') URL.revokeObjectURL = vi.fn()
 })

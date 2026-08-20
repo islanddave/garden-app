@@ -2,7 +2,6 @@ import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { FavoritesProvider } from './context/FavoritesContext.jsx'
-import { ZoneProvider } from './context/ZoneContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
 import TopChrome from './components/TopChrome.jsx'
@@ -20,7 +19,6 @@ import ProjectNew from './pages/ProjectNew.jsx'
 import ProjectDetail from './pages/ProjectDetail.jsx'
 import ProjectPublic from './pages/ProjectPublic.jsx'
 import AuthCallback from './pages/AuthCallback.jsx'
-import ZonePicker from './pages/ZonePicker.jsx'
 import Inventory from './pages/Inventory.jsx'
 import InventoryAdd from './pages/InventoryAdd.jsx'
 import InventoryDetail from './pages/InventoryDetail.jsx'
@@ -213,23 +211,18 @@ export function renderRoutes({ overlay, user, loading }) {
       { path: '/space/:spaceId',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SpaceDetail /></ErrorBoundary></Protected> },
     ] : []),
     { path: '/tasks',         element: <Navigate to="/today" replace /> },
-    // UNLINKED ON PURPOSE (Dave directive 2026-05-22), and this comment is now the ONLY record of
-    // that: the entry point was TopBar's zone pill, and its "TO RESTORE: uncomment this block" note
-    // died with TopBar.jsx in V4-APPBAR-003. The reason still holds — picking a zone here is a no-op.
-    // ZoneContext.activeZone has ZERO readers anywhere (V4-ZONEDECIDE-001 removed the last one, a
-    // dead destructure in Dashboard), and it is session-only state, so a pick does not survive a
-    // reload. The page says so on screen.
+    // `/zone` USED TO BE REGISTERED HERE and is GONE as of V4-AMBIENTZONE-001 (2026-08-20), along
+    // with ZonePicker.jsx and ZoneContext.jsx. The question it was parked pending — "should there be
+    // an ambient app-wide zone?" — was answered NO, so the picker had nothing left to become. The
+    // census that settled it: ZoneContext.activeZone had exactly ONE reader in the whole tree,
+    // ZonePicker itself, so a pick genuinely did nothing.
     //
-    // NOT to be confused with the zone filtering that DOES ship: Log Many's "By zone" scope
+    // ZONE FILTERING STILL SHIPS — it never ran through ZoneContext. Log Many's "By zone" scope
     // (ScopeChecklist.jsx tier-1 chips -> POST /api/events/batch `scope.type:'space'`, cascading
-    // through the location subtree). That mechanism is per-invocation and does not touch
-    // ZoneContext — so this page is not the thing keeping zone filtering alive, and retiring it
-    // would not remove any working filter. Dave 2026-08-20 chose to KEEP zone filtering; this
-    // picker stays parked, unlinked, pending a decision about an ambient app-wide zone.
-    // Re-link only when such a zone actually filters something — and note the More menu's "Zones"
-    // row already points at /locations, so a second entry would need a different name to not read
-    // as a duplicate door.
-    { path: '/zone',          element: <Protected><ZonePicker /></Protected> },
+    // through the location subtree) is per-invocation state persisted in localStorage
+    // `quicklog.lastScope`, validated against live locations on restore. PhotoLibrary's location
+    // filter now uses that same idiom. Deleting the context removed no working filter; do not read
+    // this deletion as a decision against zone filtering, which Dave explicitly keeps.
     // V4-PROJHIDE-001: the /projects tree is no longer a user-facing view — redirect its index to
     // /garden when hidden. Every other project route (new/:id/inactive/project-types/scoped shims/
     // admin classify) stays reachable-but-unlinked. Flag OFF renders the exact prior ProjectList.
@@ -240,6 +233,18 @@ export function renderRoutes({ overlay, user, loading }) {
     // point: Dashboard gates the link on `!PROJECTS_HIDDEN && inactiveCount > 0`, and the count
     // counts containers in status harvested/ended — of which prod had ZERO on 2026-08-20 (as it has
     // zero dismissals ever recorded). The surface works; nothing currently qualifies to appear on it.
+    //
+    // STAYS PARKED — DELIBERATELY, and NOT for the reason /zone went (V4-AMBIENTZONE-001, above).
+    // /zone was free to delete: a frontend-only picker whose context had no readers. This one is
+    // not. Retiring it buys ~65 lines and one empty table, and pays with the highest-risk mechanical
+    // edit in the dashboard Lambda — `queryInactiveCount` is element 9 of an 11-element positional
+    // Promise.allSettled (handlers.js:866-891) whose TILE_NAMES/TILE_FALLBACKS arrays and destructure
+    // must stay index-aligned, with three tests pinned to index 9 — on the app's most-loaded
+    // endpoint, plus dropping `inactive_projects_count` from a shared response contract. Bad trade:
+    // keeping costs one route entry and one COUNT(*) over an 86-row view. Reviewed 2026-08-20;
+    // re-open only alongside a redesign of what "inactive" means (handlers.js:711-716 already
+    // records that 'harvested' is a repeatable, loggable status, so pairing it with 'ended' is
+    // semantically stale).
     { path: '/inactive',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected> },
     { path: '/inventory',     element: <Protected><Inventory /></Protected> },
     { path: '/inventory/add', element: <Protected><InventoryAdd /></Protected> },
@@ -312,7 +317,7 @@ function AppShell({ user, loading, identity }) {
   // Swapping only the route slot (the tempting smaller diff) would keep the pending chrome up and
   // leave every future header/nav change needing to re-prove itself against this state.
   //
-  // The providers ABOVE AppShell (Favorites/Zone/Mode/Toast) do still mount, but `unknown` is a
+  // The providers ABOVE AppShell (Favorites/Mode/Toast) do still mount, but `unknown` is a
   // subset of `loading` — they are in exactly the state authRenderGate property 3 already pins as
   // issuing zero requests, and the new suite re-pins it for this state specifically.
   if (identity === 'unknown') return <IdentityUnavailable />
@@ -392,8 +397,9 @@ export default function App() {
 
   // ModeProvider — Field/Desk mode scaffold (Post-V2 UX overhaul Inc 2 Bite 2).
   // Global app-state (Open Q #2 → global, not per-page). Sits inside Auth so
-  // it can later read user prefs if needed, outside Zone so the mode chip
-  // remains stable as zones change. Session-persistent via sessionStorage.
+  // it can later read user prefs if needed. Session-persistent via sessionStorage.
+  // (It used to be ordered "outside Zone so the mode chip remains stable as zones
+  // change" — ZoneProvider is gone as of V4-AMBIENTZONE-001, so that constraint is moot.)
   return (
     <AuthProvider>
       {/* V4-PERFTHEMEA-001 moved this INSIDE AuthProvider so it could read `loading` and exit on
@@ -403,13 +409,11 @@ export default function App() {
           and every route, and moving it would change nothing except the diff. */}
       <SplashScreen />
       <ModeProvider>
-        <ZoneProvider>
-          <FavoritesProvider>
-            <ToastProvider>
-              <AppRoutes />
-            </ToastProvider>
-          </FavoritesProvider>
-        </ZoneProvider>
+        <FavoritesProvider>
+          <ToastProvider>
+            <AppRoutes />
+          </ToastProvider>
+        </FavoritesProvider>
       </ModeProvider>
     </AuthProvider>
   )

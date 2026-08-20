@@ -64,8 +64,9 @@ describe('flag ON — the /space routes appear', () => {
     const paths = renderRoutes({ overlay: false, user: true }).map(r => r.props.path)
     expect(paths).toContain('/space')
     expect(paths).toContain('/space/:spaceId')
-    expect(paths).toHaveLength(53)          // 51 shipped (incl. /admin/voice-debug) + 2
-    expect(new Set(paths).size).toBe(53)
+    // 50 shipped (incl. /admin/voice-debug, excl. /zone — deleted in V4-AMBIENTZONE-001) + 2
+    expect(paths).toHaveLength(52)
+    expect(new Set(paths).size).toBe(52)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {
