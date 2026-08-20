@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useId } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { useApiFetch } from '../lib/api.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import { P } from '../lib/constants.js'
 import { useToast } from '../context/ToastContext.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
@@ -30,6 +32,12 @@ export default function InventoryDetail() {
   const [errors,       setErrors]       = useState({})
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting,     setDeleting]     = useState(false)
+  // V4-DIRTYGUARDSWEEP-001 — the last form snapshot that is known to be ON THE SERVER. Kept
+  // separately from `item` because handleSave deliberately does NOT re-set `item` (the breadcrumb
+  // and heading keep showing the loaded name until a reload), so diffing against `item` would leave
+  // this page reporting dirty forever after a SUCCESSFUL save — the same post-save pin EventNew
+  // hit. Re-baselining here is additive: nothing rendered reads it.
+  const [baseline,     setBaseline]     = useState(null)
 
   // ── Load item ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -41,6 +49,7 @@ export default function InventoryDetail() {
         if (!mounted) return
         setItem(data)
         setForm(itemToForm(data))
+        setBaseline(itemToForm(data))
         setLoading(false)
       })
       .catch(err => {
@@ -148,6 +157,10 @@ export default function InventoryDetail() {
     const errs = validate()
     if (Object.keys(errs).length) { setErrors(errs); return }
 
+    // Snapshotted BEFORE the await, and it is the same render's `form` that buildChanges() reads.
+    // Anything typed while the PUT is in flight is therefore still unsaved once it lands, and the
+    // guard correctly stays held.
+    const sent = form
     setSaving(true)
     const { error } = await updateItem(id, buildChanges())
     setSaving(false)
@@ -155,6 +168,7 @@ export default function InventoryDetail() {
     if (error) {
       setErrors({ _form: error })
     } else {
+      setBaseline(sent)
       // Operational confirmation via the GLOBAL toast layer (auto-dismisses).
       show({ message: '✓ Saved' })
     }
@@ -172,6 +186,39 @@ export default function InventoryDetail() {
       navigate('/inventory')
     }
   }
+
+  // ── Dirty guard (V4-DIRTYGUARDSWEEP-001) ───────────────────────────────────
+  // This whole page IS one edit form, seeded field-for-field from the loaded item, so the honest
+  // predicate is differs-from-the-row and NOT truthiness: every box arrives populated, and a
+  // truthiness guard would hold a service-worker update from the moment the item finished loading
+  // — for a user who only came to look at it. Same reading as Locations' inline edit form.
+  //
+  // Compared over the baseline's own keys, which are exactly itemToForm's: `set()` only ever merges
+  // into that shape, so a key that appears on one side and not the other would be a bug in
+  // itemToForm rather than a case to tolerate here.
+  //
+  // Nothing else on this page carries unsaved state. PhotoUpload posts the file the instant it is
+  // chosen (there is no staged-file step, unlike EventNew's), `confirmDelete` is a transient
+  // confirmation, and the Plant-from-packet CTA is pure navigation.
+  //
+  // Declared above the loading/error early returns because hooks cannot live below them. `form` and
+  // `baseline` are both null until the load resolves, which reads as clean — correct, there is
+  // nothing typed yet.
+  const hasUnsavedInput = !!(
+    form && baseline && Object.keys(baseline).some(k => form[k] !== baseline[k])
+  )
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // The reload-gate half. Key is per-instance for the reason EventNew.jsx:985 gives — reloadGate
+  // holds a Set, so a shared literal key would let one instance's unmount release another's hold.
+  // The cleanup release is required, not defensive: a navigated-away dirty form that kept its hold
+  // would wedge updates forever and rebuild BUG-STALECLIENT-001.
+  const reloadGateKey = `inventory-detail:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) return <Shell><Spinner block /></Shell>

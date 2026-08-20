@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useId } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { setReloadBlocked } from '../lib/reloadGate.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P, PROJECT_STATUSES, APP_URL } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting, creatableEventTypes } from '../lib/eventTypes.js'
@@ -85,6 +87,23 @@ const isAlreadyGone = (err) => err?.status === 404
 function todayLocal() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
+// V4-DIRTYGUARDSWEEP-001 — the edit form's seed, hoisted out of startEdit so the dirty predicate
+// diffs against the SAME shape the form was opened with. Inlined in both places, these two would
+// drift the first time a field is added to the edit form, and the drift would be silent: the guard
+// would simply stop noticing that field.
+function projectEditSeed(project) {
+  return {
+    name:              project.name,
+    slug:              project.slug,
+    description:       project.description ?? '',
+    status:            project.status,
+    start_date:        project.start_date  ?? '',
+    is_public:         project.is_public,
+    location_id:       project.location_id ?? '',
+    parent_project_id: project.parent_project_id ?? '',
+  }
 }
 
 function emptyEventForm() {
@@ -588,16 +607,7 @@ export default function ProjectDetail() {
   }
 
   function startEdit() {
-    setForm({
-      name:              project.name,
-      slug:              project.slug,
-      description:       project.description ?? '',
-      status:            project.status,
-      start_date:        project.start_date  ?? '',
-      is_public:         project.is_public,
-      location_id:       project.location_id ?? '',
-      parent_project_id: project.parent_project_id ?? '',
-    })
+    setForm(projectEditSeed(project))
     setSaveErr(null)
     setEditing(true)
   }
@@ -705,6 +715,60 @@ export default function ProjectDetail() {
       setDeleting(false)
     }
   }
+
+  // ── Dirty guard (V4-DIRTYGUARDSWEEP-001) ───────────────────────────────────
+  // Three independent forms live on this page and any of them can be open, so the predicate is a
+  // union of three terms with three different seedings — the Locations shape, not EventNew's single
+  // truthiness sweep. Declared above the early returns because hooks cannot live below them; every
+  // term reads false while the project is still loading, which is correct.
+  //
+  // Each term is gated on its OWN visibility flag, and those flags are load-bearing rather than
+  // decorative: Cancel on all three collapses the form WITHOUT clearing it, so without them text the
+  // user has already dismissed off-screen would hold a deploy they can neither see nor resolve.
+  //
+  // The project edit form is seeded from the row, so its term is differs-from-the-row. Merely
+  // tapping Edit must not hold an update.
+  const editDirty = !!(editing && form && project &&
+    Object.entries(projectEditSeed(project)).some(([k, v]) => form[k] !== v))
+
+  // The mini event logger seeds event_type/event_date/is_public on arrival, so those three are
+  // excluded — counting them would fire the moment the form opens. plant_id and the crop chips are
+  // one tap to redo and stay out for the same reason PlantingSelect stays out of the sibling pages'
+  // predicates. miniPhotoFile is IN: the file is staged in memory and only uploaded after the event
+  // POST, so a reload loses the photo outright.
+  const logDirty = !!(showLogForm && (
+    eventForm.title.trim() || eventForm.notes.trim() || eventForm.private_notes.trim() ||
+    eventForm.quantity.trim() || miniPhotoFile
+  ))
+
+  // The add-planting form arrives with quantity '1' and everything else empty, so quantity is a
+  // differs-from-seed test and the rest are truthiness. Typed fields only: status, source_type,
+  // container_type, parent_plant_id, location_id and sown_at_approx are all single-tap selects, and
+  // a re-tap is not the data loss this gate defends. `variety` counts — it is a real search-and-pick.
+  const addPlantDirty = !!(showAddPlant && (
+    plantForm.name.trim() || plantForm.notes.trim() || plantForm.sown_at ||
+    plantForm.qty_initial.trim() || plantForm.source_ref.trim() ||
+    plantForm.source_generation.trim() || plantForm.lineage_note.trim() ||
+    (plantForm.container_size ?? '').trim() || plantForm.variety ||
+    plantForm.quantity !== '1'
+  ))
+
+  // Deliberately excluded: the Move picker (`moveSel` is one dropdown tap against a '' seed), the
+  // delete/confirm dialogs (transient), `sortOrder` (already persisted to storage by onSortChange),
+  // and the events paging state (server-backed, refetchable).
+  const hasUnsavedInput = !!(editDirty || logDirty || addPlantDirty)
+
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // Per-instance key and a cleanup release, for the reasons EventNew.jsx:975-991 sets out: the
+  // release is required so a navigated-away dirty form cannot wedge updates forever, and it is safe
+  // to release from the cleanup only because the dep is a BOOLEAN — while the user keeps typing the
+  // deps compare equal and the effect never re-runs mid-form.
+  const reloadGateKey = `project-detail:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
 
   if (loading) return <Shell><Spinner block /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
