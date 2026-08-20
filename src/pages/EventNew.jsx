@@ -555,8 +555,11 @@ export default function EventNew() {
       // Record what was OFFERED, split by what the COLLAPSED tray actually renders. selectTrayChips
       // is called rather than a cap re-derived here, so the region label cannot drift from the
       // pixels. Its user-state arguments are omitted deliberately: nothing has been tapped when the
-      // tray first paints, and the only shipped entry point is /log?session=harvest with no &plant=
-      // (Harvests.jsx) — so the collapsed set is the top HARVEST_TRAY_COLLAPSED_MAX by rank.
+      // tray first paints, and BOTH shipped entry points are /log?session=harvest with no &plant=
+      // (Harvests.jsx's primary CTA and, since V4-WEIGHINCTA-001, the TopChrome header Basket) — so
+      // the collapsed set is the top HARVEST_TRAY_COLLAPSED_MAX by rank. That "no &plant=" property
+      // is what this argument omission rests on; a future entry point that deep-links a planting
+      // would have to pass its user-state to selectTrayChips rather than be added silently here.
       // NOT awaited and cannot reject (src/lib/readyImpressions.js): a telemetry failure must never
       // reach the weigh-in.
       sendReadyImpressions(apiFetch, merged, selectTrayChips({ chips: merged }).map(c => c.plant_id))

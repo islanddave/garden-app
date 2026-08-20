@@ -7,7 +7,7 @@ import { APP_NAME } from '../lib/constants.js'
 import { ROOT_TABS } from '../lib/routeClass.js'
 
 // The three circles every content surface carries, in render order.
-const ACTIONS = { 'topchrome-snap': '/capture', 'topchrome-harvest': '/log?event_type=harvest', 'topchrome-search': '/search' }
+const ACTIONS = { 'topchrome-snap': '/capture', 'topchrome-harvest': '/log?session=harvest', 'topchrome-search': '/search' }
 
 let mockUser
 vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => ({ user: mockUser }) }))
@@ -132,24 +132,30 @@ describe('TopChrome — capture: immersive bar', () => {
 // V4-HEADERPARITY-001 added Search to the same cluster, so these now describe all three.
 describe('TopChrome (V4-TOPCHROMEACTIONS-001) — Snap + Harvest header actions', () => {
   for (const path of ['/today', '/garden', '/dashboard']) {
-    it(`root ${path}: Snap -> /capture and Harvest -> the harvest form`, () => {
+    it(`root ${path}: Snap -> /capture and Harvest -> the weigh-in session`, () => {
       renderAt(path)
       expect(screen.getByTestId('topchrome-snap').getAttribute('href')).toBe('/capture')
-      expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?event_type=harvest')
+      expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?session=harvest')
     })
   }
   it('detail (/projects/abc): both actions present alongside the search icon', () => {
     renderAt('/projects/abc')
     expect(screen.getByTestId('topchrome-snap').getAttribute('href')).toBe('/capture')
-    expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?event_type=harvest')
+    expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?session=harvest')
     expect(screen.getByTestId('topchrome-search').getAttribute('href')).toBe('/search')
   })
-  // The exact-string match in BottomNav's OVERLAYABLE_CREATE is what made the FAB harvest row open
-  // as an overlay; the header target must stay byte-identical or the same silent full-page fallback
-  // V4-HARVFAB-001 nearly shipped comes back through this door instead.
-  it('the Harvest href is byte-identical to the retired FAB row target', () => {
+  // REVERSED by V4-WEIGHINCTA-001 (CHECKIN PLAN B5, Dave GO 2026-08-18), deliberately kept as the
+  // record of the reversal. This asserted the opposite until 2026-08-20 ("the Harvest href is
+  // byte-identical to the retired FAB row target" = /log?event_type=harvest), because the exact-string
+  // match in BottomNav's OVERLAYABLE_CREATE was what made the FAB harvest row open as an overlay.
+  // That coupling is already dead: V4-HARVFABREMOVE-001 dropped the string from OVERLAYABLE_CREATE
+  // and BottomNav.jsx:83 records that the header action never consulted the Set at all. What replaces
+  // it is the ?session= pin below — the param, not the pathname, is what EventNew reads.
+  it('the Harvest href carries ?session= — ?event_type=harvest would silently skip session mode', () => {
     renderAt('/today')
-    expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?event_type=harvest')
+    const href = screen.getByTestId('topchrome-harvest').getAttribute('href')
+    expect(href).toBe('/log?session=harvest')
+    expect(new URLSearchParams(href.split('?')[1]).get('session')).toBe('harvest')
   })
   it('all three actions are icon-only with accessible names (no visible text label)', () => {
     renderAt('/today')

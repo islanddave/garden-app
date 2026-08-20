@@ -230,14 +230,19 @@ export default function Harvests() {
           </button>
         </div>
 
-        {/* V4-HARVSESSION-001: deliberate entry into the weigh-in session (full-page /log with the
-            type locked to harvest + the session ledger). A Link, not a new nav peer — the session
-            is a posture of the existing Log surface, and this stays a discoverable-but-deliberate
-            doorway (never a default anyone can wander into mid-browse). */}
+        {/* V4-WEIGHINCTA-001 (CHECKIN PLAN B5, Dave GO 2026-08-18) — PRIMARY CTA, promoted from the
+            secondary outline chip V4-HARVSESSION-001 shipped here. That chip's rationale ("a
+            discoverable-but-deliberate doorway, never a default anyone can wander into mid-browse")
+            is REVERSED, on purpose, and this note is the record of the reversal: B5's done-criterion
+            is a 5-planting harvest in <=2+3N taps, and a doorway you have to already know about
+            cannot buy that. Filled + full-width + 48px because this is the one thing the page asks
+            you to DO, sitting above everything it merely shows you.
+            Still a Link, not a nav peer — the session remains a posture of the existing Log surface,
+            and ?session= (not ?event_type=) is what engages it. */}
         <Link
           to="/log?session=harvest"
           data-testid="weigh-in-session-link"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: '0 0 14px', padding: '9px 14px', border: `1px solid ${P.green}`, borderRadius: 10, color: P.green, fontWeight: 700, fontSize: '0.85rem', textDecoration: 'none', backgroundColor: P.white }}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48, margin: '0 0 16px', padding: '0 14px', border: `1px solid ${P.green}`, borderRadius: 10, color: P.white, fontWeight: 700, fontSize: '0.95rem', textDecoration: 'none', backgroundColor: P.green }}
         >
           <span aria-hidden="true">⚖️</span>
           <span>Weigh-in session</span>
