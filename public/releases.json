@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.40.0",
+    "date": "2026-08-20",
+    "highlights": [
+      "Harvest, care and privacy: photos now ride along when you share a harvest — with location data stripped from every photo on upload and on share. Weigh-in sessions no longer restore an unrelated parked draft. Finished and failed plantings are out of Log Many. Search results open in place. Germination dates record the day you mean, not the day you logged it."
+    ]
+  },
+  {
     "version": "4.39.2",
     "date": "2026-08-20",
     "highlights": [
