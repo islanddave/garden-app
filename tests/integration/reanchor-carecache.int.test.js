@@ -92,6 +92,10 @@ const plantCache = async (id) =>
            -- read undefined and the block could never distinguish the defect from the repair.
            last_issue_at
       FROM entity_memory WHERE plant_id = ${id}`)[0] ?? null
+// BUG-EVENTPROJPLANTPAIR-001: the event's OWN project, read from the row rather than inferred from
+// which cache row moved. A pair assertion has to name the column it is about.
+const eventProject = async (id) =>
+  (await directSql`SELECT project_id FROM event_log WHERE id = ${id}`)[0]?.project_id ?? null
 const projectCache = async (id) =>
   (await directSql`
     SELECT id, plant_id, project_id, location_id, next_water_at,
@@ -393,12 +397,27 @@ describe('re-anchor between CONTAINERS: the vacated project walks back, next_wat
 describe('per-arm writer parity survives a re-anchor: first_harvest is a PLANTING milestone only', () => {
   // first_harvest carries no quantity and writes no harvest_log row (validators.js:197), so it
   // exercises the harvest columns without dragging the weight resolver in.
-  let projectSrc, projectDst, plantE, fhId
+  //
+  // REWRITTEN for BUG-EVENTPROJPLANTPAIR-001 (dev 9492601), which changed the CONTRACT this block
+  // was written against — it did not break the cache. This suite used to move the event by sending
+  // project_id ALONE on a planting-anchored event. That body is now a NO-OP on project_id by
+  // design: the pair invariant makes the PLANTING decide the project, so the event never leaves
+  // projectSrc, `projectChanged` is correctly false and there is nothing to vacate. The tell that
+  // the handler was right and the test was wrong: this file's own canonical detectors
+  // (staleForward / staleBehind) stayed GREEN throughout the failure — the cached value the old
+  // assertion demanded be NULL was pointing at an event the container genuinely still held.
+  //
+  // The parity property is unchanged and still the point. It is now driven through a move the pair
+  // invariant actually performs — re-anchoring the event to a planting that lives in the other
+  // container — which moves BOTH anchors and therefore runs all four arms, a strictly stronger
+  // exercise of the same writers than the old project-only move.
+  let projectSrc, projectDst, plantE, plantF, fhId
 
   beforeAll(async () => {
     projectSrc = await newProject('p4-src')
     projectDst = await newProject('p4-dst')
     plantE = await newPlanting({ project: projectSrc, tag: 'p4-E' })
+    plantF = await newPlanting({ project: projectDst, tag: 'p4-F' })
     fhId = await newEvent({ project_id: projectSrc, plant_id: plantE, event_type: 'first_harvest', event_date: T1 })
   })
 
@@ -408,9 +427,25 @@ describe('per-arm writer parity survives a re-anchor: first_harvest is a PLANTIN
       'the project-keyed forward writer maps harvest only').toBeNull()
   })
 
-  it('re-anchoring it to another container leaves BOTH containers last_harvested_at NULL', async () => {
+  it('a project_id disagreeing with the planting is DISCARDED — so nothing is vacated', async () => {
+    // The pair invariant seen from the cache's side. BUG-EVENTPROJPLANTPAIR-001's rule is that a
+    // planting-bearing event takes its project from the planting; the corollary the cache arms
+    // depend on is that such a request moves NOTHING, and a vacate here would be a claim about
+    // something that did not happen (and would leave the container BEHIND the log, the direction
+    // v4-cachefwdgap-001 exists for).
     const res = await put(fhId, { event_type: 'first_harvest', event_date: T1, project_id: projectDst })
     expect(res.status, JSON.stringify(res.body)).toBe(200)
+    expect(await eventProject(fhId), 'the claimed project reached the row').toBe(projectSrc)
+    expect(await projectCache(projectDst),
+      'the destination got a cache row for an event that never arrived').toBeNull()
+    expect(ms((await projectCache(projectSrc)).last_event_at),
+      'the source was vacated of an event it still holds').toBe(ms(T1))
+  })
+
+  it('re-anchoring to a planting in the other container leaves BOTH containers last_harvested_at NULL', async () => {
+    const res = await put(fhId, { event_type: 'first_harvest', event_date: T1, plant_id: plantF })
+    expect(res.status, JSON.stringify(res.body)).toBe(200)
+    expect(await eventProject(fhId), 'the event did not follow its planting').toBe(projectDst)
     expect((await projectCache(projectSrc)).last_harvested_at,
       'the vacated container invented a harvest it never had').toBeNull()
     expect((await projectCache(projectDst)).last_harvested_at,
@@ -422,8 +457,21 @@ describe('per-arm writer parity survives a re-anchor: first_harvest is a PLANTIN
     for (const col of RECENCY) expect(p[col], `${col} survived the vacate`).toBeNull()
   })
 
-  it('the planting keeps the milestone — plant_id did not change, so no plant arm ran', async () => {
-    expect(ms((await plantCache(plantE)).last_harvested_at)).toBe(ms(T1))
+  it('the destination container records the EVENT while still recording no harvest', async () => {
+    // Both halves together are the parity claim: the same row, same statement, one column set from
+    // the event and one deliberately not, because = 'harvest' is what the project-keyed forward
+    // writer maps. A recompute that unified the two arms passes the line above and fails this one.
+    const p = await projectCache(projectDst)
+    expect(ms(p.last_event_at)).toBe(ms(T1))
+    expect(p.last_harvested_at).toBeNull()
+  })
+
+  it('the milestone follows the event: the vacated planting loses it, the destination gains it', async () => {
+    // entity_memory is keyed plant-FIRST, so this is the arm that actually carries first_harvest —
+    // asserting only on the containers above would check the wrong row for this property.
+    expect((await plantCache(plantE)).last_harvested_at,
+      'the vacated planting kept a milestone that moved off it').toBeNull()
+    expect(ms((await plantCache(plantF)).last_harvested_at)).toBe(ms(T1))
   })
 })
 

@@ -1990,6 +1990,20 @@ export const handler = async (event) => {
           if (projectChanged) {
             // NEW project — the row may not exist yet, so this is an upsert. A bare UPDATE would
             // silently match zero rows on a container that has never carried an event.
+            //
+            // BUG-EMPROJGUARD-001, PUT ARM. The `WHERE ... IS NOT NULL` below is the same self-guard
+            // the POST's project-keyed upsert has carried since that ticket (~:3017), added here for
+            // the same reason and only now needed. It was genuinely unnecessary while newProjectId
+            // was `body.project_id ?? oldProjectId` — a value that could not be NULL for a row that
+            // reached this line. BUG-EVENTPROJPLANTPAIR-001 made it derive from the PLANTING, and a
+            // project-less planting (a supported state per BUG-CAPTUREFLOW400-001; 5 live on prod)
+            // derives to NULL. Unguarded, that binds NULL into a row supplying no other parent,
+            // violates the VALIDATED CHECK entity_memory_exactly_one_parent, aborts this whole
+            // transaction and fails the request 23514 -> 400 — AFTER the event_log UPDATE has
+            // already committed, so the event moves and its cache does not.
+            // Written as a SQL self-guard rather than a second JS condition on the `if` above so it
+            // holds for any future caller of this arm, and so it is the ONE thing that can fail:
+            // tests/integration/anchor-pair.int.test.js goes red the moment this line is removed.
             reanchor.push(sql`
               INSERT INTO entity_memory
                 (project_id, last_event_at, last_watered_at, last_fertilized_at,
@@ -2002,6 +2016,7 @@ export const handler = async (event) => {
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'observation' AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL)
+              WHERE ${newProjectId}::uuid IS NOT NULL
               ON CONFLICT (project_id) DO UPDATE SET
                 last_event_at = EXCLUDED.last_event_at,
                 last_watered_at = EXCLUDED.last_watered_at,
