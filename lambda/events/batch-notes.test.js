@@ -178,7 +178,11 @@ describe('events Lambda — the batch INSERT actually writes notes', () => {
     // failure — the statement is inside sql.transaction([...]), so either every row lands with the
     // note or none of them land at all. There is no partial-batch state for a note to survive in.
     const stmt = batchInsertFrom();
-    expect(stmt).toMatch(/FROM public\.garden_node p JOIN public\.container pp ON pp\.id = p\.container_id/);
+    // LEFT since BUG-LOGMANYPROJECTLESS-001: the INNER form wrote no row at all for a planting with
+    // container_id IS NULL, so "every row in the batch gets the note" was true only of the rows that
+    // survived the join. What this assertion cares about is unchanged — one statement, one bound
+    // value, N rows — but N is now genuinely every selected planting.
+    expect(stmt).toMatch(/FROM public\.garden_node p\s*\n\s*LEFT JOIN public\.container pp ON pp\.id = p\.container_id/);
     expect(stmt).toMatch(/WHERE p\.id = ANY\(\$\{plantIds\}\)/);
     expect(SRC.slice(0, SRC.indexOf('${batchNotes}::text'))).toMatch(/await sql\.transaction\(\[/);
   });

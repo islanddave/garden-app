@@ -384,12 +384,45 @@ export const handler = async (event) => {
       // searchPlantings stay unfiltered, and the single-planting POST /api/events path is
       // untouched — so an excluded planting is still fully loggable, just not in bulk. Over-
       // application is the worse bug of the two and the integration arms hold that line.
+      //
+      // BUG-LOGMANYPROJECTLESS-001 — this resolver joined `container` with an INNER join, so a
+      // planting whose container_id IS NULL matched zero rows and was invisible to Log Many
+      // ENTIRELY: absent from the dry-run preview, absent from the review checklist, and absent
+      // from the write. "all active plantings" quietly meant "all active plantings that sit in a
+      // project", and nothing anywhere said so. Live prod 2026-08-21: 5 eligible project-less
+      // plantings (San Marzano rescue, Aloe Vera, Super Sweet 100 Rescue, Hydrangeas, Kousa
+      // Dogwood — all Dave's, all created 08-07..08-17) against 221 project-bearing ones, i.e.
+      // every "all" batch under-covered the garden by 2.2%. The signature is in their event
+      // history: 16 events between them, ZERO with source='app_batch'. Every one arrived by hand
+      // through the single-event path, which is what a structural exclusion looks like.
+      //
+      // Project-less is a SUPPORTED state, not a data defect (BUG-PLANTLESSWRITE-001 made these
+      // rows readable and writable by id; validators.js admits project_id OR plant_id), so the
+      // join is now LEFT and ownership uses the two-arm predicate the status-advance UPDATEs below
+      // already carry (BUG-STATUSADVNOPROJ-001). The three scope arms need no change and were each
+      // re-checked: 'all' admits them, 'project' cannot match them (pp.id is NULL → the comparison
+      // is NULL, not true — correct, they belong to no project), and 'space' already reads
+      // COALESCE(p.location_id, pp.location_id) so it matches on the planting's OWN location, which
+      // all 5 have.
       const resolved = await sql`
         SELECT p.id AS plant_id, p.display_name AS plant_name
-        FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
-        WHERE p.deleted_at IS NULL AND pp.deleted_at IS NULL AND p.archived_at IS NULL
+        FROM public.garden_node p
+        LEFT JOIN public.container pp ON pp.id = p.container_id AND pp.deleted_at IS NULL
+        WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+          -- Byte-equivalent to the old INNER JOIN + WHERE pp.deleted_at IS NULL for every
+          -- project-BEARING planting: a container_id that resolves to nothing — missing project or
+          -- soft-deleted one — still fails this term and stays out. ONLY container_id IS NULL is
+          -- newly admitted. REDUNDANT today and kept deliberately: the ownership arm below already
+          -- excludes these rows because it keys on the FK COLUMN (p.container_id IS NULL is false
+          -- here), and deleting this line changes no behaviour — measured, not assumed. It is
+          -- defence against one specific rewrite: keying that arm on the JOINED ROW (pp.id IS NULL)
+          -- instead, which reads identically and is what "we LEFT JOINed, so test the join"
+          -- produces, and which WOULD pull every planting whose project Dave deleted back into the
+          -- batch.
+          AND (p.container_id IS NULL OR pp.id IS NOT NULL)
           AND (p.status IS NULL OR p.status NOT IN ('failed', 'ended', 'dormant'))
-          AND pp.created_by = ANY(${householdIds})
+          AND ( pp.created_by = ANY(${householdIds})
+                OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
           AND CASE ${scopeType}
                 WHEN 'all'     THEN true
                 WHEN 'project' THEN pp.id = ${projectId}
@@ -481,7 +514,23 @@ export const handler = async (event) => {
                    -- SELECT list is 42P18 "could not determine data type of parameter" (L-086), so
                    -- a batch with no note would 500 on every call without it.
                    ${batchNotes}::text
-            FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
+            -- BUG-LOGMANYPROJECTLESS-001: LEFT, not INNER — the second half of the same defect.
+            -- Even with the resolver fixed, an INNER join here would take a planting the user just
+            -- saw ticked in the review list and write no row for it, returning a success count that
+            -- counted it. Writing NULL is legal and is the CORRECT value: event_log.project_id is
+            -- nullable and event_log_has_anchor is (plant_id IS NOT NULL OR project_id IS NOT NULL)
+            -- (both read from live prod's information_schema/pg_constraint, not inferred from a
+            -- cast), p.id satisfies it, and 13 project-less event rows already exist on prod. It
+            -- also matches the sibling rule shipped this week — an event's project derives from its
+            -- planting, and a project-less planting yields a project-less event.
+            --
+            -- location_id deliberately stays pp.location_id and is therefore NULL for these rows.
+            -- COALESCE-ing p.location_id in would ALSO change 7 of 74 live projects (those with no
+            -- location of their own), which is a different decision than this ticket; and NULL is
+            -- exact parity with all 16 events these 5 plantings already have. Flagged as a
+            -- follow-up rather than smuggled in here.
+            FROM public.garden_node p
+            LEFT JOIN public.container pp ON pp.id = p.container_id
             WHERE p.id = ANY(${plantIds})`,
         sql`
           INSERT INTO entity_memory
@@ -498,9 +547,14 @@ export const handler = async (event) => {
             CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
             NULL::timestamptz
           -- BUG-EMPROJGUARD-001 (batch path): container_id IS NULLABLE, so a project-less planting
-          -- in the batch would contribute a ZERO-parent row and abort the whole batch transaction.
-          -- Latent today (0 such plantings in prod) but reachable the moment CaptureFlow starts
-          -- creating them, which BUG-CAPTUREFLOW400-001 unblocks.
+          -- in the batch would contribute a ZERO-parent row, violate entity_memory_exactly_one_parent
+          -- and abort the whole batch transaction — AFTER the event rows above have already been
+          -- staged. This self-guard is what makes it a no-op instead.
+          -- NO LONGER LATENT. That comment ("0 such plantings in prod") was measured before
+          -- CaptureFlow started creating them; live prod 2026-08-21 has 6, five of them eligible.
+          -- Until BUG-LOGMANYPROJECTLESS-001 they could not reach this statement because the
+          -- resolver's INNER join filtered them out first; now they can, and this guard is the only
+          -- thing standing between them and a mid-transaction abort. Do not remove it.
           FROM public.garden_node p
           WHERE p.id = ANY(${plantIds}) AND p.container_id IS NOT NULL
           ON CONFLICT (project_id) DO UPDATE SET
@@ -604,18 +658,27 @@ export const handler = async (event) => {
         // already-resolved owner-scoped plantIds + explicit household ownership (garden_node has
         // no RLS, L-087). No-op for every other event_type via the ${eventType} gate.
         // germinated_at_approx=false → this is a real captured date, not an estimate.
+        //
+        // BUG-LOGMANYPROJECTLESS-001: two-arm ownership, like every other statement in this array.
+        // This was the last inner-join holdout here (the transplant copy below already flagged it as
+        // "unlike the germination write above"), and it was harmless only for as long as the scope
+        // resolver could not hand a project-less planting to plantIds. It can now — `germination` is
+        // in BATCH_EVENT_TYPES — so leaving it would have traded a missing event for a missing
+        // anchor: the event row writes, the germinated_at stamp silently does not, and the caller
+        // cannot tell that from "already germinated".
         sql`
           UPDATE public.garden_node p
              SET germinated_at = ${eventDate}::timestamptz,
                  germinated_at_approx = false,
                  updated_at = NOW()
-            FROM public.container pp
            WHERE ${eventType}::text = 'germination'
              AND p.id = ANY(${plantIds})
-             AND p.container_id = pp.id
-             AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.germinated_at IS NULL
+             AND ( EXISTS (SELECT 1 FROM public.container pp
+                            WHERE pp.id = p.container_id
+                              AND pp.created_by = ANY(${householdIds}))
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
         `,
         // V4-TRANSPLANTANCHOR-001 (BD-023) — logging a `transplant` event stamps the planting's
         // transplanted_at (the EVENT date) the FIRST time only. Batch trigger-parity with the
@@ -624,8 +687,10 @@ export const handler = async (event) => {
         // `transplant` IS in BATCH_EVENT_TYPES, so this path really can be the one that establishes
         // an anchor — it is not a theoretical parity.
         //
-        // Two-arm ownership, unlike the germination write above: a planting may have NO container
-        // and the inner-join form drops those rows silently (BUG-STATUSADVNOPROJ-001).
+        // Two-arm ownership: a planting may have NO container and the inner-join form drops those
+        // rows silently (BUG-STATUSADVNOPROJ-001). The germination write above carried the
+        // inner-join form until BUG-LOGMANYPROJECTLESS-001; every statement in this array now
+        // uses the two-arm predicate, so there is no longer an exception to point at.
         sql`
           UPDATE public.garden_node p
              SET transplanted_at = ${eventDate}::timestamptz,
@@ -674,6 +739,24 @@ export const handler = async (event) => {
            AND created_by = ${userId}
            AND deleted_at IS NULL
       `;
+      // BUG-LOGMANYPROJECTLESS-001 — reconcile INTENT against REALITY before answering.
+      //
+      // The response used to report `count: plantIds.length`, which is what the handler MEANT to
+      // write. `insertedEvents` above is re-read from event_log, so it is the only count in this
+      // route derived from the database rather than from the code path that just ran — under the
+      // old inner-join INSERT it would have been the smaller of the two and nothing compared them,
+      // which is precisely how a partial batch reported total success. Every row carries batch_id
+      // (buildBatchMetadataPlan spreads the server keys LAST into both the default object and every
+      // per-row override), so this is a faithful census, not an approximation.
+      //
+      // A divergence should now be impossible — both the resolver and the INSERT LEFT JOIN, and
+      // plantIds comes from garden_node itself — which is exactly why it is worth asserting: if a
+      // future predicate reintroduces a drop, the user is told rather than reassured.
+      const missingPlantIds = plantIds.filter((id) => !insertedEvents.some((r) => r.plant_id === id));
+      if (missingPlantIds.length) {
+        console.warn('batch wrote fewer events than plantings resolved (BUG-LOGMANYPROJECTLESS-001)',
+          { batchId, resolved: plantIds.length, written: insertedEvents.length, missingPlantIds });
+      }
       const batchFx = await applyBatchSideEffects({
         sql,
         userId,
@@ -688,7 +771,19 @@ export const handler = async (event) => {
       });
       return resp(200, {
         batch_id: batchId,
-        count: plantIds.length,
+        // The number the user reads as "✓ N plantings watered" is now the number of rows that
+        // exist. Identical to plantIds.length on every path that can currently run.
+        count: insertedEvents.length,
+        // Present ONLY on a divergence, so no client field changes shape in the normal case. A
+        // client that ignores these still shows a count that is at least TRUE; LogMany surfacing
+        // `warning` is a src/ change and belongs to whoever owns that lane.
+        ...(missingPlantIds.length
+          ? {
+              requested_count: plantIds.length,
+              skipped_plant_ids: missingPlantIds,
+              warning: `${missingPlantIds.length} of ${plantIds.length} selected plantings could not be logged`,
+            }
+          : {}),
         // event_ids kept in response for backward-compat with Phase B+ clients (any deployed
         // Phase B+ build still iterates and calls /api/critters — UNIQUE INDEX makes those
         // idempotent re-hits). Will remove once all clients are Phase B++.
