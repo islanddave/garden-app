@@ -6,15 +6,29 @@
 // variant (used until the V4-ICONCOLOR-001 pass) + a `filled` multi-region variant whose
 // regions carry data-region + fill="currentColor" so the color pass swaps fills with zero
 // geometry redraw (§1 region-intent bridge). Construction notes tie each to the keyline kit.
-// Anchor set per V101 §14: today/sprout, garden, drop, leaf, pin, alert(severity-high), heart, pause.
+// Anchor set per V101 §14: today/checklist (was today/sprout until the 2026-08-21 redraw — see
+// nav.today), garden, drop, leaf, pin, alert(severity-high), heart, pause.
 
 const A = {
-  // today = SPROUT (§9: avoids the sun↔weather-sun collision). mono.
+  // today = DAILY CHECKLIST (two ticked rows + one open row). mono. Still satisfies the original
+  // §9 constraint this key was drawn for (no sun ↔ weather-sun collision) — it just no longer
+  // solves it with a sprout. DELIBERATE FORM, DO NOT CONVERGE IT BACK ON THE SEEDLING: until
+  // 2026-08-21 this svg24 was a byte-copy of STATUS_GLYPHS.seedling.svg24, so one mark served a
+  // NAV DESTINATION *and* the seedling/sprouting/seeding stages *and* the transplant event —
+  // chrome wearing content's mark, the same defect as event.given_away ≡ action.share. Dave ruled
+  // the redraw (candidate C, chosen at 77px and at real nav size): /today is a list of what to do
+  // today, so the mark now states what the page is. src/__tests__/iconUniqueness.test.js fails if
+  // anyone re-points this at a sprout form; the seedling family keeps its own (ruled) synonymy.
   'nav.today': {
     class: 'mono', register: 'functional', variant: 'line',
-    svg24: '<path d="M4.5 20.5h15"/><path d="M12 20.5v-8.2"/><path d="M12 13.2C9.2 13.2 7 11 7 8.2c2.8 0 5 2.2 5 5z"/><path d="M12 11.4c0-2.4 1.9-4.3 4.3-4.3 0 2.4-1.9 4.3-4.3 4.3z"/>',
-    // 18: shorten stem, soil bar narrows; both leaves kept (they carry the read).
-    svg18: '<path d="M5.5 20h13"/><path d="M12 20v-7.4"/><path d="M12 13C9.4 13 7.4 11 7.4 8.4c2.6 0 4.6 2 4.6 4.6z"/><path d="M12 11.6c0-2.2 1.8-4 4-4 0 2.2-1.8 4-4 4z"/>',
+    svg24: '<path d="M3.6 7.6l1.6 1.6 3.2-3.4"/><path d="M11 7.4h9.4"/><path d="M3.6 13.4l1.6 1.6 3.2-3.4"/><path d="M11 13.2h9.4"/><circle cx="5.4" cy="18.6" r="1.8"/><path d="M11 18.8h6.4"/>',
+    // 18: drops nothing (all three rows carry the "checklist" read) — re-tuned for aperture per §4,
+    // the action.share pattern rather than the nav.garden drop-an-element one. Icon.jsx normalizes
+    // strokeSmall 2.0 by 24/size, so an 18 inks at 2.0 device px against the 24's 1.75: at the 24
+    // master's r1.8 the ring closes to a solid dot and row 2's tick fuses into it. Ring r1.8->2.5,
+    // tick shallower + wider (vertex ~88°->101°, keeps the short leg legible), rows re-pitched to
+    // clear the bigger ring, line column pulled right off the widened tick tips.
+    svg18: '<path d="M3.4 6l1.8 1.3 3.7-2.9"/><path d="M11.6 6h8.8"/><path d="M3.4 11.4l1.8 1.3 3.7-2.9"/><path d="M11.6 11.4h8.8"/><circle cx="5.9" cy="18.1" r="2.5"/><path d="M11.6 18.2h6.2"/>',
   },
   // garden = potted plant. mono. RES-3: pot-dominant; 18 master drops the right sprig.
   'nav.garden': {

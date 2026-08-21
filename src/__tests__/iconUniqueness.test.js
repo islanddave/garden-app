@@ -48,26 +48,23 @@ const DELIBERATE_SYNONYMS = {
   [pk('care.pause', 'media.pause')]: 'iconAnchors.js:163 — "media.pause = two rounded bars (reuses care.pause geometry; own key)"',
 }
 
-// NOT RULED — nobody decided these; the guard found them when it was written (2026-08-21), already
-// present at v4.43.0 (= dev = main = live prod). They are allowlisted with a TODO rather than
-// failed, because fixing one means redrawing a live glyph, which is a design decision and not this
-// guard's to make. Do NOT quietly promote an entry from here to DELIBERATE_SYNONYMS — that needs a
-// ruling, and then a citation.
+// NOT RULED — the holding pen for a collision the guard FINDS but nobody has decided yet. It is
+// deliberately kept (empty is its correct steady state) so the next such collision has an obvious
+// home and does not get quietly parked in DELIBERATE_SYNONYMS, where it would read as intentional.
 //
-// TODO(dave): nav.today is byte-identical to the seedling form on svg24 — so "Today" (a nav
-// destination), the seedling/sprouting/seeding lifecycle stages, and the transplant event all
-// render the same mark. This is the action.share pattern again: chrome sharing a mark with
-// content. Evidence it is accidental rather than designed: the two are separate literal copies in
-// separate files (iconAnchors.js:15 vs iconStatus.js:10) rather than a reference like the REUSE
-// block uses, and their svg18 masters DIFFER — nav.today's 18 keeps a soil bar the seedling's 18
-// drops. Independently tuned 18s with byte-identical 24s is the signature of convergence, not
-// intent. Consequence today: re-tuning either 24 silently diverges the other.
-const UNRULED_COLLISIONS = {
-  [pk('nav.today', 'status.seedling')]:  'UNRULED — nav.today.svg24 duplicates the seedling form (svg18 differs)',
-  [pk('nav.today', 'status.sprouting')]: 'UNRULED — via the seedling form',
-  [pk('nav.today', 'status.seeding')]:   'UNRULED — via the seedling form',
-  [pk('nav.today', 'event.transplant')]: 'UNRULED — via the seedling form',
-}
+// Rules for anything added here: give it a loud TODO(dave) naming the two keys and the evidence
+// that the collision is accidental rather than designed, and do NOT promote an entry from here to
+// DELIBERATE_SYNONYMS without a ruling plus a citation. Allowlisting here is a stay of execution,
+// not an acquittal — assertion 4 below deletes the entry the moment the collision stops being real.
+//
+// Emptied 2026-08-21. It held exactly one finding: nav.today's svg24 was a byte-copy of the
+// seedling form, so a NAV DESTINATION shared its mark with the seedling/sprouting/seeding stages
+// and the transplant event (4 pairs). Dave ruled the redraw rather than the synonymy — nav.today
+// is now a daily checklist (iconAnchors.js) — so all four pairs stopped colliding and came out.
+// The six pairs AMONG status.seedling/sprouting/seeding + event.transplant are untouched and stay
+// in DELIBERATE_SYNONYMS above: three lifecycle stages and the transplant event all being "a young
+// plant" is genuine synonymy, and it was never the defect.
+const UNRULED_COLLISIONS = {}
 
 const ALLOWED = { ...DELIBERATE_SYNONYMS, ...UNRULED_COLLISIONS }
 const MASTERS = ['svg24', 'svg18']
