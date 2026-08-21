@@ -49,9 +49,12 @@ const decomment = (s) => s.split('\n')
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
-// The batch scope SELECT, delimited by two constructs unique to it: its FROM clause and the
+// The batch scope SELECT, delimited by two constructs unique to it: its container join and the
 // ORDER BY that BUG-BATCHORDER-001 pinned. Slicing first is what makes claim 2 real.
-const FROM = 'FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id';
+// BUG-LOGMANYPROJECTLESS-001 rewrote that join from INNER to LEFT (a project-less planting was
+// invisible to Log Many entirely), so the needle moved with it. The `AND pp.deleted_at IS NULL`
+// tail is what keeps it unique: the event_log INSERT below carries the same LEFT JOIN without it.
+const FROM = 'LEFT JOIN public.container pp ON pp.id = p.container_id AND pp.deleted_at IS NULL';
 const ORDER = 'ORDER BY p.display_name, p.id';
 const fromIdx = SRC.indexOf(FROM);
 const orderIdx = SRC.indexOf(ORDER, fromIdx);

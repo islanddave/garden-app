@@ -58,6 +58,16 @@ describe('awardCritterServer — V3-ARCHIVE-001 reward suppression', () => {
   });
 
   it('events bulk scope-resolution excludes archived plantings', () => {
-    expect(SRC).toMatch(/WHERE p\.deleted_at IS NULL AND pp\.deleted_at IS NULL AND p\.archived_at IS NULL/);
+    // The three aliveness terms no longer sit on one line: BUG-LOGMANYPROJECTLESS-001 turned the
+    // container join LEFT and moved `pp.deleted_at IS NULL` into its ON clause, because a
+    // project-less planting has no pp row to test. Asserted per-term against the resolver slice, so
+    // this still fails if archived_at is dropped — which is the only thing this test is about — and
+    // no longer fails merely because the clause was reformatted.
+    const RESOLVER = SRC.slice(
+      SRC.indexOf('LEFT JOIN public.container pp ON pp.id = p.container_id AND pp.deleted_at IS NULL'),
+      SRC.indexOf('ORDER BY p.display_name, p.id'),
+    );
+    expect(RESOLVER).toMatch(/pp\.deleted_at IS NULL/);
+    expect(RESOLVER).toMatch(/WHERE p\.deleted_at IS NULL AND p\.archived_at IS NULL/);
   });
 });

@@ -115,10 +115,19 @@ describe('events Lambda — Household Mode surgical widening', () => {
   // is now 6 status-advance + 2 transplant-anchor writes, and the two groups are asserted separately
   // on purpose: a bare total of 8 would be satisfied by, say, seven status arms and one transplant
   // arm, which is precisely the "right number of predicates on the wrong statements" failure the
-  // sibling status-advance-scope.test.js header calls out. germinated_at is deliberately NOT in this
-  // census — those two writes still carry the narrower container join (recorded, not fixed here), so
-  // counting them would assert a property the file does not have.
-  it("all ten ownership-scoped garden_node writes keep the container-less arm", () => {
+  // sibling status-advance-scope.test.js header calls out.
+  //
+  // BUG-LOGMANYPROJECTLESS-001 adds two more and RETIRES the germinated_at carve-out above, which
+  // used to read "those two writes still carry the narrower container join (recorded, not fixed
+  // here)". That is now half true and the half matters: the BATCH germination write was converted
+  // (it sits in the Log Many transaction, which can now hand it a project-less planting), while the
+  // single-event POST copy and the PUT date-correction copy still carry the join and are still live
+  // blind spots — logging a germination by hand to a project-less planting stamps no anchor, and
+  // there are 5 such plantings on prod today. Censused here at exactly one armed of three, so
+  // converting the other two later fails this test loudly instead of drifting past it.
+  // The twelfth arm is not a write at all: it is the Log Many scope RESOLVER, the SELECT that
+  // decides which plantings exist for the whole batch.
+  it("all twelve ownership-scoped garden_node statements keep the container-less arm", () => {
     const harvested = SRC.match(/SET status = 'harvested'/g) ?? [];
     const fruiting  = SRC.match(/SET status = 'fruiting'/g) ?? [];
     const flowering = SRC.match(/SET status = 'flowering'/g) ?? [];
@@ -133,8 +142,27 @@ describe('events Lambda — Household Mode surgical widening', () => {
     expect(flowering.length).toBe(2);                   // V3-FLOWERING-001 + V4-EVENTSEL-002 batch
     expect(transplanted.length).toBe(2);                // V4-TRANSPLANTANCHOR-001 single + batch
     expect(reduction.length).toBe(2);                   // V4-LOSSEVENT-001 apply + reverse
-    const arms = SRC.match(/p\.container_id IS NULL AND p\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(arms.length).toBe(10);
+
+    // The two BUG-LOGMANYPROJECTLESS-001 additions, grouped by their own signature for the same
+    // reason the five above are. Each sql template ends at the next backtick — SQL inside these
+    // templates contains none, one would terminate the string — so that is an exact statement
+    // boundary and the arm cannot be borrowed from a neighbouring statement.
+    const stmtsAfter = (needle) => SRC.split(needle).slice(1).map((s) => s.slice(0, s.indexOf('`')));
+    const ARM = /p\.container_id IS NULL AND p\.created_by = ANY\(\$\{householdIds\}\)/;
+    // THREE, not two — the carve-out comment this replaced said two and undercounted. They are the
+    // Log Many batch write, the single-event POST write, and the PUT germination-date correction.
+    const germ = stmtsAfter('SET germinated_at = ');
+    expect(germ.length).toBe(3);
+    expect(germ.filter((s) => ARM.test(s))).toHaveLength(1); // batch fixed; the other two are NOT
+
+    const resolver = SRC.slice(
+      SRC.indexOf('LEFT JOIN public.container pp ON pp.id = p.container_id AND pp.deleted_at IS NULL'),
+      SRC.indexOf('ORDER BY p.display_name, p.id'),
+    );
+    expect(resolver).toMatch(ARM);
+
+    const arms = SRC.match(new RegExp(ARM.source, 'g')) ?? [];
+    expect(arms.length).toBe(12);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {

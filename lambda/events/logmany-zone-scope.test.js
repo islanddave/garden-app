@@ -39,10 +39,11 @@ const decomment = (s) => s.split('\n')
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
-// Same two delimiters logmany-dormant.test.js uses: the scope SELECT's FROM clause and the ORDER BY
-// that BUG-BATCHORDER-001 pinned. Slicing is what makes claim 1 mean "in the resolver" rather than
-// "somewhere in a 2000-line file".
-const FROM = 'FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id';
+// Same two delimiters logmany-dormant.test.js uses: the scope SELECT's container join and the
+// ORDER BY that BUG-BATCHORDER-001 pinned. Slicing is what makes claim 1 mean "in the resolver"
+// rather than "somewhere in a 2000-line file". BUG-LOGMANYPROJECTLESS-001 turned that join LEFT;
+// the `AND pp.deleted_at IS NULL` tail keeps the needle unique against the event_log INSERT's copy.
+const FROM = 'LEFT JOIN public.container pp ON pp.id = p.container_id AND pp.deleted_at IS NULL';
 const ORDER = 'ORDER BY p.display_name, p.id';
 const fromIdx = SRC.indexOf(FROM);
 const orderIdx = SRC.indexOf(ORDER, fromIdx);
