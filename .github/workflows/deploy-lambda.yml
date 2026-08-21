@@ -227,8 +227,16 @@ jobs:
           FN="garden-facebook-share"
           HH=$(aws lambda get-function-configuration --function-name garden-events \
             --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
-          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
-            --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          # Read the CURRENT env and abort the step if it cannot be read. The old code fell back to
+          # "{}" here, which silently turned a read blip into a WIPE: the merge below would then emit
+          # only the four hardcoded keys, dropping FB_SHARE_ENABLED / IG_SHARE_ENABLED and
+          # re-darkening a live feature during an unrelated deploy. The step is continue-on-error,
+          # so bailing leaves the existing config untouched — strictly safer than overwriting it.
+          if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+            --query 'Environment.Variables' --output json 2>/dev/null); then
+            echo "::warning::could not read $FN config; leaving env untouched rather than risking a wipe"
+            exit 1
+          fi
           UPDATED=$(echo "$EXISTING" | jq \
             --arg hh "$HH" \
             --arg b "garden-photos-prod" \
@@ -236,10 +244,15 @@ jobs:
             --arg s "garden-app/facebook-page-token" \
             '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)')
           echo "{\"Variables\": $UPDATED}" > /tmp/env-fbshare.json
+          # 180s/1024MB, NOT the former 60s/512MB. This function fans out over up to 10 photos:
+          # S3 GetObject + EXIF strip + (Facebook) a multipart upload each, or (Instagram) an S3
+          # staging PUT + presign + container create + poll each. A timeout mid-Promise.all orphans
+          # uploaded Graph media with NO cleanup, because the catch never runs. Hardcoding the old
+          # values here silently reverted a deliberate console change on the next deploy.
           aws lambda update-function-configuration --function-name "$FN" \
-            --environment file:///tmp/env-fbshare.json --timeout 60 --memory-size 512 >/dev/null
+            --environment file:///tmp/env-fbshare.json --timeout 180 --memory-size 1024 >/dev/null
           aws lambda wait function-updated --function-name "$FN"
-          echo "facebook-share config ensured (household=$HH; admin; bucket; secret; 512MB/60s)"
+          echo "facebook-share config ensured (household=$HH; admin; bucket; secret; 1024MB/180s)"
 
       - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}
         # Idempotent: only updates if value differs. Required for photo-enriching
