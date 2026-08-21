@@ -17,6 +17,17 @@
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// BUG-VARIETYACTOREMPTY-001. Kept byte-identical in behaviour to auditActor() in
+// lambda/varieties/validate.js — each Lambda zips its own dir, so the two plant_varieties writers
+// cannot share a module; lambda/audit-actor-empty.test.js drives BOTH and fails if they diverge.
+// Rationale for throwing rather than substituting a sentinel is on softDeletePhoto below.
+function auditActor(userId) {
+  if (typeof userId !== 'string' || userId.trim() === '') {
+    throw new Error('audit actor is absent — refusing to write an unattributable audit row');
+  }
+  return userId;
+}
+
 // ── DD4: PHOTO_POINTERS is the ONE named set, never a hand-written list per call site. ───────────
 //
 // Snapshot of live prod `pg_constraint WHERE confrelid = 'photos'::regclass` (introspected
@@ -162,6 +173,14 @@ async function loadOwnedPhotoForDelete(sql, photoId, householdIds) {
  * fires trg_audit_plant_varieties on UPDATE, which reads that GUC and otherwise records the actor as
  * 'system'. The events/plants/projects/varieties lambdas all set it; photos never has.
  *
+ * BUG-VARIETYACTOREMPTY-001 — the bind goes through auditActor(), not `userId ?? 'system'`. `??`
+ * only catches null/undefined, and the value that actually reaches the audit trail as '' is neither:
+ * `set_config(name, NULL, true)` STORES the empty string rather than leaving the GUC unset, so
+ * `COALESCE(current_setting(...), 'system')` in the trigger returns '' and the row records an actor
+ * that is present-but-nameless. 201 such rows exist on prod. `?? 'system'` also passes a literal ''
+ * straight through. Every caller is behind `if (!userId) return 401` (photos/index.js), so refusing
+ * here is unreachable by design — it is what keeps it that way.
+ *
  * @returns {{status:number, body:object}}
  */
 export async function softDeletePhoto(sql, { photoId, householdIds, userId, spaceEnabled = false }) {
@@ -183,7 +202,7 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
 
   const pointers = activePointers(spaceEnabled);
   const statements = [
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId ?? 'system'}, true)`,
+    sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
     sql`
       UPDATE photos
          SET deleted_at = now()
