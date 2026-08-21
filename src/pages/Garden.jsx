@@ -394,13 +394,21 @@ export default function Garden() {
   // fired against a torn-down environment — observed 2026-08-19 as
   // `ReferenceError: document is not defined ❯ Timeout._onTimeout src/pages/Garden.jsx:398:11`,
   // a non-failing unhandled error in a full-suite run that would not reproduce in isolation. And
-  // clearing it in THIS effect's cleanup would silently kill the scroll instead: the strip above
+  // clearing it in THIS effect's cleanup would silently kill the scroll instead: the strip below
   // hands back a fresh `searchParams` object, so the effect re-runs (and cleans up) on the very
-  // re-render that setEditor triggers, well before 60ms elapse. Component-lifetime ownership is
+  // re-render that the strip triggers, well before 60ms elapse. Component-lifetime ownership is
   // the only version that both cancels on teardown and still scrolls. Same shape as
   // InactiveProjects' dismissTimerRef.
+  //
+  // BUG-EDITDEEPLINKRACE-001 — `editDeepLinkMountedRef` rides along for exactly the same reason,
+  // one scope up: the in-flight ?edit= fetch must be cancelled by TEARDOWN, never by an effect
+  // re-run. See the effect below.
   const editorScrollTimerRef = useRef(null)
-  useEffect(() => () => clearTimeout(editorScrollTimerRef.current), [])
+  const editDeepLinkMountedRef = useRef(true)
+  useEffect(() => () => {
+    editDeepLinkMountedRef.current = false
+    clearTimeout(editorScrollTimerRef.current)
+  }, [])
 
   useEffect(() => {
     const editId = searchParams.get('edit')
@@ -408,10 +416,27 @@ export default function Garden() {
     const next = new URLSearchParams(searchParams)
     next.delete('edit')
     setSearchParams(next, { replace: true, state: location.state })
-    let on = true
+    // BUG-EDITDEEPLINKRACE-001: the guard below is the MOUNT flag, not an effect-local `on`, and
+    // that one word is the whole fix. The strip immediately above changes `location.search`;
+    // `useSearchParams` memoises on exactly that (`useMemo(..., [location.search])`) and
+    // `setSearchParams` is a `useCallback` keyed on the result, so BOTH of this effect's params
+    // deps change and React runs the cleanup on the same synchronous flush the strip scheduled.
+    // An effect-local flag was therefore ALWAYS false by the time the response landed — not
+    // usually, always: even `Promise.resolve(row)` loses, because its `.then` is a microtask that
+    // runs after that flush. Tapping Edit on a planting page navigated to /garden and opened
+    // nothing, 100% of the time, since v4.33.0 (4ab9680 swapped a synchronous `plants.find()` for
+    // this by-id GET and kept the pre-fetch strip; before it, setEditor ran in the effect body
+    // where no cleanup could intervene).
+    //
+    // The strip STAYS ahead of the fetch, deliberately. Deferring it to a `.finally` reads better
+    // and is wrong: `setSearchParams` closes over the `searchParams` of the render that created
+    // it, so a call made a round-trip later strips from a stale snapshot and silently drops any
+    // param written in the meantime (measured — it ate a concurrent `groupBy=tag`). Stripping in
+    // the same tick has no staleness window at all, and it keeps the 404/offline and unknown-id
+    // arms opening nothing with the param already gone, exactly as before.
     fetch('/api/plants/' + editId)
       .then(full => {
-        if (!on || !full?.id) return
+        if (!editDeepLinkMountedRef.current || !full?.id) return
         setEditor({ mode: 'edit', plant: full })
         clearTimeout(editorScrollTimerRef.current)
         editorScrollTimerRef.current = setTimeout(() => {
@@ -422,8 +447,7 @@ export default function Garden() {
           document.getElementById('planting-editor')?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
         }, 60)
       })
-      .catch(() => { /* 404 / offline — strip the param, open nothing (prior behaviour) */ })
-    return () => { on = false }
+      .catch(() => { /* 404 / offline — param already stripped, open nothing (prior behaviour) */ })
   }, [searchParams, loading, fetch, setSearchParams])
 
   const closeEditor = useCallback(() => {
