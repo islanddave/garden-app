@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.43.0",
+    "date": "2026-08-21",
+    "highlights": [
+      "Editing a planting works again — and now opens right where you are. Tapping Edit on a planting used to send you to the Garden tab, and since 17 August it had been landing there with no form at all. It now opens as a fly-up on the planting page itself. Put-Up has its own tab instead of hiding under More. Log Many no longer skips plantings that aren't in a project. And a couple of help hints that were written but never shown now actually appear."
+    ]
+  },
+  {
     "version": "4.42.0",
     "date": "2026-08-21",
     "highlights": [
