@@ -23,7 +23,7 @@
 import React, { useState, useCallback } from 'react'
 import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { P } from '../lib/constants.js'
-import { rankHarvestReady, lastPickedLabel } from '../lib/harvestReadiness.js'
+import { rankHarvestReady, rollUpByCrop, cropSubLabel } from '../lib/harvestReadiness.js'
 import { revealStep } from '../lib/harvestWatch.js'
 import { useAmbientBandFetch } from '../lib/useAmbientBandFetch.js'
 import AmbientBandNotice from './AmbientBandNotice.jsx'
@@ -67,7 +67,10 @@ export default function HarvestReadyBand() {
   const setReveal = useCallback((n) => { writeReveal(n); setRevealed(n) }, [])
 
   // The server supplies the reporting-zone day-of-year; the predicate is a pure function of it.
-  const ready = data ? rankHarvestReady(data.candidates, data.et_doy) : []
+  // ONE ROW PER CROP, not per planting (crucible 2026-08-20 — see rollUpByCrop's header). Applied as
+  // a post-filter on the ranked output so the ranker, the score and READY_MODEL_VERSION are all
+  // untouched and EventNew's live harvest tray keeps consuming the flat list.
+  const ready = data ? rollUpByCrop(rankHarvestReady(data.candidates, data.et_doy)) : []
 
   // BUG-READYBANDFETCH-001 — before the empty check, because "we could not ask" is not "nothing is
   // ready". Only reachable on a second consecutive failure with no data in hand.
@@ -84,6 +87,10 @@ export default function HarvestReadyBand() {
 
   const renderRow = (r) => (
     <li key={r.plant_id}>
+      {/* The tap target is the crop's REPRESENTATIVE — its most-overdue planting, which is the member
+          that won the crop its position. No `&crop=` param is invented for this: both shipped entry
+          points to the harvest session are `/log?session=harvest` with no plant scope, so a crop
+          filter would be a new server contract, not a presentation rollup. */}
       <button
         type="button"
         onClick={() => overlayNavigate(`/log?project=${r.project_id}&plant=${r.plant_id}&event_type=harvest`)}
@@ -94,13 +101,17 @@ export default function HarvestReadyBand() {
         }}
       >
         <span style={{ minWidth: 0 }}>
+          {/* The row's unit is the CROP, so the crop name leads — a row folding seven tomato
+              plantings must not be headlined with one cultivar's name. Also the only form legible to
+              a four-harvest user: "Tomato" reads, "Kori Sitakame" does not. Falls back to the
+              planting name so a payload without a crop label still renders what it has. */}
           <span style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600, color: P.dark,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {r.name || r.crop_display_name || 'Planting'}
+            {r.crop_display_name || r.name || 'Planting'}
           </span>
           <span style={{ display: 'block', fontSize: '0.78rem', color: P.light,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {lastPickedLabel(r.days_since_last_harvest)}
+            {cropSubLabel(r)}
           </span>
         </span>
         <span style={{ fontSize: '0.78rem', fontWeight: 600, color: P.green, flexShrink: 0, whiteSpace: 'nowrap' }}>
@@ -132,7 +143,11 @@ export default function HarvestReadyBand() {
       </ul>
 
       {/* THE TAIL (panel Q4) — the discharge of R8, on the band Dave actually named. Trigger first,
-          content AFTER it, so the button's top edge keeps its viewport y when it expands. */}
+          content AFTER it, so the button's top edge keeps its viewport y when it expands.
+          SINCE THE CROP ROLLUP the count is CROPS, not plantings (on prod today: 11 crop rows over 29
+          ready plantings, so "Show 6 more" rather than "Show 24 more"). Individual cultivar rows are
+          no longer reachable from this band at all — the sibling count in each row's label carries
+          the magnitude, and the per-planting list lives in EventNew's harvest tray, unchanged. */}
       {hidden > 0 && (
         <button
           type="button"

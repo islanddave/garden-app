@@ -100,3 +100,64 @@ export function lastPickedLabel(days) {
   if (n === 1) return 'last picked 1 day ago'
   return `last picked ${n} days ago`
 }
+
+// ── CROP ROLLUP (V4-HARVSURFACE-001, 7-seat crucible 2026-08-20) ─────────────────────────────────
+// PRESENTATION ONLY, and deliberately NOT part of the versioned model above. It runs on the OUTPUT of
+// rankHarvestReady, changes no predicate, no score and no ordering, so READY_MODEL_VERSION does NOT
+// move: two seats measured that a gratuitous bump fragments the 46-row ready_impression series and
+// drops rows on an ON CONFLICT the deploy day it lands, for zero gain. It also keeps the ranker's
+// return shape untouched, so EventNew.jsx's live harvest tray — the only other consumer — is unaffected.
+//
+// THE DEFECT IT FIXES IS GRANULARITY, NOT RANKING. A row is a PLANTING, and Dave runs 10 pepper and
+// 7 tomato plantings against 14 herb plantings, so two crops can hold every visible slot. Measured on
+// the binding days: 93.3% of the fruiting group's slot share is pure population count and only 6.7%
+// comes from the ranking function — overdue_ratio is innocent. Three seats independently rejected a
+// second group, a second heading and a second sort key; one row per crop delivers what the split was
+// for (herbs at 3-of-5 on 15 of 18 days, never 0) with one heading and no model change.
+//
+// ORDER IS INHERITED, NEVER RECOMPUTED. The first member of a crop in the already-ranked list wins
+// that crop's position, so crops sort by their best member's overdue_ratio exactly as before. A Map
+// preserves insertion order, which is what makes that true without a second sort. Alphabetical was
+// measured and rejected: it promotes Blackberry — a deliberately-unmanaged legacy perennial sitting
+// last of 29 on prod — 26 places into a visible slot.
+//
+// NULL KEY FALLS BACK TO THE PLANTING. crop_type_slug is non-null by construction in the payload (an
+// INNER JOIN on ct.slug = pv.crop_type_slug), so this only fires on a malformed response — and there
+// it must degrade to today's per-planting rows rather than collapsing unrelated plantings under one
+// arbitrary crop name. Same idiom as selectWatchDisplay's projectless key in harvestWatch.js.
+export function rollUpByCrop(ranked) {
+  if (!Array.isArray(ranked)) return []
+  const byCrop = new Map()
+  for (const c of ranked) {
+    if (!c) continue
+    const key = c.crop_type_slug ?? `plant:${c.plant_id}`
+    const days = Number(c.days_since_last_harvest)
+    const held = byCrop.get(key)
+    if (!held) {
+      byCrop.set(key, {
+        ...c,
+        crop_planting_count: 1,
+        crop_days_since_last_harvest: Number.isFinite(days) ? days : null,
+      })
+      continue
+    }
+    held.crop_planting_count += 1
+    // The crop's own last pick is its MOST RECENT one, not the representative's. The representative
+    // is the most OVERDUE member, so using its age would tell Dave a crop he picked yesterday has
+    // gone 8 days untouched — a claim the row would be making about plantings it has folded in.
+    if (Number.isFinite(days) && (held.crop_days_since_last_harvest == null || days < held.crop_days_since_last_harvest)) {
+      held.crop_days_since_last_harvest = days
+    }
+  }
+  return [...byCrop.values()]
+}
+
+// The rolled row's second line. Count in the LABEL, never a pill (Reward-UX V102 / panel Q1) — the
+// magnitude is what Dave needs to decide whether to carry a basket, not a badge. A crop covering one
+// planting reads byte-identically to what shipped, so the rollup is invisible on a one-planting crop.
+export function cropSubLabel(row) {
+  const picked = lastPickedLabel(row?.crop_days_since_last_harvest ?? row?.days_since_last_harvest)
+  const n = Number(row?.crop_planting_count)
+  if (!Number.isFinite(n) || n <= 1) return picked
+  return picked ? `${n} plantings · ${picked}` : `${n} plantings`
+}
