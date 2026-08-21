@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.42.0",
+    "date": "2026-08-21",
+    "highlights": [
+      "Privacy: photos taken in newer phone formats (HEIC and AVIF) now have their location and camera data removed, the same as every other photo — until now those formats were uploaded and shared exactly as the camera wrote them. Sharing to Facebook uses that same thorough cleaning too, including the extra data some phones tack on after the end of the picture."
+    ]
+  },
+  {
     "version": "4.41.0",
     "date": "2026-08-20",
     "highlights": [
