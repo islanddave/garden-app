@@ -34,6 +34,30 @@ export const CLEARABLE_FIELDS = [
 
 const CLEARABLE_SET = new Set(CLEARABLE_FIELDS);
 
+// BUG-VARIETYACTOREMPTY-001 — the actor GUC bind. Not a body validator, but pure, and this is the
+// only module in this Lambda a unit test can import without dragging in @neondatabase/serverless.
+//
+// `set_config(name, NULL, true)` does NOT leave the setting unset — Postgres stores the EMPTY
+// STRING. `current_setting('app.actor_clerk_sub', true)` then returns '', which is not NULL, so the
+// live trg_audit_plant_varieties expression `COALESCE(current_setting(...), 'system')` never fires
+// and the audit row records an actor of ''. Measured on prod 2026-08-21:
+//   set_config('app.actor_clerk_sub', NULL::text, true) -> current_setting(...) = ''  -> COALESCE = ''
+// 201 plant_varieties audit rows (2026-06-26 … 2026-08-06) carry exactly that empty actor.
+//
+// So an absent userId does not degrade to 'system'. It degrades to a row asserting that somebody
+// acted while refusing to say who — worse than no row, because it looks like a record. Refuse the
+// write instead. Every call site is already behind `if (!userId) return 401`, so this is unreachable
+// in production and exists to keep it that way: it is the last line, not the first.
+// Whitespace-only is refused with the empty string and NOT trimmed on the way through: '   ' is
+// just as unattributable as '', while trimming a value that IS a sub would quietly rewrite the
+// identity being recorded.
+export function auditActor(userId) {
+  if (typeof userId !== 'string' || userId.trim() === '') {
+    throw new Error('audit actor is absent — refusing to write an unattributable audit row');
+  }
+  return userId;
+}
+
 // Absent/[] is the legacy no-op. A key that is BOTH cleared and given a value is rejected rather
 // than silently resolved — picking a winner for an ambiguous request is the exact failure mode
 // this whole ticket exists to remove.

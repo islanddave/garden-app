@@ -255,8 +255,13 @@ describe('varieties write predicates — source-level invariants', () => {
 
   // Widening WHO MAY EDIT must not blur WHO DID EDIT.
   it('the audit actor is still the calling human, not a household id', () => {
-    expect(SRC).toMatch(/set_config\('app\.actor_clerk_sub', \$\{userId\}, true\)/);
-    expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{household\}/);
+    // BUG-VARIETYACTOREMPTY-001 wrapped the bind in auditActor(); the property under test is
+    // unchanged — the actor derives from the JWT sub and from nothing else. Now asserted over EVERY
+    // bind instead of "some line matches", so a fifth write path cannot slip in on a household id.
+    const binds = [...SRC.matchAll(/set_config\('app\.actor_clerk_sub', \$\{([^}]*)\}, true\)/g)].map((m) => m[1]);
+    expect(binds).toHaveLength(4);
+    for (const b of binds) expect(b).toBe('auditActor(userId)');
+    expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{[^}]*household/);
   });
 
   it('POST still stamps created_by from the JWT sub only (no widening on create)', () => {

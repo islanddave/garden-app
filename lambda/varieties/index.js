@@ -13,7 +13,9 @@
 //   - GET /api/varieties/crop-types: globally readable controlled vocabulary (V4-PLANTTYPE-001)
 //
 // Audit: trigger trg_audit_plant_varieties writes to audit_events. Lambda sets
-// SET LOCAL app.actor_clerk_sub = $userId after BEGIN so trigger reads the actor.
+// SET LOCAL app.actor_clerk_sub = $userId after BEGIN so trigger reads the actor. The bind goes
+// through auditActor() (./validate.js) — a NULL bind would silently set the GUC to '' rather than
+// leave it unset, which the trigger's COALESCE cannot catch. BUG-VARIETYACTOREMPTY-001.
 //
 // Rate limits (per design doc C-S1-C):
 //   plant_varieties.create — 60/hour per actor
@@ -37,7 +39,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validateBody, validateCropTypeBody, resolveCropTypeName, validateClear } from './validate.js';
+import { validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
@@ -256,7 +258,7 @@ export const handler = async (event) => {
       // would land in the audit trail with no actor — the one asymmetry that would make the delete
       // attributable and its undo anonymous.
       const [, rows] = await sql.transaction([
-        sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
         sql`
           UPDATE public.cultivar
              SET deleted_at = NULL
@@ -348,7 +350,7 @@ export const handler = async (event) => {
         const cd = body.common_diseases;
         const clear = Array.isArray(body.clear) ? body.clear : [];
         const [, updateRows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
           sql`
             UPDATE public.cultivar SET
               display_name         = COALESCE(${body.name ?? null}, display_name),
@@ -398,7 +400,7 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         const [, deleteRows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
           sql`
             UPDATE public.cultivar
             SET deleted_at = NOW()
@@ -550,7 +552,7 @@ export const handler = async (event) => {
       }
 
       const [, insertRows] = await sql.transaction([
-        sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
         sql`
           INSERT INTO public.cultivar (
             display_name, species, genus,
