@@ -88,7 +88,17 @@ describe('harvest-ready SQL shape', () => {
   // abandonment with no status change at all), nothing can sit at the top of the list many
   // multiples overdue. Ceiling is empirical — see the constant's comment for the distribution.
   it('applies the staleness ceiling as a multiple of the crop repeat interval', () => {
-    expect(candidates).toMatch(/\$\{HARVEST_STALE_INTERVAL_CEILING\} \* ct\.repeat_interval_days/);
+    expect(candidates).toMatch(/\$\{HARVEST_STALE_INTERVAL_CEILING\}::int \* ct\.repeat_interval_days/);
+  });
+
+  // BUG-STALECEILING-001: the ceiling is GREATEST(ratio·interval, floor). The floor arm is the whole
+  // fix — a pure multiple gives a 3-day tomato 9 days of grace and a 30-day bay laurel 90 — and it is
+  // invisible in the payload, so nothing behavioural would notice if a refactor dropped it back to a
+  // bare multiplication. Assert the GREATEST wrapper and the floor operand separately: matching only
+  // the constant name would still pass if it were left in the query but no longer bounded anything.
+  it('composes the ceiling with an ABSOLUTE floor via GREATEST, not a bare multiple', () => {
+    expect(candidates).toMatch(/GREATEST\(\$\{HARVEST_STALE_INTERVAL_CEILING\}::int \* ct\.repeat_interval_days/);
+    expect(candidates).toMatch(/\$\{HARVEST_STALE_ABSOLUTE_FLOOR_DAYS\}::int\)/);
   });
 
   // The server ceiling is defence-in-depth behind src/lib/harvestReadiness.js's MAX_OVERDUE_RATIO,
@@ -108,6 +118,25 @@ describe('harvest-ready SQL shape', () => {
     expect(Number.isFinite(serverCeiling)).toBe(true);
     expect(Number.isFinite(clientCeiling)).toBe(true);
     expect(serverCeiling).toBe(clientCeiling);
+  });
+
+  // SECOND constant, SAME hazard (BUG-STALECEILING-001). Adding an absolute floor without extending
+  // this lock would have left the new value free to drift between bundle and Lambda — reintroducing
+  // exactly the silent-dead-config failure the test above exists to prevent, on the arm that carries
+  // the whole fix. Extending the lock is part of the change, not polish.
+  it('server absolute floor equals the client MIN_STALE_DAYS (single effective value)', () => {
+    const serverFloor = Number(
+      /const HARVEST_STALE_ABSOLUTE_FLOOR_DAYS = (\d+(?:\.\d+)?)/.exec(src)?.[1]
+    );
+    const clientSrc = decomment(readFileSync(
+      join(here, '..', '..', 'src', 'lib', 'harvestReadiness.js'), 'utf-8'
+    ));
+    const clientFloor = Number(
+      /MIN_STALE_DAYS\s*=\s*(\d+(?:\.\d+)?)/.exec(clientSrc)?.[1]
+    );
+    expect(Number.isFinite(serverFloor)).toBe(true);
+    expect(Number.isFinite(clientFloor)).toBe(true);
+    expect(serverFloor).toBe(clientFloor);
   });
 
   // The ceiling must NARROW only. Rows the pure client predicate owns rejecting (NULL/non-positive

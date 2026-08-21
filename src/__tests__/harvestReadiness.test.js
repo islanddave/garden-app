@@ -1,7 +1,7 @@
 // V4-HARVESTSURF-001 — the harvest-readiness predicate. NULL means UNKNOWN and must never fire; the
 // DOY window is a suppressor (incl. wrap-around); `single` is terminal; clock skew must not fire.
 import { describe, it, expect } from 'vitest'
-import { inHarvestWindow, isReadyToPick, rankHarvestReady, lastPickedLabel, rollUpByCrop, cropSubLabel, READY_MODEL_VERSION, MAX_OVERDUE_RATIO } from '../lib/harvestReadiness.js'
+import { inHarvestWindow, isReadyToPick, rankHarvestReady, lastPickedLabel, rollUpByCrop, cropSubLabel, READY_MODEL_VERSION, MAX_OVERDUE_RATIO, MIN_STALE_DAYS } from '../lib/harvestReadiness.js'
 
 const c = (over = {}) => ({
   plant_id: 'p1', project_id: 'proj1', name: 'Test Planting',
@@ -109,16 +109,56 @@ describe('isReadyToPick', () => {
   // A row far past its own cadence is evidence the model is WRONG about that plant, not that the
   // plant is urgent — and rankHarvestReady sorts by ratio DESC, so those rows were being promoted
   // to the top of a 5-row band. Boundary is inclusive: exactly at the ceiling still fires.
-  it('staleness ceiling: fires AT the ceiling ratio, rejects just past it', () => {
+  // The ceiling is GREATEST(ratio·interval, floor) as of BUG-STALECEILING-001, so BOTH arms need
+  // their own boundary case and each must be exercised where it actually dominates: the ratio arm
+  // only binds above interval 6 (3·6 = 18 = the floor), and below that the floor is the whole rule.
+  // A boundary asserted on the wrong side of that crossover tests nothing.
+  it('staleness ceiling: RATIO arm — fires AT 3x, rejects just past it (interval 14)', () => {
     expect(MAX_OVERDUE_RATIO).toBe(3)
-    expect(isReadyToPick(c({ repeat_interval_days: 2, days_since_last_harvest: 6 }), 202)).toBe(true)   // 3.0
-    expect(isReadyToPick(c({ repeat_interval_days: 2, days_since_last_harvest: 7 }), 202)).toBe(false)  // 3.5
+    expect(isReadyToPick(c({ repeat_interval_days: 14, days_since_last_harvest: 42 }), 202)).toBe(true)   // 3.0
+    expect(isReadyToPick(c({ repeat_interval_days: 14, days_since_last_harvest: 43 }), 202)).toBe(false)  // 3.07
   })
-  it('staleness ceiling: rejects the live wineberry row (interval 2, 21 days => 10.5)', () => {
+  it('staleness ceiling: FLOOR arm — a short interval gets 18 days regardless of ratio', () => {
+    expect(MIN_STALE_DAYS).toBe(18)
+    // Tomato, interval 3: the ratio arm alone would eject at 10 days (3x = 9). The floor holds it to 18.
+    expect(isReadyToPick(c({ repeat_interval_days: 3, days_since_last_harvest: 18 }), 202)).toBe(true)   // ratio 6.0
+    expect(isReadyToPick(c({ repeat_interval_days: 3, days_since_last_harvest: 19 }), 202)).toBe(false)  // ratio 6.33
+  })
+  // THE REGRESSION THIS FIX EXISTS FOR. Five peak-season tomatoes measured ceiling-ejected on live
+  // prod 2026-08-21 at 10-14 days, every one of them watered/fertilized/doctored within 3 days. Under
+  // the old pure ratio all five returned false. Named individually so a future floor change that
+  // re-breaks them says WHICH plant it broke.
+  it('staleness ceiling: restores the five wrongly-ejected prod tomatoes (interval 3, 10-14 days)', () => {
+    for (const [name, days] of [
+      ['Bush Early Girl', 10], ['Delicious Slicer', 10], ['Sunray', 11],
+      ['Speckled Roman', 13], ['Eva Purple Ball', 14],
+    ]) {
+      expect(isReadyToPick(c({ name, repeat_interval_days: 3, days_since_last_harvest: days }), 202)).toBe(true)
+    }
+  })
+  // FOUNDING CASE, and the binding constraint on MIN_STALE_DAYS. 21 > 18 by three days: raising the
+  // floor past 20 re-admits the exact row the ceiling was built to reject and turns this red. That is
+  // the intended tripwire — do not "fix" it by widening the fixture.
+  it('staleness ceiling: STILL rejects the live wineberry row (interval 2, 21 days)', () => {
     expect(isReadyToPick(c({ name: 'Wild Wineberry', repeat_interval_days: 2, days_since_last_harvest: 21 }), 202)).toBe(false)
+    expect(MIN_STALE_DAYS).toBeLessThan(21)
+  })
+  // The floor must not rescue genuine staleness. Both scallions sat 75 days on one lifetime pick each
+  // and were CORRECTLY ejected before the fix; interval 14 puts the ratio arm (42) above the floor, so
+  // they stay ejected. This is the pair that stops "restore the tomatoes" from becoming "restore
+  // everything".
+  it('staleness ceiling: the two genuinely-stale prod scallions stay rejected (interval 14, 75 days)', () => {
+    expect(isReadyToPick(c({ name: 'Scallion (thin clump)', repeat_interval_days: 14, days_since_last_harvest: 75 }), 202)).toBe(false)
+  })
+  // KNOWN AND ACCEPTED: 1 of the 6 wrong prod ejections is not recovered. Kori Sitakame is a pepper at
+  // 22 days on interval 7, so its ratio arm (21) already exceeds the floor and only F >= 24 would
+  // reach it — which breaks the wineberry case above. Pinned so the residue is a recorded decision
+  // rather than an unnoticed gap.
+  it('staleness ceiling: does NOT recover the marginal pepper (interval 7, 22 days) — accepted residue', () => {
+    expect(isReadyToPick(c({ name: 'Kori Sitakame', repeat_interval_days: 7, days_since_last_harvest: 22 }), 202)).toBe(false)
   })
   it('staleness ceiling: a genuinely-missed pick inside the ceiling still fires', () => {
-    // 2-day cucumber left 5 days (2.5) and a 14-day scallion at 28 days (2.0) are real nudges.
+    // 2-day cucumber left 5 days and a 14-day scallion at 28 days (2.0) are real nudges.
     expect(isReadyToPick(c({ repeat_interval_days: 2, days_since_last_harvest: 5 }), 202)).toBe(true)
     expect(isReadyToPick(c({ repeat_interval_days: 14, days_since_last_harvest: 28 }), 202)).toBe(true)
   })
@@ -208,7 +248,7 @@ describe('rollUpByCrop', () => {
   // rankHarvestReady / isReadyToPick / MAX_OVERDUE_RATIO, the model version must move with it — and
   // EventNew's live harvest tray, the ranker's only other consumer, would silently reorder too.
   it('leaves the versioned model untouched — no impression-series fragmentation', () => {
-    expect(READY_MODEL_VERSION).toBe('ready-v1')
+    expect(READY_MODEL_VERSION).toBe('ready-v2')
     expect(rankHarvestReady([
       c({ plant_id: 'a', crop_type_slug: 'pepper', repeat_interval_days: 7, days_since_last_harvest: 20 }),
       c({ plant_id: 'b', crop_type_slug: 'pepper', repeat_interval_days: 7, days_since_last_harvest: 12 }),

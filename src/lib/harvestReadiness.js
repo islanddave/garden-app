@@ -48,6 +48,51 @@ const REPEATING_HABITS = new Set(['repeat', 'cut_and_come_again'])
 // is not constructible here — which is exactly why the server-side gate is the load-bearing one.
 export const MAX_OVERDUE_RATIO = 3
 
+// ABSOLUTE FLOOR (BUG-STALECEILING-001, recon 2026-08-21). A pure ratio makes the grace period scale
+// with the crop's own interval, which inverts the urgency it is supposed to encode: a 3-day tomato
+// gets 9 days before it is called finished, a 30-day bay laurel gets 90 — and the tomato is the one
+// dropping a spoiling, splitting crop every day it is missed. The ratio was fitted to the POOLED gap
+// distribution across intervals spanning 1–30 days; tomato's own p99 is 4.33 (13 days), well past it.
+//
+// Measured on live prod 2026-08-21, not inferred. 8 plantings were ceiling-ejected and 6 of the 8
+// were wrong — five peak-season tomatoes at 10–14 days (Eva Purple Ball, Speckled Roman, Sunray, Bush
+// Early Girl, Delicious Slicer) that Dave had watered, fertilized and doctored three days earlier,
+// plus Kori Sitakame (pepper, 22 d). Across all recorded history TEN consecutive-harvest gaps exceeded
+// ratio 3 and ALL TEN ended in a real pick: 63 planting-days of nudges withheld from plants that were
+// demonstrably still producing. The harm lands on the LOGGING path — EventNew.jsx consumes the flat
+// (un-rolled-up) ranking, so each ejected planting is individually absent from the harvest tray, and
+// the recency fallback provably cannot recover them (its 50-row page reaches back only 3 days).
+//
+// A suppressed row generates no ready_impression, so this failure mode is INVISIBLE to the very
+// telemetry built to calibrate this model. It could only be found by re-deriving the predicate
+// against prod. Do not expect the impression series to surface a regression here.
+//
+// 18 is the largest floor that restores all five tomatoes while preserving BOTH founding regression
+// cases — Wild Wineberry (interval 2, 21 days) stays rejected because 21 > 18, and the two genuinely
+// stale scallions (interval 14, 75 days) stay rejected. Sweep: F=12 restores 3 of 5, F=15 restores 5,
+// F=18 cuts false negatives from 63 planting-days/10 gaps to 20/1, F=21 re-admits the wineberry and
+// turns its test red. The surviving suppression is a strawberry 38-day gap — a real June-bearing
+// season break that SHOULD stay suppressed.
+//
+// THE WINEBERRY MARGIN IS 3 DAYS, NOT COMFORTABLE. Raising this constant past 20 silently re-admits
+// the row the ceiling was built for. If more headroom is ever wanted, bound the floor by its own max
+// ratio (GREATEST(3·iv, LEAST(F, K·iv))) rather than nudging F — that variant was named but NOT
+// measured across the corpus, so it is not a drop-in.
+//
+// DELIBERATELY NOT AN UPPER CAP. LEAST(3·iv, C) would fix the bay-laurel end, but no planting on prod
+// with 3·iv > 45 has ever been harvested and the model is evidence-only (zero prior picks ⇒ never a
+// candidate at any ceiling), so a cap would ship as an unvalidatable constant. Revisit only if a bay
+// or lemongrass is picked for the first time.
+//
+// DELIBERATELY NOT SEASON-SENSITIVE. The defect occurs at PEAK season, when a frost term would be
+// inert. Note the ~Nov 8 ten-hour-daylength wall cuts the OTHER way for the frost-hardy set (they
+// survive frost but stop regrowing, so a cut_and_come_again interval becomes meaningless and the
+// ceiling should TIGHTEN) — conflating the two would produce a constant wrong in both seasons.
+// Mirrored (defence-in-depth) as HARVEST_STALE_ABSOLUTE_FLOOR_DAYS in lambda/events/index.js and
+// pinned in lockstep by harvest-ready.test.js — see MAX_OVERDUE_RATIO's note on why divergence is
+// not merely untidy.
+export const MIN_STALE_DAYS = 18
+
 // V4-READYTRAYIMPRESSION-001 — the partition key stamped on every impression this model produces
 // (public.ready_impression.model_version). It lives HERE, beside the predicate, because this model
 // runs CLIENT-side: unlike the watch band the server cannot reconstruct what was ranked, so the
@@ -55,7 +100,13 @@ export const MAX_OVERDUE_RATIO = 3
 // rankHarvestReady or MAX_OVERDUE_RATIO changes behaviour — an impression joined across a
 // definition change is a rate computed over two different models. Mirrored (fallback only) in
 // lambda/harvests/ready-impression.js, pinned in lockstep by ready-impression.test.js.
-export const READY_MODEL_VERSION = 'ready-v1'
+// ready-v1 -> ready-v2 (BUG-STALECEILING-001, 2026-08-21): isReadyToPick's eligibility changed, so
+// impressions either side of this deploy are rates over two different models. Bumped now BECAUSE the
+// series is at its smallest — 46 rows across 21 plants over 3 days (2026-08-18..20) — and the cost of
+// fragmenting it only grows. uq_ready_impression_day is (user_id, plant_id, shown_on, region) and does
+// NOT include model_version, so a bump creates no duplicates; the deploy day gets one day of mixed
+// attribution under ON CONFLICT DO NOTHING, which is not data loss.
+export const READY_MODEL_VERSION = 'ready-v2'
 
 export function isReadyToPick(c, etDoy) {
   if (!c) return false
@@ -68,9 +119,12 @@ export function isReadyToPick(c, etDoy) {
   // Clock-skew guard: a future-dated harvest yields a negative age and must never fire.
   if (Number(days) < 0) return false
   if (Number(days) < Number(interval)) return false
-  // Staleness ceiling — see MAX_OVERDUE_RATIO. Placed AFTER the habit/interval/negative guards so the
-  // NULL-means-UNKNOWN and `single`-is-terminal contracts still decide first and this only ever narrows.
-  if (Number(days) / Number(interval) > MAX_OVERDUE_RATIO) return false
+  // Staleness ceiling — see MAX_OVERDUE_RATIO and MIN_STALE_DAYS. Placed AFTER the habit/interval/
+  // negative guards so the NULL-means-UNKNOWN and `single`-is-terminal contracts still decide first
+  // and this only ever narrows. Stated as a multiplication rather than the original `days / interval >
+  // ratio` so the two arms compose in one comparison and the shape matches the server's GREATEST();
+  // interval > 0 is already guaranteed above, so the two forms are equivalent.
+  if (Number(days) > Math.max(MAX_OVERDUE_RATIO * Number(interval), MIN_STALE_DAYS)) return false
   return inHarvestWindow(etDoy, c.harvest_season_start_doy, c.harvest_season_end_doy)
 }
 

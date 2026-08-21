@@ -25,8 +25,9 @@ const cand = (over = {}) => ({
   // every fixture carries one — a slugless fixture would fall through to the per-planting fallback
   // and quietly test the degraded path instead of the shipped one.
   crop_type_slug: 'wineberry',
-  // interval 3 / 7 days = ratio 2.33, deliberately INSIDE the BD-001 staleness ceiling
-  // (MAX_OVERDUE_RATIO = 3) so this shared fixture keeps testing rendering, not the predicate.
+  // interval 3 / 7 days = ratio 2.33, deliberately INSIDE the BD-001 staleness ceiling on BOTH arms
+  // as of BUG-STALECEILING-001 — under the ratio (2.33 < 3) and under the absolute floor (7 < 18) —
+  // so this shared fixture keeps testing rendering, not the predicate, whichever arm binds.
   harvest_habit: 'repeat', repeat_interval_days: 3, days_since_last_harvest: 7,
   harvest_season_start_doy: null, harvest_season_end_doy: null, ...over,
 })

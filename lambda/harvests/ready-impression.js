@@ -31,7 +31,7 @@ export const READY_IMPRESSIONS_PATH = '/api/harvests/ready-impressions';
 // ready-impression.test.js (same mechanism as IMPRESSION_PROJECT_SLOT_CAP — the Lambda and src/ are
 // separate module graphs and cannot share a constant). Used ONLY as the fallback when a request
 // omits model_version: the client owns the model identity here, because the client IS the model.
-export const READY_MODEL_VERSION = 'ready-v1';
+export const READY_MODEL_VERSION = 'ready-v2';
 
 // Closed vocabularies, matching ready_impression_region_chk / ready_impression_source_chk. A value
 // outside these would fail the CHECK, and the writer inserts the whole tray in ONE statement — so an

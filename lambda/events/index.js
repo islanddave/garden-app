@@ -103,6 +103,15 @@ const HARVEST_TZ = 'America/New_York';
 // nag forever.
 const HARVEST_STALE_INTERVAL_CEILING = 3;
 
+// MIRROR of src/lib/harvestReadiness.js MIN_STALE_DAYS — read that constant's note for the full
+// evidence; the short version is that the ratio arm alone inverts urgency (a 3-day tomato gets 9 days
+// of grace, a 30-day bay laurel gets 90) and measured 6 wrong ejections out of 8 on prod, with all 10
+// historical past-ceiling gaps resuming in a real pick. Composed as GREATEST(ratio·interval, floor),
+// so this only ever WIDENS the candidate set — the client predicate remains authoritative and strictly
+// narrows. Pinned equal to the client by harvest-ready.test.js: an unpinned second constant would
+// reintroduce exactly the silent-dead-config hazard the ceiling lock-test exists to prevent.
+const HARVEST_STALE_ABSOLUTE_FLOOR_DAYS = 18;
+
 // ── Daily flat-XP cap ─────────────────────────────────────────────────────────────────────────
 // Raised 30 -> 300 (Batch-B decision packet item 3). The unit is UNCHANGED — 10 XP per LOGGING
 // ACTION, capped per user per day in the user's own timezone — so this is one constant, fully
@@ -1199,7 +1208,8 @@ export const handler = async (event) => {
             ct.repeat_interval_days IS NULL
             OR ct.repeat_interval_days <= 0
             OR ((NOW() AT TIME ZONE ${HARVEST_TZ})::date - lp.last_date)
-                 <= ${HARVEST_STALE_INTERVAL_CEILING} * ct.repeat_interval_days
+                 <= GREATEST(${HARVEST_STALE_INTERVAL_CEILING}::int * ct.repeat_interval_days,
+                             ${HARVEST_STALE_ABSOLUTE_FLOOR_DAYS}::int)
           )
           AND NOT EXISTS (
             SELECT 1 FROM public.harvest_watch_dismissal d
