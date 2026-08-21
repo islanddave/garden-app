@@ -11,7 +11,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { waitFor } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
-import { renderWithRouter, currentLocation, currentSearch, navigateTo, resetRouterHarness } from './helpers/routerHarness.jsx'
+import { renderWithRouter, currentLocation, currentSearch, currentNavigationType, resetRouterHarness } from './helpers/routerHarness.jsx'
 
 installStoragePolyfill()
 
@@ -52,14 +52,16 @@ describe('Garden — ?add=1 strip preserves location.state (§4)', () => {
     expect(currentLocation().state).toEqual({ background: BACKGROUND })
   })
 
-  it('replaces rather than pushes, so Back does not land on the pre-strip URL', async () => {
-    // The other half of the same `setSearchParams(next, { replace: true, … })` call, asserted as
-    // the gesture rather than as an options object. Dave is Android-only and hardware Back is his
-    // primary gesture: a PUSHED strip leaves ?add=1 one entry down, so Back re-enters it and
-    // silently reopens the editor he just left.
+  it('REPLACES rather than pushes, so Back does not stall on the pre-strip URL', async () => {
+    // The other half of the same `setSearchParams(next, { replace: true, … })` call. Dave is
+    // Android-only and hardware Back is his primary gesture: a PUSHED strip leaves ?add=1 one entry
+    // down, so Back re-enters it, the effect re-opens the editor, and Back appears to do nothing.
+    //
+    // Asserted via the router's navigation type, NOT by going Back and checking the query — that
+    // version is vacuous and was measured so. Popping back to ?add=1 re-runs the strip effect, so
+    // the page erases the evidence itself and the test stays green under `{ replace: false }`.
     await renderGardenWithBackground()
     await waitFor(() => expect(currentSearch()).not.toContain('add'))
-    await navigateTo(-1)
-    expect(currentSearch()).not.toContain('add')
+    expect(currentNavigationType()).toBe('REPLACE')
   })
 })

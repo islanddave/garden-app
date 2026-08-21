@@ -45,15 +45,19 @@
 //     await renderWithRouter(<PlantingDetail />, { route: '/plantings/p1', path: '/plantings/:id' })
 import React from 'react'
 import { act, render } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, parsePath, useLocation, useNavigate, useParams } from 'react-router-dom'
+import {
+  MemoryRouter, Routes, Route, parsePath,
+  useLocation, useNavigate, useNavigationType, useParams,
+} from 'react-router-dom'
 
 // Written during the probe's RENDER, not from an effect, so `currentSearch()` inside a `waitFor`
 // poll observes the location of the render being asserted rather than lagging it by an effect tick.
-const live = { location: null, navigate: null, params: null }
+const live = { location: null, navigate: null, navigationType: null, params: null }
 
 function LocationProbe() {
   live.location = useLocation()
   live.navigate = useNavigate()
+  live.navigationType = useNavigationType()
   live.params = useParams()
   return null
 }
@@ -63,6 +67,7 @@ function LocationProbe() {
 export function resetRouterHarness() {
   live.location = null
   live.navigate = null
+  live.navigationType = null
   live.params = null
 }
 
@@ -103,6 +108,20 @@ export function currentSearch() {
  *  `setSearchParams` spy: it reads what the URL actually became, not that a function was called. */
 export function currentParams() {
   return new URLSearchParams(currentSearch())
+}
+
+/**
+ * How the router got to the current entry: `'POP'` | `'PUSH'` | `'REPLACE'`.
+ *
+ * This is the honest observable for "the page REPLACED rather than pushed". The tempting
+ * alternative — go Back and assert the old query is gone — is VACUOUS on a self-healing page and
+ * was measured so: flipping Garden's `?add=1` strip to `{ replace: false }` left that test green,
+ * because popping back to `?add=1` re-runs the very effect that strips it, so the observable is
+ * destroyed by the correct behaviour of the page under test. This reads the router's own record of
+ * the operation, which the caller's argument object cannot fake.
+ */
+export function currentNavigationType() {
+  return live.navigationType
 }
 
 /** The live path params (populated only when `renderWithRouter` was given a `path`). */
