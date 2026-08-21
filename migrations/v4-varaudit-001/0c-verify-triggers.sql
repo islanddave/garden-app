@@ -43,7 +43,9 @@ END $$;
 
 -- Fixture. A crop_types row is needed because plant_varieties.crop_type_slug is a FK; it is created
 -- here rather than borrowed so the script does not depend on any particular environment's data.
-INSERT INTO public.crop_types(slug) VALUES ('_v0c_crop') ON CONFLICT DO NOTHING;
+-- Both columns are required: crop_types.display_name is NOT NULL with no default on prod and on
+-- staging, so a slug-only INSERT aborts on the not-null constraint before any assertion runs.
+INSERT INTO public.crop_types(slug, display_name) VALUES ('_v0c_crop','_v0c crop') ON CONFLICT DO NOTHING;
 SELECT set_config('app.actor_clerk_sub', 'user_0c', true);
 
 -- ── A. INSERT arm, single row ────────────────────────────────────────────────────────────────────
