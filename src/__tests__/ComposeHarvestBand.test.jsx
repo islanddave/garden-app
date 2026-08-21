@@ -464,3 +464,177 @@ describe('ComposeHarvestBand — season retrospective', () => {
     expect(screen.getByLabelText('Post text').value).toContain('so far')
   })
 })
+
+// ── V4-COMPOSEDRAFT-001 — the caption survives closing the composer ──────────────────────────────
+// It did not, and Business Suite (which this replaces) keeps drafts, so this was a REGRESSION
+// against the tool it competes with rather than a missing nicety. Backed by src/lib/draftStash.js —
+// sessionStorage, tab-scoped — rather than a second bespoke persistence mechanism.
+describe('ComposeHarvestBand — draft persistence', () => {
+  beforeEach(() => { try { sessionStorage.clear() } catch { /* jsdom without the shim */ } })
+
+  const openAndEdit = async (user, text) => {
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    const box = await screen.findByLabelText('Post text')
+    await user.click(box)
+    await user.keyboard(text)
+    return box
+  }
+
+  it('restores an EDITED caption after the composer is closed and reopened', async () => {
+    payload(BATCH)
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await openAndEdit(user, 'PICKED THE LAST OF THE ZEPHYRS')
+    first.unmount()
+
+    payload(BATCH)
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('PICKED THE LAST OF THE ZEPHYRS'))
+  })
+
+  it('does NOT restore a CLEAN draft as text — it regenerates from the data', async () => {
+    // A clean draft is reproducible, and re-seeding it would pin a stale generation over a batch
+    // that has since gained a row. Non-vacuity: the composer still renders its generated post.
+    payload(BATCH)
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    const generated = (await screen.findByLabelText('Post text')).value
+    expect(generated).toContain('Tomatoes:')
+    first.unmount()
+
+    payload([...BATCH, entry(ago(14), 'Zephyr', 'Summer Squash', 2)])
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    // The NEW row is present, which it could not be if the old clean text had been restored.
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('Zephyr'))
+  })
+
+  it('restores which lines were excluded, not just the words', async () => {
+    payload(BATCH)
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await screen.findByLabelText('Post text')
+    await openPicker(user)
+    await user.click(screen.getByRole('button', { name: /1 Cubanelle/ }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).not.toContain('Cubanelle'))
+    first.unmount()
+
+    payload(BATCH)
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('Tomatoes:'))
+    expect(screen.getByLabelText('Post text').value).not.toContain('Cubanelle')
+  })
+
+  it('does not surface one batch’s draft against a DIFFERENT batch', async () => {
+    // The key is the batch's startedAt + logger. A draft for last night must not open over tonight.
+    payload(BATCH)
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await openAndEdit(user, 'LAST NIGHT WORDS')
+    first.unmount()
+
+    const OTHER = [entry(ago(5), 'Sungold', 'Tomato', 4), entry(ago(4), 'Brandywine', 'Tomato', 2)]
+    payload(OTHER)
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('Sungold'))
+    expect(screen.getByLabelText('Post text').value).not.toContain('LAST NIGHT WORDS')
+  })
+
+  it('does not surface Dave’s draft in Jen’s session on the shared device', async () => {
+    payload(BATCH)
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await openAndEdit(user, 'DAVES PRIVATE WORDING')
+    first.unmount()
+
+    // Same entries, different viewer: detectLastBatch is scoped by created_by, so Jen sees her own
+    // batch — and must not inherit his caption from the shared tab.
+    profileRef.current = { id: JEN }
+    payload([entry(ago(9), 'Sungold', 'Tomato', 3), entry(ago(8), 'Brandywine', 'Tomato', 2)].map((e) => ({ ...e, created_by: JEN })))
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('Sungold'))
+    expect(screen.getByLabelText('Post text').value).not.toContain('DAVES PRIVATE WORDING')
+  })
+
+  it('survives the batch GROWING — the key is startedAt, which a later pick does not move', async () => {
+    // Crucible B2 measured 6 of 66 batch boundaries inside the 90-180 min window, so one later-logged
+    // pick BRIDGES two batches into one. Under an endedAt key that moves and the draft orphans; under
+    // startedAt the extended batch keeps its original value. ~9% of boundaries, not a corner case.
+    payload(BATCH)
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await openAndEdit(user, 'STILL PICKING')
+    first.unmount()
+
+    // Same batch, one more pick 5 minutes later — inside the 45-minute gap, so it EXTENDS the batch
+    // rather than starting a new one. endedAt moves; startedAt does not.
+    payload([...BATCH, entry(ago(10), 'Zephyr', 'Summer Squash', 2)])
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('STILL PICKING'))
+  })
+
+  it('keeps two loggers apart even when their batches START AT THE SAME INSTANT', async () => {
+    // The startedAt half of the key would already separate them in practice, so this is the case
+    // that makes createdBy non-vacuous rather than belt-and-braces: identical timestamps, two people,
+    // one shared tablet. detectLastBatch is created_by-scoped, so each sees only their own rows.
+    const T1 = ago(30), T2 = ago(29)
+    const daveRows = [entry(T1, '1884', 'Tomato', 3), entry(T2, 'Moskvich Heirloom', 'Tomato', 2)]
+    const jenRows = [
+      { ...entry(T1, 'Sungold', 'Tomato', 4), created_by: JEN },
+      { ...entry(T2, 'Brandywine', 'Tomato', 2), created_by: JEN },
+    ]
+    payload([...daveRows, ...jenRows])
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await openAndEdit(user, 'DAVES WORDS')
+    first.unmount()
+
+    profileRef.current = { id: JEN }
+    payload([...daveRows, ...jenRows])
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('Sungold'))
+    expect(screen.getByLabelText('Post text').value).not.toContain('DAVES WORDS')
+  })
+
+  it('clears the draft once it has reached the share sheet', async () => {
+    payload(BATCH)
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await openAndEdit(user, 'ALREADY POSTED THIS')
+    await user.click(screen.getByTestId('compose-share'))
+    await waitFor(() => expect(shareMock).toHaveBeenCalled())
+    first.unmount()
+
+    payload(BATCH)
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('Tomatoes:'))
+    expect(screen.getByLabelText('Post text').value).not.toContain('ALREADY POSTED THIS')
+  })
+
+  it('KEEPS the draft when the share fell through and the words never left the textarea', async () => {
+    // shareEntity's third outcome means neither the sheet nor the clipboard took it. That is exactly
+    // when discarding his words would be worst, so the clear is scoped to shared/copied only.
+    payload(BATCH)
+    shareMock.mockResolvedValue('unsupported')
+    const user = userEvent.setup()
+    const first = render(<ComposeHarvestBand />)
+    await openAndEdit(user, 'NEVER MADE IT OUT')
+    await user.click(screen.getByTestId('compose-share'))
+    await waitFor(() => expect(shareMock).toHaveBeenCalled())
+    first.unmount()
+
+    payload(BATCH)
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('NEVER MADE IT OUT'))
+  })
+})

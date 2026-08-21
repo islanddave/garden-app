@@ -37,6 +37,7 @@ import {
   LINE_SOFT_CAP, MIN_POST_LINES,
 } from '../lib/harvestPost.js'
 import { summarizeSeason, renderSeasonRetro } from '../lib/seasonRetro.js'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { collectBatchPhotos, fetchPostPhotos, MAX_POST_PHOTOS } from '../lib/harvestPostPhotos.js'
 
 // A batch older than this is history, not "tonight" — offering it invites a post that describes the
@@ -159,6 +160,51 @@ export default function ComposeHarvestBand() {
   // never overwritten by a toggle. "Rebuild" is the explicit way back.
   useEffect(() => { if (!dirty) setDraft(generated) }, [generated, dirty])
 
+  // ── V4-COMPOSEDRAFT-001: the caption survives closing the composer ──────────────────────────────
+  //
+  // It did not. Every open rebuilt from `generated` and Dave's edits were gone — and Business Suite,
+  // which this replaces, keeps drafts. So this was a REGRESSION against the tool it is meant to beat,
+  // not a missing nicety, which is why the IG crucible ranked it second of five.
+  //
+  // Reuses src/lib/draftStash.js rather than adding a second persistence mechanism. That is the whole
+  // point: this repo has already paid for two implementations of one job drifting apart (the metadata
+  // strippers), and a bespoke localStorage key here would be the same bet.
+  //
+  // sessionStorage, inherited from that module, is the right scope by accident of being right on
+  // purpose: a harvest caption is for tonight. A localStorage draft would resurface weeks later
+  // against a batch that no longer exists, and on a shared device it would surface Dave's words in
+  // Jen's session — the shape V4-RANKCLEAR-001 already had to fix once for crop ordering.
+  //
+  // KEYED ON startedAt, NOT endedAt, and that is load-bearing. Crucible B2 measured that 6 of 66
+  // batch boundaries sit in the 90-180 min window, so one later-logged event BRIDGES two batches into
+  // one — under `endedAt` the key moves and the draft orphans; under `startedAt` the merged batch
+  // keeps the earlier value and the draft still resolves. `createdBy` is in the key so Dave's and
+  // Jen's drafts cannot collide on the shared tablet.
+  const draftKeyRef = batch ? `compose.${batch.createdBy ?? 'anon'}.${batch.startedAt}` : null
+
+  // Restore runs ONCE per batch key, guarded by a ref rather than by `dirty`: an effect that reran on
+  // every keystroke would keep re-seeding the textarea from the stash and fight the user for the
+  // caret. Excluded lines ride along because unchecking six rows and losing that on a close is the
+  // same loss as losing the words — a Set is stored as an array since Sets do not serialise.
+  const restoredKeyRef = useRef(null)
+  useEffect(() => {
+    if (!draftKeyRef || restoredKeyRef.current === draftKeyRef) return
+    restoredKeyRef.current = draftKeyRef
+    const saved = readDraft(draftKeyRef)
+    if (!saved) return
+    if (Array.isArray(saved.excluded)) setExcluded(new Set(saved.excluded))
+    if (typeof saved.lead === 'string') setLead(saved.lead)
+    if (saved.mode === 'season' || saved.mode === 'batch') setMode(saved.mode)
+    // Only a DIRTY draft is restored as text. A clean one is reproducible from the data, and
+    // re-seeding it would pin a stale generation over a batch that has since gained a row.
+    if (saved.dirty && typeof saved.draft === 'string') { setDraft(saved.draft); setDirty(true) }
+  }, [draftKeyRef])
+
+  useEffect(() => {
+    if (!draftKeyRef || restoredKeyRef.current !== draftKeyRef) return
+    writeDraft(draftKeyRef, { draft, dirty, lead, mode, excluded: [...excluded] })
+  }, [draftKeyRef, draft, dirty, lead, mode, excluded])
+
   const postText = dirty ? draft : generated
 
   // ── Photos (V4-HARVPOSTPHOTOS-001) ──────────────────────────────────────────────────────────────
@@ -211,11 +257,16 @@ export default function ComposeHarvestBand() {
     const files = attachFiles
     const n = canShareFiles(files) ? files.length : 0
     const result = await shareEntity({ text, files })
+    // V4-COMPOSEDRAFT-001: a draft that reached the share sheet has done its job — keeping it would
+    // re-seed tonight's caption on the next open, over a batch he has already posted. Cleared ONLY
+    // on 'shared'/'copied'; the fallback branch means the text never left the textarea, which is
+    // precisely when it is most important not to throw it away.
+    if (draftKeyRef && (result === 'shared' || result === 'copied')) clearDraft(draftKeyRef)
     setStatus(result === 'shared'
       ? (n ? `Sent to your share sheet with ${n} ${n === 1 ? 'photo' : 'photos'}.` : 'Sent to your share sheet.')
       : result === 'copied' ? 'Copied — paste it into your post.'
       : 'Select the text above and copy it.')
-  }, [postText, attachFiles])
+  }, [postText, attachFiles, draftKeyRef])
 
   // Straight to the clipboard, never through shareEntity: on Chrome Android shareEntity always takes
   // the navigator.share leg and its clipboard branch is unreachable, so a Copy wired through it opens
