@@ -139,6 +139,10 @@ export default function PlantingDetail() {
   // an empty list renders that picker with no options rather than failing).
   const [editing, setEditing] = useState(false)
   const [editorDirty, setEditorDirty] = useState(false)
+  // V4-SHEETBUSY-001 — the editor's in-flight-write signal, fed to <Sheet busy> below. Separate
+  // state from editorDirty because they are different questions with different answers: a Save
+  // tapped on an untouched form is busy and NOT dirty, and a half-typed form is dirty and NOT busy.
+  const [editorBusy, setEditorBusy] = useState(false)
   const [editorPlants, setEditorPlants] = useState([])
 
   // The same 3-piece dirty contract Garden.jsx joined in V4-PLANTEDITORWIRE-001, for the same
@@ -169,6 +173,10 @@ export default function PlantingDetail() {
   const closeEditor = useCallback(() => {
     setEditing(false)
     setEditorDirty(false)
+    // Same one-commit-early reasoning for busy: PlantingEditor's unmount release lands a commit
+    // later, and a stale true would leave the NEXT open of the editor undismissable from the first
+    // frame — the stuck-busy trap the bounded Back guard exists to survive, reached with no write.
+    setEditorBusy(false)
   }, [])
 
   // The parent-planting (lineage) picker is the ONLY thing PlantingEditor wants that this page
@@ -870,6 +878,11 @@ export default function PlantingDetail() {
         title="Edit planting"
         onClose={closeEditor}
         dirty={editorDirty}
+        // V4-SHEETBUSY-001. `dirty` alone left this fly-up dismissable mid-save: it gates the
+        // backdrop tap only, and confirmOnDirty is still false at both registry call sites, so
+        // Escape and Android Back closed a form with a PUT already on the wire — and because that
+        // unmounts PlantingEditor, a save that FAILED could no longer render its error.
+        busy={editorBusy}
         armsBack
         size="full"
       >
@@ -880,6 +893,10 @@ export default function PlantingDetail() {
             plants={editorPlants}
             fetch={fetch}
             onDirty={setEditorDirty}
+            // The setter itself, not an inline arrow — PlantingEditor holds this behind a ref for
+            // the same reason it holds onDirty, and a stable identity means this page never relies
+            // on that. Feeds <Sheet busy> above.
+            onBusy={setEditorBusy}
             onClose={closeEditor}
             onUpdated={(updated) => {
               setPlanting(prev => (prev ? { ...prev, ...updated } : updated))

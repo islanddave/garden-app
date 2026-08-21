@@ -71,6 +71,7 @@ export default function PlantingEditor({
   onArchived,
   onClose,
   onDirty,                       // V4-PLANTEDITORDIRTY-001: (bool) => void, fires on every clean↔dirty flip
+  onBusy,                        // V4-SHEETBUSY-001: (bool) => void, fires on every idle↔write-in-flight flip
 }) {
   const isEdit = mode === 'edit'
   const [form, setForm] = useState(() => isEdit && plant
@@ -110,6 +111,27 @@ export default function PlantingEditor({
   // Unmount is the ordinary close path here (hosts render this conditionally), so without a release
   // a Cancel would strand the host holding the gate with no form left to resolve it.
   useEffect(() => () => { onDirtyRef.current?.(false) }, [])
+
+  // V4-SHEETBUSY-001 — the second continuous signal, and the one `dirty` cannot stand in for. A host
+  // that renders this editor inside a <Sheet> passes this to `busy`, which is what makes
+  // decideDismiss/decideBack return BLOCKED (dismissLayers.js:81, backNav.js:102) rather than
+  // discarding a surface with a write already on the wire.
+  //
+  // `dirty` genuinely does not cover it. Dirty gates the BACKDROP TAP ONLY (Sheet.jsx:168);
+  // `confirmOnDirty` is still false at both registry call sites (DismissRegistry.jsx:126,228)
+  // pending the ConfirmSheet primitive, so Escape and Android Back close a saving form outright.
+  // The cost is not cosmetic: onClose unmounts this component, so on the FAILURE path setErr has
+  // nothing left to render and the user is told nothing about a save that did not happen.
+  //
+  // ALL THREE in-flight writes, not `saving` alone — delete and archive are equally on the wire and
+  // delete is the destructive one, so blocking mid-save but not mid-delete would be incoherent.
+  // Each clears in a `finally`, and the unmount release below is the backstop, so busy cannot stick
+  // (a stuck busy would trap Escape; Back is separately bounded by MAX_CONSECUTIVE_BLOCKS).
+  const busy = saving || deleting || archiving
+  const onBusyRef = useRef(onBusy)
+  useEffect(() => { onBusyRef.current = onBusy })
+  useEffect(() => { onBusyRef.current?.(busy) }, [busy])
+  useEffect(() => () => { onBusyRef.current?.(false) }, [])
 
   useEffect(() => {
     let mounted = true
