@@ -64,13 +64,26 @@ const backGesture = async () => { act(() => { window.history.back() }); await se
 const SENTINEL = { __floor: 1 }
 const armed = () => !!readMarker(window.history.state)
 
-// Resolvers for the in-flight PUT, so the save can be held open across a dismissal attempt.
+// Resolvers for the in-flight write, so it can be held open across a dismissal attempt.
 let rejectSave
+let resolveDelete
 
 function primeWithHangingSave() {
   apiFetchSpy.mockImplementation((path, opts) => {
     if (path === '/api/plants/pl1' && opts?.method === 'PUT') {
       return new Promise((_res, rej) => { rejectSave = () => rej(Object.assign(new Error('nope'), { status: 500 })) })
+    }
+    if (path.startsWith('/api/plants?')) return Promise.resolve([PLANTING])
+    if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
+    if (path.startsWith('/api/events')) return Promise.resolve([])
+    return Promise.resolve(null)
+  })
+}
+
+function primeWithHangingDelete() {
+  apiFetchSpy.mockImplementation((path, opts) => {
+    if (path === '/api/plants/pl1' && opts?.method === 'DELETE') {
+      return new Promise((res) => { resolveDelete = () => res({ ok: true }) })
     }
     if (path.startsWith('/api/plants?')) return Promise.resolve([PLANTING])
     if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
@@ -110,6 +123,7 @@ async function openEditorAndStartSave() {
 beforeEach(() => {
   apiFetchSpy.mockReset()
   rejectSave = null
+  resolveDelete = null
   window.scrollTo = vi.fn()
   clearReloadBlocks()
   window.history.replaceState(SENTINEL, '')
@@ -170,5 +184,26 @@ describe('PlantingDetail — V4-SHEETBUSY-001: the Edit fly-up resists dismissal
 
     await backGesture()
     await waitFor(() => expect(sheet()).toBeNull())
+  })
+
+  // The destructive sibling. `busy` is fed by saving || deleting || archiving, not `saving` alone:
+  // a guard that held Back mid-save but let it through mid-DELETE would be incoherent, and this is
+  // the assertion that keeps the other two terms from being quietly narrowed away later.
+  it('Escape does NOT close the fly-up while a Remove is in flight, and the delete still completes', async () => {
+    primeWithHangingDelete()
+    renderPage()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(screen.getByText('Edit Megatron Jalapeno')).toBeTruthy())
+    await act(async () => { fireEvent.click(within(sheet()).getByRole('button', { name: 'Remove' })) })
+    await waitFor(() => expect(within(sheet()).getByText('Removing…')).toBeTruthy())
+    expect(isReloadBlocked()).toBe(false)   // untouched form => dirty absent; only busy can block
+
+    esc()
+    expect(sheet()).toBeTruthy()
+
+    // Not merely blocked — the write it was protecting runs to completion and the page moves on.
+    await act(async () => { resolveDelete(); await Promise.resolve() })
+    await waitFor(() => expect(screen.getByText('GARDEN PAGE')).toBeTruthy())
   })
 })
