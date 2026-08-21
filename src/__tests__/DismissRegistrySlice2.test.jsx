@@ -19,12 +19,18 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
 }))
 vi.mock('../components/PhotoImg.jsx', () => ({ default: ({ alt }) => <img alt={alt || ''} src="stub" /> }))
-// useShareToFacebook drives FacebookShareSheet's `state`; drive it from the test instead.
+// useShareToSocial drives FacebookShareSheet's `state`; drive it from the test instead.
+// (Was useShareToFacebook until V4-IGSHARE-001 made the sheet post to both targets. Mocking the
+// module the component no longer imports would leave this suite silently exercising the REAL hook
+// against an unmocked api.js — the mock would be inert rather than loudly wrong.)
 const fbState = { state: 'idle' }
-vi.mock('../hooks/useShareToFacebook.js', () => ({
-  useShareToFacebook: () => ({
+vi.mock('../hooks/useShareToSocial.js', async (importOriginal) => ({
+  // Keep the real pure helpers (captionLimitFor/validateForTargets) — the sheet calls them on every
+  // render and they have no I/O; only the hook itself needs driving.
+  ...(await importOriginal()),
+  useShareToSocial: () => ({
     get state() { return fbState.state },
-    result: null, error: null, share: vi.fn(), reset: vi.fn(),
+    perTarget: { facebook: null, instagram: null }, share: vi.fn(), reset: vi.fn(),
   }),
 }))
 

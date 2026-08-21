@@ -132,15 +132,16 @@
   },
 
   "garden-facebook-share": {
-    "memory": 512,
-    "timeout": 60,
-    "_note": "V4-FBSHARE-001 — FB_SHARE_ENABLED absent is the kill switch OFF (endpoint 503s). Declared absent so a stray flip is caught.",
+    "memory": 1024,
+    "timeout": 180,
+    "_note": "V4-FBSHARE-001 + V4-IGSHARE-001. FB_SHARE_ENABLED='1' since 2026-08-21 — Facebook posting is LIVE (secret provisioned, token non-expiring, Dev-mode post visibility verified equal to a hand-made post). IG_SHARE_ENABLED stays ABSENT: Instagram shipped dark and has never published from the Lambda, so a stray flip must still be caught. 1024MB/180s (was 512/60): this fans out over up to 10 photos — S3 get + metadata strip + either a multipart upload (FB) or a staging PUT + presign + container + poll (IG) each — and a timeout mid-Promise.all orphans uploaded Graph media with NO cleanup because the catch never runs. deploy-lambda.yml hardcoded the old 60/512 and silently reverted console changes on every deploy; that is fixed in the same commit as this line.",
     "env": {
       "GARDEN_HOUSEHOLD_IDS": true,
       "ADMIN_CLERK_SUBS": true,
       "S3_PHOTOS_BUCKET": "garden-photos-prod",
       "FB_SECRET_NAME": "garden-app/facebook-page-token",
-      "FB_SHARE_ENABLED": null
+      "FB_SHARE_ENABLED": "1",
+      "IG_SHARE_ENABLED": null
     }
   },
 

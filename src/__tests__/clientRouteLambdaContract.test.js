@@ -87,6 +87,8 @@ const PREFIX_TO_LAMBDA = {
   '/api/preservation': 'preservation',
   '/api/harvests': 'harvests',
   '/api/share/facebook': 'facebook-share',
+  // Same Lambda, same Function URL — the handler routes on rawPath (V4-IGSHARE-001).
+  '/api/share/instagram': 'facebook-share',
 }
 
 // Clients that bypass api.js and hold their own base URL: src/lib/critterClient.js and
