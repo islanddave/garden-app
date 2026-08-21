@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import exifr from 'exifr/dist/full.esm.mjs';
 import {
   stripJpegBytes, stripPngBytes, stripWebpBytes, stripImageBytes, stripImageFile,
-  stripImageFileStrict, UnstrippableFormatError,
+  stripImageFileStrict, UnstrippableFormatError, IncompleteStripError,
   isJpeg, isPng, isWebp,
 } from '../lib/imageMetadataStrip.js';
 
@@ -723,5 +723,147 @@ describe('ISOBMFF (HEIC/AVIF) — capture metadata is removed from the bytes', (
     expect(e.message).toContain('image/heic');
     expect(e.message).toMatch(/location data/i);
     expect(e.message).toMatch(/JPEG/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// incompleteWalk — the strip that stops early WITHOUT failing.
+//
+// The robustness block above has a test for a bail, but it puts the EXIF BEFORE the break, so the
+// EXIF is dropped before the walker gives up and it passes. Put the break FIRST and the same code
+// copies the GPS block through untouched. Nothing in the old result shape distinguished that from
+// success — `format` was a real format, and on a first-iteration bail `changed` is false and
+// `droppedSegments` is 0, which is byte-for-byte what an already-clean photo returns. So
+// stripImageFileStrict, whose entire job is to fail closed, called it clean.
+//
+// Every leak assertion below is made by exifr reading the OUTPUT, per this file's header rule.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe('imageMetadataStrip — incompleteWalk (fail-closed on a partial strip)', () => {
+  const DESYNC = new Uint8Array([0x00, 0x00, 0x00]);          // not 0xFF where a marker must be
+  const ZERO_LEN_APP = new Uint8Array([0xFF, 0xE7, 0x00, 0x00]); // declared len 0 -> len < 2
+
+  // Break the file BEFORE its APP1, but AFTER one well-formed segment. The leading JFIF is not
+  // decoration: isJpeg() sniffs FF D8 FF, so grafting the bad bytes straight onto SOI makes the
+  // file stop being a JPEG at all and the walker never runs — the first draft of this test did
+  // exactly that and "passed" the desync cases as `not-jpeg`, testing nothing.
+  const breakBefore = (bad) => concat(
+    GPS_JPEG.subarray(0, 2), app(0xE0, 'JFIF\0', '\x01\x01\x00\x00\x01\x00\x01\x00\x00'), bad, GPS_JPEG.subarray(2),
+  );
+
+  it.each([
+    ['desync', DESYNC],
+    ['bad-length', ZERO_LEN_APP],
+  ])('%s before the APP1: the GPS survives the strip, and incompleteWalk is the only thing that says so', async (reason, bad) => {
+    const broken = breakBefore(bad);
+    // Non-vacuity: the fixture really is carrying coordinates on the way in. Without this the
+    // after-assertion would pass against a file that never had GPS.
+    expect((await parse(broken))?.latitude).toBeCloseTo(51.4778, 3);
+
+    const r = stripJpegBytes(broken);
+    expect(r.reason).toBe(reason);
+    expect(r.incompleteWalk).toBe(true);
+
+    // THE DEFECT, asserted rather than described: exifr reads Greenwich straight out of the
+    // "stripped" bytes. This test documents what the walker does; the fail-closed tests below are
+    // what stop those bytes reaching a public surface.
+    expect((await parse(r.out))?.latitude).toBeCloseTo(51.4778, 3);
+  });
+
+  it('a bail before anything was dropped is byte-identical to the input and reports as an untouched success', () => {
+    const broken = breakBefore(DESYNC);
+    const r = stripJpegBytes(broken);
+    // Every field a caller might have reasoned from says "nothing needed doing" — this is exactly
+    // the shape an already-clean photo returns, which is why format !== null was not a guard.
+    expect(r.changed).toBe(false);
+    expect(r.droppedSegments).toBe(0);
+    expect(r.droppedBytes).toBe(0);
+    expect(r.format).toBe('jpeg');
+    expect(r.orientation).toBeNull();
+    expect(Buffer.from(r.out).equals(Buffer.from(broken))).toBe(true);
+    // Only this one dissents.
+    expect(r.incompleteWalk).toBe(true);
+  });
+
+  it('truncated-marker and truncated-length set it too (at EOF, so there is nothing left to leak)', () => {
+    // Both bail because the file ENDS mid-marker, which means no segment can follow — they cannot
+    // leak, but they are the same "did not finish walking" state and must fail closed identically.
+    const truncMarker = concat([0xFF, 0xD8], app(0xE1, 'Exif\0\0', 'X'), [0xFF, 0xFF, 0xFF]);
+    const truncLength = concat([0xFF, 0xD8], app(0xE1, 'Exif\0\0', 'X'), [0xFF, 0xE7]);
+    expect(stripJpegBytes(truncMarker)).toMatchObject({ reason: 'truncated-marker', incompleteWalk: true });
+    expect(stripJpegBytes(truncLength)).toMatchObject({ reason: 'truncated-length', incompleteWalk: true });
+  });
+
+  it('a clean walk leaves it false — otherwise every photo would fail closed', async () => {
+    for (const fixture of [GPS_JPEG, REAL_EXIF_JPEG, CLEAN_JPEG]) {
+      const r = stripJpegBytes(fixture);
+      expect(r.incompleteWalk).toBe(false);
+      expect(r.reason).toBeNull();
+    }
+    // ...and the strip still works on the one that has GPS, so this is not passing because the
+    // whole module went inert.
+    expect((await parse(stripJpegBytes(GPS_JPEG).out))?.latitude).toBeUndefined();
+  });
+
+  it('PNG and WebP bad-length set it as well — eXIf/iTXt and EXIF/XMP live past the break too', () => {
+    const PNG_SIG = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    // A chunk declaring 0xFFFFFF00 bytes of data, far past the end of the buffer.
+    const overlongPng = concat(PNG_SIG, [0xFF, 0xFF, 0xFF, 0x00], bytes('eXIf'), bytes('GPS-PAYLOAD'));
+    const png = stripPngBytes(overlongPng);
+    expect(png).toMatchObject({ reason: 'bad-length', incompleteWalk: true });
+    expect(text(png.out)).toContain('GPS-PAYLOAD');   // the leak, same shape as the JPEG one
+
+    const body = concat(bytes('EXIF'), [0xFF, 0xFF, 0xFF, 0x00], bytes('GPS-PAYLOAD'));
+    const size = 4 + body.length;
+    const overlongWebp = concat(
+      bytes('RIFF'), [size & 0xFF, (size >> 8) & 0xFF, (size >> 16) & 0xFF, (size >>> 24) & 0xFF],
+      bytes('WEBP'), body,
+    );
+    expect(stripWebpBytes(overlongWebp)).toMatchObject({ reason: 'bad-length', incompleteWalk: true });
+  });
+
+  it('STRICT refuses a partial strip — the publish paths cannot be handed unexamined bytes', async () => {
+    for (const bad of [DESYNC, ZERO_LEN_APP]) {
+      const blob = new Blob([breakBefore(bad)], { type: 'image/jpeg' });
+      await expect(stripImageFileStrict(blob)).rejects.toThrow(IncompleteStripError);
+    }
+  });
+
+  it('STRICT still accepts every well-formed photo, so the guard is not just refusing everything', async () => {
+    for (const fixture of [GPS_JPEG, REAL_EXIF_JPEG, CLEAN_JPEG]) {
+      const blob = new Blob([fixture], { type: 'image/jpeg' });
+      await expect(stripImageFileStrict(blob)).resolves.toBeDefined();
+    }
+  });
+
+  it('IncompleteStripError is distinct from UnstrippableFormatError and carries the reason', async () => {
+    const blob = new Blob([breakBefore(DESYNC)], { type: 'image/jpeg' });
+    const err = await stripImageFileStrict(blob).catch((e) => e);
+    expect(err).toBeInstanceOf(IncompleteStripError);
+    expect(err).not.toBeInstanceOf(UnstrippableFormatError);  // different cause, different remedy
+    expect(err.reason).toBe('desync');
+    expect(err.userFacing).toBe(true);
+    expect(err.message).toMatch(/location data/i);
+    expect(err.message).not.toMatch(/format/i);               // not the wrong error's wording
+  });
+
+  it('LENIENT does not throw — upload goes to private storage — but it stops being silent', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const blob = new Blob([breakBefore(DESYNC)], { type: 'image/jpeg' });
+      await expect(stripImageFile(blob)).resolves.toBeDefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('desync'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('LENIENT stays quiet for a normal photo, so the warning still means something', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await stripImageFile(new Blob([GPS_JPEG], { type: 'image/jpeg' }));
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -121,7 +121,18 @@ async function preparePhoto(row) {
     err.userFacing = true;
     throw err;
   }
-  const { out } = stripJpegExif(raw);
+  const { out, incompleteWalk, reason } = stripJpegExif(raw);
+  // FAIL CLOSED. incompleteWalk means the segment walk broke partway and everything past that
+  // offset was copied through UNEXAMINED — an APP1/EXIF/GPS block living there is still in `out`.
+  // This is the one exit that publishes a photo outside the household, so "we could not prove it
+  // is clean" has to stop the publish, not be discarded. Destructuring only `out` (what this line
+  // used to do) made a partial strip indistinguishable from a clean one: at a bail offset of 2,
+  // `out` IS the untouched original, GPS and all.
+  if (incompleteWalk) {
+    const err = new Error(`photo ${row.id} is a malformed JPEG (${reason}) — its metadata could not be fully removed, so it was not posted`);
+    err.userFacing = true;
+    throw err;
+  }
   return { photo_id: row.id, bytes: out, type: 'image/jpeg', name: `${row.id}.jpg` };
 }
 

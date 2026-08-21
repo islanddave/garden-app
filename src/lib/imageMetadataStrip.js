@@ -88,6 +88,26 @@
 // publishes publicly. The ISOBMFF walker added here propagates to the Lambda through the mirrored
 // copy above, which is why that copy was re-synced as part of this merge.
 
+// `incompleteWalk` — THE CONTRACT. Every strip result carries this boolean. It is true when the
+// walker hit structure it could not parse, copied everything from that offset to EOF verbatim, and
+// stopped. Those bytes were never classified, so an APP1/EXIF/GPS segment (or a PNG eXIf/iTXt, or a
+// WebP EXIF/XMP chunk) living past the bail rides straight through.
+//
+// It exists because NO OTHER FIELD DISTINGUISHES THAT FROM SUCCESS, and the worst case is the
+// quietest one: a bail on the first iteration copies the WHOLE file, so `out` is the original,
+// `changed` is false, `droppedSegments` is 0, `format` is a real format — byte-for-byte what an
+// already-clean photo returns. `stripImageFileStrict` used to check `format === null` alone and
+// therefore called that clean.
+//
+// Do NOT re-derive it from `reason`. Several reasons are benign and set it false: `not-jpeg` /
+// `unsupported-format` (caught by format === null), `no-metadata-items` (nothing to strip),
+// `declarations-kept` (ISOBMFF — the GPS bytes are zeroed regardless; only the iinf/iloc
+// declarations survive). Enumerating strings also fails open the next time a bail is added.
+//
+// Policy, and the two settings are deliberate: publish paths fail CLOSED on it
+// (stripImageFileStrict throws IncompleteStripError; the facebook-share Lambda throws userFacing),
+// the upload path stays LENIENT and warns — private household storage, and refusing an upload over
+// a slightly malformed file is the case the note above records Dave rejecting.
 const JPEG = 'jpeg';
 const PNG = 'png';
 const WEBP = 'webp';
@@ -219,27 +239,39 @@ function keepMarker(b, marker, markerAt, segEnd) {
  * Strip a JPEG down to its renderable segments. Never throws.
  * @returns {{out: Uint8Array, changed: boolean, format: string, droppedSegments: number,
  *            droppedBytes: number, truncatedTrailer: number, orientation: number|null,
- *            reason: string|null}}
+ *            reason: string|null, incompleteWalk: boolean}}
+ *
+ * `incompleteWalk: true` means the segment walk ABANDONED parsing partway and copied everything
+ * from the bail offset to EOF verbatim — see the four `bail()` sites below. Read the contract note
+ * on `incompleteWalk` at the top of this file before consuming it. Do not infer it from `reason`:
+ * several reasons (`not-jpeg`, `no-metadata-items`, `declarations-kept`) are benign and set it false.
  */
 export function stripJpegBytes(input) {
   const b = toBytes(input);
   const n = b.length;
   if (!isJpeg(b)) {
-    return { out: b, changed: false, format: null, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason: 'not-jpeg' };
+    return { out: b, changed: false, format: null, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason: 'not-jpeg', incompleteWalk: false };
   }
 
   const head = [];      // the synthesized orientation APP1, if any
   const parts = [b.subarray(0, 2)];
   let droppedSegments = 0, droppedBytes = 0, truncatedTrailer = 0, orientation = null, reason = null;
+  let incompleteWalk = false;
   let i = 2;
 
+  // Structurally past what we can parse. Copy the remainder verbatim rather than abandoning the
+  // strip: whatever we already identified stays dropped, and no image data is lost. But the
+  // remainder is UNEXAMINED — an APP1/EXIF/GPS segment sitting past this offset rides through
+  // untouched — so every bail records incompleteWalk, and the two publishing callers refuse to
+  // publish on it. A bail at the very first iteration passes the WHOLE file through with
+  // changed:false, which is indistinguishable from "already clean" without this flag.
+  const bail = (why) => { parts.push(b.subarray(i)); reason = why; incompleteWalk = true; };
+
   while (i + 1 < n) {
-    // Structurally past what we can parse. Copy the remainder verbatim rather than abandoning the
-    // strip: whatever we already identified stays dropped, and no image data is lost.
-    if (b[i] !== 0xFF) { parts.push(b.subarray(i)); reason = 'desync'; break; }
+    if (b[i] !== 0xFF) { bail('desync'); break; }
     let m = i + 1;
     while (m < n && b[m] === 0xFF) m++;
-    if (m >= n) { parts.push(b.subarray(i)); reason = 'truncated-marker'; break; }
+    if (m >= n) { bail('truncated-marker'); break; }
     const marker = b[m];
 
     if (marker === 0xD9) {                                    // EOI — everything past it is a trailer
@@ -248,11 +280,11 @@ export function stripJpegBytes(input) {
       break;
     }
     if ((marker >= 0xD0 && marker <= 0xD7) || marker === 0x01) { parts.push(b.subarray(i, m + 1)); i = m + 1; continue; }
-    if (m + 2 >= n) { parts.push(b.subarray(i)); reason = 'truncated-length'; break; }
+    if (m + 2 >= n) { bail('truncated-length'); break; }
 
     const len = (b[m + 1] << 8) | b[m + 2];                   // length INCLUDES its own 2 bytes
     const segEnd = m + 1 + len;
-    if (len < 2 || segEnd > n) { parts.push(b.subarray(i)); reason = 'bad-length'; break; }
+    if (len < 2 || segEnd > n) { bail('bad-length'); break; }
 
     if (marker === 0xDA) {                                    // SOS: header, then the scan verbatim
       const next = scanEntropy(b, segEnd);
@@ -281,6 +313,7 @@ export function stripJpegBytes(input) {
     truncatedTrailer,
     orientation,
     reason,
+    incompleteWalk,
   };
 }
 
@@ -296,16 +329,19 @@ const KEEP_PNG = new Set([
 export function stripPngBytes(input) {
   const b = toBytes(input);
   const n = b.length;
-  const miss = (reason) => ({ out: b, changed: false, format: reason === 'not-png' ? null : PNG, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason });
+  const miss = (reason) => ({ out: b, changed: false, format: reason === 'not-png' ? null : PNG, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason, incompleteWalk: false });
   if (!isPng(b)) return miss('not-png');
 
   const parts = [b.subarray(0, 8)];
   let droppedSegments = 0, droppedBytes = 0, reason = null;
+  let incompleteWalk = false;
   let i = 8;
   while (i + 8 <= n) {
     const len = ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
     const end = i + 12 + len;                                  // len + type(4) + data + crc(4)
-    if (end > n) { parts.push(b.subarray(i)); reason = 'bad-length'; break; }
+    // Same unexamined-remainder hazard as the JPEG bails: an eXIf/iTXt chunk past this offset is
+    // copied through without ever being classified. See the incompleteWalk contract note.
+    if (end > n) { parts.push(b.subarray(i)); reason = 'bad-length'; incompleteWalk = true; break; }
     const type = String.fromCharCode(b[i + 4], b[i + 5], b[i + 6], b[i + 7]);
     if (KEEP_PNG.has(type)) parts.push(b.subarray(i, end));
     else { droppedSegments++; droppedBytes += end - i; }
@@ -313,7 +349,7 @@ export function stripPngBytes(input) {
     if (type === 'IEND') { droppedBytes += n - i; break; }     // anything past IEND is a trailer
   }
   const out = concat(parts);
-  return { out, changed: out.length !== n, format: PNG, droppedSegments, droppedBytes, truncatedTrailer: 0, orientation: null, reason };
+  return { out, changed: out.length !== n, format: PNG, droppedSegments, droppedBytes, truncatedTrailer: 0, orientation: null, reason, incompleteWalk };
 }
 
 // RIFF fourccs a WebP decoder needs. 'EXIF' and 'XMP ' are the two metadata chunks and both can
@@ -325,15 +361,18 @@ export function stripWebpBytes(input) {
   const b = toBytes(input);
   const n = b.length;
   if (!isWebp(b)) {
-    return { out: b, changed: false, format: null, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason: 'not-webp' };
+    return { out: b, changed: false, format: null, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason: 'not-webp', incompleteWalk: false };
   }
   const parts = [];
   let droppedSegments = 0, droppedBytes = 0, reason = null;
+  let incompleteWalk = false;
   let i = 12;
   while (i + 8 <= n) {
     const size = (b[i + 4] | (b[i + 5] << 8) | (b[i + 6] << 16) | (b[i + 7] << 24)) >>> 0;
     const end = i + 8 + size + (size & 1);                     // chunks are padded to even length
-    if (end > n) { parts.push(b.subarray(i)); reason = 'bad-length'; break; }
+    // Same unexamined-remainder hazard as the JPEG bails: an EXIF/XMP chunk past this offset is
+    // copied through without ever being classified. See the incompleteWalk contract note.
+    if (end > n) { parts.push(b.subarray(i)); reason = 'bad-length'; incompleteWalk = true; break; }
     const type = String.fromCharCode(b[i], b[i + 1], b[i + 2], b[i + 3]);
     if (type === 'VP8X') {
       // The flags byte advertises which metadata chunks follow. Leaving E/X set while dropping the
@@ -356,7 +395,7 @@ export function stripWebpBytes(input) {
   const riffSize = out.length - 8;                             // RIFF size counts everything after it
   out[4] = riffSize & 0xFF; out[5] = (riffSize >> 8) & 0xFF;
   out[6] = (riffSize >> 16) & 0xFF; out[7] = (riffSize >> 24) & 0xFF;
-  return { out, changed: out.length !== n, format: WEBP, droppedSegments, droppedBytes, truncatedTrailer: 0, orientation: null, reason };
+  return { out, changed: out.length !== n, format: WEBP, droppedSegments, droppedBytes, truncatedTrailer: 0, orientation: null, reason, incompleteWalk };
 }
 
 // ---------------------------------------------------------------------------
@@ -634,9 +673,15 @@ function resolveExtent(item, extent, idatBox) {
 export function stripIsobmffBytes(input) {
   const b = toBytes(input);
   const n = b.length;
+  // Every miss here returns the ORIGINAL bytes. That is already fail-closed for the strict caller:
+  // all of them default format to null, so stripImageFileStrict throws UnstrippableFormatError —
+  // except `no-metadata-items`, which passes the real format precisely because there was nothing to
+  // strip. So incompleteWalk is false throughout: this walker never half-strips-then-passes-through
+  // the way the JPEG/PNG/WebP segment walkers can. Present for shape consistency, so no consumer
+  // ever reads `undefined` off one of these objects.
   const miss = (reason, format = null) => ({
     out: b, changed: false, format, droppedSegments: 0, droppedBytes: 0,
-    truncatedTrailer: 0, orientation: null, reason,
+    truncatedTrailer: 0, orientation: null, reason, incompleteWalk: false,
   });
   if (!isIsobmff(b)) return miss('not-isobmff');
   const format = isobmffFormat(b);
@@ -739,7 +784,11 @@ export function stripIsobmffBytes(input) {
     droppedBytes: zeroedBytes + freedBytes,
     truncatedTrailer: 0,
     orientation: null,
+    // `declarations-kept` is NOT a leak and must not fail closed: the zeroing loop above runs
+    // unconditionally, so the GPS bytes are destroyed either way — only the iinf/iloc declarations
+    // were left describing items that are now zeros.
     reason: structural ? null : 'declarations-kept',
+    incompleteWalk: false,
   };
 }
 
@@ -754,7 +803,7 @@ export function stripImageBytes(input) {
   if (isPng(b)) return stripPngBytes(b);
   if (isWebp(b)) return stripWebpBytes(b);
   if (isIsobmff(b)) return stripIsobmffBytes(b);
-  return { out: b, changed: false, format: null, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason: 'unsupported-format' };
+  return { out: b, changed: false, format: null, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason: 'unsupported-format', incompleteWalk: false };
 }
 
 // jsdom's Blob has NEITHER arrayBuffer NOR stream (verified 2026-08-20 — the same reason
@@ -787,6 +836,25 @@ export class UnstrippableFormatError extends Error {
   }
 }
 
+/**
+ * Thrown by stripImageFileStrict when the walk reported `incompleteWalk` — the file's segment/chunk
+ * structure broke partway and everything past that offset was copied through UNEXAMINED.
+ *
+ * Distinct from UnstrippableFormatError because the cause and the user's remedy differ: that one
+ * means "this container has no walker", this one means "this specific file is malformed". Both are
+ * userFacing; only this one indicates the strip PARTIALLY ran, which is the case that looks
+ * successful from the outside — `changed` can be false and `droppedSegments` zero while an
+ * untouched APP1/GPS block sits past the bail offset.
+ */
+export class IncompleteStripError extends Error {
+  constructor(reason) {
+    super("This photo's data is damaged, so its location data couldn't be fully removed and it was not sent. Re-save or re-export the photo and try again.");
+    this.name = 'IncompleteStripError';
+    this.reason = reason || null;
+    this.userFacing = true;
+  }
+}
+
 function rewrap(fileOrBlob, r) {
   if (!r.changed) return fileOrBlob;
   const type = fileOrBlob.type || '';
@@ -811,6 +879,14 @@ export async function stripImageFile(fileOrBlob) {
   if (!fileOrBlob || typeof fileOrBlob.size !== 'number') return fileOrBlob;
   const bytes = await readBytes(fileOrBlob);
   const r = stripImageBytes(bytes);
+  // Deliberately NOT fail-closed on incompleteWalk here, unlike the strict variant. This is the
+  // upload path: the destination is the household's own private storage, and refusing an upload
+  // because a file is slightly malformed is the "refusing a photo upload is a terrible idea" case
+  // the header note records. It must not be SILENT, though — a partial strip previously looked
+  // identical to a clean one from the outside.
+  if (r.incompleteWalk) {
+    console.warn(`imageMetadataStrip: ${fileOrBlob.type || 'image'} structure broke (${r.reason}) — bytes past that point were not examined and may retain metadata`);
+  }
   if (!r.changed) {
     if (r.format === null) {
       console.warn(`imageMetadataStrip: ${fileOrBlob.type || 'unknown format'} has no strip implementation — bytes uploaded as-is`);
@@ -838,6 +914,11 @@ export async function stripImageFileStrict(fileOrBlob) {
   const bytes = await readBytes(fileOrBlob);
   const r = stripImageBytes(bytes);
   if (r.format === null) throw new UnstrippableFormatError(fileOrBlob.type);
+  // The second way this can fail open, and the quieter one. format !== null only says the container
+  // was RECOGNISED; incompleteWalk says the walk over it did not finish. Checking format alone let a
+  // malformed JPEG through as "clean" — and at a bail offset of 2 that is the entire original file,
+  // GPS included, with changed:false.
+  if (r.incompleteWalk) throw new IncompleteStripError(r.reason);
   return rewrap(fileOrBlob, r);
 }
 

@@ -43,11 +43,17 @@ export function isJpeg(bytes) {
 /**
  * Strip a JPEG to its renderable segments and truncate any post-EOI trailer.
  * @returns {{out: Uint8Array, isJpeg: boolean, droppedSegments: number, droppedBytes: number,
- *            truncatedTrailer: number, orientation: number|null, reason: string|null}}
+ *            truncatedTrailer: number, orientation: number|null, reason: string|null,
+ *            incompleteWalk: boolean}}
  *
  * `droppedSegments` replaces the old `strippedApp1`: the strip no longer counts one named marker,
  * it counts everything that failed the allowlist. Callers used it as an anti-vacuity assertion
  * ("something was actually removed"), which the new name states more honestly.
+ *
+ * `incompleteWalk` MUST be checked by any caller that publishes the result — see the contract note
+ * in ./imageMetadataStrip.js. It is the only field that separates "stripped clean" from "the walk
+ * broke and the rest of the file was copied through unexamined"; on a first-iteration bail the two
+ * are otherwise byte-for-byte identical. index.js:preparePhoto is that caller and it fails closed.
  */
 export function stripJpegExif(input) {
   const r = stripJpegBytes(input);
@@ -59,5 +65,6 @@ export function stripJpegExif(input) {
     truncatedTrailer: r.truncatedTrailer,
     orientation: r.orientation,
     reason: r.reason,
+    incompleteWalk: r.incompleteWalk,
   };
 }
