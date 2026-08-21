@@ -1,29 +1,24 @@
 // V4-OVERLAY-001 Slice 2 (§4) — Garden's mount-time param-strip (?add=1) must PRESERVE the location
 // state when it rewrites the URL. The bug class: setSearchParams defaults navigate state to null, so a
-// carried `background` (or any state) is silently dropped on mount. Harness modeled on
-// Garden.editor.test with a non-null location.state to prove it survives the strip.
+// carried `background` (or any state) is silently dropped on mount.
+//
+// OPS-GARDENROUTERMOCK-001 — this used to mock `react-router-dom` and assert on the ARGUMENTS of a
+// `setSearchParams` spy: that the call carried `{ replace: true, state: {...} }`. That proves the
+// page asked for the right thing, not that the router kept it — the two diverge precisely when the
+// strip is wired wrong, which is the failure being guarded. It now runs on a real MemoryRouter and
+// reads the location the router actually holds AFTER the rewrite.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, waitFor } from '@testing-library/react'
+import { waitFor } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
+import { renderWithRouter, currentLocation, currentSearch, currentNavigationType, resetRouterHarness } from './helpers/routerHarness.jsx'
 
 installStoragePolyfill()
 
 const BACKGROUND = { pathname: '/today', search: '' }
-const { fetchSpy, getTokenSpy, searchParamsRef, setSearchParamsSpy } = vi.hoisted(() => ({
+const { fetchSpy, getTokenSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
   getTokenSpy: vi.fn(async () => 'tok'),
-  searchParamsRef: { current: new URLSearchParams('add=1') },
-  setSearchParamsSpy: vi.fn((next) => {
-    searchParamsRef.current = next instanceof URLSearchParams ? next : new URLSearchParams(next)
-  }),
-}))
-
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => ({ pathname: '/garden', search: '?add=1', state: { background: { pathname: '/today', search: '' } } }),
-  useNavigate: () => () => {},
-  useSearchParams: () => [searchParamsRef.current, setSearchParamsSpy],
 }))
 
 vi.mock('../lib/api.js', () => ({
@@ -36,8 +31,8 @@ vi.mock('../components/VarietyPicker.jsx', () => ({ default: () => <div data-tes
 import Garden from '../pages/Garden.jsx'
 
 beforeEach(() => {
-  fetchSpy.mockReset(); setSearchParamsSpy.mockClear()
-  searchParamsRef.current = new URLSearchParams('add=1')
+  fetchSpy.mockReset()
+  resetRouterHarness()
   fetchSpy.mockImplementation((url) => {
     if (url === '/api/projects') return Promise.resolve([{ id: 'proj-1', name: 'Spring', status: 'active', parent_project_id: null }])
     if (url === '/api/plants?view=grid') return Promise.resolve([])
@@ -45,13 +40,28 @@ beforeEach(() => {
   })
 })
 
+const renderGardenWithBackground = () =>
+  renderWithRouter(<Garden />, { route: '/garden?add=1', state: { background: BACKGROUND } })
+
 describe('Garden — ?add=1 strip preserves location.state (§4)', () => {
-  it('spreads the carried background through the setSearchParams rewrite', async () => {
-    render(<Garden />)
-    await waitFor(() => {
-      const stripCall = setSearchParamsSpy.mock.calls.find(([, opts]) => opts && opts.replace)
-      expect(stripCall).toBeTruthy()
-      expect(stripCall[1].state).toEqual({ background: BACKGROUND })
-    })
+  it('carries the background through the strip onto the rewritten history entry', async () => {
+    await renderGardenWithBackground()
+    // The strip has to have actually happened, or "state survived" is trivially true of the entry
+    // we arrived on and this asserts nothing.
+    await waitFor(() => expect(currentSearch()).not.toContain('add'))
+    expect(currentLocation().state).toEqual({ background: BACKGROUND })
+  })
+
+  it('REPLACES rather than pushes, so Back does not stall on the pre-strip URL', async () => {
+    // The other half of the same `setSearchParams(next, { replace: true, … })` call. Dave is
+    // Android-only and hardware Back is his primary gesture: a PUSHED strip leaves ?add=1 one entry
+    // down, so Back re-enters it, the effect re-opens the editor, and Back appears to do nothing.
+    //
+    // Asserted via the router's navigation type, NOT by going Back and checking the query — that
+    // version is vacuous and was measured so. Popping back to ?add=1 re-runs the strip effect, so
+    // the page erases the evidence itself and the test stays green under `{ replace: false }`.
+    await renderGardenWithBackground()
+    await waitFor(() => expect(currentSearch()).not.toContain('add'))
+    expect(currentNavigationType()).toBe('REPLACE')
   })
 })

@@ -10,24 +10,20 @@
 // reproduce in isolation, which is exactly why it needs a deterministic fake-timer guard.
 //
 // Fake timers, no waitFor/findBy anywhere: those poll on real timers and would hang here.
+//
+// OPS-GARDENROUTERMOCK-001 — real router, no `react-router-dom` mock. This file's positive control
+// asserts the ?edit= editor OPENED, and under the old frozen-ref mock that was unfalsifiable: the
+// param strip re-rendered nothing, so the effect cleanup that used to cancel the by-id fetch never
+// ran and the editor opened no matter what (BUG-EDITDEEPLINKRACE-001). A positive control that
+// cannot fail cannot license the unmount assertion beside it.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, act } from '@testing-library/react'
+import { act } from '@testing-library/react'
+import { renderWithRouter, resetRouterHarness } from './helpers/routerHarness.jsx'
 
-const { fetchSpy, getTokenSpy, searchParamsRef, setSearchParamsSpy } = vi.hoisted(() => ({
+const { fetchSpy, getTokenSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
   getTokenSpy: vi.fn(async () => 'tok'),
-  searchParamsRef: { current: new URLSearchParams() },
-  setSearchParamsSpy: vi.fn((next) => {
-    searchParamsRef.current = next instanceof URLSearchParams ? next : new URLSearchParams(next)
-  }),
-}))
-
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => ({ pathname: '/garden', search: '', state: null }),
-  useNavigate: () => () => {},
-  useSearchParams: () => [searchParamsRef.current, setSearchParamsSpy],
 }))
 
 vi.mock('../lib/api.js', () => ({
@@ -68,11 +64,12 @@ async function settle() {
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve() })
 }
 
+const renderGarden = () => renderWithRouter(<Garden />, { route: '/garden?edit=plant-2' })
+
 beforeEach(() => {
   localStorage.clear()
   fetchSpy.mockReset()
-  setSearchParamsSpy.mockClear()
-  searchParamsRef.current = new URLSearchParams('edit=plant-2')
+  resetRouterHarness()
   getByIdSpy = vi.spyOn(document, 'getElementById')
   vi.useFakeTimers()
 })
@@ -87,7 +84,7 @@ describe('Garden — ?edit scroll timer is owned for the component lifetime', ()
   // against a build where the timer is never scheduled, or is cancelled on every effect re-run.
   it('still scrolls to the editor when the timer fires while mounted', async () => {
     primeFetch()
-    render(<Garden />)
+    await renderGarden()
     await settle()
 
     expect(document.querySelector('#planting-editor')).not.toBeNull() // editor really opened
@@ -99,7 +96,7 @@ describe('Garden — ?edit scroll timer is owned for the component lifetime', ()
 
   it('does NOT fire after unmount (teardown race regression guard)', async () => {
     primeFetch()
-    const { unmount } = render(<Garden />)
+    const { unmount } = await renderGarden()
     await settle()
 
     expect(document.querySelector('#planting-editor')).not.toBeNull()
