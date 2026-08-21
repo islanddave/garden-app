@@ -205,8 +205,16 @@ jobs:
             echo "GARDEN_HOUSEHOLD_IDS already correct on $FN"
           else
             echo "Setting GARDEN_HOUSEHOLD_IDS on $FN from $SRC (read-merge; was: $CURRENT)"
-            EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
-              --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            # OPS-LAMBDAENVWIPE-001: test EXIT STATUS, not emptiness. `|| echo "{}"` turned a transient
+            # read failure into an empty merge base, and the update below is SET-not-MERGE, so it would
+            # delete every env var this step does not hardcode. Emptiness is NOT the signal: a net-new
+            # function legitimately has no env, which comes back as `null` at exit 0 and jq merges
+            # correctly. This step is continue-on-error, so bailing leaves the live config untouched.
+            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+              --query 'Environment.Variables' --output json 2>/dev/null); then
+              echo "::warning::could not read env for $FN; leaving config untouched rather than risking a wipe"
+              exit 1
+            fi
             UPDATED=$(echo "$EXISTING" | jq --arg v "$HH" '. + {GARDEN_HOUSEHOLD_IDS: $v}')
             echo "{\"Variables\": $UPDATED}" > "/tmp/env-$FN-household.json"
             aws lambda update-function-configuration \
@@ -217,9 +225,13 @@ jobs:
 
       # V4-FBSHARE-001: garden-facebook-share is admin-only + household-scoped and byte-uploads photos
       # to the Graph API. Net-new, so create-function sets ZERO env — read-merge its config here.
-      # FB_SHARE_ENABLED is deliberately NOT set (unset => kill switch OFF): the endpoint returns 503
-      # until Dave flips it at go-live, AFTER the garden-app/facebook-page-token secret exists.
-      # memory=512/timeout=60: parallel byte-uploads of up to 10 JPEGs need headroom over the 256/30 default.
+      # FB_SHARE_ENABLED is set to "1" on the LIVE function as of 2026-08-21 — Facebook posting went
+      # live once garden-app/facebook-page-token was provisioned. This step does NOT set or unset it;
+      # it read-merges, so the live value survives. That is deliberate: the kill switch is operated
+      # from the console, and scripts/lambda-config-expected.json is where its expected state is
+      # declared. (Before go-live this comment read "deliberately NOT set" — kept in sync now because
+      # a stale comment here is what made the drift look like an accident.)
+      # timeout/memory are NOT hardcoded below — they are read from that same manifest.
       - name: Ensure facebook-share config (household + admin + bucket + secret; read-merge)
         if: matrix.function == 'facebook-share'
         continue-on-error: true  # requires lambda:Get/UpdateFunctionConfiguration on deploy role
@@ -227,8 +239,17 @@ jobs:
           FN="garden-facebook-share"
           HH=$(aws lambda get-function-configuration --function-name garden-events \
             --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
-          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
-            --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          # Read the CURRENT env and abort the step if it cannot be read. The old code fell back to
+          # "{}" here, which silently turned a read blip into a WIPE: the merge below would then emit
+          # only the four hardcoded keys, dropping FB_SHARE_ENABLED and re-darkening a LIVE feature
+          # during an unrelated deploy. The step is continue-on-error, so bailing leaves the existing
+          # config untouched — strictly safer than overwriting it. Same `|| echo "{}"` shape appears
+          # at 6 other sites in this file; this is the one guarding a live kill switch.
+          if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+            --query 'Environment.Variables' --output json 2>/dev/null); then
+            echo "::warning::could not read $FN config; leaving env untouched rather than risking a wipe"
+            exit 1
+          fi
           UPDATED=$(echo "$EXISTING" | jq \
             --arg hh "$HH" \
             --arg b "garden-photos-prod" \
@@ -236,10 +257,23 @@ jobs:
             --arg s "garden-app/facebook-page-token" \
             '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)')
           echo "{\"Variables\": $UPDATED}" > /tmp/env-fbshare.json
+          # Timeout/memory come from scripts/lambda-config-expected.json — the SAME file the post-deploy
+          # drift guard asserts against — instead of a second hardcoded copy here. Two sources of truth
+          # for these four numbers is the root cause of OPS-FBSHAREFLAGDRIFT-001: this step hardcoded
+          # 60/512 with no read, no comparison and no log line, so it silently reverted a deliberate
+          # 180s/1024MB raise on the next deploy and the drift guard then red-flagged the promote.
+          # (Why 180s/1024MB at all: this fans out over up to 10 photos — S3 GetObject + metadata strip
+          # + a multipart Graph upload each — and a timeout mid-Promise.all orphans uploaded Graph media
+          # with NO cleanup, because neither catch nor finally runs on a Lambda timeout.)
+          # jq -e exits non-zero on null/missing, and the default GHA shell is `bash -e`, so a manifest
+          # that stops declaring these values fails the step loudly instead of writing a silent default.
+          CFG=scripts/lambda-config-expected.json
+          TMO=$(jq -er '.["garden-facebook-share"].timeout' "$CFG")
+          MEM=$(jq -er '.["garden-facebook-share"].memory' "$CFG")
           aws lambda update-function-configuration --function-name "$FN" \
-            --environment file:///tmp/env-fbshare.json --timeout 60 --memory-size 512 >/dev/null
+            --environment file:///tmp/env-fbshare.json --timeout "$TMO" --memory-size "$MEM" >/dev/null
           aws lambda wait function-updated --function-name "$FN"
-          echo "facebook-share config ensured (household=$HH; admin; bucket; secret; 512MB/60s)"
+          echo "facebook-share config ensured (household=$HH; admin; bucket; secret; ${MEM}MB/${TMO}s from $CFG)"
 
       - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}
         # Idempotent: only updates if value differs. Required for photo-enriching
@@ -259,8 +293,15 @@ jobs:
             echo "S3_PHOTOS_BUCKET already correct on $FN"
           else
             echo "Setting S3_PHOTOS_BUCKET=$EXPECTED on $FN (was: $CURRENT)"
-            EXISTING=$(aws lambda get-function-configuration \
-              --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            # OPS-LAMBDAENVWIPE-001: test EXIT STATUS, not emptiness (rationale on the household step).
+            # This step has NO continue-on-error, so it warns and SKIPS the write rather than exiting 1
+            # — refusing to destroy an env map must not newly red an otherwise good deploy. The
+            # post-deploy drift guard (scripts/check-lambda-config.py) reports any resulting gap.
+            if ! EXISTING=$(aws lambda get-function-configuration \
+              --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null); then
+              echo "::warning::could not read env for $FN; skipping S3_PHOTOS_BUCKET write rather than risking a wipe"
+              exit 0
+            fi
             UPDATED=$(echo "$EXISTING" | jq --arg b "$EXPECTED" '. + {S3_PHOTOS_BUCKET: $b}')
             echo "{\"Variables\": $UPDATED}" > /tmp/env-photos-bucket.json
             aws lambda update-function-configuration \
@@ -280,7 +321,13 @@ jobs:
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
         run: |
           FN="garden-${{ matrix.function }}"
-          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          # OPS-LAMBDAENVWIPE-001: the `[[ "$UPDATED" == "$EXISTING" ]]` test below is a NO-OP detector,
+          # not a failure detector — on a failed read the two necessarily DIFFER, so it routed the
+          # failure case straight into the write, across all five photo signers. Test exit status here.
+          if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null); then
+            echo "::warning::could not read env for $FN; leaving PHOTO_CDN_* untouched rather than risking a wipe"
+            exit 1
+          fi
           UPDATED=$(echo "$EXISTING" | jq \
             --arg d "dovwpi82qccqi.cloudfront.net" \
             --arg k "K1JIPLZ9SVNU1N" \
@@ -355,7 +402,11 @@ jobs:
           if [[ "$CURRENT" == "$EXPECTED" ]]; then
             echo "ADMIN_CLERK_SUBS already correct on $FN"
           else
-            EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            # OPS-LAMBDAENVWIPE-001: test EXIT STATUS, not emptiness (rationale on the household step).
+            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null); then
+              echo "::warning::could not read env for $FN; leaving config untouched rather than risking a wipe"
+              exit 1
+            fi
             UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {ADMIN_CLERK_SUBS: $v}')
             echo "{\"Variables\": $UPDATED}" > /tmp/env-ux-admin.json
             aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-ux-admin.json >/dev/null
@@ -373,7 +424,11 @@ jobs:
           if [[ "$CURRENT" == "$EXPECTED" ]]; then
             echo "ADMIN_CLERK_SUBS already correct on $FN"
           else
-            EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            # OPS-LAMBDAENVWIPE-001: test EXIT STATUS, not emptiness (rationale on the household step).
+            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null); then
+              echo "::warning::could not read env for $FN; leaving config untouched rather than risking a wipe"
+              exit 1
+            fi
             UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {ADMIN_CLERK_SUBS: $v}')
             echo "{\"Variables\": $UPDATED}" > /tmp/env-tags-admin.json
             aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-tags-admin.json >/dev/null
@@ -586,7 +641,14 @@ jobs:
           FN=garden-daily-plan
           OWNER=user_3D2gM0hIl03gjW3JM2DjtPzm0jI
           CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.DRY_RUN' --output text 2>/dev/null || echo "None")
-          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          # OPS-LAMBDAENVWIPE-001: widest-open of the seven — no value-check at all, so this read is
+          # followed by an unconditional write on EVERY daily-plan deploy. `|| echo "{}"` meant one
+          # transient read failure would strip the nightly engine's entire env (DRY_RUN,
+          # CARE_WATER_LEDGER_ENABLED, CARE_RAIN_MAXDAYS_ENABLED, ...) and still report success.
+          if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null); then
+            echo "::warning::could not read env for $FN; leaving config untouched rather than risking a wipe"
+            exit 1
+          fi
           if [[ "$CURRENT" == "None" || -z "$CURRENT" ]]; then
             echo "First deploy: DRY_RUN=true + OWNER_FALLBACK_SUB (dormant)."
             UPDATED=$(echo "$EXISTING" | jq --arg o "$OWNER" '. + {DRY_RUN:"true", OWNER_FALLBACK_SUB:$o}')
