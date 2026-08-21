@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>BUG-EDITDEEPLINKRACE-001 — ?edit= deep link, real browser</title>
+    <style>
+      html, body { margin: 0; padding: 0; }
+      #verdict {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+        font: 12px/1.5 ui-monospace, monospace; color: #fff; padding: 4px 8px; white-space: pre;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="verdict">booting…</div>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/editdeeplink.jsx"></script>
+  </body>
+</html>
