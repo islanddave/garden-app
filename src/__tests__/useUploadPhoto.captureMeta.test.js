@@ -8,7 +8,7 @@
 //
 // THE ORDERING GUARD IS THE LOAD-BEARING ONE, and it is deliberately not a stub agreeing with
 // itself: the blob the mocked downscale hands back is the SAME fixture with its APP1 segment
-// surgically removed by lambda/facebook-share/exif.js — the module prod already uses to strip EXIF
+// surgically removed by lambda/facebook-share/exif.js — the module prod already uses to strip metadata
 // before a byte leaves for Facebook. The test asserts, from those exact bytes, that readCaptureMeta
 // can no longer recover the capture time. So a read that moved after the resize would not merely
 // fail a convention; it would be reading bytes from which the timestamp is provably gone, which is
@@ -146,8 +146,8 @@ describe('useUploadPhoto — capture metadata (BUG-PHOTOTAKENATNULL-001)', () =>
   // Rule 1 of imagePipeline.js, enforced end to end at the live seam.
   it('reads EXIF from the ORIGINAL file, so taken_at survives a resize that strips it', async () => {
     const src = fixtureBytes('onepad-real-exif-nogps.jpg');
-    const { out: stripped, strippedApp1 } = stripJpegExif(src);
-    expect(strippedApp1, 'fixture carried no APP1 to strip — guard would be vacuous').toBeGreaterThan(0);
+    const { out: stripped, droppedSegments } = stripJpegExif(src);
+    expect(droppedSegments, 'fixture carried nothing to strip — guard would be vacuous').toBeGreaterThan(0);
 
     const resized = new File([stripped], 'onepad-real-exif-nogps.jpg', { type: 'image/jpeg' });
     // The premise, proven rather than assumed: the bytes that go to S3 no longer carry the date.

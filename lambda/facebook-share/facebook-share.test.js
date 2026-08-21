@@ -36,9 +36,9 @@ describe('isJpeg', () => {
 describe('stripJpegExif', () => {
   it('drops APP1 (EXIF) while preserving SOI/APP0/SOS/scan/EOI', () => {
     const jpeg = asBytes(b(SOI, app1Exif, app0, SOS, SCAN, EOI));
-    const { out, isJpeg: ok, strippedApp1 } = stripJpegExif(jpeg);
+    const { out, isJpeg: ok, droppedSegments } = stripJpegExif(jpeg);
     expect(ok).toBe(true);
-    expect(strippedApp1).toBe(1);
+    expect(droppedSegments).toBe(1);
     expect(out.length).toBe(jpeg.length - app1Exif.length);
     expect(includesSub(out, [0xFF, 0xE1])).toBe(false);   // no APP1 marker survives
     expect(includesSub(out, app0)).toBe(true);            // JFIF kept
@@ -49,23 +49,23 @@ describe('stripJpegExif', () => {
 
   it('strips BOTH APP1 segments (EXIF + XMP)', () => {
     const jpeg = asBytes(b(SOI, app1Exif, app1Xmp, app0, SOS, SCAN, EOI));
-    const { strippedApp1, out } = stripJpegExif(jpeg);
-    expect(strippedApp1).toBe(2);
+    const { droppedSegments, out } = stripJpegExif(jpeg);
+    expect(droppedSegments).toBe(2);
     expect(includesSub(out, [0xFF, 0xE1])).toBe(false);
   });
 
   it('is a no-op on an already-clean JPEG (no APP1)', () => {
     const jpeg = asBytes(b(SOI, app0, SOS, SCAN, EOI));
-    const { out, strippedApp1 } = stripJpegExif(jpeg);
-    expect(strippedApp1).toBe(0);
+    const { out, droppedSegments } = stripJpegExif(jpeg);
+    expect(droppedSegments).toBe(0);
     expect(Array.from(out)).toEqual(Array.from(jpeg));
   });
 
   it('returns non-JPEG input unchanged', () => {
     const png = asBytes([0x89, 0x50, 0x4E, 0x47, 1, 2, 3]);
-    const { out, isJpeg: ok, strippedApp1 } = stripJpegExif(png);
+    const { out, isJpeg: ok, droppedSegments } = stripJpegExif(png);
     expect(ok).toBe(false);
-    expect(strippedApp1).toBe(0);
+    expect(droppedSegments).toBe(0);
     expect(out).toBe(png); // same reference — caller rejects non-JPEG
   });
 

@@ -1,63 +1,63 @@
-// exif.js — V4-FBSHARE-001. Pure, dependency-free, LOSSLESS JPEG metadata strip.
+// exif.js — V4-FBSHARE-001, rewritten for BUG-FBSHAREDENYLIST-001. Pure, dependency-free, LOSSLESS
+// JPEG metadata strip on the path that publishes a photo PUBLICLY, outside the household.
 //
-// Runs on the FB share path as privacy defence-in-depth (garden == home). The client
-// imagePipeline already canvas-re-encodes resized photos to a bare EXIF-free JPEG, and 0/869 live
-// rows carry DB GPS — but "already-small" / passthrough uploads retain their original bytes WITH
-// EXIF, so we strip again server-side before any byte leaves for Facebook. FB also strips EXIF on
-// upload; this is belt-and-suspenders, not the sole control.
+// This module is now a thin adapter over ./imageMetadataStrip.js — a byte-identical copy of the
+// canonical src/lib/imageMetadataStrip.js that V4-PHOTOEXIFSTRIP-001 shipped on upload and on the
+// client share sheet. It holds NO strip logic of its own, deliberately: the bug it fixes is that
+// two strippers diverged, and a second implementation would diverge again.
 //
-// WHY byte-surgery and not sharp: re-encoding a JPEG re-compresses it (quality loss) and pulls in a
-// heavy native dep + a libheif layer we do NOT need (Dave shoots OnePlus/Android JPEG; the corpus
-// is 100% jpg). Dropping the APP1 segment is exact and reversible-free: EXIF *and* XMP both live in
-// APP1, and that is where GPS/timestamps/device ids sit. Everything else (JFIF APP0, ICC APP2,
-// quantization/Huffman tables, the entropy-coded scan) is preserved byte-for-byte.
+// WHAT IT REPLACED, AND WHY THAT WAS NOT ENOUGH. The old version was a DENYLIST: drop APP1
+// (EXIF/XMP), then at SOS copy the scan "+ EOI to the end" verbatim. Two holes, both measured on a
+// phone-shaped 412-byte fixture in ./exif.trailer.test.js:
+//   - Copying to the END means everything AFTER the primary EOI rides along. Samsung appends a raw
+//     trailer there (MCC_Data311 = the SIM's mobile country code, Image_UTC_Data<epoch_ms>, and the
+//     on-device DCIM path); Pixel appends a whole second JPEG (the Ultra HDR gain map). Trailers
+//     were on 22 of 22 real originals sampled. None of it is EXIF, none of it is in any APP segment,
+//     so naming markers can never reach it. 170 of those 412 bytes survived the old strip.
+//   - Naming ONE marker leaks every other one: APP2 MPF (which indexes the appended gain map),
+//     APP11 JUMBF (the C2PA container), APP13 Photoshop IRB (IPTC, which has its own GPS tags), and
+//     COM. 322 of 412 bytes came out the far side.
+// The replacement is an ALLOWLIST — keep only what a decoder needs (SOFn/DHT/DQT/DRI, the scan,
+// JFIF/ICC/Adobe) — and TRUNCATE AT THE PRIMARY EOI, which is the only thing that removes a trailer
+// no one has invented yet. Same fixture out the far side: 76 bytes, all seven needles gone.
 //
-// Never throws. A non-JPEG or a structurally weird file is returned UNCHANGED with isJpeg/flags set
-// so the caller decides (the handler rejects non-JPEG with a clear error rather than posting it).
+// It is still LOSSLESS: nothing is decoded and nothing is re-encoded, so the pixels are bit-identical
+// and no native dep (sharp/libheif) is pulled into a cold-start-sensitive Lambda.
+//
+// ORIENTATION IS ALSO FIXED HERE, incidentally but not accidentally. The old strip dropped APP1
+// wholesale, and Orientation lives in APP1 — so a portrait phone photo went to the Facebook Page
+// sideways. The canonical strip reads the tag out before discarding the segment and re-emits it as
+// a minimal 36-byte APP1 carrying that one tag.
+//
+// Never throws. A non-JPEG is returned UNCHANGED (same reference) with isJpeg:false so the caller
+// decides — index.js:119 rejects non-JPEG with a userFacing error before this is ever reached, so
+// container formats (HEIC/AVIF, which a JPEG segment walker cannot strip) are not this file's
+// problem on this path.
+import { stripJpegBytes, isJpeg as isJpegBytes } from './imageMetadataStrip.js';
 
+// Null-tolerant, unlike the canonical predicate: index.js feeds this straight from an S3 read.
 export function isJpeg(bytes) {
-  return bytes && bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF;
+  return !!bytes && typeof bytes.length === 'number' && isJpegBytes(bytes);
 }
 
-// Strip every APP1 (EXIF/XMP) segment. Returns { out, isJpeg, strippedApp1, strippedBytes }.
-// Structure walked: SOI, then a run of marker segments, until SOS (0xDA) after which the
-// entropy-coded image data + EOI are copied verbatim to the end.
+/**
+ * Strip a JPEG to its renderable segments and truncate any post-EOI trailer.
+ * @returns {{out: Uint8Array, isJpeg: boolean, droppedSegments: number, droppedBytes: number,
+ *            truncatedTrailer: number, orientation: number|null, reason: string|null}}
+ *
+ * `droppedSegments` replaces the old `strippedApp1`: the strip no longer counts one named marker,
+ * it counts everything that failed the allowlist. Callers used it as an anti-vacuity assertion
+ * ("something was actually removed"), which the new name states more honestly.
+ */
 export function stripJpegExif(input) {
-  const b = input instanceof Uint8Array ? input : new Uint8Array(input);
-  if (!isJpeg(b)) return { out: b, isJpeg: false, strippedApp1: 0, strippedBytes: 0 };
-
-  const parts = [];           // ordered Uint8Array views to keep
-  let strippedApp1 = 0, strippedBytes = 0;
-  const n = b.length;
-
-  parts.push(b.subarray(0, 2)); // SOI
-  let i = 2;
-  while (i + 1 < n) {
-    if (b[i] !== 0xFF) { parts.push(b.subarray(i)); break; }   // desync -> keep remainder verbatim
-    let m = i + 1;
-    while (m < n && b[m] === 0xFF) m++;                        // collapse fill bytes before the marker id
-    if (m >= n) { parts.push(b.subarray(i)); break; }
-    const marker = b[m];
-
-    if (marker === 0xD9) { parts.push(b.subarray(i, m + 1)); break; }  // EOI
-    if (marker === 0xDA) { parts.push(b.subarray(i)); break; }         // SOS -> scan + EOI to end, verbatim
-    // Standalone markers with no length payload (RSTn / TEM) should not appear before SOS; keep and advance.
-    if ((marker >= 0xD0 && marker <= 0xD7) || marker === 0x01) { parts.push(b.subarray(i, m + 1)); i = m + 1; continue; }
-
-    if (m + 2 >= n) { parts.push(b.subarray(i)); break; }              // truncated length -> bail verbatim
-    const len = (b[m + 1] << 8) | b[m + 2];                            // length field INCLUDES its own 2 bytes
-    const segEnd = m + 1 + len;
-    if (len < 2 || segEnd > n) { parts.push(b.subarray(i)); break; }   // corrupt length -> bail verbatim
-
-    if (marker === 0xE1) { strippedApp1++; strippedBytes += (segEnd - i); i = segEnd; continue; } // APP1 -> drop
-    parts.push(b.subarray(i, segEnd));                                 // keep segment (incl leading FF/fill)
-    i = segEnd;
-  }
-
-  let total = 0;
-  for (const p of parts) total += p.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const p of parts) { out.set(p, off); off += p.length; }
-  return { out, isJpeg: true, strippedApp1, strippedBytes };
+  const r = stripJpegBytes(input);
+  return {
+    out: r.out,
+    isJpeg: r.format !== null,
+    droppedSegments: r.droppedSegments,
+    droppedBytes: r.droppedBytes,
+    truncatedTrailer: r.truncatedTrailer,
+    orientation: r.orientation,
+    reason: r.reason,
+  };
 }
