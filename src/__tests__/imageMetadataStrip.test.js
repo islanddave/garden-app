@@ -568,17 +568,27 @@ describe('stripImageFile — the File-level contract', () => {
   });
 });
 
-// BUG-HEICEXIFPASSTHRU-001 — the two entry points, on containers with no walker.
+// BUG-HEICREALSTRIP-001 — the ISOBMFF walker. Was BUG-HEICEXIFPASSTHRU-001's "containers with no
+// walker"; Dave ruled that refusing an upload is not an acceptable answer, so they have one now.
 //
 // The fixtures are REAL ISOBMFF, not a 12-byte `ftyp` stub: `sips -s format heic|avif` over
 // synthetic-gps.jpg, which carries the same fabricated Greenwich fix through the conversion (macOS
 // preserves the EXIF item). A stub would prove the format sniff and nothing else — these prove
 // exifr can read a real location out of the bytes, which is what makes the after-assertions mean
 // something. Still Greenwich, still safe for a public repo.
-describe('stripImageFile vs stripImageFileStrict — unstrippable containers', () => {
+//
+// EVERY GUARD HERE ASSERTS BYTES. The privacy assertion is exifr parsing the OUTPUT and finding
+// nothing; the correctness assertion is that the coded image's bytes are untouched at an untouched
+// address. Neither can pass by the strip function merely having been called.
+describe('ISOBMFF (HEIC/AVIF) — capture metadata is removed from the bytes', () => {
   const HEIC = load('synthetic-gps.heic');
   const AVIF = load('synthetic-gps.avif');
   const fourcc = (b) => String.fromCharCode(...b.subarray(4, 12));
+  // The coded-image extent that iloc points at, read off the fixtures (see the lane report's box
+  // dump). If the strip ever moves or alters these bytes the file stops decoding, so they are
+  // asserted directly rather than inferred from "it didn't throw".
+  const IMAGE_EXTENT = { heic: [1173, 1220], avif: [1068, 1112] };
+  const META_REGION = { heic: [572, 1173], avif: [467, 1068] };
 
   it('the fixtures are real ISOBMFF AND really carry a fix', async () => {
     expect(fourcc(HEIC)).toBe('ftypheic');
@@ -588,35 +598,104 @@ describe('stripImageFile vs stripImageFileStrict — unstrippable containers', (
     expect((await parse(HEIC)).Make).toBe('TestCam');
   });
 
-  // Characterization, not aspiration: this pins what the primitive DOES so the two policy guards
-  // below rest on a stated contract rather than an assumption.
-  it('stripImageBytes cannot strip either one, and reports format:null', () => {
-    for (const b of [HEIC, AVIF]) {
-      expect(stripImageBytes(b)).toMatchObject({
-        changed: false, format: null, reason: 'unsupported-format',
-      });
+  it('stripImageBytes now recognizes both and reports the format', () => {
+    expect(stripImageBytes(HEIC)).toMatchObject({ changed: true, format: 'heif', droppedSegments: 2 });
+    expect(stripImageBytes(AVIF)).toMatchObject({ changed: true, format: 'avif', droppedSegments: 2 });
+  });
+
+  it.each([['heic', HEIC], ['avif', AVIF]])('%s: NO GPS AND NO MAKE survive the strip', async (kind, bytes) => {
+    const before = await parse(bytes);
+    expect(before.latitude).toBeCloseTo(51.4778, 3);            // the input really does carry it
+    const { out } = stripImageBytes(bytes);
+    const after = await parse(out);
+    // exifr returns undefined when it finds no parseable metadata at all.
+    expect(after?.latitude).toBeUndefined();
+    expect(after?.longitude).toBeUndefined();
+    expect(after?.Make).toBeUndefined();
+  });
+
+  // The offset-preservation contract, asserted as bytes rather than trusted. This is what makes the
+  // output still decode: deleting the metadata instead would slide the image 601 bytes out from
+  // under the offset iloc still points at.
+  it.each([['heic', HEIC], ['avif', AVIF]])('%s: the file length and the coded image are untouched', (kind, bytes) => {
+    const { out } = stripImageBytes(bytes);
+    expect(out.length).toBe(bytes.length);
+    const [s, e] = IMAGE_EXTENT[kind];
+    expect(Array.from(out.subarray(s, e))).toEqual(Array.from(bytes.subarray(s, e)));
+  });
+
+  it.each([['heic', HEIC], ['avif', AVIF]])('%s: the metadata region is ZEROED, not merely unreferenced', (kind, bytes) => {
+    const [s, e] = META_REGION[kind];
+    expect(bytes.subarray(s, e).some((x) => x !== 0)).toBe(true);   // it held something first
+    const { out } = stripImageBytes(bytes);
+    expect(out.subarray(s, e).every((x) => x === 0)).toBe(true);
+    // Overwritten in place — an S3 object holding these bytes cannot be mined for the fix later.
+    expect(e - s).toBe(601);
+  });
+
+  // Removing the declarations is the second half. A file that still ADVERTISES an Exif item over a
+  // field of zeros is not wrong, but it reads as a failed strip to anyone auditing it.
+  it.each([['heic', HEIC], ['avif', AVIF]])('%s: the Exif and XMP item declarations are gone, and meta keeps its size', (kind, bytes) => {
+    const { out } = stripImageBytes(bytes);
+    const metaAt = kind === 'heic' ? 36 : 32;
+    const size = (b, p) => (b[p] << 24 | b[p + 1] << 16 | b[p + 2] << 8 | b[p + 3]) >>> 0;
+    expect(size(out, metaAt)).toBe(size(bytes, metaAt));            // meta unchanged => mdat did not move
+    expect(String.fromCharCode(...out.subarray(metaAt + 4, metaAt + 8))).toBe('meta');
+    const text = String.fromCharCode(...out);
+    expect(text).not.toContain('Exif');
+    expect(text).not.toContain('rdf+xml');
+    expect(text).toContain('free');                                 // the padding that held meta's size
+  });
+
+  it('a video ISOBMFF is NOT claimed as strippable — it has no item structure to work with', () => {
+    const mp4 = new Uint8Array(32);
+    mp4.set([0, 0, 0, 32], 0);
+    for (let i = 0; i < 4; i++) mp4[4 + i] = 'ftyp'.charCodeAt(i);
+    for (let i = 0; i < 4; i++) mp4[8 + i] = 'mp42'.charCodeAt(i);
+    expect(stripImageBytes(mp4)).toMatchObject({ format: null, reason: 'isobmff-not-an-image' });
+  });
+
+  it('a truncated HEIC fails CLOSED rather than emitting bytes we cannot vouch for', () => {
+    // reason is asserted so the test names the guard it exercises: a box that runs past the end of
+    // the file. Without it this passes for any reason at all, including the strip never running.
+    expect(stripImageBytes(HEIC.subarray(0, 600))).toMatchObject({ format: null, changed: false, reason: 'bad-boxes' });
+  });
+
+  // A DIFFERENT failure from truncation, and it needs its own test: here every box is well-formed
+  // and tiles the file correctly, but 4 bytes are left over at the end that belong to no box. That
+  // is the ISOBMFF shape of the appended-trailer problem the JPEG walker truncates at EOI for —
+  // vendor bytes hiding past the last structure we understand. We cannot say the file is clean, so
+  // we do not say it: format:null, and the share layer refuses it.
+  it('a HEIC with bytes trailing past the last box fails CLOSED — the boxes must tile the file exactly', () => {
+    const withTrailer = new Uint8Array(HEIC.length + 4);
+    withTrailer.set(HEIC, 0);
+    withTrailer.set([0x4D, 0x43, 0x43, 0x5F], HEIC.length);      // 'MCC_' — the Samsung trailer's opener
+    expect(stripImageBytes(withTrailer)).toMatchObject({ format: null, changed: false, reason: 'bad-boxes' });
+  });
+
+  it('LENIENT stripImageFile now returns STRIPPED bytes for a real HEIC', async () => {
+    const f = new File([HEIC], 'shot.heic', { type: 'image/heic' });
+    const out = await stripImageFile(f);
+    expect(out).not.toBe(f);                                        // no longer the passthrough
+    expect(out.name).toBe('shot.heic');
+    expect(out.type).toBe('image/heic');
+    expect((await parse(await readFile(out)))?.latitude).toBeUndefined();
+  });
+
+  it('STRICT does NOT throw on a real HEIC or AVIF any more, and returns clean bytes', async () => {
+    for (const [bytes, name, type] of [[HEIC, 'shot.heic', 'image/heic'], [AVIF, 'shot.avif', 'image/avif']]) {
+      const out = await stripImageFileStrict(new File([bytes], name, { type }));
+      expect((await parse(await readFile(out)))?.latitude).toBeUndefined();
     }
   });
 
-  it('LENIENT stripImageFile passes a real HEIC through with its GPS intact', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const f = new File([HEIC], 'shot.heic', { type: 'image/heic' });
-    const out = await stripImageFile(f);
-    expect(out).toBe(f);
-    // The point of the assertion: the bytes that would leave the device still name the location.
-    expect((await parse(await readFile(out))).latitude).toBeCloseTo(51.4778, 3);
-    warn.mockRestore();
-  });
-
-  it('STRICT stripImageFileStrict THROWS on a real HEIC rather than returning bytes', async () => {
-    const f = new File([HEIC], 'shot.heic', { type: 'image/heic' });
+  // The strict entry point still has to fail closed for a container that genuinely has no walker —
+  // that is the whole reason it exists, and it must not have been softened into "always succeeds".
+  it('STRICT still throws for a container with no walker at all (a TIFF)', async () => {
+    const tiff = new Uint8Array([0x49, 0x49, 0x2A, 0x00, 8, 0, 0, 0, 0, 0, 0, 0]);
+    const f = new File([tiff], 'raw.tif', { type: 'image/tiff' });
     await expect(stripImageFileStrict(f)).rejects.toThrow(UnstrippableFormatError);
-    await expect(stripImageFileStrict(f)).rejects.toMatchObject({ format: 'image/heic', userFacing: true });
-  });
-
-  it('STRICT throws on a real AVIF too', async () => {
-    const f = new File([AVIF], 'shot.avif', { type: 'image/avif' });
-    await expect(stripImageFileStrict(f)).rejects.toThrow(UnstrippableFormatError);
+    await expect(stripImageFileStrict(f)).rejects.toMatchObject({ format: 'image/tiff', userFacing: true });
   });
 
   // format:null is the predicate, not !changed. A clean JPEG also reports changed:false, and if

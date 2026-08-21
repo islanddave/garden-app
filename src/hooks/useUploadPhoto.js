@@ -30,9 +30,8 @@ import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
 import { downscaleWithThumb } from '../lib/imageDownscale.js';
 import { readCaptureMeta } from '../lib/imagePipeline.js';
-import { stripImageFile, stripImageFileStrict } from '../lib/imageMetadataStrip.js';
+import { stripImageFile } from '../lib/imageMetadataStrip.js';
 import { putWithProgress } from '../lib/uploadPut.js';
-import { PHOTO_STRIP_STRICT_UPLOAD } from '../lib/featureFlags.js';
 
 // Step 2b only. The thumb is ~50KB; if it has not landed in 10s it is not going to, and it must
 // never be the reason a save hangs (see the bounded-PUT note at its call site).
@@ -215,17 +214,26 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // never uploaded unstripped. Sequential rather than parallel so only one copy of a
       // multi-megabyte original is held at a time (imagePipeline rule 3's memory class).
       //
-      // BUG-HEICEXIFPASSTHRU-001 — "never uploaded unstripped" holds for an unreadable blob but NOT
-      // for a container the stripper has no walker for. HEIC/AVIF are ISOBMFF; they pass straight
-      // through and land in S3 byte-identical to the camera original, GPS included, with nothing
-      // but a console.warn. Refusing them is a user-visible regression on a path that succeeds
-      // today, so it is Dave's call and it is parked OFF behind PHOTO_STRIP_STRICT_UPLOAD. The seam
-      // is here rather than inside the stripper so both arms stay one const apart and both stay
-      // covered. The SHARE layer (harvestPostPhotos.js) is fail-closed unconditionally — no flag,
-      // because there the cost is one photo missing from a post, not the user losing the photo.
-      const strip = PHOTO_STRIP_STRICT_UPLOAD ? stripImageFileStrict : stripImageFile;
-      upFile = await strip(upFile);
-      if (thumb) thumb = await strip(thumb);
+      // BUG-HEICEXIFPASSTHRU-001 / BUG-HEICREALSTRIP-001 — THE SIXTH BYPASS, and the reason this
+      // call is lenient rather than fail-closed. "Never uploaded unstripped" held for an unreadable
+      // blob but not for a container the stripper had no walker for: HEIC/AVIF are ISOBMFF box
+      // trees, they passed straight through here, and they landed in S3 byte-identical to the
+      // camera original with the GPS still in them. It stacked on the downscale bypass above —
+      // createImageBitmap cannot decode HEIC, so imageDownscale had already handed back the
+      // original — which made it the leakiest of the six.
+      //
+      // The fix is in the stripper, not here: imageMetadataStrip now walks ISOBMFF and zeroes the
+      // Exif/XMP items in place. REFUSING THE UPLOAD WAS THE OTHER OPTION AND DAVE REJECTED IT
+      // ("I think refusing a photo upload is a terrible idea"), so PHOTO_STRIP_STRICT_UPLOAD and
+      // the strict-vs-lenient seam that stood here are gone. Lenient is now the honest choice
+      // rather than the resigned one — every format a phone actually shoots has a walker.
+      //
+      // What lenient still means: a container with no walker at all (a raw DNG, a TIFF) uploads
+      // with its metadata and a console.warn, exactly as before. The SHARE layer
+      // (harvestPostPhotos.js) stays fail-closed unconditionally, so nothing unstripped is ever
+      // published — there the cost of refusing is one photo missing from a post, not a lost photo.
+      upFile = await stripImageFile(upFile);
+      if (thumb) thumb = await stripImageFile(thumb);
 
       // Set up preview eagerly — caller may want to render before upload completes.
       // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.

@@ -45,7 +45,15 @@ export const MAX_POST_PHOTO_BYTES = 25 * 1024 * 1024
 // on the same failure.
 const ATTEMPTS = 2
 
-const EXT = { 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/jpeg': 'jpg' }
+// The share sheet hands this filename to whatever app receives it, and Android apps routinely
+// dispatch on the extension rather than the MIME type — so a lying one is a file that will not
+// open. avif/heif were missing here while photoKeys.js (the upload side) had both; that was latent
+// only because BUG-HEICEXIFPASSTHRU-001's fail-closed strip dropped every ISOBMFF photo before it
+// could be named. BUG-HEICREALSTRIP-001 lets them through, so the gap is now reachable.
+const EXT = {
+  'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg',
+  'image/heic': 'heic', 'image/heif': 'heif', 'image/avif': 'avif',
+}
 
 function extForType(type) {
   return EXT[String(type || '').toLowerCase()] || 'jpg'
@@ -111,6 +119,11 @@ async function loadOne(ref, { mint, fetchBlob, signal, index }) {
       // handed it to the share sheet. Strict is what makes the comment true — the FB Lambda's
       // isJpeg reject (lambda/facebook-share/index.js) was the only enforcement, and the share
       // sheet does not go through the Lambda.
+      //
+      // BUG-HEICREALSTRIP-001 — strict stays, and the set of things it refuses shrank. HEIC/AVIF
+      // now have an ISOBMFF walker, so they come back stripped and ARE shared; what still throws
+      // is a container with no walker at all (a raw DNG, a TIFF). The policy on this line did not
+      // change and is still the thing keeping the comment above true.
       const clean = await stripImageFileStrict(blob)
       // A neutral filename: it rides into the share sheet and on to whatever app receives it, so it
       // must not carry a caption, a variety name or a UUID.
