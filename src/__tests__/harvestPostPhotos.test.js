@@ -309,16 +309,21 @@ describe('fetchPostPhotos — a shared photo never carries the garden home addre
     expect(fetchBlob).toHaveBeenCalledTimes(2)   // one retry, then counted failed
   })
 
-  // BUG-HEICEXIFPASSTHRU-001. The test above covered the UNREADABLE blob only, and that is exactly
-  // the gap the bug lived in: "cannot strip" has a second case — a container with no walker — and
-  // for that one loadOne used to return the photo. Measured before the fix, on this same fixture:
-  // items:1, failed:0, file `harvest-photo-1.heic`, exifr reading 51.4778/-0.0015 straight off the
-  // File that goes to navigator.share.
+  // BUG-HEICEXIFPASSTHRU-001 -> BUG-HEICREALSTRIP-001. The test above covered the UNREADABLE blob
+  // only, and that is exactly the gap the bug lived in: "cannot strip" has a second case — a
+  // container with no walker — and for that one loadOne used to return the photo. Measured before
+  // any fix, on this same fixture: items:1, failed:0, file `harvest-photo-1.heic`, exifr reading
+  // 51.4778/-0.0015 straight off the File that goes to navigator.share.
   //
-  // ASSERTED ON BYTES, NOT ON A COUNT. r.items being empty is necessary but not sufficient — a
-  // count can go to zero for the wrong reason. The load-bearing assertion is that no File anywhere
-  // in the result carries the fix.
-  describe('a container the stripper cannot walk is NOT shared', () => {
+  // The first fix made that a REFUSAL (fail closed, photo dropped from the post). Dave rejected
+  // refusal as the answer, so HEIC/AVIF now have a real ISOBMFF walker and the photo is SHARED,
+  // CLEAN. The fail-closed policy on this path is unchanged and still enforced below — what
+  // changed is that these two formats no longer trip it.
+  //
+  // ASSERTED ON BYTES, NOT ON A COUNT. The load-bearing assertion is that no File anywhere in the
+  // result carries the fix; the count assertions exist so the leak cannot be "fixed" by silently
+  // dropping the photo, which is the failure mode Dave named.
+  describe('ISOBMFF photos are shared, and shared clean', () => {
     const HEIC = new Uint8Array(
       readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'synthetic-gps.heic')),
     )
@@ -331,37 +336,34 @@ describe('fetchPostPhotos — a shared photo never carries the garden home addre
       expect((await parse(HEIC)).latitude).toBeCloseTo(51.4778, 3)
     })
 
-    it('NO GPS-BEARING BYTES REACH THE SHARE SHEET for a HEIC', async () => {
+    it.each([
+      ['HEIC', 'image/heic', 'harvest-photo-1.heic'],
+      ['AVIF', 'image/avif', 'harvest-photo-1.avif'],
+    ])('NO GPS-BEARING BYTES REACH THE SHARE SHEET for a %s — and it is still shared', async (kind, type, name) => {
+      const bytes = kind === 'HEIC' ? HEIC : AVIF
       const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
-      const fetchBlob = vi.fn(async () => new Blob([HEIC], { type: 'image/heic' }))
+      const fetchBlob = vi.fn(async () => new Blob([bytes], { type }))
       const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
 
       // The property that matters: nothing handed onward names the location.
       for (const item of r.items) {
-        expect(await parse(await readBytes(item.file))).toBeUndefined()
+        expect((await parse(await readBytes(item.file)))?.latitude).toBeUndefined()
       }
-      expect(r.items).toHaveLength(0)
-      expect(r.failed).toBe(1)
-      expect(fetchBlob).toHaveBeenCalledTimes(2)   // retried once, then counted failed
+      // ...and the photo was not quietly discarded to achieve that.
+      expect(r.items).toHaveLength(1)
+      expect(r.failed).toBe(0)
+      expect(r.items[0].file.name).toBe(name)
+      expect(fetchBlob).toHaveBeenCalledTimes(1)   // no retry — nothing threw
+      expect((await readBytes(r.items[0].file)).length).toBe(bytes.length)
     })
 
-    it('NO GPS-BEARING BYTES REACH THE SHARE SHEET for an AVIF', async () => {
-      const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
-      const fetchBlob = vi.fn(async () => new Blob([AVIF], { type: 'image/avif' }))
-      const r = await fetchPostPhotos([{ photoId: 'p1', eventId: 'e1' }], { mint, fetchBlob })
-      for (const item of r.items) {
-        expect(await parse(await readBytes(item.file))).toBeUndefined()
-      }
-      expect(r.items).toHaveLength(0)
-      expect(r.failed).toBe(1)
-    })
-
-    // PARTIAL IS THE CORRECT OUTCOME (header note). One unstrippable photo must not take the post
-    // down with it, or the fail-closed change trades a privacy leak for a dead feature.
-    it('drops only the unstrippable one and still shares the strippable JPEG beside it', async () => {
+    // The fail-closed policy this path was given is unchanged; it is only HEIC/AVIF that stopped
+    // tripping it. A container with no walker at all must still be dropped rather than shared.
+    it('a container with NO walker at all is still refused, and does not take the post down', async () => {
+      const TIFF = new Uint8Array([0x49, 0x49, 0x2A, 0x00, 8, 0, 0, 0, 0, 0, 0, 0])
       const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
       const fetchBlob = vi.fn(async (url) => (String(url).includes('p1')
-        ? new Blob([HEIC], { type: 'image/heic' })
+        ? new Blob([TIFF], { type: 'image/tiff' })
         : backfilled()))
       const r = await fetchPostPhotos(
         [{ photoId: 'p1', eventId: 'e1' }, { photoId: 'p2', eventId: 'e2' }],
@@ -371,6 +373,24 @@ describe('fetchPostPhotos — a shared photo never carries the garden home addre
       expect(r.items[0].photoId).toBe('p2')
       expect(r.failed).toBe(1)
       expect(await parse(await readBytes(r.items[0].file))).toBeUndefined()
+    })
+
+    // PARTIAL IS THE CORRECT OUTCOME (header note). A mixed batch must come back whole now that
+    // both formats strip.
+    it('shares a HEIC and a JPEG side by side, both clean', async () => {
+      const mint = vi.fn(async (id) => `https://s3.example/${id}?sig`)
+      const fetchBlob = vi.fn(async (url) => (String(url).includes('p1')
+        ? new Blob([HEIC], { type: 'image/heic' })
+        : backfilled()))
+      const r = await fetchPostPhotos(
+        [{ photoId: 'p1', eventId: 'e1' }, { photoId: 'p2', eventId: 'e2' }],
+        { mint, fetchBlob },
+      )
+      expect(r.items).toHaveLength(2)
+      expect(r.failed).toBe(0)
+      for (const item of r.items) {
+        expect((await parse(await readBytes(item.file)))?.latitude).toBeUndefined()
+      }
     })
   })
 })

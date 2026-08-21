@@ -56,6 +56,15 @@
 // Neither is "the safe one" in the abstract: fail-closed on SHARE costs one photo missing from a
 // post, fail-closed on UPLOAD costs the user their photo entirely. Pick per path, deliberately.
 //
+// AND THEN HEIC/AVIF STOPPED BEING UNSTRIPPABLE — BUG-HEICREALSTRIP-001. The two policies above
+// were a way to live with a container this module could not walk. Dave declined to choose between
+// them ("I do want it to be stripped ... I think refusing a photo upload is a terrible idea"), so
+// the ISOBMFF walker below exists and both HEIC and AVIF now strip on both layers. That deletes
+// the dilemma rather than resolving it: upload is lenient, share is fail-closed, and neither
+// setting can cost a phone photo any more because every format a phone shoots has a walker. The
+// two entry points remain, and still differ, for the containers that genuinely have none — a raw
+// DNG, a TIFF, a file whose magic bytes match nothing.
+//
 // Server-side lambda/facebook-share/exif.js is a separate, narrower denylist strip on the Graph
 // upload path. It is defence-in-depth on a path this module does not reach; left alone on purpose.
 
@@ -330,16 +339,401 @@ export function stripWebpBytes(input) {
   return { out, changed: out.length !== n, format: WEBP, droppedSegments, droppedBytes, truncatedTrailer: 0, orientation: null, reason };
 }
 
+// ---------------------------------------------------------------------------
+// ISOBMFF — HEIC / HEIF / AVIF. BUG-HEICREALSTRIP-001.
+//
+// WHY THE OBVIOUS IMPLEMENTATION CORRUPTS THE FILE. These are not flat marker streams like JPEG;
+// they are MP4-style box trees, and the metadata is not stored where it is declared. `meta` holds
+// only DECLARATIONS — `iinf` names each item (`Exif`, a `mime` item holding XMP, the coded image
+// itself) and `iloc` gives each one an ABSOLUTE FILE OFFSET into the `mdat` that follows. Measured
+// on the fixture: the Exif payload occupies 572..812 and the XMP 812..1173, while the actual HEVC
+// image sits at 1173..1220 — AFTER both. Delete the 601 metadata bytes and every later byte slides
+// down, but `iloc` still says the image starts at 1173, which is now 601 bytes past where it is.
+// The file stops decoding. That is why "just drop the box" works for JPEG and destroys a HEIC.
+//
+// SO WE DO NOT MOVE ANYTHING. Two operations, both offset-preserving by construction:
+//   1. ZERO the metadata payload in place. Same bytes, same positions, contents destroyed. This is
+//      the operation that actually removes the GPS, and it cannot invalidate an offset because no
+//      byte changes address.
+//   2. REMOVE the now-dangling declarations from `iinf`/`iloc`/`iref`, then pad each shrunken box
+//      back to its EXACT original size with a `free` box (ISO/IEC 14496-12 §8.1.2 — a free-space
+//      box is legal inside any container and readers must ignore it). `meta` keeps its size, so
+//      `mdat` does not move, so nothing downstream needs rewriting.
+// The invariant that falls out is worth stating because it is what makes this safe to ship:
+// OUTPUT LENGTH == INPUT LENGTH, AND EVERY BOX IS AT ITS ORIGINAL OFFSET. The primary item's bytes
+// are bit-identical at a bit-identical address, so a file that decoded before decodes after.
+//
+// The alternative — compact the file and rewrite `iloc` offsets (plus `stco`/`co64` if a `moov`
+// rode along, as it does in an iPhone Live Photo) — buys back a few KB in a multi-MB file and puts
+// every absolute offset in the container, including ones in boxes this module has never heard of,
+// at the mercy of the rewriter being exhaustively right. Not worth it here.
+//
+// DENYLIST HERE, DELIBERATELY, WHERE JPEG IS AN ALLOWLIST. In JPEG an unrecognized segment is
+// inert, so dropping everything unfamiliar is free. In ISOBMFF an unrecognized ITEM may be load-
+// bearing — the tiles a `grid` derived image is assembled from, an alpha or depth auxiliary map —
+// and dropping one changes the picture. So we remove only what is positively identified as
+// metadata (`Exif`, and `mime`/`xml ` items carrying XMP), which is where exifr finds a location.
+//
+// ORIENTATION IS NOT THE LANDMINE IT IS IN JPEG. HEIF rotation lives in the `irot`/`imir`
+// properties inside `iprp`/`ipco`, not in the Exif item — the fixture carries an `irot` and we
+// never touch `ipco`. No orientation tag needs re-emitting here.
+//
+// FAIL CLOSED ON ANYTHING UNEXPECTED. Every parse guard below returns format:null, which puts the
+// file back on the unstrippable path (share refuses it; upload passes it through as it does today)
+// rather than emitting bytes we cannot vouch for.
+const HEIF = 'heif';
+const AVIF = 'avif';
+
+// ftyp brands that mean "still image" (HEIF family + AVIF). A plain `isom`/`mp42` video is also
+// ISOBMFF and must NOT be claimed as strippable: it has no `meta` item structure to work with.
+const ISOBMFF_IMAGE_BRANDS = new Set([
+  'heic', 'heix', 'heim', 'heis', 'hevc', 'hevx', 'hevm', 'hevs',
+  'mif1', 'mif2', 'msf1', 'miaf', 'avif', 'avis', 'avio',
+]);
+
+// Item types that carry capture metadata and nothing a renderer needs.
+const XMP_CONTENT_TYPES = /rdf\+xml|xmp|^(application|text)\/xml$/i;
+
+const str4 = (b, p) => String.fromCharCode(b[p], b[p + 1], b[p + 2], b[p + 3]);
+const be16 = (b, p) => (b[p] << 8) | b[p + 1];
+const be32 = (b, p) => ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) >>> 0;
+const rdN = (b, p, n) => { let x = 0; for (let k = 0; k < n; k++) x = x * 256 + b[p + k]; return x; };
+const putN = (b, p, n, v) => { let x = v; for (let k = n - 1; k >= 0; k--) { b[p + k] = x & 0xFF; x = Math.floor(x / 256); } };
+
+export function isIsobmff(b) {
+  return b.length >= 12 && matchesId(b, 4, 'ftyp');
+}
+
+// AVIF or HEIF from major_brand + compatible_brands; null for a container that is neither.
+function isobmffFormat(b) {
+  const declared = be32(b, 0);
+  const end = Math.min(declared >= 8 ? declared : b.length, b.length);
+  let found = null;
+  for (let p = 8; p + 4 <= end; p += 4) {
+    if (p === 12) continue;                                  // minor_version, not a brand
+    const brand = str4(b, p);
+    if (!ISOBMFF_IMAGE_BRANDS.has(brand)) continue;
+    if (brand.startsWith('avi')) return AVIF;                // AVIF wins; it is the more specific claim
+    found = HEIF;
+  }
+  return found;
+}
+
+// One level of the box tree. Returns null — never a partial list — for anything that does not tile
+// the range exactly, so a mis-parse can never be mistaken for a short file.
+function scanBoxes(b, start, end) {
+  const out = [];
+  let i = start;
+  while (i + 8 <= end) {
+    let size = be32(b, i);
+    let hdr = 8;
+    if (size === 1) {                                        // 64-bit largesize
+      if (i + 16 > end) return null;
+      const hi = be32(b, i + 8);
+      if (hi > 0x1FFFFF) return null;                        // past Number's exact-integer range
+      size = hi * 4294967296 + be32(b, i + 12);
+      hdr = 16;
+    } else if (size === 0) {
+      size = end - i;                                        // "extends to the end of the container"
+    }
+    if (size < hdr || i + size > end) return null;
+    out.push({ type: str4(b, i + 4), at: i, size, hdr });
+    i += size;
+  }
+  return i === end ? out : null;
+}
+
+// iinf: FullBox, then entry_count (16-bit at version 0, 32-bit after), then that many `infe`.
+// Only infe version >= 2 carries item_type; the legacy v0/v1 form has none, so its items can never
+// be classified as metadata and are therefore never removed.
+function parseIinf(b, box) {
+  const version = b[box.at + box.hdr];
+  const countSize = version === 0 ? 2 : 4;
+  const countAt = box.at + box.hdr + 4;
+  const end = box.at + box.size;
+  if (countAt + countSize > end) return null;
+  const count = rdN(b, countAt, countSize);
+  const entries = [];
+  let p = countAt + countSize;
+  for (let k = 0; k < count; k++) {
+    if (p + 12 > end) return null;
+    const size = be32(b, p);
+    if (size < 12 || p + size > end || str4(b, p + 4) !== 'infe') return null;
+    const iv = b[p + 8];
+    const entry = { at: p, size, itemId: null, itemType: null, contentType: null };
+    let q = p + 12;
+    if (iv >= 2) {
+      const idSize = iv === 2 ? 2 : 4;
+      if (q + idSize + 6 > p + size) return null;
+      entry.itemId = rdN(b, q, idSize);
+      q += idSize + 2;                                       // + item_protection_index
+      entry.itemType = str4(b, q);
+      q += 4;
+      let e = q;
+      while (e < p + size && b[e] !== 0) e++;                // item_name
+      q = e + 1;
+      if (entry.itemType === 'mime') {
+        let c = q;
+        while (c < p + size && b[c] !== 0) c++;
+        entry.contentType = String.fromCharCode(...b.subarray(q, c));
+      }
+    } else {
+      if (q + 2 > p + size) return null;
+      entry.itemId = be16(b, q);
+    }
+    entries.push(entry);
+    p += size;
+  }
+  return { version, countAt, countSize, count, entries, entriesEnd: p, box };
+}
+
+// iloc: the offset table. Field widths are themselves declared in the box, and every one of them
+// varies in the wild, so nothing here may assume the fixture's 4/4/0/0.
+function parseIloc(b, box) {
+  const version = b[box.at + box.hdr];
+  const end = box.at + box.size;
+  let p = box.at + box.hdr + 4;
+  if (p + 2 > end) return null;
+  const offSize = b[p] >> 4, lenSize = b[p] & 0x0F, baseSize = b[p + 1] >> 4;
+  const idxSize = (version === 1 || version === 2) ? (b[p + 1] & 0x0F) : 0;
+  p += 2;
+  const countSize = version < 2 ? 2 : 4;
+  const countAt = p;
+  if (countAt + countSize > end) return null;
+  const count = rdN(b, countAt, countSize);
+  p += countSize;
+  const items = [];
+  for (let k = 0; k < count; k++) {
+    const at = p;
+    const idSize = version < 2 ? 2 : 4;
+    if (p + idSize + 2 > end) return null;
+    const itemId = rdN(b, p, idSize);
+    p += idSize;
+    let cm = 0;
+    if (version === 1 || version === 2) { cm = be16(b, p) & 0x0F; p += 2; }
+    if (p + 2 + baseSize + 2 > end) return null;
+    const dri = be16(b, p);
+    p += 2;
+    const base = rdN(b, p, baseSize);
+    p += baseSize;
+    const extentCount = be16(b, p);
+    p += 2;
+    const extents = [];
+    for (let e = 0; e < extentCount; e++) {
+      if (p + idxSize + offSize + lenSize > end) return null;
+      p += idxSize;
+      const off = rdN(b, p, offSize);
+      p += offSize;
+      const len = rdN(b, p, lenSize);
+      p += lenSize;
+      extents.push({ off, len });
+    }
+    items.push({ at, len: p - at, itemId, cm, dri, base, extents });
+  }
+  return { version, countAt, countSize, count, items, itemsEnd: p, box };
+}
+
+// iref: a FullBox holding one box per reference, each naming the item it is FROM. Removing an Exif
+// item leaves its `cdsc` ("this describes item N") pointing at nothing, so those go too.
+function parseIref(b, box) {
+  const version = b[box.at + box.hdr];
+  const idSize = version === 0 ? 2 : 4;
+  const end = box.at + box.size;
+  const refs = [];
+  let p = box.at + box.hdr + 4;
+  while (p + 8 <= end) {
+    const size = be32(b, p);
+    if (size < 8 + idSize + 2 || p + size > end) return null;
+    refs.push({ at: p, size, type: str4(b, p + 4), fromId: rdN(b, p + 8, idSize) });
+    p += size;
+  }
+  return p === end ? { version, refs, refsStart: box.at + box.hdr + 4, box } : null;
+}
+
+function readPitm(b, box) {
+  const version = b[box.at + box.hdr];
+  const at = box.at + box.hdr + 4;
+  const size = version === 0 ? 2 : 4;
+  return at + size <= box.at + box.size ? rdN(b, at, size) : null;
+}
+
+function isMetadataItem(e) {
+  if (e.itemType === 'Exif') return true;
+  if (e.itemType === 'xml ') return true;                    // XMP carried as an XMLBox item
+  if (e.itemType === 'mime') return XMP_CONTENT_TYPES.test(e.contentType || '');
+  return false;
+}
+
+/**
+ * Rebuild `box` with some of its variable-length tail removed, padded back to its ORIGINAL byte
+ * length by a trailing `free` box so that nothing after it moves.
+ *
+ * Returns null when the reclaimed space is 1-7 bytes — too small to hold a box header, so the size
+ * could not be preserved. Callers treat that as "skip the structural pass entirely" rather than
+ * emitting a file whose declarations and offsets disagree.
+ */
+function shrinkBoxInPlace(b, box, prefixEnd, keptRanges, countPatch) {
+  const prefix = b.slice(box.at, prefixEnd);
+  let bodyLen = 0;
+  for (const [s, e] of keptRanges) bodyLen += e - s;
+  const newSize = prefix.length + bodyLen;
+  const freed = box.size - newSize;
+  if (freed === 0) return { bytes: null, freed: 0 };
+  if (freed < 8) return null;
+  putN(prefix, 0, 4, newSize);
+  if (countPatch) putN(prefix, countPatch.at - box.at, countPatch.size, countPatch.value);
+  const out = new Uint8Array(box.size);
+  out.set(prefix, 0);
+  let o = prefix.length;
+  for (const [s, e] of keptRanges) { out.set(b.subarray(s, e), o); o += e - s; }
+  putN(out, o, 4, freed);
+  out[o + 4] = 0x66; out[o + 5] = 0x72; out[o + 6] = 0x65; out[o + 7] = 0x65;   // 'free'
+  return { bytes: out, freed };
+}
+
+function resolveExtent(item, extent, idatBox) {
+  if (!(extent.len > 0)) return null;              // length 0 means "to end of file"; not supported
+  if (item.dri !== 0) return null;                 // data lives in an external file, per `dref`
+  if (item.cm === 0) {
+    const start = item.base + extent.off;
+    return { start, end: start + extent.len };
+  }
+  if (item.cm === 1 && idatBox) {
+    const start = idatBox.at + idatBox.hdr + item.base + extent.off;
+    return { start, end: start + extent.len, idat: true };
+  }
+  return null;                                     // cm 2 — offsets relative to another item
+}
+
+/**
+ * Strip capture metadata from a HEIC/HEIF/AVIF. Never throws.
+ *
+ * The output is the same length as the input and every box keeps its offset — see the header note
+ * above; that is the whole safety argument, not an incidental property.
+ */
+export function stripIsobmffBytes(input) {
+  const b = toBytes(input);
+  const n = b.length;
+  const miss = (reason, format = null) => ({
+    out: b, changed: false, format, droppedSegments: 0, droppedBytes: 0,
+    truncatedTrailer: 0, orientation: null, reason,
+  });
+  if (!isIsobmff(b)) return miss('not-isobmff');
+  const format = isobmffFormat(b);
+  if (!format) return miss('isobmff-not-an-image');
+
+  const top = scanBoxes(b, 0, n);
+  if (!top) return miss('bad-boxes');
+  const metaBox = top.find((x) => x.type === 'meta');
+  if (!metaBox) return miss('no-meta');
+  // `meta` is a FullBox: 4 bytes of version+flags before its children.
+  const kids = scanBoxes(b, metaBox.at + metaBox.hdr + 4, metaBox.at + metaBox.size);
+  if (!kids) return miss('bad-meta');
+  const kid = (t) => kids.find((x) => x.type === t);
+  const iinfBox = kid('iinf'), ilocBox = kid('iloc'), idatBox = kid('idat'), irefBox = kid('iref');
+  if (!iinfBox || !ilocBox) return miss('no-iinf-or-iloc');
+
+  const iinf = parseIinf(b, iinfBox);
+  if (!iinf) return miss('bad-iinf');
+  const iloc = parseIloc(b, ilocBox);
+  if (!iloc) return miss('bad-iloc');
+  const iref = irefBox ? parseIref(b, irefBox) : null;
+  if (irefBox && !iref) return miss('bad-iref');
+
+  const pitmBox = kid('pitm');
+  const primary = pitmBox ? readPitm(b, pitmBox) : null;
+
+  // The primary item is exempt no matter what it claims to be — a file whose pitm points at an
+  // `Exif` item is malformed, and removing the thing the picture IS would be the worst outcome here.
+  const doomed = new Set();
+  for (const e of iinf.entries) {
+    if (e.itemId !== null && e.itemId !== primary && isMetadataItem(e)) doomed.add(e.itemId);
+  }
+  if (doomed.size === 0) return miss('no-metadata-items', format);
+
+  // Where item data is allowed to live. Zeroing a range outside these would overwrite box headers.
+  const mdatRanges = top.filter((x) => x.type === 'mdat').map((x) => ({ start: x.at + x.hdr, end: x.at + x.size }));
+  const idatRange = idatBox ? [{ start: idatBox.at + idatBox.hdr, end: idatBox.at + idatBox.size }] : [];
+
+  // Every byte of every item we are KEEPING. Nothing may be zeroed that touches one of these — the
+  // guard against a mis-parse pointing us at the image instead of the metadata.
+  const keepRanges = [];
+  for (const it of iloc.items) {
+    if (doomed.has(it.itemId)) continue;
+    for (const x of it.extents) {
+      const r = resolveExtent(it, x, idatBox);
+      if (!r) return miss('unresolvable-kept-extent');       // cannot prove non-overlap; refuse
+      keepRanges.push(r);
+    }
+  }
+
+  const zeroRanges = [];
+  for (const it of iloc.items) {
+    if (!doomed.has(it.itemId)) continue;
+    for (const x of it.extents) {
+      const r = resolveExtent(it, x, idatBox);
+      if (!r) return miss('unsupported-item-location');
+      const containers = r.idat ? idatRange : mdatRanges;
+      if (!containers.some((c) => r.start >= c.start && r.end <= c.end)) return miss('extent-outside-mdat');
+      if (keepRanges.some((k) => r.start < k.end && k.start < r.end)) return miss('extent-overlaps-kept-item');
+      zeroRanges.push(r);
+    }
+  }
+  if (zeroRanges.length === 0) return miss('declared-but-unlocated');
+
+  // ---- structural pass: drop the declarations, keep every box's size ----
+  // All-or-nothing across the three boxes. A half-applied pass would leave `iloc` naming items that
+  // `iinf` no longer describes, which is a worse file than one with tidy declarations over zeros.
+  const infeKept = iinf.entries.filter((e) => !doomed.has(e.itemId)).map((e) => [e.at, e.at + e.size]);
+  const ilocKept = iloc.items.filter((it) => !doomed.has(it.itemId)).map((it) => [it.at, it.at + it.len]);
+  const edits = [];
+  let freedBytes = 0;
+  let structural = true;
+
+  const pushEdit = (r, box) => {
+    if (r === null) { structural = false; return; }
+    if (r.bytes) { edits.push({ at: box.at, bytes: r.bytes }); freedBytes += r.freed; }
+  };
+  pushEdit(shrinkBoxInPlace(b, iinfBox, iinf.countAt + iinf.countSize, infeKept,
+    { at: iinf.countAt, size: iinf.countSize, value: infeKept.length }), iinfBox);
+  pushEdit(shrinkBoxInPlace(b, ilocBox, iloc.countAt + iloc.countSize, ilocKept,
+    { at: iloc.countAt, size: iloc.countSize, value: ilocKept.length }), ilocBox);
+  if (iref) {
+    const refKept = iref.refs.filter((r) => !doomed.has(r.fromId)).map((r) => [r.at, r.at + r.size]);
+    pushEdit(shrinkBoxInPlace(b, irefBox, iref.refsStart, refKept, null), irefBox);
+  }
+
+  const out = b.slice();
+  if (structural) for (const e of edits) out.set(e.bytes, e.at);
+  else freedBytes = 0;
+  // The operation that actually destroys the GPS. Runs whether or not the structural pass applied,
+  // because it is the one that does not depend on being able to rewrite a box.
+  let zeroedBytes = 0;
+  for (const r of zeroRanges) { out.fill(0, r.start, r.end); zeroedBytes += r.end - r.start; }
+
+  return {
+    out,
+    changed: zeroedBytes > 0 || freedBytes > 0,
+    format,
+    droppedSegments: doomed.size,
+    droppedBytes: zeroedBytes + freedBytes,
+    truncatedTrailer: 0,
+    orientation: null,
+    reason: structural ? null : 'declarations-kept',
+  };
+}
+
 /**
  * Strip by MAGIC BYTES, never by the declared MIME type — a content:// picker hands back junk
  * names and types, and a photo mislabelled image/png must not thereby skip the strip.
- * An unrecognized container (HEIC, AVIF) returns unchanged with format:null; the caller decides.
+ * An unrecognized container returns unchanged with format:null; the caller decides.
  */
 export function stripImageBytes(input) {
   const b = toBytes(input);
   if (isJpeg(b)) return stripJpegBytes(b);
   if (isPng(b)) return stripPngBytes(b);
   if (isWebp(b)) return stripWebpBytes(b);
+  if (isIsobmff(b)) return stripIsobmffBytes(b);
   return { out: b, changed: false, format: null, droppedSegments: 0, droppedBytes: 0, truncatedTrailer: 0, orientation: null, reason: 'unsupported-format' };
 }
 
@@ -357,9 +751,12 @@ function readBytes(blob) {
 }
 
 /**
- * Thrown by stripImageFileStrict for a container this module has no walker for (HEIC, AVIF, or
- * anything whose magic bytes match nothing). `message` is written to be shown to a user as-is,
- * because useUploadPhoto surfaces err.message verbatim.
+ * Thrown by stripImageFileStrict for a container this module has no walker for — a raw DNG, a
+ * TIFF, anything whose magic bytes match nothing. HEIC/AVIF used to land here and no longer do.
+ *
+ * `message` is written to be shown to a user as-is. Nothing surfaces it today: the only strict
+ * caller is the share path, which catches it and counts the photo failed. It stays user-legible
+ * because the alternative is a message that has to be rewritten the first time something does.
  */
 export class UnstrippableFormatError extends Error {
   constructor(type) {
