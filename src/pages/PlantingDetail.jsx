@@ -17,7 +17,7 @@
 // A11y: status is multi-channel (icon + label + color via PlantStatusBadge, never color alone);
 // sticky section headers give a jump anchor for the flat single-column layout; scroll-to-top on
 // mount (BrowserRouter doesn't reset scroll on push); breadcrumb is arbitrary-depth.
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react'
 // V4-EVENTHISTPAGE-001 (BD0806-19) — the event log used to stop at the first 50 with nothing saying
 // so. GET /api/events (Route 4) reads `Math.min(parseInt(limit ?? '50'), 200)`, so 200 is a hard
 // server ceiling per request. Route 4 DOES now expose an `offset` param (BUG-PROJEVENTTRUNC-001,
@@ -37,8 +37,10 @@ const EVENT_PAGE_SIZE = 50
 // (the BUG-EXPORTDRAINBOUND-001 rule) rather than as the whole harvest history.
 export const MAX_HARVEST_PAGES = 8
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useOverlayNavigate } from '../context/OverlayContext.jsx'
+import { useOverlayNavigate, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
+import { setReloadBlocked } from '../lib/reloadGate.js'
+import PlantingEditor from '../components/PlantingEditor.jsx'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { resolvePager, resolveSwipe } from '../lib/plantingSequence.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
@@ -127,6 +129,60 @@ export default function PlantingDetail() {
   const [unarchiving, setUnarchiving] = useState(false)  // V3-ARCHIVE-001: planting restore path
   const [archiving, setArchiving] = useState(false)      // V4-ARCHIVEINPLACE-001: archive-in-place
   const [refreshKey, setRefreshKey] = useState(0)  // V4-PLANTINGUI-001: bump to refetch events after a quick-log
+
+  // V4-EDITINPLACE-001 (BUG-EDITLEAVESPAGE-001) — Edit opens the form HERE instead of navigating to
+  // /garden?edit=<id>. Deliberately component state and NOT a query param: a param would put the
+  // open editor in the URL, so a reload would silently reopen it over a planting the user may have
+  // moved on from, and it is the param round-trip itself that broke this affordance in the first
+  // place. `editorPlants` is fetched lazily on first open — the ONLY thing PlantingEditor wants
+  // from a host that this page does not already hold (it feeds the parent-planting lineage picker;
+  // an empty list renders that picker with no options rather than failing).
+  const [editing, setEditing] = useState(false)
+  const [editorDirty, setEditorDirty] = useState(false)
+  const [editorPlants, setEditorPlants] = useState([])
+
+  // The same 3-piece dirty contract Garden.jsx joined in V4-PLANTEDITORWIRE-001, for the same
+  // reason and with the same exclusions: the EDITOR is the whole predicate. Everything else this
+  // page holds (planting, events, harvests, photos, the Details fly-up tab, the lightbox index) is
+  // fetched or ambient chrome that a reload restores, so widening this would hold a deploy for
+  // someone merely reading a planting.
+  const hasUnsavedInput = editing && editorDirty
+
+  // Inert today in the same forward-compatible way it is inert on Garden — App.jsx registers
+  // /plantings/:plantingId without `overlayable`, so no OverlayDirtyProvider sits above this page.
+  // It is the shape a flyover would need, and costs nothing to carry now.
+  useReportOverlayDirty(hasUnsavedInput)
+
+  // V4-RELOADGATEWIRE-001 shape: per-instance key (reloadGate holds a Set, so a shared literal
+  // would let one instance's unmount release another's hold) and a BOOLEAN dep (the cleanup
+  // release NOTIFIES registerSW's listeners, so a dep changing mid-form would fire a reload the
+  // user is still typing under). This is the guard that actually runs on this surface.
+  const reloadGateKey = `planting:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, hasUnsavedInput)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, hasUnsavedInput])
+
+  // Clears dirty as well as open. PlantingEditor releases its own onDirty(false) on unmount, but
+  // that lands a commit later; leaving `editorDirty` true in the gap would keep the reload gate
+  // held by a form that is already gone.
+  const closeEditor = useCallback(() => {
+    setEditing(false)
+    setEditorDirty(false)
+  }, [])
+
+  // The parent-planting (lineage) picker is the ONLY thing PlantingEditor wants that this page
+  // does not already hold. Fetched on first open rather than with the page: it costs a round trip
+  // that a reader who never taps Edit should not pay, and an empty list renders that one picker
+  // with no options instead of failing. Grid projection because only {id,name} is read.
+  useEffect(() => {
+    if (!editing || editorPlants.length) return
+    let cancelled = false
+    fetch('/api/plants?view=grid')
+      .then(rows => { if (!cancelled) setEditorPlants(Array.isArray(rows) ? rows : []) })
+      .catch(() => { /* lineage picker degrades to empty — never blocks the edit */ })
+    return () => { cancelled = true }
+  }, [editing, editorPlants.length, fetch])
 
   // V200 Slice 5b — Details fly-up (tabbed) + Lightbox gallery state.
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -772,22 +828,76 @@ export default function PlantingDetail() {
           <Icon name="nav.plus" size={16} decorative style={{ color: P.green }} />
           Log
         </button>
-        {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
-        <Link
-          to={`/garden?edit=${plantingId}`}
+        {/* V4-EDITINPLACE-001 — opens the editor ON THIS PAGE. Was a <Link to="/garden?edit=<id>">
+            (V3-EDIT-001), which left the planting entirely to reach a form embedded in another
+            page. A button, not a link, because it no longer has a destination. */}
+        <button
+          type="button"
+          onClick={() => setEditing(v => !v)}
+          aria-expanded={editing}
+          aria-controls="planting-editor"
           aria-label="Edit this planting"
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
-            backgroundColor: P.white, color: P.green,
+            backgroundColor: editing ? P.greenLight : P.white, color: P.green,
             border: `1px solid ${P.greenLight}`, borderRadius: 8,
             padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-            textDecoration: 'none', whiteSpace: 'nowrap',
+            minHeight: 44, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
           }}
         >
           <Icon name="action.edit" size={16} decorative style={{ color: P.green }} />
           Edit
-        </Link>
+        </button>
       </div>
+
+      {/* V4-EDITINPLACE-001 — the editor as a FLY-UP over this page, not a page you travel to.
+          A <Sheet>, which is the app's existing flyover primitive and already the one THIS page
+          uses for its Details fly-up below (line ~1112): Sheet calls useDismissable once for all
+          its render sites with layer LAYER.SHEET, so the dismissal contract — Escape, Android
+          hardware Back (`armsBack`), stack ordering, and the dirty confirm — is the canonical
+          registry's, not hand-rolled. `dirty={editorDirty}` is what makes decideDismiss confirm
+          before discarding typing; Dave is Android-only, so Back is the primary gesture.
+          size="full" matches /log's Sheet — this form is far too tall for a peek.
+
+          NOT a route and NOT a query param, deliberately: a param would put the open editor in the
+          URL so a reload would silently reopen it, and the param round-trip is precisely what broke
+          this affordance to begin with. `plant={pl}` is the record the page already fetched, so
+          opening costs no round trip and cannot render a projected row's blank fields. onUpdated
+          patches in place — the same contract OverwinterPrompt above uses — so the page re-labels
+          without a refetch and without leaving. */}
+      <Sheet
+        open={editing}
+        title="Edit planting"
+        onClose={closeEditor}
+        dirty={editorDirty}
+        armsBack
+        size="full"
+      >
+        {editing && (
+          <PlantingEditor
+            mode="edit"
+            plant={pl}
+            plants={editorPlants}
+            fetch={fetch}
+            onDirty={setEditorDirty}
+            onClose={closeEditor}
+            onUpdated={(updated) => {
+              setPlanting(prev => (prev ? { ...prev, ...updated } : updated))
+              closeEditor()
+              toast?.show?.({ message: 'Planting updated', tone: 'success' })
+            }}
+            onArchived={(patch) => {
+              setPlanting(prev => (prev ? { ...prev, ...patch } : prev))
+              closeEditor()
+            }}
+            onDeleted={() => {
+              // The page's own subject is gone, so staying would render a 404 of itself.
+              setEditorDirty(false)
+              navigate('/garden', { replace: true })
+            }}
+          />
+        )}
+      </Sheet>
 
       {/* Slice 5a — live care band: renders only when this planting needs water (calm → null).
           last_watered_at rides in the same record load, so surfacing it here is free and lifts

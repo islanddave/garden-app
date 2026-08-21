@@ -27,6 +27,7 @@ vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => null }))
 vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncStub.js'))
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
+import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 
 const PLANTING = {
   id: 'pl1', name: 'Megatron Jalapeno', project_id: 'proj1', project_name: 'Peppers 2026',
@@ -58,6 +59,9 @@ function renderAt(path = '/projects/proj1/plantings/pl1') {
 beforeEach(() => {
   apiFetchSpy.mockReset()
   window.scrollTo = vi.fn()
+  // reloadGate is module-global (a Set keyed per instance); a test that leaves a hold behind
+  // makes the NEXT test's "pristine does not hold" assertion pass or fail for the wrong reason.
+  clearReloadBlocks()
 })
 
 describe('PlantingDetail — four states', () => {
@@ -188,17 +192,96 @@ describe('PlantingDetail — null tolerance', () => {
 })
 
 // V3-IA: Plantings page retired — the Edit affordance must deep-link into the Garden editor.
-describe('PlantingDetail — V3-EDIT-001 edit affordance', () => {
-  it('Edit links to /garden?edit=<plantingId>', async () => {
+// V4-EDITINPLACE-001 — supersedes V3-EDIT-001's "Edit links to /garden?edit=<id>". That contract
+// was the defect, not the spec: it sent the user to another page to edit the thing they were
+// already looking at, and the /garden?edit= round trip cancelled its own fetch so the form never
+// opened at all (BUG-EDITDEEPLINKRACE-001). The property asserted here is the one Dave named —
+// tapping Edit must NOT leave the planting page — so `GARDEN PAGE` (a real route in this harness)
+// must never appear.
+describe('PlantingDetail — V4-EDITINPLACE-001 edit opens in place', () => {
+  function primeOk() {
     apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants?')) return Promise.resolve([PLANTING])
       if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
       if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
       return Promise.resolve(null)
     })
+  }
+
+  it('opens the editor WITHOUT navigating away from the planting page', async () => {
+    primeOk()
     renderAt()
     await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
-    const link = screen.getByLabelText('Edit this planting')
-    expect(link.getAttribute('href')).toBe('/garden?edit=pl1')
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(screen.getByText('Edit Megatron Jalapeno')).toBeTruthy())
+    // The whole point: still here, never went to /garden.
+    expect(screen.queryByText('GARDEN PAGE')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Megatron Jalapeno' })).toBeTruthy()
+  })
+
+  it('is a button with no href — it has no destination any more', async () => {
+    primeOk()
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    const control = screen.getByLabelText('Edit this planting')
+    expect(control.tagName).toBe('BUTTON')
+    expect(control.getAttribute('href')).toBeNull()
+  })
+
+  it('prefills from the record already on the page — no second by-id GET to open the form', async () => {
+    primeOk()
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    const byIdBefore = apiFetchSpy.mock.calls.filter(c => c[0] === '/api/plants/pl1').length
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(screen.getByText('Edit Megatron Jalapeno')).toBeTruthy())
+    expect(screen.getByDisplayValue('Megatron Jalapeno')).toBeTruthy()
+    expect(screen.getByDisplayValue('Hot one')).toBeTruthy()
+    expect(apiFetchSpy.mock.calls.filter(c => c[0] === '/api/plants/pl1').length).toBe(byIdBefore)
+  })
+
+  it('does not write the open editor into the URL, so a reload cannot silently reopen it', async () => {
+    primeOk()
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(screen.getByText('Edit Megatron Jalapeno')).toBeTruthy())
+    expect(window.location.search).not.toContain('edit')
+  })
+
+  // Real reloadGate, not a spy — per V4-DIRTYGUARDSWEEP-001's doctrine: reloadGate shipped fully
+  // built with zero callers while its own unit tests stayed green, so a primitive's tests cannot
+  // prove it is CONNECTED. The false-positive case is load-bearing too: a guard that fires on a
+  // merely-opened form holds a service-worker update for someone who typed nothing.
+  it('holds the reload gate only once the user has actually typed, and releases on close', async () => {
+    primeOk()
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(isReloadBlocked()).toBe(false)
+
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(screen.getByText('Edit Megatron Jalapeno')).toBeTruthy())
+    expect(isReloadBlocked()).toBe(false)          // opened, pristine — must NOT hold
+
+    await act(async () => {
+      fireEvent.change(screen.getByDisplayValue('Megatron Jalapeno'), { target: { value: 'Renamed' } })
+    })
+    expect(isReloadBlocked()).toBe(true)           // unsaved input — held
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Cancel$/i })) })
+    await waitFor(() => expect(screen.queryByText('Edit Megatron Jalapeno')).toBeNull())
+    expect(isReloadBlocked()).toBe(false)          // released
+  })
+
+  it('offers no Edit affordance at all when the planting 404s', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.reject(Object.assign(new Error('nope'), { status: 404 }))
+      if (path.startsWith('/api/events')) return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await waitFor(() => expect(screen.queryByLabelText('Edit this planting')).toBeNull())
+    expect(screen.queryByText(/^Edit /)).toBeNull()
   })
 })
 
