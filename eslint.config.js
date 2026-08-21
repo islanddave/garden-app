@@ -8,6 +8,8 @@
 // Token/icon HOMES (tokens.js, constants.js, iconRegistry.js) are intentionally NOT
 // scoped — they are allowed to hold the literal values.
 import js from '@eslint/js'
+import tsParser from '@typescript-eslint/parser'
+import globals from 'globals'
 
 const HEX_RE = /#[0-9a-fA-F]{3,8}\b/
 // Emoji ranges: pictographs, symbols, dingbats, arrows, misc-technical, variation
@@ -89,6 +91,45 @@ export default [
     ],
     plugins: { designsys: designsysPlugin },
     rules: { 'designsys/no-raw-design-tokens': 'error' },
+  },
+  // OPS-SETUPTSUNLINTED-001 — TypeScript files matched NO config object above, so ESLint
+  // skipped all five of them outright: `eslint src/__tests__/setup.ts` reported "File ignored
+  // because no matching configuration was supplied" and `--print-config` returned `undefined`.
+  // Not an `ignores` entry — `--no-ignore` made no difference; the base block's `files` glob is
+  // `**/*.{js,jsx,mjs,cjs}` and nothing else claimed `.ts`. The casualty that matters is
+  // src/__tests__/setup.ts, the vitest setup file every one of the 700+ test files inherits its
+  // global hooks from — the widest blast radius in the suite was the one file nothing linted.
+  //
+  // espree cannot parse the annotations (`Parsing error: Unexpected token :` on the first return
+  // type), so bringing them in needs the TS parser. Glob rather than an explicit file list — the
+  // defect WAS "nothing matches .ts", and a list would recreate it for the next file added.
+  {
+    files: ['**/*.{ts,tsx,mts,cts}'],
+    languageOptions: {
+      parser: tsParser,
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      // vitest.config.ts sets `globals: true`, so the hook names really are ambient here.
+      // `globals@14` ships no vitest key, hence the explicit map.
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        beforeAll: 'readonly',
+        beforeEach: 'readonly',
+        afterAll: 'readonly',
+        afterEach: 'readonly',
+        describe: 'readonly',
+        it: 'readonly',
+        test: 'readonly',
+        expect: 'readonly',
+        vi: 'readonly',
+      },
+    },
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    // ESLint's own baseline, not a house invention: no-undef, no-unused-vars, no-empty,
+    // no-dupe-keys and friends. Verified clean across all five .ts files at v4.43.0, so this
+    // starts green. The JS side stays rule-free (Pass A scope) — this does not change it.
+    rules: { ...js.configs.recommended.rules },
   },
   // Never lint build output / deps.
   { ignores: ['dist/**', 'node_modules/**', 'coverage/**'] },
