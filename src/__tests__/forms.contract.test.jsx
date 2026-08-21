@@ -52,11 +52,15 @@ describe('Field — label/control association + ARIA wiring', () => {
     expect(control.getAttribute('aria-describedby')).toContain('u-help')
   })
 
-  it('contract-warns when given more than one focusable child', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    render(<Field label="Two"><Input value="" onChange={() => {}} /><Input value="" onChange={() => {}} /></Field>)
-    expect(warn).toHaveBeenCalled()
-    expect(warn.mock.calls.some(c => String(c[0]).includes('Field'))).toBe(true)
+  // BUG-FIELDCHILDDROP-001 — was `contract-warns`, now throws. A warning was the wrong
+  // tier: the extra child was silently DROPPED from the render, so the warning was the
+  // only evidence that the code written was not the code that ran, and two shipped call
+  // sites carried it unnoticed for months. Full behaviour in fieldChildren.test.jsx.
+  it('contract-ERRORS when given more than one element child', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {}) // React's own throw-in-render block
+    expect(() =>
+      render(<Field label="Two"><Input value="" onChange={() => {}} /><Input value="" onChange={() => {}} /></Field>)
+    ).toThrow(/\[forms contract\] Field/)
   })
 })
 

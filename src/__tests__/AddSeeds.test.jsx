@@ -285,3 +285,25 @@ describe('AddSeeds — review-row save', () => {
     expect(JSON.parse(invCall[1].body).variety_id).toBe('var-409')
   })
 })
+
+// BUG-FIELDCHILDDROP-001 — the row-edit sheet's variety hint was a second child of its <Field>
+// and Field dropped every element child after the first, so this sentence has never reached a
+// screen. Nothing caught it because nothing rendered the sheet: every test above stops at the
+// review list. The static sweep in fieldChildren.test.jsx pins the shape; this pins the text.
+describe('AddSeeds — row-edit sheet', () => {
+  it('shows the create-a-new-variety hint under the variety picker', async () => {
+    routeFetch()
+    await renderAddSeeds()
+    await runPasteExtract()
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit Shirley Single Blend Corn Poppy Seeds' }))
+    })
+
+    // The name is interpolated from the packet, so assert the whole sentence, not just the prefix —
+    // a hint that rendered with an empty name would be a different bug wearing this one's clothes.
+    expect(screen.getByText(
+      (_t, el) => el?.textContent === `Leave blank to create “${packetToVarietyCols(PACKET).name}” as a new variety on save.`
+    )).toBeDefined()
+  })
+})

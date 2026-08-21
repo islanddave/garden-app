@@ -44,6 +44,33 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
   }
 }
 
+// OPS-TESTLOCALSTORAGEPOLLUTION-001 — GLOBAL PERSISTED-STATE RESET.
+//
+// Test files are isolated from each other (vitest `isolate: true` — verified: a key written in
+// file A reads back null in file B), but the tests INSIDE one file share a single jsdom
+// environment. So a test that drives a persisted control — a filter, the mode toggle, a draft
+// stash — hands its value to every test after it in the same file, and the later test renders a
+// screen nobody asked for. 92 files already opened with a `localStorage.clear()` for exactly this
+// reason; the other 29 that write storage did not, and the failure they carry is silent: the
+// suite stays green until someone adds a test above the affected one, or until an unrelated
+// feature starts persisting something it did not before.
+//
+// That is not hypothetical. `PhotoLibrary.selectstale` went latent-broken the moment photo-filter
+// persistence landed, and it only failed loudly because ten tests reddened at once — a file with
+// ONE such test flakes quietly forever. Measured on the pre-fix tree with `--sequence.shuffle.tests`
+// over the 29 writing files: seed 1 → 1 failure, seed 2 → 1, seed 3 → 6, in PhotoLibrary,
+// inventoryAddEnums and FieldCapture. Every one of those is green with this reset in place.
+//
+// Registered here rather than copy-pasted into 29 beforeEach blocks so it also covers the files
+// that have not been written yet. It runs BEFORE any file-level beforeEach (hooks fire in
+// registration order and setup files register first), so a file may still seed its own storage in
+// its own beforeEach and see it survive. The existing per-file clears stay where they are: they
+// are now redundant, but each one documents a local intent and removing them buys nothing.
+beforeEach(() => {
+  try { localStorage.clear(); } catch { /* jsdom build without Storage — nothing to leak */ }
+  try { sessionStorage.clear(); } catch { /* ditto */ }
+});
+
 // Silence noisy console.error in tests unless you need to debug
 const originalConsoleError = console.error;
 beforeEach(() => {
