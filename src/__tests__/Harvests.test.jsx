@@ -184,7 +184,7 @@ describe('Harvests page', () => {
     await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
   })
 
-  it('expands a Totals crop row in place to show varieties + the planting table', async () => {
+  it('expands a Totals crop row in place to show the planting table', async () => {
     const crops = [{
       crop_type_slug: 'tomato', crop_name: 'Tomato',
       units: [{ unit: 'count', unit_key: 'count', total: 6, count: 2 }], unquantified: 1,
@@ -206,11 +206,16 @@ describe('Harvests page', () => {
     render(<Harvests />)
     // S4: arrival IS Totals now — wait on the crop row directly (setup simplified, assertions intact)
     await waitFor(() => expect(screen.getByRole('button', { name: /Tomato/ })).toBeTruthy())
-    expect(screen.queryByText('Brandywine')).toBeNull() // collapsed — no variety sub-rows yet
+    expect(screen.queryByText('Bed A tomato')).toBeNull() // collapsed — nothing from the expansion yet
 
     fireEvent.click(screen.getByRole('button', { name: /Tomato/ }))
-    expect(screen.getByText('Brandywine')).toBeTruthy() // expanded variety sub-row
     expect(screen.getByText('Bed A tomato')).toBeTruthy()
+    // V4-HARVCROPDETAIL-001: the expansion used to open with a per-variety sub-list ABOVE this
+    // table. Dave had two lists of the same plantings and kept the table. The varieties fixture is
+    // deliberately left in place above — the crop row still aggregates them, it just no longer
+    // re-lists them — so this asserts they are absent rather than merely unsupplied.
+    expect(screen.queryByText('Brandywine')).toBeNull()
+    expect(screen.queryByText('Sungold')).toBeNull()
     expect(screen.getByTestId('planting-count').textContent).toBe('6')
     expect(screen.getByTestId('planting-weight').textContent).toBe('1.4 kg')
     expect(screen.getByTestId('planting-first-pick').textContent).toBe('Jun 14')

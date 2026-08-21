@@ -293,7 +293,7 @@ export default function Harvests() {
         ) : view === 'log' ? (
           <LogView entries={entries} filterActive={filterActive} onClearFilters={clearAll} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
         ) : (
-          <TotalsView aggregates={sortedAggregates} onSeeInLog={seeInLog} timeframe={timeframe} sortMode={sortMode} />
+          <TotalsView aggregates={sortedAggregates} onSeeInLog={seeInLog} timeframe={timeframe} />
         )}
       </div>
 
@@ -654,14 +654,7 @@ function sparkValues(weekly, timeframe) {
   return rows.map((w) => Number(w.count))
 }
 
-// The variety sub-row caption. Always names the ACTIVE key — see the call site for why a hardcoded
-// "By weight" became wrong the moment ordering became a control.
-function sortCaption(mode) {
-  const key = mode === 'name' ? 'By name' : mode === 'count' ? 'By picks' : 'By weight'
-  return `${key} · ≈ estimated`
-}
-
-function TotalsView({ aggregates, onSeeInLog, timeframe, sortMode }) {
+function TotalsView({ aggregates, onSeeInLog, timeframe }) {
   const [expanded, setExpanded] = useState(() => new Set())
   const crops = aggregates?.crops ?? []
   const other = aggregates?.other ?? []
@@ -686,7 +679,6 @@ function TotalsView({ aggregates, onSeeInLog, timeframe, sortMode }) {
           open={expanded.has(c.crop_type_slug)}
           onToggle={() => toggle(c.crop_type_slug)}
           onSeeInLog={onSeeInLog}
-          sortMode={sortMode}
         />
       ))}
       {other.length > 0 && (
@@ -708,10 +700,7 @@ function TotalsView({ aggregates, onSeeInLog, timeframe, sortMode }) {
 
 // One expandable crop total. Collapsed = crop name + per-unit season total + unquantified count.
 // Expanded (in place) adds variety sub-rows, the per-planting first-pick table, and the See-in-log jump.
-function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog, sortMode }) {
-  const varieties = Array.isArray(c.varieties) ? c.varieties : []
-  // A single unnamed variety is just the crop total again — only surface sub-rows when they add info.
-  const showVarieties = varieties.length > 1 || (varieties.length === 1 && !!varieties[0].variety_name)
+function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog }) {
   return (
     <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10 }}>
       <button
@@ -738,33 +727,19 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
       </button>
       {open && (
         <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${P.border}` }}>
-          {showVarieties && (
-            <div style={{ marginTop: 8 }}>
-              {/* V4-HARVGRAIN-001 (B3): a re-ordered list with no stated key reads as
-                  alphabetical-that-went-wrong, so the key is always named. Naming it also names the
-                  marker, because the ranking is only as good as its inputs: every estimated gram is
-                  a flat per-variety constant (Cherry Falls resolves to 6.04 g/unit on all 36 of its
-                  rows, min = max), so an all-≈ ordering is the pick count rescaled and nothing more.
-                  Suppressed when nothing under the crop has a weight.
-                  V4-HARVSORTCTRL-001: this said a hardcoded "By weight". Once the order became a
-                  CONTROL that string was a latent lie — the caption would still claim weight while
-                  the rows sat in name order. It now follows the active key. The sort control lives
-                  at the top of the page and a crop row can be far below it, so the local restatement
-                  earns its space rather than duplicating what is already on screen. */}
-              {varieties.some((v) => v.weight?.grams > 0) && (
-                <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 4 }}>{sortCaption(sortMode)}</div>
-              )}
-              {varieties.map((v) => (
-                <div key={v.variety_id ?? '__novar__'} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.83rem', color: P.mid, padding: '3px 0' }}>
-                  <span>{v.variety_name || 'Unspecified'}</span>
-                  <span style={{ textAlign: 'right', minWidth: 0 }}>
-                    <span style={{ display: 'block', fontWeight: 600 }}>{unitsLine(v.units, c.crop_name) || (v.unquantified > 0 ? `+${v.unquantified} unrecorded` : '')}</span>
-                    <VarietyWeightLine weight={v.weight} />
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* V4-HARVCROPDETAIL-001 — the per-variety sub-list that used to sit here is GONE, on
+              Dave's instruction 2026-08-21: "there's now two sections... all the useful information
+              for me is already in that bottom table... just show the table."
+              It was V4-HARVGRAIN-001 (B3) and it was not wrong, it was superseded — the planting
+              table that landed later carries the same weights against a grain Dave actually names
+              things at. His plantings ARE varieties ("Moskvich Heirloom", "Cherry Falls"), so the
+              two lists mostly restated each other, one of them without a first-pick date.
+              What genuinely died with it: the sort CONTROL at the top of the page no longer changes
+              anything inside an expanded crop — it still reorders the crop cards, but the table is
+              first-pick-date ordered and always has been. That order is load-bearing (it is the
+              "did this produce before frost" reading, per the note on PlantingTable), so it was NOT
+              rewired to the control unasked. Flagged to Dave as an open question rather than
+              silently answered either way. */}
           {firstPicks.length > 0 && <PlantingTable rows={firstPicks} />}
           <button
             type="button"
@@ -929,30 +904,6 @@ function TotalsWeight({ weight }) {
 // (Garden slice) moved it VERBATIM to src/components/CropWeightLine.jsx so the Garden's crop-type
 // groups render the identical thing rather than a lookalike; see the note there.
 
-// V4-HARVGRAIN-001 — the same fact one level down, on a variety sub-row.
-//
-// DELIBERATELY NOT CropWeightLine. That component is shaped for the crop row it was lifted from —
-// 0.85rem block spans, its own "no weight yet" chip, rendered inside the row's expand <button> — and
-// reusing it here would either restyle it for a second caller with different needs or make the
-// sub-rows shout louder than the crop they sit under. What must not fork is the VOCABULARY, and it
-// does not: same formatGrams, same weightParts clauses, same ≈ rule.
-//
-// The provenance counts are not optional here, and less so than anywhere else on the page, because
-// THE ROWS ARE NOW ORDERED BY THIS NUMBER. "≈ 763 g · 36 estimated" and "8.23 kg · 26 weighed" are
-// the same axis with very different standing, and a rank that renders them identically presents a
-// modelled ordering as a measured finding. Silent on rows with nothing derivable: the crop row above
-// already carries the ratchet copy once, and repeating it per variety is the same fact N times.
-function VarietyWeightLine({ weight }) {
-  if (!weight) return null
-  const text = formatGrams(weight.grams)
-  if (text == null) return null
-  const parts = weightParts(weight)
-  return (
-    <span data-testid="variety-weight" style={{ display: 'block', fontSize: '0.75rem', color: P.light, fontWeight: 500 }}>
-      {weight.estimated > 0 ? `≈ ${text}` : text}{parts.length > 0 ? ` · ${parts.join(' · ')}` : ''}
-    </span>
-  )
-}
 
 // ── Shared states ──────────────────────────────────────────────────────────────────────────────────
 function EmptyState({ emoji, title, body }) {

@@ -3,7 +3,8 @@
     "version": "4.45.0",
     "date": "2026-08-21",
     "highlights": [
-      "Tomatoes stop vanishing from the harvest list. The app decided a plant was finished once it had gone unpicked for three times its usual gap — which for a tomato meant just nine days, while a bay laurel got ninety. So five tomatoes you were still watering and feeding had quietly dropped off the list you use to log a pick. Every plant that ever went past that mark turned out to be picked again later — ten out of ten — so the guess was wrong every time it mattered. Now nothing is written off before eighteen days, whatever its usual rhythm. Genuinely finished plants, like the scallions last picked in June, still stay off the list."
+      "Tomatoes stop vanishing from the harvest list. The app decided a plant was finished once it had gone unpicked for three times its usual gap — which for a tomato meant just nine days, while a bay laurel got ninety. So five tomatoes you were still watering and feeding had quietly dropped off the list you use to log a pick. Every plant that ever went past that mark turned out to be picked again later — ten out of ten — so the guess was wrong every time it mattered. Now nothing is written off before eighteen days, whatever its usual rhythm. Genuinely finished plants, like the scallions last picked in June, still stay off the list.",
+      "Opening a crop on the Harvests page no longer shows the same plantings twice. It listed them once by variety and again in the table underneath — the table has the first-pick date and the variety list did not, so the list went and the table stayed."
     ]
   },
   {

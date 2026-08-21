@@ -60,75 +60,44 @@ async function renderTotals(aggregatesOverride = {}) {
   return aggregates
 }
 
-// Provenance is a property of a VARIETY, not of a row position. These originally read
-// `[top, second]` off the rendered array, which silently coupled a provenance assertion to the
-// ordering decision — so making the order a user control broke tests that have nothing to do with
-// order. Look each variety up by name instead: now an ordering change cannot make these lie, and a
-// provenance regression cannot hide behind a re-sort.
-function weightByVariety() {
-  const out = {}
-  for (const n of screen.getAllByTestId('variety-weight')) {
-    out[n.parentElement.parentElement.firstChild.textContent] = n.textContent
-  }
-  return out
-}
-
-describe('variety sub-rows carry weight', () => {
-  it('renders each variety’s grams with its provenance counts attached', async () => {
+// V4-HARVCROPDETAIL-001 — the `variety sub-rows carry weight` describe that stood here (6 tests,
+// V4-HARVGRAIN-001 B3) is GONE with the section it covered. Dave 2026-08-21: an expanded crop showed
+// two lists of the same plantings and he wants only the table.
+//
+// Deleting tests for deleted UI is right, but deleting them SILENTLY is how a section grows back by
+// accident. So the coverage is inverted rather than dropped: the block below asserts the sub-list is
+// absent, using the same `variety-weight` testid the old tests keyed on. If anyone re-adds it, this
+// goes red and points at the decision instead of at a mystery.
+//
+// The provenance rendering those tests protected is NOT lost — `≈`, "26 weighed · 1 estimated" and
+// the all-modelled distinction still ride the crop row (CropWeightLine) and are covered in
+// Harvests.weight.test.jsx / Harvests.totalsWeight.test.jsx. What went is the per-variety REPEAT of it.
+describe('the per-variety sub-list is gone (V4-HARVCROPDETAIL-001)', () => {
+  it('renders no variety sub-rows inside an expanded crop', async () => {
     await renderTotals()
-    expect(weightByVariety()).toEqual({
-      'Moskvich Heirloom': '≈ 8.23 kg · 26 weighed · 1 estimated',
-      'Cherry Falls': '≈ 763 g · 36 estimated',
+    expect(screen.queryAllByTestId('variety-weight')).toHaveLength(0)
+  })
+
+  it('still shows the planting table — the section was removed, not the whole expansion', async () => {
+    // Non-vacuity: proves the crop really did expand and still renders its table, so the absence
+    // assertion above is about the sub-list rather than about an expansion that never happened.
+    // first_pick has to be supplied — the table is gated on it, and renderTotals() defaults to none.
+    await renderTotals({
+      first_pick: [{
+        plant_id: 'gn-1', planting_name: 'Moskvich bed', crop_type_slug: 'tomato',
+        first_pick_date: `${new Date().getFullYear()}-07-04`,
+        units: [{ unit: 'count', unit_key: 'count', total: 65, count: 27 }], unquantified: 0, weight: MOSKVICH,
+      }],
     })
+    expect(screen.getByRole('columnheader', { name: 'Planting' })).toBeTruthy()
+    expect(screen.getByText('Moskvich bed')).toBeTruthy()
+    expect(screen.queryAllByTestId('variety-weight')).toHaveLength(0)
   })
 
-  it('an ALL-MODELLED variety is visibly distinguishable from a mostly-weighed one', async () => {
-    // The whole point of the counts riding along: both rows are "a number of grams", and only one
-    // of them is a measurement. Same ≈, very different standing.
+  it('names no sort key inside the expansion, since nothing there re-orders any more', async () => {
     await renderTotals()
-    const rows = weightByVariety()
-    expect(rows['Moskvich Heirloom']).toContain('26 weighed')
-    expect(rows['Cherry Falls']).not.toContain('weighed')
-    expect(rows['Cherry Falls']).toContain('36 estimated')
-  })
-
-  // CONTRACT CHANGED — V4-HARVSORTCTRL-001. v4.32.0 shipped weight-desc as the ONLY order, which
-  // fixed the misleading ranking and broke retrieval: you cannot scan a ranked list for a known
-  // variety. Dave: "having it weighted first and only is not all that useful when I'm trying to find
-  // specific items - alphanumeric is better sort for that and the default I want." Ordering is now a
-  // control and NAME is the default, so the default render is alphabetical. The weight ranking is
-  // still one tap away and still correct — see harvestSort.test.js for the ranking itself.
-  it('defaults to ALPHABETICAL, not heaviest-first — the retrieval case', async () => {
-    await renderTotals()
-    const names = screen.getAllByTestId('variety-weight')
-      .map((n) => n.parentElement.parentElement.firstChild.textContent)
-    expect(names).toEqual(['Cherry Falls', 'Moskvich Heirloom'])
-  })
-
-  it('names the ACTIVE sort key, so a re-ordered list is not read as a broken alphabetical one', async () => {
-    await renderTotals()
-    // Was a hardcoded "By weight". Once ordering became a control that string was a latent lie: it
-    // would keep claiming weight while the rows sat in name order. This is the guard for that.
-    expect(screen.getByText('By name · ≈ estimated')).toBeTruthy()
-    expect(screen.queryByText('By weight · ≈ estimated')).toBeNull()
-  })
-
-  it('claims no ordering when nothing under the crop has a weight', async () => {
-    // Then the order IS the name order (the tie-break), and captioning it "by weight" would be false.
-    const varieties = TOMATO.varieties.map((v) => ({ ...v, weight: w({ unweighed: 3 }) }))
-    await renderTotals({ crops: [{ ...TOMATO, varieties }] })
-    expect(screen.queryByText('By weight · ≈ estimated')).toBeNull()
-    expect(screen.queryByTestId('variety-weight')).toBeNull()
-  })
-
-  it('an older Lambda (no weight key on a variety row) renders the units line and nothing else', async () => {
-    // The SPA and the harvests Lambda deploy on separate legs and a rollback must hold. "This API
-    // does not compute variety weight" and "nothing under this variety was weighed" are different
-    // facts and only the second is safe to render.
-    const varieties = TOMATO.varieties.map(({ weight, ...v }) => v) // eslint-disable-line no-unused-vars
-    await renderTotals({ crops: [{ ...TOMATO, varieties }] })
-    expect(screen.queryByTestId('variety-weight')).toBeNull()
-    expect(screen.getByText('Moskvich Heirloom')).toBeTruthy()
+    expect(screen.queryByText(/≈ estimated$/)).toBeNull()
+    expect(screen.queryByText(/^By (name|picks|weight) ·/)).toBeNull()
   })
 })
 
@@ -138,10 +107,11 @@ describe('variety sub-rows carry weight', () => {
 // the block stays a FIRST-PICK table rather than becoming a totals table, and it keeps the page and
 // the Totals export saying the same thing.
 //
-// The provenance drop is scoped to THIS block and nowhere else: the variety sub-rows above still
-// carry "≈ 8.23 kg · 26 weighed · 1 estimated" (the describes above pin that), because those rows can
-// be ORDERED by grams and a modelled ranking rendered bare reads as a measured finding. A planting
-// row is not ranked, and Dave already knows the number is inferred.
+// The provenance drop was originally scoped to THIS block, because the variety sub-rows above still
+// carried "≈ 8.23 kg · 26 weighed · 1 estimated" — those rows could be ORDERED by grams, and a
+// modelled ranking rendered bare reads as a measured finding. Since V4-HARVCROPDETAIL-001 removed
+// that sub-list, this table is the only thing inside an expanded crop, and nothing in here is
+// ranked. The provenance wording now lives once, on the crop row.
 const plantingRow = (name) => screen.getByText(name).closest('tr')
 const cellsOf = (name) => [...plantingRow(name).cells].map((c) => c.textContent)
 
