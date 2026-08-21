@@ -235,10 +235,17 @@ async function share(event, secrets, userId) {
   // Idempotency replay: a completed post for this client_request_id returns the prior result rather
   // than re-posting (Graph has no idempotency key; a lost response on retry would double-post).
   if (clientRequestId) {
+    // target = 'facebook' is LOAD-BEARING, not symmetry with the Instagram guard below.
+    // V4-IGSHARE-001 made the client send ONE client_request_id to BOTH targets, which turned this
+    // previously-safe query into a cross-target false positive: Facebook fails, Instagram succeeds
+    // and writes a status='posted' row under the shared id, the user taps Retry, and this SELECT
+    // matches the INSTAGRAM row. The endpoint then returns replay:true with an Instagram media id
+    // as post_id, the sheet reports "Posted to Facebook and Instagram", and Facebook never received
+    // the post at all — a silent claim that something is public when it is not.
     const prior = await sql`
       SELECT post_group_id, fb_post_id
       FROM share_log
-      WHERE client_request_id = ${clientRequestId} AND status = 'posted'
+      WHERE client_request_id = ${clientRequestId} AND target = 'facebook' AND status = 'posted'
       ORDER BY created_at DESC LIMIT 1`;
     if (prior.length) return resp(200, { replay: true, post_group_id: prior[0].post_group_id, post_id: prior[0].fb_post_id });
   }

@@ -23,17 +23,26 @@ const HASHTAG = '#GardensAtMathews'
 // attempted target is in one of these, the composer is replaced by <Blocked>.
 const BLOCKED_KINDS = ['forbidden', 'token_invalid', 'disabled', 'not_configured']
 
+// MODULE CONSTANT, not an inline literal — this is load-bearing, not tidiness. The open-effect below
+// runs setTargets(DEFAULT_TARGETS) with `reset` in its dep array. A fresh {…} each time is never
+// reference-equal, so React cannot bail out of the state update: it re-renders, and if `reset` is
+// ever unstable the effect re-fires and the component spins until the heap dies. That is not
+// hypothetical — an inline literal here exhausted a 4GB Node heap and took DismissRegistrySlice2's
+// 11 tests down with it, reported as "collected, 0 run". A shared reference makes the update a
+// genuine no-op and the loop unreachable regardless of `reset`'s identity.
+const DEFAULT_TARGETS = { facebook: true, instagram: false }
+
 // Props:
 //   - open, photos, onClose, onPosted
 //   - onDirtyChange(bool)  optional; fires on every clean↔dirty flip of the caption
 export default function FacebookShareSheet({ open, photos = [], onClose, onPosted, onDirtyChange }) {
   const { state, perTarget, share, reset } = useShareToSocial()
   const [caption, setCaption] = useState('')
-  const [targets, setTargets] = useState({ facebook: true, instagram: false })
+  const [targets, setTargets] = useState(DEFAULT_TARGETS)
 
   // Fresh composer every time the sheet opens.
   useEffect(() => {
-    if (open) { reset(); setCaption(''); setTargets({ facebook: true, instagram: false }) }
+    if (open) { reset(); setCaption(''); setTargets(DEFAULT_TARGETS) }
   }, [open, reset])
 
   const posting = state === 'posting'

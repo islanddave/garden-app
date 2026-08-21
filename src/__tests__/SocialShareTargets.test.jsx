@@ -146,6 +146,34 @@ describe('partial failure', () => {
     expect(pathsCalled()).toEqual(['/api/share/facebook', '/api/share/instagram', '/api/share/instagram']);
   });
 
+  // ★★ The OTHER cell of the 2x2 — Facebook fails, Instagram succeeds. Previously untested, and it
+  // is the cell that contained a live cross-target replay bug: the server's Facebook replay guard
+  // matched on client_request_id + status='posted' with NO target filter, so the retry matched the
+  // INSTAGRAM row and returned replay:true, making the sheet claim Facebook was posted when it was
+  // not. Asserting the retry BODY (not just its path) is what pins it: the retry must carry the
+  // same client_request_id and the FULL photo_ids, because those two together are what the
+  // server-side guard keys on.
+  it('retries only Facebook when Facebook fails and Instagram succeeds', async () => {
+    queue(fails({ status: 429, body: { message: 'Facebook is rate-limiting posts right now.' } }),
+      ok({ id: 'ig1', permalink: 'https://instagram.com/p/x' }));
+    openSheet();
+    fireEvent.click(pill('Instagram'));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /post to facebook & instagram/i })); });
+    await waitFor(() => expect(screen.getByText(/Only part of this went out/i)).toBeTruthy());
+    expect(screen.getByText(/Facebook: Facebook is rate-limiting/i)).toBeTruthy();
+
+    queue(ok({ post_id: 'p1', permalink: 'https://facebook.com/p1' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /retry/i })); });
+    await waitFor(() => expect(screen.getByText(/Posted to Facebook and Instagram/i)).toBeTruthy());
+
+    // Instagram already succeeded and must never be re-sent — an IG post cannot be deleted.
+    expect(pathsCalled()).toEqual(['/api/share/facebook', '/api/share/instagram', '/api/share/facebook']);
+    const first = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    const retry = JSON.parse(fetchSpy.mock.calls[2][1].body);
+    expect(retry.client_request_id).toBe(first.client_request_id);
+    expect(retry.photo_ids).toEqual(['a', 'b']);
+  });
+
   it('marks the succeeded target done so it cannot be toggled off and re-sent', async () => {
     fbOkIgFails();
     openSheet();

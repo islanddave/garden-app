@@ -24,13 +24,25 @@ vi.mock('../components/PhotoImg.jsx', () => ({ default: ({ alt }) => <img alt={a
 // module the component no longer imports would leave this suite silently exercising the REAL hook
 // against an unmocked api.js — the mock would be inert rather than loudly wrong.)
 const fbState = { state: 'idle' }
-vi.mock('../hooks/useShareToSocial.js', async (importOriginal) => ({
-  // Keep the real pure helpers (captionLimitFor/validateForTargets) — the sheet calls them on every
-  // render and they have no I/O; only the hook itself needs driving.
-  ...(await importOriginal()),
+// The whole module is replaced — NOT importOriginal()-spread. This suite does not mock
+// ../lib/api.js, and the real useShareToSocial imports useApiFetch from it, which pulls in
+// @clerk/react. Spreading the original therefore drags Clerk into a suite that only wants to drive
+// `state`, and the file collects its tests then runs ZERO of them with one module-level error —
+// a 189s no-op that reads as a hang, not a failure. The two pure helpers are stubbed instead
+// because the sheet calls them on every render; their real values are irrelevant to dismissal.
+// The returned object and its members are HOISTED, not rebuilt per call. A `reset: vi.fn()` inside
+// the factory mints a new function identity on every render, and the sheet's open-effect lists
+// `reset` in its deps — so an unstable identity re-fires the effect every render. Paired with a
+// non-bailing setState that is an unbounded loop; this exact mock is what surfaced it.
+const shareStub = { facebook: null, instagram: null }
+const shareFn = vi.fn()
+const resetFn = vi.fn()
+vi.mock('../hooks/useShareToSocial.js', () => ({
+  captionLimitFor: () => 5000,
+  validateForTargets: () => [],
   useShareToSocial: () => ({
     get state() { return fbState.state },
-    perTarget: { facebook: null, instagram: null }, share: vi.fn(), reset: vi.fn(),
+    perTarget: shareStub, share: shareFn, reset: resetFn,
   }),
 }))
 
