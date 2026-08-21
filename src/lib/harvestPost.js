@@ -74,6 +74,17 @@ export const NAME_OVERRIDES = {
 // real values in prod ("Onion — scallion-type (thick blue-green, ID pending)").
 const UNCERTAIN_NAME = /\b(id pending|unknown variety|unknown|tbd)\b|\(.*\?\s*\)/i
 
+/**
+ * Would publishing this name assert an identification the data does not support?
+ *
+ * Exported because seasonRetro.js is a SECOND public-output surface over the same names, and a
+ * private copy of this predicate is exactly how the two metadata strippers diverged — one path
+ * hardened, the other quietly kept publishing what the first had learned not to.
+ */
+export function isUncertainName(raw) {
+  return UNCERTAIN_NAME.test(String(raw || ''))
+}
+
 // Crops with no distinct plural. "squash" is the one that bites — Dave writes "3 Zephyr squash".
 const INVARIANT_PLURALS = new Set([
   'squash', 'greens', 'lettuce', 'kale', 'spinach', 'chard', 'basil', 'corn', 'garlic', 'broccoli',
@@ -83,22 +94,45 @@ const INVARIANT_PLURALS = new Set([
 // tomatillo -> tomatillos. Enumerate rather than guess; a wrong plural ships in a public post.
 const O_TAKES_ES = new Set(['tomato', 'potato', 'hero'])
 
+/**
+ * Drop a TRAILING parenthetical. Every parenthetical in the live harvested-name corpus is internal
+ * bookkeeping or an ID note, never part of the name Dave would write in a post — measured, all four
+ * of them: "Cherokee Green (Rescue)", "Scallion (thin clump)", "Strawberry (unknown variety)",
+ * "Onion — scallion-type (thick blue-green, ID pending)". The last two are blocked outright by
+ * isUncertainName; this handles the two that are safe to publish once the note is removed.
+ * Crop types have the same shape — "Onion (bunching / scallion)" was rendering as
+ * "Onion (bunching / scallion)s" in the plural path.
+ */
+function stripParenthetical(s) {
+  return String(s || '').replace(/\s*\([^()]*\)\s*$/, '').trim()
+}
+
 export function pluralizeCrop(word, qty) {
-  const w = String(word || '').trim()
+  const w = stripParenthetical(word)
   if (!w || Number(qty) === 1) return w
-  const lower = w.toLowerCase()
-  if (INVARIANT_PLURALS.has(lower)) return w
-  if (O_TAKES_ES.has(lower)) return `${w}es`
-  if (/(s|x|z|ch|sh)$/i.test(w)) return `${w}es`
-  if (/[^aeiou]y$/i.test(w)) return `${w.slice(0, -1)}ies`
-  return `${w}s`
+  // Pluralise the LAST word, keep the qualifiers. Testing the whole string meant "Summer Squash"
+  // missed the `squash` invariant and published "Summer Squashes", and "Cherry Tomato" would have
+  // taken the generic -s rather than tomato -> tomatoes. Six multi-word crop names reach a post.
+  const parts = w.split(/\s+/)
+  const head = parts.slice(0, -1)
+  const tail = parts[parts.length - 1]
+  const lower = tail.toLowerCase()
+  let plural
+  if (INVARIANT_PLURALS.has(lower)) plural = tail
+  else if (O_TAKES_ES.has(lower)) plural = `${tail}es`
+  else if (/(s|x|z|ch|sh)$/i.test(tail)) plural = `${tail}es`
+  else if (/[^aeiou]y$/i.test(tail)) plural = `${tail.slice(0, -1)}ies`
+  else plural = `${tail}s`
+  return [...head, plural].join(' ')
 }
 
 // Strip-only. NEVER spell-correct, title-case, or expand: Dave wrote "Grandadero" for the DB's
 // "Granadero" and `1 "beefsteak"` in scare quotes, and that idiosyncrasy is what reads as human.
 // A resolver that "fixes" him publishes a correction he did not ask for.
 export function normalizeVarietyName(raw) {
-  let n = String(raw || '').trim()
+  // Parenthetical first: it is a note appended to the name, so it sits outside every suffix rule
+  // below and would otherwise block them from matching the real end of the name.
+  let n = stripParenthetical(raw)
   if (!n) return ''
   let changed = true
   while (changed) {

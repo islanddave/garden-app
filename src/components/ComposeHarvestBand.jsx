@@ -36,6 +36,7 @@ import {
   detectLastBatch, toLines, buildPostModel, renderPost, leadFacts, seasonCountsByCrop,
   LINE_SOFT_CAP, MIN_POST_LINES,
 } from '../lib/harvestPost.js'
+import { summarizeSeason, renderSeasonRetro } from '../lib/seasonRetro.js'
 import { collectBatchPhotos, fetchPostPhotos, MAX_POST_PHOTOS } from '../lib/harvestPostPhotos.js'
 
 // A batch older than this is history, not "tonight" — offering it invites a post that describes the
@@ -134,7 +135,21 @@ export default function ComposeHarvestBand() {
   })), [baseLines, excluded, firstOverride])
 
   const model = useMemo(() => buildPostModel(lines), [lines])
-  const generated = useMemo(() => renderPost(model, { lead, annotations }), [model, lead, annotations])
+  const batchText = useMemo(() => renderPost(model, { lead, annotations }), [model, lead, annotations])
+
+  // V4-SEASONRETRO-001 (B13). The season draft is free here: this component ALREADY fetches
+  // `timeframe=season:<growYear>&include=aggregates` for the per-crop totals in the lead facts, and
+  // the aggregates block is unpaginated over the full range. So the retrospective is a second render
+  // of data already in state — no extra request, no new endpoint, no Lambda change.
+  const retroText = useMemo(() => {
+    const m = summarizeSeason(data?.aggregates)
+    return m ? renderSeasonRetro(m) : ''
+  }, [data])
+
+  // 'batch' = what was picked tonight; 'season' = the year so far. Same textarea, same share and
+  // copy paths — the retrospective is a different DRAFT, not a different feature.
+  const [mode, setMode] = useState('batch')
+  const generated = mode === 'season' ? retroText : batchText
   const facts = useMemo(
     () => (batch ? leadFacts(batch, seasonCounts, 'this season') : []),
     [batch, seasonCounts],
@@ -378,6 +393,17 @@ export default function ComposeHarvestBand() {
               disabled={!postText.trim()}>
               Copy the words
             </button>
+            {/* V4-SEASONRETRO-001. Switching mode is an EXPLICIT act, like Rebuild, so it clears
+                `dirty` and loads the other draft. Without that, a mode switch after any edit would
+                silently do nothing — the effect above only tracks `generated` while undirty — and
+                the button would look broken rather than declining to overwrite his words. */}
+            {retroText && (
+              <button type="button" style={S.ghost} data-testid="compose-mode"
+                aria-pressed={mode === 'season'}
+                onClick={() => { setMode((m) => (m === 'season' ? 'batch' : 'season')); setDirty(false) }}>
+                {mode === 'season' ? 'Back to tonight' : 'The season so far'}
+              </button>
+            )}
             {status && <span style={{ fontSize: '0.78rem', color: P.mid }}>{status}</span>}
           </div>
 

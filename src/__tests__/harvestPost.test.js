@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectLastBatch, toLines, buildPostModel, renderPost, renderLine,
-  normalizeVarietyName, pluralizeCrop, leadFacts, seasonCountsByCrop, LINE_SOFT_CAP,
+  normalizeVarietyName, pluralizeCrop, isUncertainName, leadFacts, seasonCountsByCrop, LINE_SOFT_CAP,
 } from '../lib/harvestPost.js'
 
 // GOLDEN FIXTURE — the real 2026-08-06 evening batch, pulled verbatim from prod Neon on 2026-08-10.
@@ -109,6 +109,66 @@ describe('normalizeVarietyName', () => {
     expect(normalizeVarietyName('Granadero')).toBe('Granadero')
     expect(normalizeVarietyName('"beefsteak"')).toBe('"beefsteak"')
     expect(normalizeVarietyName('Rista Cayanne II')).toBe('Rista Cayanne II')
+  })
+
+  // V4-SEASONRETRO-001. Found by RENDERING the season retrospective over the real prod corpus, not
+  // by reading the code: the draft's very first line was "June 7 — Scallion (thin clump)". Every
+  // parenthetical in the live harvested-name corpus is internal bookkeeping — measured 2026-08-21,
+  // all four of them, and the other two are refused outright by isUncertainName.
+  it('drops a trailing parenthetical — it is bookkeeping, never part of the published name', () => {
+    expect(normalizeVarietyName('Scallion (thin clump)')).toBe('Scallion')
+    expect(normalizeVarietyName('Cherokee Green (Rescue)')).toBe('Cherokee Green')
+  })
+
+  it('still strips a suffix that sits BEHIND a parenthetical', () => {
+    // Order matters: the note is appended after the name, so stripping it first is what lets the
+    // suffix rules see the real end of the string.
+    expect(normalizeVarietyName('Moskvich Heirloom (Rescue)')).toBe('Moskvich')
+  })
+
+  it('leaves a mid-string parenthetical alone — only a TRAILING note is bookkeeping', () => {
+    expect(normalizeVarietyName('Bull (Red) Nose')).toBe('Bull (Red) Nose')
+  })
+
+  it('the two names that must never publish are still refused, not merely tidied', () => {
+    // Stripping the note off these would turn "unknown variety" into a confident "Strawberry".
+    // isUncertainName is the guard; normalize is not a substitute for it.
+    expect(isUncertainName('Strawberry (unknown variety)')).toBe(true)
+    expect(isUncertainName('Onion — scallion-type (thick blue-green, ID pending)')).toBe(true)
+    expect(isUncertainName('Scallion (thin clump)')).toBe(false)   // safe once the note is dropped
+    expect(isUncertainName('Cherokee Green')).toBe(false)
+  })
+})
+
+describe('pluralizeCrop — multi-word crop names', () => {
+  // Six multi-word crop names reach a post in the live corpus. The rules used to be applied to the
+  // WHOLE string, so the qualifier hid the noun from every one of them.
+  it('applies the invariant to the head noun, not the whole phrase', () => {
+    expect(pluralizeCrop('Summer Squash', 3)).toBe('Summer Squash')   // was "Summer Squashes"
+    expect(pluralizeCrop('Squash', 3)).toBe('Squash')
+  })
+
+  it('applies the -o rule to the head noun', () => {
+    expect(pluralizeCrop('Cherry Tomato', 3)).toBe('Cherry Tomatoes') // was "Cherry Tomatos"
+    expect(pluralizeCrop('Tomato', 3)).toBe('Tomatoes')
+  })
+
+  it('keeps the qualifier and pluralises the noun for the ordinary cases', () => {
+    expect(pluralizeCrop('Red Raspberry', 3)).toBe('Red Raspberries')
+    expect(pluralizeCrop('Bee Balm', 3)).toBe('Bee Balms')
+    expect(pluralizeCrop('Bitter Melon', 3)).toBe('Bitter Melons')
+  })
+
+  it('drops a parenthetical from a CROP name too', () => {
+    // "Onion (bunching / scallion)" is a real crop_types row and was rendering as
+    // "Onion (bunching / scallion)s" — the generic -s rule firing on a closing bracket.
+    expect(pluralizeCrop('Onion (bunching / scallion)', 3)).toBe('Onions')
+    expect(pluralizeCrop('Onion (bunching / scallion)', 1)).toBe('Onion')
+  })
+
+  it('still returns the singular at qty 1', () => {
+    expect(pluralizeCrop('Red Raspberry', 1)).toBe('Red Raspberry')
+    expect(pluralizeCrop('Summer Squash', 1)).toBe('Summer Squash')
   })
 })
 

@@ -335,3 +335,132 @@ describe('defects that must never return', () => {
     expect(lines.some((l) => /^\s*2\s*$/.test(l))).toBe(false)
   })
 })
+
+// ── V4-SEASONRETRO-001 (Track B / B13) ───────────────────────────────────────────────────────────
+// The season retrospective shares this band's textarea, share and copy paths — it is a different
+// DRAFT, not a different feature. It is also free: the band already fetches
+// `timeframe=season:<growYear>&include=aggregates` for the lead-fact chips, and the aggregates block
+// is unpaginated, so the retrospective is a second render of data that is already in state.
+describe('ComposeHarvestBand — season retrospective', () => {
+  // The AGGREGATES fixture above carries no `weekly`, which is what the endpoint returns for a
+  // season with nothing in it. That is deliberately kept as the DEFAULT so every pre-existing test
+  // in this file also asserts the toggle stays out of the way when there is no season to summarise.
+  // Week buckets are relative to NOW, not hardcoded. summarizeSeason compares the last bucket
+  // against the real current date to decide whether the garden is still producing, so a fixed date
+  // would quietly cross the 14-day threshold and start asserting the opposite of what it says —
+  // which is exactly what the first draft of this block did.
+  const monday = (weeksAgo) => {
+    const d = new Date()
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - weeksAgo * 7)
+    return d.toISOString().slice(0, 10)
+  }
+  const THIS_WEEK = monday(0)
+  const LAST_WEEK = monday(1)
+  const SEASON_AGGREGATES = {
+    weekly: [
+      { week_start: LAST_WEEK, count: 4 },
+      { week_start: THIS_WEEK, count: 9 },
+    ],
+    crops: [
+      {
+        crop_name: 'Tomato', crop_type_slug: 'tomato',
+        units: [{ unit: 'count', unit_key: 'count', total: 382, count: 13 }],
+        weekly: [{ week_start: LAST_WEEK, count: 4 }, { week_start: THIS_WEEK, count: 9 }],
+        varieties: [
+          { variety_id: 'v1', variety_name: 'Moskvich Heirloom', units: [{ unit: 'count', unit_key: 'count', total: 60, count: 12 }], unquantified: 0 },
+          { variety_id: 'v2', variety_name: 'Floradade', units: [{ unit: 'count', unit_key: 'count', total: 5, count: 1 }], unquantified: 0 },
+        ],
+      },
+    ],
+    first_pick: [
+      { plant_id: 'p1', planting_name: 'Moskvich Heirloom', crop_type_slug: 'tomato', first_pick_date: LAST_WEEK, units: [{ unit: 'count', unit_key: 'count', total: 60, count: 12 }], unquantified: 0 },
+    ],
+  }
+
+  const openBand = async (user) =>
+    user.click(await screen.findByRole('button', { name: /Compose post/i }))
+
+  it('offers no season draft when the season aggregates are empty', async () => {
+    payload(BATCH)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await openBand(user)
+    await waitFor(() => expect(screen.getByLabelText('Post text')).toBeTruthy())
+    expect(screen.queryByTestId('compose-mode')).toBeNull()
+  })
+
+  it('swaps the draft to the season retrospective and back', async () => {
+    payload(BATCH, SEASON_AGGREGATES)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await openBand(user)
+    const box = await screen.findByLabelText('Post text')
+    const tonight = box.value
+    expect(tonight).toContain('Moskvich')          // non-vacuity: the batch draft really rendered
+
+    await user.click(screen.getByTestId('compose-mode'))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('13 harvests'))
+    const retro = screen.getByLabelText('Post text').value
+    expect(retro).toContain('Busiest week')
+    expect(retro).not.toBe(tonight)
+
+    await user.click(screen.getByTestId('compose-mode'))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toBe(tonight))
+  })
+
+  it('reports which draft is showing, for a screen reader as well as a sighted user', async () => {
+    payload(BATCH, SEASON_AGGREGATES)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await openBand(user)
+    await screen.findByLabelText('Post text')
+    const btn = screen.getByTestId('compose-mode')
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+    expect(btn.textContent).toMatch(/season/i)
+    await user.click(btn)
+    await waitFor(() => expect(screen.getByTestId('compose-mode').getAttribute('aria-pressed')).toBe('true'))
+    expect(screen.getByTestId('compose-mode').textContent).toMatch(/tonight/i)
+  })
+
+  it('switching mode REBUILDS rather than silently keeping an edit', async () => {
+    // The textarea stops tracking `generated` once Dave edits, so without an explicit dirty reset
+    // this button would appear to do nothing at all after any keystroke.
+    payload(BATCH, SEASON_AGGREGATES)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await openBand(user)
+    const box = await screen.findByLabelText('Post text')
+    await user.click(box)
+    await user.keyboard('MY OWN WORDS')
+    expect(screen.getByLabelText('Post text').value).toContain('MY OWN WORDS')
+
+    await user.click(screen.getByTestId('compose-mode'))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('13 harvests'))
+    expect(screen.getByLabelText('Post text').value).not.toContain('MY OWN WORDS')
+  })
+
+  it('shares the SEASON text when the season draft is showing', async () => {
+    payload(BATCH, SEASON_AGGREGATES)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await openBand(user)
+    await screen.findByLabelText('Post text')
+    await user.click(screen.getByTestId('compose-mode'))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('13 harvests'))
+    await user.click(screen.getByTestId('compose-share'))
+    await waitFor(() => expect(shareMock).toHaveBeenCalled())
+    expect(shareMock.mock.calls[0][0].text).toContain('13 harvests')
+  })
+
+  it('never writes the garden off while it is still producing', async () => {
+    // The single most damaging thing this draft could do is read as an obituary in August.
+    payload(BATCH, SEASON_AGGREGATES)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await openBand(user)
+    await screen.findByLabelText('Post text')
+    await user.click(screen.getByTestId('compose-mode'))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('13 harvests'))
+    expect(screen.getByLabelText('Post text').value).toContain('so far')
+  })
+})
