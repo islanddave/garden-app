@@ -1,7 +1,7 @@
 // V4-HARVESTSURF-001 — the harvest-readiness predicate. NULL means UNKNOWN and must never fire; the
 // DOY window is a suppressor (incl. wrap-around); `single` is terminal; clock skew must not fire.
 import { describe, it, expect } from 'vitest'
-import { inHarvestWindow, isReadyToPick, rankHarvestReady, lastPickedLabel, MAX_OVERDUE_RATIO } from '../lib/harvestReadiness.js'
+import { inHarvestWindow, isReadyToPick, rankHarvestReady, lastPickedLabel, rollUpByCrop, cropSubLabel, READY_MODEL_VERSION, MAX_OVERDUE_RATIO } from '../lib/harvestReadiness.js'
 
 const c = (over = {}) => ({
   plant_id: 'p1', project_id: 'proj1', name: 'Test Planting',
@@ -154,5 +154,80 @@ describe('lastPickedLabel', () => {
     expect(lastPickedLabel(0)).toBe('last picked today')
     expect(lastPickedLabel(1)).toBe('last picked 1 day ago')
     expect(lastPickedLabel(7)).toBe('last picked 7 days ago')
+  })
+})
+
+// ── CROP ROLLUP — presentation over the ranked output, no model change ──────────────────────────
+describe('rollUpByCrop', () => {
+  // crop_display_name is populated and deliberately ANTI-alphabetical against the ranked order
+  // (Pepper, Tomato, Basil), so the ordering assertion below fails under a name sort instead of
+  // passing vacuously on three empty strings.
+  const ranked = () => rankHarvestReady([
+    c({ plant_id: 'pep0', name: 'Armageddon', crop_type_slug: 'pepper', crop_display_name: 'Pepper', repeat_interval_days: 7, days_since_last_harvest: 20 }), // 2.86
+    c({ plant_id: 'tom0', name: 'Cherokee Green', crop_type_slug: 'tomato', crop_display_name: 'Tomato', repeat_interval_days: 3, days_since_last_harvest: 8 }), // 2.67
+    c({ plant_id: 'pep1', name: 'Jalapeno', crop_type_slug: 'pepper', crop_display_name: 'Pepper', repeat_interval_days: 7, days_since_last_harvest: 12 }), // 1.71
+    c({ plant_id: 'bas0', name: 'Holy Basil', crop_type_slug: 'basil', crop_display_name: 'Basil', harvest_habit: 'cut_and_come_again', repeat_interval_days: 12, days_since_last_harvest: 20 }), // 1.67
+    c({ plant_id: 'pep2', name: 'Anaheim', crop_type_slug: 'pepper', crop_display_name: 'Pepper', repeat_interval_days: 7, days_since_last_harvest: 9 }), // 1.29
+  ], 202)
+
+  it('emits one row per crop, ordered by each crop’s best-ranked member', () => {
+    expect(rollUpByCrop(ranked()).map(r => r.crop_type_slug)).toEqual(['pepper', 'tomato', 'basil'])
+  })
+  it('keeps the best-ranked member as the row’s representative (its id drives the tap target)', () => {
+    expect(rollUpByCrop(ranked())[0].plant_id).toBe('pep0')
+  })
+  it('counts the plantings the row folds in', () => {
+    expect(rollUpByCrop(ranked()).map(r => r.crop_planting_count)).toEqual([3, 1, 1])
+  })
+  it('reports the crop’s MOST RECENT pick, not the representative’s', () => {
+    // The representative is the most OVERDUE member (20 days); the crop was picked 9 days ago.
+    const pepper = rollUpByCrop(ranked())[0]
+    expect(pepper.days_since_last_harvest).toBe(20)
+    expect(pepper.crop_days_since_last_harvest).toBe(9)
+  })
+  it('does not mutate the ranked input', () => {
+    const input = ranked()
+    rollUpByCrop(input)
+    expect(input).toHaveLength(5)
+    expect(input[0].crop_planting_count).toBeUndefined()
+  })
+  it('a null crop_type_slug falls back to the planting, never a shared bucket', () => {
+    const out = rollUpByCrop([
+      { plant_id: 'a', crop_type_slug: null, days_since_last_harvest: 4 },
+      { plant_id: 'b', crop_type_slug: null, days_since_last_harvest: 5 },
+    ])
+    expect(out.map(r => r.plant_id)).toEqual(['a', 'b'])
+    expect(out.every(r => r.crop_planting_count === 1)).toBe(true)
+  })
+  it('returns [] for an empty or non-array input, and skips null rows', () => {
+    expect(rollUpByCrop([])).toEqual([])
+    expect(rollUpByCrop(undefined)).toEqual([])
+    expect(rollUpByCrop([null, { plant_id: 'x', crop_type_slug: 'kale', days_since_last_harvest: 3 }])).toHaveLength(1)
+  })
+  // The rollup is presentation over the ranker's OUTPUT. If a future edit moves it inside
+  // rankHarvestReady / isReadyToPick / MAX_OVERDUE_RATIO, the model version must move with it — and
+  // EventNew's live harvest tray, the ranker's only other consumer, would silently reorder too.
+  it('leaves the versioned model untouched — no impression-series fragmentation', () => {
+    expect(READY_MODEL_VERSION).toBe('ready-v1')
+    expect(rankHarvestReady([
+      c({ plant_id: 'a', crop_type_slug: 'pepper', repeat_interval_days: 7, days_since_last_harvest: 20 }),
+      c({ plant_id: 'b', crop_type_slug: 'pepper', repeat_interval_days: 7, days_since_last_harvest: 12 }),
+    ], 202).map(r => r.plant_id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('cropSubLabel', () => {
+  it('a one-planting crop reads exactly as the shipped row did', () => {
+    expect(cropSubLabel({ crop_planting_count: 1, crop_days_since_last_harvest: 7 })).toBe('last picked 7 days ago')
+  })
+  it('a multi-planting crop states the count first, then the crop’s own last pick', () => {
+    expect(cropSubLabel({ crop_planting_count: 27, crop_days_since_last_harvest: 8 })).toBe('27 plantings · last picked 8 days ago')
+    expect(cropSubLabel({ crop_planting_count: 2, crop_days_since_last_harvest: 0 })).toBe('2 plantings · last picked today')
+  })
+  it('falls back to the row’s own age when the rollup fields are absent', () => {
+    expect(cropSubLabel({ days_since_last_harvest: 3 })).toBe('last picked 3 days ago')
+  })
+  it('an unknown age still carries the count rather than rendering an orphan separator', () => {
+    expect(cropSubLabel({ crop_planting_count: 4, crop_days_since_last_harvest: null })).toBe('4 plantings')
   })
 })
