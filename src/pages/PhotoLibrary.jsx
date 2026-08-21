@@ -20,6 +20,11 @@ import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
+// V4-PHOTOTODAYFILTER-001. etDay/HARVEST_TZ rather than a local date compare: "today" has to mean
+// the same garden day the harvest log uses, or a photo and the pick it documents can land on
+// different days across the midnight boundary.
+import { etDay } from '../lib/harvestSummary.js'
+import { HARVEST_TZ } from '../lib/growYear.js'
 
 // Device-local memory of the zone filter, mirroring LogMany.jsx's SCOPE_KEY ('quicklog.lastScope').
 // Same namespaced-by-surface shape, same write-on-change / validate-on-restore contract.
@@ -290,6 +295,17 @@ export default function PhotoLibrary() {
              : ''
     try {
       let data = await apiFetch('/api/photos' + qs) ?? []
+      // V4-PHOTOTODAYFILTER-001. Keyed on created_at, NOT taken_at: photoModel.js records that
+      // taken_at is NULL on every live row, so a taken_at filter would return an empty library
+      // every time and look like "no photos today" rather than like a broken predicate.
+      // "Today" is the garden day in HARVEST_TZ, not the browser's — the same boundary the harvest
+      // log groups by, so a photo and the pick it belongs to never land on different days.
+      // Client-side like its two siblings below, and complete rather than windowed: /api/photos
+      // returns the whole list in one response, so this is not filtering a partial page.
+      if (filterMode === 'today') {
+        const todayKey = etDay(new Date(), HARVEST_TZ)
+        data = data.filter(p => etDay(p.created_at, HARVEST_TZ) === todayKey)
+      }
       if (filterMode === 'standalone') data = data.filter(p => !p.event_id)
       // V4-PHOTOLOCFIND-001: a photo attached to ANY parent (event/project/zone/planting) is a
       // finished photo — untagged means attached to nothing (V002 E2: valid untagged photos must
@@ -812,6 +828,11 @@ export default function PhotoLibrary() {
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           {[
             { mode: 'all',        label: 'All' },
+            // V4-PHOTOTODAYFILTER-001: first, because it is the one people reach for. The IG
+            // crucible ranked it third of five and named why: findability over 1302 photos is this
+            // build's one real advantage over Business Suite, and the single filter that matters
+            // when you are about to post — "what did I shoot today" — did not exist.
+            { mode: 'today',      label: 'Today' },
             { mode: 'standalone', label: 'No event' },
             { mode: 'untagged',   label: 'Untagged' },
           ].map(({ mode, label }) => {

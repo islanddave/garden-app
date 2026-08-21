@@ -734,3 +734,84 @@ describe('PhotoLibrary — reload gate (V4-DIRTYGUARDSWEEP-001)', () => {
     })
   })
 })
+
+// ── V4-PHOTOTODAYFILTER-001 ─────────────────────────────────────────────────────────────────────
+// The IG crucible ranked this third of five and named the reason: findability over 1302 photos is
+// the build's one real advantage over Business Suite, and the single filter that matters when you
+// are about to post — "what did I shoot today" — did not exist.
+describe('PhotoLibrary — Today filter', () => {
+  // Built off the real clock, never hardcoded: the predicate compares against today's garden day, so
+  // a fixed '2026-08-21' fixture would pass today and start failing tomorrow.
+  const zoned = (d) => new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d)
+  const TODAY = zoned(new Date())
+  const YESTERDAY = zoned(new Date(Date.now() - 86400000))
+
+  const shot = (id, caption, dayKey, hour = '18') => ({
+    id, caption, view_url: `https://x/${id}.jpg`,
+    event_id: null, project_id: null, location_id: null, plant_id: null,
+    // Stored as an instant. 18:00 ET is mid-evening and cannot cross a day boundary in either
+    // direction under the zone conversion — the ambiguous hours are the ones near midnight.
+    created_at: `${dayKey}T${hour}:00:00-04:00`,
+  })
+
+  const TODAY_PHOTO = shot('p-today', 'picked this evening', TODAY)
+  const OLD_PHOTO = shot('p-old', 'from yesterday', YESTERDAY)
+
+  const clickToday = async () => {
+    fetchSpy.mockResolvedValueOnce([TODAY_PHOTO, OLD_PHOTO])   // refetch on mode change
+    await act(async () => { fireEvent.click(screen.getByText('Today')) })
+  }
+
+  it('shows only photos created today, in the GARDEN day not the browser day', async () => {
+    primeMount({ photos: [TODAY_PHOTO, OLD_PHOTO] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    // Non-vacuity: both are present before the filter, so the assertion below is about filtering
+    // rather than about a fixture that only ever had one photo.
+    await waitFor(() => expect(screen.getByAltText('from yesterday')).toBeDefined())
+    expect(screen.getByAltText('picked this evening')).toBeDefined()
+
+    await clickToday()
+    await waitFor(() => expect(screen.queryByAltText('from yesterday')).toBeNull())
+    expect(screen.getByAltText('picked this evening')).toBeDefined()
+  })
+
+  it('keys on created_at — taken_at is NULL on every live row and would empty the library', async () => {
+    // photoModel.js records taken_at as 100% NULL in prod. A filter reading it would return nothing
+    // and read as "no photos today" rather than as a broken predicate, which is why this is pinned.
+    const noTakenAt = { ...TODAY_PHOTO, taken_at: null }
+    primeMount({ photos: [noTakenAt] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    fetchSpy.mockResolvedValueOnce([noTakenAt])
+    await act(async () => { fireEvent.click(screen.getByText('Today')) })
+    await waitFor(() => expect(screen.getByAltText('picked this evening')).toBeDefined())
+  })
+
+  it('drops a row with no usable timestamp rather than showing it as today', async () => {
+    // etDay returns null for absent/garbage input; null never equals the day key, so the row falls
+    // out. Showing it would assert a capture date the data does not have.
+    const undated = { ...shot('p-undated', 'no timestamp', TODAY), created_at: null }
+    primeMount({ photos: [TODAY_PHOTO, undated] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    fetchSpy.mockResolvedValueOnce([TODAY_PHOTO, undated])
+    await act(async () => { fireEvent.click(screen.getByText('Today')) })
+    await waitFor(() => expect(screen.queryByAltText('no timestamp')).toBeNull())
+    expect(screen.getByAltText('picked this evening')).toBeDefined()
+  })
+
+  it('leaves the other filters alone — All still shows everything', async () => {
+    primeMount({ photos: [TODAY_PHOTO, OLD_PHOTO] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    await clickToday()
+    await waitFor(() => expect(screen.queryByAltText('from yesterday')).toBeNull())
+
+    fetchSpy.mockResolvedValueOnce([TODAY_PHOTO, OLD_PHOTO])
+    await act(async () => { fireEvent.click(screen.getByText('All')) })
+    await waitFor(() => expect(screen.getByAltText('from yesterday')).toBeDefined())
+  })
+})
