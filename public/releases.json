@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.44.0",
+    "date": "2026-08-21",
+    "highlights": [
+      "The Today tab and the “given away” event have their own icons now. Today was drawing the same sprout as a seedling — and as sprouting, seeding and transplanting — so it is a checklist instead, which is what that page actually is. Giving plants away was drawing the identical symbol to the Share button, so it is a gift now. And the planting edit form no longer closes if you tap away while a save is still going through."
+    ]
+  },
+  {
     "version": "4.43.0",
     "date": "2026-08-21",
     "highlights": [
