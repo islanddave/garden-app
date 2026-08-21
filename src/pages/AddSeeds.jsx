@@ -469,15 +469,18 @@ export default function AddSeeds() {
       >
         {editingRow && (
           <div style={{ padding: '4px 24px 8px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <Field label="Variety">
+            {/* BUG-FIELDCHILDDROP-001: this hint was a second child of the Field and had
+                never rendered. The `help` prop is where it belongs — same position under
+                the control, plus the aria-describedby the loose <div> never had. */}
+            <Field
+              label="Variety"
+              help={<>Leave blank to create &ldquo;{packetToVarietyCols(editingRow.packet).name}&rdquo; as a new variety on save.</>}
+            >
               <VarietyPicker
                 value={effectiveVariety(editingRow)}
                 onChange={(variety) => patchRow(editingIdx, { override: variety })}
                 placeholder="Search or create a variety&hellip;"
               />
-              <div style={{ marginTop: 6, fontSize: '0.74rem', color: P.light }}>
-                Leave blank to create &ldquo;{packetToVarietyCols(editingRow.packet).name}&rdquo; as a new variety on save.
-              </div>
             </Field>
             <Field label="Item name">
               <Input

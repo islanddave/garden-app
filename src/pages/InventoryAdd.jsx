@@ -342,8 +342,15 @@ export default function InventoryAdd() {
             </Field>
 
             {/* Variety picker — required when category is seeds (DB CHECK chk_inventory_seed_requires_variety) */}
+            {/* BUG-FIELDCHILDDROP-001: the hint below was a second child of the Field and had
+                never rendered. The `help` prop is where it belongs — same position under the
+                control, plus the aria-describedby the loose <div> never had. */}
             {form.category === 'seeds' && (
-              <Field label="Variety" error={errors.variety}>
+              <Field
+                label="Variety"
+                error={errors.variety}
+                help="Linking the variety lets future plants and harvest events trace back to this packet."
+              >
                 <VarietyPicker
                   value={form.variety}
                   onChange={(variety) => {
@@ -353,9 +360,6 @@ export default function InventoryAdd() {
                   required
                   placeholder="Search or create a variety…"
                 />
-                <div style={{ marginTop: 6, fontSize: '0.74rem', color: P.light }}>
-                  Linking the variety lets future plants and harvest events trace back to this packet.
-                </div>
               </Field>
             )}
 
