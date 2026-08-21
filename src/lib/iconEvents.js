@@ -1,8 +1,8 @@
 // src/lib/iconEvents.js — V4-ICON-001 (Pass B V101) event-type glyph forms.
-// 40 newly-drawn mono line forms (24+18 masters) + 8 event types that REUSE an existing
+// 42 newly-drawn mono line forms (24+18 masters) + 9 event types that REUSE an existing
 // foundation form (sowing->seed, transplant->seedling, rooting->rooting, flowering->flowering, fruit_set->fruiting,
-// harvest->harvesting basket, watering->care.drop, potting_up->nav.garden) by reference (no
-// redraw, no drift). EVENT_GLYPHS covers EVERY EVENT_TYPES value as event.<type>; consumers
+// harvest->harvesting basket, watering->care.drop, potting_up->nav.garden, failed->status.failed)
+// by reference (no redraw, no drift). EVENT_GLYPHS covers EVERY EVENT_TYPES value as event.<type>; consumers
 // route the event-type emoji render through <Icon name={`event.${type}`}>. Mono: stroke
 // inherits currentColor so a surface can tint per context. Drawn glyphs self-verified via resvg.
 import { EVENT_TYPES, EVENT_TYPE_META } from './eventTypes.js'
@@ -59,6 +59,13 @@ const NEW = {
   // that watering was NOT needed, and a user who cannot tell the two rows apart in their history
   // cannot audit their own watering record.
   moisture_check: { svg24: '<path d="M3.5 19h17"/><path d="M5 19a7 7 0 0 1 14 0"/><path d="M9.5 16.5V5.5"/><path d="M7.8 5.5h3.4"/><path d="M16 13.6c-1.1 0-2-.9-2-2 0-1.2 2-3.4 2-3.4s2 2.2 2 3.4c0 1.1-.9 2-2 2z"/>', svg18: '<path d="M3.5 19h17"/><path d="M5 19a7 7 0 0 1 14 0"/><path d="M9.5 16.5V5.5"/><path d="M7.8 5.5h3.4"/><path d="M16 13.6c-1.1 0-2-.9-2-2 0-1.2 2-3.4 2-3.4s2 2.2 2 3.4c0 1.1-.9 2-2 2z"/>' },
+  // V4-LOSSEVENT-001, corrected. Was a REUSE of ANCHORS['action.share'] until 2026-08-21; see the
+  // REUSE-block note below for why that was wrong. Gift box = lid band + body + seam + two bow
+  // loops, restoring the 🎁 the pre-icon emoji vocabulary already used (eventTypes.js:147).
+  // 18 drops nothing — the bow IS the read (without it this collapses toward `doctored`/`ended`),
+  // so instead the lid band and both loops are widened to hold their aperture at the small optical
+  // size, where the 24 master's lid blurs into the bow.
+  given_away: { svg24: '<rect x="3.6" y="8.4" width="16.8" height="3.6" rx="1"/><path d="M5.2 12v7a1.2 1.2 0 0 0 1.2 1.2h11.2a1.2 1.2 0 0 0 1.2-1.2v-7"/><path d="M12 8.4v11.8"/><path d="M12 8.4S10.7 4.8 8.9 4.8a1.8 1.8 0 0 0 0 3.6H12"/><path d="M12 8.4s1.3-3.6 3.1-3.6a1.8 1.8 0 0 1 0 3.6H12"/>', svg18: '<rect x="4" y="8.6" width="16" height="4" rx="1"/><path d="M5.6 12.6v6.6a1.2 1.2 0 0 0 1.2 1.2h10.4a1.2 1.2 0 0 0 1.2-1.2v-6.6"/><path d="M12 8.6v11.8"/><path d="M12 8.6S10.6 4.6 8.6 4.6a2 2 0 0 0 0 4H12"/><path d="M12 8.6s1.4-4 3.4-4a2 2 0 0 1 0 4H12"/>' },
 }
 
 const REUSE = {
@@ -70,12 +77,23 @@ const REUSE = {
   harvest:    STATUS_GLYPHS.harvesting,
   watering:   ANCHORS['care.drop'],
   potting_up: ANCHORS['nav.garden'],
-  // V4-LOSSEVENT-001. Both REUSE rather than redraw, and both reuses are exact rather than
-  // convenient: status.failed already IS "these plants are gone" in this icon language, and
-  // action.share already IS "this went to someone else". Drawing a second form for either would
-  // put two glyphs on one meaning, which is the drift this REUSE block exists to prevent.
+  // V4-LOSSEVENT-001. `failed` REUSEs status.failed and STAYS: status.failed already IS "these
+  // plants are gone" in this language, and status.dead aliases onto the same form (iconStatus.js:27),
+  // so the X carries three keys for ONE idea. That is synonymy, which a reader recovers from.
+  //
+  // `given_away` used to REUSE ANCHORS['action.share'] on the same reasoning and it was WRONG.
+  // This block guards against two glyphs on one meaning; what that reuse shipped was the inverse —
+  // ONE glyph on TWO meanings, which a reader cannot recover from. action.share is not an abstract
+  // "went to someone else" mark in this app: it is the live Share button (ComposeHarvestBand.jsx,
+  // PhotoHero.jsx, accessibleName 'Share'), so the identical mark meant both "publish this
+  // publicly" and "I handed plants to a neighbour" — and PlantingDetail renders BOTH on one screen
+  // (HeroPhoto's share button, and the event-history rows). Redrawn as a gift box in NEW above.
+  // The a11y name was always correct (EVENT_TYPE_META -> "Plants given away"); this was visual only.
+  //
+  // Before adding a REUSE here, check that the borrowed anchor is not itself an interactive
+  // affordance somewhere. iconUniqueness.test.js now enforces this: every collision needs an
+  // explicit allowlist entry, so the next one cannot ship silently.
   failed:      STATUS_GLYPHS.failed,
-  given_away:  ANCHORS['action.share'],
 }
 
 const FORM = (t) => NEW[t] || REUSE[t]
