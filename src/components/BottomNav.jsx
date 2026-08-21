@@ -14,8 +14,9 @@ import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
 
-// BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·More (V4-NAVHARVEST-001, 2026-08-10;
-// was Today·Garden·＋·DrG·More — DrG demoted into More, see TABS below).
+// BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·Put-Up·More (V4-PUTUPENGINE-001,
+// 2026-08-21; was Today·Garden·＋·Harvests·More per V4-NAVHARVEST-001, 2026-08-10, which itself
+// replaced Today·Garden·＋·DrG·More — DrG demoted into More, see TABS below).
 // V200 Slice 9 (2026-07-01): the two hand-rolled slide-up dialogs (Create FAB sheet +
 // More menu) now adopt the shared Sheet primitive (a11y: role=dialog, aria-modal, focus
 // trap+restore, Escape, backdrop-dismiss — Sheet owns all of it, so the local Escape
@@ -30,14 +31,29 @@ import Icon from './Icon.jsx'
 // design deliberately kept these two moves SEPARABLE (demote now, promote later, gated on
 // /harvests existing); both are taken together here because /harvests is already live in prod
 // and was only ever reachable buried in the More menu.
-// `glyph` instead of `iconName`: mirrors the Harvests/Put-Up/Zones More rows, which use raw
+// `glyph` instead of `iconName`: mirrors the Zones/Achievements More rows, which use raw
 // emoji precisely to avoid adding an iconAnchors entry + an icon-completeness harness case for
 // a destination that has no drawn SVG. Tabs render one or the other, never both.
+// V4-PUTUPENGINE-001 slice 1 (Dave ruling 2026-08-20: "I'm just gonna go to a put up tab and start
+// there the same way I'm going to the harvest tab … that is its own process that deserves its own
+// landing page"). Put-Up PROMOTES out of the More sheet into the tab bar and the bar grows to SIX
+// slots — the first time it has. That is an ADD WITHOUT A DISPLACEMENT, against the V4-NAVHARVEST-001
+// precedent (DrG was demoted so Harvests could rise), because nothing here is displaceable FOR
+// put-up: Today/Garden/＋ are the daily spine, and Harvests is the surface Dave names in the same
+// breath as one he still goes to — demoting it to seat its own divorced peer would undo the ruling
+// rather than serve it. The "4 IS THE CAP" note at CREATE_ACTIONS governs the FAB sheet and has
+// never bound TABS; the only cap the tab bar ever had was the slot count pinned in BottomNav.test.
+// Plain <Link>, NOT OverlayLink — the More row was `overlay` (a flyover over whatever page you were
+// already on), and a flyover is precisely what a landing page is not. /put-up keeps
+// `overlayable: true` in App.jsx, so the three PREFILL doors that need the flyover keep it
+// (EventNew PreserveOffer, PutUpFromPlanting, PutUpUseSoonBand). PutUp already defaults a BARE open
+// to its 'stores' view, so the tab lands on "what have I got", not on an empty form.
 const TABS = [
   { to: '/today',    label: 'Today',    iconName: 'nav.today' },
   { to: '/garden',   label: 'Garden',   iconName: 'nav.garden' },
   { to: '/log',      label: 'Create',   iconName: 'nav.plus', highlight: true },
   { to: '/harvests', label: 'Harvests', glyph: '🧺' },
+  { to: '/put-up',   label: 'Put-Up',   glyph: '🫙' },
 ]
 
 // +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
@@ -338,17 +354,14 @@ export default function BottomNav() {
         <SheetRowLink to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
         </SheetRowLink>
-        {/* V4-NAVHARVEST-001 — the Harvests row that lived here was PROMOTED to the tab bar, not
-            duplicated: two doors to one destination is the redundant door-pair the IA work exists to
-            merge. Put-Up stays here and still reads as adjacent to Harvests (what you kept, next to
-            where what-you-got now lives). */}
-        {/* V4-HARVESTCENTER-001 — Put-Up mounts under "more" (design V101 §6 dec.2 → route under More).
-            OverlayLink so it opens as a flyover over the current page when OVERLAY_ROUTES_ENABLED (flag
-            off: a plain <Link>, full-page — byte-identical). Emoji glyph mirrors the Achievements row
-            (avoids the icon-completeness harness for a brand-new destination). */}
-        <SheetRowLink overlay to="/put-up" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🫙</span>Put-Up
-        </SheetRowLink>
+        {/* V4-NAVHARVEST-001 / V4-PUTUPENGINE-001 — BOTH the Harvests row and the Put-Up row that
+            lived here were PROMOTED to the tab bar, not duplicated: two doors to one destination is
+            the redundant door-pair the IA work exists to merge. Put-Up's original placement
+            (V4-HARVESTCENTER-001, design V101 §6 dec.2 → route under More) is superseded by Dave's
+            2026-08-20 ruling; that row was an `overlay` flyover, the tab is a full-page landing.
+            The three PREFILL doors are untouched — EventNew PreserveOffer, PutUpFromPlanting and
+            PutUpUseSoonBand are content affordances carrying location.state.prefill, not nav rows,
+            and they still want the flyover. */}
         <SheetRowLink to="/achievements" onClick={closeMore} style={menuRowStyle}>
           <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>Achievements
         </SheetRowLink>

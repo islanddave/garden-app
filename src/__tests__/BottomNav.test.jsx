@@ -8,7 +8,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, within } from '@testing-library/react'
 
 const { signOutSpy, navigateSpy, locationRef } = vi.hoisted(() => ({
   signOutSpy: vi.fn(() => Promise.resolve()),
@@ -82,12 +82,14 @@ describe('BottomNav — V3-IA layout', () => {
   // V4-NAVHARVEST-001 (2026-08-10): the 4th tab is Harvests, not DrG. DrG is DEMOTED into the
   // More menu, never removed — the "still reachable" assertion below is the load-bearing half of
   // this change, and a demote that quietly became a deletion is exactly what it guards.
-  it('renders Today + Garden + Create + Harvests + More (V200 nav; Critters + Photos folded into More)', () => {
+  it('renders Today + Garden + Create + Harvests + Put-Up + More (V200 nav; Critters + Photos folded into More)', () => {
     render(<BottomNav />)
     expect(screen.getByText('Today')).toBeDefined()
     expect(screen.getByText('Garden')).toBeDefined()
     expect(screen.getByLabelText('Create')).toBeDefined()
     expect(screen.getByText('Harvests')).toBeDefined()
+    // V4-PUTUPENGINE-001 — Put-Up is the 5th tab, promoted out of the More sheet.
+    expect(screen.getByText('Put-Up')).toBeDefined()
     expect(screen.getByText('More')).toBeDefined()
     // DrG is no longer a first-class tab.
     expect(screen.queryByText('DrG')).toBeNull()
@@ -99,15 +101,21 @@ describe('BottomNav — V3-IA layout', () => {
     expect(screen.queryByText('Photos')).toBeNull()
   })
 
-  it('FAB keeps the center slot: tab order is Today · Garden · ＋ · Harvests · More', () => {
+  // V4-PUTUPENGINE-001 — the slot count moves 5 -> 6. This assertion IS the tab bar's only cap
+  // (the "4 IS THE CAP" note lives on CREATE_ACTIONS and governs the FAB sheet, not TABS), so
+  // widening it is a deliberate act, not a test repair: an add-without-displacement, taken because
+  // nothing in the previous four is displaceable for put-up. Keep it exact — a 7th slot should
+  // have to argue for itself here the same way this one did.
+  it('FAB keeps the center slot: tab order is Today · Garden · ＋ · Harvests · Put-Up · More', () => {
     render(<BottomNav />)
     const nav = screen.getByLabelText('Main navigation')
-    expect(nav.children.length).toBe(5)
+    expect(nav.children.length).toBe(6)
     expect(nav.children[0].textContent).toContain('Today')
     expect(nav.children[1].textContent).toContain('Garden')
     expect(nav.children[2].getAttribute('aria-label')).toBe('Create')
     expect(nav.children[3].textContent).toContain('Harvests')
-    expect(nav.children[4].textContent).toContain('More')
+    expect(nav.children[4].textContent).toContain('Put-Up')
+    expect(nav.children[5].textContent).toContain('More')
   })
 
   it('does NOT render Dashboard in the bottom nav (dropped per 2026-05-15 adjustment)', () => {
@@ -125,10 +133,54 @@ describe('BottomNav — V3-IA layout', () => {
     expect(screen.getByText('Today').closest('a').getAttribute('href')).toBe('/today')
     expect(screen.getByText('Garden').closest('a').getAttribute('href')).toBe('/garden')
     expect(screen.getByText('Harvests').closest('a').getAttribute('href')).toBe('/harvests')
+    expect(screen.getByText('Put-Up').closest('a').getAttribute('href')).toBe('/put-up')
     // Create is not a direct link — it's a button that opens the create action sheet.
     const logBtn = screen.getByLabelText('Create')
     expect(logBtn.tagName).toBe('BUTTON')
     expect(logBtn.getAttribute('aria-haspopup')).toBe('true')
+  })
+})
+
+// V4-PUTUPENGINE-001 — Dave 2026-08-20: "I'm just gonna go to a put up tab and start there the same
+// way I'm going to the harvest tab … that is its own process that deserves its own landing page."
+// The claim under test is REACHABILITY AT A LEVEL, not the existence of a link: `/put-up` had a link
+// before this change too — two taps down, inside the More sheet — so any assertion that merely finds
+// an href somewhere in the document passes identically before and after and proves nothing.
+describe('BottomNav — Put-Up is a first-class tab (V4-PUTUPENGINE-001)', () => {
+  it('reaches /put-up from the nav bar itself, with the More sheet never opened', () => {
+    render(<BottomNav />)
+    // Sign out is the deterministic signal that the sheet is CLOSED (it renders only when open),
+    // so anything found below is in the bar, not behind a menu.
+    expect(screen.queryByText('Sign out')).toBeNull()
+    const nav = screen.getByLabelText('Main navigation')
+    const link = within(nav).getByText('Put-Up').closest('a')
+    expect(link).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('/put-up')
+    expect(nav.contains(link)).toBe(true)
+  })
+
+  it('opens /put-up as a full-page landing, not as an overlay flyover', () => {
+    // The structural half of "its own landing page". The More row it replaces was an OverlayLink —
+    // a flyover over whatever page you were already on. A tab that flew over would satisfy the
+    // reachability test above and still not be a landing page.
+    render(<BottomNav />)
+    const nav = screen.getByLabelText('Main navigation')
+    expect(within(nav).getByText('Put-Up').closest('a').getAttribute('data-overlay-bg')).toBeNull()
+    // CONTROL — without this the null above could just mean the mock serializes nothing at all.
+    // The create sheet's /log row is an overlay under the SAME mock and must read '/dashboard'.
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.getByText('Log an event').closest('a').getAttribute('data-overlay-bg')).toBe('/dashboard')
+  })
+
+  it('does NOT duplicate Put-Up in the More menu now that it is a tab', () => {
+    // Same door-count rule V4-NAVHARVEST-001 applied to Harvests: promote, do not duplicate. Counted
+    // with the sheet OPEN, which is the only state where a leftover row could still be hiding.
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const putUpLinks = screen.getAllByText('Put-Up').map(n => n.closest('a')).filter(Boolean)
+    expect(putUpLinks).toHaveLength(1)
+    expect(putUpLinks[0].getAttribute('href')).toBe('/put-up')
+    expect(screen.getByLabelText('Main navigation').contains(putUpLinks[0])).toBe(true)
   })
 })
 
