@@ -4,24 +4,22 @@
 //   ?source_inventory_item_id/&variety_id (InventoryDetail plant-from-packet).
 // Wire-contract assertions (dual-write variety, planting-details union, COALESCE PUT)
 // ported from the old Plants.test.jsx.
+//
+// OPS-GARDENROUTERMOCK-001 — this file used to mock `react-router-dom` and hand `useSearchParams`
+// a frozen `{ current: new URLSearchParams() }` ref, so `setSearchParams` mutated an object and
+// re-rendered nothing. Measured on the pre-fix Garden.jsx (32e9473^, the source that shipped a dead
+// ?edit= deep link for four days): all 27 tests here PASSED, including "opens the edit form
+// prefilled" — the exact behaviour that was broken 100% of the time in production. Every param
+// entry point now arrives as a real URL through MemoryRouter (helpers/routerHarness.jsx), and the
+// param-strip assertions read the URL the router actually holds rather than a spy's argument.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { renderWithRouter, currentParams, navigateTo, resetRouterHarness } from './helpers/routerHarness.jsx'
 
-const { fetchSpy, getTokenSpy, searchParamsRef, setSearchParamsSpy } = vi.hoisted(() => ({
+const { fetchSpy, getTokenSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
   getTokenSpy: vi.fn(async () => 'tok'),
-  searchParamsRef: { current: new URLSearchParams() },
-  setSearchParamsSpy: vi.fn((next) => {
-    searchParamsRef.current = next instanceof URLSearchParams ? next : new URLSearchParams(next)
-  }),
-}))
-
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-    useLocation: () => ({ pathname: '/garden', search: '', state: null }),
-  useNavigate: () => () => {},
-  useSearchParams: () => [searchParamsRef.current, setSearchParamsSpy],
 }))
 
 vi.mock('../lib/api.js', () => ({
@@ -53,14 +51,19 @@ const PLANT = {
 const PACKET = { id: 'item-seed-1', name: 'Black Krim seed packet', category: 'seeds', variety_id: 'var-1', quantity_on_hand: 5 }
 const VARIETY = { id: 'var-1', name: 'Black Krim', species: 'Solanum lycopersicum', genus: 'Solanum' }
 
-function primeFetch({ plants = [PLANT] } = {}) {
+// Resolves on a MACROTASK — strictly later than the synchronous flush the ?edit= param strip
+// schedules. A by-id GET that resolves synchronously cannot distinguish the fixed code from the
+// broken code, so `byId` exists to let one test spend the extra tick.
+const late = value => new Promise(resolve => { setTimeout(() => resolve(value), 0) })
+
+function primeFetch({ plants = [PLANT], byId = () => Promise.resolve(PLANT) } = {}) {
   fetchSpy.mockImplementation((url, opts = {}) => {
     if (url === '/api/projects') return Promise.resolve(PROJECTS)
     if (url === '/api/plants?view=grid' && !opts.method) return Promise.resolve(plants)
     // V4-PLANTSPAYLOAD-001: the list is the grid projection now, so ?edit= resolves its target with
     // a by-id GET. The wide shape lives HERE, which is the point — the projected list row could not
     // prefill this form.
-    if (url === '/api/plants/plant-2' && !opts.method) return Promise.resolve(PLANT)
+    if (url === '/api/plants/plant-2' && !opts.method) return byId()
     if (url === '/api/inventory-items/item-seed-1') return Promise.resolve(PACKET)
     if (url === '/api/varieties/var-1') return Promise.resolve(VARIETY)
     if (url === '/api/plants' && opts.method === 'POST') return Promise.resolve({ id: 'plant-new', name: 'X', project_id: 'proj-1' })
@@ -74,23 +77,23 @@ function primeFetch({ plants = [PLANT] } = {}) {
 beforeEach(() => {
   localStorage.clear()
   fetchSpy.mockReset()
-  setSearchParamsSpy.mockClear()
-  searchParamsRef.current = new URLSearchParams()
+  resetRouterHarness()
 })
 
-async function renderGarden() {
-  await act(async () => { render(<Garden />) })
+// `query` is the raw query string the deep link arrives with, e.g. 'edit=plant-2'.
+async function renderGarden(query = '') {
+  const view = await renderWithRouter(<Garden />, { route: '/garden' + (query ? '?' + query : '') })
   await screen.findByText(/Log many/)
+  return view
 }
 
 describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
   it('auto-opens the add form and strips the param', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('add=1')
     expect(screen.getAllByText('Add planting').length).toBeGreaterThan(0)
-    expect(setSearchParamsSpy).toHaveBeenCalled()
-    expect(searchParamsRef.current.get('add')).toBeNull()
+    // The URL the router actually holds, not that a setter was called with something.
+    expect(currentParams().get('add')).toBeNull()
   })
 
   it('does NOT open the editor without params', async () => {
@@ -99,10 +102,22 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
     expect(screen.queryByText('Add planting')).toBeNull()
   })
 
-  it('POST carries dual-write variety + planting-details union + project_id', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
+  // ★ The BottomNav FAB while ALREADY on /garden — `<Link to="/garden?add=1">` (BottomNav.jsx:89).
+  // Same route, so Garden never remounts: the ONLY signal is the query changing underneath a live
+  // component. The old frozen-ref mock could not express a URL change it did not itself seed, so
+  // this path had no coverage at all; every ?add=1 test above enters on the initial render instead.
+  it('opens the add form when ?add=1 arrives mid-session, without a remount', async () => {
     primeFetch()
     await renderGarden()
+    expect(screen.queryByText('Add planting')).toBeNull()
+    await navigateTo('/garden?add=1')
+    expect(screen.getAllByText('Add planting').length).toBeGreaterThan(0)
+    expect(currentParams().get('add')).toBeNull()
+  })
+
+  it('POST carries dual-write variety + planting-details union + project_id', async () => {
+    primeFetch()
+    await renderGarden('add=1')
     fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'New Plant' } })
     fireEvent.click(screen.getByTestId('vp-pick-black-krim'))
     await act(async () => {
@@ -126,9 +141,8 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
     // refetch the full hydrated list. Assert a SECOND bare GET /api/plants fires after Add
     // (mirrors Garden.photoUpload.test.jsx onUploadComplete refetch assertion). The extra
     // GET is satisfied by primeFetch's bare-GET branch returning the plants list.
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('add=1')
     fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'New Plant' } })
     fireEvent.click(screen.getByTestId('vp-pick-black-krim'))
     await act(async () => {
@@ -143,9 +157,8 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
 
 describe('Garden — plant-from-packet deep link (InventoryDetail entry)', () => {
   it('prefills name + variety from packet params and shows the packet banner', async () => {
-    searchParamsRef.current = new URLSearchParams('source_inventory_item_id=item-seed-1&variety_id=var-1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('source_inventory_item_id=item-seed-1&variety_id=var-1')
     await waitFor(() => expect(screen.getByText(/Planting from/)).toBeDefined())
     expect(screen.getByText(/Black Krim seed packet/)).toBeDefined()
     await waitFor(() => expect(screen.getByTestId('vp-value').textContent).toBe('Black Krim'))
@@ -153,9 +166,8 @@ describe('Garden — plant-from-packet deep link (InventoryDetail entry)', () =>
   })
 
   it('POST includes source_inventory_item_id', async () => {
-    searchParamsRef.current = new URLSearchParams('source_inventory_item_id=item-seed-1&variety_id=var-1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('source_inventory_item_id=item-seed-1&variety_id=var-1')
     await waitFor(() => expect(screen.getByText(/Planting from/)).toBeDefined())
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
@@ -170,19 +182,17 @@ describe('Garden — plant-from-packet deep link (InventoryDetail entry)', () =>
 
 describe('Garden — ?edit=<id> opens the edit editor (V3-EDIT-001 target)', () => {
   it('opens the edit form prefilled, strips the param', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     expect(screen.getByLabelText(/Name/i).value).toBe('Krim Plant')
     expect(screen.getByTestId('vp-value').textContent).toBe('Black Krim')
-    expect(searchParamsRef.current.get('edit')).toBeNull()
+    expect(currentParams().get('edit')).toBeNull()
   })
 
   it('PUT body includes variety_id + flat variety (dual-write) on save', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Renamed' } })
     await act(async () => {
@@ -198,9 +208,8 @@ describe('Garden — ?edit=<id> opens the edit editor (V3-EDIT-001 target)', () 
   })
 
   it('Remove deletes the planting and closes the editor', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }))
@@ -211,19 +220,35 @@ describe('Garden — ?edit=<id> opens the edit editor (V3-EDIT-001 target)', () 
   })
 
   it('unknown edit id strips the param without opening an editor', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=nope')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=nope')
     expect(screen.queryByText(/^Edit /)).toBeNull()
-    expect(searchParamsRef.current.get('edit')).toBeNull()
+    expect(currentParams().get('edit')).toBeNull()
+  })
+
+  // ★ BUG-EDITDEEPLINKRACE-001, guarded from INSIDE the file that hid it. The effect strips `edit`
+  // before awaiting the by-id GET; the strip changes `location.search`, `useSearchParams`
+  // re-memoises on it, both of the effect's params deps change and React runs the cleanup on that
+  // same synchronous flush. An effect-local cancel flag was therefore false before any response
+  // could land, so the editor never opened — 100% of the time, for four days and nine releases.
+  // The cancel flag has to be TEARDOWN-scoped (`editDeepLinkMountedRef`) for this to pass.
+  //
+  // The sibling cases above resolve the GET synchronously and that is deliberate — they assert the
+  // wire contract, not the ordering. This one buys the extra macrotask so the response is
+  // unambiguously later than the strip's flush, which is what makes it able to fail.
+  it('opens the editor when the by-id GET resolves AFTER the param-strip re-render', async () => {
+    primeFetch({ byId: () => late(PLANT) })
+    await renderGarden('edit=plant-2')
+    await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
+    expect(screen.getByLabelText(/Name/i).value).toBe('Krim Plant')
+    expect(currentParams().get('edit')).toBeNull()
   })
 })
 
 describe('Garden — V3-ARCHIVE-001 archive a planting (edit editor)', () => {
   it('Archive PATCHes archived:true, closes editor, shows ambient Undo', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /^Archive$/i }))
@@ -238,9 +263,8 @@ describe('Garden — V3-ARCHIVE-001 archive a planting (edit editor)', () => {
   })
 
   it('Undo PATCHes archived:false', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Archive$/i })) })
     await waitFor(() => expect(screen.getByRole('button', { name: /^Undo$/i })).toBeDefined())
@@ -279,9 +303,8 @@ describe('Garden — the planting editor can actually clear a field', () => {
   }
 
   async function openEditorAndSave(mutate) {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFilled()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     mutate()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Save$/i })) })
@@ -371,17 +394,15 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   // ★ The nag case. An editor the user opened and has not typed into is not unsaved work, and a
   // guard that fired here would hold a deploy for every FAB tap on the page.
   it('does NOT hold when the add editor is merely opened', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('add=1')
     expect(screen.getByLabelText(/Name/i)).toBeDefined()
     expect(isReloadBlocked()).toBe(false)
   })
 
   it('holds the reload on the first keystroke in the add editor', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('add=1')
     await act(async () => {
       fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
     })
@@ -391,9 +412,8 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   // A pick is not a keystroke and travels a different path into the form (VarietyPicker's onChange,
   // not a DOM change event on an <input>), so it gets its own assertion rather than being assumed.
   it('holds the reload for a VARIETY PICK, not just typed text', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('add=1')
     expect(isReloadBlocked()).toBe(false)
     await act(async () => { fireEvent.click(screen.getByTestId('vp-pick-black-krim')) })
     expect(screen.getByTestId('vp-value').textContent).toBe('Black Krim')
@@ -403,9 +423,8 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   // ★ The predicate an "any value is non-empty" version fails. Every box in this form arrives
   // filled — name, variety, quantity, status — because it is seeded FROM the planting being edited.
   it('does NOT hold when the EDIT editor opens prefilled from a real planting', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     // The seed genuinely landed — otherwise this asserts nothing about prefilled fields.
     expect(screen.getByLabelText(/Name/i).value).toBe('Krim Plant')
@@ -413,9 +432,8 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   })
 
   it('holds once the prefilled edit form is actually changed', async () => {
-    searchParamsRef.current = new URLSearchParams('edit=plant-2')
     primeFetch()
-    await renderGarden()
+    await renderGarden('edit=plant-2')
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     await act(async () => {
       fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: 'potted on' } })
@@ -427,18 +445,16 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   // InventoryDetail's "Plant this" opens: /garden?source_inventory_item_id=…&variety_id=…, which
   // fetches the packet and writes the Name box itself.
   it('does NOT hold for a packet deep-link prefill', async () => {
-    searchParamsRef.current = new URLSearchParams('source_inventory_item_id=item-seed-1&variety_id=var-1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('source_inventory_item_id=item-seed-1&variety_id=var-1')
     await waitFor(() => expect(screen.getByLabelText(/Name/i).value).toBe('Black Krim seed packet'))
     await waitFor(() => expect(screen.getByTestId('vp-value').textContent).toBe('Black Krim'))
     expect(isReloadBlocked()).toBe(false)
   })
 
   it('releases when a dirty editor is CANCELLED — a closed form must not wedge updates', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('add=1')
     await act(async () => {
       fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
     })
@@ -449,9 +465,8 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   })
 
   it('releases on a successful save — the save is what makes the typing safe', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    await renderGarden()
+    await renderGarden('add=1')
     await act(async () => {
       fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
     })
@@ -465,11 +480,8 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   // The other half of BUG-STALECLIENT-001's lesson: a hold that outlives its form can never be
   // resolved by the user, because there is no form left on screen to clean or close.
   it('releases when Garden itself unmounts with a dirty editor open', async () => {
-    searchParamsRef.current = new URLSearchParams('add=1')
     primeFetch()
-    let view
-    await act(async () => { view = render(<Garden />) })
-    await screen.findByText(/Log many/)
+    const view = await renderGarden('add=1')
     await act(async () => {
       fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Sungold' } })
     })
