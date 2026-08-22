@@ -11,7 +11,10 @@ import HarvestTimeframeChips from '../components/HarvestTimeframeChips.jsx'
 import HarvestExportSheet from '../components/HarvestExportSheet.jsx'
 import CropWeightLine from '../components/CropWeightLine.jsx'
 import HarvestSortControl from '../components/HarvestSortControl.jsx'
-import { sortAggregates, naturalDirFor, HARVEST_SORT_MODES, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR } from '../lib/harvestSort.js'
+import {
+  sortAggregates, naturalDirFor, HARVEST_SORT_MODES, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR,
+  sortPlantings, plantingNaturalDir, PLANTING_SORT_COLUMNS, PLANTING_DEFAULT_SORT,
+} from '../lib/harvestSort.js'
 import { useHarvests } from '../hooks/useHarvests.js'
 import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
@@ -795,25 +798,86 @@ function countCell(units) {
 
 const PT_HEAD = { fontSize: '0.72rem', fontWeight: 600, color: P.light, padding: '0 0 4px', border: 'none' }
 const PT_CELL = { border: 'none', verticalAlign: 'baseline' }
+// V4-HARVPLANTSORT-001 — every column sorts, scoped to THIS crop's table.
+//
+// Dave, 2026-08-21: "I wanna be able to sort all other columns within an expanded crop block",
+// defaulting to plant name. State is LOCAL to each PlantingTable instance, which gets the per-crop
+// scoping for free — no plumbing, and no shared key that would make sorting tomatoes reorder the
+// peppers. He said crop-wide leakage would be acceptable; per-crop is strictly better and cheaper.
+//
+// Collapsing a crop unmounts the table, so re-expanding returns to name-ascending. That IS the
+// "listed by alphabetical order by default" he asked for, rather than a state bug.
+//
+// The header is a button inside the th, not a click handler ON the th: the th keeps `scope="col"`
+// and gains `aria-sort`, and the button is what receives focus and Enter/Space. A div with an
+// onClick would be unreachable by keyboard and invisible to a screen reader as a control.
+const PT_SORT_BTN = {
+  background: 'transparent', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit',
+  cursor: 'pointer', display: 'inline-flex', alignItems: 'baseline', gap: 3,
+}
+const ARIA_SORT = { asc: 'ascending', desc: 'descending' }
+
 function PlantingTable({ rows }) {
   const currentYear = new Date().getFullYear()
+  const [sort, setSort] = useState(PLANTING_DEFAULT_SORT)
+  const sorted = useMemo(() => sortPlantings(rows, sort.key, sort.dir), [rows, sort])
+
+  // Clicking a NEW column snaps to that column's natural direction rather than inheriting the
+  // previous one — picking "Total weight" and getting the lightest first reads as a bug. Clicking
+  // the ACTIVE column flips it. Same rule as the page-level control, so the two behave alike.
+  const onSort = (key) => setSort((prev) => (
+    prev.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: plantingNaturalDir(key) }
+  ))
+
   return (
     <div style={{ marginTop: 10, overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', border: 'none' }}>
         <thead>
           <tr>
-            <th scope="col" style={{ ...PT_HEAD, textAlign: 'left' }}>Planting</th>
-            <th scope="col" style={{ ...PT_HEAD, textAlign: 'right', whiteSpace: 'nowrap', paddingRight: 8 }}>Count</th>
-            {/* This ONE header is allowed to wrap. At 390px with four columns "Total weight" nowrap
-                is the widest thing in its column — wider than "8.23 kg" — so it was setting the
-                column width and starving the planting names, which then wrapped to three and four
-                lines. A header that breaks once at the top costs less than every name breaking. */}
-            <th scope="col" style={{ ...PT_HEAD, textAlign: 'right', paddingRight: 8 }}>Total weight</th>
-            <th scope="col" style={{ ...PT_HEAD, textAlign: 'right', whiteSpace: 'nowrap' }}>First pick</th>
+            {PLANTING_SORT_COLUMNS.map((col, i) => {
+              const active = sort.key === col.key
+              // "Total weight" is the ONE header allowed to wrap. At 390px with four columns its
+              // nowrap width exceeds "8.23 kg", so it was setting the column width and starving the
+              // planting names, which then wrapped to three and four lines. A header that breaks
+              // once at the top costs less than every name breaking. The arrow is a separate nowrap
+              // span so a wrapped header cannot strand it alone on the second line.
+              const isWeight = col.key === 'weight'
+              const first = i === 0
+              return (
+                <th
+                  key={col.key}
+                  scope="col"
+                  aria-sort={active ? ARIA_SORT[sort.dir] : 'none'}
+                  style={{
+                    ...PT_HEAD,
+                    textAlign: first ? 'left' : 'right',
+                    whiteSpace: isWeight ? 'normal' : 'nowrap',
+                    paddingRight: i === PLANTING_SORT_COLUMNS.length - 1 ? 0 : 8,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSort(col.key)}
+                    data-testid={`plantingsort-${col.key}`}
+                    // The accessible name carries the ACTION, not just the label — a screen reader
+                    // announcing only "Planting" gives no clue the header does anything.
+                    aria-label={`Sort by ${col.label}${active ? (sort.dir === 'asc' ? ', currently ascending' : ', currently descending') : ''}`}
+                    style={{ ...PT_SORT_BTN, color: active ? P.mid : 'inherit', fontWeight: active ? 700 : PT_HEAD.fontWeight }}
+                  >
+                    <span>{col.label}</span>
+                    <span aria-hidden="true" style={{ whiteSpace: 'nowrap', fontSize: '0.62rem', opacity: active ? 1 : 0.35 }}>
+                      {active ? (sort.dir === 'asc' ? '▲' : '▼') : '▾'}
+                    </span>
+                  </button>
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.map((f) => (
+          {sorted.map((f) => (
             <tr key={f.plant_id}>
               <td style={{ ...PT_CELL, fontSize: '0.83rem', color: P.mid, padding: '4px 8px 4px 0', overflowWrap: 'anywhere' }}>
                 {f.planting_name || 'Unnamed planting'}

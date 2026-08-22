@@ -133,7 +133,10 @@ describe('the per-planting table (V4-HARVCROPTABLE-001)', () => {
         units: [{ unit: 'count', unit_key: 'count', total: 128, count: 36 }], unquantified: 0, weight: CHERRY_FALLS,
       }],
     })
-    expect([...screen.getByRole('table').tHead.rows[0].cells].map((c) => c.textContent))
+    // V4-HARVPLANTSORT-001: every header is now a sort button carrying a direction indicator, so
+    // read the LABEL span rather than the cell's whole textContent — otherwise this asserts the
+    // arrow glyphs too and breaks on any change to them.
+    expect([...screen.getByRole('table').tHead.rows[0].cells].map((c) => c.querySelector('span').textContent))
       .toEqual(['Planting', 'Count', 'Total weight', 'First pick'])
     expect(cellsOf('Moskvich bed')).toEqual(['Moskvich bed', '65', '8.23 kg', 'Jul 4'])
     expect(cellsOf('Cherry Falls bed')).toEqual(['Cherry Falls bed', '128', '763 g', 'Jul 11'])
@@ -255,6 +258,90 @@ describe('the per-planting table (V4-HARVCROPTABLE-001)', () => {
       })
       expect(screen.getByTestId('planting-count').textContent).toBe('12')
     })
+  })
+})
+
+describe('V4-HARVPLANTSORT-001 — sorting INSIDE one expanded crop', () => {
+  // Dave 2026-08-21: "I wanna be able to sort all other columns within an expanded crop block",
+  // landing on plant name by default.
+  const FP = (name, total, grams, date) => ({
+    plant_id: `gn-${name}`, planting_name: name, crop_type_slug: 'tomato', first_pick_date: date,
+    units: [{ unit: 'count', unit_key: 'count', total, count: 3 }], unquantified: 0, weight: { grams, measured_grams: grams, estimated_grams: 0, measured: 3, estimated: 0, unweighed: 0 },
+  })
+  const THREE = [
+    FP('Zephyr bed', 10, 900, `${CUR_YEAR}-07-20`),
+    FP('Anaheim bed', 65, 8230, `${CUR_YEAR}-07-04`),
+    FP('Moskvich bed', 40, 1800, `${CUR_YEAR}-07-11`),
+  ]
+  const shown = () => [...screen.getByRole('table').tBodies[0].rows].map((r) => r.cells[0].textContent)
+  const header = (key) => screen.getByTestId(`plantingsort-${key}`)
+
+  it('lands on planting name ascending, whatever order the server sent', async () => {
+    await renderTotals({ first_pick: THREE })
+    expect(shown()).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
+  })
+
+  it('sorts by every column, and flips when the active one is clicked again', async () => {
+    await renderTotals({ first_pick: THREE })
+    fireEvent.click(header('weight'))
+    expect(shown()).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])   // heaviest first
+    fireEvent.click(header('weight'))
+    expect(shown()).toEqual(['Zephyr bed', 'Moskvich bed', 'Anaheim bed'])   // flipped
+    fireEvent.click(header('first_pick'))
+    expect(shown()).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])   // earliest first
+    fireEvent.click(header('name'))
+    expect(shown()).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
+    fireEvent.click(header('name'))
+    expect(shown()).toEqual(['Zephyr bed', 'Moskvich bed', 'Anaheim bed'])   // Z-A
+  })
+
+  it('snaps a NEWLY chosen column to its own natural direction', async () => {
+    // Picking "Total weight" and getting the lightest first reads as a bug. Flip name to descending
+    // first, so inheriting the previous direction would be visible.
+    await renderTotals({ first_pick: THREE })
+    fireEvent.click(header('name'))
+    expect(shown()).toEqual(['Zephyr bed', 'Moskvich bed', 'Anaheim bed'])
+    fireEvent.click(header('weight'))
+    expect(shown()[0]).toBe('Anaheim bed')       // heaviest, NOT the inherited descending-by-name
+  })
+
+  it('reports the active column and direction to assistive tech', async () => {
+    await renderTotals({ first_pick: THREE })
+    const th = (key) => screen.getByTestId(`plantingsort-${key}`).closest('th')
+    expect(th('name').getAttribute('aria-sort')).toBe('ascending')
+    expect(th('weight').getAttribute('aria-sort')).toBe('none')
+    fireEvent.click(header('weight'))
+    expect(th('weight').getAttribute('aria-sort')).toBe('descending')
+    expect(th('name').getAttribute('aria-sort')).toBe('none')
+  })
+
+  it('every header is a real BUTTON, so the sort is reachable by keyboard', async () => {
+    // A th with an onClick would be unreachable by keyboard and invisible as a control.
+    await renderTotals({ first_pick: THREE })
+    for (const key of ['name', 'count', 'weight', 'first_pick']) {
+      expect(header(key).tagName).toBe('BUTTON')
+      expect(header(key).getAttribute('aria-label')).toMatch(/^Sort by /)
+    }
+  })
+
+  it('sorting one crop does NOT reorder another crop’s table', async () => {
+    // State is local to each PlantingTable, so the scoping is structural rather than bookkeeping.
+    const PEPPER = { ...TOMATO, crop_type_slug: 'pepper', crop_name: 'Pepper' }
+    await renderTotals({
+      crops: [TOMATO, PEPPER],
+      first_pick: [...THREE, ...THREE.map((f) => ({ ...f, plant_id: `p-${f.planting_name}`, crop_type_slug: 'pepper' }))],
+    })
+    // renderTotals expands Tomato only; open Pepper too so there are two tables to compare.
+    fireEvent.click(screen.getByText('Pepper'))
+    const tables = screen.getAllByRole('table')
+    expect(tables).toHaveLength(2)
+    const namesIn = (t) => [...t.tBodies[0].rows].map((r) => r.cells[0].textContent)
+    fireEvent.click(tables[0].querySelector('[data-testid="plantingsort-weight"]'))
+    expect(namesIn(tables[0])).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
+    expect(namesIn(tables[1])).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])  // still by name
+    fireEvent.click(tables[1].querySelector('[data-testid="plantingsort-name"]'))
+    expect(namesIn(tables[1])).toEqual(['Zephyr bed', 'Moskvich bed', 'Anaheim bed'])  // only #2 moved
+    expect(namesIn(tables[0])).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
   })
 })
 

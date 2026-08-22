@@ -22,6 +22,8 @@
 // with the screen it was copied from — breaking the "the export reconciles with the page"
 // invariant that harvestExport.js is built around. Both call this function with the same args.
 
+import { isMassUnit } from './harvestSummary.js'
+
 export const HARVEST_SORT_MODES = [
   { value: 'name', label: 'Name' },
   { value: 'weight', label: 'Weight' },
@@ -115,4 +117,89 @@ export function sortAggregates(aggregates, mode = DEFAULT_SORT_MODE, dir = DEFAU
       .map((c) => (Array.isArray(c.varieties) ? { ...c, varieties: [...c.varieties].sort(cmp) } : c))
       .sort(cmp),
   }
+}
+
+// ── V4-HARVPLANTSORT-001 — column sorting INSIDE one expanded crop ─────────────────────────────────
+//
+// Dave, 2026-08-21: "the sort I really want is WITHIN each expanded crop block... I wanna be able to
+// sort all other columns within an expanded crop block", defaulting to plant name. Deliberately
+// separate from the page-level control above, which orders CROP CARDS and their varieties.
+//
+// It is a separate comparator rather than a fourth mode on harvestComparator() because ONE column
+// means something different here, and quietly reusing the other meaning is how a sort ends up
+// disagreeing with the numbers beside it:
+//
+//   page control "Picks"  -> pickCount(), the number of harvest EVENTS (units[].count)
+//   this table's "Count"  -> the QUANTITY picked (units[].total), which is what countCell renders
+//
+// Sorting the visible "Count" column by event count would order 65 above 128 whenever the lighter
+// planting had been visited more often — a ranking that contradicts the column it claims to sort.
+// So countedQuantity() below mirrors countCell()'s own rule, mass units and all.
+
+// Mass units are EXCLUDED here for the same reason countCell() dashes them: a pounds-logged planting
+// has no meaningful "how many did I pick", and its weight already speaks one column over. Rows that
+// filter to nothing sort as null (last in both directions), never as zero.
+//
+// isMassUnit is IMPORTED, not re-declared. The first draft of this duplicated the set locally to
+// "avoid depending on the render layer" — and got it wrong on 11 of 15 entries, because the
+// canonical set is exactly four keys (g/kg/lb/oz) and the copy invented gram/grams/pounds/ounces
+// that isMassUnit has never recognised. The sort would then have kept a 'grams' row in the Count
+// ranking while countCell dashed the very same row. There is no cycle to avoid here — harvestSummary
+// imports nothing — so the duplication bought nothing and cost correctness.
+function countedQuantity(node) {
+  const units = Array.isArray(node?.units) ? node.units : null
+  if (!units) return null
+  const countable = units.filter((u) => !isMassUnit(String(u?.unit_key ?? '').trim().toLowerCase()))
+  if (!countable.length) return null
+  return countable.reduce((n, u) => n + (Number(u?.total) || 0), 0)
+}
+
+// The columns the planting table offers, in render order. Label doubles as the header text so the
+// header and the sort key cannot drift apart.
+export const PLANTING_SORT_COLUMNS = [
+  { key: 'name', label: 'Planting' },
+  { key: 'count', label: 'Count' },
+  { key: 'weight', label: 'Total weight' },
+  { key: 'first_pick', label: 'First pick' },
+]
+
+// Same principle as NATURAL_DIR above: picking a column gives you the direction that column is
+// actually useful in. Name reads A-Z; the two magnitude columns lead with the biggest; first pick
+// leads with the EARLIEST, because the question that column answers is "what came in first" — and
+// because ascending by date is the order the table already shipped in, so the default render does
+// not move under anyone who was used to it.
+export const PLANTING_NATURAL_DIR = { name: 'asc', count: 'desc', weight: 'desc', first_pick: 'asc' }
+export const PLANTING_DEFAULT_SORT = { key: 'name', dir: 'asc' }
+
+export function plantingNaturalDir(key) { return PLANTING_NATURAL_DIR[key] ?? 'asc' }
+
+function plantingName(row) { return String(row?.planting_name ?? '') }
+
+// Null-last in BOTH directions, exactly like byWeight: a planting with no derivable count is
+// unknown, not zero, and leading an ascending list with unknowns answers a question nobody asked.
+function nullsLast(a, b, dir, valueOf, tie) {
+  const va = valueOf(a), vb = valueOf(b)
+  if (va == null && vb == null) return tie(a, b)
+  if (va == null) return 1
+  if (vb == null) return -1
+  if (va === vb) return tie(a, b)
+  if (typeof va === 'string') return dir === 'asc' ? collator.compare(va, vb) : collator.compare(vb, va)
+  return dir === 'asc' ? va - vb : vb - va
+}
+
+/**
+ * Comparator for ONE expanded crop's first_pick rows. Ties always fall back to the planting name so
+ * the order is total and stable — two plantings with the same weight must not swap between renders.
+ */
+export function plantingComparator(key = PLANTING_DEFAULT_SORT.key, dir = PLANTING_DEFAULT_SORT.dir) {
+  const byPlantingName = (a, b) => collator.compare(plantingName(a), plantingName(b))
+  if (key === 'count') return (a, b) => nullsLast(a, b, dir, countedQuantity, byPlantingName)
+  if (key === 'weight') return (a, b) => nullsLast(a, b, dir, (r) => (r?.weight?.grams == null ? null : Number(r.weight.grams)), byPlantingName)
+  if (key === 'first_pick') return (a, b) => nullsLast(a, b, dir, (r) => r?.first_pick_date ?? null, byPlantingName)
+  return dir === 'desc' ? (a, b) => byPlantingName(b, a) : byPlantingName
+}
+
+/** Non-mutating: `first_pick` is server-owned and read by other lookups on the same page. */
+export function sortPlantings(rows, key, dir) {
+  return Array.isArray(rows) ? [...rows].sort(plantingComparator(key, dir)) : []
 }

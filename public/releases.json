@@ -7,7 +7,8 @@
       "Opening a crop on the Harvests page no longer shows the same plantings twice. It listed them once by variety and again in the table underneath — the table has the first-pick date and the variety list did not, so the list went and the table stayed.",
       "Your harvest post keeps what you wrote. Closing the composer used to throw the caption away, so anything typed and not sent straight off was gone. It now comes back when you reopen it — along with any lines you unchecked — and clears itself once the post has actually gone out.",
       "A Today filter on the photo library. With 1,300 photos in there, the one thing you want before posting is what you shot today, and that was the one cut you could not make.",
-      "Taking a photo inside the app is gone — every photo button now goes straight to your photo picker. The in-app camera could never save a shot to your camera roll (a web app has no way to write there), so the one place it was still offered was the one place a photo could quietly end up nowhere but here. Snap, Log Event, the photo library and every planting and location page now open the picker in one tap instead of asking take-or-choose first."
+      "Taking a photo inside the app is gone — every photo button now goes straight to your photo picker. The in-app camera could never save a shot to your camera roll (a web app has no way to write there), so the one place it was still offered was the one place a photo could quietly end up nowhere but here. Snap, Log Event, the photo library and every planting and location page now open the picker in one tap instead of asking take-or-choose first.",
+      "Every column in an opened crop now sorts. Tap Planting, Count, Total weight or First pick on the Harvests page to reorder just that crop's plantings — it opens alphabetically by plant name, and sorting one crop leaves the others alone."
     ]
   },
   {

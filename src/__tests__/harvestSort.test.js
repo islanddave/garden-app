@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  sortAggregates, harvestComparator, pickCount, naturalDirFor,
-  HARVEST_SORT_MODES, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR,
+  sortAggregates, harvestComparator, pickCount, naturalDirFor, HARVEST_SORT_MODES, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR, sortPlantings, plantingNaturalDir, PLANTING_DEFAULT_SORT,
 } from '../lib/harvestSort.js'
+import { isMassUnit } from '../lib/harvestSummary.js'
 
 // Shaped like the real wire object: units[] carry {unit, unit_key, total, count} and weight is the
 // V4-HARVGRAIN-001 merge, absent on rows the weight pass never resolved.
@@ -199,5 +199,119 @@ describe('sortAggregates', () => {
     expect(sortAggregates({}, 'name', 'asc')).toEqual({})
     const noVarieties = { crops: [crop('Solo', 5)] }
     expect(sortAggregates(noVarieties, 'weight', 'desc').crops).toHaveLength(1)
+  })
+})
+
+// ── V4-HARVPLANTSORT-001 — the planting table's own comparator ──────────────────────────────────
+// Separate from harvestComparator on purpose: this table's "Count" column is the QUANTITY picked,
+// while the page control's "Picks" is the number of harvest EVENTS. Sorting the visible column by
+// the other number would order rows in a way that contradicts the figures beside them.
+describe('plantingComparator / sortPlantings', () => {
+  const row = (name, total, count, grams, date) => ({
+    plant_id: name, planting_name: name,
+    units: total == null ? undefined : [{ unit: 'count', unit_key: 'count', total, count }],
+    weight: grams == null ? undefined : { grams },
+    first_pick_date: date,
+  })
+  //                  name           qty  picks  grams  first pick
+  const ROWS = [
+    row('Zephyr bed',   10,   9,   900, '2026-07-20'),
+    row('Anaheim bed',  65,   2,  8230, '2026-07-04'),
+    row('Moskvich bed', 40,  30,  1800, '2026-07-11'),
+  ]
+  const names = (k, d) => sortPlantings(ROWS, k, d).map((r) => r.planting_name)
+
+  it('defaults to planting name, ascending — what Dave asked to land on', () => {
+    expect(PLANTING_DEFAULT_SORT).toEqual({ key: 'name', dir: 'asc' })
+    expect(names(PLANTING_DEFAULT_SORT.key, PLANTING_DEFAULT_SORT.dir))
+      .toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
+  })
+
+  it('sorts Count by the QUANTITY shown, not by the number of picks', () => {
+    // The discriminator: Anaheim has the most quantity (65) but the FEWEST picks (2); Moskvich has
+    // the most picks (30) but middling quantity (40). A comparator wired to pickCount would put
+    // Moskvich first and disagree with every number in the column.
+    expect(names('count', 'desc')).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
+    expect(names('count', 'asc')).toEqual(['Zephyr bed', 'Moskvich bed', 'Anaheim bed'])
+  })
+
+  it('sorts weight and first pick on their own axes', () => {
+    expect(names('weight', 'desc')).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
+    expect(names('first_pick', 'asc')).toEqual(['Anaheim bed', 'Moskvich bed', 'Zephyr bed'])
+    expect(names('first_pick', 'desc')).toEqual(['Zephyr bed', 'Moskvich bed', 'Anaheim bed'])
+  })
+
+  it('sorts names alphanumerically, so Bed 10 follows Bed 2', () => {
+    const beds = [row('Bed 10', 1, 1, 1, '2026-07-01'), row('Bed 2', 1, 1, 1, '2026-07-01')]
+    expect(sortPlantings(beds, 'name', 'asc').map((r) => r.planting_name)).toEqual(['Bed 2', 'Bed 10'])
+  })
+
+  it('puts rows with nothing to sort on LAST in BOTH directions, never first', () => {
+    // A planting with no derivable count is unknown, not zero. Leading an ascending list with
+    // unknowns answers a question nobody asked and buries the real smallest.
+    const withNulls = [...ROWS, row('No data bed', null, null, null, null)]
+    expect(sortPlantings(withNulls, 'count', 'asc').at(-1).planting_name).toBe('No data bed')
+    expect(sortPlantings(withNulls, 'count', 'desc').at(-1).planting_name).toBe('No data bed')
+    expect(sortPlantings(withNulls, 'weight', 'asc').at(-1).planting_name).toBe('No data bed')
+    expect(sortPlantings(withNulls, 'first_pick', 'asc').at(-1).planting_name).toBe('No data bed')
+  })
+
+  it('treats a MASS-unit planting as having no count — matching what the cell renders', () => {
+    // countCell() dashes a pounds-logged planting because "how many did I pick" has no answer
+    // there. The sort has to agree, or the dashed row lands mid-ranking as if it held a number.
+    // total 999 is deliberately the LARGEST quantity in the set. With total 4 this test passed
+    // whether the mass unit was excluded (null, sorts last) or counted (smallest, also sorts last)
+    // — a mutation that counted mass units survived it. At 999 the two outcomes are opposite ends
+    // of the ranking, so the assertion can only pass for the right reason.
+    // 1900 g, deliberately NOT Moskvich's 1800 — an accidental tie would make the weight assertion
+    // below test the name tie-break instead of the ordering.
+    const lb = { plant_id: 'lb', planting_name: 'Pounds bed', units: [{ unit: 'lb', unit_key: 'lb', total: 999, count: 2 }], weight: { grams: 1900 }, first_pick_date: '2026-07-05' }
+    expect(sortPlantings([...ROWS, lb], 'count', 'desc').at(-1).planting_name).toBe('Pounds bed')
+    // ...but it still sorts normally on the axes it DOES have.
+    expect(sortPlantings([...ROWS, lb], 'weight', 'desc').map((r) => r.planting_name))
+      .toEqual(['Anaheim bed', 'Pounds bed', 'Moskvich bed', 'Zephyr bed'])
+  })
+
+  it('uses the CANONICAL mass set, so the sort cannot disagree with the cell', () => {
+    // Written first as a set-equality pin against a locally duplicated copy, and it failed at once:
+    // the copy had invented gram/grams/kilograms/pounds/ounces, none of which isMassUnit recognises
+    // — it is exactly g/kg/lb/oz. The fix was to delete the copy and import it.
+    //
+    // The SECOND version of this test asserted against a local mirror of countedQuantity(), which
+    // meant it tested the mirror rather than the implementation, and a mutation that counted mass
+    // units survived. This version goes through sortPlantings and gives the mass row the BIGGEST
+    // quantity in the set — so if it were counted it would sort FIRST, and being unitless-for-this-
+    // purpose it sorts LAST. Opposite ends, no way to pass by accident.
+    const r = (unit, total) => ({ plant_id: unit, planting_name: `${unit} bed`, units: [{ unit, unit_key: unit, total, count: 1 }] })
+    for (const mass of ['g', 'kg', 'lb', 'oz']) {
+      expect(isMassUnit(mass)).toBe(true)
+      expect(sortPlantings([r(mass, 9999), r('count', 1)], 'count', 'desc').map((x) => x.planting_name))
+        .toEqual(['count bed', `${mass} bed`])
+    }
+    for (const countable of ['cup', 'bunch', 'head']) {
+      expect(isMassUnit(countable)).toBe(false)
+      expect(sortPlantings([r(countable, 9999), r('count', 1)], 'count', 'desc').map((x) => x.planting_name))
+        .toEqual([`${countable} bed`, 'count bed'])
+    }
+  })
+
+  it('breaks every tie on the planting name, so the order is total and stable', () => {
+    const tied = [row('Beta bed', 5, 1, 100, '2026-07-01'), row('Alpha bed', 5, 1, 100, '2026-07-01')]
+    for (const key of ['count', 'weight', 'first_pick']) {
+      expect(sortPlantings(tied, key, 'desc').map((r) => r.planting_name)).toEqual(['Alpha bed', 'Beta bed'])
+    }
+  })
+
+  it('does not mutate the caller’s array — first_pick is server-owned and read elsewhere', () => {
+    const original = [...ROWS]
+    sortPlantings(ROWS, 'weight', 'desc')
+    expect(ROWS).toEqual(original)
+  })
+
+  it('gives each column the direction it is actually useful in', () => {
+    expect(plantingNaturalDir('name')).toBe('asc')
+    expect(plantingNaturalDir('count')).toBe('desc')
+    expect(plantingNaturalDir('weight')).toBe('desc')
+    expect(plantingNaturalDir('first_pick')).toBe('asc')   // earliest first: "what came in first"
   })
 })
