@@ -667,8 +667,10 @@ describe('EventNew — photo-first ordering (V4-LOGPHOTOFIRST-001)', () => {
     // The conformance point of the shipped photo-first model (BUG-PHOTOFIRST-001): picking comes
     // before attribution. No project selected, no planting selected — both buttons still live.
     renderEventNew(); await flushLoad()
-    expect(screen.getByRole('button', { name: /Take photo/i }).disabled).toBe(false)
+    // V4-HIDECAPTURE-001: one arm now, not two. The test's POINT — picking is never gated on
+    // attribution (BUG-PHOTOFIRST-001) — is unchanged; only the button count moved.
     expect(screen.getByRole('button', { name: /Choose photo/i }).disabled).toBe(false)
+    expect(screen.queryByRole('button', { name: /Take photo/i })).toBeNull()
   })
 
   it('says the photo is required for a photo event, before Save rather than after', async () => {

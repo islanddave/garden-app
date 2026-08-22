@@ -161,7 +161,7 @@ describe('CaptureFlow post-save link — V4-SNAPTOAST-001', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('cap-undo')) })
     await waitFor(() => expect(document.querySelector('[data-testid="cap-view"]')).toBeNull())
     await act(async () => { fireEvent.click(screen.getByTestId('cap-next')) })
-    await waitFor(() => expect(screen.getByTestId('cap-take')).toBeDefined())   // back to photo step
+    await waitFor(() => expect(screen.getByTestId('cap-choose')).toBeDefined())   // back to photo step
     // Pre-existing bug this feature surfaced: `undone` outlived the capture it described, so every
     // subsequent done card opened struck through with both Undo and the link withdrawn.
     await saveNewPlanting()

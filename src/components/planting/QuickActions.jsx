@@ -144,7 +144,8 @@ export default function QuickActions({ planting, onLogged }) {
 
   // V4-PHOTOQUICK-001: open the picker synchronously in THIS tap (a trusted gesture — iOS
   // suppresses a picker opened after navigation), then park the File and jump into the log form
-  // pre-seeded to a photo event. No 'capture' attr so iOS offers Take Photo OR Choose.
+  // pre-seeded to a photo event. No 'capture' attr — this site never had one, and as of
+  // V4-HIDECAPTURE-001 that is the app-wide rule rather than this component's local choice.
   function openPhotoPicker() {
     const el = photoInputRef.current
     if (el) el.click()

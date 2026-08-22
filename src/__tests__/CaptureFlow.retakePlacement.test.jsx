@@ -92,7 +92,7 @@ describe('V4-SNAPDEST-001 — retake sits with the photo, not under the destinat
 
   it('is absent before a photo exists and after a destination is chosen (visibility unchanged by the move)', async () => {
     await act(async () => { render(<CaptureFlow />) })
-    await waitFor(() => expect(screen.getByTestId('cap-take')).toBeDefined())
+    await waitFor(() => expect(screen.getByTestId('cap-choose')).toBeDefined())
     expect(screen.queryByTestId('cap-retake')).toBeNull()      // step 'photo'
     await snap()
     expect(screen.getByTestId('cap-retake')).toBeTruthy()      // step 'mode'

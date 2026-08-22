@@ -1099,8 +1099,6 @@ export default function ProjectDetail() {
                     parentId={plant.id}
                     linkage={{ plant_id: plant.id, project_id: id }}
                     errorMode="surface"
-                    mode="single"
-                    capture=""
                     buttonLabel={<Icon name="media.camera" decorative size={20} />}
                     ariaLabel="Add photo"
                     showPreview={false}
@@ -1136,8 +1134,6 @@ export default function ProjectDetail() {
             parentId={id}
             linkage={{ project_id: id }}
             errorMode="surface"
-            mode="single"
-            capture=""
             buttonLabel={<><Icon name="media.camera" decorative size={18} style={{ marginRight: 8, verticalAlign: 'text-bottom' }} />Add photo</>}
             inputId={`project-photo-${id}`}
           />

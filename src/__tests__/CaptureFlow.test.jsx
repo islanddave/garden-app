@@ -80,8 +80,9 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('cap-next')) })
     // BUG-SNAPRETAKE-001: this used to assert on `capture-input`, which is now mounted in EVERY
     // step, so that assertion could no longer fail and stopped meaning "back to photo step".
-    // cap-take is photo-step-only, so it still pins the reset the test is named for.
-    await waitFor(() => expect(screen.getByTestId('cap-take')).toBeDefined()) // back to photo step
+    // V4-HIDECAPTURE-001 removed cap-take, which was the photo-step-only marker; cap-choose is now
+    // the one control that exists ONLY in step 'photo', so it carries the same proof.
+    await waitFor(() => expect(screen.getByTestId('cap-choose')).toBeDefined()) // back to photo step
   })
 
   it('log-event mode derives project_id + plant_id from the picked planting', async () => {
@@ -100,27 +101,31 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     expect(body.event_type).toBe('watering')
   })
 
-  it('SNAP picker carries no hardcoded capture and exposes both Take and Choose controls (V4-SNAPPICK-001)', async () => {
+  it('SNAP picker carries no hardcoded capture and exposes ONLY Choose (V4-HIDECAPTURE-001)', async () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })
     const input = await screen.findByTestId('capture-input')
-    // V4-SNAPPICK-001: input must NOT force the live camera — no hardcoded capture attr at render.
+    // V4-SNAPPICK-001's original point survives: the input must never force the live camera.
     expect(input.getAttribute('capture')).toBeNull()
     expect(input.getAttribute('type')).toBe('file')
-    const take = screen.getByTestId('cap-take')
     const choose = screen.getByTestId('cap-choose')
-    expect(take).toBeTruthy()
     expect(choose).toBeTruthy()
-    expect(take.textContent).toContain('Take photo')
     expect(choose.textContent).toContain('Choose photo')
+    // V4-HIDECAPTURE-001: the Take arm is gone, not merely demoted.
+    expect(screen.queryByTestId('cap-take')).toBeNull()
   })
 })
 
-// V4-SNAPCAPTURE-001 (BD0806-06) — Dave decided 2026-08-17: demote "Take a Photo" so Snap is one
-// tap into the picker. The pre-existing V4-SNAPPICK-001 case above CANNOT see this change — it
-// asserts textContent contains "Take photo", which "Take photo instead" still satisfies — so the
-// demote is pinned here or by nothing. Both arms must stay REACHABLE; only the hierarchy moves.
-describe('V4-SNAPCAPTURE-001 — Choose is primary, Take is demoted', () => {
+// V4-HIDECAPTURE-001 (BD-032) — Dave decided 2026-08-21: HIDE the camera, do not merely demote it.
+// This supersedes his own 2026-08-17 V4-SNAPCAPTURE-001 ruling, which this block previously pinned.
+// The demote's own stated reason argues for removal: in-app capture CANNOT write to the device
+// gallery (a PWA has no gallery write), so the arm left on screen was the one that silently loses
+// the photo everywhere except this app.
+//
+// THESE ARE INVERSIONS, NOT DELETIONS. Each case below asserts the ABSENCE of what its predecessor
+// asserted the presence of — because an absence is invisible in a diff, and a reinstated Take arm
+// would otherwise reintroduce itself with nothing going red.
+describe('V4-HIDECAPTURE-001 — Choose is the only arm; the camera is gone', () => {
   it('Choose photo is the single primary action: full-width and solid, not a 50/50 dashed pair', async () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })
@@ -134,39 +139,34 @@ describe('V4-SNAPCAPTURE-001 — Choose is primary, Take is demoted', () => {
     expect(choose.style.flex).toBe('0 0 auto')
   })
 
-  it('Take photo is a secondary control — no picker-button chrome, and it says "instead"', async () => {
-    wireLists()
-    await act(async () => { render(<CaptureFlow />) })
-    const take = await screen.findByTestId('cap-take')
-    expect(take.textContent).toBe('Take photo instead')
-    // Not the dashed picker-button treatment, and not filled — the two things that would put it
-    // back on equal footing with Choose. (jsdom does not round-trip the `border` shorthand set to
-    // 'none', so borderStyle is the reliable read here.)
-    expect(take.style.borderStyle).not.toBe('dashed')
-    expect(take.style.backgroundColor).toBe('')
-    expect(take.style.textDecoration).toContain('underline')
-  })
-
-  it('states WHY the camera arm is demoted — the gallery-write limit is the whole reason', async () => {
+  it('there is NO take-photo arm — not demoted, absent', async () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })
     await screen.findByTestId('cap-choose')
-    expect(screen.getByText(/aren.t saved to your camera roll/i)).toBeTruthy()
+    expect(screen.queryByTestId('cap-take')).toBeNull()
+    // Also by text, not just testid: a re-added control under a different testid still fails here.
+    expect(screen.queryByText(/take photo/i)).toBeNull()
   })
 
-  it('BOTH arms still fire the picker — demote must not become removal', async () => {
+  it('drops the camera-roll caption with the arm it justified', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    await screen.findByTestId('cap-choose')
+    // The caption existed to explain why Take was demoted rather than removed. Under a lone Choose
+    // button it reads as a warning about CHOOSING, which is both wrong and discouraging.
+    expect(screen.queryByText(/aren.t saved to your camera roll/i)).toBeNull()
+  })
+
+  it('the one arm fires the picker and never sets capture', async () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })
     const input = await screen.findByTestId('capture-input')
     const clicked = []
     input.click = () => clicked.push(input.getAttribute('capture'))
     fireEvent.click(screen.getByTestId('cap-choose'))
-    fireEvent.click(screen.getByTestId('cap-take'))
-    // choose -> no capture attr (library); take -> capture set (live camera). Order is the proof
-    // that the two controls remain wired to DIFFERENT modes, not collapsed onto one.
-    expect(clicked).toHaveLength(2)
-    expect(clicked[0]).toBeNull()
-    expect(clicked[1]).toBe('environment')
+    // Recording the attribute AT CLICK TIME, not at render: the removed implementation set it
+    // imperatively inside openPicker, so a render-time-only assertion could not have caught it.
+    expect(clicked).toEqual([null])
   })
 })
 

@@ -146,13 +146,11 @@ export default function CaptureFlow() {
   // accessible name only; `label` is what renders.
   const [result, setResult] = useState(null)     // { kind, id, label, link, undo }
   const fileRef = useRef(null)
-  // V4-SNAPPICK-001: one hidden input, capture toggled per choice so SNAP offers BOTH
-  // take-photo and choose-photo (mirrors EventNew openPhotoPicker / <PhotoUpload mode="both">).
-  function openPicker(useCamera) {
+  // V4-HIDECAPTURE-001: one hidden input, straight to the picker. The V4-SNAPPICK-001 capture toggle
+  // is gone along with the Take arm it served — see the step === 'photo' block below.
+  function openPicker() {
     const el = fileRef.current
     if (!el) return
-    if (useCamera) el.setAttribute('capture', 'environment')
-    else el.removeAttribute('capture')
     el.click()
   }
 
@@ -503,7 +501,7 @@ export default function CaptureFlow() {
               camera). This is a move, not a rewrite. */}
           {step === 'mode' && (
             <div style={{ position: 'absolute', right: 8, bottom: 8 }}>
-              <Button data-testid="cap-retake" variant="secondary" onClick={() => openPicker(false)}
+              <Button data-testid="cap-retake" variant="secondary" onClick={openPicker}
                 style={{ backgroundColor: P.white, fontSize: '0.85rem' }}>Retake / choose photo</Button>
             </div>
           )}
@@ -518,14 +516,15 @@ export default function CaptureFlow() {
         </div>
       )}
 
-      {/* V4-SNAPCAPTURE-001 (BD0806-06) — "Take photo" is DEMOTED, not removed. Dave's report was
-          that in-app capture "does not appear to save to the device gallery"; the finding is that
-          it CANNOT — a PWA has no gallery write, only the share sheet (V4-SNAPDEST-001 hid the
-          "Save to device" affordance app-wide for the same reason). So a 50/50 pair of equal
-          dashed buttons was actively steering him toward the arm that silently loses the photo
-          everywhere except this app. Choose is now the single primary action — Snap is one tap
-          into the picker — and Take stays reachable underneath with the reason stated, because
-          for a photo he does NOT want in his camera roll it is still the faster path.
+      {/* V4-HIDECAPTURE-001 (BD-032) — the Take arm is REMOVED. V4-SNAPCAPTURE-001 demoted it on
+          2026-08-17 for a reason that argues for deletion rather than demotion: in-app capture
+          CANNOT save to the device gallery — a PWA has no gallery write, only the share sheet
+          (V4-SNAPDEST-001 hid "Save to device" app-wide for the same reason). A secondary control
+          is still a control, and the one still on screen was the arm that silently loses the photo
+          everywhere except this app. Dave, 2026-08-21: "hide the ability to take a photo from the
+          app … One less tap." Choose is now the only action, so the step is a single tap.
+          The "not saved to your camera roll" caption went with it: it existed to justify the Take
+          arm, and left under a lone Choose button it reads as a warning about choosing.
           NOT auto-opening the picker on mount: the file input needs transient activation, and the
           navigation gesture that got here is already spent, so Android Chrome would block it and
           the step would render as a dead end. */}
@@ -535,17 +534,10 @@ export default function CaptureFlow() {
           {/* flex is explicitly cleared, not merely overridden: pickBtn carries flex:1 for the
               50/50 row that no longer exists, and a stray flex:1 on a lone block child is the kind
               of leftover that only surfaces when someone later re-wraps this in a flex parent. */}
-          <button data-testid="cap-choose" type="button" onClick={() => openPicker(false)}
+          <button data-testid="cap-choose" type="button" onClick={openPicker}
             style={{ ...pickBtn, flex: 'none', width: '100%', borderStyle: 'solid', borderColor: P.green, backgroundColor: P.green, color: P.white }}>
             <span style={{ fontSize: '1.3rem' }}>🖼️</span><span>Choose photo</span>
           </button>
-          <button data-testid="cap-take" type="button" onClick={() => openPicker(true)}
-            style={{ marginTop: 10, background: 'none', border: 'none', color: P.mid, fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}>
-            Take photo instead
-          </button>
-          <p style={{ color: P.light, fontSize: '0.75rem', marginTop: 6, marginBottom: 0 }}>
-            Photos taken here aren’t saved to your camera roll.
-          </p>
         </div>
       )}
 

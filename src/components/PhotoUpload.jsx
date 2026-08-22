@@ -3,15 +3,23 @@
 //
 // Mobile-first. The single reusable photo widget for the whole app.
 //
-// mode="both" (RECOMMENDED, 2026-06-02 camera-unification): renders TWO triggers —
-//   "Take photo" (camera, capture="environment") and "Choose photo" (library, no
-//   capture attr). One hidden <input> whose `capture` attribute is toggled imperatively
-//   per choice, then .click()'d inside the user gesture so the camera/library opens on
-//   mobile. This is the consistent take-OR-choose flow that plugs into every surface.
+// ONE TRIGGER, NEVER THE CAMERA (V4-HIDECAPTURE-001, Dave 2026-08-21: "hide the ability to take a
+// photo from the app, streamline any photo flow (e.g. from Snap) to go straight into choosing a
+// photo. One less tap."). This supersedes the 2026-06-02 camera-unification `mode="both"` design and
+// the 2026-08-17 V4-SNAPCAPTURE-001 ruling, which DEMOTED the camera to a secondary control rather
+// than removing it — demote is not hide, and the demoted control was still rendering.
 //
-// mode="single" (default, legacy): one trigger; behavior controlled by the `capture` prop
-//   (default 'environment' = camera on mobile, file-picker on desktop). Unchanged so the
-//   existing call sites + unit tests are untouched.
+// THE `mode`, `capture`, `takeLabel` AND `chooseLabel` PROPS ARE GONE, not defaulted-off. A `capture`
+// prop that still exists is a camera one prop away from returning silently, and "the default is safe"
+// is exactly the shape that let the demoted control survive a ruling meant to remove it. Deleting the
+// API is the only version of this that a future edit cannot quietly undo.
+//
+// WHAT THIS DOES AND DOES NOT GUARANTEE. It removes every in-app camera affordance and collapses the
+// take-or-choose decision to a single tap — that is the "one less tap". It does NOT and cannot remove
+// the camera from the OS file chooser: with `accept="image/*"` and no `capture`, the browser decides
+// what to offer, and Android Chrome may still list Camera alongside Photos/Files depending on version
+// and whether the Android Photo Picker handles that accept type. Verify on a real device before
+// claiming the camera is unreachable; the app's own surface is all this controls.
 //
 // Props:
 //   keyPrefix     : 'standalone' | 'events' | 'projects' | 'plants' | 'locations' | 'inventory' (default 'standalone')
@@ -20,19 +28,15 @@
 //   caption       : optional, forwarded to POST /api/photos
 //   is_public     : default true
 //   accept        : default 'image/*'
-//   capture       : default 'environment' (single mode only; '' or null disables camera invocation)
 //   errorMode     : 'surface' | 'swallow' — passed to useUploadPhoto
-//   mode          : 'single' (default) | 'both'
-//   buttonLabel   : single-mode trigger content (default 'Add Photo'); may be a node (e.g. an Icon)
-//   ariaLabel     : single-mode accessible name — REQUIRED when buttonLabel is icon-only/decorative
-//                   (else the control has no accessible name). Lands on the trigger <button>, which
-//                   has a role that can carry it. No-op in both mode.
-//   takeLabel     : both-mode camera trigger text (default '📷 Take photo')
-//   chooseLabel   : both-mode library trigger text (default '🖼️ Choose photo')
+//   buttonLabel   : trigger content (default 'Add Photo'); may be a node (e.g. an Icon)
+//   ariaLabel     : accessible name — REQUIRED when buttonLabel is icon-only/decorative (else the
+//                   control has no accessible name). Lands on the trigger <button>, which has a role
+//                   that can carry it.
 //   showPreview   : default true
 //   onUploadStart / onUploadComplete / onUploadError
 //   disabled      : boolean
-//   buttonStyle   : style override applied to the trigger(s); in both mode it overrides each button.
+//   buttonStyle   : style override applied to the trigger.
 
 import React, { useCallback, useRef } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
@@ -70,25 +74,6 @@ const TRIGGER_RESET = {
   WebkitAppearance: 'none',
 };
 
-const CHOICE_BTN_STYLE = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: '0.4rem',
-  flex: '1 1 0',
-  minWidth: 0,
-  padding: '0.7rem 0.9rem',
-  background: P.sage,
-  color: '#fff',
-  borderRadius: '0.5rem',
-  cursor: 'pointer',
-  fontSize: '0.95rem',
-  border: 'none',
-  fontWeight: 600,
-  textAlign: 'center',
-  userSelect: 'none',
-};
-
 export function PhotoUpload({
   keyPrefix     = 'standalone',
   parentId      = null,
@@ -96,13 +81,9 @@ export function PhotoUpload({
   caption       = null,
   is_public     = true,
   accept        = 'image/*',
-  capture       = 'environment',
   errorMode     = 'surface',
-  mode          = 'single',
   buttonLabel   = 'Add Photo',
   ariaLabel     = null,
-  takeLabel     = '📷 Take photo',
-  chooseLabel   = '🖼️ Choose photo',
   showPreview   = true,
   onUploadStart,
   onUploadComplete,
@@ -145,95 +126,53 @@ export function PhotoUpload({
   const resolvedId = inputId ?? 'photo-upload-input';
   const busy = disabled || isUploading;
 
-  // both-mode: toggle the capture attribute imperatively, then open the picker within the
-  // user gesture so iOS/Android open the camera (capture) vs the photo library (no capture).
-  // Tri-state, not truthy: single mode calls this with NO argument, and its `capture` is a
-  // prop-driven static (captureProps below), so the attribute must be left exactly as the JSX
-  // set it — a truthy test would strip capture="environment" on every single-mode open.
-  const openPicker = useCallback((useCamera) => {
+  // Opens the picker inside the user gesture, which is what makes it open at all on mobile.
+  // V4-HIDECAPTURE-001: takes no argument and touches no `capture` attribute. The previous
+  // tri-state (true = set capture, false = remove, undefined = leave the JSX's static) existed
+  // solely to switch the one hidden input between camera and library; with the camera gone there
+  // is one behaviour, and the input below never carries `capture` in the first place.
+  const openPicker = useCallback(() => {
     const el = inputRef.current;
     if (!el || busy) return;
-    if (useCamera === true) el.setAttribute('capture', 'environment');
-    else if (useCamera === false) el.removeAttribute('capture');
     el.click();
   }, [busy]);
 
-  // single-mode: capture is only added when truthy. Passing '' / null disables it (desktop fallback).
-  const captureProps = capture ? { capture } : {};
-
-  const choiceStyle = (buttonStyle ?? CHOICE_BTN_STYLE);
-  const choiceStyleBusy = busy ? { ...choiceStyle, opacity: 0.6, cursor: 'not-allowed' } : choiceStyle;
   const triggerStyle = busy
     ? { ...TRIGGER_RESET, ...(buttonStyle ?? DEFAULT_BTN_STYLE), opacity: 0.6, cursor: 'not-allowed' }
     : { ...TRIGGER_RESET, ...(buttonStyle ?? DEFAULT_BTN_STYLE) };
 
   return (
     <div className="photo-upload" data-testid="photo-upload">
-      {mode === 'both' ? (
-        <>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => openPicker(true)}
-              disabled={busy}
-              data-testid="photo-upload-take"
-              style={choiceStyleBusy}
-            >
-              {isUploading ? 'Uploading…' : takeLabel}
-            </button>
-            <button
-              type="button"
-              onClick={() => openPicker(false)}
-              disabled={busy}
-              data-testid="photo-upload-choose"
-              style={choiceStyleBusy}
-            >
-              {chooseLabel}
-            </button>
-          </div>
-          <input
-            ref={inputRef}
-            id={resolvedId}
-            type="file"
-            accept={accept}
-            onChange={handleChange}
-            disabled={busy}
-            style={{ display: 'none' }}
-            data-testid="photo-upload-input"
-          />
-        </>
-      ) : (
-        <>
-          {/* V4-A11YGATE-001 history: ariaLabel used to sit on the <label>, which has no ARIA role
-              and so dropped it. BUG-PHOTOUPLOADKBD-001 retires the <label> entirely — the name now
-              rides the <button>, whose role can carry it, and which is in the tab order. The input
-              keeps id={resolvedId}: the plant-list-photo-<id> / plant-photo-<id> / project-photo-<id>
-              contract is driven by automated bulk-attach sessions outside the app. */}
-          <button
-            type="button"
-            onClick={() => openPicker()}
-            disabled={busy}
-            aria-label={ariaLabel || undefined}
-            data-testid="photo-upload-trigger"
-            style={triggerStyle}
-          >
-            {isUploading ? busyLabel : buttonLabel}
-          </button>
-          <input
-            ref={inputRef}
-            id={resolvedId}
-            type="file"
-            accept={accept}
-            {...captureProps}
-            onChange={handleChange}
-            disabled={busy}
-            aria-hidden="true"
-            tabIndex={-1}
-            style={{ display: 'none' }}
-            data-testid="photo-upload-input"
-          />
-        </>
-      )}
+      {/* V4-A11YGATE-001 history: ariaLabel used to sit on the <label>, which has no ARIA role
+          and so dropped it. BUG-PHOTOUPLOADKBD-001 retires the <label> entirely — the name now
+          rides the <button>, whose role can carry it, and which is in the tab order. The input
+          keeps id={resolvedId}: the plant-list-photo-<id> / plant-photo-<id> / project-photo-<id>
+          contract is driven by automated bulk-attach sessions outside the app. */}
+      <button
+        type="button"
+        onClick={openPicker}
+        disabled={busy}
+        aria-label={ariaLabel || undefined}
+        data-testid="photo-upload-trigger"
+        style={triggerStyle}
+      >
+        {isUploading ? busyLabel : buttonLabel}
+      </button>
+      {/* V4-HIDECAPTURE-001: NO `capture` attribute, ever. Its absence is the whole feature, which
+          makes it invisible in a diff and easy to reinstate "for mobile" — the guard against that is
+          PhotoUpload.test.jsx asserting the attribute is absent, not this comment. */}
+      <input
+        ref={inputRef}
+        id={resolvedId}
+        type="file"
+        accept={accept}
+        onChange={handleChange}
+        disabled={busy}
+        aria-hidden="true"
+        tabIndex={-1}
+        style={{ display: 'none' }}
+        data-testid="photo-upload-input"
+      />
 
       {showPreview && preview && (
         <div style={{ marginTop: '0.75rem' }}>

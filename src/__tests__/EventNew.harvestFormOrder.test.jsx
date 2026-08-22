@@ -125,7 +125,7 @@ describe('V4-HARVFORMORDER-001 — harvest order', () => {
     // Collapsed: none of the deferred controls are in the tree at all.
     expect(screen.queryByLabelText('Notes')).toBe(null)
     expect(screen.queryByLabelText('Event date')).toBe(null)
-    expect(screen.queryByText('Take photo')).toBe(null)
+    expect(screen.queryByText('Choose photo')).toBe(null)
 
     const toggle = screen.getByTestId('harvest-more-toggle')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
@@ -137,7 +137,9 @@ describe('V4-HARVFORMORDER-001 — harvest order', () => {
 
     const notes = screen.getByLabelText('Notes')
     const when = screen.getByLabelText('Event date')
-    expect(screen.getByText('Take photo')).toBeTruthy()
+    // V4-HIDECAPTURE-001: 'Choose photo' is the photo control's label now — this line only ever
+    // used the label as a proxy for "the photo control is inside the disclosure".
+    expect(screen.getByText('Choose photo')).toBeTruthy()
     expect(precedes(notes, when)).toBe(true)
     // The whole disclosure sits BELOW the quantity field it was moved out of the way of.
     expect(precedes(screen.getByLabelText('Harvest quantity'), notes)).toBe(true)

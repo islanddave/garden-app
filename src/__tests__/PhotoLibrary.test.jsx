@@ -121,17 +121,19 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
     expect(screen.getByTestId('photo-library-upload-form')).toBeDefined()
-    expect(screen.getByTestId('pl-stage-take')).toBeDefined()
     expect(screen.getByTestId('pl-stage-choose')).toBeDefined()
+    // V4-HIDECAPTURE-001: the take arm is removed, and its absence is asserted rather than merely
+    // un-asserted — dropping the line would have let the arm return with nothing going red.
+    expect(screen.queryByTestId('pl-stage-take')).toBeNull()
   })
 
-  // THE FIX, stated as an invariant: nothing about the target may gate the camera.
+  // THE FIX, stated as an invariant: nothing about the target may gate the PICKER. (Was "the
+  // camera" until V4-HIDECAPTURE-001 removed that arm; the ungating invariant is unchanged.)
   it('never gates the photo picker on a target being chosen', async () => {
     primeMount()
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
-    expect(screen.getByTestId('pl-stage-take').disabled).toBeFalsy()
     expect(screen.getByTestId('pl-stage-choose').disabled).toBeFalsy()
     // ...and the send is what waits.
     expect(screen.getByTestId('pl-staged-upload').disabled).toBe(true)

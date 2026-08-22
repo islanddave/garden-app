@@ -1115,14 +1115,13 @@ export default function EventNew() {
     setPhotoPreview(URL.createObjectURL(file))
   }
 
-  // Camera-unification (2026-06-02): one hidden input, capture toggled per choice so the
-  // staged-photo flow offers BOTH take-photo and choose-photo, consistent with <PhotoUpload mode="both">.
+  // V4-HIDECAPTURE-001: straight to the picker. The 2026-06-02 camera-unification toggle is gone
+  // along with the Take arm; <PhotoUpload> lost its `mode`/`capture` props in the same change, so
+  // this stays consistent with it by having no camera path rather than by mirroring one.
   const photoInputRef = useRef(null)
-  function openPhotoPicker(useCamera) {
+  function openPhotoPicker() {
     const el = photoInputRef.current
     if (!el) return
-    if (useCamera) el.setAttribute('capture', 'environment')
-    else el.removeAttribute('capture')
     el.click()
   }
 
@@ -1756,24 +1755,14 @@ export default function EventNew() {
               </div>
             ) : (
               <div>
+                {/* V4-HIDECAPTURE-001: one full-width Choose, no Take arm. The flex row is kept
+                    (rather than collapsed to a bare button) so the dashed drop-target proportions
+                    and the surrounding spacing are unchanged — this is a control removal, not a
+                    re-layout of the photo step. */}
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button
                     type="button"
-                    onClick={() => openPhotoPicker(true)}
-                    style={{
-                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      padding: '18px 12px',
-                      border: `2px dashed ${P.border}`, borderRadius: 8,
-                      cursor: 'pointer', backgroundColor: P.white,
-                      color: P.mid, fontSize: '0.88rem', fontWeight: 600,
-                    }}
-                  >
-                    <span style={{ fontSize: '1.3rem' }}>📷</span>
-                    <span>Take photo</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openPhotoPicker(false)}
+                    onClick={openPhotoPicker}
                     style={{
                       flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                       padding: '18px 12px',

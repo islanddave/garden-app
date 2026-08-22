@@ -235,9 +235,11 @@ export default function PlantingTile({
           </div>
           {/* V4-DESIGNSYS-001 (bite 3): ONE "Add photo" control (media.camera Icon) replaces the former
               dual take/choose emoji buttons — declutters the footer's competing-salience cluster and finishes
-              the Garden emoji->Icon language. mode="single" + capture="" opens the native chooser (camera
-              OR library on iOS; library-first on Android 13+), and PRESERVES the stable plant-list-photo-<id>
-              input-id contract that automated bulk-attach sessions drive. ariaLabel names the icon-only
+              the Garden emoji->Icon language. V4-HIDECAPTURE-001 retired the `mode`/`capture` props this
+              call site used to pass: PhotoUpload now has exactly one behaviour — open the native chooser,
+              never the camera — so the explicit opt-out is gone because the opt-in no longer exists. The
+              stable plant-list-photo-<id> input-id contract that automated bulk-attach sessions drive is
+              UNCHANGED. ariaLabel names the icon-only
               control. V4-TAPCARD-001: raised above the stretched card overlay (z1) so it stays tappable. */}
           <span style={{ position: 'relative', zIndex: 2 }}>
           <PhotoUpload
@@ -245,8 +247,6 @@ export default function PlantingTile({
             parentId={pl.id}
             linkage={{ plant_id: pl.id, project_id: pl.project_id }}
             errorMode="surface"
-            mode="single"
-            capture=""
             buttonLabel={<Icon name="media.camera" size={17} decorative style={{ color: P.mid }} />}
             ariaLabel="Add photo"
             showPreview={false}

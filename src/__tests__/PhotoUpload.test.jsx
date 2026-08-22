@@ -49,22 +49,33 @@ describe('PhotoUpload — render', () => {
     expect(screen.getByText('Take Photo')).toBeTruthy();
   });
 
-  it('sets capture="environment" by default on the input', () => {
+  // V4-HIDECAPTURE-001 (BD-032, Dave 2026-08-21). These three tests used to pin the OPPOSITE:
+  // capture="environment" by default, absent only when a caller opted out. The camera is now
+  // removed from the component's API entirely, so the absence of the attribute is the feature.
+  //
+  // THE ABSENCE IS WHAT NEEDS PINNING, precisely because it is invisible in a diff. Nothing about
+  // the rendered output shows that `capture` was deliberately not written; re-adding it "for
+  // mobile" would look like an addition rather than a reversal, and no other test would fail.
+  it('NEVER sets a capture attribute — the camera is not reachable from this component', () => {
     render(<PhotoUpload />);
     const input = screen.getByTestId('photo-upload-input');
-    expect(input.getAttribute('capture')).toBe('environment');
+    expect(input.hasAttribute('capture')).toBe(false);
   });
 
-  it('omits capture attribute when capture prop is empty string', () => {
-    render(<PhotoUpload capture="" />);
+  // The prop is GONE, not defaulted-off. A component that still accepts `capture` is one prop away
+  // from a silent camera; this asserts the escape hatch does not exist rather than that it is unused.
+  it('ignores a capture prop entirely — the escape hatch was removed, not merely defaulted', () => {
+    render(<PhotoUpload capture="environment" />);
     const input = screen.getByTestId('photo-upload-input');
     expect(input.hasAttribute('capture')).toBe(false);
   });
 
-  it('omits capture attribute when capture prop is null', () => {
-    render(<PhotoUpload capture={null} />);
-    const input = screen.getByTestId('photo-upload-input');
-    expect(input.hasAttribute('capture')).toBe(false);
+  // The mode="both" two-button UI is gone: exactly one trigger, and the take arm's testid with it.
+  it('renders exactly ONE trigger and no take-photo arm', () => {
+    render(<PhotoUpload />);
+    expect(screen.getByTestId('photo-upload-trigger')).toBeTruthy();
+    expect(screen.queryByTestId('photo-upload-take')).toBeNull();
+    expect(screen.queryByTestId('photo-upload-choose')).toBeNull();
   });
 
   it('input accepts image/* by default', () => {
@@ -242,17 +253,16 @@ describe('PhotoUpload — single-mode keyboard reachability (BUG-PHOTOUPLOADKBD-
     expect(clickSpy).not.toHaveBeenCalled();
   });
 
-  it('opening the picker leaves single-mode capture as the JSX set it', async () => {
+  it('opening the picker never adds a capture attribute at runtime', async () => {
     const user = userEvent.setup();
     render(<PhotoUpload buttonLabel="Add Photo" />);
     const input = screen.getByTestId('photo-upload-input');
     vi.spyOn(input, 'click');
     await user.click(screen.getByRole('button', { name: 'Add Photo' }));
-    // openPicker is shared with both mode, where it SETS/REMOVES capture per choice. Single mode's
-    // capture is a prop-driven static, so it must pass no argument and openPicker must test for an
-    // explicit boolean — a truthy test would strip capture="environment" on every open and silently
-    // kill camera invocation on Android.
-    expect(input.getAttribute('capture')).toBe('environment');
+    // V4-HIDECAPTURE-001: openPicker used to be tri-state and SET the attribute imperatively for the
+    // take arm. Asserting absence AFTER a click, not just on first render, is the point — a static
+    // JSX check alone would not catch a reinstated setAttribute inside the handler.
+    expect(input.hasAttribute('capture')).toBe(false);
   });
 });
 

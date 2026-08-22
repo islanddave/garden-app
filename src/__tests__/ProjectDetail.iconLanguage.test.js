@@ -20,8 +20,11 @@ describe('V4-ICON-001 ProjectDetail emoji purge', () => {
     expect(src).not.toContain('chooseLabel="🖼️"')
     expect(src).not.toMatch(/mode="both"/)
   })
-  it('the two card/project uploaders use single-mode media.camera', () => {
-    expect((src.match(/mode="single"/g) || []).length).toBeGreaterThanOrEqual(2)
+  it('the two card/project uploaders use the media.camera icon', () => {
+    // V4-HIDECAPTURE-001 retired the `mode` prop entirely, so counting mode="single" now counts a
+    // construct that cannot exist. Assert its ABSENCE plus the icon contract that was the real point.
+    expect(src).not.toMatch(/mode="single"/)
+    expect(src).not.toMatch(/capture=/)
     expect((src.match(/name="media\.camera"/g) || []).length).toBeGreaterThanOrEqual(3)
   })
   it('preserves the plant-photo / project-photo inputId automation contracts', () => {

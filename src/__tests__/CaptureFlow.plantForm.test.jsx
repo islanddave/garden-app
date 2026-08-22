@@ -392,7 +392,7 @@ describe('V4-PLANTFORMUNIFY-001 — the added fields are wired, not decorative',
     await act(async () => { fireEvent.click(saveBtn()) })
     await waitFor(() => expect(screen.getByTestId('cap-next')).toBeDefined())
     await act(async () => { fireEvent.click(screen.getByTestId('cap-next')) })
-    await waitFor(() => expect(screen.getByTestId('cap-take')).toBeDefined())
+    await waitFor(() => expect(screen.getByTestId('cap-choose')).toBeDefined())
     const file = new File(['x'], 'again.jpg', { type: 'image/jpeg' })
     await act(async () => { fireEvent.change(screen.getByTestId('capture-input'), { target: { files: [file] } }) })
     await act(async () => { fireEvent.click(screen.getByTestId('mode-planting')) })

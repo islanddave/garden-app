@@ -775,7 +775,6 @@ export default function EventDetail() {
             parentId={event.id}
             linkage={{ event_id: event.id, project_id: event.project_id ?? projectId ?? null }}
             errorMode="swallow"
-            mode="both"
             inputId={`event-photo-${event.id}`}
             // V4-DIRTYGUARDSWEEP-001: these three props already existed and this page passed none
             // of them. They are the only signal the component gives that bytes are in flight — see

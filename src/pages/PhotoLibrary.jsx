@@ -362,11 +362,10 @@ export default function PhotoLibrary() {
 
   // BUG-PHOTOFIRST-001: open the picker inside the tap. Same reason CaptureFlow and EventNew do it
   // this way — a picker opened from a later effect has lost the trusted gesture and is suppressed.
-  function openStagedPicker(useCamera) {
+  // V4-HIDECAPTURE-001: no camera arm, so no capture toggle — straight to the picker.
+  function openStagedPicker() {
     const el = stagedInputRef.current
     if (!el) return
-    if (useCamera) el.setAttribute('capture', 'environment')
-    else el.removeAttribute('capture')
     el.click()
   }
 
@@ -705,13 +704,10 @@ export default function PhotoLibrary() {
                 style={{ display: 'none' }}
                 data-testid="pl-staged-input"
               />
+              {/* V4-HIDECAPTURE-001: the pl-stage-take arm is removed; Choose is the only entry. */}
               {!stagedPreview ? (
                 <div style={{ display: 'flex', gap: 10 }}>
-                  <button type="button" data-testid="pl-stage-take" onClick={() => openStagedPicker(true)}
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }}>
-                    <span style={{ fontSize: '1.3rem' }}>📷</span><span>Take photo</span>
-                  </button>
-                  <button type="button" data-testid="pl-stage-choose" onClick={() => openStagedPicker(false)}
+                  <button type="button" data-testid="pl-stage-choose" onClick={openStagedPicker}
                     style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }}>
                     <span style={{ fontSize: '1.3rem' }}>🖼️</span><span>Choose photo</span>
                   </button>
@@ -721,7 +717,7 @@ export default function PhotoLibrary() {
                   <img src={stagedPreview} alt="Upload preview" data-testid="pl-staged-preview"
                     style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
-                    <button type="button" data-testid="pl-stage-replace" onClick={() => openStagedPicker(false)}
+                    <button type="button" data-testid="pl-stage-replace" onClick={openStagedPicker}
                       style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
                       Change photo
                     </button>

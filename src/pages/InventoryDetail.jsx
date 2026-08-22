@@ -278,7 +278,6 @@ export default function InventoryDetail() {
             parentId={item.id}
             linkage={{ inventory_item_id: item.id }}
             errorMode="surface"
-            mode="both"
             inputId={`inventory-photo-${item.id}`}
           />
         </div>

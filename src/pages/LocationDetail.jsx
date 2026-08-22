@@ -125,7 +125,6 @@ export default function LocationDetail() {
             parentId={location.id}
             linkage={{ location_id: location.id }}
             errorMode="surface"
-            mode="both"
             onUploadComplete={loadPhotos}
             inputId={`location-photo-${location.id}`}
           />

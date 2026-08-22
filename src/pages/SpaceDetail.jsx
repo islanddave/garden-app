@@ -208,7 +208,6 @@ export default function SpaceDetail() {
             keyPrefix="standalone"
             linkage={{ space_id: spaceId }}
             errorMode="surface"
-            mode="both"
             onUploadComplete={() => { setGalleryTick((t) => t + 1); setHeroTick((t) => t + 1) }}
             inputId={`space-photo-${spaceId}`}
           />
