@@ -33,7 +33,30 @@ async function getSecrets() {
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate.
 
 // Server-side allowlist of the M1 flows. A client cannot invent flow_ids.
-export const ALLOWED_FLOWS = new Set(['log_watering', 'reach_planting', 'create_project']);
+//
+// THIS SET SILENTLY DROPS ANYTHING NOT IN IT, and that has already cost 2.5 months of data.
+// `open_planting` shipped in the CLIENT on 2026-06-03 (V3-NAV-001, PlantingDetail.jsx:115) and was
+// never added here, so every one of its events was rejected with a 200-shaped no-op. Measured on
+// live prod 2026-08-22: ux_events holds reach_planting 244, log_watering 215, create_project 53,
+// and open_planting ZERO. uxEvents.js predicted this exact outcome in a comment — "if the Lambda
+// allowlist hasn't added 'open_planting' yet, sendUxEvent is a silent no-op" — and called the
+// resulting gap a deliberate temporary double-signal during the nav cutover. It was never double:
+// PlantingDetail REPLACED ProjectDetail as the way in, so as the old surface fell out of use the
+// funnel fell to zero rather than handing over. reach_planting's last row is 2026-08-10.
+//
+// The drop is now pinned by ux-events.flowLockstep.test.js, which fails if any client FLOWS value
+// is missing here. That guard is the actual fix; adding two strings is just today's instance.
+export const ALLOWED_FLOWS = new Set([
+  'log_watering',
+  'reach_planting',
+  'create_project',
+  // Dropped for 2.5 months — see above.
+  'open_planting',
+  // V4-PHOTOUPLOADINSTR-001: one event per photo upload carrying which downscale branch ran and how
+  // long each phase took. BUG-PHOTOUPLOADSLOW-001 could be measured but not DIAGNOSED, because the
+  // branch that decides a 680 kB upload from an 8.8 MB one is a console.warn nobody collects.
+  'photo_upload',
+]);
 
 function resp(statusCode, body) {
   return {

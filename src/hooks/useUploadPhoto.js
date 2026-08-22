@@ -32,6 +32,7 @@ import { downscaleWithThumb } from '../lib/imageDownscale.js';
 import { readCaptureMeta } from '../lib/imagePipeline.js';
 import { stripImageFile } from '../lib/imageMetadataStrip.js';
 import { putWithProgress } from '../lib/uploadPut.js';
+import { sendUxEvent, FLOWS } from '../lib/uxEvents.js';
 
 // Step 2b only. The thumb is ~50KB; if it has not landed in 10s it is not going to, and it must
 // never be the reason a save hangs (see the bounded-PUT note at its call site).
@@ -93,7 +94,11 @@ function genUuid() {
 }
 
 export function useUploadPhoto({ errorMode = 'surface' } = {}) {
-  const { fetch } = useApiFetch();
+  // getToken is for the V4-PHOTOUPLOADINSTR-001 beacon only. Taken from useApiFetch rather than
+  // Clerk directly for the reason uxEvents.js documents: consumer tests that mock '../lib/api.js'
+  // then neutralize the Clerk dependency automatically, so instrumenting this hook does not force a
+  // ClerkProvider into every test that uploads a photo.
+  const { fetch, getToken } = useApiFetch();
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError]             = useState(null);
   const [photo, setPhoto]             = useState(null);
@@ -178,16 +183,23 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // BUG-PHOTOUPLOADHANG-001: raced against DOWNSCALE_DEADLINE_MS — a decode that never
       // settles must not wedge the save; the module's own fail-safe (original file, no thumb)
       // is applied by deadline.
-      let { file: upFile, thumb } = await new Promise((resolve) => {
+      // V4-PHOTOUPLOADINSTR-001: `outcome` distinguishes the five fail-safe paths that all hand back
+      // the ORIGINAL file. The deadline arm is the one this instrumentation exists to catch — it is
+      // the only bypass whose cause is OUTSIDE imageDownscale, and the leading hypothesis for the
+      // 11 consecutive 5.8-10 MB uploads measured on prod between 11:14 and 11:33 on 2026-08-21.
+      const tDownscale = Date.now();
+      let { file: upFile, thumb, outcome: downscaleOutcome } = await new Promise((resolve) => {
         const timer = setTimeout(() => {
           console.warn(`downscaleWithThumb did not settle in ${DOWNSCALE_DEADLINE_MS}ms — uploading the original`);
-          resolve({ file, thumb: null });
+          resolve({ file, thumb: null, outcome: 'bypass:deadline' });
         }, DOWNSCALE_DEADLINE_MS);
         downscaleWithThumb(file).then(
-          (v) => { clearTimeout(timer); resolve(v && v.file ? v : { file, thumb: null }); },
-          () => { clearTimeout(timer); resolve({ file, thumb: null }); },
+          (v) => { clearTimeout(timer); resolve(v && v.file ? v : { file, thumb: null, outcome: 'bypass:empty-return' }); },
+          () => { clearTimeout(timer); resolve({ file, thumb: null, outcome: 'bypass:rejected' }); },
         );
       });
+      downscaleOutcome = downscaleOutcome ?? 'unknown';
+      const downscaleMs = Date.now() - tDownscale;
 
       // V4-PHOTOEXIFSTRIP-001 — nothing reaches S3 carrying the camera's capture metadata. Dave's
       // garden IS his home, so a GPS tag is his home address (measured on his own originals:
@@ -232,8 +244,10 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // with its metadata and a console.warn, exactly as before. The SHARE layer
       // (harvestPostPhotos.js) stays fail-closed unconditionally, so nothing unstripped is ever
       // published — there the cost of refusing is one photo missing from a post, not a lost photo.
+      const tStrip = Date.now();
       upFile = await stripImageFile(upFile);
       if (thumb) thumb = await stripImageFile(thumb);
+      const stripMs = Date.now() - tStrip;
 
       // Set up preview eagerly — caller may want to render before upload completes.
       // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.
@@ -248,17 +262,21 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       const key  = buildPhotoKey({ prefix: keyPrefix, id: parentId, uuid, ext });
 
       // Step 1: presign
+      const tPresign = Date.now();
       const presign = await fetch(
         `/api/photos/upload-url?key=${encodeURIComponent(key)}&content_type=${encodeURIComponent(mime)}`
       );
       if (!presign?.upload_url) throw new Error('Presign response missing upload_url');
+      const presignMs = Date.now() - tPresign;
 
       // Step 2: direct PUT to S3 (no auth header — URL is pre-signed).
       // BUG-PHOTOUPLOADHANG-001: was a bare window.fetch with NO bound — the traced hang site
       // (presign logged, no S3 object, no register). Now progress-aware with a stall watchdog:
       // aborts only when bytes stop moving, so a slow-but-moving fallback original still lands.
       setStage('uploading');
+      const tPut = Date.now();
       let relayedThumb = false;
+      let usedRelay = false;
       try {
         await putWithProgress(presign.upload_url, upFile, mime, { onProgress: setProgress });
       } catch (putErr) {
@@ -280,7 +298,9 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
         }
         if (!relay?.ok) throw putErr;
         relayedThumb = !!relay.thumb;
+        usedRelay = true;
       }
+      const putMs = Date.now() - tPut;
       setStage('saving');
       setProgress(null);
 
@@ -360,6 +380,43 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
         }),
       });
 
+      // V4-PHOTOUPLOADINSTR-001 — ONE fire-and-forget event per upload, carrying the branch that ran
+      // and where the wall-clock went. This is the signal BUG-PHOTOUPLOADSLOW-001 needed and did not
+      // have: photos.file_size_bytes exists on 33 of ~1300 rows and records only the OUTCOME size,
+      // never the reason. With this, the next slow upload names its own cause.
+      //
+      // NO FILENAME, NO KEY, NO CAPTION. Sizes, durations and a branch label only — this is a
+      // telemetry table, and an original_filename is user content that has no business in it.
+      // sendUxEvent swallows every error and no-ops when the endpoint is unset, so nothing here can
+      // fail or delay the save; it is deliberately placed AFTER the row is registered so that even a
+      // throw inside it could not cost the photo.
+      // ISOLATED, not merely "designed not to throw". This call sits INSIDE upload()'s try block, so
+      // anything escaping it is caught below and turned into { error } — for an upload whose row is
+      // ALREADY registered, i.e. a succeeded save reported as a failure. sendUxEvent swallows its own
+      // errors and is async (so it cannot throw synchronously today), but that is a property of the
+      // callee, and this call site must not depend on it: a future refactor to a sync wrapper would
+      // silently start costing photos. The .catch covers the rejected-promise arm for the same reason.
+      try {
+        Promise.resolve(sendUxEvent(getToken, {
+          flowId: FLOWS.PHOTO_UPLOAD,
+          stepIndex: 99,
+          stepName: downscaleOutcome,
+          meta: {
+            outcome: downscaleOutcome,
+            in_bytes: typeof file.size === 'number' ? file.size : null,
+            out_bytes: typeof upFile.size === 'number' ? upFile.size : null,
+            had_thumb: !!thumb,
+            used_relay: usedRelay,
+            downscale_ms: downscaleMs,
+            strip_ms: stripMs,
+            presign_ms: presignMs,
+            put_ms: putMs,
+            total_ms: Date.now() - tDownscale,
+            mime,
+          },
+        })).catch(() => {});
+      } catch { /* telemetry must never affect the save */ }
+
       setPhoto(registered);
       // V4-IMGCACHE-001 D-1: a new photo can land in ANY cached photo list — the /api/photos wall, a
       // ?attachedTo= gallery (via the server-side event→plant union), a ?location_id= grid. The client
@@ -382,7 +439,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       console.error('useUploadPhoto (swallow):', msg);
       return { error: msg };
     }
-  }, [fetch, errorMode]);
+  }, [fetch, getToken, errorMode]);
 
   return { upload, isUploading, error, photo, preview, reset, stage, progress };
 }

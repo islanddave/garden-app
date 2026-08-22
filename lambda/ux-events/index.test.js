@@ -26,11 +26,16 @@ const decomment = (s) => s.split('\n')
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
 describe('ux-events allowlist (static-source)', () => {
-  it('declares exactly the three M1 flows in ALLOWED_FLOWS', () => {
+  // V4-PHOTOUPLOADINSTR-001 grew this from three to five. 'open_planting' had shipped in the CLIENT
+  // on 2026-06-03 and was never listed here, so it recorded ZERO prod rows in 2.5 months; this exact
+  // assertion was green throughout, because "exactly the three" describes the server in isolation
+  // and the defect was a DISAGREEMENT. flowLockstep.test.js is the guard that can see it — this one
+  // remains useful only as a pin on the literal set.
+  it('declares exactly the five allowed flows in ALLOWED_FLOWS', () => {
     const m = SRC.match(/ALLOWED_FLOWS = new Set\(\[([^\]]*)\]\)/);
     expect(m, 'expected ALLOWED_FLOWS Set literal').toBeTruthy();
     const flows = m[1].match(/'[^']+'/g).map((s) => s.replace(/'/g, '')).sort();
-    expect(flows).toEqual(['create_project', 'log_watering', 'reach_planting']);
+    expect(flows).toEqual(['create_project', 'log_watering', 'open_planting', 'photo_upload', 'reach_planting']);
   });
 });
 

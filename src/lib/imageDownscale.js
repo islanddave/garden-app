@@ -107,27 +107,35 @@ export async function downscaleWithThumb(file, opts = {}) {
     thumbQuality = THUMB_QUALITY,
   } = opts;
 
-  const asIs = { file, thumb: null };
+  // V4-PHOTOUPLOADINSTR-001 — `outcome` names WHICH branch ran. Every early return below hands back
+  // the ORIGINAL file, and until now they were indistinguishable from each other and from a resize
+  // that simply wasn't worth doing. That is the whole reason BUG-PHOTOUPLOADSLOW-001 could be
+  // measured and not diagnosed: nine uploads of 5.8-10 MB were observed on prod, the same source
+  // file came through at 680 kB and 8,813 kB on the same day, and nothing recorded which of five
+  // fail-safe paths produced the big one. The value is telemetry only — no caller branches on it,
+  // and the fail-safe contract (never block an upload) is unchanged.
+  const asIs = (outcome) => ({ file, thumb: null, outcome });
   try {
-    if (!file || typeof file.type !== 'string' || !file.type.startsWith('image/')) return asIs;
-    if (typeof createImageBitmap !== 'function') return asIs;
+    if (!file || typeof file.type !== 'string' || !file.type.startsWith('image/')) return asIs('skip:not-an-image');
+    if (typeof createImageBitmap !== 'function') return asIs('bypass:no-createimagebitmap');
 
     let bitmap;
     try {
       bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
     } catch {
-      return asIs; // undecodable codec (e.g. HEIC where unsupported) — upload the original
+      return asIs('bypass:undecodable'); // undecodable codec (e.g. HEIC where unsupported)
     }
 
     try {
       const { width, height } = bitmap;
-      if (!width || !height) return asIs;
+      if (!width || !height) return asIs('bypass:zero-dimensions');
 
       // ---- main upload bytes ----
       // Below minBytes, re-encoding the FULL image costs more than it saves, so the original is
       // uploaded as-is. That says nothing about the thumb, which is still a large win — a 400KB
       // 3000px photo makes a ~50KB thumb — so the thumb is decided separately below.
       let outFile = file;
+      let outcome = 'skip:under-min-bytes';
       const worthResizing = !(typeof file.size === 'number' && file.size < minBytes);
       if (worthResizing) {
         const type = outputTypeFor(file.type);
@@ -139,6 +147,13 @@ export async function downscaleWithThumb(file, opts = {}) {
             type,
             lastModified: file.lastModified ?? Date.now(),
           });
+          outcome = 'downscaled';
+        } else if (!blob) {
+          // renderScaled returns null when the environment has no usable canvas. Distinguished from
+          // the re-encode-grew case below because they have opposite fixes.
+          outcome = 'bypass:no-canvas';
+        } else {
+          outcome = 'bypass:reencode-grew';
         }
       }
 
@@ -154,12 +169,12 @@ export async function downscaleWithThumb(file, opts = {}) {
         if (tb && tb.size) thumb = tb;
       }
 
-      return { file: outFile, thumb };
+      return { file: outFile, thumb, outcome };
     } finally {
       bitmap.close?.(); // MANDATORY — see imagePipeline.js rule 3 (native buffer, GC can't see it)
     }
   } catch {
-    return asIs; // belt-and-braces: never let this path fail an upload
+    return asIs('bypass:threw'); // belt-and-braces: never let this path fail an upload
   }
 }
 

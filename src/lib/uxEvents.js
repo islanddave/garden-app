@@ -17,11 +17,18 @@ import { useApiFetch } from './api.js'
 // Temporary double-signal is intentional — reconcile after both are visible in the funnel.
 // If the Lambda allowlist hasn't added 'open_planting' yet, sendUxEvent is a silent no-op
 // (server drops unknown flows), so this is safe to ship ahead of the server allowlist.
+// V4-PHOTOUPLOADINSTR-001: the comment above was right and its consequence was worse than "safe to
+// ship ahead of the server allowlist". `open_planting` shipped here 2026-06-03 and was NEVER added
+// to the Lambda, so it recorded ZERO rows in 2.5 months while PlantingDetail replaced ProjectDetail
+// as the way in — the funnel did not double-signal, it handed over to a flow that was being dropped.
+// Both are in ALLOWED_FLOWS now, and ux-events.flowLockstep.test.js fails if this object ever again
+// carries a value the server does not accept. Add flows in PAIRS, or the guard will tell you.
 export const FLOWS = {
   LOG_WATERING: 'log_watering',
   REACH_PLANTING: 'reach_planting',
   OPEN_PLANTING: 'open_planting',
   CREATE_PROJECT: 'create_project',
+  PHOTO_UPLOAD: 'photo_upload',
 }
 
 const UX_BASE = (import.meta.env.VITE_API_UX_EVENTS ?? '').replace(/\/$/, '')

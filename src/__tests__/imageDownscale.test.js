@@ -147,10 +147,25 @@ describe('downscaleWithThumb', () => {
     expect(out.thumb).toBeNull();
   });
 
+  // V4-PHOTOUPLOADINSTR-001 added `outcome` to every return. The fail-safe CONTRACT is unchanged —
+  // still the original file and no thumb — so these assert the same behaviour plus the label that
+  // now names which branch produced it.
   it('fail-safe on a non-image and on nullish input', async () => {
     const t = fakeFile('notes.txt', 'text/plain', 4_000_000);
-    expect(await downscaleWithThumb(t)).toEqual({ file: t, thumb: null });
-    expect(await downscaleWithThumb(null)).toEqual({ file: null, thumb: null });
+    expect(await downscaleWithThumb(t)).toEqual({ file: t, thumb: null, outcome: 'skip:not-an-image' });
+    expect(await downscaleWithThumb(null)).toEqual({ file: null, thumb: null, outcome: 'skip:not-an-image' });
+  });
+
+  // THE POINT OF THE WHOLE CHANGE: the five paths that all hand back the original are now
+  // distinguishable from each other. Before this, a 10 MB upload could not say WHY it was 10 MB.
+  it('labels the bypass branches distinctly — an undecodable codec is not an under-min-bytes skip', async () => {
+    stubPipeline({ width: 4032, height: 3024, outBytes: 300_000 });
+    const small = await downscaleWithThumb(fakeFile('tiny.jpg', 'image/jpeg', 100_000));
+    expect(small.outcome).toBe('skip:under-min-bytes');
+    expect(small.file.size).toBe(100_000);
+
+    const big = await downscaleWithThumb(fakeFile('DSC.jpg', 'image/jpeg', 6_000_000));
+    expect(big.outcome).toBe('downscaled');
   });
 
   it('produces BOTH the 2048px upload file and an 800px thumb from ONE decode', async () => {
