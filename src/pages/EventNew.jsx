@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useId } from 'react'
 import { takePendingCapture } from '../lib/pendingCapture.js'
 import { createFinalResultReader } from '../lib/voiceResults.js'
+import { createVoiceShapeRecorder } from '../lib/voiceShape.js'
 import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
 import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import ProjectOptions from '../components/ProjectOptions.jsx'
@@ -30,7 +31,7 @@ const QTY_CHIPS = ['1', '2', '3', '4', '5', '6']
 // place to correct it. The 120px base for the action row alone is unchanged and stays inline.
 const POST_SAVE_STRIP_SPACER_PX = 86
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
-import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
+import { useUxFlow, FLOWS, sendUxEvent } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, SelectChip } from '../components/forms'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
@@ -253,6 +254,9 @@ function useVoiceInput() {
   const [listening, setListening] = useState(false)
   const [fieldKey,  setFieldKey]  = useState(null)
   const recRef = useRef(null)
+  // BUG-VOICEDUPE-003 shape telemetry only. Routed through useApiFetch rather than Clerk directly
+  // so the many EventNew tests that mock '../lib/api.js' keep neutralizing it automatically.
+  const { getToken } = useApiFetch()
 
   const supported = typeof window !== 'undefined' &&
     !!(window.SpeechRecognition || window.webkitSpeechRecognition)
@@ -293,11 +297,35 @@ function useVoiceInput() {
     // createFinalResultReader() carries a high-water mark, so each result index is emitted at most
     // once per recognizer no matter how many events visit it.
     const readNewFinals = createFinalResultReader()
+    // BUG-VOICEDUPE-003 — the capture the -002 acceptance test asked for and never got, made
+    // automatic. voiceDebug.js still writes the full local log behind its flag; this is the
+    // shape-only summary that ships without Dave having to enable anything, reproduce on demand and
+    // export by hand. Three reports in, that manual capture does not exist and will not appear.
+    const shape = createVoiceShapeRecorder()
+    let emitted = 0
     rec.onresult = (e) => {
       recordVoiceEvent(`EventNew:${key}`, e)
-      for (const text of readNewFinals(e)) onResult(text)
+      shape.observe(e)
+      for (const text of readNewFinals(e)) { emitted += 1; onResult(text) }
     }
-    rec.onend  = () => { recordVoiceMark(`EventNew:${key}`, 'end'); setListening(false); setFieldKey(null) }
+    rec.onend  = () => {
+      recordVoiceMark(`EventNew:${key}`, 'end')
+      // Isolated for the same reason the photo beacon is (V4-PHOTOUPLOADINSTR-001): telemetry that
+      // can throw into onend would break the listening-state reset below it, so nothing here may
+      // escape. Emitted only when something was actually transcribed — a cancelled or silent
+      // session is not a sample and would dilute the very rate we are trying to read.
+      if (emitted > 0) {
+        try {
+          Promise.resolve(sendUxEvent(getToken, {
+            flowId: FLOWS.VOICE_INPUT,
+            stepIndex: 99,
+            stepName: key,
+            meta: shape.summary(emitted),
+          })).catch(() => {})
+        } catch { /* telemetry must never affect voice input */ }
+      }
+      setListening(false); setFieldKey(null)
+    }
     rec.onerror = (e) => {
       recordVoiceMark(`EventNew:${key}`, 'error', e && e.error)
       setListening(false); setFieldKey(null)
@@ -308,7 +336,7 @@ function useVoiceInput() {
     rec.start()
     setListening(true)
     setFieldKey(key)
-  }, [supported])
+  }, [supported, getToken])
 
   const stop = useCallback(() => {
     recRef.current?.stop()

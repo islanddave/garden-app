@@ -21,7 +21,7 @@ describe('uxEvents FLOWS + session', () => {
     // while PlantingDetail replaced ProjectDetail as the way in. This list passing was never
     // evidence the flow worked — it only ever described the client half.
     // lambda/ux-events/flowLockstep.test.js is what checks the halves against each other.
-    expect(Object.values(FLOWS).sort()).toEqual(['create_project', 'log_watering', 'open_planting', 'photo_upload', 'reach_planting'])
+    expect(Object.values(FLOWS).sort()).toEqual(['create_project', 'log_watering', 'open_planting', 'photo_upload', 'reach_planting', 'voice_input'])
   })
 
   it('getSessionId is stable across calls', () => {

@@ -31,11 +31,11 @@ describe('ux-events allowlist (static-source)', () => {
   // assertion was green throughout, because "exactly the three" describes the server in isolation
   // and the defect was a DISAGREEMENT. flowLockstep.test.js is the guard that can see it — this one
   // remains useful only as a pin on the literal set.
-  it('declares exactly the five allowed flows in ALLOWED_FLOWS', () => {
+  it('declares exactly the allowed flows in ALLOWED_FLOWS', () => {
     const m = SRC.match(/ALLOWED_FLOWS = new Set\(\[([^\]]*)\]\)/);
     expect(m, 'expected ALLOWED_FLOWS Set literal').toBeTruthy();
     const flows = m[1].match(/'[^']+'/g).map((s) => s.replace(/'/g, '')).sort();
-    expect(flows).toEqual(['create_project', 'log_watering', 'open_planting', 'photo_upload', 'reach_planting']);
+    expect(flows).toEqual(['create_project', 'log_watering', 'open_planting', 'photo_upload', 'reach_planting', 'voice_input']);
   });
 });
 

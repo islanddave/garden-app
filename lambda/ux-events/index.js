@@ -56,6 +56,10 @@ export const ALLOWED_FLOWS = new Set([
   // long each phase took. BUG-PHOTOUPLOADSLOW-001 could be measured but not DIAGNOSED, because the
   // branch that decides a 680 kB upload from an 8.8 MB one is a console.warn nobody collects.
   'photo_upload',
+  // BUG-VOICEDUPE-003: the SHAPE of a recognition session (indices, finality, lengths, equality
+  // relations) — never the words. Two index-keyed fixes have already shipped and missed; this
+  // carries the discriminator that says whether the duplicate arrives at a NEW index.
+  'voice_input',
 ]);
 
 function resp(statusCode, body) {

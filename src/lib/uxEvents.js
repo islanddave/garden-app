@@ -29,6 +29,7 @@ export const FLOWS = {
   OPEN_PLANTING: 'open_planting',
   CREATE_PROJECT: 'create_project',
   PHOTO_UPLOAD: 'photo_upload',
+  VOICE_INPUT: 'voice_input',
 }
 
 const UX_BASE = (import.meta.env.VITE_API_UX_EVENTS ?? '').replace(/\/$/, '')
