@@ -118,3 +118,37 @@ describe('index.js preparePhoto call site (SOURCE-TEXT guard — asserts shape, 
     expect(body.slice(guard)).toMatch(/userFacing\s*=\s*true/);
   });
 });
+
+// ── BUG-FBSHAREBYTES-001 — LAYER 2: SOURCE-TEXT GUARD, not behaviour ────────────────────────────
+// Same caveat as the guards above and stated the same way so nobody reads it as more: index.js
+// cannot be imported here, so this asserts the SHAPE of the call site, never what it does. The
+// batching itself has real execution coverage in batch.test.js — that is why it lives in its own
+// import-free module.
+describe('the prepare step is bounded, not unbounded (source shape)', () => {
+  const src = readFileSync(join(here, 'index.js'), 'utf8');
+
+  it('prepares photos through mapInBatches, not a bare Promise.all over every row', () => {
+    // The live shape was `Promise.all(ordered.map((row) => preparePhoto(row)))`, which downloaded up
+    // to 10 ORIGINALS at once — measured prod photos reach 10 MB, so ~78 MB of originals plus their
+    // stripped and Blob copies on a 1024 MB function with a 106 MB baseline.
+    expect(src).toMatch(/prepared\s*=\s*await\s+mapInBatches\(\s*ordered,\s*PREPARE_CONCURRENCY/);
+    expect(src).not.toMatch(/Promise\.all\(\s*ordered\.map/);
+  });
+
+  it('declares a concurrency that is actually bounded', () => {
+    const m = src.match(/export const PREPARE_CONCURRENCY = (\d+);/);
+    expect(m).toBeTruthy();
+    const n = Number(m[1]);
+    expect(n).toBeGreaterThan(0);
+    // Below MAX_PHOTOS or it is not a bound at all — it would just be Promise.all spelled longer.
+    expect(n).toBeLessThan(10);
+  });
+
+  it('still fetches the ORIGINAL, so the bound is the only thing protecting memory', () => {
+    // Documenting the coupling rather than asserting a fix that is not there: no social-sized
+    // derivative exists (only thumb 96px and card 480px, both WebP, both unusable for a post and
+    // WebP is rejected by Instagram outright). If a derivative is ever introduced, this guard should
+    // be revisited together with PREPARE_CONCURRENCY — the two exist to solve the same problem.
+    expect(src).toMatch(/fetchPhotoBytes\(row\.storage_path\)/);
+  });
+});

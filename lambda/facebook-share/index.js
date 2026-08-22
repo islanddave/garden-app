@@ -32,6 +32,7 @@ import {
   GRAPH_VERSION, MAX_PHOTOS, photoUploadUrl, feedUrl, nodeUrl,
   attachedMediaFields, validateShareRequest, classifyGraphError,
 } from './graph.js';
+import { mapInBatches } from './batch.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // WHEN_REQUIRED: same rationale as lambda/photos — avoid the SDK injecting a checksum header S3
@@ -114,6 +115,10 @@ async function fetchPhotoBytes(storagePath) {
 }
 
 // Prepare one photo: download -> JPEG magic-byte guard -> lossless EXIF strip. Returns upload part.
+// How many photos are downloaded+stripped at once. See the note at the call site: this is a MEMORY
+// bound, not a rate limit. Exported so a test can assert the batching actually happens.
+export const PREPARE_CONCURRENCY = 3;
+
 async function preparePhoto(row) {
   const raw = await fetchPhotoBytes(row.storage_path);
   if (!isJpeg(raw)) {
@@ -268,10 +273,33 @@ async function share(event, secrets, userId) {
     UPDATE share_log SET status = 'failed', error = ${msg}, updated_at = now()
     WHERE post_group_id = ${groupId} AND status IN ('pending', 'uploading')`;
 
-  // Prepare (download + strip) all photos in parallel — independent, cap already <= MAX_PHOTOS.
+  // BUG-FBSHAREBYTES-001 — prepare in BOUNDED batches, not all at once.
+  //
+  // This was Promise.all over every row, which meant up to MAX_PHOTOS originals were downloaded and
+  // stripped concurrently. It fetches ORIGINAL bytes (fetchPhotoBytes(row.storage_path) — no
+  // derivative, no size check), and prod holds photos up to 10 MB: measured 2026-08-21, 9 of the 33
+  // rows carrying file_size_bytes exceed 5 MB, mean 7.8 MB. Ten of those at once is ~78 MB of
+  // originals, plus the stripped copies, plus the Blob copy graphMultipart makes for the upload —
+  // three live sets of the same bytes on a 1024 MB function whose measured baseline is 106 MB.
+  //
+  // Bounding the batch fixes it WITHOUT touching image quality, which is why it is the right fix.
+  // The obvious alternative — fetch a smaller derivative — is not available and would not be free:
+  // the only variants that exist are `thumb` (96x96) and `card` (480px), both WebP. Both are far too
+  // small to publish, and Instagram's API does not accept WebP at all. Using a derivative would mean
+  // BUILDING a new social-sized JPEG variant and deciding what resolution Dave's public photos get
+  // published at — a real decision with a real cost, for a problem concurrency already solves.
+  //
+  // 3 is chosen against the measured worst case rather than as a round number: 3 x 7.8 MB originals
+  // + their stripped copies sits comfortably inside the headroom above the 106 MB baseline, with
+  // room for the upload-side Blob. It costs wall-clock on a 10-photo post (4 sequential batches
+  // instead of 1) against a 180 s timeout, which is the correct trade — a slower post beats an
+  // out-of-memory kill that takes the whole post with it.
+  //
+  // ORDER IS PRESERVED: batches are awaited in sequence and concatenated, so prepared[] still
+  // matches ordered[]. The carousel cover is prepared[0] and must stay the photo Dave picked first.
   let prepared;
   try {
-    prepared = await Promise.all(ordered.map((row) => preparePhoto(row)));
+    prepared = await mapInBatches(ordered, PREPARE_CONCURRENCY, (row) => preparePhoto(row));
   } catch (err) {
     await failAll(err?.message ?? 'photo preparation failed');
     throw err;
