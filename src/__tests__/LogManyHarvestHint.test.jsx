@@ -9,6 +9,13 @@
 // Own file rather than appended to LogManyPicker.test.jsx: adding a fourth LogMany render to that
 // harness reliably exhausted the JS heap (4GB OOM, worker killed). Not diagnosed further — an
 // isolated harness is cheaper than fighting it, and keeps this assertion independent of that file.
+// COVERAGE LIMIT — this file mocks react-router-dom, including
+// `useSearchParams: () => [new URLSearchParams(), vi.fn()]`, which returns a FRESH identity on every
+// render. LogMany's load effect is keyed on [fetch, params], so under this mock it re-runs on every
+// render; with a real router (measured 2026-08-22, react-router-dom 7.18.1) that identity is stable
+// and the effect runs once. This file therefore cannot say anything about router semantics, effect
+// re-entry, or the BUG-LOGMANYCANCELFLAG-001 params race — it is a rendering test and only that.
+// Real-router coverage of the load effect lives in LogMany.paramsRace.test.jsx.
 import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'

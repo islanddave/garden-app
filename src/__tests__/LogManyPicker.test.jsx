@@ -2,6 +2,13 @@
 // This is the first RENDER test of LogMany (previously only its pure helpers were covered), so it
 // guards the chip->tile swap that is otherwise invisible to CI: tiles are <button>s, photo is
 // hidden in bulk, and the harvest tile routes to the single-event per-plant flow (not a batch select).
+// COVERAGE LIMIT — this file mocks react-router-dom, including
+// `useSearchParams: () => [new URLSearchParams(), vi.fn()]`, which returns a FRESH identity on every
+// render. LogMany's load effect is keyed on [fetch, params], so under this mock it re-runs on every
+// render; with a real router (measured 2026-08-22, react-router-dom 7.18.1) that identity is stable
+// and the effect runs once. This file therefore cannot say anything about router semantics, effect
+// re-entry, or the BUG-LOGMANYCANCELFLAG-001 params race — it is a rendering test and only that.
+// Real-router coverage of the load effect lives in LogMany.paramsRace.test.jsx.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
