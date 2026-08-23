@@ -187,6 +187,11 @@ const HARVEST_SECTION_ID = 'harvest-section'
 const PLANTING_SECTION_ID = 'planting-section'
 // V4-HARVTRAYVIEWPORT-001: aria-controls target for the weigh-in tray's Show more/fewer disclosure.
 const HARVEST_TRAY_ID = 'harvest-session-tray'
+// BUG-TRAYFETCHSILENT-001: a REJECTION marker, deliberately not `null`. Both tray loaders used to
+// `.catch(() => null)`, and `null` is also what a successful-but-empty response reads as downstream
+// (`readyD?.candidates`, `harvD?.entries`) — so the merge could not tell "the fetch failed" from
+// "there is nothing to offer", and both landed on the same zero-chip render.
+const TRAY_FETCH_FAILED = Symbol('tray-fetch-failed')
 
 // `block:'start'` puts the section HEADER at the viewport top, which is what makes the rest of the
 // panel (chips, quantity, weight, error banner, Save) fall into the space the keyboard leaves.
@@ -536,29 +541,38 @@ export default function EventNew() {
   // shut the tray between every pick of a multi-planting queue. Nothing keyed to keyboard state
   // touches this flag, so it cannot thrash as focus moves between fields.
   const [trayExpanded, setTrayExpanded] = useState(false)
+  // BUG-TRAYFETCHSILENT-001 — same shape as plantsLoadFailed/plantsReloadKey below, for the same
+  // reason: a swallowed rejection rendered as a genuinely-empty tray. One flag covers BOTH loaders
+  // (the queue is one surface, so a half-loaded queue is still a queue the user must not trust).
+  const [trayLoadFailed, setTrayLoadFailed] = useState(false)
+  const [trayReloadKey, setTrayReloadKey] = useState(0)
   const [focusQtyNonce, setFocusQtyNonce] = useState(0)
   useEffect(() => {
     if (!inHarvestSession) return
     let off = false
+    setTrayLoadFailed(false)
     // BUG-HARVTRAYEMPTY-001: ready candidates ALONE cannot seed the tray — the readiness model is
     // deliberately strict (repeat-habit crops with a set interval, ≥1 prior harvest, DOY window,
     // overdue_ratio ≤ 3 staleness ceiling), so real weigh-ins routinely include plantings it
     // excludes, and a stale dataset (staging) trips the ceiling on EVERYTHING → zero chips. The
     // field-practitioner seat called this in the crucible ("the list will miss volunteer/off-band
     // picks"). Fallback: recent harvest entries (the plantings Dave actually picks), deduped,
-    // appended after the ready band's order. Both fetches are best-effort — an empty merge just
-    // hides the tray and the picker remains the full path.
+    // appended after the ready band's order. Both fetches stay best-effort — neither can throw into
+    // the weigh-in — but BUG-TRAYFETCHSILENT-001: a rejection is now reported, not swallowed. The
+    // picker remains the full path either way; the difference is that the user is told which of
+    // "nothing is ready" and "we couldn't ask" they are looking at.
     Promise.all([
-      apiFetch('/api/events/harvest-ready').catch(() => null),
-      apiFetch('/api/harvests?include=entries').catch(() => null),
+      apiFetch('/api/events/harvest-ready').catch(() => TRAY_FETCH_FAILED),
+      apiFetch('/api/harvests?include=entries').catch(() => TRAY_FETCH_FAILED),
     ]).then(([readyD, harvD]) => {
       if (off) return
-      const ready = (readyD && Array.isArray(readyD.candidates))
+      setTrayLoadFailed(readyD === TRAY_FETCH_FAILED || harvD === TRAY_FETCH_FAILED)
+      const ready = (readyD !== TRAY_FETCH_FAILED && Array.isArray(readyD?.candidates))
         ? rankHarvestReady(readyD.candidates, readyD.et_doy)
         : []
       const seen = new Set(ready.map(c => c.plant_id))
       const recent = []
-      for (const e of (harvD?.entries ?? [])) {
+      for (const e of (harvD === TRAY_FETCH_FAILED ? [] : (harvD?.entries ?? []))) {
         if (!e.plant_id || e.planting_removed || seen.has(e.plant_id)) continue
         seen.add(e.plant_id)
         recent.push({ plant_id: e.plant_id, project_id: e.project_id, name: e.planting_name ?? 'planting', source: 'recent' })
@@ -593,7 +607,7 @@ export default function EventNew() {
       sendReadyImpressions(apiFetch, merged, selectTrayChips({ chips: merged }).map(c => c.plant_id))
     })
     return () => { off = true }
-  }, [inHarvestSession, apiFetch])
+  }, [inHarvestSession, apiFetch, trayReloadKey])
   useEffect(() => {
     if (!focusQtyNonce) return
     document.getElementById('harvest-quantity')?.focus()
@@ -2489,9 +2503,12 @@ export default function EventNew() {
               {/* V4-HARVSESSION-002: the pre-flight tray — pay the picker cost ONCE, in tap order.
                   States: current (filled pill), queued (· N position suffix), done (✓ prefix, tap
                   again for a second picking — same-day repeats are separate rows by design). The
-                  tray is supplementary: an empty/failed ready fetch renders nothing and the picker
-                  below remains the full path for anything not on the list. */}
-              {inHarvestSession && readyChips.length > 0 && (() => {
+                  tray is supplementary: an empty ready fetch renders nothing and the picker below
+                  remains the full path for anything not on the list.
+                  BUG-TRAYFETCHSILENT-001: a FAILED fetch is no longer part of that "renders
+                  nothing" case. It renders the section with a notice instead, because silence there
+                  is a lie — it tells the user the garden has nothing ready when nobody asked it. */}
+              {inHarvestSession && (readyChips.length > 0 || trayLoadFailed) && (() => {
                 const donePlantIds = new Set(sessionRows.filter(r => !r.undone && r.plantId).map(r => r.plantId))
                 // V4-HARVTRAYVIEWPORT-001. Two bounds, both needed — see src/lib/harvestTray.js for
                 // the measured geometry. The label is one line at 390px now (the old copy wrapped to
@@ -2506,6 +2523,35 @@ export default function EventNew() {
                 const hiddenCount = readyChips.length - shownChips.length
                 return (
                   <Section label="Weigh-in queue — tap in weighing order">
+                    {/* BUG-TRAYFETCHSILENT-001 — same grammar as PlantingSelect's failureNotice
+                        (role="alert" + inline Retry) so the two read as one language. Copy branches
+                        on whether anything survived: a PARTIAL failure still shows chips, and
+                        telling someone the queue is unavailable while chips sit under the notice
+                        would be the same class of lie in the other direction. */}
+                    {trayLoadFailed && (
+                      <div
+                        role="alert"
+                        data-testid="harvest-tray-load-failed"
+                        style={{ marginBottom: 10, fontSize: '0.8rem', color: P.terra, fontWeight: 600 }}
+                      >
+                        {readyChips.length > 0
+                          ? 'Couldn’t load all of your weigh-in queue — some plantings may be missing.'
+                          : 'Couldn’t load your weigh-in queue — use the planting picker below.'}
+                        <button
+                          type="button"
+                          onClick={() => setTrayReloadKey(k => k + 1)}
+                          data-testid="harvest-tray-retry"
+                          style={{
+                            marginLeft: 8, padding: 0, border: 'none', background: 'none',
+                            color: P.terra, fontSize: '0.8rem', fontWeight: 600,
+                            textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit',
+                          }}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                    {readyChips.length > 0 && (
                     <div
                       id={HARVEST_TRAY_ID}
                       data-testid="harvest-session-tray"
@@ -2537,6 +2583,7 @@ export default function EventNew() {
                         )
                       })}
                     </div>
+                    )}
                     {(hiddenCount > 0 || trayExpanded) && (
                       // OUTSIDE the scrollport deliberately: a "Show fewer" that scrolls out of
                       // view with the chips is a trap. Same disclosure grammar as the "Photo, notes
