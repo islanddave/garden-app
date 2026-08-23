@@ -714,7 +714,17 @@ export default function PlantingSelect({
   // (chip toggles deliberately do not reset it — see the chip-state contract above). Undefined then
   // means "no active option", which is exactly right: aria-activedescendant must be ABSENT, never
   // an empty string, or TalkBack looks up an element that does not exist.
-  const activeOption = (open && !disabled) ? (visible[highlight] ?? null) : null
+  //
+  // BUG-PSARIACONTROLS-001 — the same dangling IDREF VarietyPicker carried (BUG-VARPICKERARIA-001).
+  // The input declared aria-expanded/aria-controls from `open` alone, but the listbox they name is
+  // rendered under `open && !disabled`, so a picker disabled while open told a screen reader
+  // "expanded — the popup is #ps-list-x" with #ps-list-x nowhere in the document. Reachable because
+  // nothing closes the panel on disable: EventNew's picker disables when its project is cleared, and
+  // `disabled` is a prop the host can flip at any time while `open` is our own state. One derived
+  // flag now drives the two attributes AND the render, so "expanded", "here is the popup" and what
+  // was actually painted cannot disagree. Same shape as VarietyPicker's `listboxOpen`.
+  const listboxOpen = open && !disabled
+  const activeOption = listboxOpen ? (visible[highlight] ?? null) : null
 
   // A7. APG requires the active descendant be scrolled into view; with focus staying on the input
   // the browser will never do it for us, and listboxStyle caps the panel height, so an arrowed-to
@@ -989,8 +999,11 @@ export default function PlantingSelect({
         id={id}
         type="text"
         role="combobox"
-        aria-expanded={open}
-        aria-controls={listboxId}
+        // BUG-PSARIACONTROLS-001 — both derived from listboxOpen, never from `open` alone (see its
+        // definition). aria-controls is OMITTED rather than left dangling whenever the listbox is
+        // not rendered.
+        aria-expanded={listboxOpen}
+        aria-controls={listboxOpen ? listboxId : undefined}
         // V4-PICKERA11Y-001 claim 1 — the missing half of the combobox contract. `undefined` (the
         // attribute ABSENT), never '': an empty aria-activedescendant is a dangling reference, and
         // TalkBack treats it as "there is an active option, I just cannot find it".
@@ -1084,7 +1097,9 @@ export default function PlantingSelect({
           <span aria-hidden="true">✕</span>
         </button>
       )}
-      {open && !disabled && (
+      {/* BUG-PSARIACONTROLS-001 — the SAME flag the combobox attributes read, not a second copy of
+          the expression. This is the render the IDREF above promises exists. */}
+      {listboxOpen && (
         <PanelShell chips={chipRow} notice={failureNotice} placement={placement}>
         <ul
           id={listboxId}
