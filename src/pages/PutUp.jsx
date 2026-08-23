@@ -18,8 +18,12 @@
 // Cross-Device (all state server-side). Offline = require-online: the save is blocked with a clear
 // "can't save offline" state that PRESERVES entered input (no draft queue in V100 — tech-debt).
 import React, { useState, useEffect, useCallback, useMemo, useId, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+// V4-PUTUPENGINE-001 slice 2 — harvest -> put-up prefill mapping lives in its own pure module
+// because the two tables' unit vocabularies disagree (see the UNIT_GROUPS comment below, which
+// named this hazard before anything consumed it).
+import { prefillFromHarvestEntry, harvestPickLabel, harvestPickAmount } from '../lib/putUpPrefill.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, SegmentedControl } from '../components/forms'
@@ -88,7 +92,11 @@ const CANNING_METHODS = new Set(['can_water_bath', 'can_pressure'])
 // 31 integration writes of 'lb'. The column has no free-text path from the app anyway (every write
 // comes from this dropdown), so the CHECK would buy little and risk a lot. Reconciling the two
 // vocabularies is its own piece of work and must not be smuggled into a units addition.
-const UNIT_GROUPS = [
+// EXPORTED for src/__tests__/putUpPrefill.test.js only. V4-PUTUPENGINE-001 slice 2 maps harvest
+// units into this vocabulary, and the guard that every mapped value is a REAL option here has to
+// read the real list — a hand-copied duplicate in the test would drift silently and certify nothing
+// (L-384: don't duplicate a constant to dodge a dependency). Nothing in src/ imports it.
+export const UNIT_GROUPS = [
   { group: 'Weight',     options: ['lbs', 'oz'] },
   { group: 'Count',      options: ['count'] },
   { group: 'Volume',     options: ['cups', 'pints', 'quarts'] },
@@ -143,12 +151,42 @@ function prettyDate(v) {
 
 export default function PutUp() {
   const location = useLocation()
+  const navigate = useNavigate()
   const prefill = (location.state && typeof location.state.prefill === 'object' && location.state.prefill) || {}
-  const hasPrefill = prefillContextKey(prefill) !== BARE_PREFILL_KEY
+  const prefillKey = prefillContextKey(prefill)
+  const hasPrefill = prefillKey !== BARE_PREFILL_KEY
 
   // Adaptive default: a harvest-triggered open lands on the form; a bare "Put-Up" tap lands on the
   // inventory ("what have I got?") — the more common intent from the More menu.
   const [view, setView] = useState(hasPrefill ? 'log' : 'stores')
+
+  // V4-PUTUPENGINE-001 slice 2 — picking a recent harvest navigates IN PLACE with a new prefill.
+  // That reuses the one prefill door PreserveOffer / PutUpFromPlanting / PutUpUseSoonBand already
+  // use, so BUG-PUTUPSTASHHARVLINK-001's context-identity guard keeps working with no new
+  // mechanics. But the useState initialiser above already ran, so it cannot see the new context —
+  // this drives the view exactly as a fresh mount would have.
+  //
+  // Keyed on the CONTEXT KEY, never on the prefill object: every navigation builds a fresh object
+  // literal, so an object-identity dep would re-fire on every render and pin the user in 'log'.
+  const lastPrefillKeyRef = useRef(prefillKey)
+  useEffect(() => {
+    if (prefillKey === lastPrefillKeyRef.current) return
+    lastPrefillKeyRef.current = prefillKey
+    if (prefillKey !== BARE_PREFILL_KEY) setView('log')
+  }, [prefillKey])
+
+  const pickHarvest = useCallback((entry) => {
+    // `replace` so the back button leaves /put-up rather than walking the user back through each
+    // harvest they auditioned.
+    navigate(location.pathname, { state: { prefill: prefillFromHarvestEntry(entry) }, replace: true })
+  }, [navigate, location.pathname])
+
+  // Back to a BARE context: drops the harvest link, remounts the form, restores the picker. The
+  // effect above deliberately does NOT force view='log' for the bare key, so the caller's current
+  // view stands — which is what we want, since the user is still mid-log.
+  const clearPrefill = useCallback(() => {
+    navigate(location.pathname, { state: null, replace: true })
+  }, [navigate, location.pathname])
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -157,6 +195,21 @@ export default function PutUp() {
         <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.light }}>
           What you&rsquo;ve preserved — your freezer, pantry and stores.
         </p>
+
+        {/* The "start something new" slot every other landing page has and this one did not:
+            /harvests carries a full-width filled Weigh-in-session CTA above its view controls
+            (V4-WEIGHINCTA-001 — "a doorway you have to already know about cannot buy that"). The
+            segmented control below switches VIEWS; this starts the primary ACTION. Only rendered on
+            the read view — on the form it would be a button that does nothing. */}
+        {view === 'stores' && (
+          <button type="button" onClick={() => setView('log')} data-testid="putup-primary-cta"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              width: '100%', minHeight: 48, marginBottom: 14, backgroundColor: P.green, color: P.white,
+              border: 'none', borderRadius: 10, fontSize: '0.95rem', fontWeight: 700,
+              fontFamily: 'inherit', cursor: 'pointer' }}>
+            <span aria-hidden="true">🫙</span><span>Log a put-up</span>
+          </button>
+        )}
 
         <div style={{ marginBottom: 18 }}>
           <SegmentedControl
@@ -170,10 +223,119 @@ export default function PutUp() {
           />
         </div>
 
+        {view === 'log' && !hasPrefill && <RecentHarvestPicker onPick={pickHarvest} />}
+
+        {/* The correction path. harvest_log_id has NO control on the form below — that invisibility
+            is the whole substance of BUG-PUTUPSTASHHARVLINK-001 — so before this slice a wrong link
+            could neither be seen nor cleared. Now that a mis-tap in the picker can create one, it
+            needs an exit. Clearing navigates back to a BARE context, which remounts the form and
+            brings the picker back. Also serves the older PreserveOffer path, which never had one. */}
+        {view === 'log' && hasPrefill && (
+          <div data-testid="putup-prefill-strip"
+            style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, padding: '9px 12px',
+              backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 8 }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: '0.82rem', color: P.green, fontWeight: 600 }}>
+              {prefill.harvest_log_id ? 'Linked to a harvest' : 'Prefilled'}
+            </span>
+            <button type="button" onClick={clearPrefill} data-testid="putup-prefill-clear"
+              style={{ background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer',
+                color: P.green, fontSize: '0.8rem', fontWeight: 700, fontFamily: 'inherit',
+                textDecoration: 'underline', minHeight: 32 }}>
+              Change
+            </button>
+          </div>
+        )}
+
         {view === 'log'
-          ? <PutUpForm prefill={prefill} onLogged={() => setView('stores')} />
+          ? <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => setView('stores')} />
           : <StoresView />}
       </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V4-PUTUPENGINE-001 slice 2 — "From a recent harvest"
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PROBLEM THIS SOLVES, in the numbers that justified it: 791 harvests logged in 2026 against 5
+// put-up records ever, and 0 of 791 linked. Slice 1 gave Put-Up its own tab, which fixed
+// DISCOVERABILITY. What remained is that logging one from the tab means re-entering crop, variety,
+// planting, quantity and unit by hand — every one of which the app already knows, because the
+// harvest it came from is sitting in the log.
+//
+// Dave's 0821 ruling made this load-bearing: the put-up page is the ONLY fate capture, and anything
+// not put up is assumed eaten fresh. So put-up volume is no longer a nice-to-have — it is the
+// signal. Typing friction is the thing suppressing it.
+//
+// NOT a reward surface (Reward-UX V102): user-initiated, on a surface they navigated to, no
+// celebration/nudge/interrupt. It is a picker on a form.
+function RecentHarvestPicker({ onPick }) {
+  const { fetch } = useApiFetch()
+  const [entries, setEntries] = useState(null)
+  const [failed, setFailed] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    // include=entries only — the aggregates half of this endpoint is a full-season scan this
+    // picker has no use for.
+    fetch('/api/harvests?include=entries')
+      .then(d => { if (live) setEntries(Array.isArray(d?.entries) ? d.entries : []) })
+      .catch(() => { if (live) setFailed(true) })
+    return () => { live = false }
+  }, [fetch])
+
+  // A swallowed fetch error that renders identically to "you have no harvests" is a named defect on
+  // the sibling ready-band surface. It gets its own visible state here.
+  if (failed) {
+    return (
+      <div style={{ marginBottom: 16, fontSize: '0.82rem', color: P.mid }}>
+        Couldn&rsquo;t load your recent harvests — pick a crop below instead.
+      </div>
+    )
+  }
+  if (entries == null) return null           // first paint: no skeleton, the form below is usable
+  if (entries.length === 0) return null      // genuinely nothing picked yet — say nothing
+
+  const COLLAPSED = 5
+  const shown = expanded ? entries.slice(0, 20) : entries.slice(0, COLLAPSED)
+  const hiddenCount = Math.min(entries.length, 20) - shown.length
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: '0.8rem', fontWeight: 700, color: P.mid, marginBottom: 6 }}>
+        From a recent harvest
+      </div>
+      <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, overflow: 'hidden' }}>
+        {shown.map((e, i) => {
+          const amount = harvestPickAmount(e)
+          return (
+            <button key={e.event_id ?? i} type="button" onClick={() => onPick(e)}
+              data-testid="recent-harvest-pick"
+              style={{ display: 'flex', alignItems: 'baseline', gap: 10, width: '100%', minHeight: 44,
+                padding: '10px 14px', background: 'none', border: 'none',
+                borderTop: i === 0 ? 'none' : `1px solid ${P.cream}`, cursor: 'pointer',
+                fontFamily: 'inherit', textAlign: 'left' }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: '0.88rem', fontWeight: 600, color: P.dark,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {harvestPickLabel(e)}
+              </span>
+              {amount && <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>{amount}</span>}
+              <span style={{ fontSize: '0.76rem', color: P.light, flexShrink: 0 }}>{prettyDate(e.day_key)}</span>
+            </button>
+          )
+        })}
+      </div>
+      {/* A REAL control, never inert "+N more" text — an unreachable count is a named defect on the
+          sibling band surface, where 23 of 28 rows sat behind exactly that. */}
+      {hiddenCount > 0 && (
+        <button type="button" onClick={() => setExpanded(true)}
+          style={{ background: 'none', border: 'none', padding: '8px 2px', cursor: 'pointer',
+            color: P.green, fontSize: '0.82rem', fontWeight: 600, fontFamily: 'inherit',
+            textDecoration: 'underline', minHeight: 32 }}>
+          Show {hiddenCount} more
+        </button>
+      )}
     </div>
   )
 }
@@ -187,8 +349,11 @@ function PutUpForm({ prefill, onLogged }) {
 
   // Fast-path (2 required)
   const [cropSlug, setCropSlug]   = useState(prefill.crop_type_slug || '')
-  const [qtyValue, setQtyValue]   = useState('')
-  const [qtyUnit, setQtyUnit]     = useState('lbs')
+  // V4-PUTUPENGINE-001 slice 2 — quantity/unit now arrive on the prefill from a picked harvest.
+  // They come as a PAIR or not at all (putUpPrefill.js drops both when the harvest unit has no
+  // lossless mapping), so a seeded value can never be a number sitting against the wrong unit.
+  const [qtyValue, setQtyValue]   = useState(prefill.quantity_value != null ? String(prefill.quantity_value) : '')
+  const [qtyUnit, setQtyUnit]     = useState(prefill.quantity_unit || 'lbs')
 
   // Defaulted (visible, pre-filled)
   const [method, setMethod]       = useState('whole_freeze')
@@ -291,8 +456,21 @@ function PutUpForm({ prefill, onLogged }) {
   // `!success` makes both guards read clean the moment a save lands: the success screen has no
   // typeable field and handleSubmit already cleared the draft, so a hold there wedges updates for
   // nothing.
+  // V4-PUTUPENGINE-001 slice 2 — qtyValue joins class 1 above. It is now PREFILL-SEEDABLE (a picked
+  // harvest carries its amount), so a bare `qtyValue ||` would hold the reload gate and kill the
+  // backdrop on a pristine mount reached through the form's new primary entry path — the exact
+  // failure the plant_id term was already shaped to avoid.
+  //
+  // But the term is "differs from the seed", NOT "no seed present" like the plant_id term above,
+  // and that asymmetry is deliberate. Quantity is the field most likely to be CORRECTED after a
+  // pick — you picked 4 cups off the harvest and actually put up 3 — and `!prefill.quantity_value
+  // && qtyValue` would make that edit invisible to the gate forever, so the one keystroke the user
+  // most wants protected would be the one a reload discards. plant_id does not have that shape: it
+  // is re-picked from a list, not nudged.
+  const seededQty = prefill.quantity_value != null ? String(prefill.quantity_value) : ''
   const guardDirty = !success && !!(
-    qtyValue || notes || photoFile || variety ||
+    qtyValue !== seededQty ||
+    notes || photoFile || variety ||
     packageCount !== '1' ||
     (!prefill.plant_id && plantId)
   )

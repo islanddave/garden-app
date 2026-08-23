@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.46.0",
+    "date": "2026-08-22",
+    "highlights": [
+      "The Put-Up tab can now start from a harvest you already logged. Under \"Log a put-up\" there's a short list of your recent picks — tap one and the crop, the variety, the planting and the amount all come across filled in, so putting up this morning's basil is two taps instead of five fields. It also quietly records which harvest the jar came from, which nothing has ever done: of 791 harvests logged this year, not one was linked to a put-up, so the app could never answer what actually happened to what you picked.",
+      "The amounts convert properly on the way across. The harvest log says \"cup\" and the put-up list says \"cups\" — the same for pounds — and where there's no honest match at all (a harvest weighed in kilograms, which the put-up form doesn't offer) it fills in everything except the amount rather than quietly converting it and presenting a guess as a measurement.",
+      "Put-Up has a proper \"Log a put-up\" button at the top of the page, the same way Harvests has its weigh-in button. And if you tap the wrong harvest, there's now a Change link to clear it — before this there was no way to see which harvest a put-up was attached to, let alone undo it."
+    ]
+  },
+  {
     "version": "4.45.0",
     "date": "2026-08-21",
     "highlights": [
