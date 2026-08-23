@@ -40,6 +40,21 @@ const listbox = () => screen.getByRole('listbox')
 const options = () => screen.getAllByRole('option')
 const activeDescendant = () => field().getAttribute('aria-activedescendant')
 
+// BUG-PSARIACONTROLS-001. The single invariant the combobox contract reduces to, lifted verbatim
+// from VarietyPickerA11y.test.jsx so the two pickers are held to one rule: an IDREF a screen reader
+// is told to follow must land on an element that is actually in the document. ABSENT is fine —
+// DANGLING is not. This suite already pinned aria-activedescendant in the closed state and never
+// pinned aria-controls at all, which is exactly how the dangling `aria-controls` survived here after
+// the identical defect was found and fixed in the sibling picker.
+function expectNoDanglingRefs() {
+  for (const attr of ['aria-controls', 'aria-activedescendant']) {
+    const ref = field().getAttribute(attr)
+    if (ref === null) continue
+    expect(ref, `${attr} must never be empty — '' reads as "there is a target I cannot find"`).not.toBe('')
+    expect(document.getElementById(ref), `${attr}="${ref}" points at no element in the DOM`).toBeTruthy()
+  }
+}
+
 // Real focus, not fireEvent.focus: the whole point of half this suite is where document.activeElement
 // actually sits, and fireEvent.focus dispatches the event WITHOUT moving focus.
 function openPicker(props = {}) {
@@ -97,9 +112,54 @@ describe('claim 2 — option identity (the enabler for everything else)', () => 
     expect(listA.id).not.toBe(listB.id)
   })
 
+})
+
+// BUG-PSARIACONTROLS-001 — moved out of "claim 2" (where a single open-state assertion lived) into
+// its own block, mirroring VarietyPickerA11y's "claim 1". The open case is the half this suite
+// already had; the closed and disabled cases are the half whose absence let the defect ship.
+describe('BUG-PSARIACONTROLS-001 — aria-controls names a listbox that exists, or is absent', () => {
   it('points aria-controls at the listbox that actually exists', () => {
     openPicker()
     expect(field().getAttribute('aria-controls')).toBe(listbox().id)
+    expect(field().getAttribute('aria-expanded')).toBe('true')
+    expectNoDanglingRefs()
+  })
+
+  it('is ABSENT while the popup is closed', () => {
+    render(<PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" />)
+    // The shipped bug in one line: the attribute was here, and nothing it named was.
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(field().hasAttribute('aria-controls')).toBe(false)
+    expect(field().getAttribute('aria-expanded')).toBe('false')
+    expectNoDanglingRefs()
+  })
+
+  it('is ABSENT while disabled — a disabled picker renders no popup to control', () => {
+    render(<PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" disabled />)
+    act(() => { field().focus() })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(field().hasAttribute('aria-controls')).toBe(false)
+    expect(field().getAttribute('aria-expanded')).toBe('false')
+    expectNoDanglingRefs()
+  })
+
+  it('drops both attributes when the host disables an ALREADY-OPEN picker', () => {
+    // The reachable path, and the reason `open` alone was never a safe source. Nothing in this
+    // component closes the panel on disable — `disabled` is a prop the host flips (EventNew disables
+    // its planting picker the moment the chosen project is cleared) while `open` is our own state.
+    // So the component really does sit at open=true, disabled=true, rendering no listbox.
+    const { rerender } = render(
+      <PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" />)
+    act(() => { field().focus() })
+    expect(listbox()).toBeTruthy()
+    expect(field().getAttribute('aria-controls')).toBe(listbox().id)
+
+    rerender(
+      <PlantingSelect value="" onChange={() => {}} plants={PLANTS} aria-label="Planting" disabled />)
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(field().getAttribute('aria-expanded')).toBe('false')
+    expect(field().hasAttribute('aria-controls')).toBe(false)
+    expectNoDanglingRefs()
   })
 })
 

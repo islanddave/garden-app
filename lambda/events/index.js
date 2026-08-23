@@ -2244,6 +2244,51 @@ export const handler = async (event) => {
           }
         }
 
+        // ── BUG-PHOTOEVENTREANCHOR-001: the photos FOLLOW their event ─────────────────────────
+        //
+        // THE OTHER MISSING HALF of Slice 3. The UPDATE above moves the event's project_id/plant_id
+        // and nothing in this route has ever referenced `photos`, so a re-anchored event left every
+        // photo hanging off it still pointing at the anchor the event had just LEFT.
+        //
+        // NOT the COALESCE the two undo paths use. Theirs fire when a photo is LOSING its event and
+        // must keep whatever parent it already had; this one fires when the photo is KEEPING its
+        // event and must go where the event went. A COALESCE here would be the no-op that shipped.
+        //
+        // The predicate is "this photo was FOLLOWING the event", not "this photo disagrees with it".
+        // Only an anchor that still equals the PRE-EDIT one moves, which leaves two other shapes
+        // deliberately untouched — measured on prod 2026-08-23 against 874 event-attached photos:
+        //   * photo anchor NULL while the event has one (835 plant / 23 project rows). Those were
+        //     never populated, not stranded; filling them here would silently re-parent 858 rows on
+        //     the next unrelated edit and would hide the real defect, which is on the POST side.
+        //   * photo anchor set to something this event never had. That is an independent tagging
+        //     decision — the same parent the undo paths above go out of their way to preserve.
+        // Genuinely stranded, i.e. what this fixes: ONE row (photo 31bdddc5 on "Strawberries" while
+        // its harvest event had moved to "Blueberries"). IS NOT DISTINCT FROM rather than `=`
+        // because a project-less event carries a NULL old anchor and its photo followed it at NULL.
+        //
+        // `deleted_at IS NULL` matches both sibling photo writes. Prod carries zero soft-deleted
+        // event-attached photos, so it is currently a no-op; a restored photo could still surface
+        // holding a stale anchor, and that is the DELETE path's re-parent question, not this one.
+        //
+        // Gated on movement, and placed AFTER the care-cache block ON PURPOSE: like every write
+        // below the event_log UPDATE this is non-atomic with it, so a throw here must not be able to
+        // skip a recompute the already-committed event row depends on.
+        if (projectChanged || plantChanged) {
+          await sql.transaction([
+            sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+            sql`
+            UPDATE photos ph
+               SET project_id = CASE WHEN ph.project_id IS NOT DISTINCT FROM ${oldProjectId}::uuid
+                                     THEN ${newProjectId}::uuid ELSE ph.project_id END,
+                   plant_id   = CASE WHEN ph.plant_id   IS NOT DISTINCT FROM ${oldPlantId}::uuid
+                                     THEN ${newPlantId}::uuid   ELSE ph.plant_id   END,
+                   updated_at = NOW()
+             WHERE ph.event_id = ${eventId}
+               AND ph.deleted_at IS NULL
+          `,
+          ]);
+        }
+
         // ── BUG-GERMDATEBATCH-001: the germination anchor FOLLOWS ITS OWN EVENT ────────────────
         //
         // THE MISSING HALF. germinated_at is set-once (`AND p.germinated_at IS NULL` on both
