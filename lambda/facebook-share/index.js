@@ -33,6 +33,7 @@ import {
   attachedMediaFields, validateShareRequest, classifyGraphError,
 } from './graph.js';
 import { mapInBatches } from './batch.js';
+import { buildPhotoAltText } from './altText.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // WHEN_REQUIRED: same rationale as lambda/photos — avoid the SDK injecting a checksum header S3
@@ -138,7 +139,19 @@ async function preparePhoto(row) {
     err.userFacing = true;
     throw err;
   }
-  return { photo_id: row.id, bytes: out, type: 'image/jpeg', name: `${row.id}.jpg` };
+  // `alt` rides with the bytes because the Graph call sites see only `prepared[]`. null = no honest
+  // description was derivable; the field is then OMITTED, never sent empty (see altField below).
+  return { photo_id: row.id, bytes: out, type: 'image/jpeg', name: `${row.id}.jpg`, alt: buildPhotoAltText(row) };
+}
+
+// V4-SHAREALTTEXT-001 — spread into the multipart field list. An absent alt must be an ABSENT FIELD,
+// not `alt_text_custom=''`: an empty string is a stored, deliberate-looking "this image has no
+// description" that suppresses the platform's own fallbacks, whereas omitting leaves the photo in
+// the state Facebook already knows how to handle. Filler would be worse than either — a screen
+// reader announces it as though it were a description.
+function altField(alt) {
+  const a = typeof alt === 'string' ? alt.trim() : '';
+  return a ? [['alt_text_custom', a]] : [];
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────────────────────────────
@@ -242,10 +255,36 @@ async function share(event, secrets, userId) {
 
   // Household-scoped existence check. Bytes never leave the household: a photo not owned by a
   // household member is simply "not found" (no existence oracle).
+  //
+  // V4-SHAREALTTEXT-001 widened this from `SELECT id, storage_path`. The alt text is DERIVED from
+  // the record, so the descriptive columns have to be fetched HERE — the Graph call sites below hold
+  // only prepared bytes, and there is no second place in this handler that touches the DB per photo.
+  // Every added join is LEFT and every ON is on a unique key (event_log/garden_node/cultivar by PK,
+  // crop_types by its unique slug), so the row count is unchanged and the `rows.length !==
+  // photoIds.length` existence check above still means what it meant.
+  //
+  // COALESCE(p.plant_id, ev.plant_id): a photo reaches its planting either directly or through the
+  // event it was logged against, and lambda/photos/index.js's gallery query already treats those two
+  // edges as the same edge. Direct wins — it is the explicit attachment.
+  //
+  // Soft-delete predicates sit in the ON clauses, not the WHERE, on purpose: a photo whose event or
+  // planting was deleted must still POST (it is a live photo in a live library), it just posts with
+  // less description. Putting them in the WHERE would turn a deleted planting into "photos_not_found"
+  // and block the share outright.
   const rows = await sql`
-    SELECT id, storage_path
-    FROM photos
-    WHERE id = ANY(${photoIds}) AND created_by = ANY(${householdIds}) AND deleted_at IS NULL`;
+    SELECT
+      p.id, p.storage_path,
+      gn.display_name AS planting_name,
+      cv.display_name AS variety_name,
+      ct.display_name AS crop_name,
+      ev.event_type
+    FROM photos p
+    LEFT JOIN public.event_log ev ON ev.id = p.event_id AND ev.deleted_at IS NULL
+    LEFT JOIN public.garden_node gn
+           ON gn.id = COALESCE(p.plant_id, ev.plant_id) AND gn.deleted_at IS NULL
+    LEFT JOIN public.cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
+    LEFT JOIN public.crop_types ct ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
+    WHERE p.id = ANY(${photoIds}) AND p.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL`;
   if (rows.length !== photoIds.length) return resp(404, { error: 'photos_not_found', message: 'One or more photos are not in your library.' });
   const byId = new Map(rows.map((r) => [r.id, r]));
   const ordered = photoIds.map((id) => byId.get(id)); // preserve requested order for attached_media
@@ -311,6 +350,7 @@ async function share(event, secrets, userId) {
     const r = await graphMultipart(photoUploadUrl(pageId), [
       ['access_token', pageToken],
       ['caption', caption ?? ''],
+      ...altField(p.alt),
       ['published', 'true'],
     ], p);
     if (!r.ok || r.json?.error) { await failAll(classifyGraphError(r.json, r.status).message); throw new GraphError(r); }
@@ -327,7 +367,18 @@ async function share(event, secrets, userId) {
   const media = [];
   try {
     await Promise.all(prepared.map(async (p) => {
-      const r = await graphMultipart(photoUploadUrl(pageId), [['access_token', pageToken], ['published', 'false']], p);
+      // alt_text_custom rides on the published=false upload because THIS is the call that creates the
+      // Photo node; /feed below only attaches it by id and carries the caption, which is post-level
+      // text, not per-image text. UNVERIFIED against live Graph (this lane makes no external calls):
+      // that the field is honoured on an unpublished upload is read from Meta's Photo-node docs, not
+      // measured. It is fail-soft either way — Graph ignores a parameter it does not accept on
+      // /photos, so the worst case is alt text that does not stick, never a post that does not go.
+      // Verify with one real multi-photo post, then GET /{fb_media_id}?fields=alt_text_custom.
+      const r = await graphMultipart(photoUploadUrl(pageId), [
+        ['access_token', pageToken],
+        ...altField(p.alt),
+        ['published', 'false'],
+      ], p);
       if (!r.ok || r.json?.error) throw new GraphError(r);
       await setStatus(p.photo_id, { status: 'uploading', fb_media_id: r.json.id });
       media.push({ photo_id: p.photo_id, media_fbid: r.json.id });
