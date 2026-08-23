@@ -84,6 +84,13 @@ export function normalizeEventPage(data, pageSize = EVENT_PAGE_SIZE) {
 // 404. A 403, a 500 or a timeout (status 0) still fails loudly and must not navigate away.
 const isAlreadyGone = (err) => err?.status === 404
 
+// BUG-PROJDELORPHAN-001: a REJECTION marker, deliberately not `[]`. The pre-delete orphan check
+// used to `catch { setChildProjects([]) }`, and `[]` is also what a project with no sub-projects
+// reads as — so the dialog could not tell "we could not ask" from "nothing will be orphaned", and
+// both landed on the same render: no warning, no list, "Delete project?". On a destructive path a
+// network error was being shown to the user as a safety assurance.
+const CHILD_FETCH_FAILED = Symbol('child-fetch-failed')
+
 function todayLocal() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
@@ -154,6 +161,14 @@ function photoDeleteFailureCopy(failed, total) {
   if (total === 1) return 'The event was deleted, but its photo could not be deleted — it is still in your garden photos.'
   return `The event was deleted, but ${failed} of ${total} photos could not be deleted — they are still in your garden photos.`
 }
+
+// BUG-EVENTDELSILENT-001 — the two honest outcomes of a failed event delete, in the same banner and
+// the same voice as photoDeleteFailureCopy above. Each names where the event actually is, because
+// that is the only thing the user needs to decide what to do next.
+const EVENT_DELETE_FAILED_COPY =
+  'The event could not be deleted — it is still in your log. Check your connection and try again.'
+const EVENT_DELETE_STALE_LIST_COPY =
+  'The event was deleted, but the log could not refresh — reopen this project to see the current list.'
 
 // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS replaced by
 // shared getStatusColors() from src/lib/status.js (single source of truth across
@@ -243,6 +258,11 @@ export default function ProjectDetail() {
   const [deleting,        setDeleting]        = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [childProjects,    setChildProjects]    = useState([])
+  // BUG-PROJDELORPHAN-001 — the *LoadFailed flag the swallowed rejection above needs, so the dialog
+  // renders "we could not ask" instead of the reassuring childless branch. `childrenRechecking`
+  // exists only so the in-dialog Retry cannot be double-fired while a check is in flight.
+  const [childrenLoadFailed,  setChildrenLoadFailed]  = useState(false)
+  const [childrenRechecking,  setChildrenRechecking]  = useState(false)
   const [moveOpen,  setMoveOpen]  = useState(false)
   const [moveSel,   setMoveSel]   = useState('')   // '' = top level
   const [moving,    setMoving]    = useState(false)
@@ -527,6 +547,12 @@ export default function ProjectDetail() {
     if (!evId || deletingId) return
     const photos = confirmPhotoInfo?.evId === evId ? confirmPhotoInfo.photos : []
     setDeletingId(evId)
+    // BUG-EVENTDELSILENT-001: which side of the DELETE a throw came from decides the copy. A
+    // failure before this flips means the event is still in the log; after it means the event is
+    // gone and only the on-screen list is stale. Reporting either as the other is the same lie in
+    // the opposite direction, and "the delete failed" said over a row that is actually gone would
+    // send the user back to re-delete something that no longer exists.
+    let deleted = false
     try {
       // Same 404 tolerance as the project delete above, for the same reason: an event already
       // deleted (another device, a double-tap, a retried request) must still close the sheet and
@@ -538,6 +564,7 @@ export default function ProjectDetail() {
       } catch (err) {
         if (!isAlreadyGone(err)) throw err
       }
+      deleted = true
       if (deletePhotos && photos.length > 0) {
         // busy={deletingId != null} keeps the sheet up and disabled across these too.
         const results = await Promise.allSettled(
@@ -549,8 +576,19 @@ export default function ProjectDetail() {
       await refreshEvents()
     } catch (e) {
       console.error('delete event failed', e)
+      // BUG-EVENTDELSILENT-001: this catch used to end at the console.error above — the sheet shut,
+      // the spinner cleared, the row stayed put and nothing was said, so the only reading available
+      // to the user was "it worked, the list is stale". EventDetail.handleDelete has surfaced this
+      // since it shipped (setError + close the sheet so the banner is visible); the two event-delete
+      // surfaces must not diverge, and on this one they did. Functional update so a photo-delete
+      // report already written above is not clobbered — that message is the more actionable one.
+      // No Retry button here: the row's × is the retry, and it is still on screen precisely because
+      // the delete did not land.
+      setDeleteErr(prev => prev ?? (deleted ? EVENT_DELETE_STALE_LIST_COPY : EVENT_DELETE_FAILED_COPY))
     }
     setDeletingId(null)
+    // Closing the sheet is what makes the banner above the timeline visible — same reason
+    // EventDetail closes its own sheet before reporting.
     setConfirmDeleteEventId(null)
   }
 
@@ -660,15 +698,31 @@ export default function ProjectDetail() {
     setSaving(false)
   }
 
+  // Check for child projects before allowing delete.
+  //
+  // BUG-PROJDELORPHAN-001: hoisted out of handleDeleteClick so the dialog's Retry re-runs the SAME
+  // check rather than a second spelling of it, and a rejection now resolves to CHILD_FETCH_FAILED
+  // rather than `[]` — see the marker's note. childProjects stays `[]` on failure (there is nothing
+  // truthful to list); childrenLoadFailed is what the dialog branches on.
+  async function loadChildProjects() {
+    const children = await fetch('/api/projects?parent_id=' + id).catch(() => CHILD_FETCH_FAILED)
+    const failed = children === CHILD_FETCH_FAILED
+    setChildrenLoadFailed(failed)
+    setChildProjects(failed ? [] : (children ?? []))
+  }
+
   async function handleDeleteClick() {
-    // Check for child projects before allowing delete
-    try {
-      const children = await fetch('/api/projects?parent_id=' + id)
-      setChildProjects(children ?? [])
-    } catch {
-      setChildProjects([])
-    }
+    // The check still runs BEFORE the dialog opens, as it always has: the dialog's whole job is to
+    // report what it found, so opening ahead of the answer would only move the lie earlier.
+    await loadChildProjects()
     setDeleteDialogOpen(true)
+  }
+
+  async function recheckChildProjects() {
+    if (childrenRechecking) return
+    setChildrenRechecking(true)
+    await loadChildProjects()
+    setChildrenRechecking(false)
   }
 
   async function confirmDelete(archive) {
@@ -919,6 +973,9 @@ export default function ProjectDetail() {
       {deleteDialogOpen && (
         <DeleteDialog
           childProjects={childProjects}
+          checkFailed={childrenLoadFailed}
+          rechecking={childrenRechecking}
+          onRecheck={recheckChildProjects}
           onArchive={() => confirmDelete(true)}
           onDelete={() => confirmDelete(false)}
           onCancel={() => setDeleteDialogOpen(false)}
@@ -1385,7 +1442,7 @@ export default function ProjectDetail() {
   )
 }
 
-function DeleteDialog({ childProjects, onArchive, onDelete, onCancel }) {
+function DeleteDialog({ childProjects, checkFailed, rechecking, onRecheck, onArchive, onDelete, onCancel }) {
   const hasChildren = childProjects.length > 0
   const top3 = childProjects.slice(0, 3)
   const extra = childProjects.length - 3
@@ -1400,10 +1457,47 @@ function DeleteDialog({ childProjects, onArchive, onDelete, onCancel }) {
         maxWidth: 440, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
       }}>
         <h2 style={{ margin: '0 0 12px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
-          {hasChildren ? 'This project has sub-projects' : 'Delete project?'}
+          {checkFailed
+            ? 'We couldn’t check for sub-projects'
+            : hasChildren ? 'This project has sub-projects' : 'Delete project?'}
         </h2>
 
-        {hasChildren && (
+        {/* BUG-PROJDELORPHAN-001 — same grammar as the app's other failed-load notices (role="alert"
+            + an inline Retry). Permanent delete is WITHDRAWN here, not merely annotated: the "This
+            will permanently remove the project" line below is the exact copy a failed check used to
+            produce, and a warning the user can tap straight past is that same assurance in a louder
+            font. Archive stays offered — it is non-destructive, it is what this dialog recommends
+            anyway, and it leaves every sub-project attached whether or not one exists. */}
+        {checkFailed && (
+          <div
+            role="alert"
+            data-testid="project-delete-check-failed"
+            style={{
+              marginBottom: 16, padding: '10px 12px', borderRadius: 6,
+              backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
+              fontSize: '0.85rem', color: P.terra,
+            }}
+          >
+            Couldn’t check what is filed under this project, so we can’t tell you what deleting it
+            would leave behind. Permanent delete is unavailable until that check runs.
+            <button
+              type="button"
+              onClick={onRecheck}
+              disabled={rechecking}
+              data-testid="project-delete-recheck"
+              style={{
+                marginLeft: 8, padding: 0, border: 'none', background: 'none',
+                color: P.terra, fontSize: '0.85rem', fontWeight: 600,
+                textDecoration: 'underline', cursor: rechecking ? 'default' : 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {rechecking ? 'Checking…' : 'Retry'}
+            </button>
+          </div>
+        )}
+
+        {!checkFailed && hasChildren && (
           <div style={{ marginBottom: 16 }}>
             <p style={{ margin: '0 0 8px', fontSize: '0.88rem', color: P.mid }}>
               {childProjects.length} sub-project{childProjects.length !== 1 ? 's' : ''} will become top-level projects if you delete this one:
@@ -1419,7 +1513,7 @@ function DeleteDialog({ childProjects, onArchive, onDelete, onCancel }) {
           </div>
         )}
 
-        {!hasChildren && (
+        {!checkFailed && !hasChildren && (
           <p style={{ margin: '0 0 20px', fontSize: '0.88rem', color: P.mid }}>
             This will permanently remove the project. This action cannot be undone.
           </p>
@@ -1436,13 +1530,15 @@ function DeleteDialog({ childProjects, onArchive, onDelete, onCancel }) {
           }}>
             Archive instead (recommended)
           </button>
-          <button onClick={onDelete} style={{
-            backgroundColor: 'transparent', color: P.terra,
-            border: `1px solid ${P.alertBorder}`, borderRadius: 6,
-            padding: '9px 20px', fontSize: '0.88rem', cursor: 'pointer',
-          }}>
-            Delete permanently
-          </button>
+          {!checkFailed && (
+            <button onClick={onDelete} style={{
+              backgroundColor: 'transparent', color: P.terra,
+              border: `1px solid ${P.alertBorder}`, borderRadius: 6,
+              padding: '9px 20px', fontSize: '0.88rem', cursor: 'pointer',
+            }}>
+              Delete permanently
+            </button>
+          )}
           <button onClick={onCancel} style={ghostBtn}>Cancel</button>
         </div>
       </div>
