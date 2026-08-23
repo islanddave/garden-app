@@ -37,6 +37,10 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
       // BUG-RAINCREDITLIVEPATH-001: KNIFE and VESSELS reach the tier path but only its small_fast/in_ground
       // rows, so the size-gated fabric_ground row added by that fix was still unreachable from this gate.
       'rain-tier-fabric-flagoff', 'rain-tier-fabric-flagon',
+      // BUG-HEATDEMOTETOTAL-001: the >=85F bag gate under the LIVE flag config. Without it the gate's
+      // only hot-bag coverage is flag-OFF on a 1-day cadence, where the credit is pinned at its floor
+      // and a total denial is indistinguishable from a demotion — which is how the denial shipped.
+      'fabric-bag-heat-gate-flagon',
       // BUG-CADENCESIZE-001: the vessel floor. Without this the gate carries no trough, no whiskey_barrel
       // and no rigid pot >= largeMinGal, so dailyFloorFor could be deleted without moving a golden.
       // NOT a flag pair, deliberately — see the divergence loop below.
