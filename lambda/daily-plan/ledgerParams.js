@@ -132,7 +132,8 @@ const RAIN_DAY = {
   // Bag >=85F credit demotion. Keyed to weather_daily.tmax_f of the qualifying day, not today's
   // forecast high. Under RAIN_DEPTH this is a ONE-CLASS DEMOTION (deep->normal->light->nothing)
   // rather than a 0.5x scalar — the scalar had no meaning once the credit stopped being a number of
-  // days. bagHeatSoftenFactor is retained for the legacy mirror.
+  // days. bagHeatSoftenFactor/bagHeatMinCreditDays are the LEGACY engine path's form of the same
+  // rule; see BUG-HEATDEMOTETOTAL-001 below.
   //
   // CORRECTION 2026-08-17 (crucible D2, 8 seats): this block previously called the rule "SOFTENED".
   // The live record says otherwise. All 7 hot (tmax>=85F) crediting days in the 90-day prod
@@ -154,7 +155,19 @@ const RAIN_DAY = {
   // unmeasured tuning stacked on the D1 rescope, and the panel converged on one cheap instrument
   // (weigh a bag / finger-test a mulched vs bare bag after a >=0.2" rain) that has not been run yet.
   // Sequence is measurement -> ET denominator -> rain thresholds -> flip. Do not land this early.
-  bagHeatSoftenF: 85, bagHeatSoftenFactor: 0.5,
+  //
+  // BUG-HEATDEMOTETOTAL-001 (2026-08-23) — the LEGACY engine path, which is the one prod runs
+  // (CARE_WATER_LEDGER_ENABLED unset, CARE_RAIN_CREDIT_ENABLED=true), had NO demotion at all: it
+  // short-circuited `bagHeatGate ? null`, i.e. TOTAL credit denial at every rain depth, and
+  // bagHeatSoftenFactor — declared here for exactly that path — was read by nothing. Measured on
+  // engine.js for a 5-gal outdoor bag with 0.5" window rain and wi=3: 84F -> 3 credit-days,
+  // 85F -> 0, 90F -> 0. engine.js now reads BOTH constants below:
+  //     credit := max(bagHeatMinCreditDays, floor(credit x bagHeatSoftenFactor))
+  // The MIN is load-bearing, not decoration. It is what makes "demote, never deny" a property of the
+  // rule rather than an accident of today's numbers: without it, a retune of the factor below 1/3 —
+  // or the flag-OFF 2-class path, whose base credit is already the 1-day minimum — silently restores
+  // the denial this fix removes. Same reasoning as the RAIN_DEPTH.unknown derivation above.
+  bagHeatSoftenF: 85, bagHeatSoftenFactor: 0.5, bagHeatMinCreditDays: 1,
 };
 // DRG-RAINDEPTH-001 (2026-08-17, Dave directive) — measured daily precip -> Light/Normal/Deep class,
 // per substrate tier. REPLACES the RAIN_DAY.ia cliff + amount-blind `min(hold, wi)` credit, under

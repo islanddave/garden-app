@@ -266,7 +266,7 @@ export const scenarios = [
   },
   {
     name: 'fabric-bag-heat-gate',
-    desc: 'Outdoor fabric_bag on a >=85F day: rain credit withheld (DRG-WATERCREDIT-004) -> water with heat note.',
+    desc: 'Outdoor fabric_bag on a >=85F day, 2-class flag-OFF path: rain credit demoted (DRG-WATERCREDIT-004 / BUG-HEATDEMOTETOTAL-001) -> still water, with the heat note carrying the credit that survived. The demotion cannot MOVE the number here (this path\'s base credit is already the 1-day floor); its flag-ON twin below is where it does.',
     input: {
       today: '2026-06-22',
       weather: { tonightLow: 66, highToday: 90, code: 0, short: 'Hot and sunny', unit: 'F' },
@@ -412,6 +412,17 @@ export const scenarios = [
     name: 'rain-tier-fabric-flagon',
     desc: '0.30" same input, flag ON: the 5 gal bag promotes to fabric_ground (IA 0.20, hold 3 -> credited_days 3) while the "3 in" and unsized bags stay small_fast (IA 0.35 -> no credit, water). The only scenario that reaches RAIN_TIER_IA/HOLD.fabric_ground, and it pins the >= 3 gal gate in both directions.',
     input: { ...RAIN_TIER_FABRIC, rainCreditEnabled: true },
+  },
+  {
+    // BUG-HEATDEMOTETOTAL-001 — the configuration prod actually runs (CARE_RAIN_CREDIT_ENABLED=true)
+    // at the temperature the bag gate fires was unreachable from this gate: `fabric-bag-heat-gate` is
+    // flag-OFF with a 1-day cadence (credit already at the floor) and the three rain-tier fabric
+    // scenarios all sit at 79F. So the gate carried nothing that could tell a DEMOTION from a DENIAL,
+    // and the denial shipped. This is RAIN_TIER_FABRIC's inputs at 90F, which is the only combination
+    // where the demoted number is observable: fg1 3 -> 1.
+    name: 'fabric-bag-heat-gate-flagon',
+    desc: '0.30" across a 5 gal / "3 in" / unsized fabric bag at 90F, flag ON: the 5 gal bag still earns fabric_ground credit but the >=85F gate CUTS it 3 -> 1 (credited_days 1, reason names the cut) instead of erasing it; at dW=3 vs a 3-day cadence that 1 day is what keeps it on rain_skipped. The other two never cleared small_fast IA 0.35, so they water with the SOAK-IN THRESHOLD note — the gate must not claim to have withheld a credit that was never earned. Compare rain-tier-fabric-flagon (same inputs, 79F, credited_days 3).',
+    input: { ...RAIN_TIER_FABRIC, weather: { tonightLow: 70, highToday: 90, code: 0, short: 'Hot and sunny', unit: 'F' }, rainCreditEnabled: true },
   },
   {
     name: 'vessel-floor',

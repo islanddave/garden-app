@@ -331,6 +331,23 @@ function rainCreditDaysTiered(tier, wi, hy){
   if(eff<=0) return null;
   return { credit_days: Math.min(hold, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100, tier }; }
 
+// BUG-HEATDEMOTETOTAL-001 — the >=85F fabric-bag rule was a DENIAL, not the demotion it was documented
+// as. The call site read `(freshTransplant||bagHeatGate) ? null`, so an outdoor bag that had EARNED the
+// full fabric_ground credit got zero at any rain depth. Measured on this engine, 5-gal bag / 0.5" window
+// rain / wi=3, under the LIVE prod config (CARE_RAIN_CREDIT_ENABLED=true): 84F -> 3 credit-days,
+// 85F -> 0, 90F -> 0. A 3-day cliff across 1°F, on a gridded tmax carrying +-2-3F of error.
+// The demotion is a SCALAR on the earned credit, floored — both numbers named in ledgerParams
+// (bagHeatSoftenFactor was declared for this path and, until now, read by nothing). The floor is what
+// keeps this a demotion under a future retune; see the ledgerParams block for why that is structural
+// rather than fussy. Returns the rc unchanged when nothing was earned — a gate that fires on no credit
+// has nothing to withhold, and the caller's note must not claim otherwise.
+// SEPARATE from the ledger path's rule: that one is ledger.demoteDepth's one-class walk, whose
+// flip-time replacement is deliberately deferred by crucible verdict C5. Do not fold the two.
+function bagHeatDemoteCredit(rc){
+  if(!rc) return rc;
+  const d=Math.max(LP.RAIN_DAY.bagHeatMinCreditDays, Math.floor(rc.credit_days*LP.RAIN_DAY.bagHeatSoftenFactor));
+  return { ...rc, credit_days: d, bag_heat_from: rc.credit_days }; }
+
 // ── DRG-WXSATCAP-001 heavy-soak saturation cap (FLAG-INDEPENDENT; Dave-approved constants 2026-07-30) ──
 // Over-watering already-saturated media (esp. fabric bags with no drying window) drives anoxia / root rot =
 // NON-recoverable, so in the heavy-soak regime the safe error inverts to "skip". Applies to ALL outdoor vessels
@@ -713,13 +730,18 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // wrongly flagged "fresh" and denied rain credit (98/167 on 2026-06-23). transplant_at is NULL when no
     // potting_up/transplant/plant-out event exists -> treated as established -> rain credit applies.
     const freshTransplant=((daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS) && isSmallVessel(p);
-    // DRG-WATERCREDIT-004: outdoor fabric bags dry fast in heat -> withhold rain credit on hot days so they
-    // still surface for watering. Outdoor-scoped (covered bags are never credited anyway, so no misleading note).
+    // DRG-WATERCREDIT-004: outdoor fabric bags dry fast in heat -> cut rain credit on hot days so they
+    // still surface for watering sooner. Outdoor-scoped (covered bags are never credited anyway, so no
+    // misleading note). BUG-HEATDEMOTETOTAL-001: this used to zero the credit outright — it now scales
+    // it through bagHeatDemoteCredit. The fresh-transplant carve-out is still a full denial, and stays
+    // one: a small root ball is the case where "some credit" is exactly the wrong answer.
     const bagHeatGate=hotForBag && rcls==='outdoor' && ((p.container_type||'').toLowerCase()==='fabric_bag');
-    const rc=(freshTransplant||bagHeatGate) ? null
+    const _rcEarned=freshTransplant ? null
       : (rainCreditEnabled
           ? (_exposed ? rainCreditDaysTiered(_rainTier, wi, hydrology) : null)
           : rainCreditDays(rcls, wi, hydrology));
+    const rc=bagHeatGate ? bagHeatDemoteCredit(_rcEarned) : _rcEarned;
+    const bagHeatCut=!!(rc && rc.bag_heat_from > rc.credit_days);
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
     // BUG-TODAYWATER-001 — the TODAY branch is SUBORDINATE to the fast-dry carve-outs; 'soak' and 'incoming'
     // keep outranking them. The distinction is what the gate is acting on: 'soak' means water is measurably
@@ -776,15 +798,23 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     } else if(dW!=null && dW>=wi && rc && effDays<wi){
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
         days_since:dW,interval:wi,credited_days:rc.credit_days,
-        reason:`Skip — ${rc.wp}" rain over the last few days counts as watering`});
+        reason:bagHeatGate                                              // rc is non-null in this branch
+          ? `Skip — ${rc.wp}" rain counts as watering (fabric bag dries fast at ${high}°F: ${rc.credit_days}d credit${bagHeatCut?`, cut from ${rc.bag_heat_from}d`:''})`
+          : `Skip — ${rc.wp}" rain over the last few days counts as watering`});
     } else if(dW!=null && dW>=wi){
       const wp=windowPrecip(hydrology);
       // flag-OFF: _iaShown===RAIN_IA.outdoor and _creditClass===(rcls==='outdoor') -> note is byte-identical.
       const _iaShown = rainCreditEnabled ? (RAIN_TIER_IA[_rainTier] ?? RAIN_TIER_IA.small_fast) : RAIN_IA.outdoor;
+      // BUG-HEATDEMOTETOTAL-001: the bag branch now reports the credit that SURVIVED the gate, and only
+      // fires when there was a credit at all. `bagHeatGate && rc==null` means the rain never cleared the
+      // soak-in threshold in the first place — the old note called that "rain credit withheld on hot
+      // days", naming a cause that did not apply; it now falls through to the threshold note, which does.
+      // The `cut from` clause is conditional because the 2-class flag-OFF path has no room to demote: its
+      // base credit already IS bagHeatMinCreditDays, so the gate fires and the number does not move.
       const rain_note=freshTransplant
         ? 'Water — fresh transplant (no rain credit; small root ball dries fast)'
-        : bagHeatGate
-        ? `Water — fabric bag dries fast at ${high}°F (rain credit withheld on hot days)`
+        : (bagHeatGate && rc)
+        ? `Water — fabric bag dries fast at ${high}°F: ${rc.wp}" rain credited at ${rc.credit_days}d${bagHeatCut?` (cut from ${rc.bag_heat_from}d)`:''}, still short (last watered ${dW}d ago)`
         : (_creditClass && rc==null && wp!=null && wp>0
             ? `Water — ${Math.round(wp*100)/100}" rain under the ${_iaShown}" soak-in threshold`
             : (rc ? `Water — ${rc.wp}" rain didn't cover the gap (last watered ${dW}d ago)` : null));
@@ -931,6 +961,6 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
 }
 module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
-  FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered,
+  FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered, bagHeatDemoteCredit,
   dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,
   overwinter: ow};

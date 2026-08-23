@@ -165,16 +165,30 @@ describe('DRG-WATERCREDIT-004: hot-day fabric-bag heat-gate (>=85°F)', () => {
       : out.tasks.rain_skipped.some(w => w.id === 't') ? 'SKIP' : 'OTHER';
     return { b, out };
   };
-  it('established outdoor fabric bag, big rain, HOT day => DUE (credit withheld)', () => {
+  // BUG-HEATDEMOTETOTAL-001 (2026-08-23) — these two cases previously asserted DUE at 90°F and at the
+  // 85°F edge, which pinned the gate's TOTAL DENIAL (`bagHeatGate ? rc=null`). That denial is the
+  // defect: the gate is documented as a demotion and now is one. On THIS 2-class flag-OFF path the
+  // demotion has no room to move — RAIN_HOLD_DAYS is 1, which is already bagHeatMinCreditDays — so the
+  // hot bag now keeps the same 1 day a mild one gets and drops to rain_skipped at dW == wi. The gate
+  // still fires (the note proves it), and the cases where it still changes the OUTCOME are the
+  // in-flag/live ones, measured in heatdemote.test.js (3 credit-days -> 1 at >=85°F).
+  it('established outdoor fabric bag, big rain, HOT day => SKIP at the 1-day floor, gate named in the reason', () => {
     const { b, out } = mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxHot);
-    expect(b).toBe('DUE');
-    expect(out.tasks.water_due.find(w => w.id === 't').rain_note).toMatch(/fabric bag dries fast/i);
+    expect(b).toBe('SKIP');
+    const r = out.tasks.rain_skipped.find(w => w.id === 't');
+    expect(r.credited_days).toBe(1);
+    expect(r.reason).toMatch(/fabric bag dries fast at 90°F/i);
   });
   it('SAME fabric bag, big rain, MILD day => SKIP (credit applies)', () => {
-    expect(mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxMild).b).toBe('SKIP');
+    const { b, out } = mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxMild);
+    expect(b).toBe('SKIP');
+    // The discriminator on this path is the reason, not the bucket: no gate, no bag clause.
+    expect(out.tasks.rain_skipped.find(w => w.id === 't').reason).not.toMatch(/fabric bag/i);
   });
-  it('fabric bag at exactly 85°F => DUE (gate is inclusive)', () => {
-    expect(mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxEdge).b).toBe('DUE');
+  it('fabric bag at exactly 85°F => gate fires (inclusive), credit floored not erased', () => {
+    const { b, out } = mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxEdge);
+    expect(b).toBe('SKIP');
+    expect(out.tasks.rain_skipped.find(w => w.id === 't').reason).toMatch(/fabric bag dries fast at 85°F/i);
   });
   it('hot day but NON-fabric vessel (in_ground) => SKIP (gate is fabric-only)', () => {
     expect(mk({ container_type: 'in_ground', container_size: null, last_water: ago(5) }, H.big, wxHot).b).toBe('SKIP'); // in_ground uses the 5d interval
