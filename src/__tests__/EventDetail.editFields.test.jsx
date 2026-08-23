@@ -11,11 +11,21 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 // Harness copied verbatim from EventDetail.test.jsx — useApiFetch returns { fetch }, and the
 // upload HOOK is what needs stubbing, not the PhotoUpload component.
-const { apiFetchSpy, navigateSpy, dataRef } = vi.hoisted(() => ({
+const { apiFetchSpy, navigateSpy, dataRef, flags } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
   navigateSpy: vi.fn(),
   dataRef: { event: null, project: { id: 'p1', name: 'Tomatoes 2026' } },
+  flags: { EVENT_REANCHOR_ENABLED: false },
 }))
+
+// BUG-VACUOUSREANCHORTEST-001 — slice 4's guard has to be able to see BOTH flag states, so the flag
+// is read through a getter rather than baked in at import. Every other flag keeps its real value:
+// EventDetail also reads PROJECTS_HIDDEN and WATER_DEPTH_EDIT_ENABLED, and stubbing those would
+// quietly re-route the page this file is meant to be testing.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, get EVENT_REANCHOR_ENABLED() { return flags.EVENT_REANCHOR_ENABLED } }
+})
 
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) }))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => ({ user: { id: 'u1' } }) }))
@@ -139,14 +149,76 @@ describe('slice 2: the edit form seeds and saves what it can now write', () => {
   })
 })
 
-describe('slice 4: the re-anchor control is inert while its flag is off', () => {
-  it('does not send plant_id/project_id when EVENT_REANCHOR_ENABLED is false', async () => {
-    // Flag OFF is the shipped state, so this pins that EventDetail's save is byte-identical to
-    // before slice 4 existed — which is what makes the flag a real lever rather than dead code.
+// BUG-VACUOUSREANCHORTEST-001 — what this describe used to be, and why it was replaced.
+//
+// The old single test clicked Edit, saved an UNTOUCHED form, and asserted plant_id/project_id were
+// undefined. The emit it was guarding is `EVENT_REANCHOR_ENABLED && form.plant_id !== (event.plant_id
+// ?? null)` (EventDetail.jsx:349). On an untouched form the SECOND conjunct is independently false —
+// `form.plant_id` is seeded from `event.plant_id` (EventDetail.jsx:214) — so the keys were absent no
+// matter what the flag said. Verified, not inferred: flipping EVENT_REANCHOR_ENABLED to true left all
+// 7 tests in this file green. A guard that passes in the state it claims to forbid protects nothing.
+//
+// It also had a second, quieter hole: `expect(b.plant_id).toBeUndefined()` passes just as happily on
+// a body of `{}`, so a save that silently stopped sending anything would have read as a pass. Both
+// tests below therefore carry a positive control on the same body they assert absence in.
+//
+// WHAT IS STILL NOT COVERED, deliberately and with a reason. The flag conjunct on its own cannot be
+// falsified from here: nothing in EventDetail writes `form.plant_id` — the seed is its only writer,
+// Delete (the one path that refetches the event) is gated on `!editing`, and no re-anchor control is
+// rendered — so the emit branch has no reachable trigger in the client today. Deleting
+// `EVENT_REANCHOR_ENABLED &&` from line 349 would keep these tests green. That is not a gap this
+// file can close by trying harder; it is the shape of the code. When the control is built, the test
+// to add is "change the anchor, flag off -> keys still absent".
+describe('slice 4: the re-anchor keys never reach the wire from an untouched form', () => {
+  beforeEach(() => { flags.EVENT_REANCHOR_ENABLED = false })
+
+  const anchorKeys = (b) => Object.keys(b).filter(k => k === 'plant_id' || k === 'project_id')
+
+  it('flag OFF (the shipped state) — an ordinary edit saves without the anchor keys', async () => {
     setup(); await clickEdit()
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'new title' } })
     await save()
     const b = savedBody()
-    expect(b.plant_id).toBeUndefined()
-    expect(b.project_id).toBeUndefined()
+    // Positive control FIRST: absence only means something on a body that carried the edit.
+    expect(b.title).toBe('new title')
+    expect(anchorKeys(b)).toEqual([])
+  })
+
+  it('flag ON — the SEED, not the flag, is what holds the anchor still', async () => {
+    // The failure this exists to prevent is the one the flag's own comment names: SILENT DATA
+    // MOVEMENT. If `form.plant_id` ever stops mirroring the saved row, then the moment this flag is
+    // flipped on, opening an event and pressing Save re-anchors it to something the user never
+    // chose — no error, no prompt, and the old anchor is gone. Forcing the flag on is what makes
+    // that reachable from a test at all; with it off the assertion below cannot fail for any reason.
+    flags.EVENT_REANCHOR_ENABLED = true
+    setup(); await clickEdit()
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'new title' } })
+    await save()
+    const b = savedBody()
+    expect(b.title).toBe('new title')
+    expect(anchorKeys(b)).toEqual([])
+  })
+
+  it('flipping the flag alone does not change the wire — the "byte-identical" promise', async () => {
+    // featureFlags.js:123 claims "Flag OFF leaves EventDetail byte-identical". Stated that way it is
+    // untestable; stated as "both flag states produce the same PUT for the same interaction" it is
+    // exactly checkable, and it fails the moment the emit stops being conditioned on a real change.
+    flags.EVENT_REANCHOR_ENABLED = false
+    const { unmount } = setup(); await clickEdit()
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'new title' } })
+    await save()
+    const off = savedBody()
+    // Read `off` BEFORE unmounting and re-rendering: setup() resets the spy, so the second pass
+    // wipes the call log the first assertion would otherwise be read from.
+    unmount()
+
+    flags.EVENT_REANCHOR_ENABLED = true
+    setup(); await clickEdit()
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'new title' } })
+    await save()
+    const on = savedBody()
+
+    expect(Object.keys(on).sort()).toEqual(Object.keys(off).sort())
+    expect(on).toEqual(off)
   })
 })

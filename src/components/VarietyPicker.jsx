@@ -21,7 +21,7 @@
 // Schema field reference (plant_varieties): id, name, species, common_name, source, notes.
 // CHECK constraint chk_inventory_seed_requires_variety enforces inventory category=seeds → variety_id NOT NULL.
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
 import { useVarieties } from '../hooks/useVarieties.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
@@ -110,7 +110,17 @@ export default function VarietyPicker({
   // Mirrors createStage for the deferred blur-close, which runs 150ms later and would otherwise
   // read a stale captured value. See onBlur.
   const createStageRef = useRef(null)
-  const listboxId = useMemo(() => `vp-list-${Math.random().toString(36).slice(2, 9)}`, [])
+  // BUG-VARPICKERARIA-001 — was `Math.random()`. aria-activedescendant now points at an option id
+  // derived from this, so it must be stable across renders (random-per-mount already was) AND
+  // deterministic per instance so tests can assert on it. useId gives both. Its ':' delimiters are
+  // legal in an id attribute but NOT in a CSS selector, so they are stripped: the active-option
+  // scroll below resolves through getElementById, and a future querySelector must not silently fail
+  // on a ':' it did not escape. Same treatment as PlantingSelect's listboxId (V4-PICKERA11Y-001).
+  const listboxId = `vp-list-${useId().replace(/:/g, '')}`
+  // Option identity. Namespaced by listboxId, not a bare `vp-opt-…`, because a page may render more
+  // than one picker (AddSeeds, InventoryAdd) — duplicate DOM ids would make aria-activedescendant
+  // resolve into the wrong picker's list.
+  const optionId = useCallback((key) => `${listboxId}-opt-${key}`, [listboxId])
   const debounceRef = useRef(null)
   const lastSentRef = useRef('')
   // Crop chosen for the in-flight create, so a 409 "Create anyway" re-submits with the same type.
@@ -222,6 +232,49 @@ export default function VarietyPicker({
     )
   }, [cropTypes, cropFilter])
   const cropItemCount = filteredCropTypes.length + 2
+
+  // ── BUG-VARPICKERARIA-001: the combobox contract ──────────────────────────
+  // The input declared aria-expanded/aria-controls unconditionally, but the listbox those point at
+  // renders only in two of the four states below. Closed, disabled, or on the mint-a-crop form the
+  // combobox was telling a screen reader "expanded — the popup is #vp-list-x" while #vp-list-x was
+  // not in the DOM at all: a dangling IDREF, and on the mint form an actively wrong one (a panel IS
+  // up, it is just not a listbox). One derived flag now drives both attributes, so "expanded" and
+  // "here is the popup" can never disagree with what was rendered.
+  const listboxOpen = open && !disabled && createStage !== 'newcrop'
+
+  // The other missing half: `highlight` was a background colour and nothing else, so ArrowDown moved
+  // a visual bar no screen reader could observe and never announced a row. Same index, resolved to
+  // the id of the row it highlights, so the visual highlight and aria-activedescendant cannot drift.
+  // null (attribute ABSENT), never '': an empty aria-activedescendant is itself a dangling reference
+  // that reads as "there is an active option, I just cannot find it".
+  //
+  // APG deviation, deliberate and shared with PlantingSelect: DOM focus does NOT move to the option.
+  // On Chrome/Android moving focus out of the <input> drops the soft keyboard and kills the
+  // typeahead, so the input keeps focus and only the active descendant roves.
+  const activeDescendantId = useMemo(() => {
+    if (!listboxOpen) return null
+    if (createStage === 'crop') {
+      if (highlight === NEW_CROP_ROW) return optionId('newcrop')
+      if (highlight === NO_CROP_ROW) return optionId('nocrop')
+      const ct = filteredCropTypes[highlight - 2]
+      return ct ? optionId(`ct-${ct.slug}`) : null
+    }
+    // A stale highlight can outrun a shrinking list (the results swap under a held arrow key).
+    // Undefined then means "no active option", which is exactly right — see the null contract above.
+    if (highlight < filtered.length) return filtered[highlight] ? optionId(filtered[highlight].id) : null
+    return (showCreateFooter && highlight === filtered.length) ? optionId('create') : null
+  }, [listboxOpen, createStage, highlight, filteredCropTypes, filtered, showCreateFooter, optionId])
+
+  // APG requires the active descendant be scrolled into view; with focus staying on the input the
+  // browser will never do it for us, and both list styles cap their height, so an arrowed-to row
+  // below the fold was announced but invisible. `block: 'nearest'` scrolls the minimum needed —
+  // 'center' would jump the list under a sighted user's thumb on every ArrowDown. jsdom implements
+  // neither scrollIntoView nor layout, hence the optional call.
+  useEffect(() => {
+    if (!activeDescendantId) return
+    if (typeof document === 'undefined') return
+    document.getElementById(activeDescendantId)?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeDescendantId])
 
   // ── Selection handlers ────────────────────────────────────────────────────
   const selectVariety = useCallback((v) => {
@@ -488,8 +541,11 @@ export default function VarietyPicker({
         id={id}
         type="text"
         role="combobox"
-        aria-expanded={open}
-        aria-controls={listboxId}
+        // Both derived from listboxOpen, never from `open` alone — see its definition. aria-controls
+        // is omitted rather than dangling whenever the listbox is not rendered.
+        aria-expanded={listboxOpen}
+        aria-controls={listboxOpen ? listboxId : undefined}
+        aria-activedescendant={activeDescendantId ?? undefined}
         aria-autocomplete="list"
         aria-required={required || undefined}
         aria-invalid={hasError || undefined}
@@ -663,6 +719,10 @@ export default function VarietyPicker({
               onKeyDown={onCropStageKeyDown}
               aria-label="Filter crop types"
               aria-controls={listboxId}
+              // This field drives the SAME highlight (onCropStageKeyDown), and focus legitimately
+              // sits here once it is tapped, so it must report the active row too — otherwise
+              // arrowing from the filter announces nothing.
+              aria-activedescendant={activeDescendantId ?? undefined}
               placeholder={`Filter ${cropTypes.length} crop types…`}
               style={inputStyle(false, false)}
               autoComplete="off"
@@ -680,9 +740,14 @@ export default function VarietyPicker({
             {/* The mint row is FIRST. It is the only row that cannot be reached any other way —
                 the types below it are reachable by typing in the filter — and at 141 rows it was
                 previously below a blind scroll, which is how Kousa Dogwood landed untyped. */}
+            {/* aria-selected means SELECTED, not highlighted — the active row is carried by
+                aria-activedescendant above. Nothing in this chooser is selected yet (picking a row
+                IS the commit), so every row here is false; conflating the two is what left the
+                highlight unannounced. */}
             <li
+              id={optionId('newcrop')}
               role="option"
-              aria-selected={highlight === NEW_CROP_ROW}
+              aria-selected={false}
               onClick={beginNewCropType}
               onMouseEnter={() => setHighlight(NEW_CROP_ROW)}
               style={createRowStyle(highlight === NEW_CROP_ROW, false)}
@@ -690,8 +755,9 @@ export default function VarietyPicker({
               ＋ New crop type…
             </li>
             <li
+              id={optionId('nocrop')}
               role="option"
-              aria-selected={highlight === NO_CROP_ROW}
+              aria-selected={false}
               onClick={() => submitCreate(false, null, null)}
               onMouseEnter={() => setHighlight(NO_CROP_ROW)}
               style={rowStyle(highlight === NO_CROP_ROW)}
@@ -703,8 +769,9 @@ export default function VarietyPicker({
             {filteredCropTypes.map((ct, i) => (
               <li
                 key={ct.slug}
+                id={optionId(`ct-${ct.slug}`)}
                 role="option"
-                aria-selected={highlight === i + 2}
+                aria-selected={false}
                 onClick={() => submitCreate(false, ct.slug, ct.default_lifecycle ?? null)}
                 onMouseEnter={() => setHighlight(i + 2)}
                 style={rowStyle(highlight === i + 2)}
@@ -753,8 +820,12 @@ export default function VarietyPicker({
                 return (
                   <li
                     key={v.id}
+                    id={optionId(v.id)}
                     role="option"
-                    aria-selected={highlight === i}
+                    // The COMMITTED variety, not the highlighted one (which rides on
+                    // aria-activedescendant). Reachable because "Change" reopens the list with a
+                    // value already in hand.
+                    aria-selected={!!value && String(v.id) === String(value.id)}
                     onClick={() => selectVariety(v)}
                     onMouseEnter={() => setHighlight(i)}
                     style={rowStyle(highlight === i)}
@@ -784,8 +855,9 @@ export default function VarietyPicker({
               )}
               {showCreateFooter && !loading && (
                 <li
+                  id={optionId('create')}
                   role="option"
-                  aria-selected={highlight === filtered.length}
+                  aria-selected={false}
                   onClick={() => beginCreate()}
                   onMouseEnter={() => setHighlight(filtered.length)}
                   style={createRowStyle(highlight === filtered.length, creating)}
