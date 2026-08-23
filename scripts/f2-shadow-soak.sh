@@ -230,6 +230,13 @@ for pid in sorted(set(L) | set(G), key=str):
     flips += flip
     plantings.append({
         "plant_id": pid, "name": src["row"].get("name"),
+        # v2: `crop` and `in_ground` are stored because the FLIP GATE is per-CROP-CLASS
+        # ("median effective-interval shift per crop class <= +-10%") and v1 stored neither, so
+        # scripts/f2-flip-gate.py had to fall back to grouping on the leading token of the planting
+        # NAME — which turned 44 real classes into 86 singletons and made every class n=1. A
+        # per-class bound evaluated on n=1 classes is not a bound. The engine already returns both
+        # fields on every row; v1 simply dropped them.
+        "crop": src["row"].get("crop"), "in_ground": src["row"].get("in_ground"),
         "user_id": src.get("user_id"), "space_id": src.get("space_id"),
         "legacy": lv, "ledger": gv,
         "delta_class": "same" if lv["verdict"] == gv["verdict"] else f"{lv['verdict']}->{gv['verdict']}",
@@ -246,7 +253,10 @@ summary = {
     "never_both": sum(1 for p in plantings if p["legacy"]["verdict"] == p["ledger"]["verdict"] == "never"),
 }
 report = {
-    "schema": "f2-soak-v1",
+    # v2 adds per-planting `crop` + `in_ground` (see the plantings append above). Additive only —
+    # every v1 field keeps its name and meaning, so a v1 reader is unaffected and f2-flip-gate.py
+    # accepts both, degrading v1 samples to name-based crop grouping with a warning.
+    "schema": "f2-soak-v2",
     "plan_date": plan_date,
     "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
     "function": fn, "region": region,

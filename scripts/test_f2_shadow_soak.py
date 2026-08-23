@@ -251,7 +251,7 @@ def test_soak_happy_path_report(tmp_path):
     assert p1 == {"dryRun": True, "flagOverrides": {"CARE_WATER_LEDGER_ENABLED": True}}
 
     report = json.loads((out / "soak-20260813.json").read_text())
-    assert report["schema"] == "f2-soak-v1"
+    assert report["schema"] == "f2-soak-v2"
     assert report["plan_date"] == "2026-08-13"
     assert report["summary"] == {"plantings": 6, "due_legacy": 3, "due_ledger": 2, "verdict_flips": 3,
                                  "skipped_legacy": 1, "skipped_ledger": 2, "never_both": 1}
@@ -268,6 +268,13 @@ def test_soak_happy_path_report(tmp_path):
     assert rows["P6"]["delta_class"] == "due->skipped" and rows["P6"]["verdict_flip"]
     # legacy side never carries fold fields (flag off -> no ledger key on its rows)
     assert "D" not in rows["P1"]["legacy"]
+    # v2: crop + in_ground are stored. The flip gate's bound D is PER CROP CLASS, and v1 stored
+    # neither, so f2-flip-gate.py had to group on the planting name — which turned 44 real classes
+    # into 86 singletons and made a per-class median meaningless. Asserted on a row that flips, so
+    # the field cannot quietly go missing on exactly the rows the gate cares about.
+    assert rows["P1"]["crop"] == "basil"
+    assert rows["P3"]["crop"] == "chard"
+    assert all("crop" in r and "in_ground" in r for r in report["plantings"])
     assert "3 due-legacy" in r.stdout and "2 due-ledger" in r.stdout and "3 verdict-flips" in r.stdout
 
 
