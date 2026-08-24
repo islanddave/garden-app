@@ -79,6 +79,14 @@ function Harness() {
   // event_type rides along because the session gate reads `session`, but the harvest PANEL only
   // renders once a type is chosen — without it every session run would start with a tap that has
   // nothing to do with what is being measured.
+  //
+  // ⚠️ AND THAT IS A KNOWN DIVERGENCE FROM THE REAL SESSION, observed here 2026-08-24. The real
+  // weigh-in session URL carries `session=harvest` and NO `event_type`, which is exactly why
+  // harvestFabAutoOpen (EventNew.jsx `preselectedEventType === 'harvest'`) does NOT fire there —
+  // the tray is the session's picker instead. Adding event_type to satisfy the panel ALSO satisfies
+  // that predicate, so the chooser auto-opens here when it would not in prod. Harmless for pad and
+  // fold geometry (measure with the chooser dismissed), but do NOT use this mount to reason about
+  // auto-open, tray-vs-chooser, or any tap count that includes picking a planting.
   const entry = params.get('session') === 'harvest' ? '/log?session=harvest&event_type=harvest' : '/log'
   const content = <EventNew key={nonce} />
 
