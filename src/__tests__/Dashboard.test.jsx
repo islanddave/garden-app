@@ -4,7 +4,7 @@
  *
  * Covers:
  *  - I10-greeting: greeting uses first name only when display_name is a full name (L-063).
- *  - I10-greeting: fallback to "Dave" when display_name is missing.
+ *  - BUG-JENGREETEDDAVE-001: no resolvable name greets neutrally, never as a specific user.
  *  - DASH-LOC-REDUNDANT: the "WHERE ARE YOU?" zone-link card is no longer rendered.
  *  - DASH-ORDER-HARVEST-GATE: HarvestReadyTile hidden when no project is fruiting/flowering.
  *  - DASH-ORDER-HARVEST-GATE: HarvestReadyTile visible when at least one project is fruiting/flowering.
@@ -98,12 +98,23 @@ describe('Dashboard — I10-greeting (first-name only per L-063)', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/Welcome back, Jen/)
   })
 
-  it('falls back to "Dave" when display_name is missing', async () => {
-    authMock.profile = {}
+  // BUG-JENGREETEDDAVE-001. This case previously ASSERTED the bug — it required the fallback to be
+  // "Dave". Both halves below matter and neither alone is sufficient: the positive half pins the
+  // neutral noun, and the negative half is the one that actually fails against the old source,
+  // because "Dave" satisfies "renders something" perfectly well. There are exactly two real users,
+  // so the failure this guards is naming the WRONG one, not naming nobody.
+  it.each([
+    ['missing display_name', {}],
+    ['null profile',         null],
+    ['whitespace-only name', { display_name: '   ' }],
+  ])('greets neutrally, never as a specific user, on %s', async (_label, profile) => {
+    authMock.profile = profile
     primeDash()
     render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/Welcome back, Dave/)
+    const text = screen.getByRole('heading', { level: 1 }).textContent
+    expect(text).toMatch(/Welcome back, Gardener/)
+    expect(text).not.toMatch(/Dave|Jen/)
   })
 })
 

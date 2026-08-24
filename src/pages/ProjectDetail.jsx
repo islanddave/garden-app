@@ -170,6 +170,14 @@ const EVENT_DELETE_FAILED_COPY =
 const EVENT_DELETE_STALE_LIST_COPY =
   'The event was deleted, but the log could not refresh — reopen this project to see the current list.'
 
+// BUG-PROJCONFIRMDELSILENT-001 — the same two-honest-outcomes treatment for the PROJECT-level
+// actions, which were the third silent catch on this page. Split by verb because the two leave the
+// project in different places and "try again" means a different button in each case.
+const PROJECT_DELETE_FAILED_COPY =
+  'The project could not be deleted — it is still here. Check your connection and try again.'
+const PROJECT_ARCHIVE_FAILED_COPY =
+  'The project could not be archived — it is still active. Check your connection and try again.'
+
 // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS replaced by
 // shared getStatusColors() from src/lib/status.js (single source of truth across
 // Dashboard / ProjectList / ProjectDetail).
@@ -263,6 +271,13 @@ export default function ProjectDetail() {
   // exists only so the in-dialog Retry cannot be double-fired while a check is in flight.
   const [childrenLoadFailed,  setChildrenLoadFailed]  = useState(false)
   const [childrenRechecking,  setChildrenRechecking]  = useState(false)
+  // BUG-PROJCONFIRMDELSILENT-001 — separate from `deleteErr` ON PURPOSE, and the reason is position,
+  // not taste: deleteErr's banner sits above the EVENT TIMELINE, several screens below the header on
+  // a 390px phone. The project delete/archive buttons are in the header, so reporting their failure
+  // down there is the same silence in a different costume. Same grammar as the rest of the family
+  // (named copy constant, role="alert" ErrorBanner, cleared when the action is re-armed) — the only
+  // thing that differs is that the banner renders next to the control that failed.
+  const [projectActionErr, setProjectActionErr] = useState(null)
   const [moveOpen,  setMoveOpen]  = useState(false)
   const [moveSel,   setMoveSel]   = useState('')   // '' = top level
   const [moving,    setMoving]    = useState(false)
@@ -712,6 +727,10 @@ export default function ProjectDetail() {
   }
 
   async function handleDeleteClick() {
+    // BUG-PROJCONFIRMDELSILENT-001: arming clears a stale banner, same as handleDeleteEvent does for
+    // the event path. This is the ONLY arm for confirmDelete (both its buttons live in the dialog),
+    // so one clear here covers both verbs.
+    setProjectActionErr(null)
     // The check still runs BEFORE the dialog opens, as it always has: the dialog's whole job is to
     // report what it found, so opening ahead of the answer would only move the lie earlier.
     await loadChildProjects()
@@ -753,6 +772,13 @@ export default function ProjectDetail() {
       }
     } catch (err) {
       console.error('delete/archive failed', err)
+      // BUG-PROJCONFIRMDELSILENT-001: this catch used to end at the console.error above. The dialog
+      // had already closed (line ~730), the spinner cleared, and the page looked exactly as it does
+      // after a successful archive-in-place — so a tap on a destructive control produced no evidence
+      // at all that it had not happened. Third member of the family; the delete/archive split is the
+      // same "name where the thing actually is" rule the event copy follows. A 404 never reaches
+      // here (already-gone is the outcome the user asked for), so anything caught is a real failure.
+      setProjectActionErr(archive ? PROJECT_ARCHIVE_FAILED_COPY : PROJECT_DELETE_FAILED_COPY)
       setDeleting(false)
     }
   }
@@ -929,6 +955,13 @@ export default function ProjectDetail() {
           </div>
         )}
       </div>
+
+      {/* BUG-PROJCONFIRMDELSILENT-001: directly under the Delete/Archive/Unarchive row, so the
+          report is on screen with the control that failed at 390px rather than several scrolls
+          below it. Retry is those same buttons, still enabled — no separate Retry needed. */}
+      {projectActionErr && (
+        <ErrorBanner data-testid="project-action-error" style={{ marginBottom: 16 }}>{projectActionErr}</ErrorBanner>
+      )}
 
       {/* V3-REPARENT-001 inline Undo (ambient, non-toast) */}
       {lastMove && !moveOpen && (

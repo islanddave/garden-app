@@ -14,9 +14,11 @@ import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { levelProgress } from '../lib/xpLevel.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
+import { NEUTRAL_CARETAKER_NAME } from '../lib/caretakers.js'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
-// name like "Dave Nichols"; we render greetings with first name only.
+// name like "Dave Nichols"; we render greetings with first name only. Returns null — never a
+// guess — when there is no name to render; the caller supplies the neutral fallback.
 function firstName(displayName) {
   if (!displayName || typeof displayName !== 'string') return null
   const token = displayName.trim().split(/\s+/)[0]
@@ -202,12 +204,17 @@ export default function Dashboard() {
 
         {/* Header — Welcome + Streak counter top-right.
              I10-greeting (2026-05-18): first-name only per CLAUDE.md L-063.
+             BUG-JENGREETEDDAVE-001 (2026-08-24): the no-name fallback was the literal 'Dave'. This
+             app has exactly two users, so greeting an unresolved name with one of them is a coin
+             flip the first line of the page has no business making — and the one it gets wrong is
+             the user who is already invisible in every pooled metric. NEUTRAL_CARETAKER_NAME is the
+             same fallback the caretaker lenses have always used (src/lib/caretakers.js).
              DASH-LOC-REDUNDANT (2026-05-18): removed the "WHERE ARE YOU?" zone link below.
              The TopBar zone pill is the single source of truth for zone display + change. */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
           <div>
             <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: '0 0 4px' }}>
-              Welcome back, {firstName(profile?.display_name) ?? 'Dave'} 🌿
+              Welcome back, {firstName(profile?.display_name) ?? NEUTRAL_CARETAKER_NAME} 🌿
             </h1>
             <p style={{ color: P.light, fontSize: '0.875rem', margin: 0 }}>{today}</p>
           </div>

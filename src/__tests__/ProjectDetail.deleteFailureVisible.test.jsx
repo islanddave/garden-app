@@ -1,4 +1,4 @@
-// Two ProjectDetail delete-path failures that used to render as benign successes.
+// Three ProjectDetail delete-path failures that used to render as benign successes.
 //
 //   BUG-PROJDELORPHAN-001 — the pre-delete orphan check caught into `[]`, and `[]` is also what a
 //   project with no sub-projects reads as, so a 500/offline/expired-token check opened the dialog
@@ -7,6 +7,10 @@
 //
 //   BUG-EVENTDELSILENT-001 — confirmEventDelete's outer catch was a bare console.error, so a failed
 //   event delete closed the sheet, cleared the spinner and said nothing while the row stayed put.
+//
+//   BUG-PROJCONFIRMDELSILENT-001 — confirmDelete's outer catch was the same bare console.error one
+//   page-level up, so a failed project delete OR archive closed the dialog and left the page
+//   indistinguishable from a successful archive-in-place.
 //
 // The discriminating assertion in BOTH sections is a PAIR: the failure case and the ordinary
 // success case are asserted against each other, because either one alone is satisfied by the buggy
@@ -66,6 +70,8 @@ function wire({
   refreshFails = false,
   photos = [],
   photoDeleteFails = [],
+  projectDelete = null,                // () => Promise ; overrides DELETE /api/projects/proj-1
+  projectArchive = null,               // () => Promise ; overrides PATCH /api/projects/proj-1/archive
 } = {}) {
   const log = []
   let deleteSeen = false
@@ -80,8 +86,12 @@ function wire({
         ? Promise.reject(new Error('photo delete failed'))
         : Promise.resolve({ id: pid, deleted_at: '2026-08-23T00:00:00Z', affected: [] })
     }
-    if (path === '/api/projects/proj-1/archive') return Promise.resolve({ archived_at: '2026-08-23T00:00:00Z' })
-    if (path === '/api/projects/proj-1' && method === 'DELETE') return Promise.resolve({ ok: true })
+    if (path === '/api/projects/proj-1/archive') {
+      return projectArchive ? projectArchive() : Promise.resolve({ archived_at: '2026-08-23T00:00:00Z' })
+    }
+    if (path === '/api/projects/proj-1' && method === 'DELETE') {
+      return projectDelete ? projectDelete() : Promise.resolve({ ok: true })
+    }
     if (path === '/api/projects/proj-1') return Promise.resolve(PROJECT)
     if (path.startsWith('/api/projects?parent_id=')) {
       return childCheck ? childCheck() : Promise.resolve(childProjects)
@@ -294,5 +304,103 @@ describe('ProjectDetail — a failed event delete is visible (BUG-EVENTDELSILENT
 
     await act(async () => { fireEvent.click(rowDelete()) })
     expect(failBanner()).toBeNull()
+  })
+})
+
+// ── BUG-PROJCONFIRMDELSILENT-001 ────────────────────────────────────────────────────────────────
+// The PROJECT-level twin of the section above. The dialog is dismissed before the request settles,
+// so on failure the page returns to its ordinary resting state — which is why nothing on screen
+// distinguished "the delete failed" from "the archive worked" pre-fix.
+const projBanner = () => screen.queryByTestId('project-action-error')
+const dialogOpen = () => screen.queryByText('Delete project?') != null
+
+async function confirmProjectDelete() {
+  await openDeleteDialog()
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' })) })
+}
+async function confirmProjectArchive() {
+  await openDeleteDialog()
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Archive instead (recommended)' })) })
+}
+
+describe('ProjectDetail — a failed project delete/archive is visible (BUG-PROJCONFIRMDELSILENT-001)', () => {
+  // THE bug, stated as the contrast. Neither half proves anything alone: pre-fix the failure arm
+  // rendered a normal project page and the success arm navigated away, and "no banner" was true of
+  // both. The pair is what pins the difference.
+  it('a failed delete and a successful one do NOT render the same thing', async () => {
+    wire({ projectDelete: () => Promise.reject(boom()) })
+    await renderLoaded()
+    await confirmProjectDelete()
+
+    expect(projBanner()).toBeTruthy()
+    expect(projBanner().textContent).toContain('it is still here')
+    // Truthful state: the project really is still here, we are still on its page, and the Delete
+    // button is live again so the banner's "try again" points at something real.
+    expect(navigateSpy).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Delete' }).disabled).toBe(false)
+    cleanup()
+
+    // Same surface, same taps, the delete lands.
+    navigateSpy.mockReset()
+    wire()
+    await renderLoaded()
+    await confirmProjectDelete()
+
+    expect(projBanner()).toBeNull()
+    expect(navigateSpy).toHaveBeenCalledWith('/projects')
+  })
+
+  // Archive is the button the dialog RECOMMENDS, so its silent failure is the likelier one to be
+  // hit — and it fails the most quietly of all, because the archive path stays on the page by
+  // design. The only pre-fix difference between "archived" and "archive failed" was a badge the
+  // user has no reason to be watching for.
+  it('a failed archive and a successful one do NOT render the same thing, and it says ARCHIVE', async () => {
+    wire({ projectArchive: () => Promise.reject(boom()) })
+    await renderLoaded()
+    await confirmProjectArchive()
+
+    expect(projBanner()).toBeTruthy()
+    expect(projBanner().textContent).toContain('could not be archived')
+    // Naming the wrong verb is its own lie: this project was never up for deletion.
+    expect(projBanner().textContent).not.toContain('could not be deleted')
+    expect(screen.queryByText('Archived')).toBeNull()
+    cleanup()
+
+    wire()
+    await renderLoaded()
+    await confirmProjectArchive()
+
+    expect(projBanner()).toBeNull()
+    await waitFor(() => expect(screen.getByText('Archived')).toBeTruthy())
+  })
+
+  it('the failure is announced, and the dialog is closed so it can be seen', async () => {
+    wire({ projectDelete: () => Promise.reject(boom()) })
+    await renderLoaded()
+    await confirmProjectDelete()
+    // TalkBack, and the reason the banner lives beside the header controls rather than in the
+    // deleteErr slot above the timeline: on a 390px phone that one is several scrolls away.
+    expect(projBanner().getAttribute('role')).toBe('alert')
+    expect(dialogOpen()).toBe(false)
+  })
+
+  // The tolerance that must NOT become a banner, mirroring the event path: a project already gone
+  // is the outcome the user asked for, and navigating away is correct.
+  it('a 404 stays silent and still navigates — already-gone is success', async () => {
+    wire({ projectDelete: () => Promise.reject(boom(404)) })
+    await renderLoaded()
+    await confirmProjectDelete()
+    expect(projBanner()).toBeNull()
+    expect(navigateSpy).toHaveBeenCalledWith('/projects')
+  })
+
+  it('re-arming the dialog clears a stale failure banner', async () => {
+    wire({ projectArchive: () => Promise.reject(boom()) })
+    await renderLoaded()
+    await confirmProjectArchive()
+    expect(projBanner()).toBeTruthy()
+
+    await openDeleteDialog()
+    expect(projBanner()).toBeNull()
   })
 })

@@ -7,6 +7,12 @@ import { P } from './constants.js'
 // Stable warm hues for non-self caretakers; the current user always reads P.green ("you").
 const OTHER_HUES = [P.terra, '#c9a84c', '#6b8fb5', '#a86b9c']
 
+// What we call a signed-in human whose display_name did not resolve. Exported because it is the
+// ONE answer to that question in the app: BUG-JENGREETEDDAVE-001 found the Dashboard greeting
+// answering it with the literal 'Dave', which turns a missing name into a false claim about WHICH
+// of the two users is holding the phone. A neutral noun cannot be wrong about that.
+export const NEUTRAL_CARETAKER_NAME = 'Gardener'
+
 export function buildProjectsById(projects) {
   const m = new Map()
   for (const p of (projects || [])) if (p && p.id) m.set(p.id, p)
@@ -33,7 +39,7 @@ export function buildCaretakerMap(members, meId) {
   for (const m of (members || [])) {
     if (!m || !m.id) continue
     const isMe = m.id === meId
-    const name = (m.display_name || '').trim() || 'Gardener'
+    const name = (m.display_name || '').trim() || NEUTRAL_CARETAKER_NAME
     const first = name.split(/\s+/)[0]
     map.set(m.id, {
       id: m.id,
@@ -56,7 +62,7 @@ export function lensOptions(members, meId) {
     if (!m || !m.id) continue
     if (m.id === meId) mine.push({ value: m.id, label: 'Mine' })
     else {
-      const name = (m.display_name || '').trim() || 'Gardener'
+      const name = (m.display_name || '').trim() || NEUTRAL_CARETAKER_NAME
       others.push({ value: m.id, label: name.split(/\s+/)[0] })
     }
   }
