@@ -130,12 +130,18 @@ def main():
     dl = sum(s["summary"]["due_legacy"] for s in samples)
     dg = sum(s["summary"]["due_ledger"] for s in samples)
     pct = (dg - dl) / dl * 100 if dl else 0.0
-    print(f"\nBOUND B — total water_due delta")
+    print(f"\nBOUND B — total water_due delta   [INFORMATIONAL — NOT A GATE]")
     print(f"  legacy {dl} -> ledger {dg}   delta {dg-dl:+d} ({pct:+.1f}%) across {len(samples)} sample(s)")
-    print("  UNSPECIFIED: the canon says 'within stated bounds' and never states them. Reported,")
-    print("  not adjudicated — Dave sets the bound or it is not a gate.")
+    print("  DROPPED as a gate 2026-08-24 on Dave's call (canon Part 5 amendment). It was never")
+    print("  adjudicable: the counter saturates and the saturation moves with the weather (92% of")
+    print("  evaluable rows due on a dry sample, 60% on a wet one); the denominator is not stable")
+    print("  (100/159/176/179 plantings across four consecutive samples); and the delta is confounded")
+    print("  by the two legs reading different precipitation (BUG-F2RAINBASIS-001, narrowed but not")
+    print("  closed by BUG-RAINFORECASTCREDIT-001). Printed so the number stays visible — a moving")
+    print("  number is still worth watching — but it gates nothing and MUST NOT be read as a pass.")
+    print("  Reinstating it needs a stated theory of the correct value, not a fresh percentage.")
     verdicts["B_due_delta"] = {"legacy": dl, "ledger": dg, "delta": dg - dl, "pct": round(pct, 1),
-                               "status": "unspecified"}
+                               "status": "informational_not_a_gate", "dropped": "2026-08-24"}
 
     # ---- Bound C -----------------------------------------------------------------
     hits = bound_c(samples)
