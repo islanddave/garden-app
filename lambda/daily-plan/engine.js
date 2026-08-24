@@ -485,8 +485,17 @@ function saturationSuppressed(rcls, hy, opts){
   const soakBasis = todayAware ? ((hy.recent_precip_in || 0) + (hy.today_observed_in || 0)) : wp;
   if(soakBasis >= SOAK_CAP_IN) return { wp: Math.round(soakBasis*100)/100, kind: 'soak' };
   const fq = hy && hy.tomorrow_precip_in, pop = hy && hy.tomorrow_pop;
-  if(wp >= SOAK_WET_FLOOR_IN && fq!=null && fq >= SOAK_FCST_QPF_IN && (pop==null || pop >= SOAK_FCST_POP_PCT))
-    return { wp: wpR, fq, pop, kind: 'incoming' };
+  // BUG-RAINFORECASTCREDIT-001 residual: the "already wet" prerequisite reads soakBasis, the same
+  // MEASURED term the soak cap above judges — not windowPrecip. "Already wet" is a claim about water
+  // in the media right now, and windowPrecip's D0 half is today's unelapsed hourly FORECAST, so the
+  // old form let rain that has not fallen satisfy a wetness floor and then skip the planting on a
+  // second forecast (tomorrow's). It also re-introduced, on this one line, exactly the double-count
+  // the today branch below is written to avoid. Reports the basis it actually judged, as the soak
+  // branch does — sat_wp is the forensic field for "did we skip on a forecast that busted?" and a
+  // number no bar was applied to cannot answer it. todayAware OFF -> soakBasis === wp, so the
+  // flag-OFF path (condition AND payload) is byte-identical.
+  if(soakBasis >= SOAK_WET_FLOOR_IN && fq!=null && fq >= SOAK_FCST_QPF_IN && (pop==null || pop >= SOAK_FCST_POP_PCT))
+    return { wp: Math.round(soakBasis*100)/100, fq, pop, kind: 'incoming' };
   // TODAY. Ordered LAST so it can never pre-empt the two branches that act on water already in the media —
   // and evaluated against the raw forecast, NOT windowPrecip, so today is never counted twice (windowPrecip
   // already contains today_precip_in; using it here would let one 0.6" event satisfy both a "0.5 already
@@ -603,6 +612,11 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
     todayStr: today, effNowMs: lo.effNowMs,
     todayEt0: hydrology ? (hydrology.today_et0_in ?? null) : null,
     todayTmax: hydrology ? (hydrology.today_tmax_f ?? null) : null,
+    // BUG-F2RAINBASIS-001: today's rain for the fold's D0 day-credit. today_observed_in ONLY —
+    // the identical term creditPrecip spends at the measured-basis line above, so the ledger and
+    // the legacy chain now credit the same inches on the same day. Absent (no bound station) or
+    // absent hydrology -> null -> no D0 credit, matching legacy's degrade-to-`recent`.
+    todayPrecip: hydrology ? (hydrology.today_observed_in ?? null) : null,
     // RAIN_DEPTH key, not the IA/hold one. sizeGal gates the bed-equivalent fabric_ground row.
     exposure, vessel: vp, rainTier: rainDepthTierFor(p.container_type, vp.sizeGal),
     transplantAt: p.transplant_at || null,
@@ -829,7 +843,14 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
           ? `Skip — ${rc.wp}" rain counts as watering (fabric bag dries fast at ${high}°F: ${rc.credit_days}d credit${bagHeatCut?`, cut from ${rc.bag_heat_from}d`:''})`
           : `Skip — ${rc.wp}" rain over the last few days counts as watering`});
     } else if(dW!=null && dW>=wi){
-      const wp=windowPrecip(hydrology);
+      // BUG-RAINFORECASTCREDIT-001 residual: the DECISION that landed us in this branch is
+      // `rc == null`, and rc comes from creditPrecip(hydrology, measuredCreditEnabled). Quoting
+      // windowPrecip here instead made the sentence and the verdict cite different numbers the
+      // moment the measured flag went live — a literally false `Water — 0.38" rain under the 0.20"
+      // soak-in threshold`, where 0.38 was the mixed sum and the 0.20 bar was applied to the
+      // measured one. Same call, same args as the credit itself. measuredCreditEnabled=false ->
+      // creditPrecip IS windowPrecip, so the flag-OFF note is byte-identical.
+      const wp=creditPrecip(hydrology, measuredCreditEnabled);
       // flag-OFF: _iaShown===RAIN_IA.outdoor and _creditClass===(rcls==='outdoor') -> note is byte-identical.
       const _iaShown = rainCreditEnabled ? (RAIN_TIER_IA[_rainTier] ?? RAIN_TIER_IA.small_fast) : RAIN_IA.outdoor;
       // BUG-HEATDEMOTETOTAL-001: the bag branch now reports the credit that SURVIVED the gate, and only

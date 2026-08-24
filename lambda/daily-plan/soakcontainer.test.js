@@ -140,8 +140,14 @@ describe('BUG-SOAKBAR-001 — replay against the real 2026 season (live prod pay
   // the stored recent_precip_in chain (recent(D) = actual(D-2) + actual(D-1); the reconstruction reproduced
   // all 56 stored recent values with zero inconsistencies).
   const SEASON = [
+    // BUG-RAINFORECASTCREDIT-001 residual (2026-08-24): was 'incoming', is now 'today'. The incoming
+    // branch's "already wet" prerequisite moved from windowPrecip to soakBasis — MEASURED water only —
+    // and on this day nothing had been measured at all (recent 0, no gauge split in the payload), so
+    // the branch that used to claim the day was asserting wet media on a forecast. Same suppression,
+    // honest label, and now it is the today branch's own bars deciding it: PoP 91 >= 60 and 1.42" >=
+    // the 0.91" small-vessel bar. See the dedicated test below for what this day does and does not prove.
     { d: '2026-06-22', hy: { recent_precip_in: 0, today_precip_in: 1.42, today_pop: 91, tomorrow_precip_in: 1.25, tomorrow_pop: 74, upcoming_precip_in: 1.25 },
-      expectSmall: 'incoming', actual: 0.67 },
+      expectSmall: 'today', actual: 0.67 },
     { d: '2026-07-07', hy: { recent_precip_in: 0, today_precip_in: 0.74, today_pop: 90, tomorrow_precip_in: 0, tomorrow_pop: 7, upcoming_precip_in: 0.16 },
       expectSmall: null, actual: 1.03 },
     { d: '2026-07-29', hy: { recent_precip_in: 0.8, today_precip_in: 2.2, today_pop: 95, tomorrow_precip_in: 0.02, tomorrow_pop: 72, upcoming_precip_in: 0.03 },
@@ -157,17 +163,41 @@ describe('BUG-SOAKBAR-001 — replay against the real 2026 season (live prod pay
     }
   });
 
-  // 2026-06-22 is the day the bar LOOKS like it should matter (1.42" @ 91%) and does not: the incoming
-  // branch claims it first, because 1.25" more was forecast for the next day. Recorded because a reader
-  // comparing 1.42 against the bar would otherwise conclude this day is bar-sensitive. It is not, at ANY
-  // bar value — which is a large part of why the constant is near-inert.
-  it('2026-06-22 is claimed by the incoming branch before the bar is ever consulted', () => {
+  // 2026-06-22 USED to be claimed by the incoming branch before the bar was ever consulted, and was
+  // recorded here as bar-INSENSITIVE at any bar value. That is no longer true, and the reversal is the
+  // point of this test now. The incoming branch's "already wet" prerequisite reads soakBasis (measured
+  // actuals + today's gauge) instead of windowPrecip (which folds in today's unelapsed FORECAST).
+  // On this day the gauge split does not even exist in the payload and recent was 0 — not one drop had
+  // been measured — so "rain incoming on already-wet media" was a false premise, and a forecast was
+  // satisfying a wetness floor and then being skipped on a second forecast. The day now falls to the
+  // today branch, which is where a forecast-only skip belongs and which applies its own bars.
+  //
+  // This MATTERS beyond the label. `today` is deliberately SUBORDINATE to the fast-dry carve-outs
+  // (engine.js _satApplies: a fresh transplant or a hot fabric bag is watered anyway) while `incoming`
+  // outranks them, and `today` is the only branch that consults the small-vessel bar. So a day like
+  // this one now waters the plantings those carve-outs exist to protect, and a weaker forecast that
+  // used to be claimed by incoming will now have to clear 0.91" to hold a small vessel at all.
+  it('2026-06-22 is a FORECAST skip, not an already-wet skip — the bar decides it now', () => {
     const { hy } = SEASON[0];
-    expect(sup(hy, true).kind).toBe('incoming');
-    // The day DOES clear the today gate — so it is branch ORDER, not the gate and not the bar, that
-    // decides here. Both vessel classes land on 'incoming', which is what makes the day bar-insensitive.
+    expect(sup(hy, true).kind).toBe('today');
+    expect(sup(hy, false).kind).toBe('today');
     expect(todayQualifies(hy)).toBe(true);
-    expect(sup(hy, false).kind).toBe('incoming');
+    // Nothing had been measured: this is exactly the premise the incoming branch used to assert.
+    expect((hy.recent_precip_in || 0) + (hy.today_observed_in || 0)).toBe(0);
+    // And it IS bar-sensitive now — the same day under a bar above the forecast waters the container.
+    // Proven behaviourally against a real patched threshold file, the same hermetic trick used above,
+    // so this cannot pass on an arithmetic restatement of the literal.
+    const dir = mkdtempSync(join(tmpdir(), 'soakbar622-'));
+    try {
+      cpSync(dirname(fileURLToPath(import.meta.url)), dir, { recursive: true });
+      const jsonPath = join(dir, 'wateringThresholds.json');
+      writeFileSync(jsonPath, JSON.stringify(
+        { ...JSON.parse(readFileSync(jsonPath, 'utf8')), SOAK_TODAY_SMALL_IN: 1.75 }, null, 2) + '\n');
+      const patched = createRequire(import.meta.url)(join(dir, 'engine.js'));
+      expect(patched.saturationSuppressed('outdoor', hy, { todayAware: true, smallVessel: true })).toBe(null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // Every suppression this bar produced on real data was CORRECT: the rain that arrived cleared the
@@ -183,9 +213,17 @@ describe('BUG-SOAKBAR-001 — replay against the real 2026 season (live prod pay
 
   // The honest blast-radius pin. If a future change makes the bar start firing on new days, that is a real
   // behaviour change and should be a deliberate, visible test edit — not a silent side effect.
-  it('the retune from 2.0 changed zero days this season, and that is the recorded result', () => {
+  // 2026-08-24, BUG-RAINFORECASTCREDIT-001 residual: that is exactly what happened, and this is the
+  // deliberate edit. 2026-06-22 joined the list — not because the bar moved (it did not) but because the
+  // incoming branch stopped claiming days on unmeasured rain, so the bar is consulted on one more day of
+  // the season than before. One day of 56 nightly runs; every other day is unchanged.
+  it('the bar fires on three days this season — 06-22 joined when incoming went measured-only', () => {
     const firesNow = SEASON.filter(s => sup(s.hy, true)?.kind === 'today').map(s => s.d);
-    expect(firesNow).toEqual(['2026-07-29', '2026-08-03']);
+    expect(firesNow).toEqual(['2026-06-22', '2026-07-29', '2026-08-03']);
+    // And no day in the season is claimed by incoming any more: every payload here predates the gauge
+    // split, so soakBasis is `recent` alone and only 07-29 carries any measured water at all (0.8" < 1.0"
+    // cap, < 0.5"... no: 0.8 >= 0.5, but its tomorrow_precip_in is 0.02, below the more-coming bar).
+    expect(SEASON.filter(s => sup(s.hy, true)?.kind === 'incoming').map(s => s.d)).toEqual([]);
   });
 });
 
