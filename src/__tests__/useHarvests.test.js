@@ -50,3 +50,55 @@ describe('useHarvests', () => {
     expect(fetchSpy.mock.calls[1][0]).toContain('cursor=CUR1')
   })
 })
+
+// BUG-HARVCURSORDUPE-001. A keyset cursor minted by one deploy can be re-walked by the next, so a
+// load-more page can repeat rows already appended. event_id IS the React key (Harvests.jsx:519), so
+// the visible symptom is duplicate rows plus a duplicate-key warning. Every assertion below FAILS
+// against the previous `[...prev, ...page]` append — they are not vacuous.
+describe('useHarvests — duplicate pages (BUG-HARVCURSORDUPE-001)', () => {
+  it('appends a repeated event_id only once', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({ entries: [{ event_id: 'a' }, { event_id: 'b' }], aggregates: null, cursor: 'CUR1' })
+      .mockResolvedValueOnce({ entries: [{ event_id: 'b' }, { event_id: 'c' }], aggregates: null, cursor: null })
+    const { result } = renderHook(() => useHarvests())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => { await result.current.loadMore() })
+    // Old behaviour: ['a','b','b','c'].
+    expect(result.current.entries.map((e) => e.event_id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('collapses duplicates WITHIN a single page, not just against what came before', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({ entries: [{ event_id: 'a' }], aggregates: null, cursor: 'CUR1' })
+      .mockResolvedValueOnce({ entries: [{ event_id: 'b' }, { event_id: 'b' }], aggregates: null, cursor: null })
+    const { result } = renderHook(() => useHarvests())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => { await result.current.loadMore() })
+    expect(result.current.entries.map((e) => e.event_id)).toEqual(['a', 'b'])
+  })
+
+  it('passes through rows with no event_id rather than silently dropping them', async () => {
+    // The dedupe must never become a filter. A row with no identity has nothing to collide with,
+    // so it is kept — losing a real harvest would be far worse than showing it twice.
+    fetchSpy
+      .mockResolvedValueOnce({ entries: [{ event_id: 'a' }], aggregates: null, cursor: 'CUR1' })
+      .mockResolvedValueOnce({ entries: [{ day_key: '2026-08-24' }, { day_key: '2026-08-23' }], aggregates: null, cursor: null })
+    const { result } = renderHook(() => useHarvests())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => { await result.current.loadMore() })
+    expect(result.current.entries).toHaveLength(3)
+  })
+
+  it('still advances the cursor when a page was entirely duplicate', async () => {
+    // Otherwise a single repeated page would strand pagination on that cursor forever.
+    fetchSpy
+      .mockResolvedValueOnce({ entries: [{ event_id: 'a' }], aggregates: null, cursor: 'CUR1' })
+      .mockResolvedValueOnce({ entries: [{ event_id: 'a' }], aggregates: null, cursor: 'CUR2' })
+    const { result } = renderHook(() => useHarvests())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => { await result.current.loadMore() })
+    expect(result.current.entries.map((e) => e.event_id)).toEqual(['a'])
+    expect(result.current.hasMore).toBe(true)
+    expect(fetchSpy.mock.calls[1][0]).toContain('cursor=CUR1')
+  })
+})

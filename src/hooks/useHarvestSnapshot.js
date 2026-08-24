@@ -18,8 +18,10 @@ import { snapshotStats } from '../lib/snapshotStats.js'
 // were derived from that slice while labelled "Last 7 days".
 //
 // NOT A CURSOR DRAIN. Walking the pages would be ~4 round trips today and more every week, on a
-// surface that needs one number; the sibling hook (useSeasonCropWeights.js) already rejected
-// exactly that and moved to the uncapped aggregate, and RAISING PAGE_LIMIT only moves the cliff.
+// surface that needs one number; the sibling season-weight hook already rejected exactly that and
+// moved to the uncapped aggregate (that hook is gone — deleted dead under
+// OPS-ORPHANSEASONWEIGHTS-001 — but the reasoning is why this one is shaped as it is), and RAISING
+// PAGE_LIMIT only moves the cliff.
 // The 7-day window is asked for as a window — `timeframe=7d&include=aggregates` — so the server
 // counts it over the whole range and the answer is structurally uncappable.
 //

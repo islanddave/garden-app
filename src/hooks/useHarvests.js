@@ -57,7 +57,23 @@ export function useHarvests({ timeframe, crop, project } = {}) {
     try {
       const data = await apiFetch('/api/harvests' + buildQs(cursor))
       if (reqRef.current !== rid) return // filter changed under us — the appended page would be wrong
-      setEntries((prev) => [...prev, ...(Array.isArray(data?.entries) ? data.entries : [])])
+      // BUG-HARVCURSORDUPE-001. A cursor minted by one deploy can be re-walked by the next, so a
+      // page may repeat rows already appended — duplicate event_id, and event_id IS the React key
+      // (Harvests.jsx:519). Dedupe on append rather than at the cursor: it also covers any other
+      // duplicate source, and it is a no-op when the page is clean.
+      setEntries((prev) => {
+        const page = Array.isArray(data?.entries) ? data.entries : []
+        const seen = new Set(prev.map((e) => e?.event_id).filter((id) => id != null))
+        const add = []
+        for (const e of page) {
+          const id = e?.event_id
+          if (id == null) { add.push(e); continue } // no identity to dedupe on — pass through unchanged
+          if (seen.has(id)) continue
+          seen.add(id) // also collapses duplicates WITHIN one page
+          add.push(e)
+        }
+        return add.length ? [...prev, ...add] : prev
+      })
       setCursor(data?.cursor ?? null)
     } catch {
       /* keep the existing feed — a failed load-more must not wipe it */
