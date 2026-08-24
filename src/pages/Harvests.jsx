@@ -714,8 +714,17 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
       >
         <span style={{ minWidth: 0 }}>
           <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>{c.crop_name}</span>
-          <span style={{ display: 'block', fontSize: '0.88rem', color: P.green, fontWeight: 600 }}>{unitsLine(c.units, c.crop_name)}</span>
-          <CropWeightLine weight={c.weight} />
+          {/* V4-HARVCROPTABLE-001 — the collapsed crop block was FIVE stacked rows (name / units /
+              weight / weighed-vs-estimated / sparkline) for a fact Dave reads at a glance. The
+              count line is gone (see CropWeightLine) and the weight now rides the units line, so a
+              crop is two text rows plus its graphic. The weight keeps its own smaller, lighter
+              treatment rather than being concatenated into the units string: it is a different
+              quantity in a different system of units, and running "33.13 cups ≈ 1.14 kg" together
+              in one weight would read as a conversion of the cups, which it is not. */}
+          <span style={{ display: 'block', fontSize: '0.88rem', color: P.green, fontWeight: 600 }}>
+            {unitsLine(c.units, c.crop_name)}
+            <CropWeightLine weight={c.weight} inline />
+          </span>
           {c.unquantified > 0 && (
             <span style={{ display: 'block', fontSize: '0.75rem', color: P.light, marginTop: 2 }}>+{c.unquantified} unrecorded</span>
           )}

@@ -99,15 +99,22 @@ describe('Harvests Totals — weight total', () => {
 })
 
 describe('Harvests Totals — per-crop weight', () => {
-  it('puts the crop weight under its native-unit line, counts attached, headline intact', async () => {
+  // V4-HARVCROPTABLE-001 — the crop weight now rides the native-unit line instead of owning a row
+  // beneath it, and the count line under it is gone. Two text rows per crop, not four.
+  it('puts the crop weight ON the native-unit line, no count line, headline intact', async () => {
     await renderTotals({
       weight: w({ grams: 1400, estimated_grams: 1400, estimated: 3 }),
       cropWeight: w({ grams: 1400, estimated_grams: 1400, estimated: 3 }),
     })
-    expect(screen.getByTestId('crop-weight').textContent).toBe('≈ 1.4 kg')
-    expect(screen.getByTestId('crop-weight-basis').textContent).toBe('3 estimated')
+    const weightEl = screen.getByTestId('crop-weight')
+    expect(weightEl.textContent).toBe('≈ 1.4 kg')
+    expect(screen.queryByTestId('crop-weight-basis')).toBeNull()
     // Native units stay the headline — grams are a second axis, not a replacement.
     expect(screen.getByText(/14 tomato/i)).toBeTruthy()
+    // The structural half of the ask: the weight is INSIDE the units line, not a sibling row.
+    // Asserting the testid alone would pass just as well with the old stacked layout.
+    expect(weightEl.parentElement.textContent).toMatch(/14 tomato/i)
+    expect(weightEl.style.display).not.toBe('block')
   })
 
   it('a crop with zero weighed entries says "no weight yet" once, not twice', async () => {

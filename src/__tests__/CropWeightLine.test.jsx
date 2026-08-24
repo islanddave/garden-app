@@ -15,11 +15,24 @@ const weight = (o = {}) => ({
 })
 
 describe('CropWeightLine', () => {
-  it('marks a total containing estimates with ≈, and says how much was inferred', () => {
+  // V4-HARVCROPTABLE-001 — the visible "3 weighed · 12 estimated" line is gone. The honesty it
+  // carried has to survive somewhere or its removal was a regression, so this asserts BOTH: the
+  // count line is absent, and the ≈ plus the full aria-label sentence still mark the total as
+  // partly modelled. Absence alone would pass against a component that dropped everything.
+  it('marks a total containing estimates with ≈ and an explicit label, without a count line', () => {
     render(<CropWeightLine weight={weight({ grams: 2400, measured_grams: 400, estimated_grams: 2000, measured: 3, estimated: 12 })} />)
     expect(screen.getByTestId('crop-weight').textContent).toBe('≈ 2.4 kg')
     expect(screen.getByTestId('crop-weight').getAttribute('aria-label')).toBe('Estimated total harvest weight: 2.4 kg')
-    expect(screen.getByTestId('crop-weight-basis').textContent).toBe('3 weighed · 12 estimated')
+    expect(screen.queryByTestId('crop-weight-basis')).toBeNull()
+    expect(screen.queryByText(/weighed/)).toBeNull()
+  })
+
+  it('renders inline on request without changing what it says', () => {
+    render(<CropWeightLine inline weight={weight({ grams: 2400, measured_grams: 400, estimated_grams: 2000, measured: 3, estimated: 12 })} />)
+    const el = screen.getByTestId('crop-weight')
+    expect(el.textContent).toBe('≈ 2.4 kg')
+    expect(el.getAttribute('aria-label')).toBe('Estimated total harvest weight: 2.4 kg')
+    expect(el.style.display).not.toBe('block')
   })
 
   it('leaves a fully measured total unmarked — the ratchet has to look like it works', () => {
@@ -28,9 +41,16 @@ describe('CropWeightLine', () => {
     expect(screen.getByTestId('crop-weight').getAttribute('aria-label')).toBe('Total harvest weight: 900 g')
   })
 
-  it('counts the unweighed picks alongside the number rather than dropping them', () => {
+  // Was: "counts the unweighed picks alongside the number rather than dropping them." That count is
+  // no longer rendered anywhere on this component. Note what this costs, deliberately accepted:
+  // with unweighed picks and every WEIGHED pick measured, the total carries no ≈ and the surface no
+  // longer says 5 picks contributed nothing to it. The number is still true for what it covers.
+  // Recorded here rather than in a comment nobody reads, because if that silence ever bites, this
+  // is the test that would have caught it.
+  it('does not render a count line for unweighed picks, and does not fake an ≈ for them', () => {
     render(<CropWeightLine weight={weight({ grams: 900, measured_grams: 900, measured: 2, unweighed: 5 })} />)
-    expect(screen.getByTestId('crop-weight-basis').textContent).toBe('2 weighed · 5 with no weight yet')
+    expect(screen.queryByTestId('crop-weight-basis')).toBeNull()
+    expect(screen.getByTestId('crop-weight').textContent).toBe('900 g')
   })
 
   it('says "no weight yet" — never 0 g — for a crop with picks but nothing weighable', () => {

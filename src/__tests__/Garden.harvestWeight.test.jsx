@@ -75,12 +75,18 @@ async function renderGarden() {
 }
 
 describe('Garden — crop-group season weight', () => {
-  it('renders the crop total through the shared CropWeightLine, ≈ and qualifier included', async () => {
+  // V4-HARVCROPTABLE-001 — the weighed/estimated count line was dropped from the SHARED component,
+  // so it disappears here too. That is intended: Dave's "drop weighed vs estimated" was given on
+  // two different harvest surfaces and is a stance on the family. The Garden keeps the STACKED
+  // layout though (no `inline`), because only the Harvests crop block was the one five rows tall.
+  it('renders the crop total through the shared CropWeightLine — ≈ kept, count line gone, still stacked', async () => {
     mockFetch([{ crop_type_slug: 'tomato', crop_name: 'Tomato', weight: weight({ grams: 2400, measured_grams: 400, estimated_grams: 2000, measured: 3, estimated: 12 }) }])
     await renderGarden()
     expect(screen.getByTestId('crop-group-weight')).toBeTruthy()
-    expect(screen.getByTestId('crop-weight').textContent).toBe('≈ 2.4 kg')
-    expect(screen.getByTestId('crop-weight-basis').textContent).toBe('3 weighed · 12 estimated')
+    const el = screen.getByTestId('crop-weight')
+    expect(el.textContent).toBe('≈ 2.4 kg')
+    expect(screen.queryByTestId('crop-weight-basis')).toBeNull()
+    expect(el.style.display).toBe('block')
   })
 
   it('labels the timeframe — an unlabelled total would read as all-time', async () => {
