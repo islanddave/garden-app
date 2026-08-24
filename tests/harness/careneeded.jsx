@@ -25,14 +25,28 @@ const LOCATIONS = [
   { id: 'loc-long', name: 'Legacy Pasture In-Ground Beds (north row)', full_path: 'Legacy Pasture In-Ground Beds (north row)' },
 ]
 
-const mk = (locId, n, overdue) => Array.from({ length: n }, (_, i) => ({
-  id: locId + '-' + i,
-  name: ['Bhut Jolokia', 'Sungold', 'Genovese Basil', 'Lacinato Kale', 'Wild Bergamot'][i % 5] + ' ' + (i + 1),
-  crop: 'pepper', project: 'Peppers 2026', project_id: 'pr-' + locId,
-  overdue_by: overdue, in_ground: locId === 'loc-long', interval: 3, days_since: overdue + 3,
-}))
+// BD-036b — `overdue` may be a number or a function of the row index. The Bag group uses the
+// function form to spread rows across ALL THREE severity tiers (gold 0 / terra 1-2 / terra-bold 3+),
+// because after the redesign the tier COLOUR is the only on-screen carrier of urgency. A fixture
+// where every row scores the same cannot show whether the three are actually distinguishable at a
+// glance, which is now the question the whole design rests on.
+const mk = (locId, n, overdue) => Array.from({ length: n }, (_, i) => {
+  const od = typeof overdue === 'function' ? overdue(i) : overdue
+  return {
+    id: locId + '-' + i,
+    name: ['Bhut Jolokia', 'Sungold', 'Genovese Basil', 'Lacinato Kale', 'Wild Bergamot'][i % 5] + ' ' + (i + 1),
+    crop: 'pepper', project: 'Peppers 2026', project_id: 'pr-' + locId,
+    overdue_by: od, in_ground: locId === 'loc-long', interval: 3, days_since: od + 3,
+  }
+})
 
-const WATER = [...mk('loc-bag', 77, 1), ...mk('loc-drive', 9, 2), ...mk('loc-long', 4, 6)]
+// Bag cycles 0 / 1 / 2 / 4 / 11 so the first five rows on screen are gold, terra, terra, terra-bold,
+// terra-bold — i.e. every tier boundary is visible in one screenshot, adjacent, for comparison.
+const WATER = [
+  ...mk('loc-bag', 77, i => [0, 1, 2, 4, 11][i % 5]),
+  ...mk('loc-drive', 9, 2),
+  ...mk('loc-long', 4, 6),
+]
 const PLANTS = WATER.map(w => ({
   id: w.id, location_id: w.id.replace(/-\d+$/, ''), container_type: null,
   featured_photo_view_url: null, featured_photo_id: null,

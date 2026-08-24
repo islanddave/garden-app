@@ -69,21 +69,58 @@ function eventBody(row) {
   }
 }
 
-// Synthetic inline status chip — shares the waterDue SEVERITY_STYLES tokens + a text verb so the
-// Today row and the detail CareStatus band never disagree (one mental model, two components). Three
-// channels (SC 1.4.1): mono event icon + text verb + token color. role=img label carried by Icon.
-function StatusChip({ row }) {
+// BD-036b — the care chip IS the log button.
+//
+// It used to be a status chip sitting inside the row body, with a separate solid-green "Log" button
+// to its right. Dave's read: those two are redundant. The chip already carries the severity colour
+// that says how urgent this is, and the thing you want to tap is the thing that is coloured. So the
+// chip absorbed the action and the Log button is gone — which also buys back ~64px of width on a
+// 390px screen and removes a control from every row.
+//
+// Still three channels, unchanged (SC 1.4.1): mono event icon + text verb + token colour. Colour is
+// never the only carrier. It keeps the SEVERITY_STYLES tokens so the Today row and the detail
+// CareStatus band still cannot disagree.
+//
+// The accessible NAME stays exactly "Log Water for X". Appending the reason to it was the obvious
+// first move and it was wrong twice over: it silently broke every caller matching /^Log Water for
+// X$/ (four of this repo's own tests caught it), and a name that grows a clause is a worse name —
+// AT announces it on focus, in bulk lists, and in the rotor. The reason travels as visually-hidden
+// text in the row body instead (see Row), which is where a screen reader meets it in reading order
+// anyway. That keeps the urgency signal available to someone who gets no colour at all, without
+// renaming the control.
+function CareChipButton({ row, pending, onLog }) {
   const s = SEVERITY_STYLES[row.tier] || SEVERITY_STYLES.gold
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
-      backgroundColor: s.bg, border: '1px solid ' + s.border, color: s.text,
-      borderRadius: 999, padding: '3px 9px', fontSize: '0.72rem', fontWeight: 700,
-    }}>
-      <Icon name={'event.' + row.eventType} size={14} decorative style={{ color: s.text }} />
-      {NEED_LABEL[row.need]}
-    </span>
+    <button
+      type="button" onClick={() => onLog(row)} disabled={pending}
+      aria-label={'Log ' + NEED_LABEL[row.need] + ' for ' + row.name}
+      style={{
+        flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+        minWidth: 78, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border,
+        background: pending ? P.greenPale : s.bg, color: pending ? P.green : s.text,
+        fontWeight: 700, fontSize: '0.8rem', cursor: pending ? 'default' : 'pointer',
+      }}
+    >
+      {pending ? '…' : <><Icon name={'event.' + row.eventType} size={15} decorative style={{ color: s.text }} />{NEED_LABEL[row.need]}</>}
+    </button>
   )
+}
+
+// The floor on row height, and the reason it is a named constant rather than a number inlined three
+// times. Dave asked for the rows to lose "a third or even half" of their height. A third is
+// available and is what this delivers; half is not, and the binding constraint is not taste.
+//
+// The old row ran ~69px: a 48px control band plus a second text line plus 10px of vertical padding.
+// Dropping the reason line and the padding collapses it ONTO the control band. Below that, the
+// thing that shrinks is the tap target, and Dave is on Android where Material's minimum is 48dp.
+// So 48 is the floor, and the row is now exactly its buttons — no whitespace left to give back.
+const ROW_TAP_MIN = 48
+
+// Same shape as the one in forms/PlantingSelect.jsx. NOT `display:none` and not width/height 0 —
+// both remove the node from the accessibility tree, which would defeat the entire point.
+const SR_ONLY = {
+  position: 'absolute', width: 1, height: 1, overflow: 'hidden',
+  clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap',
 }
 
 function Row({ row, pending, onLog, onSkip }) {
@@ -94,37 +131,37 @@ function Row({ row, pending, onLog, onSkip }) {
     <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid ' + P.border }}>
       {/* Secondary zone: open detail (whole row body). */}
       <Link to={detailHref} style={{
-        flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10,
-        padding: '10px 12px', textDecoration: 'none', color: P.dark, minHeight: 48,
+        flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8,
+        padding: '0 10px', textDecoration: 'none', color: P.dark, minHeight: ROW_TAP_MIN,
       }}>
         {row.thumb && (
-          <PhotoImg photoId={row.photoId} initialUrl={row.thumb} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
+          <PhotoImg photoId={row.photoId} initialUrl={row.thumb} alt="" style={{ width: 30, height: 30, borderRadius: 6, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '0.92rem', fontWeight: 600, color: P.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: '0.9rem', fontWeight: 600, color: P.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {row.name}
           </div>
-          <div style={{ fontSize: '0.76rem', color: P.light, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {row.reason}
-          </div>
+          {/* The reason line is now conditional — it is what made the row two lines tall. It prints
+              only when it says something the chip colour cannot: a rain note, "Never watered", a
+              long-gap daily record, a pest label. A bare "3d overdue" is the tier restated in words
+              (terra-bold IS >=3d), so on the water rows that dominate this list it is gone. */}
+          {!row.reasonRedundant && row.reason && (
+            <div style={{ fontSize: '0.74rem', color: P.light, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {row.reason}
+            </div>
+          )}
+          {/* Dropped from SIGHT, not from the page. The tier colour replaces this text for sighted
+              users; a screen-reader user gets no colour, so removing it outright would have made
+              the row strictly less informative for them than before the redesign. */}
+          {row.reasonRedundant && row.reason && <span style={SR_ONLY}>{row.reason}</span>}
         </div>
-        <StatusChip row={row} />
       </Link>
-      {/* Skip (suppress-for-today) — quiet secondary control. */}
+      {/* Skip (suppress-for-today) — quiet secondary control, to the LEFT of the care chip. */}
       <button type="button" onClick={() => onSkip(row)} aria-label={'Skip ' + row.name + ' today'}
-        style={{ flexShrink: 0, width: 44, minHeight: 48, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.light, cursor: 'pointer', fontSize: '0.7rem' }}>
+        style={{ flexShrink: 0, width: 42, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.light, cursor: 'pointer', fontSize: '0.7rem' }}>
         Skip
       </button>
-      {/* Primary zone: dominant one-tap Log. */}
-      <button type="button" onClick={() => onLog(row)} disabled={pending}
-        aria-label={'Log ' + NEED_LABEL[row.need] + ' for ' + row.name}
-        style={{
-          flexShrink: 0, minWidth: 64, minHeight: 48, border: 'none', borderLeft: '1px solid ' + P.border,
-          background: pending ? P.greenPale : P.green, color: pending ? P.green : P.white,
-          fontWeight: 700, fontSize: '0.82rem', cursor: pending ? 'default' : 'pointer',
-        }}>
-        {pending ? '…' : 'Log'}
-      </button>
+      <CareChipButton row={row} pending={pending} onLog={onLog} />
     </div>
   )
 }
@@ -508,10 +545,18 @@ export default function CareNeeded({ plan }) {
             <GroupByControl options={GROUP_OPTS} value={mode} onChange={setMode} />
           </div>
 
-          {staleness.stale && (
+          {/* V4-TODAYVERBIAGE-001 — halved, not deleted, and the half that stayed is the one that
+              changes what Dave can conclude from the screen. "Showing the longest-waiting 20 per
+              group" is the only thing telling him rows are being WITHHELD; without it the list
+              silently under-reports the garden and the group counts stop matching what is under
+              them. The dropped clause ("half of these rest on a check N+ days old") was the surface
+              explaining its own reasoning — the same class as the bulk-water arithmetic, and the
+              staleness is already legible from the rows themselves.
+              Prints only while capping is actually in effect: with nothing withheld there is
+              nothing to disclose, and the old copy appeared on stale-but-uncapped days too. */}
+          {capping && (
             <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, padding: '0 2px' }}>
-              No recent watering record — half of these rest on a check {staleness.daysSince}+ days old.
-              {capping && ' Showing the longest-waiting ' + WATER_STALE_CAP + ' per group.'}
+              Showing the longest-waiting {WATER_STALE_CAP} per group.
             </div>
           )}
 

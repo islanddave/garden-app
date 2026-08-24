@@ -26,12 +26,12 @@ const GOLDEN = {
 }
 
 const EXPECTED = [
-  { key: 'p1:water_due',  plantingId: 'p1', name: 'Bhut Jolokia', crop: 'pepper', project: 'Peppers', projectId: 'prP', need: 'water_due',  eventType: 'watering',       reason: '4d overdue',      tier: 'terra-bold', interval: null, overdueBy: 4, inGround: false, never: false },
-  { key: 'p2:water_due',  plantingId: 'p2', name: 'Habanero',     crop: 'pepper', project: 'Peppers', projectId: 'prP', need: 'water_due',  eventType: 'watering',       reason: '2d overdue',      tier: 'terra',      interval: null, overdueBy: 2, inGround: true,  never: false },
-  { key: 'p4:no_history', plantingId: 'p4', name: 'New Basil',    crop: 'basil',  project: 'Herbs',   projectId: 'prH', need: 'no_history', eventType: 'watering',       reason: 'Never watered',   tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: true },
-  { key: 'p1:fertilize',  plantingId: 'p1', name: 'Bhut Jolokia', crop: 'pepper', project: 'Peppers', projectId: 'prP', need: 'fertilize',  eventType: 'fertilizing',    reason: 'MG · half',       tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: false },
-  { key: 'p5:pest',       plantingId: 'p5', name: 'Kale',         crop: 'kale',   project: 'Greens',  projectId: 'prG', need: 'pest',       eventType: 'observation',    reason: 'Aphids likely',   tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: false },
-  { key: 'p6:cold',       plantingId: 'p6', name: 'Lime Tree',    crop: 'citrus', project: 'Citrus',  projectId: 'prC', need: 'cold',       eventType: 'brought_inside', reason: 'Below 40 tonight',tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: false },
+  { key: 'p1:water_due',  plantingId: 'p1', name: 'Bhut Jolokia', crop: 'pepper', project: 'Peppers', projectId: 'prP', need: 'water_due',  eventType: 'watering',       reason: '4d overdue',      tier: 'terra-bold', interval: null, overdueBy: 4, inGround: false, never: false , reasonRedundant: true },
+  { key: 'p2:water_due',  plantingId: 'p2', name: 'Habanero',     crop: 'pepper', project: 'Peppers', projectId: 'prP', need: 'water_due',  eventType: 'watering',       reason: '2d overdue',      tier: 'terra',      interval: null, overdueBy: 2, inGround: true,  never: false , reasonRedundant: true },
+  { key: 'p4:no_history', plantingId: 'p4', name: 'New Basil',    crop: 'basil',  project: 'Herbs',   projectId: 'prH', need: 'no_history', eventType: 'watering',       reason: 'Never watered',   tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: true , reasonRedundant: false },
+  { key: 'p1:fertilize',  plantingId: 'p1', name: 'Bhut Jolokia', crop: 'pepper', project: 'Peppers', projectId: 'prP', need: 'fertilize',  eventType: 'fertilizing',    reason: 'MG · half',       tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: false , reasonRedundant: false },
+  { key: 'p5:pest',       plantingId: 'p5', name: 'Kale',         crop: 'kale',   project: 'Greens',  projectId: 'prG', need: 'pest',       eventType: 'observation',    reason: 'Aphids likely',   tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: false , reasonRedundant: false },
+  { key: 'p6:cold',       plantingId: 'p6', name: 'Lime Tree',    crop: 'citrus', project: 'Citrus',  projectId: 'prC', need: 'cold',       eventType: 'brought_inside', reason: 'Below 40 tonight',tier: 'gold',       interval: null, overdueBy: null, inGround: false, never: false , reasonRedundant: false },
 ]
 
 describe('buildCareNeeded — read-path parity anchor', () => {

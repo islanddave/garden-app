@@ -141,6 +141,21 @@ export function buildCareNeeded(plan) {
         overdueBy: (!daily && typeof it.overdue_by === 'number') ? it.overdue_by : null,
         inGround: !!it.in_ground,
         never: !!it.never,
+        // BD-036b — is this row's reason a restatement of what needTier already encodes as colour?
+        // TRUE only for a plain non-daily water row: needReason then returns "Nd overdue" or "Due
+        // today", and needTier maps the same overdue_by onto terra-bold / terra / gold. Two channels,
+        // one fact, on the rows that make up most of the list — so the renderer drops the text one
+        // and the row loses its second line.
+        //
+        // Deliberately NARROW. It is false for a rain_note ("0.38\" rain didn't cover the gap"),
+        // for "Never watered", for a stale daily record ("Daily — last watered 9d ago"), for the
+        // daily-cadence framing BUG-CADENCEONEDAY-001 added on purpose, and for every non-water
+        // need — a pest label or "Protect tonight" is content no colour carries, and all non-water
+        // needs are gold regardless, so their colour says nothing at all.
+        //
+        // Computed HERE, next to needReason, so the two cannot drift: whoever changes what a reason
+        // says is looking at the rule that decides whether it is worth printing.
+        reasonRedundant: need === 'water_due' && !it.rain_note && !daily,
       })
     }
   }

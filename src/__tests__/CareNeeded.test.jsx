@@ -274,9 +274,14 @@ describe('CareNeeded — Slice 7', () => {
       expect(screen.queryByText('Pasture 0')).toBeNull()
     })
 
-    it('says "no recent watering record" instead of asserting 120 thirsty plantings', () => {
+    // V4-TODAYVERBIAGE-001 — the note was halved. The self-explaining clause ("half of these rest
+    // on a check N+ days old") is gone; the disclosure that rows are WITHHELD stays, because it is
+    // the only thing that stops the visible list from silently under-reporting the garden.
+    it('discloses that rows are withheld, without explaining its own reasoning', () => {
       render(<CareNeeded plan={bigPlan()} />)
-      expect(screen.getByText(/No recent watering record/i)).toBeTruthy()
+      expect(screen.getByText(/Showing the longest-waiting 20 per group/i)).toBeTruthy()
+      expect(screen.queryByText(/No recent watering record/i)).toBeNull()
+      expect(screen.queryByText(/days old/i)).toBeNull()
     })
 
     it('caps the expanded group at WATER_STALE_CAP rows while the header keeps the TRUE count', () => {
@@ -302,7 +307,7 @@ describe('CareNeeded — Slice 7', () => {
     it('a fresh record leaves the list uncapped and unannotated, however long it is', () => {
       // Live 2026-08-15: 134 due at median days_since 2 — the wi=1 cohort really is due.
       render(<CareNeeded plan={bigPlan({ daysSince: 2 })} />)
-      expect(screen.queryByText(/No recent watering record/i)).toBeNull()
+      expect(screen.queryByText(/Showing the longest-waiting/i)).toBeNull()
       expect(screen.getByText('Bag 115')).toBeTruthy()
       expect(screen.queryByRole('button', { name: /Show \d+ more/i })).toBeNull()
     })
@@ -327,10 +332,28 @@ describe('CareNeeded — Slice 7', () => {
       no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
     })
 
-    it('shows the daily rows as a cadence and the wi>=2 row as overdue, in the same list', () => {
+    // BD-036b split these two apart, because after the redesign they are no longer the same claim.
+    // The daily framing still PRINTS (colour cannot say "daily"); the bare overdue restatement is
+    // now visually dropped and survives as screen-reader-only text.
+    //
+    // getByText finds sr-only nodes, so asserting '4d overdue' exists would pass either way and
+    // would quietly become a test of nothing. The visibility check is what carries the meaning here.
+    it('shows the daily rows as a cadence — colour cannot express "daily"', () => {
       render(<CareNeeded plan={dailyPlan()} />)
       expect(screen.getAllByText('Daily — last watered 5d ago').length).toBe(12)
-      expect(screen.getByText('4d overdue')).toBeTruthy()   // the 7-day row keeps its backlog
+      expect(screen.getAllByText('Daily — last watered 5d ago')[0].style.position).not.toBe('absolute')
+    })
+
+    it('drops the bare overdue restatement from sight but keeps it for screen readers', () => {
+      render(<CareNeeded plan={dailyPlan()} />)
+      const el = screen.getByText('4d overdue')          // the 7-day row's backlog
+      // sr-only, not rendered inline. Asserted on position+size rather than `clip`: jsdom does not
+      // reflect the legacy clip property, so that assertion read '' and would have failed forever.
+      expect(el.style.position).toBe('absolute')
+      expect(el.style.width).toBe('1px')
+      expect(el.style.overflow).toBe('hidden')
+      // And the urgency it used to spell out is still on screen, as the chip's tier colour.
+      expect(screen.getAllByRole('button', { name: /^Log Water for/i }).length).toBe(13)
     })
 
     it('keeps every daily planting visible and one-tap loggable', async () => {
