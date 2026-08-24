@@ -26,6 +26,7 @@ import { setPlantingSequence } from '../lib/plantingSequence.js'
 import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
+import Sheet from '../components/forms/Sheet.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import { useMembers } from '../hooks/useMembers.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
@@ -209,6 +210,11 @@ export default function Garden() {
   // its `onDirty` prop. Garden owns none of the form's field state, so this boolean is the ONLY
   // thing this page can know about typed content inside it — see hasUnsavedInput below.
   const [editorDirty, setEditorDirty] = useState(false)
+  // V4-OVERLAYSLICE3-001: feeds <Sheet busy>. Same reason PlantingDetail carries one
+  // (V4-SHEETBUSY-001): `dirty` gates the BACKDROP TAP only, so without this Escape and Android
+  // Back can dismiss a form with a POST already on the wire — and that unmounts PlantingEditor, so
+  // a save that FAILED can no longer render its error.
+  const [editorBusy, setEditorBusy] = useState(false)
   // V3-GARDEN-001: transient id of the just-created planting. Drives an ambient in-row
   // highlight/fade so the new row is acknowledged WITHOUT a toast/modal/banner (reward-UX
   // ambient rule). Cleared ~1200ms after create (matches the @keyframes duration below).
@@ -754,6 +760,40 @@ export default function Garden() {
         </div>
       )}
 
+      {/* V4-OVERLAYSLICE3-001 (BD-043) — slice 3, the last in-DOM inline form. V4-OVERLAY-001's own
+          note said "only slice 3 add-planting remains", and Dave re-raised it unprompted: Add
+          Planting was "just a form that sits at the top of the Garden tab", i.e. part of the
+          underlying tab rather than a flyover over it.
+
+          A <Sheet>, exactly as PlantingDetail wraps this SAME component for V4-EDITINPLACE-001 — so
+          the dismissal contract (Escape, Android hardware Back via `armsBack`, stack ordering, the
+          dirty confirm) is DismissRegistry's rather than hand-rolled, and this page adds no second
+          grammar. size="full" matches /log and that precedent: the form is far too tall for a peek.
+
+          NOT a route and NOT a query param, deliberately, for the reason PlantingDetail records: a
+          param would put the open editor in the URL, so a reload would silently reopen it. Note the
+          page ALREADY strips `add`/`source_inventory_item_id`/`variety_id` from the query above.
+
+          `editor &&` is kept inside rather than replaced by Sheet's `open`: Sheet still renders its
+          chrome when closed, and PlantingEditor must not stay mounted holding field state (and its
+          dirty report) behind a dismissed sheet. */}
+      {/* ariaLabel, NOT title — deliberate, and it differs from PlantingDetail's call on purpose.
+          PlantingEditor renders its OWN heading ("Add planting", or "Edit {plant name}"), so a
+          Sheet `title` here prints a second one. On the edit path PlantingDetail gets away with it
+          because the two strings differ ("Edit planting" over "Edit Sungold") and read as
+          title-over-subtitle; on the ADD path both are the literal string "Add planting", which is
+          just a duplicated heading. Sheet's header row renders the mandatory Close button whether
+          or not a title is passed (Sheet.jsx:204-206) and takes its accessible name from
+          `title || ariaLabel`, so dropping the visible title costs no a11y and no affordance. */}
+      <Sheet
+        open={!!editor}
+        ariaLabel={editor?.mode === 'add' ? 'Add planting' : 'Edit planting'}
+        onClose={closeEditor}
+        dirty={editorDirty}
+        busy={editorBusy}
+        armsBack
+        size="full"
+      >
       {editor && (
         <PlantingEditor
           mode={editor.mode}
@@ -772,8 +812,12 @@ export default function Garden() {
           // `onDirty` out of its effect deps behind a ref precisely so an unstable prop cannot fire
           // a spurious release, and a stable identity means this page never depends on that.
           onDirty={setEditorDirty}
+          // The setter itself, NOT an inline arrow — same reason as onDirty above: PlantingEditor
+          // holds it behind a ref, and a stable identity means this page never relies on that.
+          onBusy={setEditorBusy}
         />
       )}
+      </Sheet>
 
       {(effectiveGroupBy !== 'none' ? (
         <FacetedGarden

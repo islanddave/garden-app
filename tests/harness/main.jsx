@@ -12,6 +12,7 @@ import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import EventNew from '../../src/pages/EventNew.jsx'
 import CaptureFlow from '../../src/pages/CaptureFlow.jsx'
+import Garden from '../../src/pages/Garden.jsx'
 import { setPendingCapture } from '../../src/lib/pendingCapture.js'
 import Sheet from '../../src/components/forms/Sheet.jsx'
 import { ToastProvider } from '../../src/context/ToastContext.jsx'
@@ -89,7 +90,9 @@ function Harness() {
   // that predicate, so the chooser auto-opens here when it would not in prod. Harmless for pad and
   // fold geometry (measure with the chooser dismissed), but do NOT use this mount to reason about
   // auto-open, tray-vs-chooser, or any tap count that includes picking a planting.
-  const entry = params.get('session') === 'harvest' ? '/log?session=harvest&event_type=harvest' : '/log'
+  const entry = surface === 'garden'
+    ? (params.get('add') === '1' ? '/garden?add=1' : '/garden')
+    : params.get('session') === 'harvest' ? '/log?session=harvest&event_type=harvest' : '/log'
 
   // 'capture' — the Snap surface (/capture -> CaptureFlow), for BUG-SNAPFORM2FIELD-001. The photo
   // step opens the OS file picker from a trusted tap, which cannot be driven headlessly; CaptureFlow
@@ -97,7 +100,15 @@ function Harness() {
   // its mount effect), so parking a synthetic File lands the flow on the 'mode' step the same way a
   // real pick does. Nothing about the FORM step is stubbed or shortcut — from 'mode' onward this is
   // the real component tree.
-  const content = surface === 'capture' ? <CaptureFlow key={nonce} /> : <EventNew key={nonce} />
+  // 'garden' — the Garden tab (V4-OVERLAYSLICE3-001). Garden takes no props and self-fetches
+  // through useApiFetch, so the harness's existing /api/plants + /api/projects + /api/locations
+  // fixtures are enough to mount it. `?add=1` on the entry is the page's own FAB-create deep link,
+  // which opens the Add-planting editor — the surface this slice moved into a Sheet.
+  const content = surface === 'capture'
+    ? <CaptureFlow key={nonce} />
+    : surface === 'garden'
+      ? <Garden key={nonce} />
+      : <EventNew key={nonce} />
 
   if (surface === 'overlay') {
     return (

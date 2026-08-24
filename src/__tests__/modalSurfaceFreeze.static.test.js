@@ -113,6 +113,15 @@ const DIALOG_SURFACES = {
 // registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed; `busy` blocks
 // dismissal while the DELETE is in flight. armsBack is load-bearing, not decorative: backing out is
 // the outcome this sheet exists to make easy, and Back is that gesture on Chrome/Android.
+// V4-OVERLAYSLICE3-001 (BD-043): pages/Garden.jsx is a DELIBERATE addition — slice 3, the last
+// in-DOM inline form. V4-OVERLAY-001's own note recorded that "only slice 3 add-planting remains",
+// and Dave re-raised it unprompted: Add Planting was a form sitting at the TOP OF THE GARDEN TAB,
+// part of the underlying tab rather than a flyover over it. It wraps the very same PlantingEditor
+// that pages/PlantingDetail.jsx already wraps for V4-EDITINPLACE-001, so this is one component
+// reaching parity across its two hosts rather than a new modal dialect. It renders the shared
+// <Sheet armsBack>, so the registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry
+// is owed; `busy={editorBusy}` blocks dismissal while the POST/PUT is in flight, which is the
+// V4-SHEETBUSY-001 lesson applied at mint time instead of after the fact.
 const SHEET_SITES = [
   'App.jsx',
   'components/BatchUndoConfirm.jsx',
@@ -126,6 +135,7 @@ const SHEET_SITES = [
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',
   'pages/AddSeeds.jsx',
+  'pages/Garden.jsx',
   'pages/Harvests.jsx',
   'pages/PlantingDetail.jsx',
   'pages/SowNow.jsx',
