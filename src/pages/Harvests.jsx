@@ -219,37 +219,50 @@ export default function Harvests() {
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '24px 16px 60px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-          <div>
-            <h1 style={{ margin: '0 0 2px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Harvests</h1>
-            <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: P.light }}>What the garden gave you.</p>
-          </div>
+        {/* V4-HARVHEADERCOMPACT-001 (BD-053) — title, Export and Weigh-in session on ONE line.
+            Was: a two-line title block (heading + "What the garden gave you.") with Export floated
+            right, and BELOW it a full-width filled 48px Weigh-in session CTA. Three stacked bands
+            of chrome before any harvest data. Dave: the subtitle "can be lost", and both controls
+            belong up on the title line as quick buttons.
+
+            WEIGH-IN IS RIGHTMOST because Dave asked for it there — "closer to my thumb".
+            FLAGGED, NOT SILENTLY RESOLVED: in the same breath he said that DURING a weigh-in
+            session he works LEFT-handed (right hand moves fruit onto the scale, left hand logs) —
+            see V4-HANDEDNESSCONTROLS-001. Right-edge placement assumes a right thumb, so the header
+            and the in-session controls may want opposite hands, or one global handedness
+            preference. That is a real open question for Dave and it is NOT answered here; this
+            follows his literal instruction for this button and nothing more.
+
+            REVERSES V4-WEIGHINCTA-001's promotion of Weigh-in to a full-width filled primary CTA.
+            That row's reasoning was that a doorway you must already know about cannot buy a
+            <=2+3N-tap session. The doorway is not being hidden — it stays visible, on every visit,
+            in the thumb corner, one tap. It stops being 48px of full-width fill to get there.
+            Still a Link and still ?session=harvest: EventNew gates session behaviour on
+            `harvestSessionParam && !inOverlay`, so anything that opened this in an overlay would
+            silently degrade to the plain single-event form. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 16px' }}>
+          <h1 style={{ margin: 0, flex: 1, minWidth: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Harvests</h1>
           <button
             type="button"
             onClick={() => setExportOpen(true)}
-            style={{ flex: '0 0 auto', minHeight: 48, padding: '0 6px', background: 'transparent', border: 'none', color: P.green, fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer' }}
+            style={{ flex: '0 0 auto', minHeight: 44, padding: '0 10px', background: 'transparent', border: `1px solid ${P.greenLight}`, borderRadius: 8, color: P.green, fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer' }}
           >
             Export
           </button>
+          <Link
+            to="/log?session=harvest"
+            data-testid="weigh-in-session-link"
+            style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 44, padding: '0 12px', border: `1px solid ${P.green}`, borderRadius: 8, color: P.white, fontWeight: 700, fontSize: '0.82rem', textDecoration: 'none', backgroundColor: P.green }}
+          >
+            <span aria-hidden="true">⚖️</span>
+            <span>Weigh-in</span>
+          </Link>
         </div>
 
-        {/* V4-WEIGHINCTA-001 (CHECKIN PLAN B5, Dave GO 2026-08-18) — PRIMARY CTA, promoted from the
-            secondary outline chip V4-HARVSESSION-001 shipped here. That chip's rationale ("a
-            discoverable-but-deliberate doorway, never a default anyone can wander into mid-browse")
-            is REVERSED, on purpose, and this note is the record of the reversal: B5's done-criterion
-            is a 5-planting harvest in <=2+3N taps, and a doorway you have to already know about
-            cannot buy that. Filled + full-width + 48px because this is the one thing the page asks
-            you to DO, sitting above everything it merely shows you.
-            Still a Link, not a nav peer — the session remains a posture of the existing Log surface,
-            and ?session= (not ?event_type=) is what engages it. */}
-        <Link
-          to="/log?session=harvest"
-          data-testid="weigh-in-session-link"
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48, margin: '0 0 16px', padding: '0 14px', border: `1px solid ${P.green}`, borderRadius: 10, color: P.white, fontWeight: 700, fontSize: '0.95rem', textDecoration: 'none', backgroundColor: P.green }}
-        >
-          <span aria-hidden="true">⚖️</span>
-          <span>Weigh-in session</span>
-        </Link>
+        {/* The full-width V4-WEIGHINCTA-001 CTA that stood here moved UP onto the title line by
+            V4-HARVHEADERCOMPACT-001 (BD-053) — see the header block above, which carries the record
+            of that reversal. Deliberately not two entry points: a second copy is how the header
+            button and the CTA drift apart on target or on session semantics. */}
 
         <SnapshotStrip snapshot={snapshot} onOpenLog={() => setView('log')} onOpenTotals={() => setView('totals')} />
 

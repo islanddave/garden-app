@@ -39,7 +39,7 @@ import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import Section from '../components/FormSection.jsx'
 import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedback.jsx'
 import { useToast } from '../context/ToastContext.jsx'
-import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger — fed at the same post-save moment as
@@ -2439,23 +2439,19 @@ export default function EventNew() {
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
             Log an event
           </h1>
-          {/* V3-LOGBTN-001: themed ghost button (cream/sage/terra), not a raw text link.
-              V4-OVERLAY-001 Slice 2: OverlaySwapLink so this in-overlay cross-link swaps content to
-              Log Many while preserving the background (full-page: a plain push, unchanged). */}
-          <div style={{ marginTop: 8 }}>
-            <OverlaySwapLink
-              to="/log/many"
-              style={{
-                display: 'inline-block', marginTop: 4,
-                backgroundColor: P.white, color: P.green,
-                border: `1px solid ${P.greenLight}`, borderRadius: 8,
-                padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-                textDecoration: 'none',
-              }}
-            >
-              Log many →
-            </OverlaySwapLink>
-          </div>
+          {/* V4-LOGMINIBTNKILL-001 (BD-048) — the "Log many →" ghost button is REMOVED.
+              ("Log Mini" in the braindump is voice-to-text for "Log many".)
+              Dave: "I really don't need the log mini button anymore, the FAB menu is good enough
+              for that." Verified before deleting rather than after, because the row says not to
+              strand the flow: BottomNav.jsx:86 carries a 'Log many' row in the FAB create sheet
+              pointing at the same /log/many, and /log/many is in OVERLAYABLE_CREATE, so it still
+              opens as a flyover exactly as this link did.
+              The motive is VERTICAL SPACE at the top of the screen — the same small-viewport
+              pressure behind BD-045 and BD-047 — so this is a deletion, not a relocation.
+              WHAT IT COSTS, accepted by Dave: from an already-open Log Event OVERLAY this was a
+              one-tap content swap that preserved the page behind it. The FAB route is dismiss-then-
+              tap. Two taps instead of one, on a cross-link, in exchange for the header height on
+              every visit. */}
         </div>
 
         {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
