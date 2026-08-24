@@ -490,3 +490,54 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
     expect(isReloadBlocked()).toBe(false)
   })
 })
+
+// ── V4-OVERLAYSLICE3-001 — the Sheet dismissal guard ────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Moving Add Planting into a <Sheet> ADDED dismissal gestures the inline form
+// never had, and Sheet does not guard them: `dirty` gates the BACKDROP TAP only, because
+// confirmOnDirty defaults FALSE at both registry call sites (dismissLayers.js:78, backNav.js:75)
+// pending the ConfirmSheet primitive. MEASURED in tests/harness on the un-guarded build: typing a
+// name and pressing Escape closed the sheet, raised NO confirm, and discarded the typing. Dave is
+// Android-only and hardware Back routes through the same decision, so this is the gesture at risk.
+//
+// The guard lives in Garden (requestCloseEditor), NOT in PlantingEditor: the editor's own Cancel
+// and its post-save close must not prompt, and a save that SUCCEEDED must never ask to discard.
+describe('Garden — Sheet dismissal guard (V4-OVERLAYSLICE3-001)', () => {
+  const typeName = (v) => fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: v } })
+  const escape = () => fireEvent.keyDown(document, { key: 'Escape' })
+  const editorMounted = () => !!document.getElementById('planting-editor')
+
+  it('a DIRTY form survives Escape when the user declines, and keeps the typing', async () => {
+    primeFetch()
+    await renderGarden('add=1')
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    typeName('Half Typed Plant')
+    await act(async () => { escape() })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(editorMounted()).toBe(true)
+    // The whole point: the characters are still there, not just the sheet.
+    expect(screen.getByLabelText(/Name/i).value).toBe('Half Typed Plant')
+    confirmSpy.mockRestore()
+  })
+
+  it('Escape DOES discard once the user accepts — the guard must not be a trap', async () => {
+    primeFetch()
+    await renderGarden('add=1')
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    typeName('Half Typed Plant')
+    await act(async () => { escape() })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(editorMounted()).toBe(false)
+    confirmSpy.mockRestore()
+  })
+
+  it('a CLEAN form closes on Escape with NO prompt — no nag on an untouched sheet', async () => {
+    primeFetch()
+    await renderGarden('add=1')
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await act(async () => { escape() })
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(editorMounted()).toBe(false)
+    confirmSpy.mockRestore()
+  })
+})
