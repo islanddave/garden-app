@@ -8,18 +8,29 @@
 // overload"). Reusing it here would have shipped aria-pressed on a keypad, which is wrong for a
 // screen reader, not merely redundant.
 //
-// Geometry (design-weighin-session-20260824.md §5.5): five columns at 48px = 252px wide, inside the
-// 304px the outgoing 6-chip row already occupied at 390px. Costs ~+50px of height and saves the
-// ~301-344px the keyboard was taking — the pad pays for itself about six times over.
+// Geometry — SIX columns, deliberately NOT the five the design doc proposes (§5.5). That figure was
+// drawn for a WIZARD STEP, where the pad owns the sheet and nothing overlays it. On the shipped
+// harvest panel a sticky Save band floats over the form at `bottom: BOTTOM_NAV_HEIGHT_PX + 12`, and
+// a 5-column pad is three rows / 160px tall. MEASURED in tests/harness at 390x500 — keyboard-open
+// geometry with the quantity field focused — the third row sat at y370-418 beneath a band occupying
+// y384-432, and elementFromPoint returned the BAND for both `.` and BACKSPACE: the backspace this
+// component documents as mandatory was not tappable at all. Six columns is two rows / 104px, which
+// ends above the band. In-session the two pads together go 320px -> 264px (the quantity pad keeps a
+// third row for Next; the weight pad does not) — a reduction, not a halving.
 //
-// ⚠️ jsdom cannot falsify the geometry above (getBoundingClientRect returns zeros —
-// tests/harness/README.md:14-16). A green suite proves the STATE MACHINE only; the layout claim
-// needs tests/harness/.
+// 6 x ~46.7px at a 320px group width still clears the 44px WCAG 2.5.5 floor — and six is the column
+// count the outgoing chip row already used at this width, so the fit is proven on this exact
+// surface. The Next row (session only) spans all six as a third row; that path never meets this
+// constraint, because inputMode="none" means no keyboard and therefore no 390x500.
+//
+// ⚠️ jsdom cannot falsify ANY of the above (getBoundingClientRect returns zeros —
+// tests/harness/README.md:14-16, and elementFromPoint is meaningless there). A green suite proves
+// the STATE MACHINE only; every layout claim here came from tests/harness/.
 import React from 'react'
 import { P } from '../lib/constants.js'
 import { PAD_BACKSPACE, appendDigit, padKeyDisabled } from '../lib/numberPad.js'
 
-const ROWS = [['1', '2', '3', '4', '5'], ['6', '7', '8', '9', '0']]
+const ROWS = [['1', '2', '3', '4', '5', '6'], ['7', '8', '9', '0']]
 
 const keyBase = {
   minHeight: 48,
@@ -79,7 +90,7 @@ export default function NumberPad({
     <div
       role="group"
       aria-label={ariaLabel}
-      style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 8 }}
+      style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}
     >
       {ROWS.flat().map((d) => (
         <PadKey
@@ -117,7 +128,7 @@ export default function NumberPad({
           ariaLabel={primaryLabel}
           testId={`${idPrefix}-primary`}
           onClick={onPrimary}
-          gridColumn="span 3"
+          gridColumn="1 / -1"
           tone="primary"
         />
       )}
