@@ -64,6 +64,7 @@ import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
+import { plantingIsHarvestTracked } from '../lib/harvestTracked.js'
 import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
@@ -1016,10 +1017,18 @@ export default function PlantingDetail() {
       )}
 
       {/* ── Harvested (V4-HARVESTQTY-001) — the near end of the spine, immediately upstream of Put
-          up: how much actually came off this planting, recent + cumulative. Renders
-          UNCONDITIONALLY for the same reason Put up does — "nothing yet" on a planting you are
-          looking at is itself the answer, and hiding it would make the section appear only after a
-          harvest exists, which reads as a bug. Self-fetches; does not widen /api/plants/:id. ── */}
+          up: how much actually came off this planting, recent + cumulative. Renders unconditionally
+          FOR HARVEST-TRACKED CROPS — "nothing yet" on a tomato you are looking at is itself the
+          answer, and hiding it would make the section appear only after a harvest exists, which
+          reads as a bug. Self-fetches; does not widen /api/plants/:id.
+          V4-CONSUMABLECLASS-001 (BD-042): that reasoning holds only for a plant grown to be EATEN.
+          On the 49 live not-harvest-tracked plantings it said "Nothing harvested from this planting
+          yet" about a pothos. Gated on the existing helper rather than a new column: `crop_types`
+          already carries the axis, and zero of 879 all-time harvest events touched an ornamental,
+          so this removes no data and moves no denominator. The helper defaults to TRACKED on an
+          unknown or missing slug, so the only thing this can do is drop the section from a plant
+          somebody positively listed as not-harvested. ── */}
+      {plantingIsHarvestTracked(pl) && (<>
       <SectionHeader>Harvested</SectionHeader>
       <div style={cardStyle}>
         <HarvestFromPlanting planting={pl} fetch={fetch} />
@@ -1037,15 +1046,22 @@ export default function PlantingDetail() {
           </div>
         )}
       </div>
+      </>)}
 
       {/* ── Put up (V4-PUTUPLINK-001) — the far end of the spine: what this planting yielded that is
-          still in the stores. Renders UNCONDITIONALLY (unlike Growth/Photos, which hide when empty):
-          the empty state carries the "log a put-up from this planting" affordance, which is exactly
-          the moment worth prompting — you are looking at the planting you just picked from. ── */}
+          still in the stores. Renders unconditionally FOR HARVEST-TRACKED CROPS (unlike
+          Growth/Photos, which hide when empty): the empty state carries the "log a put-up from this
+          planting" affordance, which is exactly the moment worth prompting — you are looking at the
+          planting you just picked from.
+          V4-CONSUMABLECLASS-001 (BD-042): on a not-harvest-tracked planting that affordance was a
+          live invitation to log a put-up from a pothos, which is the sharper half of the complaint —
+          the Harvested section merely said nothing, this one asked. Same gate, same default. ── */}
+      {plantingIsHarvestTracked(pl) && (<>
       <SectionHeader>Put up</SectionHeader>
       <div style={cardStyle}>
         <PutUpFromPlanting planting={pl} fetch={fetch} />
       </div>
+      </>)}
 
       {/* ── Photos (V3-PHOTOMULTI-001 V1: every photo for this planting; tap -> Lightbox gallery) ── */}
       {(photosLoading || photos.length > 0) && (
