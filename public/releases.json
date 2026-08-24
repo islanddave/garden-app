@@ -1,5 +1,22 @@
 [
   {
+    "version": "4.47.0",
+    "date": "2026-08-24",
+    "highlights": [
+      "The Needs-care list on Today no longer moves under your finger. Working down a location group and tapping Log, the sections were quietly re-sorting themselves after every single tap — the list ranks groups by how overdue they are, and logging a plant lowers its group's score, so the page re-ranked itself mid-tap and slid the next plant somewhere else. That is why you were mis-tapping. The order is now fixed when the page loads and only changes when you change it; the same applies to which sections sit open, which were popping open on their own for the same reason.",
+      "The care rows are about a third shorter, so you see roughly 13 plants where you used to see 9. The green Log button is gone — the coloured water chip IS the button now. It was already telling you how urgent the plant was, and having a separate button next to it was two controls doing one job. Skip sits to its left, water on the right where your thumb is. The \"1d overdue\" line went with it: the chip's colour already says that, and it was costing a whole second line on every row. One consequence worth knowing — a 4-day and a 19-day overdue plant now look the same shade, since the colour has three bands rather than a number.",
+      "Each section on Today has its own \"Water all\" button in its header, so a group like Pasture Bag Area with 77 plants logs in one tap without leaving the page for Log Many.",
+      "Today stopped explaining its own arithmetic. \"One bulk water covers 111 of these, 113\" is gone, and the staleness note lost the half that justified itself — it still tells you when rows are being withheld, because that is the part you cannot see for yourself.",
+      "The Harvest page crop blocks went from five stacked lines to two. \"7 weighed, 10 estimated\" is gone everywhere it appeared, and the kilogram figure now rides on the same line as the cups and bunches instead of owning a row. The ≈ still marks a total that contains estimates.",
+      "The Garden tab has no harvest data on it at all any more — no \"This season\", no weight, no counts. It is the browsing surface; the Harvest tab is where harvests live. It also stopped fetching the whole-garden harvest total on every visit to display it.",
+      "The harvest log is finally in the order you entered things. Inside each day the entries were sorted by their internal id, which is a random string — so the within-day order was noise, not history. Measured before the fix: on 2026-08-24, 13 of 13 entries were in the wrong place; on 08-17, 39 of 39. It now sorts by when you actually hit save, and a harvest you backdate still files under its harvest date while sitting at the top of that day as the most recent thing you entered.",
+      "The Snap button goes straight to your photos. It used to open a screen whose only option was \"Choose photo\" — a tap that did nothing but ask you to tap again, and you hit it twice per burst because it came back after every save.",
+      "The weigh-in queue is gone from the weigh-in session, along with the two requests it made every time the session opened. The session itself is untouched.",
+      "Plants you grow to look at no longer claim a harvest. The rescued violet was showing \"Est. harvest Oct 4 – Oct 24\"; six plantings were doing that and fourteen were carrying a days-to-maturity figure. The app has always known which crops are not harvested — the Today ready-band and the harvest watcher both check — but the planting card never asked. It still tells you how long ago something was transplanted, which is the part that means anything on a houseplant.",
+      "Fixed a crash waiting to happen in the harvest post composer: a crop name containing a bracket or a plus sign would have taken the whole composer down."
+    ]
+  },
+  {
     "version": "4.46.0",
     "date": "2026-08-22",
     "highlights": [
