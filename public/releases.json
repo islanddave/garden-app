@@ -1,5 +1,18 @@
 [
   {
+    "version": "4.48.0",
+    "date": "2026-08-24",
+    "highlights": [
+      "Projects you marked private were readable by anyone who had the link. The public share route served every project by its slug with no privacy check at all, and it handed back your notes, description, species and variety along with it — confirmed live against the previous version on a project whose is_public flag was false. It now refuses anything not marked public. If you have ever shared a link to one garden, that link could reach the others.",
+      "Harvest quantity and weight now have their own number pad, so the phone keyboard stays down. Tapping 3 still fills in 3 in one tap — that is most of your picks and it has not changed. What changed is everything else: 13 used to mean tapping into the field, waiting for the keyboard, and typing two digits. Now it is tap 1, tap 3. In a weigh-in session the keyboard never appears at all, which is where it had been covering roughly half the screen. There is a backspace key, and it matters more than it sounds: the pad BUILDS a number rather than replacing it, so a mis-tap adds a digit instead of overwriting one.",
+      "Add Planting opens as a fly-over on top of the Garden tab instead of a form wedged into the top of it. That was the last form still built the old way.",
+      "What you type into Add Planting or Edit Planting no longer vanishes if you back out. Both forms used to close on the Back gesture and throw away everything typed — no warning, and nothing to recover afterwards. They now ask first. Edit has been doing this since it became a fly-over three versions ago; it was never intentional.",
+      "The Harvest log no longer shows the same pick twice if you happen to be scrolling through it at the moment a new version goes out.",
+      "The microphone button on the notes and quantity fields is easier to hit. It looks exactly the same — the tappable area around it grew to the size it should always have been.",
+      "Search engines were being served the app's loading shell instead of a real robots.txt."
+    ]
+  },
+  {
     "version": "4.47.0",
     "date": "2026-08-24",
     "highlights": [
