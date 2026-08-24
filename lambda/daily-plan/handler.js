@@ -932,6 +932,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
   // Mirror any flip in src/lib/featureFlags.js -- the CJS Lambda cannot import that ESM module.
   const todayAwareEnabled = _flag('CARE_TODAY_AWARE_ENABLED', process.env.CARE_TODAY_AWARE_ENABLED === 'true');
+  // BUG-RAINFORECASTCREDIT-001 — rain credit spends MEASURED precipitation only (engine.creditPrecip).
+  // Default OFF: absent env => byte-identical plan, so the deploy is inert and the behaviour change is a
+  // deliberate flip, not a side effect of shipping. Flipping it makes the engine stop crediting rain that
+  // has not fallen, which REDUCES skips -- i.e. it errs toward watering, the fail-safe direction.
+  const measuredCreditEnabled = _flag('CARE_RAIN_MEASURED_CREDIT_ENABLED', process.env.CARE_RAIN_MEASURED_CREDIT_ENABLED === 'true');
   // BUG-SEEDEDGATE-001 — structural cadence provenance replaces the in-payload _seeded marker.
   // DEFAULT OFF, and OFF is byte-identical.
   //
@@ -1018,7 +1023,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is
     // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
     // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled,
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled,
       waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now() });
     // Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
     // types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings

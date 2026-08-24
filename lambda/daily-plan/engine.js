@@ -217,10 +217,37 @@ function windowPrecip(hy){
   // gate that must distinguish the two reads today_observed_in / today_remaining_in — never this sum.
   return (hy.recent_precip_in||0) + (hy.today_precip_in||0);
 }
+// BUG-RAINFORECASTCREDIT-001 — the precipitation basis RAIN CREDIT is allowed to spend.
+//
+// windowPrecip's own comment above states the rule this function exists to honour: the D0 term is
+// today_observed_in + today_remaining_in, "part-measured/part-predicted, in a ratio that moves through
+// the day", and "any gate that must distinguish the two reads today_observed_in / today_remaining_in --
+// never this sum." Rain credit is the strongest such gate in the engine: it decides whether a live plant
+// is skipped. It read the sum anyway, so a forecast that never arrived could retire a real watering.
+//
+// Measured 2026-08-23 on prod v4.45.0: 35 plantings skipped while only 0.09" had actually fallen -- 0.13"
+// of the credited 0.22" was still forecast. Worse at the 02:00 run, where index.js reads Open-Meteo
+// precipitation_sum[2] "for a day that has not started": there the D0 term is 100% prediction, and the
+// 02:00 run is the one that builds the morning task list. So the DEFAULT daily experience was the fully
+// forecast case, not the part-measured one.
+//
+// The shape is deliberately identical to saturationSuppressed's soakBasis (:458), which already solved
+// this for the cap under BUG-TODAYWATER-001 -- actuals judge water in the media, forecast is judged
+// separately with its own PoP bars. This makes the credit path consistent with the cap path rather than
+// inventing a second vocabulary. today_observed_in is ABSENT with no bound station, so the term is 0
+// there: no gauge => today contributes no credit, which is the fail-safe direction (canon 20260710 4.3:
+// never suppress a baseline watering cue on unverified rain).
+//
+// Flag-gated default-OFF so an un-updated caller and every existing fixture stay byte-identical.
+function creditPrecip(hy, measuredOnly){
+  if(!hy || hy.recent_precip_in==null) return null;
+  if(!measuredOnly) return windowPrecip(hy);
+  return (hy.recent_precip_in||0) + (hy.today_observed_in||0);
+}
 // Returns { credit_days, wp, eff } when rain qualifies for credit, else null.
-function rainCreditDays(cls, wi, hy){
+function rainCreditDays(cls, wi, hy, measuredOnly=false){
   if(cls!=='outdoor') return null;                                  // covered/indoor never credited
-  const wp = windowPrecip(hy); if(wp==null) return null;
+  const wp = creditPrecip(hy, measuredOnly); if(wp==null) return null;
   const eff = wp - RAIN_IA.outdoor;
   if(eff <= 0) return null;                                         // didn't clear first-wetting loss
   return { credit_days: Math.min(RAIN_HOLD_DAYS, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100 };  // cap at one cycle
@@ -323,10 +350,10 @@ function rainMaxDays(tier, status, crop){
   else if((isLeafy(c)||PEPPER_TOMATO.test(c)) && (stage==='flowering'||stage==='fruiting')) mod=-1; // steady-moisture crops
   return Math.max(1, base+mod); }
 // Tiered rain credit — mirrors rainCreditDays but with per-tier IA + hold. Returns {credit_days,wp,eff,tier} or null.
-function rainCreditDaysTiered(tier, wi, hy){
+function rainCreditDaysTiered(tier, wi, hy, measuredOnly=false){
   const ia = RAIN_TIER_IA[tier] ?? RAIN_TIER_IA.small_fast;
   const hold = RAIN_TIER_HOLD[tier] ?? RAIN_TIER_HOLD.small_fast;
-  const wp = windowPrecip(hy); if(wp==null) return null;
+  const wp = creditPrecip(hy, measuredOnly); if(wp==null) return null;
   const eff = wp - ia;
   if(eff<=0) return null;
   return { credit_days: Math.min(hold, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100, tier }; }
@@ -600,7 +627,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 // generatePlan — {enabled, eventsByPlant, weatherByDate, weatherRowCount, effNowMs}. Null/absent ->
 // byte-identical legacy path; the fold requires BOTH the flag and a real event window (a failed
 // event-window read degrades the whole run to flag-OFF, per the canon fail-to-today's-model rule).
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null){
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[];
   let overwinterHeld=0, overwinterDeferred=0;
@@ -738,8 +765,8 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     const bagHeatGate=hotForBag && rcls==='outdoor' && ((p.container_type||'').toLowerCase()==='fabric_bag');
     const _rcEarned=freshTransplant ? null
       : (rainCreditEnabled
-          ? (_exposed ? rainCreditDaysTiered(_rainTier, wi, hydrology) : null)
-          : rainCreditDays(rcls, wi, hydrology));
+          ? (_exposed ? rainCreditDaysTiered(_rainTier, wi, hydrology, measuredCreditEnabled) : null)
+          : rainCreditDays(rcls, wi, hydrology, measuredCreditEnabled));
     const rc=bagHeatGate ? bagHeatDemoteCredit(_rcEarned) : _rcEarned;
     const bagHeatCut=!!(rc && rc.bag_heat_from > rc.credit_days);
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
@@ -929,7 +956,7 @@ function hydrologyStatus(hy){
 // handler threads through (weatherDaily was already passed as the F1 seam; it is consumed now).
 // All default to inert — an un-updated caller is byte-identical, and enabled-without-events stays
 // legacy (the handler passes enabled=false when the event-window read fails).
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false}){
   const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
     ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
     : null;
@@ -947,7 +974,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const rainComing = _todayComing || _tomorrowComing;
   const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled);
     users[u]=up; }
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
