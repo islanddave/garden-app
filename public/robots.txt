@@ -1,0 +1,20 @@
+# Gardens at Mathews — operator app. Not for indexing.
+#
+# This host serves the Clerk-gated app UI plus /garden/:slug, a share-link surface meant to be
+# opened from a link someone was handed, not discovered in search results. The public-facing
+# site is gardensatmathews.garden; indexable content belongs there.
+#
+# Why this file has to exist rather than being absent: CloudFront maps 403/404 -> 200 /index.html
+# on this distribution, so a MISSING robots.txt returns the SPA shell with HTTP 200 and
+# content-type text/html. Crawlers read that as "no directives" and crawl freely. Only a real
+# object at this key produces a real robots.txt — an existing object bypasses the error mapping
+# (verified against prod: /releases.json serves as application/json while any missing path
+# returns the 3,162-byte HTML shell).
+#
+# robots.txt governs CRAWLING, not access. Share links continue to work exactly as before.
+# Relaxing this is a deliberate, reviewable step (public-site runbook, Phase 3) because indexing
+# is the direction that cannot be undone — published data cannot be recalled from crawler caches
+# or archives.
+
+User-agent: *
+Disallow: /
