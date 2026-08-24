@@ -5,6 +5,11 @@
 //   formatBotanical(varietyRef) -> { text, italic } | null for the Basics-tab botanical row.
 // Both read JSON fields defensively (optional-chaining + type guards): the cultivar substrate
 // is sparse and heterogeneous, so any missing/garbage field must degrade to "skip", never throw.
+//
+// "dependency-free" above is now one import short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
+// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing. The property that
+// mattered — no React, no network, no clock, unit-testable in isolation — is intact.
+import { plantingIsHarvestTracked } from './harvestTracked.js'
 
 // Lower-cased crop-family signal used by both the key-fact cascade and the no-photo fallback
 // glyph picker. Pulls from variety type/group + the planting's own name as a last resort.
@@ -103,10 +108,17 @@ export function selectKeyFact(planting) {
   }
 
   // (3) Days to maturity window.
+  //
+  // V4-CONSUMABLECLASS-001 (BD-042) — skipped for a not-harvest-tracked crop. "75–95 days" next to
+  // a violet is the same claim as the "Est. harvest" window plantingMaturity.js now suppresses,
+  // just in a shorter sentence: days-to-MATURITY is a harvest figure, and the pill sits on a hero
+  // photo where it reads as one. This is a SKIP, not a blank — the chain falls through to sun
+  // requirement, which is the genuinely useful key fact for an ornamental. That fall-through is why
+  // the gate is here rather than at the render site.
   const v = planting?.variety_ref || {}
   const dmin = Number.isFinite(v.days_to_maturity_min) ? v.days_to_maturity_min : null
   const dmax = Number.isFinite(v.days_to_maturity_max) ? v.days_to_maturity_max : null
-  if (dmin != null || dmax != null) {
+  if (plantingIsHarvestTracked(planting) && (dmin != null || dmax != null)) {
     if (dmin != null && dmax != null && dmin !== dmax) return `${dmin}–${dmax} days`
     return `${dmin ?? dmax} days`
   }

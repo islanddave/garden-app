@@ -44,6 +44,7 @@
 // it says now and why the alternatives were rejected.
 
 import { calibrateFromTransplant, SITE_FACTOR } from './maturityCalibration.js'
+import { plantingIsHarvestTracked } from './harvestTracked.js'
 
 export const DTM_BASIS_SOW = 'from-sow'
 export const DTM_BASIS_TRANSPLANT = 'from-transplant'
@@ -64,7 +65,13 @@ export const DTM_BASIS_TRANSPLANT = 'from-transplant'
 // when Dave entered a real sow or transplant date.
 //
 // `single` and NULL/unknown habits are NOT in this set and take the untouched code path below.
-// NULL is the load-bearing exclusion: on live prod it is 54 live plantings, every one an ornamental.
+//
+// CORRECTED 2026-08-24 (BD-042). This comment used to read "NULL is the load-bearing exclusion: on
+// live prod it is 54 live plantings, every one an ornamental." The count is right and the claim is
+// NOT: 5 of those 54 are edible. NULL harvest_habit means "nobody has said", which is a different
+// statement from "this is not harvested" — so it was never safe to read ornamental-ness off it, and
+// anything built on that reading would have suppressed harvest information on 5 food plantings.
+// The positive list in lib/harvestTracked.js is the actual classifier; see harvestTracked there.
 export const CONTINUOUS_HARVEST_HABITS = new Set(['repeat', 'cut_and_come_again'])
 
 // Only the two CHECK-constrained values resolve; anything else (null, undefined, a value from a
@@ -103,6 +110,9 @@ export function computeMaturity(planting, today = new Date()) {
     awaitingTransplant: false,
     calibrated: false, calibrationFactor: null,
     harvestHabit: null, continuousHarvest: false,
+    // BD-042: true unless the crop type is positively listed as not-harvested. Defaults TRUE so an
+    // unknown slug can only ever remove a claim somebody made, never withhold one from a food crop.
+    harvestTracked: true,
   }
   if (!planting) return out
 
@@ -112,6 +122,18 @@ export function computeMaturity(planting, today = new Date()) {
   // undefined here and gets the pre-V4-MATURITYREPEAT-001 wording unchanged.
   out.harvestHabit = planting?.variety_ref?.harvest_habit ?? null
   out.continuousHarvest = CONTINUOUS_HARVEST_HABITS.has(out.harvestHabit)
+
+  // V4-CONSUMABLECLASS-001 (BD-042) — a plant grown to be LOOKED AT gets no harvest projection.
+  // Dave's live case: a rescued violet (cobaea) reading "Est. harvest Oct 4 – Oct 24", which he
+  // called nonsensical. This module was the ONLY harvest consumer with no such gate;
+  // harvestReadiness.js and the watch Lambda have always had one.
+  //
+  // AGE IS NOT SUPPRESSED, only the harvest CLAIM. "Transplanted 34 days ago" is true and useful
+  // for an ornamental — it is what the card is FOR on those plantings. What goes is the projected
+  // window, its dates, isMature and the progress fraction: statements about a pick that will never
+  // happen. Suppressed here rather than at each render site so every consumer of computeMaturity is
+  // covered at once, which is exactly how this defect arose (one gate, three call sites).
+  out.harvestTracked = plantingIsHarvestTracked(planting)
 
   // Anchor for AGE display: the most advanced lifecycle date present.
   const transplanted = parseDate(planting.transplanted_at)
@@ -150,13 +172,16 @@ export function computeMaturity(planting, today = new Date()) {
   // D3: a from-transplant crop with no transplant/planted-out date has an UNKNOWABLE window.
   // Say so instead of projecting one -- start_indoor_weeks is populated for well under half the
   // affected plantings, so a projection would fabricate a confident-looking wrong date.
-  if (!dtmAnchor && basis === DTM_BASIS_TRANSPLANT && (dtmMin != null || dtmMax != null)) {
+  if (out.harvestTracked && !dtmAnchor && basis === DTM_BASIS_TRANSPLANT && (dtmMin != null || dtmMax != null)) {
     out.awaitingTransplant = true
     out.harvestWindowLabel = 'Est. harvest — set at transplant'
     return out
   }
 
-  if (dtmAnchor && (dtmMin != null || dtmMax != null)) {
+  // BD-042: the harvest projection is skipped entirely for a not-harvest-tracked crop. Placed
+  // BEFORE the awaiting-transplant branch above would be wrong — that branch is also a harvest
+  // claim ("Est. harvest — set at transplant"), so it is gated by the same condition below.
+  if (out.harvestTracked && dtmAnchor && (dtmMin != null || dtmMax != null)) {
     // Slice D: for from-transplant crops, scale the catalogue ends by the site factor and widen.
     // Returns null for every other basis, so from-sow/uncurated keep the raw catalogue window.
     const calib = calibrateFromTransplant(basis, dtmMin, dtmMax)
