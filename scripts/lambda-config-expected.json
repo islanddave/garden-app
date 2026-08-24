@@ -1,23 +1,23 @@
 {
   "_README": [
-    "OPS-LAMBDACONFIG-001 — the repo's declaration of prod Lambda configuration.",
+    "OPS-LAMBDACONFIG-001 \u2014 the repo's declaration of prod Lambda configuration.",
     "Enforced by scripts/check-lambda-config.py, which deploy-lambda.yml's verify-daily-plan job",
     "runs against the LIVE account after every prod deploy. A mismatch fails the run.",
     "",
     "WHY: on 2026-08-17 CARE_WATER_LEDGER_ENABLED and CARE_RAIN_MAXDAYS_ENABLED were found ABSENT",
-    "(not false) from garden-daily-plan, so RAIN_DEPTH — ~140 lines, fully unit-tested — was",
+    "(not false) from garden-daily-plan, so RAIN_DEPTH \u2014 ~140 lines, fully unit-tested \u2014 was",
     "unreachable in prod while CI stayed green either way. Nothing in the repo asserted prod flag",
     "state, so a code comment claiming a flag was on was the only 'source'. Absent and false behave",
     "identically at a === 'true' gate but mean different things, so this file distinguishes them.",
     "The same deploy also revealed garden-plants living at 1024MB with the repo declaring nothing.",
     "",
-    "SCHEMA — per function name (the live name, e.g. 'garden-plants'):",
+    "SCHEMA \u2014 per function name (the live name, e.g. 'garden-plants'):",
     "  memory   int    required MemorySize in MB",
     "  timeout  int    required Timeout in seconds (optional; omit to not assert)",
-    "  env      obj    per-KEY expectation. NOT exhaustive — unlisted keys are ignored, which is",
+    "  env      obj    per-KEY expectation. NOT exhaustive \u2014 unlisted keys are ignored, which is",
     "                  deliberate: SECRET_REFRESH / FORCE_COLD_START are operational churn.",
     "",
-    "ENV VALUE SENTINELS — type-encoded so they can never collide with a real value (always a string):",
+    "ENV VALUE SENTINELS \u2014 type-encoded so they can never collide with a real value (always a string):",
     "  null      key MUST BE ABSENT from the live map. This is the absent-vs-false distinction.",
     "  true      key MUST BE PRESENT with any value. For values that are environment-derived or",
     "            not worth pinning (Clerk subs, SNS ARNs). Proves 'not wiped' without hardcoding.",
@@ -25,15 +25,14 @@
     "",
     "FLIPPING A FLAG IS A REPO CHANGE. Editing this file is how a flag flip becomes reviewable;",
     "flipping live without editing here fails the next deploy. That is the point, not a nuisance.",
-    "Use scripts/lambda-env-set.sh for the live write — never a bare --environment (set-not-merge).",
+    "Use scripts/lambda-env-set.sh for the live write \u2014 never a bare --environment (set-not-merge).",
     "",
     "Captured from live us-east-1 on 2026-08-18. Values are CURRENT REALITY, not aspiration."
   ],
-
   "garden-daily-plan": {
     "memory": 256,
     "timeout": 120,
-    "_note": "memory INTENTIONALLY 256 — DRG-NIGHTLYTIMEOUT-001 proved I/O wait, not CPU. env below is the COMPLETE set of vars lambda/daily-plan reads, so every flag is declared present-or-absent.",
+    "_note": "memory INTENTIONALLY 256 \u2014 DRG-NIGHTLYTIMEOUT-001 proved I/O wait, not CPU. env below is the COMPLETE set of vars lambda/daily-plan reads, so every flag is declared present-or-absent.",
     "env": {
       "DRY_RUN": "false",
       "SYSTEM_CLERK_SUB": true,
@@ -45,7 +44,7 @@
       "CARE_RAIN_CREDIT_ENABLED": "true",
       "CARE_WATER_LEDGER_ENABLED": null,
       "CARE_RAIN_MAXDAYS_ENABLED": null,
-    "CARE_RAIN_MEASURED_CREDIT_ENABLED": null,
+      "CARE_RAIN_MEASURED_CREDIT_ENABLED": "true",
       "FROST_HEAT_ENABLED": null,
       "FROST_BAND_THRESHOLDS_JSON": null,
       "FROST_SEASON_START_MMDD": null,
@@ -61,11 +60,10 @@
       "AWN_RAIN_MAX_DAILY_IN": null
     }
   },
-
   "garden-plants": {
     "memory": 1024,
     "timeout": 30,
-    "_note": "OPS-PLANTSLAMBDACPU-001 — bumped 256->1024 live 2026-08-17 with Dave's approval: ~446 HMAC CDN presigns per list request were CPU-bound at 256MB's 0.145 vCPU. update-function-code does not touch memory, so the bump survives deploys, but it was UNDECLARED until now.",
+    "_note": "OPS-PLANTSLAMBDACPU-001 \u2014 bumped 256->1024 live 2026-08-17 with Dave's approval: ~446 HMAC CDN presigns per list request were CPU-bound at 256MB's 0.145 vCPU. update-function-code does not touch memory, so the bump survives deploys, but it was UNDECLARED until now.",
     "env": {
       "GARDEN_HOUSEHOLD_IDS": true,
       "S3_PHOTOS_BUCKET": "garden-photos-prod",
@@ -75,7 +73,6 @@
       "PHOTO_CDN_ENABLED": null
     }
   },
-
   "garden-photos": {
     "memory": 256,
     "timeout": 30,
@@ -90,7 +87,6 @@
       "SPACE_PHOTOS_ENABLED": "true"
     }
   },
-
   "garden-projects": {
     "memory": 256,
     "timeout": 30,
@@ -104,7 +100,6 @@
       "PHOTO_CDN_ENABLED": null
     }
   },
-
   "garden-locations": {
     "memory": 256,
     "timeout": 30,
@@ -117,11 +112,10 @@
       "PHOTO_CDN_ENABLED": null
     }
   },
-
   "garden-inventory-items": {
     "memory": 512,
     "timeout": 120,
-    "_note": "V4-SEEDINV-001 — Anthropic image-OCR proxy needs >30s and base64 headroom.",
+    "_note": "V4-SEEDINV-001 \u2014 Anthropic image-OCR proxy needs >30s and base64 headroom.",
     "env": {
       "GARDEN_HOUSEHOLD_IDS": true,
       "S3_PHOTOS_BUCKET": "garden-photos-prod",
@@ -131,11 +125,10 @@
       "PHOTO_CDN_ENABLED": null
     }
   },
-
   "garden-facebook-share": {
     "memory": 1024,
     "timeout": 180,
-    "_note": "V4-FBSHARE-001. FB_SHARE_ENABLED='1' since 2026-08-21 — Facebook posting is LIVE (secret provisioned, token non-expiring, Dev-mode post visibility verified equal to a hand-made post). This line declares that deliberate flip so the drift guard stops redding every promote on it. 1024MB/180s (was 512/60): the live function was raised to these values on 2026-08-21 because it fans out over up to 10 photos — S3 get + metadata strip + a multipart Graph upload each — and a timeout mid-Promise.all orphans uploaded Graph media with NO cleanup, because the catch never runs. deploy-lambda.yml hardcoded the old 60/512 with no read/compare, so every Lambda deploy silently reverted that raise; fixed in the same commit as this line. IG_SHARE_ENABLED is declared ABSENT defensively: no Instagram handler code exists on dev as of this commit (V4-IGSHARE-001 is unlanded), so this key must never appear — if it does, something set a flag for a surface that has no code behind it.",
+    "_note": "V4-FBSHARE-001. FB_SHARE_ENABLED='1' since 2026-08-21 \u2014 Facebook posting is LIVE (secret provisioned, token non-expiring, Dev-mode post visibility verified equal to a hand-made post). This line declares that deliberate flip so the drift guard stops redding every promote on it. 1024MB/180s (was 512/60): the live function was raised to these values on 2026-08-21 because it fans out over up to 10 photos \u2014 S3 get + metadata strip + a multipart Graph upload each \u2014 and a timeout mid-Promise.all orphans uploaded Graph media with NO cleanup, because the catch never runs. deploy-lambda.yml hardcoded the old 60/512 with no read/compare, so every Lambda deploy silently reverted that raise; fixed in the same commit as this line. IG_SHARE_ENABLED is declared ABSENT defensively: no Instagram handler code exists on dev as of this commit (V4-IGSHARE-001 is unlanded), so this key must never appear \u2014 if it does, something set a flag for a surface that has no code behind it.",
     "env": {
       "GARDEN_HOUSEHOLD_IDS": true,
       "ADMIN_CLERK_SUBS": true,
@@ -145,17 +138,15 @@
       "IG_SHARE_ENABLED": null
     }
   },
-
   "garden-photocdn-derivative": {
     "memory": 2048,
     "timeout": 30,
-    "_note": "Created by infra/photocdn.yaml (CFN), not by deploy-lambda.yml's create branch — which would produce nodejs20.x/x86_64/256MB. Asserted here so a CFN placeholder-revert is caught by the deploy rather than days later.",
+    "_note": "Created by infra/photocdn.yaml (CFN), not by deploy-lambda.yml's create branch \u2014 which would produce nodejs20.x/x86_64/256MB. Asserted here so a CFN placeholder-revert is caught by the deploy rather than days later.",
     "env": {
       "ORIGINALS_BUCKET": "garden-photos-prod",
       "DERIVATIVES_BUCKET": "garden-photos-derivatives-769788341849"
     }
   },
-
   "garden-xp-reconcile": {
     "memory": 256,
     "timeout": 30,
@@ -163,32 +154,109 @@
       "DRY_RUN": "true"
     }
   },
-
-  "garden-harvests":         { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-members":          { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-events":           { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-dashboard":        { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-varieties":        { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-findings":         { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-evidence-ingest":  { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-storage-location": { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-preservation":     { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-  "garden-daily-plan-read":  { "memory": 256, "timeout": 30, "env": { "GARDEN_HOUSEHOLD_IDS": true } },
-
+  "garden-harvests": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-members": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-events": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-dashboard": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-varieties": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-findings": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-evidence-ingest": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-storage-location": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-preservation": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
+  "garden-daily-plan-read": {
+    "memory": 256,
+    "timeout": 30,
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    }
+  },
   "garden-tags": {
     "memory": 256,
     "timeout": 30,
-    "env": { "GARDEN_HOUSEHOLD_IDS": true, "ADMIN_CLERK_SUBS": true }
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "ADMIN_CLERK_SUBS": true
+    }
   },
   "garden-ux-events": {
     "memory": 256,
     "timeout": 30,
-    "env": { "ADMIN_CLERK_SUBS": true }
+    "env": {
+      "ADMIN_CLERK_SUBS": true
+    }
   },
-
-  "garden-favorites":     { "memory": 256, "timeout": 30 },
-  "garden-app-events":    { "memory": 256, "timeout": 30 },
-  "garden-achievements":  { "memory": 256, "timeout": 30 },
-  "garden-critter":       { "memory": 256, "timeout": 30 },
-  "garden-shared-state":  { "memory": 256, "timeout": 30 }
+  "garden-favorites": {
+    "memory": 256,
+    "timeout": 30
+  },
+  "garden-app-events": {
+    "memory": 256,
+    "timeout": 30
+  },
+  "garden-achievements": {
+    "memory": 256,
+    "timeout": 30
+  },
+  "garden-critter": {
+    "memory": 256,
+    "timeout": 30
+  },
+  "garden-shared-state": {
+    "memory": 256,
+    "timeout": 30
+  }
 }
