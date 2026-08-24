@@ -236,6 +236,14 @@ export function toLines(items) {
   })
 }
 
+// BUG-HARVESTPOSTREGEX-001 — kept byte-identical to lambda/facebook-share/altText.js:89 on purpose.
+// The two run over the same user-authored crop and cultivar strings on the two halves of one publish
+// path, and a subtly different character class between them is how the client and the Page end up
+// disagreeing about a name only for the cultivars that contain the character one of them missed.
+function escapeRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 // How Dave actually writes a flat line: "1 Cubanelle pepper", "2 Pineapple tomatillos",
 // "2 Dark Green zucchini", "10 cucamelons". Three things fall out of that:
 //   - a MULTI-WORD crop label is taxonomy, not speech ("Summer Squash"), so it is never appended —
@@ -255,8 +263,22 @@ export function renderLine(line, { withCrop } = {}) {
   const plural = pluralizeCrop(crop, qty).toLowerCase()
 
   if (name.toLowerCase() === crop.toLowerCase()) return `${qty} ${plural}`
-  if (cropIsSingleWord && new RegExp(`\\s${crop}$`, 'i').test(name)) {
-    return `${qty} ${name.replace(new RegExp(`\\s${crop}$`, 'i'), ` ${plural}`)}`
+  // BUG-HARVESTPOSTREGEX-001 — `crop` is user-authored and was interpolated into `new RegExp` raw.
+  // A crop named "Squash+" or "Pepper[" throws a SyntaxError out of renderLine, which takes the
+  // whole post composer with it; milder metacharacters mis-match silently instead.
+  //
+  // Latent TODAY, not theoretical: 12 live crop types already carry parentheses ("Cherry (sweet)",
+  // "Onion (bunching / scallion)"). None reach here only because they contain a space and
+  // cropIsSingleWord gates them out — an accident of an unrelated taxonomy rule, not a guard. The
+  // first single-token crop with a metacharacter breaks it, and Dave can mint crop types from the
+  // app. Verified against prod: zero single-word crop names carry a metacharacter right now.
+  //
+  // lambda/facebook-share/altText.js:84 already escapes for exactly this reason and its comment
+  // names this file as the unfixed half ("Reported rather than fixed upstream: src/lib is another
+  // lane's file"). This is that fix; the two sides now agree.
+  const cropTail = cropIsSingleWord ? new RegExp(`\\s${escapeRe(crop)}$`, 'i') : null
+  if (cropTail && cropTail.test(name)) {
+    return `${qty} ${name.replace(cropTail, ` ${plural}`)}`
   }
   if (cropIsSingleWord && !name.toLowerCase().includes(crop.toLowerCase())) {
     return `${qty} ${name} ${plural}`

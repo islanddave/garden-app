@@ -175,6 +175,28 @@ describe('pluralizeCrop — multi-word crop names', () => {
 describe('renderLine', () => {
   const L = (name, crop, quantity) => ({ name: normalizeVarietyName(name), crop, quantity })
 
+  // BUG-HARVESTPOSTREGEX-001 — crop names are user-authored and reach `new RegExp`. Unescaped, a
+  // single-token crop with a metacharacter threw a SyntaxError out of renderLine and took the whole
+  // composer down. Each case below throws (not just mis-renders) against the unescaped version.
+  describe('crop names containing regex metacharacters', () => {
+    it('does not throw on the characters that used to be a SyntaxError', () => {
+      for (const crop of ['Squash+', 'Pepper[', 'Kale(', 'Bean)', 'Corn*', 'Leek?', 'Beet{2}', 'Pea|Bean', 'Dill\\']) {
+        expect(() => renderLine(L('Golden ' + crop, crop, 2), { withCrop: true })).not.toThrow()
+      }
+    })
+
+    it('still matches the crop as a LITERAL tail rather than as a pattern', () => {
+      // "Squash+" must pluralise the trailing literal token, not read "h+" as one-or-more h.
+      expect(renderLine(L('Golden Squash+', 'Squash+', 2), { withCrop: true })).toBe('2 Golden squash+s')
+    })
+
+    it('does not let a metacharacter crop match a name it is not actually in', () => {
+      // Unescaped, crop "Pea." matched "Snap Peas" via the wildcard dot and rewrote the tail.
+      // Escaped, the tail does not match, so the crop word is appended instead.
+      expect(renderLine(L('Snap Peas', 'Pea.', 2), { withCrop: true })).toBe('2 Snap Peas pea.s')
+    })
+  })
+
   it('writes the crop word the way Dave does, not the way the taxonomy does', () => {
     expect(renderLine(L('Cubanelle', 'Pepper', 1), { withCrop: true })).toBe('1 Cubanelle pepper')
     expect(renderLine(L('Cucamelon', 'Cucamelon', 10), { withCrop: true })).toBe('10 cucamelons')
