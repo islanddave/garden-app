@@ -11,7 +11,7 @@ import Icon from '../Icon.jsx'
 import PhotoImg from '../PhotoImg.jsx'
 import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
-  bulkWaterNote, dormantRows,
+  dormantRows,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
 } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
@@ -135,17 +135,31 @@ function SubHeader({ label }) {
   )
 }
 
-function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode, onShowAll }) {
+function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode, onShowAll, groupBulk, onGroupBulk, bulkBusy }) {
   const panelId = 'care-group-' + group.key
   return (
     <div style={{ border: '1px solid ' + P.border, borderRadius: 12, background: P.white, overflow: 'hidden' }}>
-      <button type="button" onClick={onToggle} aria-expanded={expanded} aria-controls={panelId}
-        style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '12px 14px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.dark, minHeight: 52 }}>
-        <span style={{ flex: 1, fontSize: '0.98rem', fontWeight: 700 }}>{group.label}</span>
-        {/* TRUE count, never the capped one — the staleness cap changes what renders, not what exists. */}
-        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: P.green, background: P.greenPale, borderRadius: 999, padding: '2px 9px' }}>{group.count}</span>
-        <span aria-hidden="true" style={{ color: P.light, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>▾</span>
-      </button>
+      {/* V4-TODAYSECTIONBULK-001 (BD-037) — the section bulk sits BESIDE the disclosure, not inside
+          it: nesting a button in a button is invalid, and the toggle must stay the whole-width
+          target it already is. Same three-zone shape as Row (body | secondary | primary action), so
+          the header reads as one control strip rather than a new panel. */}
+      <div style={{ display: 'flex', alignItems: 'stretch' }}>
+        <button type="button" onClick={onToggle} aria-expanded={expanded} aria-controls={panelId}
+          style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, textAlign: 'left', padding: '12px 14px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.dark, minHeight: 52 }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: '0.98rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.label}</span>
+          {/* TRUE count, never the capped one — the staleness cap changes what renders, not what exists. */}
+          <span style={{ fontSize: '0.78rem', fontWeight: 800, color: P.green, background: P.greenPale, borderRadius: 999, padding: '2px 9px' }}>{group.count}</span>
+          <span aria-hidden="true" style={{ color: P.light, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>▾</span>
+        </button>
+        {groupBulk.map(b => (
+          <button key={b.eventType} type="button" disabled={bulkBusy}
+            onClick={() => onGroupBulk(b.eventType, b.keys)}
+            aria-label={b.verb + ' all ' + b.keys.size + ' in ' + group.label}
+            style={{ flexShrink: 0, minHeight: 52, border: 'none', borderLeft: '1px solid ' + P.border, background: P.greenPale, color: P.green, padding: '0 12px', fontWeight: 700, fontSize: '0.78rem', cursor: bulkBusy ? 'default' : 'pointer' }}>
+            {b.verb} all
+          </button>
+        ))}
+      </div>
       {expanded && (
         <div id={panelId} role="list">
           {(() => {
@@ -320,7 +334,10 @@ export default function CareNeeded({ plan }) {
     const gs = groupRows(enrichedRows, mode, pinnedOrder)
     return gs.map(g => {
       const c = capping ? capStaleRows(g.rows, WATER_STALE_CAP) : { rows: g.rows, hidden: 0 }
-      return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length }
+      // `bulkRows` is the UNCAPPED set. The cap withholds rows from the display, not from the
+      // garden — a section bulk that logged only the visible ones would silently under-report the
+      // work Dave says he did, which is the same trade the global bulk already refuses above.
+      return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length, bulkRows: g.rows }
     })
   }, [enrichedRows, mode, capping, pinnedOrder])
   const total = rows.length
@@ -401,6 +418,29 @@ export default function CareNeeded({ plan }) {
     }
     return seen
   }, [candidatesFor])
+
+  // V4-TODAYSECTIONBULK-001 (BD-037) — per-section bulk sets. Same predicate as candidatesFor,
+  // applied to one group's uncapped rows, so a section button and the global pill can never claim
+  // different work. Keyed by NEED_ORDER for a stable button order.
+  //
+  // Capped at ONE button per section. A group that mixes water and pest work would otherwise grow a
+  // row of controls in a header whose whole requirement is to stay tight, and the second type is
+  // always the small one — the long tail stays one tap away inside the expanded section. The type
+  // shown is the first in NEED_ORDER, which is the time-sensitivity order the list already uses.
+  const groupBulkFor = useCallback((group) => {
+    const src = Array.isArray(group.bulkRows) ? group.bulkRows : []
+    for (const need of NEED_ORDER) {
+      const et = NEED_EVENT_TYPE[need]
+      const keys = new Set()
+      for (const r of src) {
+        if (r.eventType !== et) continue
+        if (et === 'watering' && bedWait && r.inGround) continue
+        keys.add(r.key)
+      }
+      if (keys.size > 1) return [{ eventType: et, verb: bulkVerb(et), keys }]
+    }
+    return []
+  }, [bedWait])
 
   const openBulk = useCallback((etype) => {
     setBulkType(etype)
@@ -498,23 +538,21 @@ export default function CareNeeded({ plan }) {
             </div>
           )}
 
-          {/* BUG-CADENCEONEDAY-001 — the list's true unit, stated directly under the button that
-              applies it. Counts the SAME candidate set the pill logs (bed-wait exclusions included),
-              so the two numbers can never disagree. Ambient copy, same weight as the staleness note
-              above: a fact about the work, not another thing to do. */}
-          {(() => {
-            const note = bulkWaterNote(candidatesFor('watering').length, total)
-            return note && (
-              <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, padding: '0 2px', marginTop: -4 }}>
-                {note}
-              </div>
-            )
-          })()}
+          {/* V4-TODAYVERBIAGE-001 (BD-035) — the bulk-water denomination note is REMOVED. It was
+              added under BUG-CADENCEONEDAY-001 to re-price the list in taps ("One bulk water covers
+              111 of these 113") because a row count made a single action read as a hundred jobs.
+              That reasoning was sound and the note still did its job; Dave simply does not need it
+              told to him any more ("I understand the arithmetic"). Removed rather than shortened —
+              a briefer restatement of a thing he has said he already knows is the same noise with
+              fewer characters. The count itself is unchanged and still on every bulk pill.
+              REVERSIBLE: `bulkWaterNote` and its tests are deleted in the same commit, so restoring
+              this means restoring the function, not just this block. */}
 
           {groups.map(g => (
             <Group key={g.key} group={g} expanded={isExpanded(g)}
               onToggle={() => setOverrides(prev => ({ ...prev, [g.key]: !((g.key in prev) ? prev[g.key] : autoKeys.has(g.key)) }))}
               pendingKeys={pendingKeys} onLog={logRow} onSkip={skipRow} mode={mode}
+              groupBulk={groupBulkFor(g)} onGroupBulk={runBulk} bulkBusy={!!bulkProgress}
               onShowAll={() => setShowCapped(true)} />
           ))}
 
@@ -564,6 +602,15 @@ function bulkLabel(etype) {
   if (etype === 'observation') return 'checks'
   if (etype === 'brought_inside') return 'protection'
   return 'care'
+}
+
+// BD-037 — short imperative for the section header. bulkLabel's noun form ("Log all watering")
+// wraps at phone width inside a header that also carries a label and a count.
+function bulkVerb(etype) {
+  if (etype === 'watering') return 'Water'
+  if (etype === 'fertilizing') return 'Feed'
+  if (etype === 'brought_inside') return 'Protect'
+  return 'Check'
 }
 
 // V4-DORMANTRESUME-001 — the dormant plantings the engine emits and nothing has ever rendered.

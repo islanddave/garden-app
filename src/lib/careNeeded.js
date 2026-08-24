@@ -246,23 +246,16 @@ export function autoExpandKeys(groups, budget = EXPAND_ROW_BUDGET) {
   return keys
 }
 
-// ── Effort denomination (BUG-CADENCEONEDAY-001) ─────────────────────────────────────────────────
-// A row count is the wrong unit for this list. Dave's watering is ONE bulk action fanning out to
-// ~200 event rows in 14 seconds — 190 rows on 08-07 all created 13:03:08→13:03:22 — so "80 plantings
-// need water" prices a single tap as eighty jobs. That mis-pricing is what makes a correct daily
-// cadence feel unpayable. This note re-denominates the same list in the unit the work is actually
-// done in, next to the button that does it. It does not hide, reorder or exclude a single row.
+// ── Effort denomination (BUG-CADENCEONEDAY-001) — REMOVED 2026-08-24, V4-TODAYVERBIAGE-001 ──────
+// `bulkWaterNote` lived here and rendered "One bulk water covers 111 of these 113." under the bulk
+// pill. Its reasoning was that a row count prices one tap as a hundred jobs, which is true and is
+// why the note was written. Dave asked for it gone anyway: "I understand the arithmetic." The
+// mis-pricing it corrected is a thing he learned once, not a thing he needs restated daily, and
+// this list is read in the garden on a phone.
 //
-// Only past EXPAND_ROW_BUDGET rows: a list that fits one chunk on screen is already legible as an
-// amount of work, and re-explaining it there would be noise. Reuses that tuned constant rather than
-// inventing a second threshold that would then need its own justification.
-export function bulkWaterNote(bulkCount, totalRows) {
-  if (!(typeof bulkCount === 'number' && bulkCount > EXPAND_ROW_BUDGET)) return null
-  return bulkCount >= totalRows
-    ? 'One bulk water covers all ' + bulkCount + '.'
-    : 'One bulk water covers ' + bulkCount + ' of these ' + totalRows + '.'
-}
-
+// Kept as a comment rather than silently vanishing because the NEXT person to notice that a row
+// count over-states the work will re-derive exactly this note. It was already tried. If it comes
+// back it needs a new reason, not this one.
 // ── Watering staleness (V4-WATERMATH-001 / skeptic seat) ────────────────────────────────────────
 // The wall this exists for is a PHASE-LOCKING artifact, not a cadence defect: Dave waters the whole
 // garden in one batch action, so every planting's due-clock locks into one cohort and the due count

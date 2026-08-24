@@ -344,13 +344,15 @@ describe('CareNeeded — Slice 7', () => {
       expect(JSON.parse(opts.body).plant_id).toBe('bag0')
     })
 
-    it('denominates the list in bulk actions beside the button that performs one', () => {
+    // V4-TODAYVERBIAGE-001 (BD-035) — this pair used to assert the denomination note rendered on a
+    // long list and stayed silent on a short one. Inverted: the note is gone at EVERY length, and
+    // the count it explained is still on the pill. Kept as an assertion rather than deleted so the
+    // note cannot quietly return — its original rationale is persuasive and will be re-derived.
+    it('does not explain the arithmetic of the bulk action at any list length', () => {
       render(<CareNeeded plan={dailyPlan()} />)
-      expect(screen.getByText('One bulk water covers all 13.')).toBeTruthy()
+      expect(screen.queryByText(/One bulk water covers/i)).toBeNull()
       expect(screen.getByRole('button', { name: /^Log all watering \(13\)$/i })).toBeTruthy()
-    })
-
-    it('stays silent on a list short enough to read as an amount of work', () => {
+      cleanup()
       render(<CareNeeded plan={plan()} />)     // two rows
       expect(screen.queryByText(/One bulk water covers/i)).toBeNull()
     })
@@ -371,5 +373,50 @@ describe('CareNeeded — Slice 7', () => {
     await act(async () => { await onUndo() })
     expect(toastMock.show).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Bhut Jolokia')).toBeNull()
+  })
+
+  // V4-TODAYSECTIONBULK-001 (BD-037) — one-tap bulk per section, in the header. Dave's case is a
+  // location group of ~77 that previously had to leave Today for Log Many to clear in one action.
+  describe('section bulk', () => {
+    const twoGroups = () => ({
+      hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10 },
+      rain_skipped: [],
+      water_due: [
+        { id: 'a1', name: 'Alpha One', crop: 'pepper', project: 'Alpha', project_id: 'prA', overdue_by: 2, in_ground: false },
+        { id: 'a2', name: 'Alpha Two', crop: 'pepper', project: 'Alpha', project_id: 'prA', overdue_by: 2, in_ground: false },
+        { id: 'b1', name: 'Beta One', crop: 'kale', project: 'Beta', project_id: 'prB', overdue_by: 0, in_ground: false },
+        { id: 'b2', name: 'Beta Two', crop: 'kale', project: 'Beta', project_id: 'prB', overdue_by: 0, in_ground: false },
+      ],
+      no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
+    })
+
+    it('logs only its own section, leaving the other section untouched', async () => {
+      render(<CareNeeded plan={twoGroups()} />)
+      fireEvent.click(await screen.findByRole('button', { name: /Water all 2 in Alpha/i }))
+      await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(2))
+      const ids = fetchMock.mock.calls.filter(c => c[0] === '/api/events').map(c => JSON.parse(c[1].body).plant_id)
+      expect(ids.sort()).toEqual(['a1', 'a2'])
+      await waitFor(() => expect(screen.queryByText('Alpha One')).toBeNull())
+      // The whole point: Beta is still there and still offers its own button.
+      expect(screen.queryByText('Beta One')).toBeTruthy()
+      expect(screen.getByRole('button', { name: /Water all 2 in Beta/i })).toBeTruthy()
+    })
+
+    it('is absent for a section with only one row — a bulk of one is just the row button', () => {
+      const single = twoGroups()
+      single.water_due = single.water_due.filter(r => r.project_id === 'prA').slice(0, 1)
+      render(<CareNeeded plan={single} />)
+      expect(screen.queryByRole('button', { name: /Water all .* in Alpha/i })).toBeNull()
+      expect(screen.getByRole('button', { name: /Log Water for Alpha One/i })).toBeTruthy()
+    })
+
+    it('excludes in-ground beds while bed-wait is active, exactly as the global pill does', async () => {
+      const p = twoGroups()
+      p.hydrology = { tomorrow_precip_in: 0.5, tomorrow_pop: 80 }   // bedWaitActive
+      p.water_due[1].in_ground = true                                // a2 becomes a bed
+      render(<CareNeeded plan={p} />)
+      // Only a1 remains a candidate, so the section bulk drops below two and disappears.
+      expect(screen.queryByRole('button', { name: /Water all .* in Alpha/i })).toBeNull()
+    })
   })
 })

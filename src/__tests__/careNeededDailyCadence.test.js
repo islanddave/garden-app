@@ -9,7 +9,7 @@
 // overdue_by, so a change that flattens both at once fails here.
 import { describe, it, expect } from 'vitest'
 import {
-  buildCareNeeded, needReason, needTier, groupSeverity, bulkWaterNote,
+  buildCareNeeded, needReason, needTier, groupSeverity,
   EXPAND_ROW_BUDGET, WATER_STALE_DAYS,
 } from '../lib/careNeeded.js'
 import { isDailyCadence, DAILY_INTERVAL_DAYS } from '../lib/waterDue.js'
@@ -127,19 +127,6 @@ describe('groupSeverity — a daily cohort scores its mass, not a phantom backlo
   })
 })
 
-describe('bulkWaterNote — the list denominated in actions', () => {
-  it('says nothing for a list that already fits one chunk on screen', () => {
-    expect(bulkWaterNote(EXPAND_ROW_BUDGET, EXPAND_ROW_BUDGET)).toBe(null)
-    expect(bulkWaterNote(1, 1)).toBe(null)
-    expect(bulkWaterNote(0, 40)).toBe(null)
-    expect(bulkWaterNote(null, 40)).toBe(null)
-  })
-
-  it('prices the whole list as one action when every row is a water row', () => {
-    expect(bulkWaterNote(80, 80)).toBe('One bulk water covers all 80.')
-  })
-
-  it('names both numbers when the water lane is a subset of the list', () => {
-    expect(bulkWaterNote(80, 92)).toBe('One bulk water covers 80 of these 92.')
-  })
-})
+// The three `bulkWaterNote` cases that stood here were deleted with the function itself
+// (V4-TODAYVERBIAGE-001, 2026-08-24 — Dave: "I understand the arithmetic"). Kept as a marker so a
+// future reader does not go looking for coverage that was removed on purpose rather than lost.
