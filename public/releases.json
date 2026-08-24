@@ -1,5 +1,22 @@
 [
   {
+    "version": "4.49.0",
+    "date": "2026-08-24",
+    "highlights": [
+      "Voice input no longer doubles a word. Saying \"bitter melon\" was giving you \"bitter bitter melon\", and it happened most when you enunciated carefully — because a clear pause makes Chrome decide \"bitter\" is a finished phrase, then change its mind a moment later and send the whole thing again. The app was treating the second version as new words and sticking it on the end. It now treats it as a correction and replaces what it had. The two earlier attempts at this fixed a different, rarer version of the problem.",
+      "Typing in a form and pressing Back no longer throws the work away silently. Add Planting, Edit Planting and Sow all ask first now, with a proper in-app confirmation rather than the browser's grey box. Sow was still unguarded before this — it kept nothing of what you had typed.",
+      "Each crop on Harvest Totals now shows a photo, taken from the planting of that crop you picked from most recently. 30 of your 31 crops already had a picture ready, so it looks complete rather than half-empty.",
+      "A jar you have finished no longer disappears from a planting's put-up list. It stays, marked as used, so the planting still shows everything it produced.",
+      "Deleting or archiving a project used to fail silently — you tapped, nothing happened, and nothing said why. It now tells you.",
+      "The greeting no longer calls Jen \"Dave\". It was a hardcoded fallback name, used whenever a first name was missing.",
+      "The planting chooser stops jumping. It decides whether to open upwards or downwards once, when you open it, instead of re-deciding on every frame while the keyboard slides up — which is why it sometimes flipped while you were already looking at it.",
+      "Both number pads now sit below their field instead of one above and one below, putting them a little closer to your thumb. Nothing got taller.",
+      "You can bring back a plant you snoozed with \"Not yet\". Until now that hid it for ten to twenty days and there was no way to undo it once you left the page.",
+      "Plants you grow to look at no longer pretend to be food. A pothos was showing a \"Harvested\" section and actively offering to log a put-up from it.",
+      "Rain that has actually fallen today now counts toward watering on the day it falls, rather than the day after. This affects the watering ledger, which is not switched on in production yet."
+    ]
+  },
+  {
     "version": "4.48.0",
     "date": "2026-08-24",
     "highlights": [
