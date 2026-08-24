@@ -120,16 +120,16 @@ describe('transcribe.js — realistic Android Chrome cadence', () => {
   })
 })
 
-// ── CHARACTERIZATION — current behavior, NOT desired behavior ──────────────────────────────────
-// These record the two residual duplication paths so the next reader can compare them against a
-// real device capture instead of re-deriving them. If a device capture shows either pattern,
-// THESE ARE THE TESTS TO FLIP. Do not "fix" them blind: the second one is indistinguishable from
-// speech Dave genuinely repeated, and dropping it would delete real words to remove fake ones —
-// exactly the trade BUG-VOICEDUPE-001's `${index}:${text}` key was chosen to avoid.
-describe('transcribe.js — residual blind spots in the index+text dedupe (characterization)', () => {
-  it('CHARACTERIZATION: a REVISED final at the same index is counted a second time', () => {
+// ── BUG-VOICEDUPE-003 — the revision shape, FIXED ──────────────────────────────────────────────
+// These were CHARACTERIZATION tests pinning the live bug, deferred pending a device capture. Dave's
+// 2026-08-24 report ("bitter melon" → "bitter bitter melon", worse when he enunciates) is that
+// capture by symptom shape, so the first one is flipped to the desired behavior per its own note.
+// results[i] is now a SLOT: a revision REPLACES it and the transcript is re-joined from the slots,
+// so nothing the user said is dropped — which was -001's stated reason for not keying on index.
+describe('transcribe.js — a revised final replaces its slot (BUG-VOICEDUPE-003)', () => {
+  it('a REVISED final at the same index replaces it instead of appending', () => {
     // Chrome rewrites settled finals (capitalization, punctuation, "six"→"6") and re-dispatches the
-    // index. Different text ⇒ different key ⇒ the dedupe does not fire.
+    // index. Slot 0 is revised; slot 1 is new. Both survive, neither doubles.
     const { sr, onEnd } = session()
     sr.emit(0, [{ text: 'harvested six beans', final: true }])
     sr.emit(0, [
@@ -137,11 +137,46 @@ describe('transcribe.js — residual blind spots in the index+text dedupe (chara
       { text: 'and two peppers', final: true },
     ])
     sr.onend()
-    expect(finalText(onEnd)).toBe('harvested six beans Harvested 6 beans. and two peppers')
-    // ^ if a device capture shows this shape, the correct fix is an index-keyed REPLACE (revise the
-    //   slot) rather than an append, and this expectation becomes 'Harvested 6 beans. and two peppers'.
+    expect(finalText(onEnd)).toBe('Harvested 6 beans. and two peppers')
   })
 
+  it("an extended revision of the first segment does not double the first word", () => {
+    // Dave's literal report. The enunciated pause is what makes Chrome finalize "bitter" as its own
+    // result before the phrase is done, creating the settled slot it then revises.
+    const { sr, onEnd } = session()
+    sr.emit(0, [{ text: 'bitter', final: false }])
+    sr.emit(0, [{ text: 'bitter', final: true }])
+    sr.emit(0, [{ text: 'bitter melon', final: true }])
+    sr.onend()
+    expect(finalText(onEnd)).toBe('bitter melon')
+  })
+
+  it('does NOT re-emit a revised slot through onResult (consumers append blindly)', () => {
+    // The load-bearing half. MicCaptureButton and TranscriptReview append every isFinal they are
+    // handed, so a fix confined to finalTranscript would leave the visible field duplicated.
+    const { sr, onResult } = session()
+    sr.emit(0, [{ text: 'bitter', final: true }])
+    sr.emit(0, [{ text: 'bitter melon', final: true }])
+    const finals = onResult.mock.calls.map((c) => c[0]).filter((r) => r.isFinal).map((r) => r.transcript)
+    expect(finals).toEqual(['bitter'])
+  })
+
+  it('still drops a byte-identical re-delivery of the same slot', () => {
+    const { sr, onEnd, onResult } = session()
+    sr.emit(0, [{ text: 'bitter melon', final: true }])
+    sr.emit(0, [{ text: 'bitter melon', final: true }])
+    sr.onend()
+    expect(finalText(onEnd)).toBe('bitter melon')
+    expect(onResult.mock.calls.map((c) => c[0]).filter((r) => r.isFinal)).toHaveLength(1)
+  })
+})
+
+// ── CHARACTERIZATION — current behavior, NOT desired behavior ──────────────────────────────────
+// One residual duplication path remains, deliberately NOT fixed: it is indistinguishable from
+// speech Dave genuinely repeated, and dropping it would delete real words to remove fake ones —
+// exactly the trade BUG-VOICEDUPE-001's key was chosen to avoid. The slot model does not reach it,
+// because the two deliveries land on genuinely different indices.
+describe('transcribe.js — residual blind spot: repeat at a NEW index (characterization)', () => {
   it('CHARACTERIZATION: the same text re-emitted at a NEW index is counted twice', () => {
     // An on-device recognizer restart can replay the tail of an utterance at a fresh index. Indices
     // differ, so neither an index key nor an index+text key suppresses it — and it is byte-identical

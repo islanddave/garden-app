@@ -191,11 +191,14 @@ export default function MicCaptureButton({
           maybeEmit()
         },
         onEnd: ({ finalTranscript }) => {
-          // transcribe.js's finalTranscript holds only finalized segments. If it's
-          // ahead of our accumulated finals, adopt it; otherwise keep ours + any
-          // trailing interim (so an unfinalized last phrase is never lost).
+          // BUG-VOICEDUPE-003: adopt transcribe.js's finalTranscript whenever it is non-empty. It
+          // is now the slot-joined canonical text, so it is right even when it is SHORTER than what
+          // we appended — precisely the case the old `ft.length > ours` compare could not reach,
+          // because both accumulators consumed the same stream and ours was never shorter.
+          // Non-empty is the only guard needed: a trailing interim that never finalized still lives
+          // in interimRef and is re-attached on the next line, so nothing unfinalized is lost.
           const ft = (finalTranscript || '').trim()
-          if (ft.length > finalTextRef.current.length) finalTextRef.current = ft
+          if (ft) finalTextRef.current = ft
           liveTranscriptRef.current = (finalTextRef.current + ' ' + interimRef.current).trim()
           liveHandleRef.current = null
           recogDoneRef.current = true

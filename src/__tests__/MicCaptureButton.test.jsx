@@ -190,6 +190,24 @@ describe('MicCaptureButton (Inc 2 Bite 7 — one-pass capture)', () => {
     expect(arg.blob).toBeTruthy()
   })
 
+  it('adopts a SHORTER finalTranscript from onEnd (BUG-VOICEDUPE-003)', async () => {
+    // transcribe.js now suppresses the onResult for a REVISED slot, so this component's own
+    // accumulator can be left holding the pre-revision text — and when the revision shortens the
+    // slot, that text is LONGER than the canonical join. The old `ft.length > ours` compare could
+    // not fire in that direction, so it kept the stale text. onEnd's finalTranscript is canonical.
+    const onRecorded = vi.fn()
+    render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    act(() => { liveCb.last.onResult({ transcript: 'bitter melon plants', isFinal: true }) })
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => {
+      liveCb.last.onEnd({ finalTranscript: 'bitter melon' })   // slot 0 revised down
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(onRecorded.mock.calls[0][0].transcript).toBe('bitter melon')
+  })
+
   it('interim (non-final) results are ignored in the accumulator', async () => {
     const onRecorded = vi.fn()
     render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)

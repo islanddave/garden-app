@@ -140,9 +140,18 @@ describe('transcribe.js', () => {
       startLiveTranscription({ onResult, onEnd, startTimeoutMs: 0, noSpeechTimeoutMs: 0 })
       const sr = FakeSpeechRecognition.instances[0]
       sr.fireStart()
-      sr.fireResult(fakeResults([{ transcript: 'tomato', isFinal: false }]))
-      sr.fireResult(fakeResults([{ transcript: 'tomato leaves', isFinal: true }]))
-      sr.fireResult(fakeResults([{ transcript: 'curling', isFinal: true }]))
+      // BUG-VOICEDUPE-003: uses fireResultAt so the two finals land on DIFFERENT slots, which is
+      // what "two segments" actually looks like on the wire. The old fireResult form pinned both to
+      // index 0 — a shape the browser never dispatches (see this file's own note at :34-38, and the
+      // header of transcribe.rawEvents.test.js). Under the slot model a second final at index 0 is
+      // a REVISION of the first, so that fixture asserted a duplication as if it were accumulation.
+      // Intent of the test is unchanged: interims stream, finals accumulate.
+      sr.fireResultAt(0, fakeResults([{ transcript: 'tomato', isFinal: false }]))
+      sr.fireResultAt(0, fakeResults([{ transcript: 'tomato leaves', isFinal: true }]))
+      sr.fireResultAt(1, fakeResults([
+        { transcript: 'tomato leaves', isFinal: true },
+        { transcript: 'curling', isFinal: true },
+      ]))
       sr.fireEnd()
       expect(onResult).toHaveBeenCalledTimes(3)
       expect(onResult.mock.calls[0][0].isFinal).toBe(false)

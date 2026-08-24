@@ -111,21 +111,27 @@ export function startLiveTranscription(opts = {}) {
   recognition.maxAlternatives = 1
 
   let finalTranscript  = ''
-  // BUG-VOICEDUPE-001: finals already counted, keyed `${index}:${text}`.
+  // BUG-VOICEDUPE-003: results[i] is a SLOT that Chrome may REVISE, not a stream to append to.
   //
   // event.results is cumulative for the session and MDN defines event.resultIndex as "the lowest
   // index value result that has actually changed" — so a correct implementation never re-reports a
-  // settled final. In practice Web Speech implementations do re-deliver, which is what produces
-  // Dave's "often, not always" duplication: cadence decides how results get batched.
+  // settled final. In practice Web Speech implementations do re-deliver AND revise, which is what
+  // produces Dave's "often, not always" duplication: cadence decides how results get batched.
   //
-  // The key is index+text, NOT index alone, and that is deliberate on evidence rather than taste.
-  // MDN does not state whether a finalized index may later hold different text, and this file's own
-  // existing test asserts that it can (two successive finals at index 0). Keying on index alone
-  // would silently drop the second — i.e. it would DELETE words the user really said in order to
-  // fix words they didn't. Index+text only ever drops a byte-identical re-delivery of the same
-  // slot, which cannot be new speech. Saying the same word twice for real lands on two different
-  // indices and is preserved.
-  const consumedFinals = new Set()
+  // -001 kept a Set keyed `${index}:${text}` and appended on a miss. That suppressed only a
+  // BYTE-IDENTICAL re-delivery. A REVISION of a settled slot (final@0 "bitter", then final@0
+  // "bitter melon" — which is what an enunciated pause provokes, because the pause makes Chrome
+  // finalize "bitter" on its own before the phrase is done) is a different key, so it fell through
+  // and APPENDED: "bitter bitter melon". Dave's 2026-08-24 report is exactly that shape, and the
+  // repo already knew: transcribe.rawEvents.test.js carried a passing CHARACTERIZATION test
+  // asserting the duplicated string, whose comment prescribed this fix and deferred it pending a
+  // device capture. The symptom shape is that capture.
+  //
+  // -001's stated fear — that keying on index ALONE would delete words the user really said — is
+  // what the slot model answers. A revision does not drop the second delivery; it REPLACES the slot
+  // and the transcript is re-joined from the slots, so the revised text wins and nothing is lost.
+  // Saying the same word twice for real still lands on two different indices and is preserved.
+  const finalsByIndex  = []
   let startWatchdog    = null
   let noSpeechWatchdog = null
   let started   = false
@@ -174,14 +180,18 @@ export function startLiveTranscription(opts = {}) {
       const confidence = typeof r[0].confidence === 'number' ? r[0].confidence : null
       const isFinal    = !!r.isFinal
       if (isFinal) {
-        // A re-delivery of an already-consumed final is not new speech — drop it entirely rather
-        // than re-appending. Skipping the onResult emission too is the load-bearing half:
-        // MicCaptureButton appends every isFinal it receives with no dedup of its own, so a
-        // fix confined to finalTranscript here would still duplicate on the surface Dave uses.
-        const key = i + ':' + transcript
-        if (consumedFinals.has(key)) continue
-        consumedFinals.add(key)
-        finalTranscript = (finalTranscript + ' ' + transcript).trim()
+        const prev = finalsByIndex[i]
+        // Byte-identical re-delivery: not new speech, nothing changed, drop it entirely.
+        if (prev === transcript) continue
+        finalsByIndex[i] = transcript
+        // Re-join from the slots rather than appending, so a revision REPLACES its slot instead of
+        // extending the transcript. Never carries a stale prefix, because it is recomputed whole.
+        finalTranscript = finalsByIndex.filter(Boolean).map((s) => s.trim()).filter(Boolean).join(' ')
+        // Suppressing the emit on a REVISION is the load-bearing half. Every downstream consumer
+        // appends each isFinal it receives with no dedup of its own (MicCaptureButton, and
+        // TranscriptReview's accumulator), so a fix confined to finalTranscript would still
+        // duplicate on the surface Dave uses. A first final at this slot still emits normally.
+        if (prev !== undefined) continue
       }
       try { onResult({ transcript, isFinal, confidence }) } catch {}
     }
