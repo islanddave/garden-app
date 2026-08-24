@@ -41,6 +41,11 @@ const SURFACES = [
   // what puts Back on the panel rather than on the route overlay it opened inside. Its painted
   // value moved 30 -> 200 in the same change so the two halves agree.
   { file: 'components/forms/PlantingSelect.jsx', layer: 'SHEET', paints: Z.sheet },
+  // BUG-DIRTYDISMISSGAP-001. The first and only SYSTEM registration. Z.systemConfirm was reserved
+  // for exactly this ("must outrank every ordinary surface") and nothing claimed it until the
+  // discard confirm existed. It has to outrank LAYER.DIALOG (1000) — a confirm raised over
+  // VarietyPicker must be the surface Back and Escape resolve to, not the picker under it.
+  { file: 'components/ConfirmSheet.jsx', layer: 'SYSTEM', paints: Z.systemConfirm },
 ]
 
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8')

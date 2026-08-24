@@ -68,17 +68,21 @@ export function resolveTopmost(entries) {
 //   CONFIRM — topmost holds unsaved input; ask before discarding.
 //   DISMISS — close the topmost, and only the topmost.
 //
-// `confirmOnDirty` and `blockOnBusy` both DEFAULT FALSE, which reproduces today's shipped behaviour
-// exactly: Sheet's Escape closes regardless of dirty (Sheet.jsx: only the BACKDROP tap consults it)
-// and regardless of any in-flight save. Slice 1 deliberately ships with both off — it is an
-// arbitration repair, not a behaviour change, so the only observable difference is that the RIGHT
-// surface closes. They turn on with the ConfirmSheet primitive, which does not exist yet; wiring a
-// confirm before it exists would either block a gesture with no dialog to show or trap the user
-// behind a stuck `busy`.
+// `confirmOnDirty` and `blockOnBusy` are the CALLER's opt-ins. `blockOnBusy` still defaults false
+// here (the provider passes true); `confirmOnDirty` defaults false as the global kill-switch.
+//
+// BUG-DIRTYDISMISSGAP-001 — CONFIRM now needs BOTH the caller's switch AND the entry's own
+// `confirmOnDirty`. The per-entry term is not belt-and-braces, it is what makes the switch safe to
+// turn on at all: `dirty` means four different things at the four sites that pass it (a route
+// overlay's aggregate, PlantingEditor's deliberately over-reporting latch ×3), and the three overlay
+// routes behind App.jsx's OverlayHost carry real draft stashes, so confirming there would nag on the
+// app's most-used path to protect content that already survives the dismiss. This is exactly the
+// precedent `armsBack` set in backNav.js: registry membership must not imply Back membership, and by
+// the same argument it must not imply CONFIRM membership. Entries opt in one at a time.
 export function decideDismiss(entries, { confirmOnDirty = false, blockOnBusy = false } = {}) {
   const target = resolveTopmost(entries)
   if (!target) return { action: 'NONE', target: null }
   if (blockOnBusy && target.busy) return { action: 'BLOCKED', target }
-  if (confirmOnDirty && target.dirty) return { action: 'CONFIRM', target }
+  if (confirmOnDirty && target.dirty && target.confirmOnDirty) return { action: 'CONFIRM', target }
   return { action: 'DISMISS', target }
 }

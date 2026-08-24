@@ -14,8 +14,11 @@
 // param-strip assertions read the URL the router actually holds rather than a spy's argument.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { renderWithRouter, currentParams, navigateTo, resetRouterHarness } from './helpers/routerHarness.jsx'
+import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
+import { readMarker } from '../lib/backNav.js'
 
 const { fetchSpy, getTokenSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -491,53 +494,129 @@ describe('Garden — reload gate over the embedded editor (V4-PLANTEDITORWIRE-00
   })
 })
 
-// ── V4-OVERLAYSLICE3-001 — the Sheet dismissal guard ────────────────────────────────────────────
+// ── V4-OVERLAYSLICE3-001 / BUG-DIRTYDISMISSGAP-001 — the Sheet dismissal guard ──────────────────
 //
-// WHY THIS EXISTS. Moving Add Planting into a <Sheet> ADDED dismissal gestures the inline form
-// never had, and Sheet does not guard them: `dirty` gates the BACKDROP TAP only, because
-// confirmOnDirty defaults FALSE at both registry call sites (dismissLayers.js:78, backNav.js:75)
-// pending the ConfirmSheet primitive. MEASURED in tests/harness on the un-guarded build: typing a
-// name and pressing Escape closed the sheet, raised NO confirm, and discarded the typing. Dave is
-// Android-only and hardware Back routes through the same decision, so this is the gesture at risk.
+// WHY THIS EXISTS. Moving Add Planting into a <Sheet> ADDED dismissal gestures the inline form never
+// had, and Sheet did not guard them: `dirty` gated the BACKDROP TAP only, confirmOnDirty was false at
+// both registry call sites, and CONFIRM had no consumer branch. MEASURED in tests/harness on the
+// un-guarded build: typing a name and pressing Escape closed the sheet, raised NO confirm, and
+// discarded the typing. Dave is Android-only and hardware Back routes through the same decision.
 //
-// The guard lives in Garden (requestCloseEditor), NOT in PlantingEditor: the editor's own Cancel
-// and its post-save close must not prompt, and a save that SUCCEEDED must never ask to discard.
-describe('Garden — Sheet dismissal guard (V4-OVERLAYSLICE3-001)', () => {
+// REWRITTEN for the real fix. The interim guard was a `window.confirm` in Garden itself
+// (`requestCloseEditor`), which these tests asserted through a spy. That patch is DELETED and the
+// registry owns the confirm now, so the assertions moved to the ConfirmSheet surface and each one
+// ALSO asserts window.confirm was not called — with two mechanisms live, a window.confirm spy keeps
+// passing while ConfirmSheet is entirely broken.
+//
+// THE PROVIDER IS REAL HERE AND NOWHERE ELSE IN THIS FILE, and it has to be: `renderGarden` mounts
+// no DismissRegistryProvider, so `registered` is false, Sheet falls back to its own per-instance
+// Escape handler (Sheet.jsx:123-126) which closes unconditionally, and requestDismiss falls back to
+// onClose. Every assertion below would fail for the wrong reason. App.jsx wraps the app in the
+// provider, so THAT is the shape under test. Feature flags are deliberately NOT mocked.
+describe('Garden — Sheet dismissal guard (V4-OVERLAYSLICE3-001 / BUG-DIRTYDISMISSGAP-001)', () => {
   const typeName = (v) => fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: v } })
   const escape = () => fireEvent.keyDown(document, { key: 'Escape' })
   const editorMounted = () => !!document.getElementById('planting-editor')
+  const confirmUi = () => screen.queryByTestId('confirm-sheet')
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+  const backGesture = async () => { act(() => { window.history.back() }); await settle() }
+  const armed = () => !!readMarker(window.history.state)
+
+  // A floor entry so back() is never called at history index 0, where jsdom makes it a SILENT no-op
+  // that would false-PASS "the sheet stayed open" for entirely the wrong reason.
+  beforeEach(() => { window.history.replaceState({ __floor: 1 }, '') })
+
+  async function renderGardenWithRegistry(query = '') {
+    let view
+    await act(async () => {
+      view = render(
+        <DismissRegistryProvider>
+          <MemoryRouter initialEntries={['/garden' + (query ? '?' + query : '')]}>
+            <Garden />
+          </MemoryRouter>
+        </DismissRegistryProvider>,
+      )
+    })
+    await screen.findByText(/Log many/)
+    return view
+  }
 
   it('a DIRTY form survives Escape when the user declines, and keeps the typing', async () => {
     primeFetch()
-    await renderGarden('add=1')
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await renderGardenWithRegistry('add=1')
+    const confirmSpy = vi.spyOn(window, 'confirm')
     typeName('Half Typed Plant')
     await act(async () => { escape() })
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(confirmUi()).toBeTruthy()
+    expect(confirmSpy).not.toHaveBeenCalled()
     expect(editorMounted()).toBe(true)
+
+    await act(async () => { fireEvent.click(screen.getByTestId('confirm-sheet-cancel')) })
+    expect(confirmUi()).toBeNull()
     // The whole point: the characters are still there, not just the sheet.
+    expect(editorMounted()).toBe(true)
     expect(screen.getByLabelText(/Name/i).value).toBe('Half Typed Plant')
     confirmSpy.mockRestore()
   })
 
+  it('Android Back on a DIRTY form asks and re-arms, and a second Back closes the question only', async () => {
+    primeFetch()
+    await renderGardenWithRegistry('add=1')
+    typeName('Half Typed Plant')
+    await act(async () => {})
+    expect(armed()).toBe(true)                       // SELF-TEST: back() reaches the arbiter
+    expect(window.history.state.__floor).toBe(1)     // SELF-TEST: not at index 0
+
+    await backGesture()
+    expect(confirmUi()).toBeTruthy()
+    expect(editorMounted()).toBe(true)
+    expect(armed()).toBe(true)                       // the consumed marker was replaced
+
+    await backGesture()
+    expect(confirmUi()).toBeNull()
+    expect(editorMounted()).toBe(true)
+    expect(screen.getByLabelText(/Name/i).value).toBe('Half Typed Plant')
+  })
+
   it('Escape DOES discard once the user accepts — the guard must not be a trap', async () => {
     primeFetch()
-    await renderGarden('add=1')
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await renderGardenWithRegistry('add=1')
     typeName('Half Typed Plant')
     await act(async () => { escape() })
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(confirmUi()).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByTestId('confirm-sheet-confirm')) })
+    expect(editorMounted()).toBe(false)
+    expect(confirmUi()).toBeNull()
+  })
+
+  it('a CLEAN form closes on Escape with NO question — no nag on an untouched sheet', async () => {
+    primeFetch()
+    await renderGardenWithRegistry('add=1')
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    await act(async () => { escape() })
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(confirmUi()).toBeNull()
     expect(editorMounted()).toBe(false)
     confirmSpy.mockRestore()
   })
 
-  it('a CLEAN form closes on Escape with NO prompt — no nag on an untouched sheet', async () => {
+  // The labelled Close is the MOST discoverable exit, so routing it through the arbiter is not
+  // polish: leaving it on the direct onClose path would have made it the one gesture that still
+  // discarded silently, after Escape and Back stopped doing so.
+  it('the labelled Close asks on a DIRTY form', async () => {
     primeFetch()
-    await renderGarden('add=1')
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    await act(async () => { escape() })
-    expect(confirmSpy).not.toHaveBeenCalled()
+    await renderGardenWithRegistry('add=1')
+    typeName('Half Typed Plant')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(confirmUi()).toBeTruthy()
+    expect(editorMounted()).toBe(true)
+  })
+
+  it('the labelled Close still closes a CLEAN form outright — unchanged for every other Sheet', async () => {
+    primeFetch()
+    await renderGardenWithRegistry('add=1')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(confirmUi()).toBeNull()
     expect(editorMounted()).toBe(false)
-    confirmSpy.mockRestore()
   })
 })

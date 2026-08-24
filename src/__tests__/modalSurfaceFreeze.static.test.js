@@ -72,6 +72,12 @@ const DIALOG_SURFACES = {
   'components/VarietyPicker.jsx':      { registered: true, busy: 'creating' },
   'pages/Dashboard.jsx':               { registered: true },
   'pages/PhotoLibrary.jsx':            { registered: true, busy: 'tagging' },
+  // BUG-DIRTYDISMISSGAP-001: the system discard confirm, and a DELIBERATE addition. It is the one
+  // surface the provider itself renders — the registry raises it on a CONFIRM decision — so it is
+  // not built on <Sheet> (it must paint and register ABOVE LAYER.DIALOG, and Sheet hardcodes 190/200
+  // for all 18 of its render sites). It registers LAYER.SYSTEM/1200, pinned in
+  // layerMatchesPaint.test.js. Not a SHEET_SITE for the same reason: it renders no <Sheet>.
+  'components/ConfirmSheet.jsx':       { registered: true },
 }
 
 // <Sheet render sites. App.jsx is OverlayHost (the route-overlay host), not a page-level sheet.

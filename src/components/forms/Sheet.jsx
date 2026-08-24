@@ -25,6 +25,9 @@
 // rendered with no provider) every behaviour below is byte-identical to before that slice.
 // New prop: busy — a write is in flight. RECORDED for the arbiter, not yet acted on; `dirty` keeps
 // its existing meaning (unsaved user input) and its existing backdrop-only effect.
+// BUG-DIRTYDISMISSGAP-001 UPDATE: `dirty` is no longer backdrop-only ON A SITE THAT PASSES
+// `confirmOnDirty`. There it also makes Escape, Android Back and the labelled Close raise the
+// registry's ConfirmSheet instead of discarding. Sites that do not pass it are unchanged.
 import React, { useEffect, useRef } from 'react'
 import { P } from '../../lib/constants.js'
 import { useDismissable } from '../../context/DismissRegistry.jsx'
@@ -76,11 +79,16 @@ function focusablesIn(panel) {
 // refused to ship. So the arming decision is made at each render site and defaults to OFF.
 //   armsBack — the 6 close-in-place Sheets that carried useBackDismiss before this slice.
 //   kind='route' — App.jsx's OverlayHost only: the router already owns a real entry for it.
-export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null }) {
+// BUG-DIRTYDISMISSGAP-001 — `confirmOnDirty` (+ its copy) is a per-render-site opt-in, defaulting
+// OFF for the same reason armsBack does: one hook call serves 18 sites, and `dirty` does not mean
+// the same thing at all of them. Only the three PlantingEditor hosts opt in today. See the deciders
+// in lib/dismissLayers.js and lib/backNav.js for why the per-entry term exists at all.
+export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
-  const { registered, isTopmost } = useDismissable({
+  const { registered, isTopmost, requestDismiss } = useDismissable({
     open, onDismiss: onClose, dirty, busy, layer: LAYER.SHEET, kind, armsBack, backIntercept,
+    confirmOnDirty, confirmTitle, confirmBody,
   })
   // Latest-value refs: keep the keydown handler current WITHOUT making onClose/dirty deps of the
   // focus effect. Callers pass inline closures recreated every render; if their identity drove the
@@ -210,10 +218,17 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
           ) : (
             <div style={{ flex: 1 }} />
           )}
+          {/* ROUTED THROUGH THE ARBITER, not straight to onClose (BUG-DIRTYDISMISSGAP-001). Escape
+              and Back both ask before discarding on an opted-in surface; a Close button that called
+              onClose directly would be the one exit that still discarded silently — and it is the
+              MOST discoverable exit, so that hole would swallow more work than the two it fixed.
+              requestDismiss falls back to onClose whenever the provider declines ownership (not
+              opted in, not dirty, flag off, or no provider), so every other render site is
+              unchanged. */}
           <button
             type="button"
             data-sheet-close="true"
-            onClick={() => onClose?.()}
+            onClick={() => requestDismiss()}
             aria-label={closeLabel}
             style={{
               flexShrink: 0, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center',

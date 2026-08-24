@@ -211,19 +211,29 @@ describe('PlantingDetail — V4-SHEETBUSY-001: the Edit fly-up resists dismissal
 // ── BUG-DIRTYDISMISSGAP-001 — the DIRTY term, which `busy` above does not cover ─────────────────
 //
 // Sibling to the suite above: same root gap, other side of it. That one pins that a form with a
-// WRITE ON THE WIRE resists dismissal (`busy`). This pins that a form with TYPING IN IT does too —
-// which `dirty` alone does NOT deliver, for exactly the reason this file's header already gives:
-// confirmOnDirty is false at both registry call sites, so `dirty` gates the backdrop tap alone and
-// Escape/Back close outright.
+// WRITE ON THE WIRE resists dismissal (`busy`). This pins that a form with TYPING IN IT does too.
 //
-// WHY THIS SURFACE FIRST, of the four that pass `dirty`. Recovery is not uniform: EventNew carries
-// a full draftStash so a discarded /log overlay restores, SowNow stashes an inventory id.
-// PlantingEditor has NO draft stash, so what is typed here is simply gone. Dave is Android-only, so
-// Back — not Escape — is the gesture that fires this in practice, and it gets its own assertion.
+// REWRITTEN when the real fix landed. These tests used to assert on a `window.confirm` spy, because
+// the guard was a per-surface `requestCloseEditor` patch in this page. That patch is DELETED and the
+// registry now owns the confirm (`confirmOnDirty` on the Sheet → the provider raises ConfirmSheet),
+// so the assertions moved to the ConfirmSheet surface — AND every one of them additionally asserts
+// `window.confirm` was NOT called. That second half is not decoration: with both mechanisms live a
+// test spying on window.confirm keeps passing while ConfirmSheet is entirely broken, so the two must
+// be held apart or the guard is unfalsifiable. One mechanism, one place to break.
 //
-// The guard is requestCloseEditor on the SHEET only; the editor's own Cancel and its post-save
-// close keep plain closeEditor, because a save that SUCCEEDED must never ask to discard.
+// WHY THIS SURFACE. Recovery is not uniform: EventNew carries a full draftStash so a discarded /log
+// overlay restores, SowNow stashes an inventory id. PlantingEditor has NO draft stash, so what is
+// typed here is simply gone. Dave is Android-only, so Back — not Escape — is the gesture that fires
+// this in practice, and it gets its own assertions: Escape goes through decideDismiss and Back
+// through decideBack, DIFFERENT call sites, so one passing proves nothing about the other.
+//
+// The editor's own Cancel and its post-save close keep plain closeEditor, because a save that
+// SUCCEEDED must never ask to discard.
 describe('PlantingDetail — BUG-DIRTYDISMISSGAP-001: a DIRTY Edit fly-up is not discarded silently', () => {
+  const confirmUi = () => screen.queryByTestId('confirm-sheet')
+  const discard = () => screen.getByTestId('confirm-sheet-confirm')
+  const keepEditing = () => screen.getByTestId('confirm-sheet-cancel')
+
   // primeWithHangingSave serves the planting rows; its hang is on PUT, which nothing here fires.
   async function openEditorAndType(value = 'Renamed In Progress') {
     await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
@@ -233,56 +243,98 @@ describe('PlantingDetail — BUG-DIRTYDISMISSGAP-001: a DIRTY Edit fly-up is not
     // Precondition ASSERTED, not assumed — isReloadBlocked is the page's own read of editorDirty,
     // and it is what the sibling suite uses to prove its own forms are pristine.
     await waitFor(() => expect(isReloadBlocked()).toBe(true))
+    // The other half of the same precondition: no write on the wire, so `busy` cannot be what keeps
+    // the sheet up. Without this the BLOCKED branch (checked AHEAD of CONFIRM) is a second
+    // suppression mechanism and the assertions below would pass with the confirm path dead.
+    expect(within(sheet()).queryByText('Saving…')).toBeNull()
   }
 
-  it('Escape on a dirty form prompts, and declining keeps BOTH the sheet and the typing', async () => {
+  it('Escape on a dirty form asks, and declining keeps BOTH the sheet and the typing', async () => {
     primeWithHangingSave()
     renderPage()
     await openEditorAndType()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const confirmSpy = vi.spyOn(window, 'confirm')
     await esc()
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(confirmUi()).toBeTruthy())
+    expect(confirmSpy).not.toHaveBeenCalled()   // the deleted patch must stay deleted
+    expect(sheet()).toBeTruthy()
+
+    await act(async () => { fireEvent.click(keepEditing()) })
+    expect(confirmUi()).toBeNull()
     expect(sheet()).toBeTruthy()
     // The characters, not just the sheet — losing the sheet is recoverable, losing these is not.
     expect(within(sheet()).getByLabelText(/Name/i).value).toBe('Renamed In Progress')
     confirmSpy.mockRestore()
   })
 
-  it('Android hardware Back on a dirty form prompts, and declining keeps the sheet', async () => {
+  it('Android hardware Back on a dirty form asks, keeps the sheet, and RE-ARMS', async () => {
     // Back routes through decideBack, a DIFFERENT registry call site from Escape's decideDismiss,
     // so one passing does not imply the other — which is exactly how the busy gap shipped half
     // covered. This is also the gesture Dave actually uses.
     primeWithHangingSave()
     renderPage()
     await openEditorAndType()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    expect(armed()).toBe(true)                       // SELF-TEST: back() will reach the arbiter
+    expect(window.history.state.__floor).toBe(1)     // SELF-TEST: not at index 0, where back() is silent
+    const confirmSpy = vi.spyOn(window, 'confirm')
+
     await backGesture()
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(confirmUi()).toBeTruthy()
+    expect(confirmSpy).not.toHaveBeenCalled()
     expect(sheet()).toBeTruthy()
+    // THE MARKER. Back consumed it before the decision; the provider must push a fresh one, or the
+    // user's next Back exits the installed PWA with a half-edited form still open.
+    expect(armed()).toBe(true)
+
+    // And it genuinely still works: a second Back lands on the confirm (SYSTEM outranks the sheet)
+    // and closes it, leaving the sheet and the typing intact.
+    await backGesture()
+    expect(confirmUi()).toBeNull()
+    expect(sheet()).toBeTruthy()
+    expect(within(sheet()).getByLabelText(/Name/i).value).toBe('Renamed In Progress')
     confirmSpy.mockRestore()
   })
 
-  it('accepting the prompt DOES discard — the guard must not be a trap', async () => {
+  it('the labelled Close on a dirty form asks too — the most discoverable exit is not a hole', async () => {
     primeWithHangingSave()
     renderPage()
     await openEditorAndType()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    await esc()
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
-    await waitFor(() => expect(sheet()).toBeNull())
-    confirmSpy.mockRestore()
+    await act(async () => { fireEvent.click(within(sheet()).getByRole('button', { name: 'Close' })) })
+    expect(confirmUi()).toBeTruthy()
+    expect(sheet()).toBeTruthy()
   })
 
-  it('a PRISTINE form closes on Escape with NO prompt — no nag on an untouched sheet', async () => {
+  it('accepting DOES discard — the guard must not be a trap', async () => {
+    primeWithHangingSave()
+    renderPage()
+    await openEditorAndType()
+    await esc()
+    await waitFor(() => expect(confirmUi()).toBeTruthy())
+    await act(async () => { fireEvent.click(discard()) })
+    await waitFor(() => expect(sheet()).toBeNull())
+    expect(confirmUi()).toBeNull()
+  })
+
+  it('a PRISTINE form closes on Escape with NO question — no nag on an untouched sheet', async () => {
     primeWithHangingSave()
     renderPage()
     await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
     await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
     await waitFor(() => expect(sheet()).toBeTruthy())
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await esc()
-    expect(confirmSpy).not.toHaveBeenCalled()
     await waitFor(() => expect(sheet()).toBeNull())
-    confirmSpy.mockRestore()
+    expect(confirmUi()).toBeNull()
+  })
+
+  it('a PRISTINE form closes on Back with NO question', async () => {
+    primeWithHangingSave()
+    renderPage()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(sheet()).toBeTruthy())
+    expect(armed()).toBe(true)
+    await backGesture()
+    await waitFor(() => expect(sheet()).toBeNull())
+    expect(confirmUi()).toBeNull()
   })
 })
