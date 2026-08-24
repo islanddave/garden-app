@@ -14,13 +14,16 @@ import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
 
-// V4-HARVQTYCHIPS-001 — the fast-path quantity set. MEASURED, not guessed: 83.2% of the 519 prod
-// harvest_log rows are integers 1-6 and 87.1% are a single character, so a chip row collapses the
-// two-interaction "tap the field, type a digit" into ONE tap for five of every six harvests AND
-// keeps the soft keyboard off the fast path entirely (which is worth more than the tap on a 390px
-// viewport, where the keypad takes roughly half the height).
-// The chips ADD to the field rather than replacing it, so the 16.8% tail (decimals, integers >6)
-// costs exactly what it costs today — no regression to trade against the win.
+// Quantity entry — the measurement that governs it, kept here because it is the reason the control
+// is shaped the way it is. MEASURED, not guessed: 83.2% of the 519 prod harvest_log rows are
+// integers 1-6 and 87.1% are a single character. So the fast path must cost ONE tap and must not
+// raise the soft keyboard, which on a 390px viewport takes roughly half the height.
+//
+// V4-HARVQTYCHIPS-001 served that with a 1-6 chip row (replace semantics). V4-QUICKHITRANGE-001
+// (BD-047) superseded it with the digit BUILDER in components/NumberPad.jsx: one tap on '3' still
+// yields '3', so the 83.2% path is unchanged, but the 16.8% tail no longer needs the keyboard
+// either — '13' is two taps rather than a keyboard round trip. The free-text field is still there
+// underneath both, which is why neither change regressed the tail.
 
 // V4-HARVFEEDBACK-001 S5b (spec §8) — how much the bottom spacer grows while the post-save feedback
 // zone is rendered, so the last form control still clears the sticky band. CSS-DERIVED ESTIMATE,
@@ -400,6 +403,16 @@ function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translate
         zIndex: 1,
       }}
     >
+      {/* WCAG 2.5.5 touch target. The visual circle stays 30px — growing it would change the look
+          of four fields and shift the two textarea call sites, which pass `top` in px and position
+          the box by its EDGE. This transparent child extends the TAPPABLE area 7px past the circle
+          on every side (30 + 14 = 44) and inherits the click by bubbling, so geometry and layout
+          are byte-identical while the target clears the floor. Every call site already reserves
+          paddingRight: 44, so nothing overlaps the field text.
+          Raised here per design-weighin-session-20260824.md §8.4, which flagged this second mic
+          system as 30x30. It is deliberately NOT the handedness flip — that one is still an open
+          question (whether HarvestWatchBand's left/right split, a SAFETY decision, should mirror). */}
+      <span aria-hidden="true" style={{ position: 'absolute', top: -7, right: -7, bottom: -7, left: -7 }} />
       {active ? '⏹' : '🎙️'}
     </button>
   )
