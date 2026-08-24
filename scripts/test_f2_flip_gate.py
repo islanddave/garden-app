@@ -181,12 +181,21 @@ def test_unknown_schema_is_skipped_not_silently_counted(tmp_path):
     assert "unknown schema" in p.stdout
 
 
-def test_bound_b_is_reported_as_unspecified_never_as_a_pass(tmp_path):
-    # The canon says "within stated bounds" and never states them. Reporting a PASS here would
-    # manufacture a gate nobody set.
+def test_bound_b_is_reported_as_not_a_gate_never_as_a_pass(tmp_path):
+    # Bound B was "unspecified" (the canon said "within stated bounds" and never stated them) until
+    # Dave DROPPED it as a gate outright on 2026-08-24: it watched a number with no theory of the
+    # correct value — the counter saturates, the saturation moves with the weather, and the
+    # denominator is unstable across samples. f2-flip-gate.py was updated to emit
+    # "informational_not_a_gate"; this assertion still pinned the old string, which left dev's
+    # pytest job RED from 31b9d70 onward and would have fail-closed any promote.
+    #
+    # The invariant under test is unchanged and is the reason the case exists at all: bound B must
+    # never report a PASS. Only the name of the not-a-pass status moved. Asserting the exact string
+    # rather than "not PASS" is deliberate — it is what makes the drop visible to the next reader.
     write_sample(tmp_path, [planting("a", "tomato", legacy_due=False, ledger_due=True)])
     v, _ = verdicts(tmp_path)
-    assert v["B_due_delta"]["status"] == "unspecified"
+    assert v["B_due_delta"]["status"] == "informational_not_a_gate"
+    assert v["B_due_delta"]["dropped"] == "2026-08-24"
     assert v["B_due_delta"]["delta"] == 1
 
 
