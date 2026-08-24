@@ -28,9 +28,6 @@ import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import { useMembers } from '../hooks/useMembers.js'
-import { useSeasonCropWeights } from '../hooks/useSeasonCropWeights.js'
-import CropWeightLine from '../components/CropWeightLine.jsx'
-import { formatGrams } from '../lib/harvestWeight.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import { buildProjectsById, effectiveAssignee, buildCaretakerMap, lensOptions, hasMixedCaretakers } from '../lib/caretakers.js'
 import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
@@ -783,7 +780,7 @@ export default function Garden() {
           plants={visiblePlants} tagMap={tagMap} facet={effectiveGroupBy} locations={locations}
           crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress}
           onSpriteIntersect={onSpriteIntersect} onPhotoUploaded={refetchPlants} flashId={flashId}
-          caretakerFor={caretakerFor} showCropWeight={effectiveLens === 'all'} />
+          caretakerFor={caretakerFor} />
       ) : tree.length === 0 ? (
         <EmptyState />
       ) : (
@@ -943,7 +940,7 @@ function Shell({ children }) {
 // V4-GARDENIA-001: faceted Garden render. Group-by overlay over the SAME PlantingTile the legacy
 // tree uses, so plantings look identical; the by-project tree (effectiveGroupBy==='none') is
 // untouched and remains golden-gated. A planting may appear under multiple groups (multi-membership).
-function FacetedGarden({ plants, tagMap, facet, locations = [], crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null, showCropWeight = true }) {
+function FacetedGarden({ plants, tagMap, facet, locations = [], crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null }) {
   // Sections COLLAPSED by default (Dave 2026-06-26): track the EXPANDED set instead of collapsed,
   // so an empty set = everything collapsed. Toggling a header adds/removes it from expandedGroups.
   const [expandedGroups, setExpandedGroups] = useState(() => loadGroupsExpanded())
@@ -959,7 +956,6 @@ function FacetedGarden({ plants, tagMap, facet, locations = [], crittersByPlantI
   //     plantings produced this" — a claim it is not making (and the two users' harvest counts
   //     differ by three orders of magnitude, so the misread would be large).
   // Called before the early return below so hook order stays stable (rules-of-hooks).
-  const cropWeights = useSeasonCropWeights(facet === 'crop_type' && showCropWeight)
   const groups = buildTagGroupedList(plants, tagMap, facet, SORT_ALPHA, locations) || []
   if (groups.length === 0) return <EmptyState />
   // Expand-all / Collapse-all — complements collapse-by-default so the whole view is one tap away.
@@ -988,8 +984,14 @@ function FacetedGarden({ plants, tagMap, facet, locations = [], crittersByPlantI
               isUnsorted={g.isUnsorted} collapsed={isCollapsed}
               onToggle={isEmpty ? undefined : () => toggle(g.slug)}
               style={indent ? { marginLeft: indent } : undefined} />
-            {/* Outside the collapse: the weight is the reason to glance at a collapsed section. */}
-            <CropGroupWeight weight={cropWeights.get(g.slug)} indent={indent} />
+            {/* V4-GARDENTABNOHARVEST-001 (BD-041) — the season-weight block is GONE from here.
+                It used to render outside the collapse on the reasoning that the weight is the
+                reason to glance at a collapsed section. Dave's ruling is the opposite: he wants NO
+                harvest data on the Garden tab at all. This is his BROWSE/DRILL-DOWN surface — a
+                collapsed crop list he taps into to see what is actually there — and with every crop
+                collapsed each row carried three extra stacked lines ("This season" / "1.14
+                kilograms" / "7 weighed, 10 estimated"). The Harvest tab is the right home and he
+                will go there. */}
             {!isCollapsed && !isEmpty && (
               <div style={{ marginTop: 8 }}>
                 <TileGrid items={g.plantings} columns={2} gap={12} ariaLabel={g.label} windowSize={24}
@@ -1013,31 +1015,10 @@ function FacetedGarden({ plants, tagMap, facet, locations = [], crittersByPlantI
   )
 }
 
-// V4-HARVWEIGHTSURF-001 — one crop group's season weight, rendered by the SAME CropWeightLine the
-// Harvests Totals tab uses, so the number, the ≈ and the "3 weighed · 12 estimated" qualifier are
-// identical words in identical order on both surfaces.
-//
-// The timeframe has to be named here. On Harvests the season is stated by the timeframe chip the user
-// just tapped; on the Garden nothing else says it, and an unlabelled kilo total would read as
-// all-time. "This season" is the chip's own copy (HarvestTimeframeChips), not new vocabulary.
-//
-// DELIBERATE DIVERGENCE FROM TOTALS, the one place these two surfaces differ: a crop whose picks are
-// all unweighed renders NOTHING here, where Totals says "no weight yet". Totals is a harvest ledger
-// and the ratchet copy is its point; the Garden is a browsing grid where that line would print under
-// most groups at once and become chrome. Gating on formatGrams — the shared formatter, which returns
-// null for absent/zero grams — also means no empty eyebrow is left behind when the line itself
-// declines to render.
-function CropGroupWeight({ weight, indent = 0 }) {
-  if (!weight || formatGrams(weight.grams) == null) return null
-  return (
-    <div data-testid="crop-group-weight" style={{ marginLeft: indent, padding: '4px 10px 0' }}>
-      <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: P.light, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-        This season
-      </span>
-      <CropWeightLine weight={weight} />
-    </div>
-  )
-}
+// V4-HARVWEIGHTSURF-001's CropGroupWeight was DELETED here on 2026-08-24 by
+// V4-GARDENTABNOHARVEST-001 (BD-041) — Dave wants no harvest data on the Garden tab.
+// The shared CropWeightLine it rendered still exists and is still used by the Harvests
+// Totals tab; only this surface's call site and wrapper are gone.
 
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 

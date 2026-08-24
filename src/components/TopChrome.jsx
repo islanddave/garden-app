@@ -22,7 +22,7 @@
 // BottomNav More (already mirrored there, now the primary home); What's-New dot -> BottomNav More
 // "Release Notes" (already present). Header is brand + the three actions.
 // DIM_SCRIM stops mirror scripts/banner_contrast.py STOPS — change BOTH together.
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
@@ -30,6 +30,7 @@ import { P, APP_NAME } from '../lib/constants.js'
 import { getRouteClass, CAPTURE_TITLES } from '../lib/routeClass.js'
 import { pickBanner } from '../lib/pickBanner.js'
 import { BANNERS } from '../lib/bannerManifest.js'
+import { setPendingCapture } from '../lib/pendingCapture.js'
 
 const HEADER_BG = '#f9e3d6'
 const HEADER_BORDER = '#edc7b3'
@@ -96,7 +97,9 @@ const ACTION_CIRCLE = {
   textDecoration: 'none', flexShrink: 0, ...FROST,
 }
 
-// Snap is a PAGE (route class 'capture' swaps the whole header for CaptureBar), so a plain Link.
+// Snap is a PAGE (route class 'capture' swaps the whole header for CaptureBar). It was a plain Link
+// until BD-032; it is now a button that opens the picker in-tap and then navigates — see SnapAction
+// below for why the navigation alone could not do it.
 //
 // V4-WEIGHINCTA-001 (CHECKIN PLAN B5, Dave GO 2026-08-18) — Harvest now opens the WEIGH-IN SESSION
 // full-page (/log?session=harvest), not the single-event overlay it carried from the retired FAB row.
@@ -117,12 +120,53 @@ const ACTION_CIRCLE = {
 // the affordance every screen already trained on the right edge. Not rendered by 'unauth' or
 // 'pending' (all three targets are Protected / identity-bearing), which is why this stays a
 // component the signed-in row opts into rather than something baked into the bar itself.
+// BD-032 — the Snap circle opens the OS picker IN THIS TAP, then parks the file and navigates.
+//
+// It used to be a plain <Link to="/capture">, which landed on a step whose only control was a
+// "Choose photo" button: a screen with one option is a dead tap, and Dave hit it on arrival and
+// again after every save. It could not be fixed from inside CaptureFlow — a file input needs
+// transient activation, and the navigation gesture that got you there is already spent, so
+// auto-opening on mount is blocked by Android Chrome (CaptureFlow documents this).
+//
+// Opening it here works because THIS tap is the trusted gesture. Same pattern already shipped in
+// planting/QuickActions.jsx:149 for the same reason; this reuses `pendingCapture` rather than
+// inventing a second hand-off.
+//
+// Deliberately still navigates when the user CANCELS the picker: <input type=file> fires no cancel
+// event, so "navigate only on pick" would strand the tap silently for anyone who backs out. Landing
+// on the photo step with a working Choose button is the correct fallback, and is what the old
+// behaviour was for everyone.
+function SnapAction() {
+  const navigate = useNavigate()
+  const inputRef = useRef(null)
+  return (
+    <>
+      <input
+        ref={inputRef} type="file" accept="image/*" data-testid="topchrome-snap-input"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          e.target.value = ''            // re-picking the same file must refire onChange
+          if (file) setPendingCapture(file)
+          navigate('/capture')
+        }}
+      />
+      {/* No `capture` attribute — V4-HIDECAPTURE-001 made in-app camera the app-wide non-default. */}
+      <button
+        type="button" aria-label="Snap a photo" data-testid="topchrome-snap"
+        onClick={() => inputRef.current?.click()}
+        style={{ ...ACTION_CIRCLE, border: 'none', cursor: 'pointer', font: 'inherit' }}
+      >
+        <Camera />
+      </button>
+    </>
+  )
+}
+
 function HeaderActions() {
   return (
     <>
-      <Link to="/capture" aria-label="Snap a photo" data-testid="topchrome-snap" style={ACTION_CIRCLE}>
-        <Camera />
-      </Link>
+      <SnapAction />
       <Link to="/log?session=harvest" aria-label="Log a harvest" data-testid="topchrome-harvest" style={ACTION_CIRCLE}>
         <Basket />
       </Link>

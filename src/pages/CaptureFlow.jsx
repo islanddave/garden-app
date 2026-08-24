@@ -12,6 +12,7 @@
 // take/choose picker and the mode cards are distinct affordances and keep their own styling.
 import React, { useState, useEffect, useRef, useId } from 'react'
 import { saveFileToDevice } from '../lib/saveFileToDevice.js'
+import { takePendingCapture } from '../lib/pendingCapture.js'
 import { SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -153,6 +154,26 @@ export default function CaptureFlow() {
     if (!el) return
     el.click()
   }
+
+  // BD-032 — claim a photo the Snap header parked for us and skip the photo step entirely.
+  //
+  // The header (TopChrome SnapAction) opens the OS picker inside its own tap, because that tap is a
+  // trusted gesture and arriving here is not — a file input opened on mount is blocked by Android
+  // Chrome, which is why this step existed as a "Choose photo" screen at all. With the file already
+  // chosen, the first thing Dave sees is his photo and the mode cards.
+  //
+  // A MISS IS SAFE HERE, unlike the same claim in EventNew (BUG-SNAPATTACH-001, where a remount
+  // between park and claim produced photo events carrying no photo). The park is module state
+  // cleared on read, so a remount can still eat it — but nothing has been saved yet, so the only
+  // consequence is landing on the photo step with a working button, i.e. exactly the old behaviour.
+  // No warning banner is warranted for a fallback that is indistinguishable from normal use.
+  useEffect(() => {
+    const f = takePendingCapture()
+    if (!f) return
+    setFile(f)
+    setPreview(URL.createObjectURL(f))
+    setStep('mode')
+  }, [])
 
   const [plantings, setPlantings] = useState([])
   const [locations, setLocations] = useState([])
@@ -298,6 +319,16 @@ export default function CaptureFlow() {
     setUndone(false)
     clearDraft(DRAFT_KEY)   // fields are back at their seeds — nothing left to resume
     setStep('photo')
+    // BD-032 — and open the picker IN THIS TAP rather than landing on the photo step and making
+    // Dave tap "Choose photo" again. "Save & Next — snap another" is itself a trusted user gesture,
+    // so the transient activation the file input needs is available right here; it is NOT available
+    // on mount, which is the whole reason the photo step exists (see the comment on that block).
+    //
+    // This is the second of the two dead taps per burst: one on arrival, one after every save.
+    // Only this one is fixable from inside the flow. `step` is still set to 'photo' above so a
+    // cancelled picker lands on a real screen with a working button rather than a blank state —
+    // there is no cancel event on <input type=file>, so the fallback has to be the resting state.
+    openPicker()
   }
 
   async function attach(linkage, keyPrefix, parentId) {

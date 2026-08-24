@@ -7,7 +7,13 @@ import { APP_NAME } from '../lib/constants.js'
 import { ROOT_TABS } from '../lib/routeClass.js'
 
 // The three circles every content surface carries, in render order.
-const ACTIONS = { 'topchrome-snap': '/capture', 'topchrome-harvest': '/log?session=harvest', 'topchrome-search': '/search' }
+//
+// BD-032 — Snap's value is `null`, not '/capture'. It is no longer a Link: it is a button that
+// opens the OS file picker inside its own tap (a file input needs a trusted gesture, and the
+// navigation that used to get you to /capture spent it), parks the file, and THEN navigates.
+// `null` means "present, but carries no href" and the parity assertions below check exactly that
+// rather than pretending the href is still there.
+const ACTIONS = { 'topchrome-snap': 'NO-HREF', 'topchrome-harvest': '/log?session=harvest', 'topchrome-search': '/search' }
 
 let mockUser
 vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => ({ user: mockUser }) }))
@@ -60,7 +66,10 @@ describe('TopChrome (V4-HEADERPARITY-001) — root tabs: icon search, NO Back ar
       cleanup()
       renderAt(path)
       for (const [testid, href] of Object.entries(ACTIONS)) {
-        expect(screen.getByTestId(testid).getAttribute('href'), `${path} ${testid}`).toBe(href)
+        // Same three-way read as the parity helper below: getByTestId already fails loudly if the
+        // element is missing, so 'NO-HREF' here means present-and-hrefless (Snap, post-BD-032).
+        const el = screen.getByTestId(testid)
+        expect(el.getAttribute('href') ?? 'NO-HREF', `${path} ${testid}`).toBe(href)
       }
     }
   })
@@ -82,7 +91,15 @@ describe('TopChrome (V4-HEADERPARITY-001) — root tabs: icon search, NO Back ar
     const actionsAt = (path) => {
       cleanup()
       renderAt(path)
-      return Object.keys(ACTIONS).map((t) => `${t}=${screen.queryByTestId(t)?.getAttribute('href') ?? 'ABSENT'}`)
+      // Three-way, not two. Before BD-032 every action was a Link, so `href ?? 'ABSENT'` was
+      // unambiguous; now Snap is a button and a missing ELEMENT and a missing HREF would both have
+      // read 'ABSENT' — which would let this parity test go green while an action silently vanished
+      // from one variant. That is the single failure it exists to catch.
+      return Object.keys(ACTIONS).map((t) => {
+        const el = screen.queryByTestId(t)
+        if (!el) return `${t}=ABSENT`
+        return `${t}=${el.getAttribute('href') ?? 'NO-HREF'}`
+      })
     }
     const root = actionsAt('/today')
     const detail = actionsAt('/projects/abc')
@@ -132,15 +149,18 @@ describe('TopChrome — capture: immersive bar', () => {
 // V4-HEADERPARITY-001 added Search to the same cluster, so these now describe all three.
 describe('TopChrome (V4-TOPCHROMEACTIONS-001) — Snap + Harvest header actions', () => {
   for (const path of ['/today', '/garden', '/dashboard']) {
-    it(`root ${path}: Snap -> /capture and Harvest -> the weigh-in session`, () => {
+    it(`root ${path}: Snap opens the picker in-tap and Harvest -> the weigh-in session`, () => {
       renderAt(path)
-      expect(screen.getByTestId('topchrome-snap').getAttribute('href')).toBe('/capture')
+      const snap = screen.getByTestId('topchrome-snap')
+      expect(snap.tagName).toBe('BUTTON')
+      expect(snap.getAttribute('href')).toBe(null)
+      expect(screen.getByTestId('topchrome-snap-input').getAttribute('type')).toBe('file')
       expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?session=harvest')
     })
   }
   it('detail (/projects/abc): both actions present alongside the search icon', () => {
     renderAt('/projects/abc')
-    expect(screen.getByTestId('topchrome-snap').getAttribute('href')).toBe('/capture')
+    expect(screen.getByTestId('topchrome-snap').tagName).toBe('BUTTON')
     expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?session=harvest')
     expect(screen.getByTestId('topchrome-search').getAttribute('href')).toBe('/search')
   })

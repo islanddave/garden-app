@@ -305,7 +305,10 @@ describe('V4-PERFCLERK-001 C — signed-out, and resolving to signed-out after m
     act(() => { rerender(<MemoryRouter initialEntries={['/today']}><TopChrome /></MemoryRouter>) })
     expect(container.querySelector('[data-app-chrome="top"]').getAttribute('data-chrome-state')).toBe(null)
     expect(screen.getByLabelText('Search your garden').getAttribute('href')).toBe('/search')
-    expect(screen.getByTestId('topchrome-snap').getAttribute('href')).toBe('/capture')
+    // BD-032 — Snap is a button that opens the picker in-tap, no longer a Link to /capture. What
+    // this case actually cares about is that the user-gated action APPEARS on the signed-in
+    // handover, so it asserts presence rather than a href that is no longer part of the contract.
+    expect(screen.getByTestId('topchrome-snap').tagName).toBe('BUTTON')
     expect(screen.queryByText('Sign in')).toBe(null)
   })
 
