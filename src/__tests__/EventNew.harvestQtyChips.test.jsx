@@ -247,3 +247,69 @@ describe('EventNew — weigh-in session pads (V4-WEIGHKBDNEXT-001)', () => {
     expect(screen.getAllByText('Save')).toHaveLength(1)
   })
 })
+
+// V4-WEIGHMOBILEVIEWPORT-001 — BOTH PADS BELOW THEIR FIELDS.
+//
+// DOM structure, not layout, so jsdom is a legitimate oracle here — unlike everything the header of
+// this file disclaims. The panel shipped with two grammars for one control type: the quantity pad
+// above its field (it inherited the slot V4-HARVQTYCHIPS-001's chip row vacated) and the weight pad
+// below its own. Nothing at either render site ever argued for a position. The measured half of this
+// change lives in tests/harness — see the comment at the quantity pad's render site for the 390x500
+// before/after coordinates and the elementFromPoint results. What is pinned here is the ORDER, so a
+// future edit cannot quietly restore the asymmetry.
+const SESSION_Q = 'session=harvest&event_type=harvest&project=proj-1'
+
+function orderOf(...els) {
+  // compareDocumentPosition rather than any coordinate: jsdom has no layout engine, and a rect-based
+  // assertion here would be a guard that cannot fail (every rect is zero).
+  for (let i = 0; i < els.length - 1; i++) {
+    const rel = els[i].compareDocumentPosition(els[i + 1])
+    if (!(rel & Node.DOCUMENT_POSITION_FOLLOWING)) return false
+  }
+  return true
+}
+
+describe('EventNew — pad position is uniform: each pad follows its own field', () => {
+  it('the quantity pad renders AFTER the quantity field, not before it', async () => {
+    renderEventNew(); await flushLoad()
+    const field = screen.getByLabelText('Harvest quantity')
+    const pad = screen.getByRole('group', { name: 'Harvest quantity quick pick' })
+    expect(orderOf(field, pad)).toBe(true)
+  })
+
+  it('puts the quantity pad BETWEEN the two fields it bridges', async () => {
+    // The sequence argument, pinned: `Next →` advances downward to #harvest-weight, so the pad that
+    // carries it must sit between the field it leaves and the field it targets. Above the quantity
+    // field it was above BOTH, and the gesture pointed the opposite way to the control.
+    renderEventNew(SESSION_Q); await flushLoad()
+    expect(orderOf(
+      screen.getByLabelText('Harvest quantity'),
+      screen.getByRole('group', { name: 'Harvest quantity quick pick' }),
+      screen.getByLabelText('Harvest weight'),
+    )).toBe(true)
+  })
+
+  it('gives both pads the same grammar — field, then its pad', async () => {
+    renderEventNew(SESSION_Q); await flushLoad()
+    expect(orderOf(
+      screen.getByLabelText('Harvest quantity'),
+      screen.getByRole('group', { name: 'Harvest quantity quick pick' }),
+      screen.getByLabelText('Harvest weight'),
+      screen.getByRole('group', { name: 'Harvest weight keypad' }),
+    )).toBe(true)
+  })
+
+  it('keeps the 8px above the moved pad that makes this a PURE reorder', async () => {
+    // Not cosmetic and not a style-snapshot for its own sake. NumberPad carries marginBottom:8;
+    // below the field that margin COLLAPSES into the weight group's marginTop:14 (block flow), so
+    // the naive move shortened the panel 8px and lifted everything under it. MEASURED consequence
+    // at 390x500: the weight pad's bottom row rose into the sticky Save band and elementFromPoint
+    // returned the BAND instead of the key — the exact failure mode NumberPad.jsx's 6-vs-5 column
+    // note records. With this spacer, the harness reports the weight input and Save on
+    // byte-identical coordinates before and after. Delete it and the occlusion comes back silently,
+    // because no jsdom test can see it.
+    renderEventNew(SESSION_Q); await flushLoad()
+    const pad = screen.getByRole('group', { name: 'Harvest quantity quick pick' })
+    expect(pad.parentElement.style.marginTop).toBe('8px')
+  })
+})

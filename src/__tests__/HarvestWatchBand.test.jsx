@@ -514,6 +514,96 @@ describe('HarvestWatchBand — the tail (panel Q4)', () => {
   })
 })
 
+// BD-045 D1 — THE SNOOZE THAT COULD NOT BE TAKEN BACK.
+//
+// "Not yet" writes suppressed_until = observed_on + WATCH_SUPPRESS_DAYS (10), and a byte-identical
+// basis on return suppresses one more cycle — up to 20 days invisible. The in-place Undo above
+// renders from `rowUi`, which is useState({}), so it dies the moment Today unmounts; after that the
+// row lives only in this read-only Snoozed list. These tests pin the recovery route that closes
+// that gap, and — more importantly — pin the two properties that make it CORRECT rather than merely
+// present: it must target the row that was tapped, and it must be a soft retraction.
+const SNOOZED_TWO = [
+  { plant_id: 's1', project_id: 'proj-s', name: 'Charentais', location_name: 'Hilltop bed 2', crop_display_name: 'Melon', suppressed_until: '2026-08-20', reason: 'dismissed' },
+  { plant_id: 's2', project_id: 'proj-t', name: 'Old Row', location_name: null, crop_display_name: 'Melon', suppressed_until: '2026-08-28', reason: 'dismissed' },
+]
+
+async function openSnoozed(snoozed = SNOOZED_TWO) {
+  payload([], { snoozed })
+  render(<HarvestWatchBand />)
+  const card = await band()
+  await userEvent.click(within(card).getByRole('button', { name: new RegExp(`Snoozed \\(${snoozed.length}\\)`) }))
+  return card
+}
+
+describe('HarvestWatchBand — a snooze can be taken back after leaving the page', () => {
+  it('offers a restore control on every snoozed row', async () => {
+    const card = await openSnoozed()
+    expect(within(card).getByRole('button', { name: 'Bring back Charentais' })).toBeTruthy()
+    expect(within(card).getByRole('button', { name: 'Bring back Old Row' })).toBeTruthy()
+  })
+
+  it('clears the snooze with a real WRITE, targeting the row that was tapped', async () => {
+    // The property that matters. handleDismissToggle scopes its UPDATE to user_id AND plant_id and
+    // retracts the newest active dismissal for THAT planting, so sending the wrong plant_id would
+    // un-snooze a different plant and leave this one hidden — a failure the UI could never show.
+    const card = await openSnoozed()
+    await userEvent.click(within(card).getByRole('button', { name: 'Bring back Old Row' }))
+
+    const posts = fetchMock.mock.calls
+      .filter(([u, o]) => u === DISMISS && o?.method === 'POST')
+      .map(([, o]) => JSON.parse(o.body))
+    expect(posts).toHaveLength(1)
+    expect(posts[0]).toEqual({ plant_id: 's2', project_id: 'proj-t', dismissed: false })
+  })
+
+  it('retracts SOFTLY — never a hard delete, and never a by-id call it has no id for', async () => {
+    // Two invariants in one. (1) handleDismissToggle's header names the hard DELETE as the one thing
+    // this path must never acquire: a retracted observation is labelled calibration data and the row,
+    // its frozen model snapshot and its observed_on all have to survive. (2) projectSnoozedRow does
+    // NOT project a dismissal id, so a copy-paste of the in-session Undo would fire
+    // DELETE /watch/dismissals/undefined — a 404 the optimistic UI would happily read as success.
+    const card = await openSnoozed()
+    await userEvent.click(within(card).getByRole('button', { name: 'Bring back Charentais' }))
+
+    const deletes = fetchMock.mock.calls.filter(([, o]) => o?.method === 'DELETE')
+    expect(deletes).toEqual([])
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('undefined'))).toBe(false)
+  })
+
+  it('re-asks the server rather than deciding locally that the row is a candidate again', async () => {
+    // Whether an un-suppressed planting is eligible, and where it ranks, is the server's verdict.
+    // Splicing the row out locally would show a plant as "back" that the next load may still hide.
+    const card = await openSnoozed()
+    const before = fetchMock.mock.calls.filter(([u]) => u === WATCH).length
+    await userEvent.click(within(card).getByRole('button', { name: 'Bring back Charentais' }))
+    await waitFor(() => expect(
+      fetchMock.mock.calls.filter(([u]) => u === WATCH).length).toBeGreaterThan(before))
+  })
+
+  it('never rests on a write that did not land', async () => {
+    fetchMock.mockImplementation((url) => (url === WATCH
+      ? Promise.resolve({ candidates: [], snoozed: SNOOZED_TWO })
+      : Promise.reject(new Error('boom'))))
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Snoozed \(2\)/ }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Bring back Charentais' }))
+
+    expect(await within(card).findByText(/Could not save — try again\./)).toBeTruthy()
+    // The control is re-offered and no false acknowledgement is left on screen.
+    expect(within(card).getByRole('button', { name: 'Bring back Charentais' })).toBeTruthy()
+    expect(card.textContent).not.toMatch(/Back on the list\./)
+  })
+
+  it('keeps the restore control at the 48px touch floor', async () => {
+    // jsdom cannot measure, but it CAN read the declared minHeight — and this control is the undo
+    // for a 10-20 day hide, tapped one-handed. Same floor the in-session Undo already honours.
+    const card = await openSnoozed()
+    const btn = within(card).getByRole('button', { name: 'Bring back Charentais' })
+    expect(btn.style.minHeight).toBe('48px')
+  })
+})
+
 // NAMED MUTATION TARGETS (each must turn the listed test red):
 //   "Start checking {name}" -> "{name} is ready"        => the check-form test
 //   drop <HarvestWindow observable> / return null early  => "names the observable"
@@ -527,3 +617,10 @@ describe('HarvestWatchBand — the tail (panel Q4)', () => {
 //   minHeight 48 -> unset, or controls reordered         => the mobile touch-floor test
 //   headline Link dropped, or href built from project_id => the BD-007 right-id href test
 //   name Link wired to dismissRow or overlayNavigate     => the BD-007 name-tap isolation test
+// BD-045 D1 restore route (each VERIFIED red on the listed test, 2026-08-24):
+//   drop "Bring back" from the snoozed row               => all six restore tests
+//   post a fixed plant_id instead of the tapped row's    => the targets-the-tapped-row test
+//   copy the by-id DELETE from the in-session Undo       => the soft-retraction test (no id exists)
+//   drop load() after a successful restore               => the re-asks-the-server test
+//   .catch that sets restored:true instead of an error   => the never-rests-on-a-failed-write test
+//   minHeight 48 -> 30 on the restore control            => the restore touch-floor test
