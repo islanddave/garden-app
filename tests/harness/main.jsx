@@ -63,17 +63,28 @@ function resetLocalState() {
 //              the router/nav tree), so a spacer of the exact height constant stands in for it —
 //              the sticky Save's `bottom` offset is BOTTOM_NAV_HEIGHT_PX + 12, so the nav's HEIGHT
 //              is the only property of it the measurement depends on.
+// `?session=harvest` mounts the WEIGH-IN SESSION (design-weighin-session-20260824.md §11 Slice A
+// step 1). Without it the session surface was unreachable here, so the one measurement the
+// V4-WEIGHKBDNEXT-001 pads most needed — two pads on screen at once — could not be taken at all.
+// Note EventNew's own gate is `harvestSessionParam && !inOverlay`, so this is only live on the
+// FULLPAGE surface; requesting it under 'overlay' silently yields the non-session panel, which is
+// EventNew's real behaviour and not a harness limitation.
 function Harness() {
-  const [surface, setSurface] = useState(new URLSearchParams(location.search).get('surface') || 'overlay')
+  const params = new URLSearchParams(location.search)
+  const [surface, setSurface] = useState(params.get('surface') || 'overlay')
   const [nonce, setNonce] = useState(0)
   window.__setSurface = (s) => { resetLocalState(); setSurface(s); setNonce(n => n + 1) }
   window.__remount = () => { resetLocalState(); setNonce(n => n + 1) }
 
+  // event_type rides along because the session gate reads `session`, but the harvest PANEL only
+  // renders once a type is chosen — without it every session run would start with a tap that has
+  // nothing to do with what is being measured.
+  const entry = params.get('session') === 'harvest' ? '/log?session=harvest&event_type=harvest' : '/log'
   const content = <EventNew key={nonce} />
 
   if (surface === 'overlay') {
     return (
-      <MemoryRouter initialEntries={['/log']}>
+      <MemoryRouter initialEntries={[entry]}>
         <ToastProvider>
           <Sheet open onClose={() => {}} ariaLabel="Log an event" size="full" kind="route">
             <OverlaySurfaceProvider>
@@ -85,7 +96,7 @@ function Harness() {
     )
   }
   return (
-    <MemoryRouter initialEntries={['/log']}>
+    <MemoryRouter initialEntries={[entry]}>
       <ToastProvider>
         {content}
         <div

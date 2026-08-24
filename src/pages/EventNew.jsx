@@ -21,7 +21,6 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 // viewport, where the keypad takes roughly half the height).
 // The chips ADD to the field rather than replacing it, so the 16.8% tail (decimals, integers >6)
 // costs exactly what it costs today — no regression to trade against the win.
-const QTY_CHIPS = ['1', '2', '3', '4', '5', '6']
 
 // V4-HARVFEEDBACK-001 S5b (spec §8) — how much the bottom spacer grows while the post-save feedback
 // zone is rendered, so the last form control still clears the sticky band. CSS-DERIVED ESTIMATE,
@@ -33,7 +32,7 @@ const POST_SAVE_STRIP_SPACER_PX = 86
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS, sendUxEvent } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
-import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, SelectChip } from '../components/forms'
+import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import Section from '../components/FormSection.jsx'
@@ -52,6 +51,7 @@ import { recordCropLog } from '../lib/cropLogLedger.js'
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
 // V4-HARVDISPOSITION-001 — the optional "what went wrong with this pick" chip row.
 import HarvestDispositionChips from '../components/HarvestDispositionChips.jsx'
+import NumberPad from '../components/NumberPad.jsx'
 import {
   WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
@@ -2012,65 +2012,57 @@ export default function EventNew() {
   const harvestBlock = (
           form.event_type === 'harvest' && (
             <Section id={HARVEST_SECTION_ID} label="Harvest *">
-              {/* V4-HARVQTYCHIPS-001 — quick-pick chips ABOVE the field, not replacing it.
-                  A chip fills the quantity in ONE tap with no keyboard; the field below is
-                  untouched, so the 16.8% of harvests outside 1-6 cost exactly what they cost
-                  today. Pure addition, no regression on the tail — which is why there is no
-                  "More" affordance: the field IS the more affordance.
+              {/* V4-QUICKHITRANGE-001 (BD-047) — the 1-6 quick-pick chips became a digit BUILDER.
+                  Supersedes V4-HARVQTYCHIPS-001's replace semantics. The single-digit fast path is
+                  byte-identical in cost — one tap on '3' still yields '3', and that is 83.2% of
+                  measured quantities. What changed is the tail: '13' was "tap the field, raise the
+                  keyboard, type 1, type 3" and is now "tap 1, tap 3". BD-047 originally asked to
+                  halve the buttons and extend the range to 20; ten keys cover every value instead,
+                  and halving would have taken the keys under the 44px touch floor BD-047 itself
+                  warned about. The field below is still untouched for anyone who wants to type.
+
                   Sits outside <Field> deliberately: Field's frozen contract takes EXACTLY ONE
                   focusable control and clones ARIA onto it (components/forms/Field.jsx), so a
-                  chip group inside it would trip contractWarn and steal the input's wiring.
-                  Composed from the frozen SelectChip primitive, not a new one (FROZEN.md).
+                  key group inside it would trip contractWarn and steal the input's wiring.
 
-                  BUG-HARVROWOVERFLOW-001 + BUG-HARVUNITVIS-001 — the chip grid is a FULL-WIDTH
-                  sibling of the quantity/unit row, NOT nested in that row's flex:2 column.
-                  It used to live inside that column, which made both filed defects one defect:
-                  six touch chips are minWidth 44 (SelectChip `touch`), so the grid demands
-                  6*44 + 5*8 = 304px of min-content, and asking for 304px inside two-thirds of the
-                  row forced the whole row to a 399px min-content against a 390px viewport — the
-                  overlay Sheet scrolled sideways and the full page scaled down ~2.3%. The same
-                  nesting put the unit <Select> beside the CHIPS rather than beside the quantity
-                  input, squeezing it to its ~85px minimum where the selected unit is not legible
-                  ("it's very easy to miss the unit") — a data-integrity bug on the one form whose
-                  purpose is quantity capture, since a wrong-unit harvest logs unnoticed.
-                  Full width gives the grid its 304px with room to spare at 390px AND lets the unit
-                  take a full third of the row beside the input it actually modifies.
-                  The chips are KEPT — Dave's call, they measured 83.2% of quantities — and the
-                  <Select> is untouched (replacing it with chips breaks Field's one-control contract). */}
-              <div
-                role="group"
-                aria-label="Harvest quantity quick pick"
-                // Grid, not flex-wrap: six equal columns keep the row on ONE line at 375px
-                // instead of wrapping to two and doubling the block height from 48px to 104px
-                // on the fast path. At full width the 304px min-content clears 375px outright.
-                style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}
-              >
-                {QTY_CHIPS.map(q => (
-                  <SelectChip
-                    key={q}
-                    active={harvest.quantity === q}
-                    onClick={() => {
-                      setHarvest(h => ({ ...h, quantity: q }))
-                      if (harvestError) setHarvestError(null)
-                    }}
-                    touch
-                    aria-label={`Harvest quantity ${q}`}
-                    data-testid={`qty-chip-${q}`}
-                  >
-                    {q}
-                  </SelectChip>
-                ))}
-              </div>
+                  BUG-HARVROWOVERFLOW-001 + BUG-HARVUNITVIS-001 — the pad is a FULL-WIDTH sibling
+                  of the quantity/unit row, NOT nested in that row's flex:2 column. Nesting it made
+                  both filed defects one defect: the grid's min-content (now 5*44 + 4*8 = 252px,
+                  down from the 6-chip row's 304px) inside two-thirds of the row forced a 399px
+                  min-content against a 390px viewport — the overlay Sheet scrolled sideways and the
+                  page scaled down ~2.3% — and it put the unit <Select> beside the KEYS rather than
+                  beside the quantity input, squeezing it to ~85px where the selected unit is not
+                  legible. A wrong-unit harvest logs unnoticed, so that one is data integrity, not
+                  polish. Full width keeps both fixed, with more headroom than before. */}
+              <NumberPad
+                value={harvest.quantity}
+                onChange={v => {
+                  setHarvest(h => ({ ...h, quantity: v }))
+                  if (harvestError) setHarvestError(null)
+                }}
+                idPrefix="qty-chip"
+                ariaLabel="Harvest quantity quick pick"
+                keyAriaPrefix="Harvest quantity"
+                // V4-WEIGHKBDNEXT-001 (BD-046), session only. Outside the session the keyboard is
+                // still reachable, so Enter still advances and this button would be a second way to
+                // do one thing. Inside it, inputMode="none" means Enter no longer exists.
+                onPrimary={inHarvestSession ? (() => { document.getElementById('harvest-weight')?.focus() }) : undefined}
+                primaryLabel="Next →"
+              />
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ flex: 2 }}>
                   <Field label="Quantity *" htmlFor="harvest-quantity">
-                    {/* type=text + inputMode=decimal is deliberate and stays: on Chrome Android an
-                        invalid intermediate value in a type=number input makes .value return '',
-                        which would silently defeat the MAX_PLAUSIBLE[unit] check in validateHarvest(). */}
+                    {/* type=text is deliberate and stays: on Chrome Android an invalid intermediate
+                        value in a type=number input makes .value return '', which would silently
+                        defeat the MAX_PLAUSIBLE[unit] check in validateHarvest().
+                        inputMode is session-conditional (V4-WEIGHKBDNEXT-001). In the weigh-in
+                        session the pad above owns entry and 'none' keeps the keyboard down — which
+                        is the ~301-344px of viewport the whole slice exists to buy. Everywhere else
+                        it stays 'decimal', so the non-session harvest path is byte-identical. */}
                     <Input
                       id="harvest-quantity"
                       type="text"
-                      inputMode="decimal"
+                      inputMode={inHarvestSession ? 'none' : 'decimal'}
                       value={harvest.quantity}
                       onChange={e => {
                         setHarvest(h => ({ ...h, quantity: e.target.value }))
@@ -2135,7 +2127,11 @@ export default function EventNew() {
                     <Input
                       id="harvest-weight"
                       type="text"
-                      inputMode="decimal"
+                      // Session-conditional for the same reason as quantity (V4-WEIGHKBDNEXT-001):
+                      // the pad below owns entry in the session, and this is the field that was
+                      // raising the keyboard at all — quantity is a single digit 83.2% of the time,
+                      // weight almost never is.
+                      inputMode={inHarvestSession ? 'none' : 'decimal'}
                       // V4-HARVSESSION-002 (session only): grams → Enter IS the save. Explicit
                       // handler, NOT the form's implicit submission: Save is type="button", and a
                       // multi-input form with no submit button gets no implicit Enter submission,
@@ -2167,6 +2163,38 @@ export default function EventNew() {
                     </Select>
                   </div>
                 </div>
+                {/* V4-WEIGHKBDNEXT-001 (BD-046) — SESSION ONLY, unlike the quantity pad above.
+                    Outside the session weight is the secondary, mostly-skipped field (see the
+                    V4-HARVDUAL-001 note above), and a second three-row pad there would cost the
+                    common path ~160px to serve the exception. Inside the session it is the field
+                    the keyboard was actually being raised for, so it is exactly where the pad pays.
+                    ⚠️ Viewport arithmetic, MEASURED in tests/harness at 390x844 (not estimated —
+                    jsdom returns zeros): each pad is 320x160, so both together add 320px against
+                    the ~301-344px of keyboard removed. That is roughly a WASH on height, NOT the
+                    ~+50px net win the design doc quotes — that figure assumed one pad per wizard
+                    step. The win here is that the keyboard never appears and 13 costs two taps,
+                    not that the panel got shorter. Same run: Save sits at bottom 776 against an
+                    844 viewport, so it stays above the fold with both pads up, and exactly one
+                    control on the surface says "Save". Slice C (the wizard) is what would collapse
+                    this to one pad on screen at a time and recover the height. */}
+                {inHarvestSession && (
+                  <NumberPad
+                    value={harvest.weight}
+                    onChange={v => {
+                      setHarvest(h => ({ ...h, weight: v }))
+                      if (harvestError) setHarvestError(null)
+                    }}
+                    idPrefix="wt-key"
+                    ariaLabel="Harvest weight keypad"
+                    keyAriaPrefix="Harvest weight"
+                    // NO primary button here, deliberately. The quantity pad needs its "Next →"
+                    // because inputMode="none" killed the Enter-to-advance that was the only way
+                    // from quantity to weight. Save is different: the sticky Save band (below,
+                    // position:sticky) is already on screen and already does exactly this. A second
+                    // Save on the pad would be two controls doing one job — the same defect
+                    // BD-036b just removed from the Today row, reintroduced one screen over.
+                  />
+                )}
                 <div style={{ marginTop: 5, fontSize: '0.72rem', color: P.light, lineHeight: 1.4 }}>
                   Weigh the whole pick — the count above says how many that was.
                 </div>
