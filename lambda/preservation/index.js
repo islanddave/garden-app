@@ -348,6 +348,15 @@ export const handler = async (event) => {
     // ?group=crop regroups by crop_type (JOIN crop_types for display). NULL storage → "Unassigned".
     // Excludes soft-deleted + fully-consumed (remaining_count=0). Headlines count PACKAGES and list
     // per-record units — NEVER sums across incompatible quantity_units (L5).
+    //
+    // V4-HARVESTFATE-001 — ?include_consumed=1 keeps the fully-consumed rows in. STORES and FATE are
+    // two different questions over one table: "what is in the freezer" must drop an empty jar, and
+    // "where did this planting's harvest go" must not — an eaten jar is an ANSWER to the second and
+    // absent from the first. Without this flag a planting reverts to "nothing put up" the day its
+    // last jar is finished, silently rewriting its history. Zero live rows are consumed today
+    // (5 of 5 have remaining_count > 0, prod 2026-08-24), so this changes no response yet; it is
+    // here because the day it starts mattering is the day the record is already wrong.
+    // OPT-IN: absent/anything-but-1 keeps the exclusion, so the Put-Up inventory page is untouched.
     if (rawPath === '/api/preservation/whats-put-up') {
       if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
       const rawGroup = event.queryStringParameters?.group;
@@ -356,6 +365,7 @@ export const handler = async (event) => {
       // "what did wave 2 of the zucchini actually yield into the freezer"). Feeds the planting-detail
       // surface. Empty result is a legitimate answer, not a 404.
       const plantFilter = event.queryStringParameters?.plant_id || null;
+      const includeConsumed = event.queryStringParameters?.include_consumed === '1';
       const rows = await sql`
         SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name,
                gn.display_name AS planting_name, gn.sown_at AS planting_sown_at,
@@ -368,7 +378,7 @@ export const handler = async (event) => {
         LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         WHERE p.user_id = ANY(${householdIds})
           AND p.deleted_at IS NULL
-          AND (p.remaining_count IS NULL OR p.remaining_count > 0)
+          AND (${includeConsumed} OR p.remaining_count IS NULL OR p.remaining_count > 0)
           AND (${plantFilter}::uuid IS NULL OR p.plant_id = ${plantFilter}::uuid)
         ORDER BY p.preserved_at DESC, p.created_at DESC
       `;

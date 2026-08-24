@@ -10,6 +10,8 @@ import Sparkline from '../components/Sparkline.jsx'
 import HarvestTimeframeChips from '../components/HarvestTimeframeChips.jsx'
 import HarvestExportSheet from '../components/HarvestExportSheet.jsx'
 import CropWeightLine from '../components/CropWeightLine.jsx'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import HarvestSortControl from '../components/HarvestSortControl.jsx'
 import {
   sortAggregates, naturalDirFor, HARVEST_SORT_MODES, DEFAULT_SORT_MODE, DEFAULT_SORT_DIR,
@@ -714,6 +716,46 @@ function TotalsView({ aggregates, onSeeInLog, timeframe }) {
   )
 }
 
+// V4-HARVCROPPHOTO-001 — the crop's photo, from the featured photo of the planting it was most
+// recently picked from (aggregates.crops[].hero_photo_id; absent on an older Lambda -> renders
+// nothing, the weekly[]/TotalsWeight precedent). Coverage is 31 of 31 live crops.
+//
+// fallback="none" is the silent-collapse contract (PutUpPhotoThumb): a missing, pending or failed
+// photo renders NOTHING, never a grey box. Deliberate on a 31-row list — one placeholder square
+// among 30 photos reads as breakage, and the numbers are the payload here, the picture is garnish.
+// The data-testid rides ...rest onto the <img> AND onto the placeholder box, which is what lets a
+// test tell "collapsed" apart from "rendered an empty grey square" — without it both read as
+// "no <img>" and the fallback prop could be deleted with the suite still green.
+// alt="" for the same reason it is decorative: the crop name is the accessible label, two rows away
+// from this element, and "Photo of tomato" next to the word "Tomato" is noise to a screen reader.
+//
+// tier=THUMB, and it has to be asked for: the id-only arm resolves the ORIGINAL unless told
+// otherwise, and these 31 originals measured 134 MB against 5.6 MB of thumbs on live S3
+// (2026-08-24). PhotoView degrades to the original for the 2 of 31 that have no thumb object.
+// NO `if (!photoId) return null` HERE, deliberately: PhotoView already renders nothing for a photo
+// with no id, so a second guard would be a second mechanism suppressing one behaviour — and a
+// mutation test then passes whichever of the two you break, which is how a guard that cannot fail
+// gets shipped as if it were proof.
+const HERO_PX = 44
+function CropHeroThumb({ photoId }) {
+  return (
+    <PhotoView
+      photo={{ id: photoId ?? null }}
+      resolveById
+      tier={TIER.THUMB}
+      fallback="none"
+      alt=""
+      data-testid="crop-hero"
+      width={HERO_PX}
+      height={HERO_PX}
+      style={{
+        width: HERO_PX, height: HERO_PX, objectFit: 'cover', borderRadius: 8,
+        border: `1px solid ${P.border}`, display: 'block', flexShrink: 0,
+      }}
+    />
+  )
+}
+
 // One expandable crop total. Collapsed = crop name + per-unit season total + unquantified count.
 // Expanded (in place) adds variety sub-rows, the per-planting first-pick table, and the See-in-log jump.
 function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog }) {
@@ -725,7 +767,8 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
         aria-expanded={open}
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '12px 14px', cursor: 'pointer', borderRadius: 10 }}
       >
-        <span style={{ minWidth: 0 }}>
+        <CropHeroThumb photoId={c.hero_photo_id} />
+        <span style={{ minWidth: 0, flex: 1 }}>
           <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>{c.crop_name}</span>
           {/* V4-HARVCROPTABLE-001 — the collapsed crop block was FIVE stacked rows (name / units /
               weight / weighed-vs-estimated / sparkline) for a fact Dave reads at a glance. The
