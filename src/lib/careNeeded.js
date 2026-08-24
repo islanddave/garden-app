@@ -182,7 +182,19 @@ export function groupSeverity(rows) {
 // Group rows for render. mode: 'location' (by project proxy — the only location-ish field the plan
 // carries; TRUE location names + Containers/beds sub-split are deferred to V4-TODAYLOC-001, blocked
 // on container_type population) | 'type' (by care need). Returns [{ key, label, rows, severity }].
-export function groupRows(rows, mode) {
+//
+// BUG-TODAYCAREREORDER-001 (BD-036) — `orderKeys` PINS the location-mode order. Severity is summed
+// from the rows PRESENT, so under the old unconditional sort every log removed a row, dropped its
+// group's score, and re-sorted the page WHILE Dave's finger was on it — he tapped Log down a
+// location group and a section slid out from under him, mis-tapping the next plant. The severity
+// sort is right for choosing what leads on ARRIVAL and wrong as a continuous function of a list the
+// user is actively draining. Callers pass the order computed from the FULL row set once, so
+// position becomes a property of the plan rather than of how far through it you are.
+//
+// Unranked keys fall to the end on severity — a group can only APPEAR mid-session via enrichment
+// settling or an undo, and appending is the one placement that cannot move a row already under a
+// finger. 'type' mode is unaffected: NEED_ORDER is fixed, so it never had the defect.
+export function groupRows(rows, mode, orderKeys) {
   const map = new Map()
   for (const r of rows) {
     const gkey = mode === 'type' ? r.need : (r.locationId || r.projectId || '_none')
@@ -193,6 +205,15 @@ export function groupRows(rows, mode) {
   const groups = [...map.values()].map(g => ({ ...g, severity: groupSeverity(g.rows) }))
   if (mode === 'type') {
     groups.sort((a, b) => NEED_ORDER.indexOf(a.key) - NEED_ORDER.indexOf(b.key))
+  } else if (Array.isArray(orderKeys) && orderKeys.length) {
+    const rank = new Map()
+    orderKeys.forEach((k, i) => { if (!rank.has(k)) rank.set(k, i) })
+    groups.sort((a, b) => {
+      const ra = rank.has(a.key) ? rank.get(a.key) : Number.POSITIVE_INFINITY
+      const rb = rank.has(b.key) ? rank.get(b.key) : Number.POSITIVE_INFINITY
+      if (ra !== rb) return ra - rb
+      return (b.severity - a.severity) || a.label.localeCompare(b.label)
+    })
   } else {
     // Most-overdue group first (auto-expand target); ties broken by label for determinism.
     groups.sort((a, b) => (b.severity - a.severity) || a.label.localeCompare(b.label))

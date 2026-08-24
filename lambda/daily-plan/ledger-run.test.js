@@ -177,12 +177,26 @@ describe('resolveInvokeOptions — flagOverrides sanitization', () => {
     expect(out.dryRun).toBe(true);
     expect(out.flagOverrides).toEqual({ CARE_WATER_LEDGER_ENABLED: true });
   });
-  it('arrays/garbage/absence -> null; the whitelist is exactly the five CARE flags', () => {
+  it('arrays/garbage/absence -> null; the whitelist is exactly the six CARE flags', () => {
     expect(resolveInvokeOptions({ flagOverrides: [true] }, OPTS).flagOverrides).toBeNull();
     expect(resolveInvokeOptions({ flagOverrides: 'CARE_WATER_LEDGER_ENABLED' }, OPTS).flagOverrides).toBeNull();
     expect(resolveInvokeOptions({}, OPTS).flagOverrides).toBeNull();
     expect(LEDGER_OVERRIDABLE_FLAGS).toEqual(['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
-      'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED']);
+      'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED',
+      'CARE_RAIN_MEASURED_CREDIT_ENABLED']);
+  });
+  // DRG-INTRADAY-002 Track 0. Asserted on its own rather than left to the list pin above, because
+  // the list pin passes whether or not the name is spelled the same as the read site at :939 — and
+  // a near-miss there strips the key silently, which is exactly how this went unnoticed until a
+  // replay produced a number for a question nobody asked.
+  it('CARE_RAIN_MEASURED_CREDIT_ENABLED survives sanitization on a dry run, both directions', () => {
+    expect(resolveInvokeOptions({ flagOverrides: { CARE_RAIN_MEASURED_CREDIT_ENABLED: false } }, OPTS).flagOverrides)
+      .toEqual({ CARE_RAIN_MEASURED_CREDIT_ENABLED: false });
+    expect(resolveInvokeOptions({ flagOverrides: { CARE_RAIN_MEASURED_CREDIT_ENABLED: true } }, OPTS).flagOverrides)
+      .toEqual({ CARE_RAIN_MEASURED_CREDIT_ENABLED: true });
+    // Still hard-rejected on a live run — widening the whitelist must not widen the blast radius.
+    expect(resolveInvokeOptions({ flagOverrides: { CARE_RAIN_MEASURED_CREDIT_ENABLED: false } },
+      { envDryRun: 'false', todayDefault: TODAY }).flagOverrides).toBeNull();
   });
 });
 

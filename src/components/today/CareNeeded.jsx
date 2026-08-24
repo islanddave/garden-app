@@ -270,9 +270,21 @@ export default function CareNeeded({ plan }) {
     () => allRows.filter(r => !logged.has(r.key) && !skipped.has(r.key)),
     [allRows, logged, skipped],
   )
-  const enrichedRows = useMemo(
-    () => rows.map(r => { const e = enrichById[r.plantingId]; return e ? { ...r, ...e } : r }),
-    [rows, enrichById],
+  const enrich = useCallback(
+    (r) => { const e = enrichById[r.plantingId]; return e ? { ...r, ...e } : r },
+    [enrichById],
+  )
+  const enrichedRows = useMemo(() => rows.map(enrich), [rows, enrich])
+  // BUG-TODAYCAREREORDER-001 (BD-036) — the ordering set. Deliberately NOT `rows`: it withholds
+  // `skipped` but keeps `logged`, so the layout is computed against the list as it stood when Dave
+  // arrived and does not move as he drains it. Logging is the side effect he named — tapping Log
+  // down a location group dropped that group's summed severity and slid the section out from under
+  // his finger onto the next plant. Skips stay withheld because a skip is an explicit user action
+  // (his rule permits re-sorting on those) AND because they persist all day across devices, so
+  // counting them would rank a group by work already declined.
+  const orderingRows = useMemo(
+    () => allRows.filter(r => !skipped.has(r.key)).map(enrich),
+    [allRows, skipped, enrich],
   )
   // Staleness state (skeptic seat): when half the water list rests on a record >= WATER_STALE_DAYS
   // old, the honest claim is "no recent record", not "N plantings are thirsty" — so the note below
@@ -290,15 +302,29 @@ export default function CareNeeded({ plan }) {
   const staleness = useMemo(() => waterStaleness(plan), [plan])
   const [showCapped, setShowCapped] = useState(false)
   const capping = staleness.stale && !showCapped
-  const groups = useMemo(() => {
-    const gs = groupRows(enrichedRows, mode)
+  // BD-036 — the pinned layout, computed once per (plan, mode, capping) from `orderingRows`. It
+  // supplies BOTH the group order and the auto-expand set, because both were functions of the
+  // draining list: autoExpandKeys walks groups filling a row budget, so logging rows out of a group
+  // freed budget and silently opened a collapsed section further down the page — the same finger-
+  // level movement as the re-sort, from a second source. Capping is included because it changes the
+  // row counts the budget is spent against.
+  const pinnedGroups = useMemo(() => {
+    const gs = groupRows(orderingRows, mode)
     return gs.map(g => {
       const c = capping ? capStaleRows(g.rows, WATER_STALE_CAP) : { rows: g.rows, hidden: 0 }
       return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length }
     })
-  }, [enrichedRows, mode, capping])
+  }, [orderingRows, mode, capping])
+  const pinnedOrder = useMemo(() => pinnedGroups.map(g => g.key), [pinnedGroups])
+  const groups = useMemo(() => {
+    const gs = groupRows(enrichedRows, mode, pinnedOrder)
+    return gs.map(g => {
+      const c = capping ? capStaleRows(g.rows, WATER_STALE_CAP) : { rows: g.rows, hidden: 0 }
+      return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length }
+    })
+  }, [enrichedRows, mode, capping, pinnedOrder])
   const total = rows.length
-  const autoKeys = useMemo(() => autoExpandKeys(groups, EXPAND_ROW_BUDGET), [groups])
+  const autoKeys = useMemo(() => autoExpandKeys(pinnedGroups, EXPAND_ROW_BUDGET), [pinnedGroups])
 
   const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
 

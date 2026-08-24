@@ -1163,8 +1163,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
 // matter what the event carried (hard-reject, not best-effort); when dry, only whitelisted flag
 // names with strict-boolean values pass through. NEVER an env-based A/B — an env flip arms the live
 // EventBridge runs (canon landmine).
+// CARE_RAIN_MEASURED_CREDIT_ENABLED added 2026-08-24 (DRG-INTRADAY-002 Track 0). Its read site at
+// :939 already went through `_flag`, so the override was honoured everywhere EXCEPT this list — the
+// one place that decides whether it arrives. The gap made Track 0 unmeasurable on the only day it
+// mattered: the flag flipped live at 13:13Z while the stored plan had been generated 09:30Z, so a
+// replay compared two different engines and could not separate intraday freshness from the flip.
+// Without this entry the instrument silently answers a different question than the one asked.
 const LEDGER_OVERRIDABLE_FLAGS = ['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
-  'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED'];
+  'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED',
+  'CARE_RAIN_MEASURED_CREDIT_ENABLED'];
 function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   const envLive = String(envDryRun ?? 'true').toLowerCase() === 'false';
   const dryRun = (event && event.dryRun === true) ? true : !envLive;
