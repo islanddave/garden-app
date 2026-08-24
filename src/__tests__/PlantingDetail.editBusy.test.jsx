@@ -207,3 +207,82 @@ describe('PlantingDetail — V4-SHEETBUSY-001: the Edit fly-up resists dismissal
     await waitFor(() => expect(screen.getByText('GARDEN PAGE')).toBeTruthy())
   })
 })
+
+// ── BUG-DIRTYDISMISSGAP-001 — the DIRTY term, which `busy` above does not cover ─────────────────
+//
+// Sibling to the suite above: same root gap, other side of it. That one pins that a form with a
+// WRITE ON THE WIRE resists dismissal (`busy`). This pins that a form with TYPING IN IT does too —
+// which `dirty` alone does NOT deliver, for exactly the reason this file's header already gives:
+// confirmOnDirty is false at both registry call sites, so `dirty` gates the backdrop tap alone and
+// Escape/Back close outright.
+//
+// WHY THIS SURFACE FIRST, of the four that pass `dirty`. Recovery is not uniform: EventNew carries
+// a full draftStash so a discarded /log overlay restores, SowNow stashes an inventory id.
+// PlantingEditor has NO draft stash, so what is typed here is simply gone. Dave is Android-only, so
+// Back — not Escape — is the gesture that fires this in practice, and it gets its own assertion.
+//
+// The guard is requestCloseEditor on the SHEET only; the editor's own Cancel and its post-save
+// close keep plain closeEditor, because a save that SUCCEEDED must never ask to discard.
+describe('PlantingDetail — BUG-DIRTYDISMISSGAP-001: a DIRTY Edit fly-up is not discarded silently', () => {
+  // primeWithHangingSave serves the planting rows; its hang is on PUT, which nothing here fires.
+  async function openEditorAndType(value = 'Renamed In Progress') {
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(screen.getByText('Edit Megatron Jalapeno')).toBeTruthy())
+    fireEvent.change(within(sheet()).getByLabelText(/Name/i), { target: { value } })
+    // Precondition ASSERTED, not assumed — isReloadBlocked is the page's own read of editorDirty,
+    // and it is what the sibling suite uses to prove its own forms are pristine.
+    await waitFor(() => expect(isReloadBlocked()).toBe(true))
+  }
+
+  it('Escape on a dirty form prompts, and declining keeps BOTH the sheet and the typing', async () => {
+    primeWithHangingSave()
+    renderPage()
+    await openEditorAndType()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await esc()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(sheet()).toBeTruthy()
+    // The characters, not just the sheet — losing the sheet is recoverable, losing these is not.
+    expect(within(sheet()).getByLabelText(/Name/i).value).toBe('Renamed In Progress')
+    confirmSpy.mockRestore()
+  })
+
+  it('Android hardware Back on a dirty form prompts, and declining keeps the sheet', async () => {
+    // Back routes through decideBack, a DIFFERENT registry call site from Escape's decideDismiss,
+    // so one passing does not imply the other — which is exactly how the busy gap shipped half
+    // covered. This is also the gesture Dave actually uses.
+    primeWithHangingSave()
+    renderPage()
+    await openEditorAndType()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await backGesture()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(sheet()).toBeTruthy()
+    confirmSpy.mockRestore()
+  })
+
+  it('accepting the prompt DOES discard — the guard must not be a trap', async () => {
+    primeWithHangingSave()
+    renderPage()
+    await openEditorAndType()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await esc()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(sheet()).toBeNull())
+    confirmSpy.mockRestore()
+  })
+
+  it('a PRISTINE form closes on Escape with NO prompt — no nag on an untouched sheet', async () => {
+    primeWithHangingSave()
+    renderPage()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(screen.getByLabelText('Edit this planting')) })
+    await waitFor(() => expect(sheet()).toBeTruthy())
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await esc()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await waitFor(() => expect(sheet()).toBeNull())
+    confirmSpy.mockRestore()
+  })
+})
