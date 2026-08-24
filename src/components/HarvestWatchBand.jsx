@@ -95,6 +95,12 @@ export default function HarvestWatchBand() {
   const [rowUi, setRowUi] = useState({})
   const [revealed, setRevealed] = useState(readReveal)
   const [snoozedOpen, setSnoozedOpen] = useState(false) // defaults collapsed every mount (panel Q4)
+  // plant_id -> { busy?: boolean, restored?: boolean, error?: string } for the Snoozed subgroup.
+  // Deliberately NOT rowUi: that map drives the candidate rows' dismissed/undo branch, and a
+  // plant_id can only ever be in one of the two lists (the server marks a suppressed planting
+  // eligible:false and moves it to `snoozed`), so sharing the map would only make the two states
+  // look interchangeable when they are not.
+  const [snoozeUi, setSnoozeUi] = useState({})
   const [, bumpWindow] = useReducer(t => t + 1, 0)
 
   const setReveal = useCallback((n) => { writeReveal(n); setRevealed(n) }, [])
@@ -164,6 +170,48 @@ export default function HarvestWatchBand() {
         }
       })
   }, [fetch, rowUi])
+
+  // BD-045 D1 / V4-HANDEDNESSCONTROLS-001 recon — THE UNDO GAP. Until this existed, "Not yet" was
+  // the one irreversible control on Today. It writes suppressed_until = observed_on + 10 days
+  // (WATCH_SUPPRESS_DAYS, lambda/harvests/watch.js), and a returning planting with a byte-identical
+  // basis is suppressed one more cycle — worst case 20 days invisible. The only retraction was the
+  // in-place Undo above, which renders from `rowUi` and `rowUi` is useState({}): navigate away from
+  // Today, or let the tab reload, and it is gone. The row is no longer in `candidates` either
+  // (server: eligible:false, reason:'dismissed'), so it lands here in Snoozed, which was a set of
+  // read-only prints. A single stray thumb tap therefore removed a planting from the watch list for
+  // 10-20 days with no way back from anywhere in the app — on a system whose own header records
+  // 11.8% calibration and a -22d median error, that is a missed or over-ripe harvest.
+  //
+  // WHY THE BOOLEAN TOGGLE AND NOT DELETE /watch/dismissals/:id. The by-id path is the preferred one
+  // above only because the dismissal RESPONSE hands the id back. Nothing hands it back here:
+  // projectSnoozedRow (watch.js) projects plant_id/project_id/name/location_name/crop_display_name/
+  // suppressed_until/reason and no dismissal id, and the snoozed rows are built from a verdict, not
+  // from a dismissal row the client ever saw. The toggle is exact regardless — handleDismissToggle
+  // scopes its UPDATE to user_id AND plant_id and takes the single newest active dismissal
+  // (ORDER BY observed_on DESC, dismissed_at DESC LIMIT 1), which is precisely the row holding this
+  // planting's live suppression.
+  //
+  // SOFT UNDO, never a delete: it sets undone_at and leaves the row, its frozen model snapshot and
+  // its observed_on intact. A retracted observation is itself labelled data for the calibration
+  // refit — see handleDismissToggle's header, which names the hard DELETE as the one invariant this
+  // path must never acquire.
+  //
+  // Reload rather than splice the row out locally: whether an un-suppressed planting is a CANDIDATE
+  // again is the server's verdict (eligibility, ranking, basis), not something the band can infer.
+  const restoreSnoozed = useCallback((s) => {
+    const id = s.plant_id
+    setSnoozeUi(u => ({ ...u, [id]: { busy: true, error: null } }))
+    fetch('/api/harvests/watch/dismiss', {
+      method: 'POST',
+      body: JSON.stringify({ plant_id: id, project_id: s.project_id ?? null, dismissed: false }),
+    })
+      .then(() => {
+        setSnoozeUi(u => ({ ...u, [id]: { busy: false, restored: true, error: null } }))
+        load()
+      })
+      // Same posture as dismissRow: never come to rest claiming a write that did not land.
+      .catch(() => setSnoozeUi(u => ({ ...u, [id]: { busy: false, error: 'Could not save — try again.' } })))
+  }, [fetch, load])
 
   const all = rankWatchCandidates(data?.candidates)
   const snoozed = Array.isArray(data?.snoozed) ? data.snoozed.filter(s => s && s.plant_id != null) : []
@@ -382,8 +430,13 @@ export default function HarvestWatchBand() {
 
           {/* "Snoozed" subgroup (panel Q3/Q4): every suppressed row prints its return date.
               Defaults collapsed, individually expandable — R6 stays reachable without revealing
-              the whole overflow. Rows are read-only prints; the in-session Undo lives on the row
-              that was just dismissed, above. */}
+              the whole overflow.
+              Each row now carries "Bring back" (see restoreSnoozed): this is the ONLY retraction
+              that survives leaving the page, and it is placed here rather than on a new surface
+              because this list is already the one place a snoozed planting is visible at all. It
+              mirrors the in-session Undo's geometry (48px, right of the line) deliberately — the
+              handedness of these controls is an open Dave decision (V4-HANDEDNESSCONTROLS-001) and
+              inventing a second convention here would pre-empt it. */}
           {snoozed.length > 0 && (
             <>
               <button
@@ -400,15 +453,43 @@ export default function HarvestWatchBand() {
                 <ul id="harvest-watch-snoozed" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}>
                   {snoozed.map(s => {
                     const back = monthDayLabel(s.suppressed_until)
+                    const name = s.name || s.crop_display_name || 'Planting'
+                    const ui = snoozeUi[s.plant_id] ?? {}
                     return (
                       <li key={s.plant_id} style={{ borderTop: `1px solid ${P.border}`, padding: '8px 0' }}>
-                        <span style={{ fontSize: '0.8rem', color: P.mid }}>
-                          {s.name || s.crop_display_name || 'Planting'}
-                        </span>
-                        <span style={{ fontSize: '0.74rem', color: P.light }}>
-                          {s.location_name ? ` · ${s.location_name}` : ''}
-                          {back ? ` · back ${back}` : ' · snoozed for the season'}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ fontSize: '0.8rem', color: P.mid }}>{name}</span>
+                            <span style={{ fontSize: '0.74rem', color: P.light }}>
+                              {s.location_name ? ` · ${s.location_name}` : ''}
+                              {back ? ` · back ${back}` : ' · snoozed for the season'}
+                            </span>
+                          </span>
+                          {ui.restored
+                            ? (
+                              // Declarative, quiet, in place — the band's Reward-UX posture (no toast,
+                              // no celebration). The reload this kicked off will drop the row.
+                              <span style={{ fontSize: '0.74rem', color: P.light, flexShrink: 0 }}>Back on the list.</span>
+                            )
+                            : (
+                              <button
+                                type="button"
+                                aria-label={`Bring back ${name}`}
+                                disabled={!!ui.busy}
+                                onClick={() => restoreSnoozed(s)}
+                                style={{
+                                  minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
+                                  cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
+                                  color: P.green,
+                                }}
+                              >
+                                Bring back
+                              </button>
+                            )}
+                        </div>
+                        {ui.error && (
+                          <div role="alert" style={{ fontSize: '0.74rem', color: P.terra, paddingTop: 2 }}>{ui.error}</div>
+                        )}
                       </li>
                     )
                   })}

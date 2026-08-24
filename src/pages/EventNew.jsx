@@ -2025,43 +2025,6 @@ export default function EventNew() {
   const harvestBlock = (
           form.event_type === 'harvest' && (
             <Section id={HARVEST_SECTION_ID} label="Harvest *">
-              {/* V4-QUICKHITRANGE-001 (BD-047) — the 1-6 quick-pick chips became a digit BUILDER.
-                  Supersedes V4-HARVQTYCHIPS-001's replace semantics. The single-digit fast path is
-                  byte-identical in cost — one tap on '3' still yields '3', and that is 83.2% of
-                  measured quantities. What changed is the tail: '13' was "tap the field, raise the
-                  keyboard, type 1, type 3" and is now "tap 1, tap 3". BD-047 originally asked to
-                  halve the buttons and extend the range to 20; ten keys cover every value instead,
-                  and halving would have taken the keys under the 44px touch floor BD-047 itself
-                  warned about. The field below is still untouched for anyone who wants to type.
-
-                  Sits outside <Field> deliberately: Field's frozen contract takes EXACTLY ONE
-                  focusable control and clones ARIA onto it (components/forms/Field.jsx), so a
-                  key group inside it would trip contractWarn and steal the input's wiring.
-
-                  BUG-HARVROWOVERFLOW-001 + BUG-HARVUNITVIS-001 — the pad is a FULL-WIDTH sibling
-                  of the quantity/unit row, NOT nested in that row's flex:2 column. Nesting it made
-                  both filed defects one defect: the grid's min-content (now 5*44 + 4*8 = 252px,
-                  down from the 6-chip row's 304px) inside two-thirds of the row forced a 399px
-                  min-content against a 390px viewport — the overlay Sheet scrolled sideways and the
-                  page scaled down ~2.3% — and it put the unit <Select> beside the KEYS rather than
-                  beside the quantity input, squeezing it to ~85px where the selected unit is not
-                  legible. A wrong-unit harvest logs unnoticed, so that one is data integrity, not
-                  polish. Full width keeps both fixed, with more headroom than before. */}
-              <NumberPad
-                value={harvest.quantity}
-                onChange={v => {
-                  setHarvest(h => ({ ...h, quantity: v }))
-                  if (harvestError) setHarvestError(null)
-                }}
-                idPrefix="qty-chip"
-                ariaLabel="Harvest quantity quick pick"
-                keyAriaPrefix="Harvest quantity"
-                // V4-WEIGHKBDNEXT-001 (BD-046), session only. Outside the session the keyboard is
-                // still reachable, so Enter still advances and this button would be a second way to
-                // do one thing. Inside it, inputMode="none" means Enter no longer exists.
-                onPrimary={inHarvestSession ? (() => { document.getElementById('harvest-weight')?.focus() }) : undefined}
-                primaryLabel="Next →"
-              />
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ flex: 2 }}>
                   <Field label="Quantity *" htmlFor="harvest-quantity">
@@ -2121,6 +2084,81 @@ export default function EventNew() {
                     </Select>
                   </Field>
                 </div>
+              </div>
+              {/* V4-QUICKHITRANGE-001 (BD-047) — the 1-6 quick-pick chips became a digit BUILDER.
+                  Supersedes V4-HARVQTYCHIPS-001's replace semantics. The single-digit fast path is
+                  byte-identical in cost — one tap on '3' still yields '3', and that is 83.2% of
+                  measured quantities. What changed is the tail: '13' was "tap the field, raise the
+                  keyboard, type 1, type 3" and is now "tap 1, tap 3". BD-047 originally asked to
+                  halve the buttons and extend the range to 20; ten keys cover every value instead,
+                  and halving would have taken the keys under the 44px touch floor BD-047 itself
+                  warned about. The field above is still untouched for anyone who wants to type.
+
+                  Sits outside <Field> deliberately: Field's frozen contract takes EXACTLY ONE
+                  focusable control and clones ARIA onto it (components/forms/Field.jsx), so a
+                  key group inside it would trip contractWarn and steal the input's wiring.
+
+                  BUG-HARVROWOVERFLOW-001 + BUG-HARVUNITVIS-001 — the pad is a FULL-WIDTH sibling
+                  of the quantity/unit row, NOT nested in that row's flex:2 column. Nesting it made
+                  both filed defects one defect: the grid's min-content (now 5*44 + 4*8 = 252px,
+                  down from the 6-chip row's 304px) inside two-thirds of the row forced a 399px
+                  min-content against a 390px viewport — the overlay Sheet scrolled sideways and the
+                  page scaled down ~2.3% — and it put the unit <Select> beside the KEYS rather than
+                  beside the quantity input, squeezing it to ~85px where the selected unit is not
+                  legible. A wrong-unit harvest logs unnoticed, so that one is data integrity, not
+                  polish. Full width keeps both fixed, with more headroom than before.
+
+                  BELOW its field, not above (V4-WEIGHMOBILEVIEWPORT-001). It sat above only because
+                  it inherited the slot V4-HARVQTYCHIPS-001's chip row vacated — no comment at
+                  either render site ever argued for above-vs-below, and the one position decision on
+                  this surface that WAS deliberate (6 columns, not 5) carries a measured
+                  justification with coordinates. The weight pad, having no predecessor, was placed
+                  fresh and chose below, so the panel shipped with two grammars for one control type.
+                  Three reasons for unifying on below. (a) SEQUENCE: `Next →` advances DOWNWARD to
+                  #harvest-weight, so with the pad above, the advance control sat above both the
+                  field it leaves and the field it targets; below puts it between them. (b) The keys
+                  Dave taps most per harvest drop 72px toward his thumb, for free — this is a
+                  reorder, not a growth. (c) The focus anchor (anchorSectionToTop, below) exists to
+                  keep quantity, weight, the error banner and Save co-visible; it used to spend its
+                  first 104-160px on the pad before quantity appeared.
+                  ⚠️ MEASURED in tests/harness at a true 390x500 (iframe, not --window-size — macOS
+                  Chrome floors a window at ~500px and CROPS rather than reflows, so a narrow window
+                  measures a 500px layout), non-session, keyboard-open layout with quantity focused
+                  and the section anchored. Before -> after: quantity input y161-200 -> y49-88; pad
+                  bottom row y85-133 -> y157-205; weight input y239-278 and Save y440-488 BOTH
+                  byte-identical (see the marginTop note below — that is what makes it a pure
+                  reorder). Every bottom-row key returns ITSELF from elementFromPoint and true from
+                  checkVisibility(), 235px clear of the sticky Save band — the risk this reorder had
+                  to clear, since the non-session path keeps inputMode="decimal" and therefore really
+                  does meet 390x500. offsetParent was NOT used: it reports both occluded content and
+                  content-visibility:hidden content as visible. jsdom returns zero rects and can
+                  falsify none of this. */}
+              {/* marginTop:8 is NOT cosmetic — it makes this a PURE reorder. NumberPad carries
+                  marginBottom:8; above the field that 8px was the pad→row gap, but below the field
+                  it lands against the weight group's marginTop:14 and COLLAPSES into it (this
+                  Section is block flow, not a flex column), so the naive move silently shortened the
+                  panel by 8px and lifted everything under it. MEASURED, and it mattered: the weight
+                  pad's bottom row rose y409-457 -> y403-451, and against the sticky Save band at
+                  y384-432 (session, synthetic 390x500) that turned a 1px elementFromPoint clearance
+                  into a 5px OCCLUSION — the band answered the hit test instead of the key. Restoring
+                  the 8px puts every element below this pad back on its shipped coordinate, so the
+                  diff moves the pad and nothing else. */}
+              <div style={{ marginTop: 8 }}>
+                <NumberPad
+                  value={harvest.quantity}
+                  onChange={v => {
+                    setHarvest(h => ({ ...h, quantity: v }))
+                    if (harvestError) setHarvestError(null)
+                  }}
+                  idPrefix="qty-chip"
+                  ariaLabel="Harvest quantity quick pick"
+                  keyAriaPrefix="Harvest quantity"
+                  // V4-WEIGHKBDNEXT-001 (BD-046), session only. Outside the session the keyboard is
+                  // still reachable, so Enter still advances and this button would be a second way to
+                  // do one thing. Inside it, inputMode="none" means Enter no longer exists.
+                  onPrimary={inHarvestSession ? (() => { document.getElementById('harvest-weight')?.focus() }) : undefined}
+                  primaryLabel="Next →"
+                />
               </div>
               {/* ── V4-HARVDUAL-001 Slice B: optional weight, alongside the count ──
                   Deliberately SECONDARY to quantity: smaller label, no asterisk, blank by default,

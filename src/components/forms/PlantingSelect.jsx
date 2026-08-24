@@ -195,14 +195,23 @@ export function readChromeInsets(anchorEl = null, inOverlay = false) {
 // floating panel with the list, so room the chips occupy is room the list cannot have, and a flip
 // threshold that ignored it would open a panel taller than the band it measured. panelExtra=0 is
 // arithmetically a no-op: every pre-chip caller and test keeps its exact behavior.
+// V4-WEIGHMOBILEVIEWPORT-001: `forceFlip` is the per-open direction latch (see the placement effect).
+// null = decide freely, which is every pre-latch caller and every existing test — arithmetically a
+// no-op. A boolean pins the DIRECTION and, critically, makes `room` follow it: overriding `flip`
+// on the RESULT would keep the maxHeight computed for the side we just declined, so a latched-down
+// panel would render the 280px it measured ABOVE into the 60px it actually has BELOW — a deliberate
+// overflow into the chrome band V4-KBVIEWPORT-001 subtracted for, i.e. the wrong-tap hazard back
+// again by the front door. The clamp below then does the rest: a latched direction that has gone
+// cramped renders the room it really has, down to the one-row LIST_ABS_MIN floor.
 export function computePlacement({
   rectTop, rectBottom, viewTop, viewBottom, chromeTop = 0, chromeBottom = 0, panelExtra = 0,
+  forceFlip = null,
 }) {
   const below = Math.floor(viewBottom - chromeBottom - rectBottom - LIST_GAP) - panelExtra
   const above = Math.floor(rectTop - viewTop - chromeTop - LIST_GAP) - panelExtra
   // Flip only when down genuinely cannot seat a choosable list AND up is roomier. A flip that buys
   // 10px is churn the user reads as jitter.
-  const flip = below < LIST_MIN_H && above > below
+  const flip = forceFlip === null ? (below < LIST_MIN_H && above > below) : forceFlip
   const room = flip ? above : below
   // When the roomier direction still cannot seat LIST_MIN_H, render the room we ACTUALLY have.
   // The old unconditional `Math.max(LIST_MIN_H, …)` floored a 40px gap up to 140px — a deliberate
@@ -221,7 +230,7 @@ export function computePlacement({
 // so every existing test keeps the previous down-280 behavior rather than silently exercising a new
 // path. That guard has its own test (PlantingSelectPlacement.test.jsx) — do not "fix" it by making
 // jsdom measure; 340+ test files depend on it.
-function measurePlacement(inputEl, inOverlay = false, panelExtra = 0) {
+function measurePlacement(inputEl, inOverlay = false, panelExtra = 0, forceFlip = null) {
   if (!inputEl || typeof inputEl.getBoundingClientRect !== 'function') return null
   const r = inputEl.getBoundingClientRect()
   if (!r || (!r.top && !r.bottom && !r.height)) return null
@@ -237,6 +246,7 @@ function measurePlacement(inputEl, inOverlay = false, panelExtra = 0) {
     // V4-CROPFILTER-001: chip-row height (zero rect in jsdom → 0 → the measure guard's
     // null/default path is untouched; the suite keeps today's arithmetic).
     panelExtra,
+    forceFlip,
   })
 }
 
@@ -661,8 +671,29 @@ export default function PlantingSelect({
   // V4-PICKERUX-001 P1 — measured placement. null = "could not measure", which renders exactly the
   // pre-P1 style (down, 280) rather than guessing.
   const [placement, setPlacement] = useState(null)
+  // V4-WEIGHMOBILEVIEWPORT-001 (BD-045) — DIRECTION IS LATCHED PER OPEN.
+  //
+  // Dave: the chooser "pops ABOVE or BELOW inconsistently… wants that HOMOGENIZED". The defect is
+  // sharper than inconsistency between opens. `apply` is subscribed to visualViewport `scroll` as
+  // well as `resize` (below), and both fire per compositor frame while the Android keyboard
+  // animates in — and the old bail only skipped no-op renders, so a direction change ALWAYS
+  // committed. Six inputs move during that animation (input y, viewport height, the chrome-inset
+  // flip, inOverlay, fixed-ancestor, live chip-row height), so the panel could flip WHILE Dave was
+  // watching it open, once per harvest, N times per session. Six columns of a NumberPad can be
+  // measured; a panel that changes sides mid-gesture cannot be aimed at at all.
+  //
+  // So: the FIRST measurable flip of an open wins and is held until the panel closes. maxHeight is
+  // deliberately NOT latched — the clamp must keep tracking, because the keyboard genuinely eats
+  // the room the list is sized against and a stale height either overflows the chrome band or
+  // wastes rows. Direction is the thing the thumb aims at; height is not.
+  //
+  // Reset lives in the closed/disabled branch of the effect below, which is reached on every
+  // close because `open` is a dep — NOT in a separate effect, so there is no ordering to get
+  // wrong. A close-then-reopen collapsed into a single React commit keeps the latch, which is the
+  // correct read: the panel never left the screen.
+  const flipLatchRef = useRef(null)
   useEffect(() => {
-    if (!open || disabled) { setPlacement(null); return }
+    if (!open || disabled) { flipLatchRef.current = null; setPlacement(null); return }
     let raf = 0
     const apply = () => {
       raf = 0
@@ -670,7 +701,13 @@ export default function PlantingSelect({
       // world) is the panelExtra term — measured rather than assumed, because the row wraps to a
       // second line on narrow viewports and the More tray expands it further.
       const extra = chipRowRef.current?.getBoundingClientRect?.().height || 0
-      const next = measurePlacement(inputRef.current, inOverlay, extra)
+      // The latch is threaded INTO the arithmetic, not applied to its result, so maxHeight is
+      // always the room on the side we are actually rendering — see computePlacement's forceFlip.
+      const next = measurePlacement(inputRef.current, inOverlay, extra, flipLatchRef.current)
+      // A null measure (jsdom, or a detached input) leaves the latch disarmed: "could not measure"
+      // is not a direction, and arming from it would freeze the panel on a guess. The first
+      // measurable open therefore arms it, and every later frame of that open obeys it.
+      if (next && flipLatchRef.current === null) flipLatchRef.current = next.flip
       // Bail when nothing changed: this runs on visualViewport scroll, which fires per compositor
       // frame during the keyboard animation. Re-rendering a 200-row listbox every frame, on the one
       // interaction where the device is already animating, is exactly the cost not worth paying.

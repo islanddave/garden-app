@@ -169,9 +169,17 @@ describe('V4-HARVFORMORDER-001 — harvest order', () => {
     renderEventNew('event_type=harvest')
     await flushLoad()
 
-    // V4-HARVQTYCHIPS-001 — all six chips, still above the field, still filling it in one tap.
+    // V4-HARVQTYCHIPS-001 — all six keys present, still filling the field in one tap.
     for (const q of ['1', '2', '3', '4', '5', '6']) expect(screen.getByTestId(`qty-chip-${q}`)).toBeTruthy()
-    expect(precedes(screen.getByTestId('qty-chip-1'), screen.getByLabelText('Harvest quantity'))).toBe(true)
+    // INVERTED by V4-WEIGHMOBILEVIEWPORT-001 (2026-08-24), deliberately, and kept rather than
+    // deleted so the change is legible. This line read `precedes(qty-chip-1, quantity) === true`:
+    // the pad sat ABOVE its field only because it inherited the slot the outgoing 1-6 chip row
+    // vacated, while the weight pad — which had no predecessor — was placed below its own. Both
+    // pads now follow their field. The ORDER is owned by EventNew.harvestQtyChips.test.jsx
+    // ("pad position is uniform"); what THIS test is for is that the V4-HARVFORMORDER-001 section
+    // shuffle leaves the pad and the two unit selects working, so the assertion is flipped, not
+    // dropped — a deleted line would have hidden which slice moved it.
+    expect(precedes(screen.getByLabelText('Harvest quantity'), screen.getByTestId('qty-chip-1'))).toBe(true)
     fireEvent.click(screen.getByTestId('qty-chip-3'))
     expect(screen.getByLabelText('Harvest quantity').value).toBe('3')
 
