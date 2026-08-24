@@ -16,22 +16,41 @@ export function parseTimeframe(raw) {
   return null;
 }
 
-// Keyset cursor = base64("<event_date ISO>|<uuid>"). Opaque to the client; decodes to the (date,id)
-// tuple the next page compares against. Malformed -> null (treated as first page, never a 500).
-export function encodeCursor(eventDate, id) {
-  const iso = eventDate instanceof Date ? eventDate.toISOString() : String(eventDate);
-  return Buffer.from(`${iso}|${id}`, 'utf8').toString('base64');
+// Keyset cursor = base64("<event_date ISO>|<created_at ISO>|<uuid>"). Opaque to the client; decodes
+// to the tuple the next page compares against. Malformed -> null (treated as first page, never 500).
+//
+// V4-HARVLOGENTRYORDER-001 (BD-040) added the middle component. The order key used to be
+// (event_date, id) DESC and `event_log.id` is a **uuid** — so within a day block the sort was
+// effectively random, which is exactly Dave's report that entries are not in the order he logged
+// them. Measured on live prod before the change: 13 of 13 entries misordered on 2026-08-24, 36 of 36
+// on 08-19, 39 of 39 on 08-17. Not a near-miss ordering; noise.
+//
+// `id` STAYS as the final component even though created_at now does the ordering work, because the
+// keyset needs a strictly unique tiebreaker: two rows written by the same bulk fan-out can share a
+// created_at to the microsecond, and a non-unique keyset silently drops or repeats rows at a page
+// boundary. It orders nothing a user can perceive; it makes the pagination total.
+export function encodeCursor(eventDate, createdAt, id) {
+  const iso = (v) => (v instanceof Date ? v.toISOString() : String(v));
+  return Buffer.from(`${iso(eventDate)}|${iso(createdAt)}|${id}`, 'utf8').toString('base64');
 }
 export function decodeCursor(cursor) {
   if (!cursor) return null;
   try {
     const s = Buffer.from(String(cursor), 'base64').toString('utf8');
-    const i = s.lastIndexOf('|');
-    if (i < 0) return null;
-    const eventDate = s.slice(0, i);
-    const id = s.slice(i + 1);
-    if (!eventDate || !id) return null;
-    return { eventDate, id };
+    const parts = s.split('|');
+    // BACKWARD COMPATIBLE, and it has to be: a client mid-pagination across the deploy holds a
+    // 2-part cursor, and rejecting it would throw them back to page 1 mid-scroll. A 2-part cursor
+    // keeps its old meaning and the caller falls back to the old comparison for that one page —
+    // the worst case is one page ordered the old way, not an error and not a gap.
+    if (parts.length === 2) {
+      const [eventDate, id] = parts;
+      if (!eventDate || !id) return null;
+      return { eventDate, createdAt: null, id };
+    }
+    if (parts.length !== 3) return null;
+    const [eventDate, createdAt, id] = parts;
+    if (!eventDate || !createdAt || !id) return null;
+    return { eventDate, createdAt, id };
   } catch { return null; }
 }
 

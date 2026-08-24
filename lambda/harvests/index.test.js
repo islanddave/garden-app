@@ -69,12 +69,29 @@ describe('timeframe CASE arms (source guard)', () => {
 });
 
 describe('cursor round-trip', () => {
-  it('encode then decode recovers (event_date, id)', () => {
+  it('encode then decode recovers (event_date, created_at, id)', () => {
     const d = new Date('2026-07-20T14:30:00.000Z');
+    const c8 = new Date('2026-07-24T09:05:00.000Z');   // entered later than the harvest date
     const id = '11111111-2222-4333-8444-555555555555';
-    const c = encodeCursor(d, id);
+    const c = encodeCursor(d, c8, id);
     expect(typeof c).toBe('string');
-    expect(decodeCursor(c)).toEqual({ eventDate: '2026-07-20T14:30:00.000Z', id });
+    expect(decodeCursor(c)).toEqual({
+      eventDate: '2026-07-20T14:30:00.000Z',
+      createdAt: '2026-07-24T09:05:00.000Z',
+      id,
+    });
+  });
+
+  // V4-HARVLOGENTRYORDER-001 (BD-040) — a client that started paginating BEFORE this deployed is
+  // holding a 2-part cursor. It must keep working: rejecting it returns null, which the handler
+  // reads as "first page" and would silently throw a mid-scroll reader back to the top of the log.
+  it('still decodes a pre-BD-040 two-part cursor, with createdAt null', () => {
+    const legacy = Buffer.from('2026-07-20T14:30:00.000Z|11111111-2222-4333-8444-555555555555', 'utf8').toString('base64');
+    expect(decodeCursor(legacy)).toEqual({
+      eventDate: '2026-07-20T14:30:00.000Z',
+      createdAt: null,
+      id: '11111111-2222-4333-8444-555555555555',
+    });
   });
   it('malformed / empty -> null (never throws)', () => {
     expect(decodeCursor(null)).toBeNull();

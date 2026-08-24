@@ -179,6 +179,8 @@ export const handler = async (event) => {
 
   const cur = decodeCursor(qp.cursor);
   const curDate = cur ? cur.eventDate : null;
+  // BD-040: null for a pre-deploy 2-part cursor, which the WHERE clause below branches on.
+  const curCreated = cur ? (cur.createdAt ?? null) : null;
   const curId = cur ? cur.id : null;
 
   const sql = neon(secrets.NEON_DATABASE_URL);
@@ -274,15 +276,34 @@ export const handler = async (event) => {
                 WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
               ))
           AND (${createdSince}::timestamptz IS NULL OR e.created_at >= ${createdSince}::timestamptz)
-          AND (${curDate}::timestamptz IS NULL OR (e.event_date, e.id) < (${curDate}::timestamptz, ${curId}::uuid))
-        ORDER BY e.event_date DESC, e.id DESC
+          AND (
+            ${curDate}::timestamptz IS NULL
+            OR (
+              -- V4-HARVLOGENTRYORDER-001 (BD-040). Two comparisons, one per cursor generation.
+              -- A 3-part cursor matches the new (event_date, created_at, id) order key. A 2-part
+              -- cursor (curCreated NULL) is one a client picked up before this deployed and is
+              -- still paginating with; it keeps the OLD comparison for that one page rather than
+              -- being rejected, which would throw a mid-scroll reader back to the top.
+              CASE WHEN ${curCreated}::timestamptz IS NULL
+                THEN (e.event_date, e.id) < (${curDate}::timestamptz, ${curId}::uuid)
+                ELSE (e.event_date, e.created_at, e.id)
+                       < (${curDate}::timestamptz, ${curCreated}::timestamptz, ${curId}::uuid)
+              END
+            )
+          )
+        -- Days newest-first, and WITHIN a day newest-ENTERED first. created_at, never event_date:
+        -- a harvest backdated to 08-21 while standing in the garden on 08-24 belongs in the 08-21
+        -- block (event_date groups it) but is the most recent thing Dave entered there, so it leads
+        -- that block. And never id: event_log.id is a uuid, so the old id-DESC tiebreak randomised
+        -- every day block. id survives only as the unique keyset tiebreaker.
+        ORDER BY e.event_date DESC, e.created_at DESC, e.id DESC
         LIMIT ${PAGE_LIMIT + 1}
       `;
       const hasMore = rows.length > PAGE_LIMIT;
       const page = hasMore ? rows.slice(0, PAGE_LIMIT) : rows;
       out.entries = page.map(projectEntry);
       const last = page[page.length - 1];
-      out.cursor = hasMore && last ? encodeCursor(last.event_date, last.event_id) : null;
+      out.cursor = hasMore && last ? encodeCursor(last.event_date, last.created_at, last.event_id) : null;
     }
 
     if (wantAggregates) {
