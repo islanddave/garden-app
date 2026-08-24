@@ -22,13 +22,19 @@
 //   * I7 photo thumbnails: this Lambda returns photo IDs only (no S3 presign, no S3_PHOTOS/PHOTO_CDN
 //     env). The client resolves each thumbnail lazily against the EXISTING household-scoped
 //     GET /api/photos/view-url/:id (the PutUpPhotoThumb precedent) — one canonical photo-URL path.
+//     V4-HARVCROPPHOTO-001 adds a SECOND id-bearing field (aggregates.crops[].hero_photo_id) under
+//     the same rule, and the rule is now load-bearing rather than incidental: 31 crop heroes measured
+//     134 MB as originals against 5.6 MB as thumbs (live S3, 2026-08-24), so the tier the client
+//     asks for is worth ~24x the payload. Reversing the decline — copying photo-access.js in and
+//     granting the photos bucket — would let this response carry both derivative URLs and cost zero
+//     extra round trips, which is exactly what it buys and why it stays Dave's call, not a lane's.
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
 // Pure, DB-free helpers live in ./aggregate.js so they unit-test without this file's runtime deps
 // (neon/clerk/aws — absent from root package.json under CI `npm ci`). See lambda/preservation/attribution.js.
-import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates, applyWeights } from './aggregate.js';
+import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates, applyWeights, applyCropHeroPhotos } from './aggregate.js';
 // V4-HARVSURFACE-001 — Today watch list + "not yet" dismissal. Same DB-free-pure / DB-touching split:
 // watch.js holds the candidate logic, watch-route.js the SQL and request contract.
 import {
@@ -37,7 +43,7 @@ import {
 // V4-READYTRAYIMPRESSION-001 — the weigh-in tray's impression beacon. Same prefix trick, same
 // pure/DB split; separate module because it serves a different surface with a different model.
 import { matchReadyImpressionRoute, handleReadyImpressionPost } from './ready-impression.js';
-export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates, shapeWeightRow, applyWeights } from './aggregate.js';
+export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates, shapeWeightRow, applyWeights, applyCropHeroPhotos } from './aggregate.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -446,6 +452,46 @@ export const handler = async (event) => {
       // an older client ignores them, and the crop/grand-total numbers it does read are unchanged
       // (GROUPING SETS computes each set independently: adding members cannot move an existing one).
       applyWeights(out.aggregates, weightRows);
+
+      // V4-HARVCROPPHOTO-001 — one photo ID per crop, for the planting computeAggregates named as
+      // that crop's most recent pick. IDS ONLY: the I7 note at the top of this file still holds, so
+      // there is no presign, no S3 client and no photos-bucket env here. The client resolves each id
+      // against the household-scoped GET /api/photos/view-url/:id (the PutUpPhotoThumb precedent).
+      //
+      // WHY A SEPARATE QUERY rather than a column on the aggregates SELECT: that rowset is one row
+      // per harvest EVENT (874 live), and this question has ONE answer per crop (31 live). Joining
+      // photos there would pay ~28x the lookups for the same answer, on the query that already
+      // carries the archive anti-join and feeds every total on the page. Here the driving set is the
+      // winners themselves, and when there are none the query does not run at all.
+      //
+      // The FALLBACK is the whole reason this is not a bare featured_photo_id read: 30 of 31 live
+      // crops resolve through `fph`, and the 31st (blackberry) has four photos hanging off its
+      // HARVEST EVENTS and none on the plant row, so a plant_id-only fallback would still miss it.
+      // The LATERAL therefore reaches both attachment points. `fph` is joined rather than read off
+      // gn directly so a featured pointer at a soft-deleted photo falls through to the fallback
+      // instead of emitting an id that can only 404.
+      const heroPlantIds = [...new Set((out.aggregates.crops ?? []).map((c) => c.hero_plant_id).filter(Boolean))];
+      if (heroPlantIds.length > 0) {
+        const heroRows = await sql`
+          SELECT gn.id AS plant_id, COALESCE(fph.id, alt.id) AS photo_id
+          FROM public.garden_node gn
+          LEFT JOIN photos fph ON fph.id = gn.featured_photo_id AND fph.deleted_at IS NULL
+          LEFT JOIN LATERAL (
+            SELECT p.id
+            FROM photos p
+            LEFT JOIN event_log pe ON pe.id = p.event_id AND pe.deleted_at IS NULL
+            WHERE p.deleted_at IS NULL AND (p.plant_id = gn.id OR pe.plant_id = gn.id)
+            -- created_at, never taken_at: taken_at is 100% NULL on all 1094 live rows
+            -- (src/lib/photoModel.js), so sorting on it would be sorting on nothing.
+            ORDER BY p.created_at DESC, p.id DESC
+            LIMIT 1
+          ) alt ON true
+          WHERE gn.id = ANY(${heroPlantIds}::uuid[])
+        `;
+        applyCropHeroPhotos(out.aggregates, heroRows);
+      } else {
+        applyCropHeroPhotos(out.aggregates, []);
+      }
     }
 
     return resp(200, out);

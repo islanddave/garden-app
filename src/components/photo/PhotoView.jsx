@@ -38,14 +38,21 @@
 //   FALLBACK, NOT AN OVERRIDE. The flag only matters when the chain is empty; a row that DOES
 //     carry a URL renders from it with zero network, so a later server-side widening (events
 //     starting to send view_url) upgrades every id-only caller transparently, no client change.
-//   STILL FULL-TIER, BUT NO LONGER BECAUSE IT HAS TO BE. V4-TIERBLINDMINT-001 made the thumb
-//     addressable by id (`?tier=thumb`), so the old reason — "no thumb derivative is addressable" —
-//     is gone; this arm passes TIER.FULL as a CHOICE. It has no second source in hand: the chain is
-//     empty by definition, so `hasFallback` is false and PhotoImg's one retry would re-mint the same
-//     tier. A thumb that has no object (181 of 1094 live rows, BUG-PHOTONEWTHUMB-001) would 404,
-//     re-mint, 404 again and go TERMINAL BLANK, where today it renders the original fine. Asking for
-//     a tier costs nothing only when there is something to degrade to. A tier=THUMB caller therefore
-//     gets the full original — the same honest degrade sourceChain() performs for a thumb-less row.
+//   IT HONOURS `tier`, BY DEGRADING RATHER THAN BY CHOOSING (V4-HARVCROPPHOTO-001). This arm used
+//     to pass TIER.FULL for every caller, and the reason was sound at the time: it had no second
+//     source in hand, so `hasFallback` was false and PhotoImg's one retry would re-mint the SAME
+//     tier — a thumb with no object (181 of 1094 live rows, BUG-PHOTONEWTHUMB-001) would 404,
+//     re-mint, 404 and go terminal blank, where asking for the original rendered it fine. "Asking
+//     for a tier costs nothing only when there is something to degrade to" was the rule, and the
+//     answer was to ask for nothing. What changed is the second half, not the rule: V4-TIERBLINDMINT
+//     made BOTH derivatives addressable by id, so `idTiers` below can be a real two-rung chain
+//     (thumb → original) walked by the same `step` cursor and the same hasFallback contract as a
+//     URL-bearing row. A tier=THUMB caller now gets the thumb, and gets the original the moment the
+//     thumb fails — which is what "tier-blind" was standing in for all along.
+//     IT MATTERS AT SCALE, which is why it was worth changing: measured live 2026-08-24, the 31
+//     Harvest-Totals crop heroes are 134 MB as originals and 5.6 MB as thumbs, and 29 of the 31 have
+//     a thumb object. Default is unchanged — a caller that names no tier still resolves the original
+//     in exactly one request, so PutUpPhotoThumb and EventDetail are byte-identical.
 //   STATES (an async resolve has more than two): PENDING and UNRESOLVABLE both render PhotoImg's
 //     `fallback` — 'placeholder' (default) reserves the consumer's box, so a grid does not reflow
 //     when the mint lands, and a TERMINAL failure with a meaningful alt announces as role=img;
@@ -75,6 +82,17 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
   const p = toPhoto(photo)
   const chain = sourceChain(p, tier)
 
+  // The id-only arm's OWN chain, expressed in tiers because it has no URLs to express it in. It is
+  // the same degrade sourceChain() performs for a URL-bearing row — thumb first, original as the
+  // rung beneath — and it exists now for the reason the header's old "still full-tier" note gave for
+  // why it could not: the arm finally HAS a second source in hand, because ?tier= makes both
+  // derivatives addressable by id. Empty unless this render is actually taking the id-only branch,
+  // so `steps` below stays exactly chain.length for every URL-bearing caller.
+  const idTiers = (chain.length === 0 && resolveById && p?.id)
+    ? (tier === TIER.THUMB ? [TIER.THUMB, TIER.FULL] : [TIER.FULL])
+    : []
+  const steps = chain.length || idTiers.length
+
   // Reset the degrade cursor when the consumer swaps in a different photo (windowed grids and the
   // Lightbox both reuse one instance across ids). Render-time, matching PhotoImg's own adoption
   // idiom — an effect here would paint one frame of the previous photo's degraded source.
@@ -92,8 +110,8 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
   // spending a mint on a URL this component is about to replace.
   const handleError = useCallback((ev) => {
     onError?.(ev)
-    setStep(s => (s + 1 < chain.length ? s + 1 : s))
-  }, [onError, chain.length])
+    setStep(s => (s + 1 < steps ? s + 1 : s))
+  }, [onError, steps])
 
   if (!p) return null
 
@@ -101,13 +119,26 @@ export default function PhotoView({ photo, tier = TIER.FULL, alt, resolveById = 
   // URL: it fires only when there is nothing to render and an id to resolve with.
   if (!source) {
     if (!resolveById || !p.id) return null
+    const idStep = Math.min(step, idTiers.length - 1)
+    const idTier = idTiers[idStep]
+    const idAtLast = idStep >= idTiers.length - 1
+    // `key` is what makes the tier step REAL, and it is not decoration. PhotoImg resets on a changed
+    // photoId or a changed initialUrl; this arm has neither (same id, no URL at any step), so a bare
+    // mintTier swap would leave the failed thumb in `src` and the once-per-photoId mount-fetch guard
+    // would refuse to mint the original. Remounting is the honest way to say "different object".
+    // Cost of the degrade, stated: a DELETED id spends two mints instead of one (thumb 404 → step →
+    // full 404 → terminal). That is the right trade — a thumb-less-but-live photo is 2 of the 31
+    // live crop heroes measured 2026-08-24, a deleted one is the rarer case, and only one of the two
+    // outcomes loses a photo the user actually has.
     return (
       <PhotoImg
+        key={idTier}
         photoId={p.id}
-        mintTier={TIER.FULL}
+        mintTier={idTier}
+        hasFallback={!idAtLast}
         alt={alt === undefined ? p.alt : alt}
         onOpen={onOpen}
-        onError={onError}
+        onError={handleError}
         {...rest}
       />
     )

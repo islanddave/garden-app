@@ -84,11 +84,12 @@ describe('the arm resolves through the app’s one signed-URL path', () => {
     expect(fetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-1', { cache: 'no-store' })
   })
 
-  it('is TIER-BLIND: a thumb request resolves the same original, with one call not two', async () => {
+  it('a caller that names NO tier still resolves the original, in one call not two', async () => {
     fetchSpy.mockResolvedValue({ view_url: MINTED })
-    const { container } = render(<PhotoView photo={EVENT_ROW} tier={TIER.THUMB} resolveById />)
+    const { container } = render(<PhotoView photo={EVENT_ROW} resolveById />)
     await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(MINTED))
     expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-1', { cache: 'no-store' })
   })
 
   it('two co-visible thumbs of the same id share ONE mint (PhotoImg’s storm dedup)', async () => {
@@ -123,6 +124,51 @@ describe('the arm resolves through the app’s one signed-URL path', () => {
     expect(img(container).getAttribute('alt')).toBe('Photo 1 of 2')
     fireEvent.click(container.querySelector('button'))
     expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+})
+
+// V4-HARVCROPPHOTO-001 — the arm stopped being tier-blind, and these are why that is safe.
+//
+// It used to pass TIER.FULL for every caller because it had no second source to degrade onto. It has
+// one now (?tier= addresses both derivatives by id), so a THUMB request walks a real two-rung chain
+// under the same `step` cursor and the same hasFallback contract a URL-bearing row uses. The reason
+// it was worth changing is payload, and payload is exactly what jsdom cannot see: the 31 Harvest
+// Totals crop heroes measured 134 MB as originals against 5.6 MB as thumbs on live S3 (2026-08-24).
+// So the URL is asserted literally — a regression here is silent everywhere else.
+describe('the id-only tier chain: ask for the thumb, land on the original when there isn’t one', () => {
+  it('a THUMB request mints the thumb derivative, not the original', async () => {
+    fetchSpy.mockResolvedValue({ view_url: THUMB })
+    const { container } = render(<PhotoView photo={EVENT_ROW} tier={TIER.THUMB} resolveById />)
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(THUMB))
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-1?tier=thumb', { cache: 'no-store' })
+  })
+
+  // 181 of 1094 live photo rows have no thumb OBJECT, and the URL presigns fine regardless
+  // (BUG-PHOTONEWTHUMB-001) — so the only signal is the <img> failing to load. 2 of the 31 live crop
+  // heroes are in this state, and without the degrade they would render nothing at all.
+  it('degrades to the ORIGINAL when the thumb object does not exist', async () => {
+    fetchSpy.mockImplementation((url) => Promise.resolve(
+      String(url).includes('tier=thumb') ? { view_url: THUMB } : { view_url: FULL }))
+    const { container } = render(<PhotoView photo={EVENT_ROW} tier={TIER.THUMB} resolveById />)
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(THUMB))
+    fireEvent.error(img(container))
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(FULL))
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    expect(fetchSpy).toHaveBeenLastCalledWith('/api/photos/view-url/ph-1', { cache: 'no-store' })
+  })
+
+  it('stops at the original — a failing original does not loop back round the chain', async () => {
+    fetchSpy.mockImplementation((url) => Promise.resolve(
+      String(url).includes('tier=thumb') ? { view_url: THUMB } : { view_url: FULL }))
+    const { container } = render(<PhotoView photo={EVENT_ROW} tier={TIER.THUMB} resolveById fallback="none" />)
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(THUMB))
+    fireEvent.error(img(container))
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(FULL))
+    // The last rung owns the retry budget: one reactive re-mint, then terminal. Not a third tier.
+    fireEvent.error(img(container))
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3))
+    expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('tier=thumb'))).toHaveLength(1)
   })
 })
 

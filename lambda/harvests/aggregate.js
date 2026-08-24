@@ -191,8 +191,21 @@ export function computeAggregates(rows) {
 
     if (r.crop_slug) {
       let c = crops.get(r.crop_slug);
-      if (!c) { c = { crop_type_slug: r.crop_slug, crop_name: r.crop_name ?? r.crop_slug, units: new Map(), varieties: new Map(), unquantified: 0, weekly: new Map() }; crops.set(r.crop_slug, c); }
+      if (!c) { c = { crop_type_slug: r.crop_slug, crop_name: r.crop_name ?? r.crop_slug, units: new Map(), varieties: new Map(), unquantified: 0, weekly: new Map(), hero: null }; crops.set(r.crop_slug, c); }
       c.weekly.set(wk, (c.weekly.get(wk) ?? 0) + 1);
+      // V4-HARVCROPPHOTO-001 — the crop's MOST RECENTLY HARVESTED planting. first_pick[] tracks the
+      // minimum day_key and there was no maximum anywhere in the payload, so this is a new fact, not
+      // a re-read of one. Ordered (day_key, event_id) DESC to match the coverage query this feature
+      // was sized against; day_key is date-grain so a same-day tie needs the second key, and
+      // event_id is the only strictly-unique field in this rowset — WITHOUT it the winner would
+      // depend on Postgres row order and could differ between two identical requests.
+      // gn_id gates it for the same reason first_pick does: a soft-deleted planting LEFT-JOINs to
+      // NULL, and naming it as the hero would resolve a photo off a row the page cannot show.
+      if (r.plant_id != null && r.gn_id != null
+          && (!c.hero || r.day_key > c.hero.day_key
+              || (r.day_key === c.hero.day_key && String(r.event_id) > String(c.hero.event_id)))) {
+        c.hero = { plant_id: r.plant_id, day_key: r.day_key, event_id: r.event_id };
+      }
       if (hasQty) addUnit(c.units, r.unit, q); else c.unquantified += 1;
       const vkey = r.variety_id ?? '__novar__';
       let v = c.varieties.get(vkey);
@@ -215,6 +228,10 @@ export function computeAggregates(rows) {
       crop_name: c.crop_name,
       units: serializeUnits(c.units),
       unquantified: c.unquantified,
+      // ADDITIVE, same contract as weekly[] above: the planting whose photo represents this crop.
+      // The PHOTO id is NOT resolved here — that needs a second query, so it arrives via
+      // applyCropHeroPhotos() below and this field is what keys the two together.
+      hero_plant_id: c.hero?.plant_id ?? null,
       weekly: [...c.weekly.entries()].map(([week_start, count]) => ({ week_start, count })).sort((a, b) => a.week_start.localeCompare(b.week_start)),
       varieties: [...c.varieties.values()].map((v) => ({
         variety_id: v.variety_id, variety_name: v.variety_name, units: serializeUnits(v.units), unquantified: v.unquantified,
@@ -332,5 +349,33 @@ export function applyWeights(aggregates, weightRows) {
     f.weight = byPlanting.get(f.plant_id) ?? shapeWeightRow(null);
   }
   aggregates.crops?.sort(byWeightThenName((c) => c.crop_name));
+  return aggregates;
+}
+
+// ── Crop hero photo, merged onto the aggregate shape (V4-HARVCROPPHOTO-001) ─────────────────────
+//
+// rows = [{ plant_id, photo_id }] for the plantings computeAggregates named in hero_plant_id. Pure
+// and exported for the same reason applyWeights is: index.js cannot be imported by the root vitest
+// run, so a merge that lived there could only ever be guarded by a regex over its own source text,
+// and a merge's failure mode is a key mismatch that no regex can see.
+//
+// EVERY crop gets the key, null included. An ABSENT key and a null one read identically to
+// `if (c.hero_photo_id)`, but they mean different things to the NEXT reader of this payload —
+// absent says "this Lambda predates the feature", null says "asked, and this crop has no photo".
+// The client branches on absence to survive a rollback (the TotalsWeight precedent), so the two
+// must stay distinguishable.
+//
+// A photo id is NOT a URL and deliberately never becomes one here: resolving it would mean copying
+// photo-access.js into this function and granting it the photos bucket — the infra change the I7
+// note in index.js declines. The client resolves each id against the household-scoped
+// GET /api/photos/view-url/:id, which is also what keeps a leaked id unviewable.
+export function applyCropHeroPhotos(aggregates, rows) {
+  const byPlanting = new Map();
+  for (const r of rows ?? []) {
+    if (r?.plant_id != null && r.photo_id != null) byPlanting.set(r.plant_id, r.photo_id);
+  }
+  for (const c of aggregates?.crops ?? []) {
+    c.hero_photo_id = (c.hero_plant_id != null ? byPlanting.get(c.hero_plant_id) : null) ?? null;
+  }
   return aggregates;
 }

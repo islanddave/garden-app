@@ -47,10 +47,12 @@ function renderSection(fetchImpl) {
 }
 
 describe('PutUpFromPlanting', () => {
-  it('scopes the read to THIS planting', async () => {
+  it('scopes the read to THIS planting, and asks for the consumed rows too', async () => {
+    // include_consumed is asserted literally because nothing on screen distinguishes its absence
+    // until a jar is actually finished — and at that point the section silently loses the record.
     const { fetchMock } = renderSection(() => Promise.resolve(GROUPED))
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith('/api/preservation/whats-put-up?plant_id=pl-w2'))
+      expect(fetchMock).toHaveBeenCalledWith('/api/preservation/whats-put-up?plant_id=pl-w2&include_consumed=1'))
   })
 
   it('counts containers and LISTS units without summing across them (L5)', async () => {
@@ -99,5 +101,74 @@ describe('PutUpFromPlanting', () => {
   it('handles a group payload with no records array', async () => {
     renderSection(() => Promise.resolve({ groups: [{ group_key: 'x', label: 'X' }] }))
     expect(await screen.findByText(/Nothing from this planting is in the stores yet/)).toBeTruthy()
+  })
+})
+
+// V4-HARVESTFATE-001 — the fate reading. This section is the ONLY surface that answers "where did
+// this planting's harvest go", and the endpoint's default filter drops a fully-consumed jar. Every
+// case below is invisible on today's data (5 of 5 live put-ups still have stock, prod 2026-08-24)
+// and becomes the normal case the first time Dave finishes one.
+describe('PutUpFromPlanting — consumed put-ups are fate, not stock', () => {
+  const one = (over) => ({
+    group_by: 'storage',
+    groups: [{
+      group_key: 'loc-1', label: 'Chest Freezer 1', total_packages: 4, units: ['quarts'], use_soon_count: 0,
+      records: [
+        { id: 'live', plant_id: 'pl-w2', quantity_value: 2, quantity_unit: 'quarts', package_count: 2,
+          remaining_count: 2, method: 'whole_freeze', preserved_at: '2026-07-20', use_by_target: null },
+        { id: 'gone', plant_id: 'pl-w2', quantity_value: 1, quantity_unit: 'quarts', package_count: 2,
+          remaining_count: 0, method: 'passata', preserved_at: '2026-06-01',
+          use_by_target: '2026-09-01', use_by_status: 'use_soon', ...over },
+      ],
+    }],
+  })
+
+  it('LISTS a used-up put-up rather than dropping it — the history is the answer', async () => {
+    renderSection(() => Promise.resolve(one()))
+    await screen.findByText(/2 put-ups/)
+    expect(screen.getByText(/all used/)).toBeTruthy()
+  })
+
+  it('counts containers from the STORES only — an empty jar is not stock', async () => {
+    renderSection(() => Promise.resolve(one()))
+    // 2 in the freezer, not the 4 that were ever put up.
+    expect(await screen.findByText('2 containers')).toBeTruthy()
+  })
+
+  it('says how many were used, alongside the all-time put-up count', async () => {
+    renderSection(() => Promise.resolve(one()))
+    const headline = (await screen.findByText('2 containers')).parentElement
+    expect(headline.textContent).toMatch(/2 put-ups/)
+    expect(headline.textContent).toMatch(/1 used up/)
+  })
+
+  it('never prompts "use soon" for a jar that has already been eaten', async () => {
+    renderSection(() => Promise.resolve(one()))
+    await screen.findByText('2 containers')
+    expect(screen.queryByText(/use soon/)).toBeNull()
+    expect(screen.queryByText(/use by/)).toBeNull()
+  })
+
+  it('a planting whose stores are all gone still shows what it produced', async () => {
+    const allGone = one()
+    allGone.groups[0].records = allGone.groups[0].records.filter(r => r.id === 'gone')
+    renderSection(() => Promise.resolve(allGone))
+    // NOT the "nothing put up yet" empty state — that would erase a real record.
+    expect(await screen.findByText('Nothing left in the stores')).toBeTruthy()
+    expect(screen.queryByText(/Nothing from this planting is in the stores yet/)).toBeNull()
+    expect(screen.getByText(/all used/)).toBeTruthy()
+  })
+
+  // NULL means the count was never tracked, not that the jar is gone. The endpoint's own default
+  // filter reads it the same way, so a row it WOULD have returned must not be dimmed out here.
+  it('treats a NULL remaining_count as still in the stores, not as used up', async () => {
+    const untracked = one()
+    untracked.groups[0].records = [{
+      id: 'untracked', plant_id: 'pl-w2', quantity_value: 3, quantity_unit: 'quarts',
+      package_count: 3, remaining_count: null, method: 'whole_freeze', preserved_at: '2026-07-20',
+    }]
+    renderSection(() => Promise.resolve(untracked))
+    expect(await screen.findByText('3 containers')).toBeTruthy()
+    expect(screen.queryByText(/all used/)).toBeNull()
   })
 })

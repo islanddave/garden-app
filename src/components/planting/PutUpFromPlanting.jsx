@@ -1,11 +1,24 @@
-// PutUpFromPlanting — V4-PUTUPLINK-001. "What came off THIS planting and is still in the stores."
+// PutUpFromPlanting — V4-PUTUPLINK-001. "What came off THIS planting, and what became of it."
 // The read end of the seed → planting → harvest → put-up spine: PutUp.jsx writes preservation_log
 // .plant_id, this renders it back on the planting that produced it.
 //
-// Data: GET /api/preservation/whats-put-up?plant_id=<id>. The Lambda returns storage-grouped
-// records already scoped to the planting (and already excluding soft-deleted + fully-consumed
-// rows), so this flattens the groups and keeps each group's label as the row's storage location —
-// there is no per-record storage_label on the projection.
+// Data: GET /api/preservation/whats-put-up?plant_id=<id>&include_consumed=1. The Lambda returns
+// storage-grouped records already scoped to the planting, so this flattens the groups and keeps each
+// group's label as the row's storage location — there is no per-record storage_label on the
+// projection.
+//
+// V4-HARVESTFATE-001 — WHY include_consumed, and why this section is now two readings rather than
+// one. The endpoint's default drops a fully-consumed jar, which is correct for the Put-Up inventory
+// page ("what is in the freezer") and WRONG here: this is the only surface that answers "where did
+// this planting's harvest go", and on the default the answer silently reverts to "nothing" the day
+// the last jar is finished. So the fetch keeps consumed rows and the component separates them —
+// STORES (still there, the headline) and USED (gone, but still the planting's history). The fate
+// reading is a COUNT AND A LIST, never a fraction: harvests are counted in count/cup/head/bunch and
+// put-ups in quarts/cups, only cup↔cups overlaps, and preservation_log has no weight column at all
+// (live prod, 2026-08-24). "40% preserved" is not computable from this data and would be invented.
+//
+// Zero live rows are consumed today, so this renders identically to before until the first jar is
+// finished. That is the point: the gap is invisible right up until it eats a record.
 //
 // Deliberately READ-ONLY. Edit / "mark used" / remove all live on the Put-Up surface; duplicating
 // the mutation affordances here would mean two places to keep in step with the PUT full-replace
@@ -48,7 +61,7 @@ export default function PutUpFromPlanting({ planting, fetch }) {
     if (!planting?.id) return
     let cancelled = false
     setLoading(true); setFailed(false)
-    Promise.resolve(fetch(`/api/preservation/whats-put-up?plant_id=${planting.id}`))
+    Promise.resolve(fetch(`/api/preservation/whats-put-up?plant_id=${planting.id}&include_consumed=1`))
       .then(data => {
         if (cancelled) return
         // Flatten groups → records, carrying the group's storage label down onto each row.
@@ -94,21 +107,36 @@ export default function PutUpFromPlanting({ planting, fetch }) {
     )
   }
 
+  // A row is USED UP only on an explicit zero. NULL remaining_count means the count was never
+  // tracked, not that the jar is gone — the same reading the endpoint's own default filter uses
+  // (`remaining_count IS NULL OR remaining_count > 0`), so the two cannot disagree about which rows
+  // the un-flagged call would have returned.
+  const isUsedUp = (r) => r.remaining_count != null && Number(r.remaining_count) <= 0
+  const usedUp = rows.filter(isUsedUp)
+  const inStores = rows.filter(r => !isUsedUp(r))
+
   // Headline counts PACKAGES and LISTS the distinct units — never a cross-unit sum (L5), the same
   // rule the Put-Up inventory headline follows. "6 lbs + 3 jars" is not 9 of anything.
-  const totalPackages = rows.reduce((n, r) => n + (Number(r.package_count) || 0), 0)
-  const units = [...new Set(rows.map(r => r.quantity_unit).filter(Boolean))]
-  const useSoon = rows.filter(r => r.use_by_status === 'use_soon' || r.use_by_status === 'past_use_by').length
+  // The container count and the unit list describe the STORES; the put-up count is the planting's
+  // whole history. Two different questions, so two different denominators, said out loud rather
+  // than blended into one number that answers neither.
+  const totalPackages = inStores.reduce((n, r) => n + (Number(r.package_count) || 0), 0)
+  const units = [...new Set(inStores.map(r => r.quantity_unit).filter(Boolean))]
+  // A finished jar cannot be "use soon" — the prompt is to eat it and it has been eaten.
+  const useSoon = inStores.filter(r => r.use_by_status === 'use_soon' || r.use_by_status === 'past_use_by').length
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
         <div style={{ fontSize: '0.875rem', color: P.mid }}>
           <strong style={{ color: P.dark }}>
-            {totalPackages} {totalPackages === 1 ? 'container' : 'containers'}
+            {inStores.length === 0
+              ? 'Nothing left in the stores'
+              : `${totalPackages} ${totalPackages === 1 ? 'container' : 'containers'}`}
           </strong>
           {units.length ? ` · ${units.join(', ')}` : ''}
           {` · ${rows.length} ${rows.length === 1 ? 'put-up' : 'put-ups'}`}
+          {usedUp.length > 0 ? ` · ${usedUp.length} used up` : ''}
         </div>
         {useSoon > 0 && (
           <span style={{ fontSize: '0.7rem', fontWeight: 700, color: P.gold, backgroundColor: P.warn,
@@ -118,11 +146,16 @@ export default function PutUpFromPlanting({ planting, fetch }) {
         )}
       </div>
 
+      {/* Stores first, then the used-up rows. Both are listed — a finished jar is the ANSWER to
+          "where did it go", so hiding it would leave the section quieter the more of the harvest
+          actually got eaten, which is backwards. A used row is dimmed and says "all used" instead of
+          a remaining count; it never carries a use-by prompt. */}
       <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-        {rows.map(r => {
+        {[...inStores, ...usedUp].map(r => {
+          const used = isUsedUp(r)
           const remaining = r.remaining_count ?? r.package_count ?? 0
           return (
-            <li key={r.id} style={{ padding: '10px 0', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 10 }}>
+            <li key={r.id} style={{ padding: '10px 0', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 10, opacity: used ? 0.62 : 1 }}>
               <PutUpPhotoThumb photoId={r.photo_id} fetch={fetch} size={36}
                 alt={`Photo of ${r.quantity_unit} put up`} />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -136,8 +169,8 @@ export default function PutUpFromPlanting({ planting, fetch }) {
               <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>
                 {r.storage_label ? `${r.storage_label} · ` : ''}
                 put up {prettyDate(r.preserved_at)}
-                {remaining !== r.package_count ? ` · ${remaining} left` : ''}
-                {r.use_by_target ? ` · use by ${prettyDate(r.use_by_target)}` : ''}
+                {used ? ' · all used' : (remaining !== r.package_count ? ` · ${remaining} left` : '')}
+                {!used && r.use_by_target ? ` · use by ${prettyDate(r.use_by_target)}` : ''}
               </div>
               </div>
             </li>

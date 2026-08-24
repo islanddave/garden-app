@@ -11,12 +11,12 @@
 // guard bans, and this file sat on its allow-list solely because the primitive could not express an
 // id-only photo. It can now: <PhotoView resolveById> runs the SAME PhotoImg mount-mint underneath,
 // so the mechanism is unchanged (same endpoint, same cache, same one request per id) while this
-// surface leaves the allow-list. `tier` is not passed on purpose — but the REASON changed with
-// V4-TIERBLINDMINT-001: a thumb IS now addressable by id (view-url takes ?tier=full|thumb). The
-// id-only arm stays FULL because its degrade chain is empty, so hasFallback is false and PhotoImg's
-// single retry would re-mint the same tier: a thumb with no object (181 of 1094 rows,
-// BUG-PHOTONEWTHUMB-001) would 404, re-mint, 404 and go terminal blank, where today it renders the
-// original. Asking for a tier costs nothing only when there is something to degrade to.
+// surface leaves the allow-list. `tier` is still not passed, and the omission is still deliberate —
+// but it is now a SIZING call rather than a forced one. V4-HARVCROPPHOTO-001 gave the id-only arm a
+// real thumb→original degrade, so asking would be safe here too; it just is not worth a second
+// round-trip for the handful of put-up rows on a page, where the 31-thumb Harvest Totals grid that
+// motivated the chain is a different order of payload. Omitting the tier resolves the original in
+// exactly one request, which is the right trade at this volume.
 //
 // fallback='none' keeps the silent-collapse contract: a missing/failed/pending photo renders NOTHING
 // rather than a broken-image glyph — the put-up record is the payload, the photo is garnish, and a
