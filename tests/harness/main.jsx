@@ -11,6 +11,8 @@ import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import EventNew from '../../src/pages/EventNew.jsx'
+import CaptureFlow from '../../src/pages/CaptureFlow.jsx'
+import { setPendingCapture } from '../../src/lib/pendingCapture.js'
 import Sheet from '../../src/components/forms/Sheet.jsx'
 import { ToastProvider } from '../../src/context/ToastContext.jsx'
 import { OverlaySurfaceProvider, OverlayDirtyProvider } from '../../src/context/OverlayContext.jsx'
@@ -88,7 +90,14 @@ function Harness() {
   // fold geometry (measure with the chooser dismissed), but do NOT use this mount to reason about
   // auto-open, tray-vs-chooser, or any tap count that includes picking a planting.
   const entry = params.get('session') === 'harvest' ? '/log?session=harvest&event_type=harvest' : '/log'
-  const content = <EventNew key={nonce} />
+
+  // 'capture' — the Snap surface (/capture -> CaptureFlow), for BUG-SNAPFORM2FIELD-001. The photo
+  // step opens the OS file picker from a trusted tap, which cannot be driven headlessly; CaptureFlow
+  // already has a park-and-claim seam for exactly this (setPendingCapture -> takePendingCapture in
+  // its mount effect), so parking a synthetic File lands the flow on the 'mode' step the same way a
+  // real pick does. Nothing about the FORM step is stubbed or shortcut — from 'mode' onward this is
+  // the real component tree.
+  const content = surface === 'capture' ? <CaptureFlow key={nonce} /> : <EventNew key={nonce} />
 
   if (surface === 'overlay') {
     return (
@@ -118,7 +127,16 @@ function Harness() {
   )
 }
 
+// A 4-byte JPEG (SOI + EOI). CaptureFlow only ever calls URL.createObjectURL on it and posts it at
+// submit time, so the bytes never need to decode to a real image for the form step to be reachable.
+function parkSyntheticCapture() {
+  setPendingCapture(new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'harness.jpg', { type: 'image/jpeg' }))
+}
+
 resetLocalState()
+// Must run BEFORE the first render: CaptureFlow claims the parked file in a mount effect, and a
+// park that lands after mount is simply never seen (takePendingCapture clears on read).
+if (new URLSearchParams(location.search).get('surface') === 'capture') parkSyntheticCapture()
 installCounters()
 createRoot(document.getElementById('root')).render(<Harness />)
 
@@ -128,8 +146,47 @@ window.__h = {
   viewport, measureA, measureC, settle, waitFor, tap, typeInto, byText,
   resetCounters, readCounters, runHarvestScript, yieldMacro, sleepReal, blurActive,
   net: () => netLog.slice(),
-  surface: (s) => window.__setSurface(s),
-  remount: () => window.__remount(),
+  surface: (s) => { if (s === 'capture') parkSyntheticCapture(); window.__setSurface(s) },
+  remount: () => { if (new URLSearchParams(location.search).get('surface') === 'capture') parkSyntheticCapture(); window.__remount() },
+  parkCapture: () => parkSyntheticCapture(),
+
+  // BUG-SNAPFORM2FIELD-001. Counts fields as a PERSON sees them, not as the DOM holds them: the
+  // deployed-bundle recon counted 16 labels, but twelve of PlantForm's provenance fields live
+  // inside a <details> that CaptureFlow leaves collapsed, and a collapsed field is present in the
+  // markup and invisible on screen. Those are different numbers and only one of them is what Dave
+  // is reporting. jsdom cannot tell them apart at all — offsetParent is always null there.
+  snapFieldCensus() {
+    const form = document.querySelector('form') || document.body
+    const controls = [...form.querySelectorAll('input, select, textarea')]
+      .filter(el => el.type !== 'hidden' && el.type !== 'file')
+    // ⚠️ offsetParent + a non-zero rect DO NOT WORK here, and the wrong answer is the believable
+    // one. Chrome collapses <details> with `content-visibility: hidden` on ::details-content, not
+    // `display: none` — so every field inside a CLOSED disclosure still reports offsetParent
+    // non-null and a full-height rect. Measured 2026-08-24: that predicate called all 16 Snap
+    // controls visible when only 5 are painted. checkVisibility() is the only one that knows about
+    // content-visibility; elementFromPoint corroborates it (a hidden field hit-tests to whatever is
+    // actually painted at its phantom coordinates).
+    const visible = el => (typeof el.checkVisibility === 'function'
+      ? el.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true })
+      : el.offsetParent !== null && el.getBoundingClientRect().height > 0)
+    const details = form.querySelector('details, [data-testid="planting-details"]')
+    const describe = el => ({
+      id: el.id || null,
+      label: (el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].textContent) || '').trim().slice(0, 40),
+      visible: visible(el),
+      inDetails: !!(details && details.contains(el)),
+    })
+    const rows = controls.map(describe)
+    return {
+      domControls: rows.length,
+      visibleControls: rows.filter(r => r.visible).length,
+      hiddenInsideDetails: rows.filter(r => !r.visible && r.inDetails).length,
+      detailsPresent: !!details,
+      detailsOpen: details ? details.open === true : null,
+      hasCapPlantName: !!document.getElementById('cap-plant-name'),
+      rows,
+    }
+  },
   ready: () => !!plantingInput(),
 
   // Drive the form to the exact state measurement A asks about: a planting selected, a quantity
