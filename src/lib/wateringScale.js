@@ -88,16 +88,19 @@ export function computeWateringScale(hydrology = {}, weather = {}) {
   // null on a null recent_precip_in and saturationSuppressed bails, and this mirrors that bail exactly.
   // Uncertainty resolves toward WATERING on both sides.
   const noData = hydrology.recent_precip_in == null;
-  // The engine's windowPrecip: actuals + the whole D0 term. Only the "already wet" prerequisite reads
-  // it; every bar below reads either the measured half or the forecast half, never the sum, so one
-  // event can never satisfy both a wet floor and a more-coming bar.
-  const windowPrecip = measured + todayFcst;
 
-  // The engine's three suppression branches, same constants, same fail-safe directions.
+  // The engine's three suppression branches, same constants, same fail-safe directions. Every bar
+  // reads either the measured half or the forecast half, never the sum, so one event can never
+  // satisfy both a wet floor and a more-coming bar.
   const soaked = !noData && measured >= SOAK_CAP_IN;
+  // BUG-RAINFORECASTCREDIT-001 residual (mirrors engine.js saturationSuppressed): the "already wet"
+  // prerequisite reads MEASURED water, not `measured + todayFcst`. It was the one bar in this module
+  // still reading the sum, which is what let today's unelapsed hourly forecast pose as wetness and
+  // then skip the beds on a second forecast. Both sides moved in the same commit; the parity sweep
+  // in wateringModelParity.test.js fails on a one-sided edit.
   // A null tomorrow PoP is permissive (matches the engine): tomorrow gets re-evaluated overnight
   // before anyone acts on it.
-  const incoming = !noData && windowPrecip >= SOAK_WET_FLOOR_IN
+  const incoming = !noData && measured >= SOAK_WET_FLOOR_IN
     && tmrwIn != null && tmrwIn >= SOAK_FCST_QPF_IN
     && (tmrwPop == null || tmrwPop >= SOAK_FCST_POP_PCT);
   // A null TODAY PoP fails CLOSED toward watering (also matches the engine): fetchPrecip sets

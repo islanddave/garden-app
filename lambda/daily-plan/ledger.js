@@ -12,8 +12,9 @@
 // falls back to it — never to NaN (canon Decision 3; clamp(NaN) is unreachable by construction).
 //
 // FOLD DETERMINISM (canon Decision 15): ONE merged timeline — event_log rows at their timestamps,
-// gauge-rain day-credits positioned at 23:59 ET of their qualifying day, demand accruing
-// continuously between positions — ordered by (timestamp, type-priority: watering/rain ->
+// gauge-rain day-credits positioned at 23:59 ET of their qualifying SETTLED day (today's, which is
+// still accumulating, sits at effNow instead — BUG-F2RAINBASIS-001), demand accruing continuously
+// between positions — ordered by (timestamp, type-priority: watering/rain ->
 // moisture_check -> rain-day-credit, id). All ages are FRACTIONAL days on the epoch-ms timeline
 // (ET civil days only bucket demand attribution); date-only backdated events sit at 12:00 ET.
 
@@ -197,7 +198,7 @@ function demoteDepth(depth) {
 }
 function foldLedger(ctx) {
   const { wiEff, thr, events = [], weatherByDate = {}, weatherRowCount = 0,
-    todayStr, effNowMs, todayEt0 = null, todayTmax = null,
+    todayStr, effNowMs, todayEt0 = null, todayTmax = null, todayPrecip = null,
     exposure, vessel, rainTier, transplantAt = null } = ctx;
 
   const spaceDegenerate = weatherRowCount < P.CONFIDENCE.minWeatherRows;
@@ -242,27 +243,59 @@ function foldLedger(ctx) {
     if (e.type === 'moisture_check') snoozeCount++;
     items.push({ t, prio: PRIO[e.type] ?? 0, id: String(e.id), type: e.type, depth: e.depth || null });
   }
-  // Gauge/forecast rain day-credits: once per qualifying settled day, at 23:59 ET, outdoor only,
-  // transplant carve-out honored per-day. DRG-RAINDEPTH-001: the day's MEASURED precip maps to a
-  // depth class (per substrate tier) and the credit is that class's watering arithmetic — not a
-  // tier-keyed number of days. bag>=85F demotes one class (a bag in heat does not hold the rain).
+  // Gauge/forecast rain day-credits: once per qualifying day, outdoor only, transplant carve-out
+  // honored per-day. DRG-RAINDEPTH-001: the day's MEASURED precip maps to a depth class (per
+  // substrate tier) and the credit is that class's watering arithmetic — not a tier-keyed number of
+  // days. bag>=85F demotes one class (a bag in heat does not hold the rain).
   if (exposure === 'outdoor' && !spaceDegenerate) {
-    for (let d = windowStartStr; d < todayStr; d = addDays(d, 1)) {
-      const row = weatherByDate[d];
-      if (!row || row.precip_in == null) continue;
-      let depth = rainDepthClass(rainTier, row.precip_in);
-      if (depth == null) continue;                                  // trace: under the tier's light floor
+    // ONE credit rule for every day, settled or current — same depth mapping, same carve-out, same
+    // bag-heat demotion, same window clip. Only the SOURCE of the inches and the credit's position
+    // on the timeline differ between the two callers, so those are the arguments and nothing else
+    // is: a settled day and today must never be able to drift apart (same discipline as applyDepth).
+    const pushDayCredit = (d, precipIn, tmaxF, t) => {
+      if (precipIn == null) return;
+      let depth = rainDepthClass(rainTier, precipIn);
+      if (depth == null) return;                                    // trace: under the tier's light floor
       const carved = vessel.smallVessel && transplantAt != null
         && calDays(transplantAt, d) >= 0 && calDays(transplantAt, d) <= P.TRANSPLANT_CARVEOUT_DAYS;
-      if (carved) continue;                                         // fresh small root ball: no credit
-      if (vessel.isFabric && row.tmax_f != null && row.tmax_f >= P.RAIN_DAY.bagHeatSoftenF) {
+      if (carved) return;                                           // fresh small root ball: no credit
+      if (vessel.isFabric && tmaxF != null && tmaxF >= P.RAIN_DAY.bagHeatSoftenF) {
         depth = demoteDepth(depth);
-        if (depth == null) continue;                                // demoted off the bottom
+        if (depth == null) return;                                  // demoted off the bottom
       }
-      const t = etMidnightMs(d) + DAY - 60000;                      // 23:59 ET of the qualifying day
-      if (t < windowStartMs || t > effNowMs) continue;
+      if (t < windowStartMs || t > effNowMs) return;
       items.push({ t, prio: PRIO.day_credit, id: d, type: 'day_credit', depth });
+    };
+    // Settled days, from weather_daily, each at 23:59 ET of its own day.
+    for (let d = windowStartStr; d < todayStr; d = addDays(d, 1)) {
+      const row = weatherByDate[d];
+      if (!row) continue;
+      pushDayCredit(d, row.precip_in, row.tmax_f, etMidnightMs(d) + DAY - 60000);
     }
+    // BUG-F2RAINBASIS-001 — TODAY, from the GAUGE ONLY. The loop above cannot reach today and never
+    // will: weather_daily holds COMPLETED days by construction (handler.js writes settled_days and
+    // re-guards `d >= today`), so no D0 row exists to widen the bound onto. Rain that has physically
+    // fallen this morning therefore earned nothing until tomorrow — the ledger's credit was not
+    // smaller than legacy's, it was A DAY LATE, and on 2026-08-23 that one-day phase shift moved 29
+    // plantings one way and 74 back the next day.
+    //
+    // The source is `hydrology.today_observed_in` and NOTHING else — the exact term legacy
+    // creditPrecip spends (engine.js `recent_precip_in + today_observed_in`), so the two engines now
+    // agree BY CONSTRUCTION on what counts and any remaining flag-on/flag-off diff measures the
+    // MODEL rather than the input. today_precip_in is deliberately not accepted here: it is
+    // observed + still-expected, and crediting the forecast half is BUG-RAINFORECASTCREDIT-001,
+    // which cost 32 plantings a watering on 2026-08-08 (0.97" predicted at 28% PoP, 0.04" fell).
+    // With no bound station the term is absent -> null -> no D0 credit, which is correct: nothing
+    // has been MEASURED, and legacy's basis degrades to `recent` on those runs too.
+    //
+    // POSITIONED AT effNow, not at 23:59 like a settled day, and that is load-bearing twice over.
+    // Agronomically: a partial day's rain has not finished falling, so the credit may not be dated
+    // later than the instant we observed it. Mechanically: 23:59 of today is in the future at every
+    // run (effNowMs clamps into the plan day), so the window clip would drop it and this whole
+    // branch would be dead code. Prio day_credit still sorts it AFTER any watering logged at the
+    // same instant, and applyDepth(0, ...) is a no-op, so a same-day manual log cannot be
+    // double-counted.
+    pushDayCredit(todayStr, num(todayPrecip), todayTmax, effNowMs);
   }
   items.sort((a, b) => (a.t - b.t) || (a.prio - b.prio) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
