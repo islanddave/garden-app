@@ -47,9 +47,6 @@ import { setReloadBlocked } from '../lib/reloadGate.js'
 import { recordCropLog } from '../lib/cropLogLedger.js'
 // V4-HARVSESSION-002: chip-queue ranking — the same order the Today ready band shows, so the tray
 // and the band never disagree about what "next" means.
-import { rankHarvestReady } from '../lib/harvestReadiness.js'
-import { selectTrayChips, harvestTrayScrollport } from '../lib/harvestTray.js'
-import { sendReadyImpressions } from '../lib/readyImpressions.js'
 // V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
 // for the metadata contract with the events Lambda and why it is NOT quantity_numeric.
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
@@ -191,7 +188,6 @@ const HARVEST_TRAY_ID = 'harvest-session-tray'
 // `.catch(() => null)`, and `null` is also what a successful-but-empty response reads as downstream
 // (`readyD?.candidates`, `harvD?.entries`) — so the merge could not tell "the fetch failed" from
 // "there is nothing to offer", and both landed on the same zero-chip render.
-const TRAY_FETCH_FAILED = Symbol('tray-fetch-failed')
 
 // `block:'start'` puts the section HEADER at the viewport top, which is what makes the rest of the
 // panel (chips, quantity, weight, error banner, Save) fall into the space the keyboard leaves.
@@ -527,91 +523,25 @@ export default function EventNew() {
   // Session ledger — every confirmed save this mount. Undone rows stay listed struck-through
   // (excluded from totals): the ledger is an honest record of what happened, not a mutable cart.
   const [sessionRows, setSessionRows] = useState([])
-  // V4-HARVSESSION-002: pre-flight queue. Chips come from /api/events/harvest-ready (rank order);
-  // tapping one while the form is idle makes it CURRENT (fills planting+project, focuses qty);
-  // tapping while a planting is current QUEUES it; Save auto-advances to the next queued planting.
-  // `sessionQueue` holds UPCOMING plantings only — current lives in form.plant_id, done derives
-  // from sessionRows. This is user-tap seeding, not auto-seeding: the no-auto-seed misattribution
-  // guard (BUG-LOGTARGETREQ-001) is untouched because every attribution here is an explicit tap.
-  const [readyChips, setReadyChips] = useState([])
-  const [sessionQueue, setSessionQueue] = useState([])
-  // V4-HARVTRAYVIEWPORT-001: collapsed by cap, not by default — the tray always renders, and the
-  // top-ranked chips plus everything the user has queued are always on screen. Sticky once the
-  // user expands it: tapping a chip QUEUES it, so a FilterChipRow-style collapse-on-select would
-  // shut the tray between every pick of a multi-planting queue. Nothing keyed to keyboard state
-  // touches this flag, so it cannot thrash as focus moves between fields.
-  const [trayExpanded, setTrayExpanded] = useState(false)
-  // BUG-TRAYFETCHSILENT-001 — same shape as plantsLoadFailed/plantsReloadKey below, for the same
-  // reason: a swallowed rejection rendered as a genuinely-empty tray. One flag covers BOTH loaders
-  // (the queue is one surface, so a half-loaded queue is still a queue the user must not trust).
-  const [trayLoadFailed, setTrayLoadFailed] = useState(false)
-  const [trayReloadKey, setTrayReloadKey] = useState(0)
-  const [focusQtyNonce, setFocusQtyNonce] = useState(0)
-  useEffect(() => {
-    if (!inHarvestSession) return
-    let off = false
-    setTrayLoadFailed(false)
-    // BUG-HARVTRAYEMPTY-001: ready candidates ALONE cannot seed the tray — the readiness model is
-    // deliberately strict (repeat-habit crops with a set interval, ≥1 prior harvest, DOY window,
-    // overdue_ratio ≤ 3 staleness ceiling), so real weigh-ins routinely include plantings it
-    // excludes, and a stale dataset (staging) trips the ceiling on EVERYTHING → zero chips. The
-    // field-practitioner seat called this in the crucible ("the list will miss volunteer/off-band
-    // picks"). Fallback: recent harvest entries (the plantings Dave actually picks), deduped,
-    // appended after the ready band's order. Both fetches stay best-effort — neither can throw into
-    // the weigh-in — but BUG-TRAYFETCHSILENT-001: a rejection is now reported, not swallowed. The
-    // picker remains the full path either way; the difference is that the user is told which of
-    // "nothing is ready" and "we couldn't ask" they are looking at.
-    Promise.all([
-      apiFetch('/api/events/harvest-ready').catch(() => TRAY_FETCH_FAILED),
-      apiFetch('/api/harvests?include=entries').catch(() => TRAY_FETCH_FAILED),
-    ]).then(([readyD, harvD]) => {
-      if (off) return
-      setTrayLoadFailed(readyD === TRAY_FETCH_FAILED || harvD === TRAY_FETCH_FAILED)
-      const ready = (readyD !== TRAY_FETCH_FAILED && Array.isArray(readyD?.candidates))
-        ? rankHarvestReady(readyD.candidates, readyD.et_doy)
-        : []
-      const seen = new Set(ready.map(c => c.plant_id))
-      const recent = []
-      for (const e of (harvD === TRAY_FETCH_FAILED ? [] : (harvD?.entries ?? []))) {
-        if (!e.plant_id || e.planting_removed || seen.has(e.plant_id)) continue
-        seen.add(e.plant_id)
-        recent.push({ plant_id: e.plant_id, project_id: e.project_id, name: e.planting_name ?? 'planting', source: 'recent' })
-      }
-      // V4-READYTRAYIMPRESSION-001 — `source` is the PROVENANCE FLAG (recon §7c called it a blocking
-      // prerequisite). Before it, the two producers flattened into one shape and an impression could
-      // not tell "the readiness MODEL surfaced this" from "the recency FALLBACK surfaced this" —
-      // which is exactly the discrimination any precision claim about the model needs. The ready
-      // rows additionally carry their frozen rank coordinate. NOTHING RENDERS ANY OF THESE FIELDS:
-      // they exist so the impression log can freeze the model's claim as shown, and every chip
-      // consumer below still reads only plant_id / project_id / name.
-      const merged = [
-        ...ready.map(c => ({
-          plant_id: c.plant_id, project_id: c.project_id, name: c.name, source: 'ready',
-          overdue_ratio: c.overdue_ratio,
-          days_since_last_harvest: c.days_since_last_harvest,
-          repeat_interval_days: c.repeat_interval_days,
-        })),
-        ...recent,
-      ].slice(0, 14)
-      setReadyChips(merged)
-      // Record what was OFFERED, split by what the COLLAPSED tray actually renders. selectTrayChips
-      // is called rather than a cap re-derived here, so the region label cannot drift from the
-      // pixels. Its user-state arguments are omitted deliberately: nothing has been tapped when the
-      // tray first paints, and BOTH shipped entry points are /log?session=harvest with no &plant=
-      // (Harvests.jsx's primary CTA and, since V4-WEIGHINCTA-001, the TopChrome header Basket) — so
-      // the collapsed set is the top HARVEST_TRAY_COLLAPSED_MAX by rank. That "no &plant=" property
-      // is what this argument omission rests on; a future entry point that deep-links a planting
-      // would have to pass its user-state to selectTrayChips rather than be added silently here.
-      // NOT awaited and cannot reject (src/lib/readyImpressions.js): a telemetry failure must never
-      // reach the weigh-in.
-      sendReadyImpressions(apiFetch, merged, selectTrayChips({ chips: merged }).map(c => c.plant_id))
-    })
-    return () => { off = true }
-  }, [inHarvestSession, apiFetch, trayReloadKey])
-  useEffect(() => {
-    if (!focusQtyNonce) return
-    document.getElementById('harvest-quantity')?.focus()
-  }, [focusQtyNonce])
+  // V4-WEIGHQUEUEKILL-001 (BD-044) — the whole "Weigh-in queue - tap in weighing order" section is
+  // GONE, on Dave's instruction: "I never use that... it's a nice idea, but it's just not
+  // functionally useful for me and the way I log these." He asked for the WHOLE section, not only
+  // the ordering, and confirmed that when asked directly.
+  //
+  // Scoped, not dissatisfaction: he opened the same braindump saying he LOVES the weigh-in session
+  // ("that is really great"). The session, its ledger, undo and the planting picker are untouched.
+  // What went is V4-HARVSESSION-002's pre-flight queue and the V4-HARVTRAYVIEWPORT-001 chip tray.
+  //
+  // Removed with it, deliberately, and each worth knowing:
+  //   * TWO fetches off every weigh-in mount (/api/events/harvest-ready and
+  //     /api/harvests?include=entries) that are now simply not made;
+  //   * SAVE AUTO-ADVANCE. It fired only when a queue existed, so with no queue it was already
+  //     unreachable for Dave - no behaviour he actually had is lost;
+  //   * the V4-READYTRAYIMPRESSION-001 impression log. That telemetry froze what the readiness
+  //     MODEL offered so its precision could be judged later, and it now records nothing. The model
+  //     itself (lib/harvestReadiness.js) is untouched and still drives the Today ready band. Called
+  //     out rather than dropped quietly: any future precision claim about the ready band has lost
+  //     its instrument on this surface, and OPS-HARVFRICTIONREMEASURE-001 owes a re-measure.
   // V4-HARVESTCENTER-001 (L9): the harvest-log habit-stack trigger. After a harvest saves, offer an
   // ambient "preserve this?" affordance that opens /put-up carrying { prefill } (crop/variety/plant/
   // harvest_log). useOverlaySwap so an in-overlay trigger swaps the SAME overlay's content (preserving
@@ -1198,21 +1128,7 @@ export default function EventNew() {
     }
   }
 
-  // V4-HARVSESSION-002: chip → form. Sets BOTH ids from the ready row (plant_id ⇒ project_id
-  // invariant — under PROJECTS_HIDDEN the project step never renders, so the chip must carry it).
-  function fillFromChip(chip) {
-    setForm(f => ({ ...f, plant_id: chip.plant_id, project_id: chip.project_id }))
-    setFocusQtyNonce(n => n + 1)
-  }
-  function tapSessionChip(chip) {
-    if (chip.plant_id === form.plant_id) return
-    if (sessionQueue.some(q => q.plant_id === chip.plant_id)) {
-      setSessionQueue(q => q.filter(x => x.plant_id !== chip.plant_id))
-      return
-    }
-    if (!form.plant_id) fillFromChip(chip)
-    else setSessionQueue(q => [...q, chip])
-  }
+  // BD-044: fillFromChip / tapSessionChip removed with the tray that was their only caller.
 
   // (V4-HARVFEEDBACK-001 S5a: the confirmPhase-keyed focus effect that used to sit here moved into
   // components/PostSaveFeedback.jsx along with closeBtnRef — the ref's only consumer was the card's
@@ -1679,14 +1595,7 @@ export default function EventNew() {
         // V4-HARVSESSION-001: the session ledger IS the confirmation + undo surface — the
         // transient toast would duplicate it and pull attention from the next pile on the scale.
         setSessionRows(rows => [...rows, sessionRow])
-        // V4-HARVSESSION-002 auto-advance: the next queued planting fills in with qty focused, so
-        // the steady-state loop is numbers only. Closure-read of sessionQueue is safe here: no chip
-        // can be tapped between submit and this line (the same interaction thread is busy saving).
-        const [nextChip, ...restQueue] = sessionQueue
-        if (nextChip) {
-          setSessionQueue(restQueue)
-          fillFromChip(nextChip)
-        }
+        // BD-044: the queue auto-advance stood here; it went with the queue.
       } else {
         // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the
         // aria-modal sheet the toast IS AT-reachable, and the full-page rapid-entry flow keeps the
@@ -2504,102 +2413,7 @@ export default function EventNew() {
                   BUG-TRAYFETCHSILENT-001: a FAILED fetch is no longer part of that "renders
                   nothing" case. It renders the section with a notice instead, because silence there
                   is a lie — it tells the user the garden has nothing ready when nobody asked it. */}
-              {inHarvestSession && (readyChips.length > 0 || trayLoadFailed) && (() => {
-                const donePlantIds = new Set(sessionRows.filter(r => !r.undone && r.plantId).map(r => r.plantId))
-                // V4-HARVTRAYVIEWPORT-001. Two bounds, both needed — see src/lib/harvestTray.js for
-                // the measured geometry. The label is one line at 390px now (the old copy wrapped to
-                // two, ~15px of the very space this row is reclaiming).
-                const shownChips = selectTrayChips({
-                  chips: readyChips,
-                  expanded: trayExpanded,
-                  currentPlantId: form.plant_id,
-                  queuedPlantIds: sessionQueue.map(q => q.plant_id),
-                  donePlantIds,
-                })
-                const hiddenCount = readyChips.length - shownChips.length
-                return (
-                  <Section label="Weigh-in queue — tap in weighing order">
-                    {/* BUG-TRAYFETCHSILENT-001 — same grammar as PlantingSelect's failureNotice
-                        (role="alert" + inline Retry) so the two read as one language. Copy branches
-                        on whether anything survived: a PARTIAL failure still shows chips, and
-                        telling someone the queue is unavailable while chips sit under the notice
-                        would be the same class of lie in the other direction. */}
-                    {trayLoadFailed && (
-                      <div
-                        role="alert"
-                        data-testid="harvest-tray-load-failed"
-                        style={{ marginBottom: 10, fontSize: '0.8rem', color: P.terra, fontWeight: 600 }}
-                      >
-                        {readyChips.length > 0
-                          ? 'Couldn’t load all of your weigh-in queue — some plantings may be missing.'
-                          : 'Couldn’t load your weigh-in queue — use the planting picker below.'}
-                        <button
-                          type="button"
-                          onClick={() => setTrayReloadKey(k => k + 1)}
-                          data-testid="harvest-tray-retry"
-                          style={{
-                            marginLeft: 8, padding: 0, border: 'none', background: 'none',
-                            color: P.terra, fontSize: '0.8rem', fontWeight: 600,
-                            textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit',
-                          }}
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    )}
-                    {readyChips.length > 0 && (
-                    <div
-                      id={HARVEST_TRAY_ID}
-                      data-testid="harvest-session-tray"
-                      role="group"
-                      aria-label="Weigh-in queue"
-                      // The scrollport clips the TRAY only. plantingBlock is a later sibling, not a
-                      // descendant, so this overflow context cannot clip the picker's listbox the way
-                      // BUG-PICKERCLIP-001 did.
-                      style={{ display: 'flex', flexWrap: 'wrap', gap: 8, ...harvestTrayScrollport }}
-                    >
-                      {shownChips.map(chip => {
-                        const isCurrent = chip.plant_id === form.plant_id
-                        const queuePos = sessionQueue.findIndex(q => q.plant_id === chip.plant_id)
-                        const isDone = donePlantIds.has(chip.plant_id)
-                        return (
-                          // Wrapper carries the done-dimming: SelectChip spreads ...rest AFTER its
-                          // own style, so a style prop would REPLACE the chip's styling wholesale.
-                          <span key={chip.plant_id} style={isDone && !isCurrent ? { opacity: 0.55 } : undefined}>
-                            <SelectChip
-                              active={isCurrent}
-                              touch
-                              onClick={() => tapSessionChip(chip)}
-                              aria-label={`${chip.name}${isCurrent ? ' — weighing now' : queuePos >= 0 ? ` — queued ${queuePos + 1}` : isDone ? ' — logged, tap to weigh again' : ''}`}
-                              data-testid={`session-chip-${chip.plant_id}`}
-                            >
-                              {isDone ? '✓ ' : ''}{chip.name}{queuePos >= 0 ? ` · ${queuePos + 1}` : ''}
-                            </SelectChip>
-                          </span>
-                        )
-                      })}
-                    </div>
-                    )}
-                    {(hiddenCount > 0 || trayExpanded) && (
-                      // OUTSIDE the scrollport deliberately: a "Show fewer" that scrolls out of
-                      // view with the chips is a trap. Same disclosure grammar as the "Photo, notes
-                      // & date" toggle below, so the two read as one language — but with a touch
-                      // height, because this one is tapped with produce in hand.
-                      <button
-                        type="button"
-                        onClick={() => setTrayExpanded(x => !x)}
-                        aria-expanded={trayExpanded}
-                        aria-controls={HARVEST_TRAY_ID}
-                        data-testid="harvest-tray-toggle"
-                        style={{ marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: '8px 0', minHeight: 44, display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit' }}
-                      >
-                        <span aria-hidden="true">{trayExpanded ? '▾' : '▸'}</span>
-                        <span>{trayExpanded ? 'Show fewer' : `Show ${hiddenCount} more`}</span>
-                      </button>
-                    )}
-                  </Section>
-                )
-              })()}
+              {/* BD-044: the Weigh-in queue chip tray rendered here. Removed entirely. */}
               {projectBlock}
               {plantingBlock}
               {harvestBlock}

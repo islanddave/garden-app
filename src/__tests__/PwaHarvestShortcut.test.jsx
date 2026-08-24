@@ -185,11 +185,19 @@ describe('V4-PWAHARVSHORTCUT-001 engagement — the session actually starts', ()
     expect(screen.getByTestId('harvest-session-lock')).toBeTruthy()
   })
 
-  it('asks the session tray for ready plantings on arrival', async () => {
+  it('engages the session quantity loop on arrival', async () => {
     await launchShortcut()
-    // The tray fetch is gated on inHarvestSession, so this is a second, independent witness that the
-    // gate opened — one that a change to the lock strip's markup cannot fake.
-    expect(apiFetchSpy.mock.calls.some(([p]) => String(p).startsWith('/api/events/harvest-ready'))).toBe(true)
+    // A SECOND, INDEPENDENT witness that the gate opened — one a change to the lock strip's markup
+    // cannot fake. It used to be the tray fetch (/api/events/harvest-ready), which BD-044 removed
+    // along with the whole weigh-in queue; the witness had to be replaced rather than dropped,
+    // because the first case in this describe reads the lock strip and would then be the only
+    // check, which is exactly the single-point-of-failure this pair exists to avoid.
+    //
+    // enterKeyHint on the quantity field is `inHarvestSession ? 'next' : undefined` — set nowhere
+    // else, and it belongs to the session's qty -> grams -> save loop rather than to its chrome.
+    const qty = document.getElementById('harvest-quantity')
+    expect(qty).toBeTruthy()
+    expect(qty.getAttribute('enterkeyhint')).toBe('next')
   })
 
   // THE TRAP, pinned. Same url, same component, overlay posture: the session silently does not
