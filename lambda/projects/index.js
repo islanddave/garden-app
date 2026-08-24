@@ -140,12 +140,23 @@ export async function reparentCore(sql, { subjectId, newParentId, opId, expected
 }
 
 // WS-A1: public project share route target. `/garden/:slug` is an UNAUTHENTICATED surface, so
-// this runs BEFORE verifyToken in the handler (early return). Strict deny-by-default projection:
-// slug is globally unique (plant_projects_slug_key) and every non-deleted, non-archived project
-// is viewable by slug (post-PUBHIDE: no is_public gate, per Dave's locked decision). The security
-// boundary is the column allowlist below — the response object is built key-by-key and a DB row
-// is NEVER spread, so a newly-added or sensitive column can't leak by default. `slug` is a bound
-// parameter (neon tagged-template), never string-interpolated.
+// this runs BEFORE verifyToken in the handler (early return). TWO independent boundaries guard it:
+//
+//   (1) ROW GATE — is_public on both the project and its events. ADDED 2026-08-24, reversing the
+//       earlier "post-PUBHIDE: no is_public gate, per Dave's locked decision". Reversed by Dave
+//       ("add the filter and keep the route") after an audit found this route serving is_public=false
+//       projects, with notes, to anyone who guesses a slug. CAVEAT for whoever reads this next:
+//       V4-PUBHIDE-001 removed the is_public toggle from every create/edit form and defaults it
+//       true server-side, so this gate hides the 5 projects historically marked private and gives
+//       NO ongoing control — there is no UI to unpublish. A `published_at` column (default NULL) is
+//       the intended durable axis; until it ships, do not read this gate as user-facing curation.
+//   (2) COLUMN GATE — the deny-by-default projection below. The response object is built
+//       key-by-key and a DB row is NEVER spread, so a newly-added or sensitive column can't leak.
+//
+// The two are deliberately independent: a row that passes (1) still cannot leak a column that (2)
+// omits, and each is tested separately so neither can mask a regression in the other.
+// slug is globally unique (plant_projects_slug_key) and is a bound parameter (neon tagged-template),
+// never string-interpolated.
 async function handlePublicProject(slug, secrets) {
   try {
     const sql = neon(secrets.NEON_DATABASE_URL);
@@ -165,6 +176,7 @@ async function handlePublicProject(slug, secrets) {
       LEFT JOIN locations_with_path lwp
         ON lwp.id = c.location_id AND lwp.deleted_at IS NULL
       WHERE c.slug = ${slug}
+        AND c.is_public IS TRUE
         AND c.deleted_at IS NULL
         AND c.archived_at IS NULL
       LIMIT 1
@@ -178,6 +190,7 @@ async function handlePublicProject(slug, secrets) {
       SELECT id, event_type, event_date, notes, quantity
       FROM event_log
       WHERE project_id = ${row.id}
+        AND is_public IS TRUE
         AND deleted_at IS NULL
       ORDER BY event_date DESC
       LIMIT 200

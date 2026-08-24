@@ -89,5 +89,20 @@ describe('WS-A1 public share route', () => {
     it('binds slug as a tagged-template parameter (never string-interpolated into SQL)', () => {
       expect(publicFn).toContain('c.slug = ${slug}');
     });
+
+    // ROW GATE (added 2026-08-24). Independent of the column allowlist above: that boundary
+    // controls WHICH COLUMNS a visible row may expose, this one controls WHICH ROWS are visible
+    // at all. Both queries must carry it — an is_public project with non-public events would
+    // otherwise publish those events' notes. Asserted statically so the gate cannot be dropped
+    // without a test failing; the integration suite proves the runtime behaviour separately.
+    it('gates the project SELECT on is_public', () => {
+      const projQuery = publicFn.slice(publicFn.indexOf('FROM public.container'), publicFn.indexOf('LIMIT 1'));
+      expect(projQuery, 'project query missing is_public row gate').toMatch(/AND\s+c\.is_public\s+IS\s+TRUE/);
+    });
+
+    it('gates the event SELECT on is_public', () => {
+      const evQuery = publicFn.slice(publicFn.indexOf('FROM event_log'), publicFn.indexOf('LIMIT 200'));
+      expect(evQuery, 'event query missing is_public row gate').toMatch(/AND\s+is_public\s+IS\s+TRUE/);
+    });
   });
 });
