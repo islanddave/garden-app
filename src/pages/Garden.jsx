@@ -463,34 +463,15 @@ export default function Garden() {
     }
   }, [searchParams, setSearchParams, sourceInventoryItemId, queryVarietyId])
 
-  // V4-OVERLAYSLICE3-001 — the dismissal guard <Sheet> does NOT provide, and the reason this slice
-  // needs one at all.
+  // BUG-DIRTYDISMISSGAP-001 — V4-OVERLAYSLICE3-001's interim `requestCloseEditor` window.confirm
+  // patch lived here and is DELETED. The registry now owns the discard confirm (see `confirmOnDirty`
+  // on the <Sheet> below), and keeping the local patch alongside it would leave two mechanisms
+  // suppressing one dismissal — a double prompt for the user, and a mutation test that passes
+  // whichever of the two you break. The guard it provided is unchanged in substance: this page still
+  // asks before discarding, on Escape, on Android Back and on the labelled Close.
   //
-  // Sheet's `dirty` gates the BACKDROP TAP ONLY. `confirmOnDirty` defaults FALSE at both registry
-  // call sites (dismissLayers.js:78, backNav.js:75) pending the ConfirmSheet primitive, so Escape
-  // and Android hardware Back close a dirty form outright. MEASURED in tests/harness, not assumed:
-  // typing a name and pressing Escape closed the sheet, raised NO confirm, and discarded the typing.
-  //
-  // That is a regression THIS SLICE WOULD OTHERWISE INTRODUCE rather than a pre-existing one — the
-  // inline form had no dismissal at all, so there was no gesture that could lose typing. Dave is
-  // Android-only and Back is his primary gesture, so shipping the flyover without this would trade
-  // a UX win for a data-loss path on the exact input he reaches for most.
-  //
-  // window.confirm rather than a new sheet: this is a plain yes/no with nothing to disclose, which
-  // is the line ProjectTypes.jsx:81 and Locations.jsx:179 already draw. The Sheet-based confirms
-  // (EventDeleteConfirm, PhotoDeleteConfirm, BatchUndoConfirm) exist only where the content does
-  // not fit in a confirm — a checkbox, a count, a recovery path. None of that applies here.
-  //
-  // Wired to the SHEET only. PlantingEditor keeps plain `closeEditor` for its own Cancel and for
-  // the post-save close, both of which are unchanged from the inline era: a save that succeeded
-  // must never prompt to discard.
-  const requestCloseEditor = useCallback(() => {
-    if (editorDirty && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      if (!window.confirm('Discard this planting? What you typed will be lost.')) return
-    }
-    closeEditor()
-  }, [editorDirty, closeEditor])
-
+  // PlantingEditor keeps plain `closeEditor` for its own Cancel and for the post-save close, both
+  // unchanged from the inline era: a save that succeeded must never prompt to discard.
   // ---- V4-PLANTEDITORWIRE-001 — the dirty contract over the embedded PlantingEditor ----
   //
   // /garden had NO guard of any kind before this: not the reload gate, not the overlay report. The
@@ -816,8 +797,14 @@ export default function Garden() {
       <Sheet
         open={!!editor}
         ariaLabel={editor?.mode === 'add' ? 'Add planting' : 'Edit planting'}
-        onClose={requestCloseEditor}
+        onClose={closeEditor}
         dirty={editorDirty}
+        // BUG-DIRTYDISMISSGAP-001 — the opt-in that replaces this page's window.confirm patch. Copy
+        // is per-surface: this is the ADD path, so what is lost is a re-enterable new entry rather
+        // than edits to a record that already exists.
+        confirmOnDirty
+        confirmTitle="Discard this planting?"
+        confirmBody="This planting has not been added yet. What you typed will be lost."
         busy={editorBusy}
         armsBack
         size="full"

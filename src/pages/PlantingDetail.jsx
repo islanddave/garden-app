@@ -179,32 +179,16 @@ export default function PlantingDetail() {
     setEditorBusy(false)
   }, [])
 
-  // BUG-DIRTYDISMISSGAP-001 — the guard `dirty` does not actually provide, and this surface is the
-  // worst-exposed of the four that pass it.
+  // BUG-DIRTYDISMISSGAP-001 — the interim `requestCloseEditor` window.confirm patch that used to sit
+  // here is DELETED, and its deletion is part of the fix rather than a tidy-up. The registry now
+  // owns the discard confirm (confirmOnDirty on the <Sheet> below → ConfirmSheet), and leaving the
+  // per-surface patch in place would mean two mechanisms suppressing one dismissal: a mutation test
+  // would then pass whichever of them you broke, which is the shape of green-but-broken guard this
+  // program has shipped before. One mechanism, one place to break, one test that can fail.
   //
-  // `dirty` gates the BACKDROP TAP only: confirmOnDirty defaults FALSE at both registry call sites
-  // (dismissLayers.js:78, backNav.js:75) pending a ConfirmSheet primitive that does not exist, so
-  // Escape and Android hardware Back dismiss a dirty form outright. The comment on the <Sheet>
-  // below says `dirty` "is what makes decideDismiss confirm before discarding typing" — that is
-  // ASPIRATIONAL, describing the contract once confirmOnDirty is on, and it is not true today.
-  //
-  // Recovery differs per surface and that is what makes this one the priority: EventNew carries a
-  // full draftStash so a discarded /log overlay can be restored, SowNow stashes an id. PlantingEditor
-  // has NO draft stash, so everything typed here is simply gone. Dave is Android-only, so Back —
-  // not Escape — is the gesture that actually fires it.
-  //
-  // Deliberately the SAME window.confirm shape Garden.jsx uses for the add path (and the line
-  // ProjectTypes.jsx:81 / Locations.jsx:179 already draw), so the two hosts of this one editor stay
-  // consistent. A per-surface patch, NOT the fix — the fix is ConfirmSheet + confirmOnDirty, or a
-  // draft stash in PlantingEditor. Wired to the SHEET only: the editor's own Cancel and its
-  // post-save close keep plain closeEditor, because a save that SUCCEEDED must never ask to discard.
-  const requestCloseEditor = useCallback(() => {
-    if (editorDirty && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      if (!window.confirm('Discard your changes? What you typed will be lost.')) return
-    }
-    closeEditor()
-  }, [editorDirty, closeEditor])
-
+  // Recovery is why this surface opted in first: EventNew carries a full draftStash, SowNow stashes
+  // an id, PlantingEditor has NO stash at all — everything typed here is simply gone. Dave is
+  // Android-only, so Back is the gesture that actually fires it.
   // The parent-planting (lineage) picker is the ONLY thing PlantingEditor wants that this page
   // does not already hold. Fetched on first open rather than with the page: it costs a round trip
   // that a reader who never taps Edit should not pay, and an empty list renders that one picker
@@ -891,15 +875,14 @@ export default function PlantingDetail() {
           hardware Back (`armsBack`) and stack ordering — is the canonical registry's, not
           hand-rolled.
 
-          ⚠️ CORRECTION (BUG-DIRTYDISMISSGAP-001). This comment used to claim `dirty={editorDirty}`
-          "is what makes decideDismiss confirm before discarding typing". That was ASPIRATIONAL —
-          it describes the contract once confirmOnDirty is on, and confirmOnDirty is FALSE at both
-          registry call sites (dismissLayers.js:78, backNav.js:75) pending a ConfirmSheet primitive
-          that does not exist. `dirty` gates the BACKDROP TAP alone. Escape and Back discarded a
-          half-edited planting outright, with no confirm and — PlantingEditor having no draft stash
-          — no recovery. `onClose={requestCloseEditor}` above is the interim guard; `dirty` is kept
-          because the backdrop term is real and because it is the signal ConfirmSheet will consume.
-          Dave is Android-only, so Back is the primary gesture and the one this protects.
+          ✅ RESOLVED (BUG-DIRTYDISMISSGAP-001). This comment once claimed `dirty={editorDirty}` "is
+          what makes decideDismiss confirm before discarding typing", which was ASPIRATIONAL: `dirty`
+          gated the BACKDROP TAP alone, confirmOnDirty was false at both registry call sites, and
+          CONFIRM had no consumer branch, so Escape and Back discarded a half-edited planting
+          outright with no confirm and — PlantingEditor having no draft stash — no recovery. The
+          claim is now TRUE, and `confirmOnDirty` below is what makes it so: the registry raises
+          ConfirmSheet for Escape, Android Back AND the labelled Close. Dave is Android-only, so Back
+          is the primary gesture and the one this protects.
           size="full" matches /log's Sheet — this form is far too tall for a peek.
 
           NOT a route and NOT a query param, deliberately: a param would put the open editor in the
@@ -911,8 +894,13 @@ export default function PlantingDetail() {
       <Sheet
         open={editing}
         title="Edit planting"
-        onClose={requestCloseEditor}
+        onClose={closeEditor}
         dirty={editorDirty}
+        // The opt-in. Copy is per-surface because the loss differs: this is an EXISTING record, so
+        // what is at risk is edits to real data rather than a re-enterable new entry.
+        confirmOnDirty
+        confirmTitle="Discard your changes?"
+        confirmBody="Your edits to this planting have not been saved. They cannot be recovered."
         // V4-SHEETBUSY-001. `dirty` alone left this fly-up dismissable mid-save: it gates the
         // backdrop tap only, and confirmOnDirty is still false at both registry call sites, so
         // Escape and Android Back closed a form with a PUT already on the wire — and because that

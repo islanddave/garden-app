@@ -67,9 +67,9 @@ export function isArmable(e) {
 //               router navigate, or let the app exit).
 //   BLOCKED   — topmost has a write in flight. popstate is NOT cancelable, so "blocking" can only
 //               be expressed by re-pushing an entry; the provider bounds that (see A5).
-//   CONFIRM   — topmost holds unsaved input. Never emitted while confirmOnDirty is false, which it
-//               is until a ConfirmSheet primitive exists; kept in the enum so the shape matches
-//               decideDismiss and a future slice does not widen a closed enum.
+//   CONFIRM   — topmost holds unsaved input AND has opted in (see the per-entry note on
+//               decideDismiss). BUG-DIRTYDISMISSGAP-001 wired this to a real consumer branch: the
+//               provider raises ConfirmSheet and RE-ARMS, rather than falling through to cbRef.
 //   INTERCEPT — topmost wants to handle this itself first (a sub-state step-back).
 //   DISMISS   — close the topmost, and only the topmost.
 export function decideBack(entries, { confirmOnDirty = false, blockOnBusy = true } = {}) {
@@ -100,7 +100,9 @@ export function decideBack(entries, { confirmOnDirty = false, blockOnBusy = true
   // a dead press, and the exact Escape/Back divergence this slice exists to remove. Once a marker
   // is armed, Back closes the topmost, which is what parity with Escape means.
   if (blockOnBusy && top.busy) return { action: 'BLOCKED', target: top }
-  if (confirmOnDirty && top.dirty) return { action: 'CONFIRM', target: top }
+  // Per-entry opt-in, same three-term test decideDismiss uses — the two deciders must not disagree
+  // about WHICH surfaces confirm, or Escape and Back diverge again.
+  if (confirmOnDirty && top.dirty && top.confirmOnDirty) return { action: 'CONFIRM', target: top }
   if (top.canIntercept) return { action: 'INTERCEPT', target: top }
   return { action: 'DISMISS', target: top }
 }

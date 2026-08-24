@@ -40,6 +40,9 @@ import {
   MARKER_KEY, MARKER_VERSION, readMarker, readAnyMarker,
   decideBack, hasArmable, MAX_CONSECUTIVE_BLOCKS,
 } from '../lib/backNav.js'
+// Cyclic with this file (ConfirmSheet calls useDismissable) and safe: both sides are hoisted
+// function declarations, so each binding is initialised before the other module's body runs.
+import ConfirmSheet from '../components/ConfirmSheet.jsx'
 
 // TWO contexts, deliberately. The API context holds register/unregister/update, all of which are
 // useCallback([]) — so its identity is stable FOREVER. The value context holds topmostId, which
@@ -94,6 +97,56 @@ export function DismissRegistryProvider({ children }) {
   const topmost = resolveTopmost(entries)
   const topmostId = topmost ? topmost.id : null
 
+  // ─── BUG-DIRTYDISMISSGAP-001 — the CONFIRM consumer branch ─────────────────────────────────────
+  //
+  // WHAT WAS ACTUALLY BROKEN. The ledger read as "confirmOnDirty is off pending a ConfirmSheet",
+  // implying a flip would call something missing. It would not — it would do NOTHING, silently:
+  // CONFIRM is neither NONE nor BLOCKED, so both switches below fell through to cbRef and dismissed.
+  // A future session could have flipped both booleans, watched the pure-decider tests stay green,
+  // shipped it, and changed nothing on any surface. The branch is the fix; the flag was trivia.
+  //
+  // PROVIDER-OWNED, not consumer-owned, for three reasons that are not style: only the arbiter can
+  // see the whole stack (the confirm must outrank surfaces the consumer cannot know about); the
+  // re-arm and resolve-once bookkeeping has to sit next to armedRef/blockedRef/selfPopRef; and a
+  // consumer-rendered confirm is just the per-surface window.confirm patch again, once per host.
+  //
+  // pendingConfirm is BOTH state (to render) and a ref (readable from the popstate listener, which
+  // is bound once with [] deps and must not rebind on every keystroke).
+  const [pendingConfirm, setPendingConfirm] = useState(null)
+  const pendingConfirmRef = useRef(null)
+
+  const raiseConfirm = useCallback((entry) => {
+    if (pendingConfirmRef.current) return false      // one question at a time
+    if (!entry) return false
+    const next = { id: entry.id, title: entry.confirmTitle, body: entry.confirmBody }
+    pendingConfirmRef.current = next
+    setPendingConfirm(next)
+    return true
+  }, [])
+
+  // Resolve EXACTLY ONCE. The target is looked up by id at resolution time rather than captured:
+  // if the surface unmounted while the question was up, there is nothing to dismiss and calling a
+  // stale cbRef would setState into a dead tree.
+  const resolveConfirm = useCallback((accepted) => {
+    const p = pendingConfirmRef.current
+    pendingConfirmRef.current = null
+    setPendingConfirm(null)
+    if (!accepted || !p) return
+    entriesRef.current.find((e) => e.id === p.id)?.cbRef?.current?.()
+  }, [])
+
+  // A consumer's own labelled Close, routed through the arbiter (dismissLayers.js's header has
+  // always named "a labelled Close routed here" as in scope). Without this, deleting the two shipped
+  // window.confirm patches would REGRESS their X button: Escape and Back would confirm while the
+  // visible Close discarded silently. Returns true only when it took ownership of the gesture; the
+  // caller falls back to its own onDismiss otherwise, so this is provably inert for the 24 surfaces
+  // that never opt in.
+  const requestDismiss = useCallback((id) => {
+    const e = entriesRef.current.find((x) => x.id === id)
+    if (!e || !e.confirmOnDirty || !e.dirty) return false
+    return raiseConfirm(e)
+  }, [raiseConfirm])
+
   // THE single Escape listener. Topmost-only, exactly one dismissal per press.
   //
   // ESCAPE-VS-BACK PARITY IS ACHIEVED AS OF SLICE 3a (2026-08-06). Both gestures now resolve
@@ -123,7 +176,7 @@ export function DismissRegistryProvider({ children }) {
       // is what makes the class unreachable. Deliberately AFTER the key check so an unrelated
       // preventDefault on some other key can never make Escape inert.
       if (e.defaultPrevented) return
-      const d = decideDismiss(entries, { blockOnBusy: true })
+      const d = decideDismiss(entries, { blockOnBusy: true, confirmOnDirty: true })
       if (d.action === 'NONE') return          // nothing registered — let the event through
       // BLOCKED: a write is in flight. Swallow the key rather than discarding the surface. Enabled
       // in Slice 2 because it is the only way to register the two surfaces that ALREADY hand-rolled
@@ -133,11 +186,14 @@ export function DismissRegistryProvider({ children }) {
       // which is all the rest, so turning it on is not a blanket behaviour change.
       e.preventDefault()
       if (d.action === 'BLOCKED') return
+      // CONFIRM: ask instead of discarding. No marker bookkeeping on this path — Escape consumes no
+      // history entry, so the surface underneath keeps whatever it armed.
+      if (d.action === 'CONFIRM') { raiseConfirm(d.target); return }
       d.target.cbRef?.current?.()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [entries])
+  }, [entries, raiseConfirm])
 
   // ─── V4-BACKNAV-001 Slice 3a — the system Back, arbitrated by THIS registry ────────────────────
   //
@@ -225,7 +281,7 @@ export function DismissRegistryProvider({ children }) {
       if (cur && cur.seq === armedRef.current) return  // still standing on ours: not our gesture
       armedRef.current = null                       // our marker was just consumed
 
-      const d = decideBack(entriesRef.current, { blockOnBusy: true })
+      const d = decideBack(entriesRef.current, { blockOnBusy: true, confirmOnDirty: true })
       if (d.action === 'NONE') return
 
       if (d.action === 'BLOCKED') {
@@ -237,6 +293,20 @@ export function DismissRegistryProvider({ children }) {
         return
       }
       blockedRef.current = 0
+
+      // CONFIRM — the highest-risk three lines in this change, and the re-arm is why.
+      //
+      // :226 above already consumed our marker, and the surface is NOT closing, so without arm()
+      // here the dirty sheet is left with no marker and the user's SECOND Back exits the installed
+      // PWA with a half-filled form still on screen. Same shape as the BLOCKED branch, minus the
+      // bound: a confirm is a question the user answers, not a refusal that could loop forever.
+      // Re-arm unconditionally, even in the (unreachable — ConfirmSheet outranks everything) case
+      // where a question is already up, so no path can fall through and discard the surface.
+      if (d.action === 'CONFIRM') {
+        raiseConfirm(d.target)
+        arm()
+        return
+      }
 
       if (d.action === 'INTERCEPT') {
         // Call FIRST, arm only on success. Arming before and un-setting the ref on decline left the
@@ -254,15 +324,30 @@ export function DismissRegistryProvider({ children }) {
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
-  }, [arm])
+  }, [arm, raiseConfirm])
 
   // Stable for the life of the provider — never re-runs a consumer's registration effect.
-  const api = useMemo(() => ({ register, unregister, update }), [register, unregister, update])
+  const api = useMemo(
+    () => ({ register, unregister, update, requestDismiss }),
+    [register, unregister, update, requestDismiss],
+  )
   const top = useMemo(() => ({ topmostId, count: entries.length }), [topmostId, entries.length])
 
   return (
     <DismissApiContext.Provider value={api}>
-      <DismissTopContext.Provider value={top}>{children}</DismissTopContext.Provider>
+      <DismissTopContext.Provider value={top}>
+        {children}
+        {/* INSIDE both providers, so it registers in the same stack it is arbitrating, and AFTER
+            children so the equal-layer tiebreak is never load-bearing (SYSTEM already outranks
+            every other layer). Mounted at the app root, so it paints above every route. */}
+        <ConfirmSheet
+          open={!!pendingConfirm}
+          title={pendingConfirm?.title || undefined}
+          body={pendingConfirm?.body || undefined}
+          onConfirm={() => resolveConfirm(true)}
+          onCancel={() => resolveConfirm(false)}
+        />
+      </DismissTopContext.Provider>
     </DismissApiContext.Provider>
   )
 }
@@ -284,6 +369,17 @@ export function useDismissable({
   //   hook once for all 9 <Sheet> render sites, so a default of true would silently enrol
   //   BottomNav's two navigating sheets on the app's most frequent path.
   kind = 'modal', armsBack = false,
+  // BUG-DIRTYDISMISSGAP-001 — the per-surface CONFIRM opt-in, and three more registration-time
+  // constants. DEFAULT FALSE for the same reason armsBack is: Sheet calls this hook once for all 18
+  // of its render sites, so a default of true would silently enrol every one of them, including the
+  // three overlay routes whose content already survives a dismiss via a real draft stash.
+  //
+  // SCALARS, NOT A COPY OBJECT. These are effect deps (registration-time constants, unlike
+  // dirty/busy), and an inline `confirmCopy={{...}}` literal has a fresh identity every render — it
+  // would unregister and re-register on every keystroke, reordering the stack mid-typing. That is
+  // exactly the failure the dirty/busy exclusion below exists to prevent, so the copy travels as
+  // strings, which compare by value.
+  confirmOnDirty = false, confirmTitle = null, confirmBody = null,
   // backIntercept: the topmost surface handling this Back ITSELF (a sub-state step-back) instead of
   //   being dismissed. Read through a REF, never pushed through update(): update()'s shallow
   //   compare is true on every render for an inline closure, which would produce a new entries
@@ -304,29 +400,47 @@ export function useDismissable({
   const canIntercept = !!backIntercept
 
   const [id, setId] = useState(null)
+  // Mirrored synchronously so requestDismiss below can read it from an event handler without a
+  // render's lag and without becoming an unstable callback.
+  const idRef = useRef(null)
   useEffect(() => {
-    if (!active) { setId(null); return }
+    if (!active) { setId(null); idRef.current = null; return }
     const newId = api.register({
       layer, cbRef, dirty: !!dirty, busy: !!busy,
       kind, armsBack: !!armsBack, interceptRef, canIntercept: !!canIntercept,
+      confirmOnDirty: !!confirmOnDirty, confirmTitle, confirmBody,
     })
     setId(newId)
-    return () => { api.unregister(newId); setId(null) }
+    idRef.current = newId
+    return () => { api.unregister(newId); setId(null); idRef.current = null }
     // `api` is identity-stable (see the two-context note above), so this effect keys only on
     // active/layer. dirty/busy are intentionally excluded and pushed via update() below: making
     // them deps would unregister and re-register on every keystroke, reordering the stack
     // mid-interaction so a typing user's sheet would silently become "topmost" over a dialog.
-  }, [active, api, layer, kind, armsBack])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [active, api, layer, kind, armsBack, confirmOnDirty, confirmTitle, confirmBody])   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!active || !id) return
     api.update(id, { dirty: !!dirty, busy: !!busy, canIntercept: !!canIntercept })
   }, [active, api, id, dirty, busy, canIntercept])
 
+  // A consumer's own labelled Close/Cancel control, arbitrated. Escape and Back already route
+  // through the provider; a Close button that called onDismiss directly would be the one gesture
+  // that bypassed the confirm, which is a data-loss hole rather than an inconsistency. Identity is
+  // stable (it reads idRef/cbRef, never `id`/`onDismiss`), so it is safe in a consumer's deps.
+  // Falls back to onDismiss whenever the provider declines ownership — so for the surfaces that
+  // never opt in, and for an unprovided/flag-off render, this is byte-identical to calling onDismiss.
+  const requestDismiss = useCallback(() => {
+    const cur = idRef.current
+    if (cur && api?.requestDismiss?.(cur)) return
+    cbRef.current?.()
+  }, [api])
+
   const registered = active && !!id
   return {
     registered,
     isTopmost: registered ? top?.topmostId === id : true,
+    requestDismiss,
   }
 }
 

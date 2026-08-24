@@ -67,8 +67,33 @@ describe('decideBack — closed enum, exactly one outcome per input', () => {
   })
 
   it('CONFIRM is never emitted while confirmOnDirty is off (its default)', () => {
-    expect(decideBack([e({ dirty: true })]).action).toBe('DISMISS')
-    expect(decideBack([e({ dirty: true })], { confirmOnDirty: true }).action).toBe('CONFIRM')
+    expect(decideBack([e({ dirty: true, confirmOnDirty: true })]).action).toBe('DISMISS')
+    expect(decideBack([e({ dirty: true, confirmOnDirty: true })], { confirmOnDirty: true }).action).toBe('CONFIRM')
+  })
+
+  // BUG-DIRTYDISMISSGAP-001 — the per-entry opt-in, mirrored from decideDismiss so the two gestures
+  // cannot disagree about WHICH surfaces confirm. The provider passes confirmOnDirty:true now, so
+  // this term is the only thing standing between "SowNow asks before discarding" and "every dirty
+  // surface in the app nags", including the route overlays that already stash their drafts.
+  it('a dirty entry that did NOT opt in still DISMISSes, even with the caller switch on', () => {
+    expect(decideBack([e({ dirty: true })], { confirmOnDirty: true }).action).toBe('DISMISS')
+  })
+
+  it('an opted-in entry that is CLEAN dismisses — no nag on an untouched surface', () => {
+    expect(decideBack([e({ confirmOnDirty: true })], { confirmOnDirty: true }).action).toBe('DISMISS')
+  })
+
+  it('BLOCKED outranks CONFIRM, and CONFIRM outranks INTERCEPT', () => {
+    const dirty = { dirty: true, confirmOnDirty: true }
+    expect(decideBack([e({ ...dirty, busy: true })], { confirmOnDirty: true }).action).toBe('BLOCKED')
+    expect(decideBack([e({ ...dirty, canIntercept: true })], { confirmOnDirty: true }).action).toBe('CONFIRM')
+  })
+
+  // kind:'route' short-circuits BEFORE the confirm check, so App.jsx's OverlayHost could not confirm
+  // on Back even if it opted in. Pinned because it is the one place the two gestures legitimately
+  // differ, and because it is the reason the migration deliberately leaves OverlayHost opted OUT.
+  it('a route overlay returns NONE even when dirty and opted in', () => {
+    expect(decideBack([e({ kind: 'route', dirty: true, confirmOnDirty: true })], { confirmOnDirty: true }).action).toBe('NONE')
   })
 })
 

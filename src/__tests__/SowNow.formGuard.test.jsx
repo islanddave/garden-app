@@ -468,9 +468,18 @@ describe('SowNow — Sheet backdrop guard over the embedded editor (V4-PLANTEDIT
     expect(within(screen.getByRole('dialog')).getByLabelText('Quantity').value).toBe('6')
   })
 
-  // Sheet's contract is that ONLY the backdrop consults dirty (§5.2). A dirty sheet with no way out
-  // would be a trap, and this page has no confirm dialog to offer instead.
-  it('the labelled Close still closes a dirty sheet — the backdrop is the only guarded exit', async () => {
+  // ⚠️ THESE TWO PIN THE UNREGISTERED FALLBACK, NOT PRODUCTION (BUG-DIRTYDISMISSGAP-001).
+  //
+  // This file mounts NO DismissRegistryProvider, so `registered` is false: Sheet's labelled Close
+  // falls back to calling onClose directly and Escape runs Sheet's own legacy keydown
+  // (Sheet.jsx:123-125), neither of which consults the registry. That fallback must stay
+  // byte-identical for isolated tests and for a flag-off build, and these two assert it.
+  //
+  // In production — provider mounted, `confirmOnDirty` passed on this Sheet — both gestures now
+  // raise ConfirmSheet instead. That is asserted in SowNow.backNavDirty.test.jsx, which mounts a
+  // real provider and real window.history. Do not read the two titles below as the shipped contract;
+  // they used to be, and pinning the defect as the spec is exactly what this comment now prevents.
+  it('with NO provider, the labelled Close still closes a dirty sheet (unregistered fallback)', async () => {
     routeFetch()
     await renderSowNow()
     const dialog = await openSheet()
@@ -481,7 +490,7 @@ describe('SowNow — Sheet backdrop guard over the embedded editor (V4-PLANTEDIT
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('Escape still closes a dirty sheet', async () => {
+  it('with NO provider, Escape still closes a dirty sheet (Sheet\'s legacy keydown)', async () => {
     routeFetch()
     await renderSowNow()
     const dialog = await openSheet()

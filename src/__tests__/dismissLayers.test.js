@@ -68,13 +68,27 @@ describe('decideDismiss', () => {
     expect(decideDismiss([e(1, LAYER.SHEET, { busy: true })]).action).toBe('DISMISS')
   })
 
-  it('opt-in confirmOnDirty yields CONFIRM (wired when the ConfirmSheet primitive exists)', () => {
-    const d = decideDismiss([e(1, LAYER.SHEET, { dirty: true })], { confirmOnDirty: true })
+  it('opt-in confirmOnDirty yields CONFIRM for an entry that opted in', () => {
+    const d = decideDismiss([e(1, LAYER.SHEET, { dirty: true, confirmOnDirty: true })], { confirmOnDirty: true })
     expect(d.action).toBe('CONFIRM')
   })
 
+  // BUG-DIRTYDISMISSGAP-001 — CONFIRM takes THREE terms, and this is the one that makes the caller's
+  // switch safe to leave on. The provider passes confirmOnDirty:true for every gesture now, so
+  // without the per-entry term every dirty surface in the app would confirm, including the three
+  // overlay routes whose content already survives a dismiss via a real draft stash.
+  it('a dirty entry that did NOT opt in still DISMISSes, even with the caller switch on', () => {
+    const d = decideDismiss([e(1, LAYER.SHEET, { dirty: true })], { confirmOnDirty: true })
+    expect(d.action).toBe('DISMISS')
+  })
+
+  it('an opted-in entry that is CLEAN dismisses — no nag on an untouched surface', () => {
+    const d = decideDismiss([e(1, LAYER.SHEET, { confirmOnDirty: true })], { confirmOnDirty: true })
+    expect(d.action).toBe('DISMISS')
+  })
+
   it('opt-in blockOnBusy outranks confirmOnDirty — an in-flight write is refused, not discarded', () => {
-    const d = decideDismiss([e(1, LAYER.SHEET, { dirty: true, busy: true })],
+    const d = decideDismiss([e(1, LAYER.SHEET, { dirty: true, busy: true, confirmOnDirty: true })],
       { confirmOnDirty: true, blockOnBusy: true })
     expect(d.action).toBe('BLOCKED')
   })
@@ -92,8 +106,10 @@ describe('decideDismiss', () => {
     const layers = [LAYER.SHEET, LAYER.DIALOG, LAYER.SYSTEM]
     const stacks = [[]]
     for (const l of layers) for (const dirty of [false, true]) for (const busy of [false, true]) {
-      stacks.push([e(1, l, { dirty, busy })])
-      stacks.push([e(1, LAYER.SHEET), e(2, l, { dirty, busy })])
+      for (const optIn of [false, true]) {
+        stacks.push([e(1, l, { dirty, busy, confirmOnDirty: optIn })])
+        stacks.push([e(1, LAYER.SHEET), e(2, l, { dirty, busy, confirmOnDirty: optIn })])
+      }
     }
     for (const stack of stacks) {
       for (const confirmOnDirty of [false, true]) for (const blockOnBusy of [false, true]) {

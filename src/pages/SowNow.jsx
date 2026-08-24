@@ -114,6 +114,12 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   // its `onDirty` prop. This is the ONLY thing this page can know about content typed INSIDE the
   // sheet — `sowTarget` says which packet is being sown, never whether anything has been entered.
   const [editorDirty, setEditorDirty] = useState(false)
+  // BUG-DIRTYDISMISSGAP-001 — the editor's in-flight-write signal, which this page alone of the
+  // three PlantingEditor hosts never subscribed to (Garden.jsx and PlantingDetail.jsx both did).
+  // Without it decideBack's BLOCKED branch could never fire here, so the sow sheet was dismissable
+  // mid-POST as well as mid-typing: closing unmounts the editor, so a create that FAILED had nothing
+  // left to render its error into and looked exactly like one that succeeded.
+  const [editorBusy, setEditorBusy] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -260,6 +266,11 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   const closeSowSheet = useCallback(() => {
     clearDraft(DRAFT_KEY)
     setSowTarget(null)
+    // Cleared here as well as by PlantingEditor's unmount release, which lands a commit later: a
+    // stale `true` would leave the NEXT sow sheet undismissable from its first frame — the stuck-busy
+    // trap the bounded Back guard exists to survive, reached with no write in flight at all. Same
+    // reasoning PlantingDetail.jsx records on its own closeEditor.
+    setEditorBusy(false)
   }, [])
 
   // V4-SOWARCHIVE-001. Archive/un-archive a packet for THIS season.
@@ -493,10 +504,18 @@ export default function SowNow({ todayISO = localTodayISO() }) {
         // user who means to leave still has two ways out and needs no confirm dialog to use them.
         // Gated on the EDITOR's signal, not on `dirty` (= sheet-open): passing sheet-open would make
         // the backdrop inert for every sow, including the far more common one where the sheet was
-        // opened by mistake and holds nothing. It also registers with the DismissRegistry, where
-        // `confirmOnDirty` is still off by default (dismissLayers.js) — forward-compat for the
-        // ConfirmSheet primitive, inert for Back/Escape today.
+        // opened by mistake and holds nothing.
         dirty={editorDirty}
+        // BUG-DIRTYDISMISSGAP-001 — this was the app's genuinely UNGUARDED editor surface, and the
+        // worst-exposed of the three hosts. closeSowSheet clears the stash as its FIRST act, so an
+        // unconfirmed dismiss destroyed both the typed fields and the {inventoryItemId} crumb that
+        // would have said which packet was mid-sow (see the stash note at the top of this file).
+        // Net recovery was zero. Escape and Android Back now raise the registry's ConfirmSheet.
+        confirmOnDirty
+        confirmTitle="Discard this sowing?"
+        confirmBody="This packet has not been sown yet. What you typed will be lost, and the sheet will not reopen on this packet."
+        // The in-flight-write half of the same gap — see the editorBusy declaration above.
+        busy={editorBusy}
         title={sowTarget ? `Sow ${sowTarget.candidate.variety_name || sowTarget.candidate.item_name}` : undefined}
       >
         {sowTarget && (
@@ -518,6 +537,8 @@ export default function SowNow({ todayISO = localTodayISO() }) {
               // keeps `onDirty` behind a ref so an unstable prop cannot fire a spurious release,
               // and a stable identity means this page never has to rely on that.
               onDirty={setEditorDirty}
+              // Same contract, same reasoning — feeds <Sheet busy> above.
+              onBusy={setEditorBusy}
             />
           </div>
         )}
