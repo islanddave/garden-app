@@ -2304,7 +2304,11 @@ export default function EventNew() {
                   disclosure row instead of moving the pad. Cancelled here, spent below the weight
                   pad. Cost: the quantity pad now abuts the WEIGHT label, which is text and takes no
                   taps, so nothing mis-tappable moved closer to anything else. */}
-              <div style={{ marginTop: sessionFrame ? 0 : 8, marginBottom: sessionFrame ? -NUMBERPAD_MARGIN_BOTTOM_PX : 0 }}>
+              {/* Two whole style objects rather than one with conditional values, because a
+                  `marginBottom: 0` on the rollback arm is not a no-op — it emits `margin-bottom: 0px`
+                  into the inline style and broke both legacy byte fixtures. The frame arm's props
+                  must not reach the arm that is the rollback lever. */}
+              <div style={sessionFrame ? { marginTop: 0, marginBottom: -NUMBERPAD_MARGIN_BOTTOM_PX } : { marginTop: 8 }}>
                 <NumberPad
                   value={harvest.quantity}
                   onChange={v => {
