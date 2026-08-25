@@ -31,7 +31,7 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 52-route set with no duplicates', () => {
+  it('the page tree has the full 53-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
     // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
@@ -50,9 +50,14 @@ describe('App route table (single source of truth)', () => {
     // both unreachable (no `to="/zone"` in src) and inert. Context, page and route went together.
     // This is the first DECREMENT in this ledger; the uniqueness assert below cannot catch a
     // deletion, so the count is the only mechanical proof the route actually left the table.
+    // 52 → 53: V4-HANDEDNESSCONTROLS-001 (BD-054) adds /settings/controls, the handedness
+    // preference. A SIBLING of /settings/notifications rather than a section of it — that page
+    // is titled Notifications and is about critter visits. /settings itself still redirects to
+    // notifications, so Settings.test.jsx is untouched; the parent-index refactor its header has
+    // anticipated since MVP-Critter Session 4 was deliberately NOT done here.
     const paths = pagePaths()
-    expect(paths).toHaveLength(52)
-    expect(new Set(paths).size).toBe(52)
+    expect(paths).toHaveLength(53)
+    expect(new Set(paths).size).toBe(53)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

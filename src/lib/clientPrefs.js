@@ -31,6 +31,19 @@ export const CLIENT_PREF_KEYS = [
   // preference is the opposite of Dave's), so a stale cache pre-selects every planting for her.
   'quicklog.defaultAllSelected',  // ScopeChecklist.jsx — Log-Many default selection
   'garden.releasesSeenVersion',   // whatsNew.js — last-seen release version
+  // V4-HANDEDNESSCONTROLS-001 (BD-054) — handedness.js. The strongest case in this list for being
+  // here: every other key leaks a PRESENTATION choice, this one leaks which side of a two-control
+  // row the DESTRUCTIVE control sits on. Left behind, the second person to sign in on a shared
+  // phone inherits the other's hand, and "Not yet" — a 10-20 day snooze — lands under their thumb
+  // while the harmless control sits out of reach. That is the exact harm the setting exists to
+  // remove, delivered to the wrong person.
+  //
+  // ⚠️ INTERIM COST, ACCEPTED KNOWINGLY: user_notification_prefs.handedness is authored and NOT yet
+  // applied (migrations/v4-handednesscontrols-001), so until it lands there is no server copy to
+  // re-adopt and a sign-out really does lose the choice. Re-picking it is one tap; inheriting the
+  // wrong hand silently is not recoverable by the person it happens to, because nothing on screen
+  // says the layout was decided by someone else.
+  'ui.handedness',
 ]
 
 export const CLIENT_PREF_KEY_PREFIXES = [

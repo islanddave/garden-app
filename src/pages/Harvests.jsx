@@ -228,12 +228,16 @@ export default function Harvests() {
             belong up on the title line as quick buttons.
 
             WEIGH-IN IS RIGHTMOST because Dave asked for it there — "closer to my thumb".
-            FLAGGED, NOT SILENTLY RESOLVED: in the same breath he said that DURING a weigh-in
-            session he works LEFT-handed (right hand moves fruit onto the scale, left hand logs) —
-            see V4-HANDEDNESSCONTROLS-001. Right-edge placement assumes a right thumb, so the header
-            and the in-session controls may want opposite hands, or one global handedness
-            preference. That is a real open question for Dave and it is NOT answered here; this
-            follows his literal instruction for this button and nothing more.
+
+            ⛔ DELIBERATELY EXEMPT FROM THE HANDEDNESS SETTING — DO NOT "FIX" THIS.
+            V4-HANDEDNESSCONTROLS-001 (BD-054) shipped a real global handedness preference
+            (src/lib/handedness.js) and wired the watch band, the number pad and the picker slots to
+            it. This button is the one control that was ASKED ABOUT and RULED OUT: Dave, 2026-08-25,
+            "it should stay on the right permanently, because I tap it BEFORE I pick anything up" —
+            both hands are free at that moment, so thumb-reach does not apply and the muscle memory
+            of a fixed corner is worth more. The open question this comment used to carry (header vs
+            in-session hands) is therefore ANSWERED, not outstanding. A future pass that flips this
+            for consistency would be reversing an explicit user decision.
 
             REVERSES V4-WEIGHINCTA-001's promotion of Weigh-in to a full-width filled primary CTA.
             That row's reasoning was that a doorway you must already know about cannot buy a

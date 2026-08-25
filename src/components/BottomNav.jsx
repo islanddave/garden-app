@@ -396,6 +396,12 @@ export default function BottomNav() {
         <SheetRowLink to="/settings" onClick={closeMore} style={menuRowStyle}>
           <Icon name="action.settings" size={22} decorative />Settings
         </SheetRowLink>
+        {/* V4-HANDEDNESSCONTROLS-001 (BD-054). Its own row rather than a child of Settings because
+            /settings is still the notifications redirect — see SettingsControls.jsx on why the
+            /settings parent refactor was deliberately left alone. */}
+        <SheetRowLink to="/settings/controls" onClick={closeMore} style={menuRowStyle}>
+          <Icon name="action.settings" size={22} decorative />Controls
+        </SheetRowLink>
         <SheetRowLink to="/about" onClick={closeMore} style={menuRowStyle}>
           <Icon name="action.info" size={22} decorative />About
         </SheetRowLink>

@@ -95,15 +95,17 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     }
   })
 
-  it('the enumerated list is exactly the five keys plus the two prefixes', () => {
+  it('the enumerated list is exactly the six keys plus the two prefixes', () => {
     // Pins the SCOPE, not the behaviour: widening this set is a deliberate decision, not a drive-by.
     // Widened by V4-USERPREFS-001 (2026-08-17), deliberately: the three keys added there are
     // per-device CACHES of per-user server state, read synchronously to seed first render. That
     // read is the window in which the second person to sign in sees the first person's answer, so
     // they belong here for the same reason the original three did.
+    // Widened again by V4-HANDEDNESSCONTROLS-001 (2026-08-25): same shape, higher stakes — the
+    // inherited value decides which side a destructive control sits on, not merely a sort order.
     expect(CLIENT_PREF_KEYS).toEqual([
       'croprank.v1', 'logone.lastPlant', 'lastHarvestUnit',
-      'quicklog.defaultAllSelected', 'garden.releasesSeenVersion',
+      'quicklog.defaultAllSelected', 'garden.releasesSeenVersion', 'ui.handedness',
     ])
     expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:'])
   })

@@ -26,9 +26,20 @@
 // ⚠️ jsdom cannot falsify ANY of the above (getBoundingClientRect returns zeros —
 // tests/harness/README.md:14-16, and elementFromPoint is meaningless there). A green suite proves
 // the STATE MACHINE only; every layout claim here came from tests/harness/.
+//
+// V4-HANDEDNESSCONTROLS-001 (BD-054) — ⌫ AND `.` FOLLOW THE HANDEDNESS SETTING. ⌫ is the
+// most-repeated corrective key on this surface (the header above calls it MANDATORY: under build
+// semantics a mis-tap COMPOUNDS), so it belongs on whichever edge the user's thumb actually
+// reaches. Right-handed — the default — is byte-identical to what shipped: `7 8 9 0 . ⌫`. The
+// DIGITS never reverse; only the trailing corrective pair moves to the leading cells, because a pad
+// that renders `0 9 8 7` would be a different and much worse defect than the one being fixed.
+// The grid is `repeat(6, 1fr)`, so this is a reorder, not a re-layout, and the primary keeps
+// `gridColumn: '1 / -1'` — a full-width control has no handedness and must stay that way.
 import React from 'react'
 import { P } from '../lib/constants.js'
 import { PAD_BACKSPACE, appendDigit, padKeyDisabled } from '../lib/numberPad.js'
+import { orderByThumb } from '../lib/handedness.js'
+import { useHandedness } from '../hooks/useHandedness.js'
 
 const ROWS = [['1', '2', '3', '4', '5', '6'], ['7', '8', '9', '0']]
 
@@ -85,6 +96,48 @@ export default function NumberPad({
   const opts = maxLen == null ? undefined : { maxLen }
   const press = (key) => onChange(appendDigit(value, key, opts))
   const dis = (key) => padKeyDisabled(value, key, opts)
+  const hand = useHandedness()
+
+  const digitKey = (d) => (
+    <PadKey
+      key={d}
+      label={d}
+      ariaLabel={`${keyAriaPrefix} ${d}`}
+      testId={`${idPrefix}-${d}`}
+      disabled={dis(d)}
+      onClick={() => press(d)}
+    />
+  )
+
+  // ⌫ is MANDATORY, not a nicety. Under replace semantics a mis-tap was corrected by tapping the
+  // right chip; under build semantics it COMPOUNDS. Without a backspace the builder would be
+  // strictly worse than the chips for errors — the one way this feature can go wrong. Being the
+  // key the thumb returns to most, it is the `underThumb` argument at BOTH levels below: outermost
+  // within the corrective pair, and the pair itself outermost within the row.
+  const backKey = (
+    <PadKey
+      key="back"
+      label={PAD_BACKSPACE}
+      ariaLabel={`${keyAriaPrefix} backspace`}
+      testId={`${idPrefix}-back`}
+      disabled={dis(PAD_BACKSPACE)}
+      onClick={() => press(PAD_BACKSPACE)}
+    />
+  )
+  const dotKey = (
+    <PadKey
+      key="dot"
+      label="."
+      ariaLabel={`${keyAriaPrefix} decimal point`}
+      testId={`${idPrefix}-dot`}
+      disabled={dis('.')}
+      onClick={() => press('.')}
+    />
+  )
+
+  const [topRow, bottomDigits] = ROWS
+  const corrective = orderByThumb(hand, backKey, dotKey)
+  const bottomRow = orderByThumb(hand, corrective, bottomDigits.map(digitKey)).flat()
 
   return (
     <div
@@ -92,33 +145,8 @@ export default function NumberPad({
       aria-label={ariaLabel}
       style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}
     >
-      {ROWS.flat().map((d) => (
-        <PadKey
-          key={d}
-          label={d}
-          ariaLabel={`${keyAriaPrefix} ${d}`}
-          testId={`${idPrefix}-${d}`}
-          disabled={dis(d)}
-          onClick={() => press(d)}
-        />
-      ))}
-      <PadKey
-        label="."
-        ariaLabel={`${keyAriaPrefix} decimal point`}
-        testId={`${idPrefix}-dot`}
-        disabled={dis('.')}
-        onClick={() => press('.')}
-      />
-      {/* ⌫ is MANDATORY, not a nicety. Under replace semantics a mis-tap was corrected by tapping
-          the right chip; under build semantics it COMPOUNDS. Without a backspace the builder would
-          be strictly worse than the chips for errors — the one way this feature can go wrong. */}
-      <PadKey
-        label={PAD_BACKSPACE}
-        ariaLabel={`${keyAriaPrefix} backspace`}
-        testId={`${idPrefix}-back`}
-        disabled={dis(PAD_BACKSPACE)}
-        onClick={() => press(PAD_BACKSPACE)}
-      />
+      {topRow.map(digitKey)}
+      {bottomRow}
       {onPrimary && (
         // The coupling that makes BD-046 non-optional: once the pad sets inputMode="none" the
         // keyboard stops appearing, and with it the Enter key — which was the ONLY shipped

@@ -44,6 +44,7 @@ import GardenHelper from './pages/GardenHelper.jsx'
 import FieldCapture from './pages/FieldCapture.jsx'
 import Settings from './pages/Settings.jsx'
 import SettingsNotifications from './pages/SettingsNotifications.jsx'
+import SettingsControls from './pages/SettingsControls.jsx'
 import Findings from './pages/Findings.jsx'
 import About from './pages/About.jsx'
 import ReleaseNotes from './pages/ReleaseNotes.jsx'
@@ -286,6 +287,9 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/helper',        element: <Protected><GardenHelper /></Protected> },
     { path: '/settings',      element: <Protected><Settings /></Protected> },
     { path: '/settings/notifications', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected> },
+    // V4-HANDEDNESSCONTROLS-001 (BD-054) — handedness. Sibling of /settings/notifications rather
+    // than a section of it: that page is about critter visits.
+    { path: '/settings/controls', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsControls /></ErrorBoundary></Protected> },
     { path: '/field',         element: <Protected><FieldCapture /></Protected> },
     { path: '/about',         element: <Protected><About /></Protected> },
     { path: '/releases',      element: <Protected><ReleaseNotes /></Protected> },

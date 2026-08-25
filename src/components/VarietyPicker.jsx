@@ -27,8 +27,9 @@ import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
 import {
   useComboboxInput, looseIncludes, looseKey,
-  kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingRight,
+  kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingStyle,
 } from '../lib/comboboxInput.js'
+import { useHandedness } from '../hooks/useHandedness.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 
@@ -70,6 +71,9 @@ export default function VarietyPicker({
   id,
 }) {
   const { varieties, loading, error, search, createVariety } = useVarieties()
+  // V4-HANDEDNESSCONTROLS-001 — which edge the ⌨/🎤 slots take. Local-only read: no auth, no
+  // network, resolved synchronously so the slots never move after first paint.
+  const hand = useHandedness()
   const { cropTypes, createCropType } = useCropTypes()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -532,7 +536,7 @@ export default function VarietyPicker({
   // 🎤 shows whenever speech is available and the list is open — independent of kbMode (speaking
   // over a raised keyboard is legitimate), same mint-a-crop exclusion as ⌨.
   const showMicBtn = open && !disabled && voiceSupported && createStage !== 'newcrop'
-  const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn })
+  const togglePad = toggleSlotsPaddingStyle({ showKb: showKbBtn, showMic: showMicBtn, hand })
 
   return (
     <div ref={rootRef} style={{ position: 'relative' }}>
@@ -562,7 +566,7 @@ export default function VarietyPicker({
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         disabled={disabled}
-        style={togglePad ? { ...inputStyle(hasError, disabled), paddingRight: togglePad } : inputStyle(hasError, disabled)}
+        style={togglePad ? { ...inputStyle(hasError, disabled), ...togglePad } : inputStyle(hasError, disabled)}
         autoComplete="off"
       />
 
@@ -578,7 +582,7 @@ export default function VarietyPicker({
           onClick={enableKeyboard}
           aria-label="Type to search varieties"
           title="Type to search"
-          style={kbToggleBtnStyle}
+          style={kbToggleBtnStyle(hand)}
         >
           <span aria-hidden="true">⌨</span>
         </button>
@@ -600,7 +604,7 @@ export default function VarietyPicker({
           aria-pressed={voiceState === 'listening'}
           aria-disabled={voiceState === 'denied' || undefined}
           title="Speak to search"
-          style={micToggleBtnStyle(voiceState)}
+          style={micToggleBtnStyle(voiceState, hand)}
         >
           <span aria-hidden="true">🎤</span>
         </button>

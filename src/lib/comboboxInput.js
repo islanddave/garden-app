@@ -27,6 +27,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { P } from './constants.js'
 import { isTranscriptionSupported, startLiveTranscription } from './transcribe.js'
+import { thumbEdge } from './handedness.js'
 
 export function useComboboxInput({ open, inputRef, onVoiceText, defaultMode = 'none' }) {
   // ── Mode 1/2: the surface's opening mode + the explicit swap ───────────────
@@ -142,6 +143,18 @@ export function looseIncludes(haystack, needle) {
 // the keyboard is raised) the mic deliberately does NOT slide into it. A surface that renders the
 // slot as a two-way toggle instead (PlantingSelect, V4-PICKERKBDEF-001) never empties it at all.
 // Buttons are full field height (input minHeight 44) so the target tracks the field.
+//
+// V4-HANDEDNESSCONTROLS-001 (BD-054) — THE SLOTS FOLLOW THE HANDEDNESS SETTING, AND THIS IS THE
+// DEFECT THE TICKET WAS FILED ABOUT. Dave, verbatim: on "choose a planting" the MICROPHONE sits on
+// the RIGHT of the field, which is the far side for his logging thumb during a weigh-in (right hand
+// on the scale, left hand on the phone). These are PHYSICAL `right:` offsets, not logical
+// properties and not flex order, so neither a `dir` flip nor any reorder would ever have reached
+// them — the edge has to be computed. `thumbEdge` returns 'right' for the default hand, so the
+// shipped positions are unchanged for anyone who never opens the setting.
+//
+// The slot ORDER off the edge is preserved in both modes (⌨ outermost, then 🎤, then ✕): those are
+// positions a thumb already knows, and BUG-PICKERUNDISMISSABLE-001's rule that the dismiss slot is
+// APPENDED beyond the shipped two rather than inserted between them is unchanged by mirroring.
 const toggleBtnBase = {
   position: 'absolute',
   top: 0, bottom: 0,
@@ -157,12 +170,14 @@ const toggleBtnBase = {
   padding: 0,
 }
 
-export const kbToggleBtnStyle = { ...toggleBtnBase, right: 0 }
+export function kbToggleBtnStyle(hand) {
+  return { ...toggleBtnBase, [thumbEdge(hand)]: 0 }
+}
 
-export function micToggleBtnStyle(voiceState) {
+export function micToggleBtnStyle(voiceState, hand) {
   return {
     ...toggleBtnBase,
-    right: 44,
+    [thumbEdge(hand)]: 44,
     ...(voiceState === 'listening' ? { backgroundColor: P.greenPale, color: P.green } : null),
     ...(voiceState === 'denied' ? { opacity: 0.35, cursor: 'default' } : null),
   }
@@ -172,8 +187,8 @@ export function micToggleBtnStyle(voiceState) {
 // two shipped slots must keep the positions a thumb already knows. It takes the OUTERMOST occupied
 // slot, so it sits at 88 alongside a mic and at 44 where speech is unsupported — a capability that
 // is fixed for the life of the mount, so the target still never moves mid-interaction.
-export function closeToggleBtnStyle(showMic) {
-  return { ...toggleBtnBase, right: showMic ? 88 : 44 }
+export function closeToggleBtnStyle(showMic, hand) {
+  return { ...toggleBtnBase, [thumbEdge(hand)]: showMic ? 88 : 44 }
 }
 
 // Input padding-right for the slots currently occupied: mic shown -> clear both slots (it sits
@@ -185,4 +200,14 @@ export function toggleSlotsPaddingRight({ showKb, showMic, showClose = false }) 
   if (showMic) return 92
   if (showKb) return 48
   return null
+}
+
+// The same width, expressed as the style object the caller spreads. Returns `null` (not an empty
+// object) when no slot is occupied, so `togglePad ? {...} : base` at both call sites keeps working
+// unchanged. V4-HANDEDNESSCONTROLS-001: the padding has to move to whichever side the slots did,
+// or the query text runs underneath them — the same physical-offset problem one level up.
+export function toggleSlotsPaddingStyle({ showKb, showMic, showClose = false, hand }) {
+  const px = toggleSlotsPaddingRight({ showKb, showMic, showClose })
+  if (px == null) return null
+  return thumbEdge(hand) === 'left' ? { paddingLeft: px } : { paddingRight: px }
 }
