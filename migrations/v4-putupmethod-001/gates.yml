@@ -13,6 +13,24 @@
 # a NARROWING (see 0r) is the one that must never precede its writer.
 #
 # ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ═══ WHY THE ASSERTING POST GATES BELOW ARE SELF-ARMING (2026-08-25) ═══
+# `continuous:` DEFAULTS TO TRUE, and .github/workflows/gate-invariants.yml runs
+# `gate_runner.py --all --phase post --continuous-only` against live prod AND staging on every push
+# touching migrations/**, BLOCKING. There is no skip-if-unapplied logic anywhere in the runner. The
+# push necessarily precedes the apply, so a post gate asserting THIS migration's own effect is a
+# guaranteed red on the critical path. Measured against live prod before the fix: two of this file's
+# gates failed (4<>0, 0<>1).
+# post_all_eighteen_values_present is now SELF-ARMING on this migration's schema_version row —
+# vacuously true before the apply, a genuine permanent invariant after it, with no follow-up edit to
+# remember. 0a widens the CHECK and writes the receipt in ONE transaction, so the guard can never be
+# armed ahead of what it guards. Reference shape: migrations/v4-harvhabitgap-001/gates.yml.
+#
+# NOT ARMED, DELIBERATELY: post_no_bare_can_value and post_method_check_is_validated. Both are
+# already TRUE against the live pre-apply constraint, because a widening keeps the constraint's name
+# and validity — they are standing invariants of the fourteen-value world as much as the eighteen-
+# value one. Arming them would make them vacuous before the apply and would DELETE a real assertion
+# that holds today. Self-arming is for a gate that would otherwise be red, never a blanket style.
 
 pre:
   - name: pre_method_check_present
@@ -78,6 +96,10 @@ post:
   # value silently lost during the retype is named rather than merely counted. The fourteen
   # pre-existing values are first; losing any of them is a data-destroying narrowing wearing the
   # costume of an additive change.
+  #
+  # SELF-ARMING per the header. The gate was already violation-shaped (it counts the values MISSING
+  # from the live definition, expecting 0), so arming it needed only the EXISTS conjunct — before the
+  # apply the unnest scan yields no rows, the count is 0, and it passes while CLAIMING nothing.
   - name: post_all_eighteen_values_present
     sql: |
       SELECT count(*) FROM unnest(ARRAY[
@@ -86,7 +108,8 @@ post:
         'purchased_preserved','other',
         'quick_pickle','pesto','hot_sauce','ferment_mash'
       ]) AS v(val)
-       WHERE (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.40.0-putupmethod-001')
+         AND (SELECT pg_get_constraintdef(oid) FROM pg_constraint
                WHERE conrelid='public.preservation_log'::regclass
                  AND conname='chk_preservation_log_method')
              NOT LIKE '%''' || v.val || '''%'
@@ -118,7 +141,16 @@ post:
     expect: rowcount_eq
     value: 1
 
+  # continuous: false — the ONE gate here that CANNOT be self-armed. This is a pure apply receipt:
+  # arming it on its own version row gives `EXISTS(v) AND NOT EXISTS(v)`, unsatisfiable in every
+  # state — a permanently vacuous gate, which is worse than a temporarily red one. It is also the only
+  # gate whose subject genuinely is not an invariant of an unapplied migration. This does NOT silence
+  # it at the runbook checkpoint: gate_runner honours `continuous: false` only under
+  # --continuous-only, which gate-invariants.yml passes and the promote runbook does not, so the
+  # receipt still runs and must still be TRUE at the apply. Same rule and same single exception as
+  # migrations/v4-losscapture-001/gates.yml.
   - name: post_schema_version_recorded
+    continuous: false
     sql: |
       SELECT 1 FROM public.schema_version WHERE version='4.40.0-putupmethod-001'
     expect: rowcount_eq
