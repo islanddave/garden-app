@@ -23,6 +23,17 @@
 // surface. The Next row (session only) spans all six as a third row; that path never meets this
 // constraint, because inputMode="none" means no keyboard and therefore no 390x500.
 //
+// ⚠️ THAT LAST SENTENCE IS NOW FALSE, and the column count alone was never the real guard.
+// BUG-HARVNUMPADINPUT-001 (BD-063) retired `inputMode="none"` on both fields — quantity is
+// 'numeric', weight is 'decimal' — so the keyboard DOES come up in session and 390x500 IS reachable.
+// Re-measured there (BUG-WEIGHPADSAVEBAND-001): the WEIGHT pad's two-row geometry does NOT end above
+// the band, it ends 15px inside it. Fitting the pad above the band by choosing a row count only ever
+// held for the quantity pad, and only at one band height — the band grows from 48px to 184px as the
+// session ledger fills. The clearance is therefore no longer inferred from this component's shape;
+// it is resolved against the band as rendered, by lib/saveBandLayout.js, with a stated 20px minimum
+// and a real-engine gate (scripts/layout-gate/save-band-clearance.mjs). Change the row count freely;
+// the gate, not this paragraph, is what holds the line.
+//
 // ⚠️ jsdom cannot falsify ANY of the above (getBoundingClientRect returns zeros —
 // tests/harness/README.md:14-16, and elementFromPoint is meaningless there). A green suite proves
 // the STATE MACHINE only; every layout claim here came from tests/harness/.
