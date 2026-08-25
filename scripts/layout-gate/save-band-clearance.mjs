@@ -13,8 +13,10 @@
 // gate identifies the rendered arm and asserts what is true of it, and FAILS on one it cannot
 // identify.
 //   LEGACY  (c) is SAVE_BAND_MIN_CLEARANCE_PX above the sticky band's top edge.
-//   FRAME   (c) is "not underneath track 3", plus per-entry weight-pad travel of 0px in VIEWPORT
-//           coordinates and Save on-screen and hit-testing to itself at all four entries.
+//   FRAME   (c) is SAVE_BAND_MIN_CLEARANCE_PX above SAVE'S top edge — the SAME floor, because it is
+//           the same hazard (V4-WEIGHFRAME-001 R1) — plus "not underneath track 3", proof that the
+//           strip between them is DEAD, per-entry weight-pad travel of 0px in VIEWPORT coordinates,
+//           and Save on-screen and hit-testing to itself at all four entries.
 //
 // WHY IT CANNOT BE A VITEST TEST. jsdom has no layout engine: every getBoundingClientRect() is
 // zeros and elementFromPoint is meaningless, so no test under src/__tests__/** can distinguish
@@ -42,7 +44,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { SAVE_BAND_MIN_CLEARANCE_PX } from '../../src/lib/saveBandLayout.js'
+import { SAVE_BAND_MIN_CLEARANCE_PX, FRAME_SAVE_HEIGHT_PX } from '../../src/lib/saveBandLayout.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5312)
@@ -140,10 +142,14 @@ async function attach(wsUrl) {
 //   LEGACY  the band is a STICKY OVERLAY, so content can slide under it. The invariant is
 //           CLEARANCE — SAVE_BAND_MIN_CLEARANCE_PX of gap between every bottom-row key and the
 //           band's top edge. Unchanged from BUG-WEIGHPADSAVEBAND-001.
-//   FRAME   there is nothing to clear: track 3 is a grid track and the pad cannot go beneath it.
-//           The invariants are the frame's own claims — per-entry weight-pad travel of 0px in
-//           VIEWPORT coordinates, every bottom-row key hit-testing to itself, and Save on-screen
-//           and hit-testing to itself at all four entries.
+//   FRAME   two invariants, because track 3 being a grid track answers only one of them. STRUCTURAL:
+//           the pad is never beneath the ledger (that would mean track 2 overflowed). MIS-TAP: the
+//           same SAVE_BAND_MIN_CLEARANCE_PX, measured to SAVE'S top edge rather than the track's —
+//           the first version of this gate asserted only the structural one and passed at 1px
+//           (V4-WEIGHFRAME-001 R1), which is the whole reason the floor is now spelled against the
+//           button. Plus the frame's own claims: per-entry weight-pad travel of 0px in VIEWPORT
+//           coordinates, every bottom-row key hit-testing to itself, and Save on-screen and
+//           hit-testing to itself at all four entries.
 //
 // Why VIEWPORT coordinates on the frame arm and not scrollTop: the frame's document is
 // `overflow: hidden`, so scrollTop is pinned at 0 for the whole run. A scroll-based travel number
@@ -177,9 +183,27 @@ const DRIVE = `(async () => {
     for (const k of keys) { const t = Math.round(k.getBoundingClientRect().top); if (!byTop.has(t)) byTop.set(t, []); byTop.get(t).push(k) }
     return { keys, bottomRow: [...byTop.entries()].sort((a,b)=>a[0]-b[0]).pop()[1] }
   }
-  const probeKey = (k, refTop) => {
+  // The strip between a key and Save has to be DEAD, not merely empty: a gap measured in px says
+  // nothing about what answers a tap landing in it. Sampled at the key's own centre-x so it probes
+  // the column a low press would actually fall down, and it refuses anything clickable — a <button>,
+  // or anything role=button — rather than only refusing Save by name.
+  const stripIsDead = (k, from, to) => {
+    const r = k.getBoundingClientRect()
+    const x = r.left + r.width/2
+    const hits = []
+    for (let n = 0; n <= 4; n++) {
+      const y = from + (to - from) * (n / 4)
+      const el = d.elementFromPoint(x, y)
+      if (!el) { hits.push('null'); continue }
+      const clickable = el.closest('button, [role="button"], a, input, select, textarea')
+      hits.push((clickable ? '!' : '') + (el.dataset?.testid ? '#' + el.dataset.testid : el.tagName.toLowerCase()))
+    }
+    return { x: +x.toFixed(1), from: +from.toFixed(1), to: +to.toFixed(1), hits, dead: hits.every(h => !h.startsWith('!')) }
+  }
+  const probeKey = (k, refTop, saveRect) => {
     const r = k.getBoundingClientRect()
     const hit = d.elementFromPoint(r.left + r.width/2, r.top + r.height/2)
+    const overlapsSaveX = saveRect ? (r.left < saveRect.right && r.right > saveRect.left) : null
     return {
       id: k.dataset.testid || k.getAttribute('aria-label'),
       left: +r.left.toFixed(1), right: +r.right.toFixed(1), bottom: +r.bottom.toFixed(1),
@@ -187,6 +211,11 @@ const DRIVE = `(async () => {
       hitIsSelf: hit === k || k.contains(hit),
       hit: hit ? (hit.dataset?.testid ? '#' + hit.dataset.testid : hit.tagName.toLowerCase()) : null,
       clearancePx: refTop == null ? null : +(refTop - r.bottom).toFixed(1),
+      // V4-WEIGHFRAME-001 R1 — the mis-tap distance. Save's TOP edge, not the track's: Save is
+      // bottom-aligned in track 3, so the two differ by exactly the height the button gives up.
+      saveClearancePx: saveRect ? +(saveRect.top - r.bottom).toFixed(1) : null,
+      overlapsSaveX,
+      strip: saveRect && overlapsSaveX ? stripIsDead(k, r.bottom + 1, saveRect.top - 1) : null,
     }
   }
 
@@ -249,13 +278,14 @@ const DRIVE = `(async () => {
       const t3cs = w.getComputedStyle(t3)
       const shit = d.elementFromPoint(sr.left + sr.width/2, sr.top + sr.height/2)
       e.keyCount = keys.length
-      e.bottomRow = bottomRow.map(k => probeKey(k, t3r.top))
+      e.bottomRow = bottomRow.map(k => probeKey(k, t3r.top, sr))
       e.track3 = {
         top: +t3r.top.toFixed(1), height: +t3r.height.toFixed(1),
         visibility: t3cs.visibility, pointerEvents: t3cs.pointerEvents,
       }
       e.save = {
         left: +sr.left.toFixed(1), right: +sr.right.toFixed(1), top: +sr.top.toFixed(1), bottom: +sr.bottom.toFixed(1),
+        height: +sr.height.toFixed(1), width: +sr.width.toFixed(1),
         onScreen: sr.left >= 0 && sr.right <= w.innerWidth + 0.5 && sr.top >= 0 && sr.bottom <= w.innerHeight + 0.5,
         visible: save.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true }),
         hitIsSelf: shit === save || save.contains(shit),
@@ -341,16 +371,26 @@ const DOCUMENTED_FLOOR_PX = 20
 // what makes 0 a measurement rather than a broken instrument.
 const FRAME_STEADY_TRAVEL_PX = 0
 // Entry 1 alone is allowed one settle: PlantingSelect swaps a 62px search input for a 52px chip on
-// pick, which moves track 2's top edge by 3px once. Measured 3; 8 leaves room for a font metric to
-// differ without hiding a real jump.
-const FRAME_FIRST_ENTRY_SETTLE_PX = 8
-// The pad may sit flush against track 3 (measured gap: exactly 0) but never BENEATH it. Negative
-// means track 2 overflowed and pushed the pad under the ledger — measured to happen when the
-// planting chip wraps to a second line, at a name of 72 characters or more (the longest real
-// planting name today is 52). This is the frame's analogue of the clearance rule, and it is 0
-// rather than 20 because track 3 is a grid track, not an overlay: nothing can slide under it while
-// track 2 fits.
+// pick, moving track 2's top edge by 10px once, and the 1fr disclosure row absorbs whatever of that
+// it still has spare. So this number is not free-floating — it is `10 - row0's remaining slack`,
+// which was 3 when that row had 7px and is 8 now that R1 has spent 5 of them. Measured 8 at entries
+// 1 and 0 at 2-4; 12 leaves headroom for a font metric without hiding a real jump.
+// This is a MOUNT-only settle, not a per-entry one: entries 2-4 return to the same pre-pick state
+// after each save and measure 0, because track 1 no longer swings once a chip has been picked.
+const FRAME_FIRST_ENTRY_SETTLE_PX = 12
+// STRUCTURAL floor: the pad may sit close to track 3 but never BENEATH it. Negative means track 2
+// overflowed and pushed the pad under the ledger — measured to happen when the planting chip wraps
+// to a second line, at a name of 72 characters or more (the longest real planting name today is 52).
+// 0 rather than 20 because this is not the mis-tap rule: track 3 is a grid track, not an overlay, so
+// nothing can slide under it while track 2 fits. The mis-tap rule is the next constant, and keeping
+// them separate is deliberate — the first version of this gate had only this one and passed at 1px
+// of clearance, because "not underneath the ledger" was true and says nothing about Save.
 const FRAME_MIN_PAD_TO_TRACK3_PX = 0
+// THE MIS-TAP FLOOR (V4-WEIGHFRAME-001 R1). Key bottom -> Save top, same number as the legacy arm
+// and for the same stated reason. MEASURED after the fix, all four entries: bottom row y336-384,
+// track 3 top y399, Save y404-448 — 20.0px, with the 15px above the track and the 4px inside it
+// (Save is 44 tall in a 48 row, bottom-aligned) both dead to elementFromPoint.
+const FRAME_MIN_PAD_TO_SAVE_PX = SAVE_BAND_MIN_CLEARANCE_PX
 
 const failures = []
 const fail = m => failures.push(m)
@@ -413,6 +453,17 @@ try {
         if (k.clearancePx < FRAME_MIN_PAD_TO_TRACK3_PX) {
           fail(`entry ${e.i} ${k.id}: bottom is ${-k.clearancePx}px BELOW track 3's top edge — track 2 has overflowed and pushed the pad under the ledger`)
         }
+        // THE MIS-TAP RULE. Not occlusion — every key above still hit-tests to itself — but the
+        // distance between a corrective key and an irreversible commit, which is what a low press
+        // crosses. Recovery is Undo-then-redo, so this is the expensive direction.
+        if (k.saveClearancePx < FRAME_MIN_PAD_TO_SAVE_PX) {
+          fail(`entry ${e.i} ${k.id}: bottom is ${k.saveClearancePx}px above Save's top edge, minimum is ${FRAME_MIN_PAD_TO_SAVE_PX}px — a low press on this key commits the entry`)
+        }
+        // ...and the px are only worth having if nothing in them takes a tap. A gap that answers
+        // with a button is the same defect measured differently.
+        if (k.strip && !k.strip.dead) {
+          fail(`entry ${e.i} ${k.id}: the strip between it and Save is not dead — elementFromPoint down x${k.strip.x} returns [${k.strip.hits.join(', ')}] (! = clickable)`)
+        }
       }
 
       // Save must be on screen and reachable at every entry. BUG at 76e5c96: an implicit `auto` grid
@@ -420,6 +471,12 @@ try {
       if (!e.save.onScreen) fail(`entry ${e.i}: Save at x${e.save.left}-${e.save.right} y${e.save.top}-${e.save.bottom} is outside the ${VIEWPORT.w}x${VIEWPORT.h} viewport`)
       if (!e.save.visible) fail(`entry ${e.i}: Save checkVisibility() false`)
       if (!e.save.hitIsSelf) fail(`entry ${e.i}: elementFromPoint at Save's centre returns ${e.save.hit}, not the button — occluded`)
+      // R1 bought 4px of its clearance off this button's height, so the floor it landed on is
+      // asserted here rather than left to a comment. It also keeps `saveClearancePx` honest: that
+      // number is measured from `sr.top`, and a degenerate rect would make every gap above look fine.
+      if (e.save.height < FRAME_SAVE_HEIGHT_PX || e.save.width < FRAME_SAVE_HEIGHT_PX) {
+        fail(`entry ${e.i}: Save is ${e.save.width}x${e.save.height}, under the ${FRAME_SAVE_HEIGHT_PX}px WCAG 2.5.5 floor it was reduced to`)
+      }
 
       // THE HEADLINE PROPERTY. Viewport coordinates, never scrollTop: this document is
       // overflow:hidden, so a scroll-based zero would be a constant instrument rather than a still
@@ -433,9 +490,13 @@ try {
     }
 
     const gap = Math.min(...m.entries.flatMap(e => e.bottomRow.map(k => k.clearancePx)))
+    const saveGap = Math.min(...m.entries.flatMap(e => e.bottomRow.map(k => k.saveClearancePx)))
+    const over = m.entries[0].bottomRow.filter(k => k.overlapsSaveX).map(k => k.id)
     console.log(`[save-band-clearance] track 3 y${m.entries[0].track3.top} h${m.entries[0].track3.height} ${m.entries[0].track3.visibility}/${m.entries[0].track3.pointerEvents} (a grid track — no sticky band to clear)`)
     console.log(`[save-band-clearance] weight-pad travel per entry (VIEWPORT px): ${m.entries.map(e => e.i + ':' + e.travel).join('  ')}`)
     console.log(`[save-band-clearance] min pad-to-track-3 gap ${gap}px (floor ${FRAME_MIN_PAD_TO_TRACK3_PX}px); all six keys and Save hit-test to themselves at every entry: ${m.entries.every(e => e.bottomRow.every(k => k.hitIsSelf) && e.save.hitIsSelf)}`)
+    console.log(`[save-band-clearance] min pad-to-SAVE gap ${saveGap}px (floor ${FRAME_MIN_PAD_TO_SAVE_PX}px), Save ${m.entries[0].save.width}x${m.entries[0].save.height} at y${m.entries[0].save.top}-${m.entries[0].save.bottom}`)
+    console.log(`[save-band-clearance] keys sharing Save's x-range: ${over.length ? over.join(', ') : 'none'} — the strip below each is dead to elementFromPoint: ${m.entries.every(e => e.bottomRow.every(k => !k.strip || k.strip.dead))}`)
   } else {
     // ── LEGACY ARM — unchanged from BUG-WEIGHPADSAVEBAND-001 ──────────────────────────────────────
     // Non-vacuity: the band must actually be able to occlude something.
