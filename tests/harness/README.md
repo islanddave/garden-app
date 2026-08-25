@@ -44,6 +44,23 @@ __h.surface('fullpage')                            // or 'overlay' (default)
 
 `?surface=fullpage` in the URL works too.
 
+### Measuring a true 390-wide layout — `viewport.html`
+
+⚠️ **`--window-size=390,500` on a headless Chrome does NOT reflow to 390px.** macOS Chrome floors a
+window at roughly 500px wide and **crops** the screenshot instead, so you measure a 500px layout,
+every coordinate past ~500px is silently absent, and laid-out text reads as clipped. Nothing errors.
+
+`viewport.html` is the fix: an iframe has no minimum width, so it is a real layout viewport at
+whatever size the host gives it inside a normally-sized window.
+
+```
+http://localhost:5311/tests/harness/viewport.html?vw=390&vh=500&surface=fullpage&session=harvest
+```
+
+`vw`/`vh` size the frame; every other param is forwarded to the harness page. Same origin, so a
+driver reaches straight through `frames[0]` for both `__h` and the document. Confirm
+`frames[0].innerWidth === 390` in any run that quotes a number from it.
+
 ### Pinning to a SHA — `HARNESS_BASELINE_SHA`
 
 This checkout is shared by concurrent Claude sessions. While this harness was being built, another
@@ -78,6 +95,7 @@ this one.
 | file | role |
 |---|---|
 | `index.html` | entry page; **viewport meta copied verbatim from the app** |
+| `viewport.html` | iframe host — the only honest way to measure a sub-500px layout in headless Chrome |
 | `main.jsx` | mounts real `EventNew` in the two real surfaces; global `fetch` stub; `window.__h` |
 | `harnessApi.js` | tap/type synthesis, counters, `measureA`, `measureC`, hidden-tab scheduling |
 | `script.js` | the scripted N-harvest journey — **read its header before quoting a tap number** |
