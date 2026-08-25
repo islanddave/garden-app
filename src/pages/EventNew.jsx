@@ -58,7 +58,7 @@ import NumberPad from '../components/NumberPad.jsx'
 // BUG-WEIGHPADSAVEBAND-001 — the sticky Save band floats over this form and its height is not a
 // constant, so the keypad's clearance is resolved against the band as rendered. Rule, stated
 // minimum and the measured numbers: src/lib/saveBandLayout.js.
-import { SAVE_BAND_BOTTOM_INSET_PX, clearWeightPadOfSaveBand } from '../lib/saveBandLayout.js'
+import { SAVE_BAND_BOTTOM_INSET_PX, FRAME_SAVE_HEIGHT_PX, clearWeightPadOfSaveBand, framePadGapPx } from '../lib/saveBandLayout.js'
 import { orderByThumb } from '../lib/handedness.js'
 import { useHandedness } from '../hooks/useHandedness.js'
 import {
@@ -221,6 +221,15 @@ const FRAME_HEIGHT = 'calc(100dvh - 52px)'
 // The ledger + Save row. Constant FOREVER — this is the number that replaces the shipped band's
 // 48 -> 128 -> 156 -> 184 -> 202px growth across four saves.
 const FRAME_LEDGER_PX = 48
+// R1. The gap the weight pad owes Save, so a low ⌫ press lands on track 3's own container — painted
+// but handler-less — rather than on the commit. Derived from the ledger height and Save's height
+// (lib/saveBandLayout.js) so it cannot drift away from meaning SAVE_BAND_MIN_CLEARANCE_PX; the whole
+// accounting for where the px came from is in that file, and the real-engine gate is what holds it.
+const FRAME_PAD_GAP_PX = framePadGapPx(FRAME_LEDGER_PX)
+// NumberPad's own `marginBottom: 8`, named because the frame now cancels it at BOTH pads. Cancelled
+// from the outside rather than changed at source: NumberPad.jsx is another lane's file, and a
+// negative margin here is reversible and touches nobody else's render.
+const NUMBERPAD_MARGIN_BOTTOM_PX = 8
 
 // Handedness. This lane carried a local shim of `useHandedness`/`orderByThumb` because
 // lane-handedness-20260825 was not merged and importing them would not have built. It IS merged now,
@@ -2288,8 +2297,14 @@ export default function EventNew() {
                   band as rendered, so a future edit here can move this pad without recomputing which
                   pixel it lands on.
                   All of the above is the SHIPPED (block-flow) path. The frame is a grid, not block
-                  flow, so nothing collapses there and the 8 buys nothing — hence the conditional. */}
-              <div style={{ marginTop: sessionFrame ? 0 : 8 }}>
+                  flow, so nothing collapses there and the 8 buys nothing — hence the conditional.
+                  marginBottom (frame only, R1): this pad's own 8px was the LAST unspent padding in
+                  the harvest row, and the harvest row is the only place the pad→Save gap can be
+                  funded from — freeing height in track 1 or track 3 is absorbed by the 1fr
+                  disclosure row instead of moving the pad. Cancelled here, spent below the weight
+                  pad. Cost: the quantity pad now abuts the WEIGHT label, which is text and takes no
+                  taps, so nothing mis-tappable moved closer to anything else. */}
+              <div style={{ marginTop: sessionFrame ? 0 : 8, marginBottom: sessionFrame ? -NUMBERPAD_MARGIN_BOTTOM_PX : 0 }}>
                 <NumberPad
                   value={harvest.quantity}
                   onChange={v => {
@@ -2325,10 +2340,19 @@ export default function EventNew() {
                   exactly as it was — this row is for when the bowl happens to be near the scale.
                   Its payoff is disproportionate to its size: a count AND a weight together is a
                   per-variety calibration sample, which is what retires the estimated weights. */}
-              <div style={sessionFrame ? { marginTop: 2, marginBottom: -8 } : { marginTop: 14 }}>
+              {/* R1 — paddingBottom, NOT marginBottom, and the difference is load-bearing. This
+                  group is the last child of `#harvest-section`, which has no padding or border of
+                  its own, so a bottom MARGIN here collapses straight out of the block and lands on
+                  the grid item instead of growing it: the pad would not move and the gate would read
+                  the same 1px. Padding cannot collapse, and it also stops the pad's own 8px margin
+                  collapsing out — so the space below the pad is `8 + this`, which is why this is
+                  FRAME_PAD_GAP_PX minus that 8 rather than the gap itself.
+                  marginTop 2 -> 0 and the label's marginBottom 2 -> 0 are the other 2px of the
+                  10 this row gives up; see the accounting in lib/saveBandLayout.js. */}
+              <div style={sessionFrame ? { marginTop: 0, paddingBottom: FRAME_PAD_GAP_PX - NUMBERPAD_MARGIN_BOTTOM_PX } : { marginTop: 14 }}>
                 <label
                   htmlFor="harvest-weight"
-                  style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: sessionFrame ? 2 : 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}
+                  style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: sessionFrame ? 0 : 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}
                 >
                   Weight  ·  optional
                 </label>
@@ -2411,12 +2435,11 @@ export default function EventNew() {
                     control on the surface says "Save". Slice C (the wizard) is what would collapse
                     this to one pad on screen at a time and recover the height. */}
                 {/* NumberPad carries its own `marginBottom: 8`. On the shipped path that is the gap
-                    to the helper line below it; in the frame this pad is the LAST thing above track
-                    3, so the 8px is dead space against a 5px deficit. NumberPad.jsx is owned by
-                    another lane, so the margin is cancelled from the outside rather than changed at
-                    source — a negative margin here is reversible and touches nobody else's file.
-                    Cancelled on the weight GROUP's own marginBottom (above), so neither arm gains a
-                    DOM node and the shipped render is untouched. */}
+                    to the helper line below it. In the frame this pad is the LAST thing above track
+                    3, and as of R1 that 8px is no longer dead space nor cancelled — it is the first
+                    8 of FRAME_PAD_GAP_PX, which is why the group's paddingBottom above is the gap
+                    MINUS it. Getting that wrong in either direction is a silent 8px, so the gate
+                    measures the rendered result rather than trusting this arithmetic. */}
                 {inHarvestSession && (
                   <NumberPad
                     value={harvest.weight}
@@ -2722,7 +2745,19 @@ export default function EventNew() {
             'Saving…'
           }
           onClick={e => handleSubmit(e, { keepMode: 'type' })}
-          style={{ minWidth: 150, flexShrink: 0 }}
+          // R1 — 44 rather than the primitive's frozen 48, and it is 4 of the 20px of clearance
+          // above. Track 3 is `alignItems: center` on a 48px content box, so a 48px Save fills it
+          // and its hit area starts 1px under the pad's bottom row; at 44 the top 4px of the track
+          // are the container itself, which paints the same and takes no clicks. Bought for a
+          // control that is 44x150 — still clear of the 44px WCAG 2.5.5 floor, and MEASURED it moves
+          // Save's centre DOWN 2px while the pad rises 15px, so the aim-high error margin improves
+          // too (nearest key-bottom to Save-centre: 25px -> 42px). The padding is respelled because
+          // buttonChrome's `13px 30px` would otherwise exceed a 44px box.
+          // alignSelf is half the point and was MEASURED, not assumed: this row is
+          // `alignItems: center`, so a 44px Save centres at y402-446 and splits the 4px into 2px
+          // above and 2px below — 18px of clearance, and 2px wasted under a button whose bottom edge
+          // is the frame's. flex-end puts all four above, where the hazard is.
+          style={{ minWidth: 150, flexShrink: 0, minHeight: FRAME_SAVE_HEIGHT_PX, height: FRAME_SAVE_HEIGHT_PX, padding: '11px 30px', alignSelf: 'flex-end' }}
         >
           Save
         </Button>,
