@@ -2114,9 +2114,11 @@ export default function EventNew() {
                   this surface that WAS deliberate (6 columns, not 5) carries a measured
                   justification with coordinates. The weight pad, having no predecessor, was placed
                   fresh and chose below, so the panel shipped with two grammars for one control type.
-                  Three reasons for unifying on below. (a) SEQUENCE: `Next →` advances DOWNWARD to
-                  #harvest-weight, so with the pad above, the advance control sat above both the
-                  field it leaves and the field it targets; below puts it between them. (b) The keys
+                  Three reasons for unifying on below. (a) SEQUENCE: reading order runs quantity →
+                  weight, so a pad below its own field sits between the field it serves and the one
+                  that follows. (This argument was originally written about the `Next →` advance
+                  control, removed in BD-063; the ordering it justifies is unaffected — the pad
+                  still belongs after its field, which is what the tests below pin.) (b) The keys
                   Dave taps most per harvest drop 72px toward his thumb, for free — this is a
                   reorder, not a growth. (c) The focus anchor (anchorSectionToTop, below) exists to
                   keep quantity, weight, the error banner and Save co-visible; it used to spend its
@@ -2153,11 +2155,24 @@ export default function EventNew() {
                   idPrefix="qty-chip"
                   ariaLabel="Harvest quantity quick pick"
                   keyAriaPrefix="Harvest quantity"
-                  // V4-WEIGHKBDNEXT-001 (BD-046), session only. Outside the session the keyboard is
-                  // still reachable, so Enter still advances and this button would be a second way to
-                  // do one thing. Inside it, inputMode="none" means Enter no longer exists.
-                  onPrimary={inHarvestSession ? (() => { document.getElementById('harvest-weight')?.focus() }) : undefined}
-                  primaryLabel="Next →"
+                  // BUG-HARVNUMPADINPUT-001 (BD-063), Dave: hide "Next →" entirely, no replacement.
+                  //
+                  // BD-046 seated this button on the reasoning that inputMode="none" kills the Enter
+                  // key, which was "the ONLY shipped mechanism for quantity → weight → save"
+                  // (NumberPad.jsx:123-125). That premise is true about the KEYBOARD and false about
+                  // this surface: each pad calls its own onChange directly (NumberPad.jsx:86), so the
+                  // weight pad writes harvest.weight whether or not the weight field holds focus.
+                  // Advancing was never required — the user taps the weight pad, then the sticky Save
+                  // band that is already on screen. Verified in tests/harness, not reasoned: with this
+                  // button gone, tapping wt-key digits still populates #harvest-weight.
+                  //
+                  // Removing the props rather than the capability: NumberPad still renders a primary
+                  // when given one, because V4-WEIGHWIZARDFLOW-001 (BD-055) may want exactly that in a
+                  // wizard step where the pad owns the sheet. Narrow fix; the redesign stays open.
+                  //
+                  // Side effect worth keeping: this pad drops its third row, 3 rows -> 2 (104px), so
+                  // the in-session pads go 264px -> ~208px and the panel gets ~56px back on a surface
+                  // whose whole problem is height.
                 />
               </div>
               {/* ── V4-HARVDUAL-001 Slice B: optional weight, alongside the count ──
@@ -2238,12 +2253,11 @@ export default function EventNew() {
                     idPrefix="wt-key"
                     ariaLabel="Harvest weight keypad"
                     keyAriaPrefix="Harvest weight"
-                    // NO primary button here, deliberately. The quantity pad needs its "Next →"
-                    // because inputMode="none" killed the Enter-to-advance that was the only way
-                    // from quantity to weight. Save is different: the sticky Save band (below,
-                    // position:sticky) is already on screen and already does exactly this. A second
-                    // Save on the pad would be two controls doing one job — the same defect
-                    // BD-036b just removed from the Today row, reintroduced one screen over.
+                    // NO primary button here, deliberately — and as of BD-063 neither pad has one.
+                    // The sticky Save band (below, position:sticky) is already on screen and already
+                    // does this job; a second Save on the pad would be two controls doing one job,
+                    // the same defect BD-036b removed from the Today row, reintroduced one screen
+                    // over. Exactly one control on this surface says "Save".
                   />
                 )}
                 <div style={{ marginTop: 5, fontSize: '0.72rem', color: P.light, lineHeight: 1.4 }}>

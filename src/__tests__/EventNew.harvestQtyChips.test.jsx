@@ -217,13 +217,27 @@ describe('EventNew — weigh-in session pads (V4-WEIGHKBDNEXT-001)', () => {
     expect(screen.getByRole('group', { name: 'Harvest weight keypad' })).toBeTruthy()
   })
 
-  it('the quantity pad gains a Next button that moves focus to weight', async () => {
-    // With inputMode=none the Enter key no longer exists, so this button is the ONLY remaining
-    // path from quantity to weight. If it regresses, the session loop is stranded.
+  it('carries NO Next button in-session either, and the loop completes without one', async () => {
+    // BUG-HARVNUMPADINPUT-001 (BD-063), Dave: hide it entirely, no replacement.
+    //
+    // This test previously asserted the OPPOSITE, on BD-046's reasoning that inputMode="none"
+    // kills Enter and so this button was "the ONLY remaining path from quantity to weight" and
+    // "if it regresses, the session loop is stranded". That premise was wrong about this surface:
+    // NumberPad keys call their own onChange directly (NumberPad.jsx:86), so the weight pad writes
+    // harvest.weight with no focus advance and nothing was ever stranded. The sibling test
+    // 'the weight pad builds grams and the existing sticky Save posts the whole entry' has been
+    // proving that all along — it never clicks Next.
+    //
+    // So this guard has to carry the load the old one claimed to: absence is not enough on its
+    // own (it would still pass if the pads stopped working entirely), so assert the WHOLE
+    // quantity → weight path still closes with the button gone.
     renderEventNew(SESSION); await flushLoad()
+    expect(screen.queryByTestId('qty-chip-primary')).toBeNull()
+
     fireEvent.click(screen.getByTestId('qty-chip-2'))
-    fireEvent.click(screen.getByTestId('qty-chip-primary'))
-    expect(document.activeElement).toBe(screen.getByLabelText('Harvest weight'))
+    expect(qtyField().value).toBe('2')
+    for (const d of ['5', '0']) fireEvent.click(screen.getByTestId(`wt-key-${d}`))
+    expect(screen.getByLabelText('Harvest weight').value).toBe('50')
   })
 
   it('the weight pad builds grams and the existing sticky Save posts the whole entry', async () => {
