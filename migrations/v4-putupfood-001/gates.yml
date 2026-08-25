@@ -11,6 +11,25 @@
 #   pollution this migration's header argues it avoids. Apply-after keeps that window closed.
 #
 # ANY pre/post assertion failing is a HARD ABORT.
+#
+# ═══ WHY EVERY ASSERTING POST GATE BELOW IS SELF-ARMING (2026-08-25) ═══
+# `continuous:` DEFAULTS TO TRUE, and .github/workflows/gate-invariants.yml runs
+# `gate_runner.py --all --phase post --continuous-only` against live prod AND staging on every push
+# touching migrations/**, BLOCKING. There is no skip-if-unapplied logic anywhere in the runner. The
+# push necessarily precedes the apply, so a post gate asserting THIS migration's own effect is a
+# guaranteed red on the critical path. Measured against live prod before the fix: three of this
+# file's gates failed (0<>7, 0<>7, 0<>1).
+# Each is now SELF-ARMING on this migration's schema_version row — vacuously true before the apply,
+# a genuine permanent invariant after it, with no follow-up edit to remember. 0a writes the effect
+# and the receipt in ONE transaction, so the guard can never be armed ahead of what it guards.
+# Reference shape: migrations/v4-harvhabitgap-001/gates.yml.
+#
+# POLARITY, because arming a presence assertion naively gets it backwards: a bare
+# `AND EXISTS (schema_version...)` conjunct on "the seven rows exist" returns 0 rows before the
+# apply against an expectation of 7 — it FAILS exactly when it is supposed to be quiet. Each armed
+# gate here is therefore expressed as a VIOLATION count expecting 0. Same self-arming property,
+# correct polarity. (The same trap is live in v4-croptypealoe-001, which is quiet only because that
+# seed is already applied.)
 
 pre:
   - name: pre_crop_types_present
@@ -54,25 +73,35 @@ pre:
     value: 0
 
 post:
+  # Armed + violation-shaped per the header. Walking the expected slugs with unnest rather than
+  # counting rows also NAMES the missing class instead of reporting an arithmetic mismatch, and is
+  # immune to the count being met by duplicate rows.
   - name: post_all_seven_food_types_present
     sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE slug IN ('bread','cheese','milk','butter','yogurt','meat','fish')
-         AND deleted_at IS NULL
+      SELECT count(*) FROM unnest(ARRAY[
+        'bread','cheese','milk','butter','yogurt','meat','fish'
+      ]) AS want(slug)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.39.0-putupfood-001')
+         AND NOT EXISTS (SELECT 1 FROM public.crop_types ct
+                          WHERE ct.slug = want.slug AND ct.deleted_at IS NULL)
     expect: scalar_eq
-    value: 7
+    value: 0
 
   # THE GATE THAT MAKES THE APP FILTER MEAN ANYTHING. The whole no-pollution story is
   # "category = 'non_plant_food' and useCropTypes(scope='garden') excludes it". A seeded row with the
   # wrong category is a loaf of bread in the planting picker, and nothing else in this file catches
-  # it — post_all_seven_present would still be green.
+  # it — post_all_seven_present would still be green. 0a inserts ON CONFLICT (slug) DO NOTHING, so a
+  # pre-existing row under one of these slugs is silently kept with whatever category it already had;
+  # this is the gate that sees that. Armed + violation-shaped per the header. IS DISTINCT FROM, not
+  # <>, so a NULL category counts as a violation rather than vanishing from the count.
   - name: post_every_food_class_carries_the_gating_category
     sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE slug IN ('bread','cheese','milk','butter','yogurt','meat','fish')
-         AND category='non_plant_food'
+      SELECT count(*) FROM public.crop_types ct
+       WHERE ct.slug IN ('bread','cheese','milk','butter','yogurt','meat','fish')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.39.0-putupfood-001')
+         AND ct.category IS DISTINCT FROM 'non_plant_food'
     expect: scalar_eq
-    value: 7
+    value: 0
 
   # The V4-HARVATTR-001 honesty contract applied to a seed: NULL = UNKNOWN = never fires. Unlike the
   # v4-putupprov-002-fruitseed version of this gate — which had to be scoped `continuous: false`
@@ -120,7 +149,17 @@ post:
     expect: scalar_eq
     value: 7
 
+  # continuous: false — the ONE gate here that CANNOT be self-armed, and the reason the header says
+  # "every ASSERTING post gate". This is a pure apply receipt: arming it on its own version row gives
+  # `EXISTS(v) AND NOT EXISTS(v)`, unsatisfiable in every state — a permanently vacuous gate, which is
+  # worse than a temporarily red one. It is also the only gate whose subject genuinely is not an
+  # invariant of an unapplied migration, so there is nothing for the continuous sweep to learn from
+  # it. This does NOT silence it at the runbook checkpoint: gate_runner honours `continuous: false`
+  # only under --continuous-only, which gate-invariants.yml passes and the promote runbook does not,
+  # so the receipt still runs and must still be TRUE at the apply. Same rule and same single
+  # exception as migrations/v4-losscapture-001/gates.yml.
   - name: post_schema_version_recorded
+    continuous: false
     sql: |
       SELECT 1 FROM public.schema_version WHERE version='4.39.0-putupfood-001'
     expect: rowcount_eq
