@@ -604,6 +604,104 @@ describe('HarvestWatchBand — a snooze can be taken back after leaving the page
   })
 })
 
+// V4-HANDEDNESSCONTROLS-001 (BD-054) — WHICH CONTROL LANDS UNDER THE DOMINANT THUMB.
+//
+// This is the reason the ticket exists, and it is a SAFETY property, not a preference. "Not yet"
+// writes suppressed_until = observed_on + 10 days and a returning planting with a byte-identical
+// basis is suppressed one more cycle — worst case 20 days invisible, on a system running 11.8%
+// calibration. "Log harvest" only opens a prefilled form. The band shipped with the destructive one
+// on the LEFT and the harmless one on the RIGHT, which is correct for a right thumb and INVERTED
+// for Dave's actual weigh-in grip (right hand on the scale, left hand logging).
+//
+// The assertions are on DOM ORDER because that is the only mechanism (handedness.js): the row is a
+// plain `justifyContent: space-between` flex in default `row` direction, so DOM order IS visual
+// order IS tab order. The `flexDirection` assertion below is not a second mechanism — it is the
+// guard that a second one never gets added, because a later `row-reverse` would flip the pixels
+// while leaving every DOM-order assertion here green.
+describe('HarvestWatchBand — the thumb-zone invariant (V4-HANDEDNESSCONTROLS-001)', () => {
+  beforeEach(() => { localStorage.removeItem('ui.handedness') })
+
+  const controls = (card) => ({
+    notYet: within(card).getByRole('button', { name: /Not yet — Yellow Brandywine/ }),
+    log: within(card).getByRole('button', { name: /Log harvest — Yellow Brandywine/ }),
+  })
+  // a precedes b in DOM order.
+  const precedes = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+  it('RIGHT-handed (the default, unset): the harmless control is on the right, under the thumb', async () => {
+    payload([brandywine()])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const { notYet, log } = controls(card)
+    expect(precedes(notYet, log)).toBe(true)
+    // Nothing about the row's own geometry changed while doing this.
+    expect(log.parentElement.style.justifyContent).toBe('space-between')
+    expect(log.parentElement.style.flexDirection).toBe('')
+  })
+
+  it('LEFT-handed: the harmless control moves to the left and the 10-20 day snooze moves away', async () => {
+    localStorage.setItem('ui.handedness', 'left')
+    payload([brandywine()])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const { notYet, log } = controls(card)
+    // THE FIX: "Log harvest" first (left edge, under a left thumb), "Not yet" pushed to the right.
+    expect(precedes(log, notYet)).toBe(true)
+    // Not achieved by reversing the flex — DOM order is the single mechanism, so tab order and
+    // screen-reader order move with the pixels rather than contradicting them.
+    expect(log.parentElement.style.flexDirection).toBe('')
+    expect(log.parentElement.style.justifyContent).toBe('space-between')
+    // The touch floor survives the reorder on both.
+    expect(notYet.style.minHeight).toBe('48px')
+    expect(log.style.minHeight).toBe('48px')
+  })
+
+  it('a stored junk value lays the row out right-handed rather than half-flipping it', async () => {
+    localStorage.setItem('ui.handedness', 'sideways')
+    payload([brandywine()])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const { notYet, log } = controls(card)
+    expect(precedes(notYet, log)).toBe(true)
+  })
+
+  it('LEFT-handed: Undo on a dismissed row is reachable, not stranded on the far edge', async () => {
+    localStorage.setItem('ui.handedness', 'left')
+    payload([brandywine()])
+    fetchMock.mockImplementation((url) => Promise.resolve(
+      url === WATCH ? { candidates: [brandywine()], snoozed: [] }
+        : url === DISMISS ? { dismissal: { id: 'd-1', suppressed_until: '2026-09-03' } } : null))
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Not yet — Yellow Brandywine/ }))
+    const undo = await within(card).findByRole('button', { name: /Undo — Yellow Brandywine/ })
+    const ack = within(card).getByText(/Not checking Yellow Brandywine/)
+    // Undo leads; the acknowledgement text takes the far edge.
+    expect(precedes(undo, ack)).toBe(true)
+    expect(undo.style.minHeight).toBe('48px')
+  })
+
+  it('LEFT-handed: "Bring back" — the only escape from a live 10-20 day snooze — leads its row', async () => {
+    localStorage.setItem('ui.handedness', 'left')
+    payload([], { snoozed: [{ plant_id: 'p-ch', project_id: 'proj-9', name: 'Charentais', location_name: 'Melon patch', suppressed_until: '2026-09-03' }] })
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Snoozed \(1\)/ }))
+    const btn = await within(card).findByRole('button', { name: 'Bring back Charentais' })
+    const label = within(card).getByText('Charentais')
+    expect(precedes(btn, label)).toBe(true)
+  })
+
+  it('RIGHT-handed: those same two rows keep their shipped order — a provable no-op', async () => {
+    payload([brandywine()], { snoozed: [{ plant_id: 'p-ch', project_id: 'proj-9', name: 'Charentais', location_name: 'Melon patch', suppressed_until: '2026-09-03' }] })
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Snoozed \(1\)/ }))
+    const btn = await within(card).findByRole('button', { name: 'Bring back Charentais' })
+    expect(precedes(within(card).getByText('Charentais'), btn)).toBe(true)
+  })
+})
+
 // NAMED MUTATION TARGETS (each must turn the listed test red):
 //   "Start checking {name}" -> "{name} is ready"        => the check-form test
 //   drop <HarvestWindow observable> / return null early  => "names the observable"
@@ -624,3 +722,9 @@ describe('HarvestWatchBand — a snooze can be taken back after leaving the page
 //   drop load() after a successful restore               => the re-asks-the-server test
 //   .catch that sets restored:true instead of an error   => the never-rests-on-a-failed-write test
 //   minHeight 48 -> 30 on the restore control            => the restore touch-floor test
+// V4-HANDEDNESSCONTROLS-001 thumb zone (each VERIFIED red on the listed test, 2026-08-25):
+//   swap orderByThumb's two arguments on the control pair => LEFT-handed pin (and the RIGHT-handed
+//                                                            pin, in the opposite direction)
+//   orderByThumb returns [underThumb, farSide] always     => the RIGHT-handed default no-op pin
+//   orderByThumb ignores `hand`                           => the LEFT-handed pin
+//   `row-reverse` added instead of reordering the DOM     => the flexDirection guard

@@ -13,11 +13,18 @@
 // Defaults applied by Lambda when no row exists: critter_visit='in_app_only',
 // quiet_hours_start='21:00:00', quiet_hours_end='07:00:00'.
 
+import { HANDS } from './handedness.js'
+
 const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, '')
 
 export const CRITTER_VISIT_VALUES = ['off', 'in_app_only', 'system']
 export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status']
 export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
+// Re-exported (not redeclared) from the layout module so the wire contract and the render contract
+// cannot drift: handedness.js is what every surface reads, and this is what gets PATCHed. Imported
+// as well as re-exported — a bare `export ... from` does not bind the name in this module's scope,
+// and saveHandedness below validates against it.
+export const HANDEDNESS_VALUES = HANDS
 export const GARDEN_EXPANDED_MAX = 2000
 
 // saveGardenGroupBy — fire-and-forget PATCH of the cross-device Garden group-by preference
@@ -316,6 +323,39 @@ export async function saveLogManyAllSelected({ getToken, value } = {}) {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ log_many_all_selected: value }),
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    return await res.json().catch(() => null)
+  } catch {
+    return null
+  }
+}
+
+// V4-HANDEDNESSCONTROLS-001 (BD-054) — which hand works the phone, per USER.
+//
+// Per-identity for the same reason log_many_all_selected is: this app has exactly two users on
+// shared devices and they do not have the same hands. It is also the one preference here where
+// inheriting the other person's answer is a SAFETY regression rather than an annoyance — it moves
+// a destructive control under the wrong thumb (see src/lib/handedness.js).
+//
+// ⚠️ INERT UNTIL THE COLUMN LANDS. user_notification_prefs.handedness does not exist yet
+// (migrations/v4-handednesscontrols-001 — authored, NOT applied to staging or prod). Until it does,
+// this PATCH carries `handedness` as its ONLY key, so validateNotificationPrefsPatchBody's
+// HAS_UPDATABLE check (lambda/critter/validators.js:102) returns 400 "no updatable fields present"
+// and this function returns null. That is the correct pre-migration outcome and it is why the key
+// is sent alone rather than batched with another: batching it would carry a live preference into a
+// request the server is about to reject. Nothing else on the prefs surface is affected.
+export async function saveHandedness({ getToken, value } = {}) {
+  if (!CRITTER_BASE) return null
+  if (!HANDEDNESS_VALUES.includes(value)) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ handedness: value }),
       keepalive: true,
     })
     if (!res.ok) return null

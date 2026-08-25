@@ -50,6 +50,8 @@ import {
   rankWatchCandidates, selectWatchDisplay, groupWatchOverflow, revealStep,
   watchingSinceLabel, monthDayLabel, observableFrom,
 } from '../lib/harvestWatch.js'
+import { orderByThumb } from '../lib/handedness.js'
+import { useHandedness, useHandednessSync } from '../hooks/useHandedness.js'
 
 // Module-scope so a second mount (in-app nav back to Today) resolves synchronously with no pop-in.
 // CropCard holds its own identical cache; both await the same dynamic import, so whichever lands
@@ -89,8 +91,15 @@ function Chevron({ open }) {
 const normalize = (d) => (d && Array.isArray(d.candidates) ? d : { candidates: [], snoozed: [] })
 
 export default function HarvestWatchBand() {
-  const { fetch } = useApiFetch()
+  const { fetch, getToken } = useApiFetch()
   const overlayNavigate = useOverlayNavigate()
+  // V4-HANDEDNESSCONTROLS-001. The local read is synchronous, so the controls are in their final
+  // positions on the FIRST paint — a control that moves after first paint is a worse version of the
+  // mis-tap hazard this setting exists to remove. The sync is the module-latched cross-device adopt
+  // and lives here because Today is the landing surface and this band is the surface whose SAFETY
+  // depends on the value being right; both hooks precede every early return below.
+  const hand = useHandedness()
+  useHandednessSync(getToken)
   // plant_id -> { dismissed?: boolean, busy?: boolean, error?: string, dismissalId, suppressedUntil }
   const [rowUi, setRowUi] = useState({})
   const [revealed, setRevealed] = useState(readReveal)
@@ -243,23 +252,30 @@ export default function HarvestWatchBand() {
       const back = monthDayLabel(ui.suppressedUntil)
       return (
         <li key={r.plant_id} style={rowStyle}>
+          {/* Undo is the only control on this row and it is the RETRACTION of the tap that got
+              here — the last thing that should be out of thumb reach. It follows the setting for
+              the same reason the pair above does (V4-HANDEDNESSCONTROLS-001). */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-            <span style={{ fontSize: '0.82rem', color: P.light, minWidth: 0 }}>
-              {back ? `Not checking ${name} — back ${back}.` : `Not checking ${name} for now.`}
-            </span>
-            <button
-              type="button"
-              aria-label={`Undo — ${name}`}
-              disabled={!!ui.busy}
-              onClick={() => undoDismiss(r)}
-              style={{
-                minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
-                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
-                color: P.green,
-              }}
-            >
-              Undo
-            </button>
+            {orderByThumb(
+              hand,
+              <button
+                key="undo"
+                type="button"
+                aria-label={`Undo — ${name}`}
+                disabled={!!ui.busy}
+                onClick={() => undoDismiss(r)}
+                style={{
+                  minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
+                  cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
+                  color: P.green,
+                }}
+              >
+                Undo
+              </button>,
+              <span key="ack" style={{ fontSize: '0.82rem', color: P.light, minWidth: 0 }}>
+                {back ? `Not checking ${name} — back ${back}.` : `Not checking ${name} for now.`}
+              </span>,
+            )}
           </div>
         </li>
       )
@@ -322,38 +338,53 @@ export default function HarvestWatchBand() {
 
         {/* CONTROL PLACEMENT IS A DELIBERATE MOBILE DECISION (Chrome/Android, ~390px).
             Two controls on one line, pushed to opposite edges — neither is a mis-tap neighbour of
-            the other. "Log harvest" takes the right-hand natural thumb zone and "Not yet" the
-            harder-to-reach left, so a stray thumb tap lands on the NAVIGATION (reversible, writes
-            nothing) rather than the control that writes a calibration sample. Both 48px tall. */}
+            the other. The INVARIANT is about consequence, not about compass direction: the control
+            under the natural thumb must be the NAVIGATION ("Log harvest" — reversible, writes
+            nothing), and the control that writes a calibration sample and snoozes the row for 10-20
+            days ("Not yet") must sit on the harder-to-reach edge. Both 48px tall.
+
+            V4-HANDEDNESSCONTROLS-001 (BD-054) — that invariant used to be spelled "Log harvest on
+            the right", which silently assumed a right thumb. Dave works a weigh-in LEFT-handed
+            (right hand moves fruit onto the scale, left hand logs), so on his actual grip the old
+            spelling put the destructive control under the thumb and the harmless one out of reach —
+            precisely inverting what the comment claimed to guarantee. orderByThumb names the two
+            controls by consequence and derives the edges, so the safety property now holds in BOTH
+            modes instead of in one. DOM order is the only mechanism (see handedness.js). */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginTop: 2 }}>
-          <button
-            type="button"
-            aria-label={`Not yet — ${name}`}
-            disabled={!!ui.busy}
-            onClick={() => dismissRow(r)}
-            style={{
-              minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
-              cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
-              // P.mid, NOT P.light: subordination to the primary is carried by HUE, not by low
-              // contrast — making the dismissal harder to READ is not the risk being managed.
-              color: P.mid,
-            }}
-          >
-            Not yet
-          </button>
-          {/* Navigates to the prefilled harvest form — never a one-tap POST. */}
-          <button
-            type="button"
-            aria-label={`Log harvest — ${name}`}
-            onClick={() => overlayNavigate(`/log?project=${r.project_id}&plant=${r.plant_id}&event_type=harvest`)}
-            style={{
-              minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
-              cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
-              color: P.green,
-            }}
-          >
-            Log harvest
-          </button>
+          {orderByThumb(
+            hand,
+            // Navigates to the prefilled harvest form — never a one-tap POST. This is the one that
+            // belongs under the thumb.
+            <button
+              key="log"
+              type="button"
+              aria-label={`Log harvest — ${name}`}
+              onClick={() => overlayNavigate(`/log?project=${r.project_id}&plant=${r.plant_id}&event_type=harvest`)}
+              style={{
+                minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
+                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
+                color: P.green,
+              }}
+            >
+              Log harvest
+            </button>,
+            <button
+              key="notyet"
+              type="button"
+              aria-label={`Not yet — ${name}`}
+              disabled={!!ui.busy}
+              onClick={() => dismissRow(r)}
+              style={{
+                minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
+                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
+                // P.mid, NOT P.light: subordination to the primary is carried by HUE, not by low
+                // contrast — making the dismissal harder to READ is not the risk being managed.
+                color: P.mid,
+              }}
+            >
+              Not yet
+            </button>,
+          )}
         </div>
       </li>
     )
@@ -434,9 +465,10 @@ export default function HarvestWatchBand() {
               Each row now carries "Bring back" (see restoreSnoozed): this is the ONLY retraction
               that survives leaving the page, and it is placed here rather than on a new surface
               because this list is already the one place a snoozed planting is visible at all. It
-              mirrors the in-session Undo's geometry (48px, right of the line) deliberately — the
-              handedness of these controls is an open Dave decision (V4-HANDEDNESSCONTROLS-001) and
-              inventing a second convention here would pre-empt it. */}
+              mirrors the in-session Undo's geometry (48px, thumb-side of the line) deliberately —
+              and that geometry is now DERIVED from the handedness setting rather than hardcoded.
+              The open Dave decision this comment used to defer to was answered on 2026-08-24: a
+              real preference, defaulting to right-handed (V4-HANDEDNESSCONTROLS-001). */}
           {snoozed.length > 0 && (
             <>
               <button
@@ -458,34 +490,38 @@ export default function HarvestWatchBand() {
                     return (
                       <li key={s.plant_id} style={{ borderTop: `1px solid ${P.border}`, padding: '8px 0' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-                          <span style={{ minWidth: 0 }}>
-                            <span style={{ fontSize: '0.8rem', color: P.mid }}>{name}</span>
-                            <span style={{ fontSize: '0.74rem', color: P.light }}>
-                              {s.location_name ? ` · ${s.location_name}` : ''}
-                              {back ? ` · back ${back}` : ' · snoozed for the season'}
-                            </span>
-                          </span>
-                          {ui.restored
-                            ? (
-                              // Declarative, quiet, in place — the band's Reward-UX posture (no toast,
-                              // no celebration). The reload this kicked off will drop the row.
-                              <span style={{ fontSize: '0.74rem', color: P.light, flexShrink: 0 }}>Back on the list.</span>
-                            )
-                            : (
-                              <button
-                                type="button"
-                                aria-label={`Bring back ${name}`}
-                                disabled={!!ui.busy}
-                                onClick={() => restoreSnoozed(s)}
-                                style={{
-                                  minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
-                                  cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
-                                  color: P.green,
-                                }}
-                              >
-                                Bring back
-                              </button>
-                            )}
+                          {orderByThumb(
+                            hand,
+                            ui.restored
+                              ? (
+                                // Declarative, quiet, in place — the band's Reward-UX posture (no toast,
+                                // no celebration). The reload this kicked off will drop the row.
+                                <span key="ctl" style={{ fontSize: '0.74rem', color: P.light, flexShrink: 0 }}>Back on the list.</span>
+                              )
+                              : (
+                                <button
+                                  key="ctl"
+                                  type="button"
+                                  aria-label={`Bring back ${name}`}
+                                  disabled={!!ui.busy}
+                                  onClick={() => restoreSnoozed(s)}
+                                  style={{
+                                    minHeight: 48, padding: '0 2px', flexShrink: 0, background: 'none', border: 'none',
+                                    cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
+                                    color: P.green,
+                                  }}
+                                >
+                                  Bring back
+                                </button>
+                              ),
+                            <span key="label" style={{ minWidth: 0 }}>
+                              <span style={{ fontSize: '0.8rem', color: P.mid }}>{name}</span>
+                              <span style={{ fontSize: '0.74rem', color: P.light }}>
+                                {s.location_name ? ` · ${s.location_name}` : ''}
+                                {back ? ` · back ${back}` : ' · snoozed for the season'}
+                              </span>
+                            </span>,
+                          )}
                         </div>
                         {ui.error && (
                           <div role="alert" style={{ fontSize: '0.74rem', color: P.terra, paddingTop: 2 }}>{ui.error}</div>

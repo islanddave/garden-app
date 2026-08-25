@@ -35,11 +35,12 @@ import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 import { useInOverlaySurface } from '../../context/OverlayContext.jsx'
 import FilterChipRow from './FilterChipRow.jsx'
 import { readCropRank } from '../../lib/cropLogLedger.js'
+import { useHandedness } from '../../hooks/useHandedness.js'
 import { useDismissable } from '../../context/DismissRegistry.jsx'
 import { LAYER } from '../../lib/dismissLayers.js'
 import {
   useComboboxInput, looseIncludes,
-  kbToggleBtnStyle, micToggleBtnStyle, closeToggleBtnStyle, toggleSlotsPaddingRight,
+  kbToggleBtnStyle, micToggleBtnStyle, closeToggleBtnStyle, toggleSlotsPaddingStyle,
 } from '../../lib/comboboxInput.js'
 
 // Max rows rendered in the listbox — VarietyPicker precedent: cap VISIBLY (footer row), never
@@ -391,6 +392,9 @@ export default function PlantingSelect({
   'data-testid': dataTestId,
 }) {
   const { fetch: apiFetch } = useApiFetch()
+  // V4-HANDEDNESSCONTROLS-001 — which edge the ⌨/🎤/✕ slots take. BD-054's named defect was the
+  // MIC sitting on the far side of this exact field during a weigh-in.
+  const hand = useHandedness()
   const [fetched, setFetched] = useState([])
   const [loading, setLoading] = useState(plants == null)
   const [failed, setFailed] = useState(false)
@@ -947,7 +951,7 @@ export default function PlantingSelect({
   // Conditioning it on how the panel was opened would make the app's one shared picker behave two
   // ways, which is the drift this component exists to end.
   const showCloseBtn = open && !disabled
-  const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn, showClose: showCloseBtn })
+  const togglePad = toggleSlotsPaddingStyle({ showKb: showKbBtn, showMic: showMicBtn, showClose: showCloseBtn, hand })
 
   // V4-CROPFILTER-001 — the chip row sits INSIDE the floating panel but OUTSIDE the listbox role:
   // chips are never options and never keyboard-highlight targets (onKeyDown walks `visible` only).
@@ -1066,7 +1070,7 @@ export default function PlantingSelect({
         disabled={disabled}
         style={{
           ...inputChrome(showBlankError), minHeight: 44,
-          ...(togglePad ? { paddingRight: togglePad } : null),
+          ...(togglePad ?? null),
           ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : null),
         }}
         autoComplete="off"
@@ -1088,7 +1092,7 @@ export default function PlantingSelect({
           aria-label={kbRaised ? 'Hide the keyboard and browse plantings' : 'Type to search plantings'}
           aria-pressed={kbRaised}
           title={kbRaised ? 'Hide the keyboard' : 'Type to search'}
-          style={kbToggleBtnStyle}
+          style={kbToggleBtnStyle(hand)}
         >
           <span aria-hidden="true">{kbRaised ? '⌄' : '⌨'}</span>
         </button>
@@ -1107,7 +1111,7 @@ export default function PlantingSelect({
           aria-pressed={voiceState === 'listening'}
           aria-disabled={voiceState === 'denied' || undefined}
           title="Speak to search"
-          style={micToggleBtnStyle(voiceState)}
+          style={micToggleBtnStyle(voiceState, hand)}
         >
           <span aria-hidden="true">🎤</span>
         </button>
@@ -1129,7 +1133,7 @@ export default function PlantingSelect({
           aria-label="Close the planting list"
           title="Close the list"
           data-testid="ps-close"
-          style={closeToggleBtnStyle(showMicBtn)}
+          style={closeToggleBtnStyle(showMicBtn, hand)}
         >
           <span aria-hidden="true">✕</span>
         </button>
