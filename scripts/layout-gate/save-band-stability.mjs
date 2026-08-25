@@ -162,8 +162,12 @@ const BAND_HEIGHT_PROGRESSION_PX = [48, 128, 156, 184, 202]
 // number; the fix is to give the gate the honest one, not to relax the check.
 const FRAME_MAX_ENTRY_TRAVEL_PX = 0
 // Entry 1 alone: PlantingSelect swaps a 62px search input for a 52px chip on pick, moving track 2's
-// top edge once. Measured 3px; 8 leaves room for a font metric without hiding a real jump.
-const FRAME_FIRST_ENTRY_SETTLE_PX = 8
+// top edge by 10px once, and the 1fr disclosure row absorbs whatever of that it still has spare. So
+// the number is `10 - that row's remaining slack`: 3 when the row had 7px, 8 since V4-WEIGHFRAME-001
+// R1 spent 5 of them buying the pad-to-Save clearance. Measured 8 here and in the sibling gate; 12
+// leaves room for a font metric without hiding a real jump. Mount-only — entries 2-4 return to the
+// same pre-pick state after each save and still measure 0, because track 1 stops swinging.
+const FRAME_FIRST_ENTRY_SETTLE_PX = 12
 // Track 3 is FRAME_LEDGER_PX (48) plus its 1px top border, at every entry — flat, by construction,
 // which is the whole point of the one-line ledger. This is the number that replaces the shipped
 // band's 48 -> 128 -> 156 -> 184 -> 202 growth, so pinning it flat is pinning the claim.
