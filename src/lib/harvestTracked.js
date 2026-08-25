@@ -19,7 +19,7 @@
 // WHY A SLUG LIST AND NOT `harvest_habit IS NULL`. That inference is the obvious shortcut and it is
 // wrong: plantingMaturity.js's own comment claims the 54 NULL-habit live plantings are "every one an
 // ornamental", and 5 of them are edible. NULL means "nobody has said", which is not the same claim as
-// "this is not harvested". The 59 slugs below are the POSITIVE, curated statement, each one a
+// "this is not harvested". The 60 slugs below are the POSITIVE, curated statement, each one a
 // recorded decision — including the two that are edible-but-not-here: avocado will not fruit in this
 // zone, and the dogwood does fruit but was planted as a landscape tree.
 //
@@ -51,7 +51,7 @@ export const NOT_HARVEST_TRACKED_SLUGS = Object.freeze([
   'hibiscus', 'hollyhock', 'hosta', 'jade', 'japanese_maple', 'lantana', 'lithops', 'marigold',
   'meat', 'milk', 'milkweed', 'money_plant', 'morning_glory', 'petunia', 'pineapple', 'poppy',
   'pothos', 'rose', 'sedum', 'sempervivum', 'spider_plant', 'stock', 'succulent', 'sunflower',
-  'thunbergia', 'torenia', 'tradescantia', 'tweedia', 'viola', 'yogurt',
+  'thunbergia', 'torenia', 'tradescantia', 'tweedia', 'viola', 'yarrow', 'yogurt',
 ])
 
 const NOT_TRACKED = new Set(NOT_HARVEST_TRACKED_SLUGS)

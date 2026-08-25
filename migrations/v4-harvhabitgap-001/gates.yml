@@ -132,7 +132,7 @@ post:
            'nectarine','parsnip','pear','perilla','petunia','pineapple','plum','poppy','pothos',
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
            'spinach','stock','succulent','sunflower','thunbergia','torenia','tradescantia','tweedia',
-           'vietnamese_coriander','viola','yogurt')
+           'vietnamese_coriander','viola','yarrow','yogurt')
     expect: scalar_eq
     value: 0
 
