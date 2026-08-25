@@ -945,6 +945,11 @@ export default function PhotoLibrary() {
             <PhotoModalErrorFallback error={err} retry={retry} onClose={() => setModal(null)} />
           )}
         >
+          {/* V4-DIRTYGUARDREST-001 — `dirty` is the SAME differs-from-the-row predicate the reload
+              gate above already computes, threaded down rather than recomputed. PhotoModal cannot
+              derive it: it holds neither the seed nor the form state, both of which live on this
+              page. One predicate, one definition of dirty for the deploy gate and the discard
+              confirm alike. */}
           <PhotoModal
             photo={modal}
             tagForm={tagForm}
@@ -952,6 +957,7 @@ export default function PhotoLibrary() {
             plantsForModal={plantsForModal}
             onSave={handleTag}
             onClose={() => setModal(null)}
+            dirty={modalDirty}
             tagging={tagging}
             tagErr={tagErr}
             projects={projects}
@@ -1073,7 +1079,7 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
 
 // ---- Photo modal ----
 // Uses photo.view_url for display
-function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations, onShare, onDelete }) {
+function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, dirty = false, tagging, tagErr, projects, locations, onShare, onDelete }) {
   const hasEvent = !!photo.event_id
 
   // V4-BACKNAV-001 Slice 2 follow-up — PHOTOMODAL_GAP closed. This was a fixed full-viewport overlay
@@ -1081,15 +1087,33 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
   // its only exit, and it was invisible to every machine-checkable definition of "modal" — including
   // the freeze test's scan, which is why it had to be tracked by hand. `busy: tagging` keeps a
   // save-in-flight from being dismissed out from under itself, matching the other write surfaces.
-  const { isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: !!tagging, layer: LAYER.SHEET, armsBack: true })
+  //
+  // V4-DIRTYGUARDREST-001 — `dirty` + `confirmOnDirty` are the half Slice 2 left off. `armsBack` was
+  // already here, so Escape AND Android Back both reached this surface and both discarded a
+  // half-edited tag form outright: re-tagging, re-picking a location and a retyped caption, gone on
+  // one gesture with no stash to recover from. The predicate is the page's `modalDirty` (see the
+  // reload-gate note above) — differs-from-the-row, never truthiness, because every field here is
+  // pre-seeded from the photo and a truthiness test would question every captioned photo the user
+  // merely looked at.
+  const { isTopmost, requestDismiss } = useDismissable({
+    open: true, onDismiss: onClose, dirty, busy: !!tagging, layer: LAYER.SHEET, armsBack: true,
+    confirmOnDirty: true,
+    confirmTitle: 'Discard these changes?',
+    confirmBody: 'Your edits to this photo have not been saved. They cannot be recovered.',
+  })
   // Close-in-place: onClose just clears the selected photo, it never navigates.
 
+  // The backdrop tap and the ✕ route through the arbiter for the reason Sheet's labelled Close does
+  // (DismissRegistry.jsx:138-143): they are the two most reachable exits here, and leaving either on
+  // the raw onClose would mean Escape and Back asking while a tap discarded silently — and would give
+  // a mutation test a second suppressor to hide behind. Inert unless dirty: requestDismiss falls back
+  // to onClose whenever the provider declines ownership.
   return (
     <div
       role="dialog"
       aria-modal={isTopmost ? 'true' : undefined}
       aria-label="Photo details"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      onClick={e => { if (e.target === e.currentTarget) requestDismiss() }}
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
         boxSizing: 'border-box',
@@ -1137,7 +1161,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
             style={{ width: '100%', borderRadius: '12px 12px 0 0', display: 'block', maxHeight: 300, objectFit: 'cover' }}
           />
           <button
-            onClick={onClose}
+            onClick={requestDismiss}
             style={{
               position: 'absolute', top: 10, right: 10,
               background: 'rgba(0,0,0,0.55)', color: P.onPhotoFg,
