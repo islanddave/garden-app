@@ -22,7 +22,9 @@
     "icon:golden:update": "node scripts/icon-ci/optical-weight.mjs --update",
     "icon:seam": "node scripts/icon-ci/region-seam.mjs",
     "parity:golden": "node scripts/parity/capture-daily-plan-golden.mjs --check",
-    "parity:golden:update": "node scripts/parity/capture-daily-plan-golden.mjs"
+    "parity:golden:update": "node scripts/parity/capture-daily-plan-golden.mjs",
+    "gate:save-band-stability": "node scripts/layout-gate/save-band-stability.mjs",
+    "gate:save-band-stability:report": "node scripts/layout-gate/save-band-stability.mjs --report"
   },
   "dependencies": {
     "@clerk/react": "^6.12.7",
