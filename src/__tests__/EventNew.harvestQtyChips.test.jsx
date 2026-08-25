@@ -210,11 +210,39 @@ describe('EventNew — harvest quantity pad (V4-QUICKHITRANGE-001)', () => {
 describe('EventNew — weigh-in session pads (V4-WEIGHKBDNEXT-001)', () => {
   const SESSION = 'session=harvest&event_type=harvest&project=proj-1'
 
-  it('suppresses the keyboard on BOTH fields and mounts the weight pad', async () => {
+  // BUG-HARVNUMPADINPUT-001 (BD-063) REVERSES what this test used to assert. It pinned
+  // inputMode="none" on both in-session fields, shipped in v4.48.0 to hold the keyboard down.
+  // Dave reported against it the same day: inputMode is a HINT, and an Android IME that does not
+  // implement 'none' falls back to the DEFAULT keyboard for type="text" — the full alphanumeric
+  // one. So 'none' did not suppress his keyboard, it upgraded a numeric keypad into an
+  // alphanumeric one. The markup was correct and the behaviour was not, which is why reading the
+  // deliberate inputMode as exoneration was wrong twice over, in two separate sessions.
+  //
+  // VERIFICATION CEILING, stated so a green suite never stands in for it: no test in any
+  // environment can confirm which soft keyboard Chrome on Android raises. This asserts the markup
+  // is what Android needs. Only Dave's phone confirms the keyboard that actually appears.
+  it('asks for a NUMERIC keypad on both in-session fields, never the default keyboard', async () => {
     renderEventNew(SESSION); await flushLoad()
-    expect(qtyField().getAttribute('inputmode')).toBe('none')
-    expect(screen.getByLabelText('Harvest weight').getAttribute('inputmode')).toBe('none')
+    expect(qtyField().getAttribute('inputmode')).toBe('numeric')
+    expect(screen.getByLabelText('Harvest weight').getAttribute('inputmode')).toBe('decimal')
+    // 'none' is the specific value that degrades to alphanumeric on a non-implementing IME.
+    expect(qtyField().getAttribute('inputmode')).not.toBe('none')
+    expect(screen.getByLabelText('Harvest weight').getAttribute('inputmode')).not.toBe('none')
+    // The pad is untouched and still mounts — Dave asked for it kept as-is.
     expect(screen.getByRole('group', { name: 'Harvest weight keypad' })).toBeTruthy()
+  })
+
+  it('leaves the weight field directly usable, not merely present', async () => {
+    // Guards the fix that was REJECTED: readOnly would also have kept the keyboard down, on every
+    // IME, but it kills the weight field's enterKeyHint + Enter-to-save because that handler is
+    // only reachable while a keyboard is up. This test fails against that variant, so the rejection
+    // is pinned by a guard rather than by a paragraph in a commit message.
+    renderEventNew(SESSION); await flushLoad()
+    const w = screen.getByLabelText('Harvest weight')
+    expect(w.readOnly).toBe(false)
+    expect(w.disabled).toBe(false)
+    w.focus()
+    expect(document.activeElement).toBe(w)
   })
 
   it('carries NO Next button in-session either, and the loop completes without one', async () => {

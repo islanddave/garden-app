@@ -2031,14 +2031,24 @@ export default function EventNew() {
                     {/* type=text is deliberate and stays: on Chrome Android an invalid intermediate
                         value in a type=number input makes .value return '', which would silently
                         defeat the MAX_PLAUSIBLE[unit] check in validateHarvest().
-                        inputMode is session-conditional (V4-WEIGHKBDNEXT-001). In the weigh-in
-                        session the pad above owns entry and 'none' keeps the keyboard down — which
-                        is the ~301-344px of viewport the whole slice exists to buy. Everywhere else
-                        it stays 'decimal', so the non-session harvest path is byte-identical. */}
+                        BUG-HARVNUMPADINPUT-001 (BD-063) RETIRES the session-conditional 'none' that
+                        V4-WEIGHKBDNEXT-001 put here in v4.48.0, on Dave's instruction: "tapping the
+                        field must raise a numeric keypad."
+                        inputMode is a HINT. An Android IME that does not implement 'none' falls back
+                        to the DEFAULT keyboard for type="text" — the full alphanumeric one. So on
+                        Dave's device 'none' never suppressed a keyboard; it UPGRADED a numeric keypad
+                        into an alphanumeric one. That is what he reported, the same day v4.48.0
+                        shipped this line, and it also left Enter alive for him — a second reason Next
+                        read as redundant, independent of the pad-onChange reason that retired it.
+                        'numeric' not 'decimal' here: quantity is whole.
+                        THE TRADE, stated not buried: 'none' bought ~301-344px of viewport whenever
+                        the keyboard stayed down. That is given back on any tap of the field. It is
+                        what Dave asked for — the pad is for when he does NOT tap the field — and
+                        BD-055's wizard is where the height gets recovered properly. */}
                     <Input
                       id="harvest-quantity"
                       type="text"
-                      inputMode={inHarvestSession ? 'none' : 'decimal'}
+                      inputMode={inHarvestSession ? 'numeric' : 'decimal'}
                       value={harvest.quantity}
                       onChange={e => {
                         setHarvest(h => ({ ...h, quantity: e.target.value }))
@@ -2193,11 +2203,14 @@ export default function EventNew() {
                     <Input
                       id="harvest-weight"
                       type="text"
-                      // Session-conditional for the same reason as quantity (V4-WEIGHKBDNEXT-001):
-                      // the pad below owns entry in the session, and this is the field that was
-                      // raising the keyboard at all — quantity is a single digit 83.2% of the time,
-                      // weight almost never is.
-                      inputMode={inHarvestSession ? 'none' : 'decimal'}
+                      // BUG-HARVNUMPADINPUT-001 (BD-063): 'decimal' unconditionally. THIS is the
+                      // field Dave reported, and the reason the old comment gave for the session
+                      // branch — "this is the field that was raising the keyboard at all" — is
+                      // exactly why 'none' hurt most here. 'decimal' not 'numeric': grams take a
+                      // point. NOT readOnly, which would suppress the keyboard on every IME but kill
+                      // the enterKeyHint + Enter-to-save immediately below, since that handler is
+                      // only reachable while a keyboard is up.
+                      inputMode="decimal"
                       // V4-HARVSESSION-002 (session only): grams → Enter IS the save. Explicit
                       // handler, NOT the form's implicit submission: Save is type="button", and a
                       // multi-input form with no submit button gets no implicit Enter submission,

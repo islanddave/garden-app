@@ -4,6 +4,7 @@
     "date": "2026-08-24",
     "highlights": [
       "Voice input no longer doubles a word. Saying \"bitter melon\" was giving you \"bitter bitter melon\", and it happened most when you enunciated carefully — because a clear pause makes Chrome decide \"bitter\" is a finished phrase, then change its mind a moment later and send the whole thing again. The app was treating the second version as new words and sticking it on the end. It now treats it as a correction and replaces what it had. The two earlier attempts at this fixed a different, rarer version of the problem.",
+      "Tapping the weight or quantity box during a weigh-in now brings up a number keypad instead of the full letters-and-numbers keyboard. The pad itself is unchanged. The redundant “Next” button on the quantity pad is gone — you can just tap the weight box, or keep using the pad.",
       "Typing in a form and pressing Back no longer throws the work away silently. Add Planting, Edit Planting and Sow all ask first now, with a proper in-app confirmation rather than the browser's grey box. Sow was still unguarded before this — it kept nothing of what you had typed.",
       "Each crop on Harvest Totals now shows a photo, taken from the planting of that crop you picked from most recently. 30 of your 31 crops already had a picture ready, so it looks complete rather than half-empty.",
       "A jar you have finished no longer disappears from a planting's put-up list. It stays, marked as used, so the planting still shows everything it produced.",
