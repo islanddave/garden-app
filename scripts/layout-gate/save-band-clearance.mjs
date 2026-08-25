@@ -5,8 +5,16 @@
 //
 // ASSERTS, at a TRUE 390x500 in real Chrome: in the harvest weigh-in session, once the user has
 // moved to the weight field, every key in the weight keypad's bottom row is (a) visible per
-// checkVisibility(), (b) returned by elementFromPoint at its own centre, and (c) at least
-// SAVE_BAND_MIN_CLEARANCE_PX above the sticky Save band's top edge.
+// checkVisibility(), (b) returned by elementFromPoint at its own centre, and (c) clear of the Save
+// row by that arm's floor.
+//
+// TWO ARMS, BOTH ASSERTED, NEITHER SKIPPED — see §ARM DETECTION below. Since 2026-08-25 the shipped
+// default is the fixed frame, which has no sticky band; the legacy band is the rollback lever. The
+// gate identifies the rendered arm and asserts what is true of it, and FAILS on one it cannot
+// identify.
+//   LEGACY  (c) is SAVE_BAND_MIN_CLEARANCE_PX above the sticky band's top edge.
+//   FRAME   (c) is "not underneath track 3", plus per-entry weight-pad travel of 0px in VIEWPORT
+//           coordinates and Save on-screen and hit-testing to itself at all four entries.
 //
 // WHY IT CANNOT BE A VITEST TEST. jsdom has no layout engine: every getBoundingClientRect() is
 // zeros and elementFromPoint is meaningless, so no test under src/__tests__/** can distinguish
@@ -117,6 +125,31 @@ async function attach(wsUrl) {
   return { ws, send, sessionId, evalIn }
 }
 
+// ── ARM DETECTION ──────────────────────────────────────────────────────────────────────────────
+// V4-WEIGHFRAME-001 shipped WEIGH_IN_FRAME_ENABLED true, and the frame has NO sticky Save band: its
+// Save lives in `weigh-frame-track3`, a real grid track. `save-sticky` now renders only on the
+// rollback arm. So this gate cannot key off one testid any more — it detects which arm rendered and
+// asserts what is TRUE of that arm.
+//
+// Both arms ship: the frame is the default, the legacy band is the rollback lever. Both therefore
+// need a guard, and neither may be skipped. THE GATE FAILS ON AN ARM IT CANNOT IDENTIFY — a gate
+// that no-ops on the default path is the vacuous-guard pattern this directory exists to refuse, and
+// "no band found" must never resolve to "nothing to check".
+//
+// What each arm is asserted on, and why they differ rather than being forced into one number:
+//   LEGACY  the band is a STICKY OVERLAY, so content can slide under it. The invariant is
+//           CLEARANCE — SAVE_BAND_MIN_CLEARANCE_PX of gap between every bottom-row key and the
+//           band's top edge. Unchanged from BUG-WEIGHPADSAVEBAND-001.
+//   FRAME   there is nothing to clear: track 3 is a grid track and the pad cannot go beneath it.
+//           The invariants are the frame's own claims — per-entry weight-pad travel of 0px in
+//           VIEWPORT coordinates, every bottom-row key hit-testing to itself, and Save on-screen
+//           and hit-testing to itself at all four entries.
+//
+// Why VIEWPORT coordinates on the frame arm and not scrollTop: the frame's document is
+// `overflow: hidden`, so scrollTop is pinned at 0 for the whole run. A scroll-based travel number
+// there reads 0 for the wrong reason — it is a constant instrument, not a still page. The sibling
+// gate's own non-vacuity precondition already refuses such a run.
+
 // ── The measurement, run inside the driver page against the 390x500 child frame ────────────────
 const DRIVE = `(async () => {
   const f = document.getElementById('f')
@@ -128,6 +161,125 @@ const DRIVE = `(async () => {
 
   const tile = H.byText('Harvested'); if (tile) { H.tap(tile); await H.settle(10) }
   await H.waitFor(() => d.getElementById('harvest-quantity'), { label: 'harvest panel' })
+
+  // Detect the arm BEFORE driving anything, so the legacy path below runs the exact sequence it has
+  // always run. Ambiguity is a failure, never a default: one arm, identified, or the gate stops.
+  const hasSticky = !!d.querySelector('[data-testid="save-sticky"]')
+  const hasFrame = !!d.querySelector('[data-testid="weigh-frame-track3"]')
+  if (hasSticky && hasFrame) throw new Error('BOTH save-sticky and weigh-frame-track3 rendered — the arms are not exclusive, every number below would be ambiguous')
+  if (!hasSticky && !hasFrame) throw new Error('neither save-sticky nor weigh-frame-track3 rendered — the weigh-in surface is unrecognised, refusing to pass')
+  const arm = hasFrame ? 'frame' : 'legacy'
+
+  // Shared bottom-row extraction: group the keypad's 12 buttons by rounded top, take the lowest row.
+  const bottomRowOf = (pad) => {
+    const keys = [...pad.querySelectorAll('button')]
+    const byTop = new Map()
+    for (const k of keys) { const t = Math.round(k.getBoundingClientRect().top); if (!byTop.has(t)) byTop.set(t, []); byTop.get(t).push(k) }
+    return { keys, bottomRow: [...byTop.entries()].sort((a,b)=>a[0]-b[0]).pop()[1] }
+  }
+  const probeKey = (k, refTop) => {
+    const r = k.getBoundingClientRect()
+    const hit = d.elementFromPoint(r.left + r.width/2, r.top + r.height/2)
+    return {
+      id: k.dataset.testid || k.getAttribute('aria-label'),
+      left: +r.left.toFixed(1), right: +r.right.toFixed(1), bottom: +r.bottom.toFixed(1),
+      visible: k.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true }),
+      hitIsSelf: hit === k || k.contains(hit),
+      hit: hit ? (hit.dataset?.testid ? '#' + hit.dataset.testid : hit.tagName.toLowerCase()) : null,
+      clearancePx: refTop == null ? null : +(refTop - r.bottom).toFixed(1),
+    }
+  }
+
+  if (arm === 'frame') {
+    // ⚠️ The harness auto-opens the planting chooser and prod does not (tests/harness/main.jsx:85-92).
+    // It expands the page and moves every field below it, so it is dismissed before measuring —
+    // Escape does not close it; its own control is the only way out.
+    if (d.querySelector('[role="listbox"]')) {
+      const close = d.querySelector('[data-testid="ps-close"]')
+      if (close) { H.tap(close); await H.settle(10) }
+    }
+    if (d.querySelector('[role="listbox"]')) throw new Error('auto-opened planting chooser would not dismiss — measurement would describe a layout the user never sees')
+
+    const padEl = () => d.querySelector('[aria-label="Harvest weight keypad"]')
+    const padTop = () => { const p = padEl(); return p ? Math.round(p.getBoundingClientRect().top) : null }
+    const t3El = () => d.querySelector('[data-testid="weigh-frame-track3"]')
+    const saveEl = () => { const t = t3El(); return t ? [...t.querySelectorAll('button')].find(b => (b.textContent||'').trim() === 'Save') : null }
+    // Quiescence on the PAD's viewport y, NOT scrollTop: the frame's document cannot scroll, so a
+    // scroll-based settle would report "converged" instantly and always.
+    const settlePad = async (stable = 4, cap = 26) => {
+      let last = padTop(), n = 0
+      for (let i = 0; i < cap; i++) {
+        await H.sleepReal(120)
+        const now = padTop()
+        if (now === last) { if (++n >= stable) return { v: now, converged: true } } else { n = 0; last = now }
+      }
+      return { v: padTop(), converged: false }
+    }
+
+    const entries = []
+    for (let i = 1; i <= 4; i++) {
+      const e = { i, samples: [], stalled: [] }
+      const S = at => e.samples.push({ at, v: padTop() })
+      const SR = async at => { const r = await settlePad(); if (!r.converged) e.stalled.push(at); e.samples.push({ at, v: r.v }) }
+
+      const pIn = d.querySelector('[data-testid="evtnew-planting"]')
+      if (pIn && !d.querySelector('[data-testid="evtnew-planting-chip"]')) {
+        S('before-picker-open')
+        H.tap(pIn, { focus: true }); await H.settle(6)
+        const lb = await H.waitFor(() => d.querySelector('[role="listbox"]'), { label: 'planting listbox' })
+        S('picker-open')
+        H.tap(lb.querySelector('[role="option"]')); await H.settle(12)
+        await SR('after-pick')
+      }
+      const qty = d.getElementById('harvest-quantity')
+      S('before-qty-focus'); H.tap(qty, { focus: true }); qty.focus(); await H.settle(14); await SR('qty-focus-settled')
+      H.typeInto(qty, '3'); await H.settle(6); S('after-qty-typed')
+      const wt = d.getElementById('harvest-weight')
+      if (!wt) throw new Error('#harvest-weight absent — is the weigh-in session mounted?')
+      S('before-weight-focus'); H.tap(wt, { focus: true }); wt.focus(); await H.settle(14); await SR('weight-focus-settled')
+
+      const pad = padEl(); if (!pad) throw new Error('weight keypad absent at the weigh-in step')
+      const { keys, bottomRow } = bottomRowOf(pad)
+      for (let k = 0; k < 3 && k < keys.length; k++) { H.tap(keys[k]); await H.settle(8); S('padkey'+(k+1)) }
+
+      // Measured with the pad and Save both live — the moment a mis-tap would happen.
+      const t3 = t3El(), save = saveEl()
+      if (!t3 || !save) throw new Error('track 3 or its Save button absent at the weigh-in step')
+      const t3r = t3.getBoundingClientRect(), sr = save.getBoundingClientRect()
+      const t3cs = w.getComputedStyle(t3)
+      const shit = d.elementFromPoint(sr.left + sr.width/2, sr.top + sr.height/2)
+      e.keyCount = keys.length
+      e.bottomRow = bottomRow.map(k => probeKey(k, t3r.top))
+      e.track3 = {
+        top: +t3r.top.toFixed(1), height: +t3r.height.toFixed(1),
+        visibility: t3cs.visibility, pointerEvents: t3cs.pointerEvents,
+      }
+      e.save = {
+        left: +sr.left.toFixed(1), right: +sr.right.toFixed(1), top: +sr.top.toFixed(1), bottom: +sr.bottom.toFixed(1),
+        onScreen: sr.left >= 0 && sr.right <= w.innerWidth + 0.5 && sr.top >= 0 && sr.bottom <= w.innerHeight + 0.5,
+        visible: save.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true }),
+        hitIsSelf: shit === save || save.contains(shit),
+        hit: shit ? (shit.dataset?.testid ? '#' + shit.dataset.testid : (shit.textContent||'').trim().slice(0,12) || shit.tagName.toLowerCase()) : null,
+      }
+
+      H.tap(save)
+      try { await H.waitFor(() => d.getElementById('harvest-quantity') && d.getElementById('harvest-quantity').value === '' && !d.querySelector('[data-testid="evtnew-planting-chip"]'), { label: 'session reset', timeout: 9000 }) }
+      catch (err) { e.saveWaitErr = String(err) }
+      await H.settle(12); await SR('after-save')
+
+      const v = e.samples.map(s => s.v).filter(x => x != null)
+      e.path = v
+      e.travel = v.slice(1).reduce((a,x,k)=>a+Math.abs(x-v[k]),0)
+      e.net = v.length ? v[v.length-1] - v[0] : null
+      entries.push(e)
+    }
+    return {
+      arm,
+      frame: { vw: w.innerWidth, vh: w.innerHeight, scrollW: d.documentElement.scrollWidth },
+      docScrollHeight: d.documentElement.scrollHeight, docClientHeight: d.documentElement.clientHeight,
+      entries,
+    }
+  }
 
   const pIn = d.querySelector('[data-testid="evtnew-planting"]')
   if (pIn && !d.querySelector('[data-testid="evtnew-planting-chip"]')) {
@@ -154,30 +306,17 @@ const DRIVE = `(async () => {
   const bandR = band.getBoundingClientRect()
   const pad = d.querySelector('[aria-label="Harvest weight keypad"]')
   if (!pad) throw new Error('weight keypad absent')
-  const keys = [...pad.querySelectorAll('button')]
-  const byTop = new Map()
-  for (const k of keys) { const t = Math.round(k.getBoundingClientRect().top); if (!byTop.has(t)) byTop.set(t, []); byTop.get(t).push(k) }
-  const bottomRow = [...byTop.entries()].sort((a,b)=>a[0]-b[0]).pop()[1]
+  const { keys, bottomRow } = bottomRowOf(pad)
 
   return {
+    arm,
     frame: { vw: w.innerWidth, vh: w.innerHeight, scrollW: d.documentElement.scrollWidth },
     band: {
       top: +bandR.top.toFixed(1), bottom: +bandR.bottom.toFixed(1), height: +bandR.height.toFixed(1),
       visibility: bandCS.visibility, pointerEvents: bandCS.pointerEvents, position: bandCS.position,
     },
     keyCount: keys.length,
-    bottomRow: bottomRow.map(k => {
-      const r = k.getBoundingClientRect()
-      const hit = d.elementFromPoint(r.left + r.width/2, r.top + r.height/2)
-      return {
-        id: k.dataset.testid || k.getAttribute('aria-label'),
-        bottom: +r.bottom.toFixed(1),
-        visible: k.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true }),
-        hitIsSelf: hit === k || k.contains(hit),
-        hit: hit ? (hit.dataset?.testid ? '#' + hit.dataset.testid : hit.tagName.toLowerCase()) : null,
-        clearancePx: +(bandR.top - r.bottom).toFixed(1),
-      }
-    }),
+    bottomRow: bottomRow.map(k => probeKey(k, bandR.top)),
   }
 })()`
 
@@ -191,6 +330,27 @@ html,body{margin:0;padding:0;background:#333}
 // and still see a green gate — which is the "eating the last pixel" move this whole ticket exists
 // to stop. Lowering the policy number is allowed; doing it silently is not.
 const DOCUMENTED_FLOOR_PX = 20
+
+// ── THE FRAME ARM'S NUMBERS ────────────────────────────────────────────────────────────────────
+// Measured 2026-08-25 on lane-frameon at a true 390x500, WEIGH_IN_FRAME_ENABLED true, four entries.
+//
+// TRAVEL. The frame's headline claim is that the weight pad does not move under the thumb. Measured
+// in VIEWPORT coordinates the pad's top is 295 at every one of the 14 sample points of entries 2, 3
+// and 4 — travel 0, net 0. The control is the same script one commit earlier with the flag false:
+// 482 / 538 / 594px of travel at the same entries, from 12 distinct pad positions. That delta is
+// what makes 0 a measurement rather than a broken instrument.
+const FRAME_STEADY_TRAVEL_PX = 0
+// Entry 1 alone is allowed one settle: PlantingSelect swaps a 62px search input for a 52px chip on
+// pick, which moves track 2's top edge by 3px once. Measured 3; 8 leaves room for a font metric to
+// differ without hiding a real jump.
+const FRAME_FIRST_ENTRY_SETTLE_PX = 8
+// The pad may sit flush against track 3 (measured gap: exactly 0) but never BENEATH it. Negative
+// means track 2 overflowed and pushed the pad under the ledger — measured to happen when the
+// planting chip wraps to a second line, at a name of 72 characters or more (the longest real
+// planting name today is 52). This is the frame's analogue of the clearance rule, and it is 0
+// rather than 20 because track 3 is a grid track, not an overlay: nothing can slide under it while
+// track 2 fits.
+const FRAME_MIN_PAD_TO_TRACK3_PX = 0
 
 const failures = []
 const fail = m => failures.push(m)
@@ -218,27 +378,87 @@ try {
   }
   if (m.frame.scrollW !== VIEWPORT.w) fail(`frame scrollWidth ${m.frame.scrollW} != ${VIEWPORT.w} — page overflows, layout is not the one claimed`)
 
-  // ── Non-vacuity: the band must actually be able to occlude something ──
-  if (m.band.position !== 'sticky') fail(`band position is '${m.band.position}', not sticky — gate is measuring the wrong element`)
-  if (m.band.visibility !== 'visible') fail(`band visibility is '${m.band.visibility}' — clearance would pass vacuously`)
-  if (m.band.pointerEvents !== 'auto') fail(`band pointerEvents is '${m.band.pointerEvents}' — clearance would pass vacuously`)
-  if (m.band.height <= 0) fail('band has zero height — clearance would pass vacuously')
-  if (m.keyCount !== 12) fail(`weight keypad rendered ${m.keyCount} keys, expected 12`)
-  if (m.bottomRow.length !== 6) fail(`bottom row has ${m.bottomRow.length} keys, expected 6`)
+  console.log(`[save-band-clearance] ${VIEWPORT.w}x${VIEWPORT.h} (frame self-reports ${m.frame.vw}x${m.frame.vh}, scrollW ${m.frame.scrollW}) — arm: ${m.arm}`)
 
-  // ── The invariant ──
-  for (const k of m.bottomRow) {
-    if (!k.visible) fail(`${k.id}: checkVisibility() false`)
-    if (!k.hitIsSelf) fail(`${k.id}: elementFromPoint at its centre returns ${k.hit}, not the key — occluded`)
-    if (k.clearancePx < SAVE_BAND_MIN_CLEARANCE_PX) {
-      fail(`${k.id}: clears the Save band by ${k.clearancePx}px, minimum is ${SAVE_BAND_MIN_CLEARANCE_PX}px`)
+  if (m.arm === 'frame') {
+    // ── FRAME ARM ────────────────────────────────────────────────────────────────────────────────
+    // Non-vacuity first. Track 3 must be a real, painted, pointer-taking row, and the keypad must
+    // yield its full six-key bottom row — otherwise "no key is occluded" is true of nothing.
+    if (m.entries.length !== 4) fail(`only ${m.entries.length} of 4 entries completed — the run did not reach steady state`)
+    if (m.docScrollHeight !== m.docClientHeight) {
+      fail(`document scrollHeight ${m.docScrollHeight} != clientHeight ${m.docClientHeight} — the frame's document IS scrollable, which is the one thing it claims not to be`)
     }
-  }
+    for (const e of m.entries) {
+      if (e.saveWaitErr) fail(`entry ${e.i}: the save never reset the session (${e.saveWaitErr})`)
+      if (e.stalled?.length) fail(`entry ${e.i}: still moving when sampling gave up at [${e.stalled.join(', ')}] — that IS the jump this gate is about`)
+      if (!e.track3 || e.track3.height <= 0) fail(`entry ${e.i}: track 3 has zero height — every assertion about it would pass vacuously`)
+      if (e.track3?.visibility !== 'visible') fail(`entry ${e.i}: track 3 visibility is '${e.track3?.visibility}' — Save is not on screen to be cleared of`)
+      if (e.track3?.pointerEvents !== 'auto') fail(`entry ${e.i}: track 3 pointerEvents is '${e.track3?.pointerEvents}' — Save takes no taps`)
+      if (e.keyCount !== 12) fail(`entry ${e.i}: weight keypad rendered ${e.keyCount} keys, expected 12`)
+      if (e.bottomRow.length !== 6) fail(`entry ${e.i}: bottom row has ${e.bottomRow.length} keys, expected 6`)
+      if (new Set(e.bottomRow.map(k => k.left)).size !== e.bottomRow.length) {
+        fail(`entry ${e.i}: bottom-row keys do not have distinct left edges — the instrument is reading one rect six times`)
+      }
 
-  const min = Math.min(...m.bottomRow.map(k => k.clearancePx))
-  console.log(`[save-band-clearance] ${VIEWPORT.w}x${VIEWPORT.h} (frame self-reports ${m.frame.vw}x${m.frame.vh}, scrollW ${m.frame.scrollW})`)
-  console.log(`[save-band-clearance] band y${m.band.top}-${m.band.bottom} h${m.band.height} ${m.band.visibility}/${m.band.pointerEvents}`)
-  console.log(`[save-band-clearance] weight keypad bottom row: min clearance ${min}px (floor ${SAVE_BAND_MIN_CLEARANCE_PX}px), all six keys hit-test to themselves: ${m.bottomRow.every(k => k.hitIsSelf)}`)
+      // THE INVARIANT — every bottom-row key painted, reachable, and not underneath track 3.
+      for (const k of e.bottomRow) {
+        if (!k.visible) fail(`entry ${e.i} ${k.id}: checkVisibility() false`)
+        if (!k.hitIsSelf) fail(`entry ${e.i} ${k.id}: elementFromPoint at its centre returns ${k.hit}, not the key — occluded`)
+        if (k.left < 0 || k.right > VIEWPORT.w + 0.5) {
+          fail(`entry ${e.i} ${k.id}: sits at x${k.left}-${k.right}, outside a ${VIEWPORT.w}px viewport — unreachable`)
+        }
+        // NOT SAVE_BAND_MIN_CLEARANCE_PX: there is no overlay to clear. Track 3 is a grid track, so
+        // the only way the pad can reach it is by track 2 overflowing, and a NEGATIVE gap means the
+        // pad has been pushed underneath the ledger row. Measured 2026-08-25 the gap is exactly 0.
+        if (k.clearancePx < FRAME_MIN_PAD_TO_TRACK3_PX) {
+          fail(`entry ${e.i} ${k.id}: bottom is ${-k.clearancePx}px BELOW track 3's top edge — track 2 has overflowed and pushed the pad under the ledger`)
+        }
+      }
+
+      // Save must be on screen and reachable at every entry. BUG at 76e5c96: an implicit `auto` grid
+      // column sized to max-content and put Save at x424-574 from entry 2 — painted, clipped, gone.
+      if (!e.save.onScreen) fail(`entry ${e.i}: Save at x${e.save.left}-${e.save.right} y${e.save.top}-${e.save.bottom} is outside the ${VIEWPORT.w}x${VIEWPORT.h} viewport`)
+      if (!e.save.visible) fail(`entry ${e.i}: Save checkVisibility() false`)
+      if (!e.save.hitIsSelf) fail(`entry ${e.i}: elementFromPoint at Save's centre returns ${e.save.hit}, not the button — occluded`)
+
+      // THE HEADLINE PROPERTY. Viewport coordinates, never scrollTop: this document is
+      // overflow:hidden, so a scroll-based zero would be a constant instrument rather than a still
+      // page. Entry 1 legitimately settles once — the chooser swaps a 62px search input for a 52px
+      // chip, moving track 2's top edge — so the budget applies from steady state.
+      const budget = e.i === 1 ? FRAME_FIRST_ENTRY_SETTLE_PX : FRAME_STEADY_TRAVEL_PX
+      if (e.travel > budget) {
+        fail(`entry ${e.i}: the weight pad travelled ${e.travel}px in viewport coordinates (budget ${budget}px) via ${JSON.stringify(e.path)}`)
+      }
+      if (e.i >= 2 && e.net !== 0) fail(`entry ${e.i}: net displacement ${e.net}px — entry ${e.i + 1} would not begin where entry ${e.i} did`)
+    }
+
+    const gap = Math.min(...m.entries.flatMap(e => e.bottomRow.map(k => k.clearancePx)))
+    console.log(`[save-band-clearance] track 3 y${m.entries[0].track3.top} h${m.entries[0].track3.height} ${m.entries[0].track3.visibility}/${m.entries[0].track3.pointerEvents} (a grid track — no sticky band to clear)`)
+    console.log(`[save-band-clearance] weight-pad travel per entry (VIEWPORT px): ${m.entries.map(e => e.i + ':' + e.travel).join('  ')}`)
+    console.log(`[save-band-clearance] min pad-to-track-3 gap ${gap}px (floor ${FRAME_MIN_PAD_TO_TRACK3_PX}px); all six keys and Save hit-test to themselves at every entry: ${m.entries.every(e => e.bottomRow.every(k => k.hitIsSelf) && e.save.hitIsSelf)}`)
+  } else {
+    // ── LEGACY ARM — unchanged from BUG-WEIGHPADSAVEBAND-001 ──────────────────────────────────────
+    // Non-vacuity: the band must actually be able to occlude something.
+    if (m.band.position !== 'sticky') fail(`band position is '${m.band.position}', not sticky — gate is measuring the wrong element`)
+    if (m.band.visibility !== 'visible') fail(`band visibility is '${m.band.visibility}' — clearance would pass vacuously`)
+    if (m.band.pointerEvents !== 'auto') fail(`band pointerEvents is '${m.band.pointerEvents}' — clearance would pass vacuously`)
+    if (m.band.height <= 0) fail('band has zero height — clearance would pass vacuously')
+    if (m.keyCount !== 12) fail(`weight keypad rendered ${m.keyCount} keys, expected 12`)
+    if (m.bottomRow.length !== 6) fail(`bottom row has ${m.bottomRow.length} keys, expected 6`)
+
+    // The invariant.
+    for (const k of m.bottomRow) {
+      if (!k.visible) fail(`${k.id}: checkVisibility() false`)
+      if (!k.hitIsSelf) fail(`${k.id}: elementFromPoint at its centre returns ${k.hit}, not the key — occluded`)
+      if (k.clearancePx < SAVE_BAND_MIN_CLEARANCE_PX) {
+        fail(`${k.id}: clears the Save band by ${k.clearancePx}px, minimum is ${SAVE_BAND_MIN_CLEARANCE_PX}px`)
+      }
+    }
+
+    const min = Math.min(...m.bottomRow.map(k => k.clearancePx))
+    console.log(`[save-band-clearance] band y${m.band.top}-${m.band.bottom} h${m.band.height} ${m.band.visibility}/${m.band.pointerEvents}`)
+    console.log(`[save-band-clearance] weight keypad bottom row: min clearance ${min}px (floor ${SAVE_BAND_MIN_CLEARANCE_PX}px), all six keys hit-test to themselves: ${m.bottomRow.every(k => k.hitIsSelf)}`)
+  }
 } catch (e) {
   fail(`gate could not complete: ${e.message}`)
 } finally {

@@ -7,12 +7,23 @@
 //
 // ASSERTS, at a TRUE 390x500 in real Chrome, driving four consecutive harvest entries through the
 // weigh-in session (pick planting -> qty -> weight -> three keypad digits -> Save):
-//   1. every entry's TOTAL VERTICAL TRAVEL (the sum of |Δ scrollTop| across the entry's steps, i.e.
-//      how far the page moves under the user's thumb, NOT where it ends up) is within a stated,
-//      named budget;
+//   1. every entry's TOTAL VERTICAL TRAVEL (the sum of the absolute deltas across the entry's steps,
+//      i.e. how far the surface moves under the user's thumb, NOT where it ends up) is within a
+//      stated, named budget;
 //   2. every steady-state entry's NET DISPLACEMENT is exactly zero — the session returns the user to
 //      the same offset it started them at, so entry N+1 begins where entry N began;
-//   3. the Save band's height follows the exact recorded progression as the session ledger grows.
+//   3. the Save band / track-3 height follows the exact recorded progression as the ledger grows.
+//
+// TWO ARMS, BOTH ASSERTED, NEITHER SKIPPED. Since 2026-08-25 WEIGH_IN_FRAME_ENABLED ships TRUE, and
+// the frame has no sticky band at all — Save sits in `weigh-frame-track3`, a real grid track, and
+// `save-sticky` renders only on the rollback arm. The gate detects which arm rendered and asserts
+// what is true of it; a surface it cannot identify FAILS, because a gate that no-ops on the default
+// path is the vacuous guard this file exists to be the opposite of.
+//   LEGACY  metric = document scrollTop. Budget MAX_ENTRY_TRAVEL_PX (594), band 48->202px.
+//   FRAME   metric = the weight pad's VIEWPORT top. Budget 0 from entry 2, track 3 flat at 49px.
+// The metric changes because the frame's document is overflow:hidden — scrollTop is pinned at 0 for
+// the whole run there, so a scroll-based travel of 0 would be a constant instrument rather than a
+// still page, and the non-vacuity check below is right to refuse it.
 //
 // WHY THIS EXISTS. Dave's requirement for the weigh-in session is that it "doesn't jump around up
 // and down". That was a preference, not an invariant, and preferences do not survive diffs. Its
@@ -44,10 +55,15 @@
 //
 // NON-VACUITY. A stability gate that measures a page which never scrolls at all, or a band that is
 // not painted, passes for the wrong reason — this repo has shipped several gates that could not
-// fail. The preconditions below fail the run if the band is missing/hidden/pointer-transparent/zero
-// height, if the Save button does not hit-test to itself, if fewer than four entries completed, or
-// if scrollTop never varied across the whole run (a constant instrument, cf. the "bound scoring
-// exactly 0.0% across every row" class of false pass).
+// fail. The preconditions below fail the run if the band/track is missing, hidden, pointer-
+// transparent or zero-height, if the Save button does not hit-test to itself, or if fewer than four
+// entries completed. The instrument check itself is per-arm, because the frame's sampler is
+// SUPPOSED to be constant — that is its claim — so "took 1 distinct value" cannot be the test there:
+//   LEGACY  scrollTop must take 2+ distinct values (a constant instrument, cf. the "bound scoring
+//           exactly 0.0% across every row" class of false pass).
+//   FRAME   the pad rect must be non-degenerate, the document must genuinely be unable to scroll,
+//           and Save must hit-test to ITSELF at the sampled coordinates — a dead or fabricated
+//           coordinate cannot do that.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -128,6 +144,30 @@ const SLACK_NOTICE_PX = 100
 // reasoning 18px short of the band it resolves against. Pinning the true progression here means the
 // next change to the ledger row markup cannot move these numbers without someone noticing.
 const BAND_HEIGHT_PROGRESSION_PX = [48, 128, 156, 184, 202]
+
+// ── THE FRAME ARM ──────────────────────────────────────────────────────────────────────────────
+// WEIGH_IN_FRAME_ENABLED shipped true 2026-08-25, and the frame has no sticky band at all — Save
+// lives in `weigh-frame-track3`, a real grid track. This gate therefore detects the arm from the
+// DOM and asserts what is true of it. Neither arm is skipped: the frame is the default and the
+// legacy band is the rollback lever, so both need a guard, and an unrecognised surface FAILS.
+//
+// TRAVEL, measured 2026-08-25 on lane-frameon at a true 390x500 in viewport coordinates: the weight
+// pad's top is 295 at every one of the 14 sample points of entries 2, 3 and 4 — travel 0, net 0.
+// The control is the same drive one commit earlier with the flag false: 482 / 538 / 594px at those
+// entries across 12 distinct pad positions. That contrast is what makes 0 a measurement.
+//
+// Why the metric changes with the arm rather than staying scrollTop: the frame's document is
+// `overflow: hidden`, so scrollTop is pinned at 0 for the whole run. The non-vacuity precondition
+// above ("took 1 distinct value — the instrument is reading a constant") is RIGHT to refuse that
+// number; the fix is to give the gate the honest one, not to relax the check.
+const FRAME_MAX_ENTRY_TRAVEL_PX = 0
+// Entry 1 alone: PlantingSelect swaps a 62px search input for a 52px chip on pick, moving track 2's
+// top edge once. Measured 3px; 8 leaves room for a font metric without hiding a real jump.
+const FRAME_FIRST_ENTRY_SETTLE_PX = 8
+// Track 3 is FRAME_LEDGER_PX (48) plus its 1px top border, at every entry — flat, by construction,
+// which is the whole point of the one-line ledger. This is the number that replaces the shipped
+// band's 48 -> 128 -> 156 -> 184 -> 202 growth, so pinning it flat is pinning the claim.
+const FRAME_TRACK3_PROGRESSION_PX = [49, 49, 49, 49, 49]
 
 const ENTRIES = 4
 // Entry 1 starts at scrollTop 0 and descends into the form, so its net displacement is legitimately
@@ -220,8 +260,28 @@ const DRIVE = `(async () => {
   if (!(w.__h && w.__h.ready())) throw new Error('harness never became ready in the child frame')
   const H = w.__h, d = w.document
   const sc = () => (d.scrollingElement || d.documentElement)
-  const top = () => Math.round(sc().scrollTop)
   const out = { steps: [], entries: [], bandHeights: [] }
+
+  // ── ARM DETECTION ────────────────────────────────────────────────────────────────────────────
+  // Detected from the DOM, not from a flag import: this runs in the page, and what matters is what
+  // actually rendered. Ambiguity is a failure, never a default — see the header.
+  const armOf = () => {
+    const sticky = !!d.querySelector('[data-testid="save-sticky"]')
+    const frame = !!d.querySelector('[data-testid="weigh-frame-track3"]')
+    if (sticky && frame) throw new Error('BOTH save-sticky and weigh-frame-track3 rendered — the arms are not exclusive, every number below would be ambiguous')
+    if (!sticky && !frame) throw new Error('neither save-sticky nor weigh-frame-track3 rendered — the weigh-in surface is unrecognised, refusing to pass')
+    return frame ? 'frame' : 'legacy'
+  }
+
+  // THE SAMPLER, and the one thing about this gate that is arm-specific rather than cosmetic.
+  // LEGACY: the page scrolls, so scrollTop IS how far the surface moves under the thumb.
+  // FRAME:  the document is overflow:hidden — scrollTop is pinned at 0 for the entire run, so a
+  //         scroll-based travel number reads 0 for the wrong reason. The non-vacuity check below
+  //         ("took 1 distinct value — the instrument is reading a constant") is RIGHT to refuse it.
+  //         The honest number is the same physical quantity in VIEWPORT coordinates: how far the
+  //         weight pad — the thing the thumb is on — moves in the frame.
+  const padEl = () => d.querySelector('[aria-label="Harvest weight keypad"]')
+  let top = () => Math.round(sc().scrollTop)
 
   // ── Wait for the page to STOP MOVING, rather than sleeping a fixed guess ───────────────────────
   // Every anchor in this flow is a SMOOTH scroll, and the save also reflows the band (the ledger row
@@ -242,13 +302,24 @@ const DRIVE = `(async () => {
     return { v: top(), ticks: capTicks, converged: false }
   }
 
-  const bandEl = () => d.querySelector('[data-testid="save-sticky"]')
+  let bandEl = () => d.querySelector('[data-testid="save-sticky"]')
   const bandH = () => { const b = bandEl(); return b ? Math.round(b.getBoundingClientRect().height) : null }
+  // The Save button inside the band/track. On the legacy band Save is the only non-Undo button; the
+  // frame's track 3 also holds the ledger summary toggle, which that selector would match first.
+  let saveIn = (band) => band.querySelector('button:not([aria-label^="Undo"])')
   const chooserOpen = () => !!d.querySelector('[role="listbox"]')
 
   await H.settle(10)
   const tile = H.byText('Harvested'); if (tile) { H.tap(tile); await H.settle(10) }
   await H.waitFor(() => d.getElementById('harvest-quantity'), { label: 'harvest panel' })
+
+  out.arm = armOf()
+  if (out.arm === 'frame') {
+    top = () => { const p = padEl(); return p ? Math.round(p.getBoundingClientRect().top) : 0 }
+    bandEl = () => d.querySelector('[data-testid="weigh-frame-track3"]')
+    saveIn = (band) => [...band.querySelectorAll('button')].find(b => (b.textContent||'').trim() === 'Save')
+  }
+  out.metric = out.arm === 'frame' ? 'weight-pad viewport top' : 'document scrollTop'
 
   // ⚠️ Trap 3 (see header). The harness auto-opens the planting chooser; prod does not. A modal
   // chooser owns its own scroll container, so every number below would describe the wrong element.
@@ -314,7 +385,7 @@ const DRIVE = `(async () => {
     // Non-vacuity, taken at the moment the band is tallest and most able to occlude: the Save button
     // must be painted AND reachable. checkVisibility + elementFromPoint, never offsetParent.
     const band = bandEl()
-    const saveBtn = band ? band.querySelector('button:not([aria-label^="Undo"])') : null
+    const saveBtn = band ? saveIn(band) : null
     if (band && saveBtn) {
       const cs = w.getComputedStyle(band), br = band.getBoundingClientRect(), sr = saveBtn.getBoundingClientRect()
       const hit = d.elementFromPoint(sr.left + sr.width / 2, sr.top + sr.height / 2)
@@ -323,6 +394,10 @@ const DRIVE = `(async () => {
         saveVisible: saveBtn.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true }),
         saveHitIsSelf: hit === saveBtn || saveBtn.contains(hit),
         saveHit: hit ? (hit.dataset?.testid ? '#' + hit.dataset.testid : hit.tagName.toLowerCase()) : null,
+        // Frame arm only: Save is inside a fixed-width grid column now, and the defect at 76e5c96
+        // put it at x424-574 — painted, clipped by overflow:hidden, entirely unreachable.
+        saveOnScreen: sr.left >= 0 && sr.right <= w.innerWidth + 0.5 && sr.top >= 0 && sr.bottom <= w.innerHeight + 0.5,
+        saveRect: [Math.round(sr.left), Math.round(sr.right), Math.round(sr.top), Math.round(sr.bottom)],
       }
     }
 
@@ -349,6 +424,11 @@ const DRIVE = `(async () => {
 
   out.frame = { vw: w.innerWidth, vh: w.innerHeight, scrollW: d.documentElement.scrollWidth, dpr: w.devicePixelRatio, hidden: d.hidden }
   out.distinctScrollTops = [...new Set(out.entries.flatMap(e => e.path || []))].length
+  // Frame arm: the document must genuinely be unable to scroll. If it can, overflow:hidden has
+  // been lost and the whole design premise is gone — while the pad-based travel number could still
+  // read 0 for a single settled sample. Checked, not assumed.
+  out.docScrolls = d.documentElement.scrollHeight > d.documentElement.clientHeight
+  out.padRect = (() => { const p = padEl(); if (!p) return null; const r = p.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) } })()
   return out
 })()`
 
@@ -381,17 +461,43 @@ try {
   if (m.frame.scrollW !== VIEWPORT.w) fail(`frame scrollWidth ${m.frame.scrollW} != ${VIEWPORT.w} — page overflows horizontally, the layout is not the one claimed`)
   if (m.chooserOpenAtMeasureStart) fail('planting chooser was still open when measurement began — travel would describe the modal scroller')
 
+  // ── Arm-specific policy. Both arms ship — the frame is the default, the legacy band the rollback
+  // lever — so both are asserted and NEITHER is skipped. An unrecognised surface throws inside the
+  // drive and lands in the catch below as a failure, never as a pass.
+  const FRAME = m.arm === 'frame'
+  const budget = FRAME ? FRAME_MAX_ENTRY_TRAVEL_PX : MAX_ENTRY_TRAVEL_PX
+  const expectedHeights = FRAME ? FRAME_TRACK3_PROGRESSION_PX : BAND_HEIGHT_PROGRESSION_PX
+
   // ── Non-vacuity: prove the instrument and the subject are both live ──
   const ok = m.entries.filter(e => !e.error)
   if (ok.length !== ENTRIES) fail(`only ${ok.length}/${ENTRIES} entries completed: ${m.entries.filter(e => e.error).map(e => `entry ${e.i}: ${e.error}`).join('; ')}`)
-  if (m.distinctScrollTops < 2) fail(`scrollTop took ${m.distinctScrollTops} distinct value(s) across the whole run — the instrument is reading a constant, not the page`)
+  if (FRAME) {
+    // The frame's sampler is SUPPOSED to be constant — that is the claim — so "took 1 distinct
+    // value" cannot be the instrument check here. What proves the instrument instead:
+    //   · the pad rect is non-degenerate (a dead sampler reads 0x0), and
+    //   · every entry's Save and keypad hit-test to THEMSELVES via elementFromPoint at the sampled
+    //     coordinates. A constant or fabricated coordinate cannot hit-test correctly.
+    // Plus the design premise itself: the document must genuinely be unable to scroll.
+    if (!m.padRect || !(m.padRect.w > 0 && m.padRect.h > 0)) fail(`the weight pad measures ${JSON.stringify(m.padRect)} — the sampler is not reading a real element`)
+    if (m.docScrolls) fail('the frame\'s document CAN scroll (scrollHeight > clientHeight) — `overflow: hidden` has been lost, so a pad-based travel of 0 no longer means the surface holds still')
+  } else if (m.distinctScrollTops < 2) {
+    fail(`scrollTop took ${m.distinctScrollTops} distinct value(s) across the whole run — the instrument is reading a constant, not the page`)
+  }
   for (const e of ok) {
     const p = e.bandProbe
-    if (!p) { fail(`entry ${e.i}: no Save band found at the weigh-in step — clearance/stability would pass vacuously`); continue }
-    if (p.position !== 'sticky') fail(`entry ${e.i}: band position is '${p.position}', not sticky — measuring the wrong element`)
-    if (p.visibility !== 'visible') fail(`entry ${e.i}: band visibility is '${p.visibility}' — would pass vacuously`)
-    if (p.pointerEvents !== 'auto') fail(`entry ${e.i}: band pointerEvents is '${p.pointerEvents}' — would pass vacuously`)
-    if (!(p.h > 0)) fail(`entry ${e.i}: band has zero height — would pass vacuously`)
+    if (!p) { fail(`entry ${e.i}: no ${FRAME ? 'track 3' : 'Save band'} found at the weigh-in step — clearance/stability would pass vacuously`); continue }
+    // The legacy band must be STICKY (that is what lets content slide under it). The frame's track 3
+    // must NOT be: it is a real grid track, which is precisely why BUG-SAVEBANDDEADINSET-001 cannot
+    // recur on it. Asserting the same string on both arms would be asserting the wrong thing twice.
+    if (FRAME) {
+      if (p.position === 'sticky' || p.position === 'fixed') fail(`entry ${e.i}: track 3 position is '${p.position}' — it must be a grid track, not an overlay, or the dead-inset class of bug is back`)
+      if (!p.saveOnScreen) fail(`entry ${e.i}: Save is at x${p.saveRect[0]}-${p.saveRect[1]} y${p.saveRect[2]}-${p.saveRect[3]}, outside the ${VIEWPORT.w}x${VIEWPORT.h} viewport — clipped and unreachable`)
+    } else if (p.position !== 'sticky') {
+      fail(`entry ${e.i}: band position is '${p.position}', not sticky — measuring the wrong element`)
+    }
+    if (p.visibility !== 'visible') fail(`entry ${e.i}: ${FRAME ? 'track 3' : 'band'} visibility is '${p.visibility}' — would pass vacuously`)
+    if (p.pointerEvents !== 'auto') fail(`entry ${e.i}: ${FRAME ? 'track 3' : 'band'} pointerEvents is '${p.pointerEvents}' — would pass vacuously`)
+    if (!(p.h > 0)) fail(`entry ${e.i}: ${FRAME ? 'track 3' : 'band'} has zero height — would pass vacuously`)
     if (!p.saveVisible) fail(`entry ${e.i}: Save button checkVisibility() false`)
     if (!p.saveHitIsSelf) fail(`entry ${e.i}: elementFromPoint at the Save button's centre returns ${p.saveHit}, not the button — occluded`)
     if (e.weightKeyCount !== 12) fail(`entry ${e.i}: weight keypad rendered ${e.weightKeyCount} keys, expected 12`)
@@ -399,39 +505,42 @@ try {
     // A step that never reached a resting position IS the jumping-around symptom, and it also means
     // the offset recorded for it is a sample of something still in motion — the numbers below it
     // would be unreproducible. Fail rather than average it away.
-    if (e.stalled.length) fail(`entry ${e.i}: scroll never came to rest at ${e.stalled.join(', ')} (still moving after ~3s) — the page is still settling when the user's next tap lands`)
+    if (e.stalled.length) fail(`entry ${e.i}: ${m.metric} never came to rest at ${e.stalled.join(', ')} (still moving after ~3s) — the page is still settling when the user's next tap lands`)
   }
 
   // ── 1. The travel budget ──
   for (const e of ok) {
-    if (e.travel > MAX_ENTRY_TRAVEL_PX) {
-      fail(`entry ${e.i}: vertical travel ${e.travel}px exceeds the budget of ${MAX_ENTRY_TRAVEL_PX}px. Path: ${e.path.join(' -> ')}. A diff that moves the page further under the user's thumb is the regression this gate exists to catch — measure it, and if the increase is intended, raise MAX_ENTRY_TRAVEL_PX in the same commit with the reason.`)
+    // Entry 1 descends into the surface on both arms and is exempt from the frame's zero — see
+    // FRAME_FIRST_ENTRY_SETTLE_PX.
+    const b = FRAME && e.i < STEADY_FROM_ENTRY ? FRAME_FIRST_ENTRY_SETTLE_PX : budget
+    if (e.travel > b) {
+      fail(`entry ${e.i}: ${m.metric} travel ${e.travel}px exceeds the budget of ${b}px. Path: ${e.path.join(' -> ')}. A diff that moves the surface further under the user's thumb is the regression this gate exists to catch — measure it, and if the increase is intended, raise the budget in the same commit with the reason.`)
     }
   }
 
   // ── 2. Net displacement: the session must hand entry N+1 the offset entry N started from ──
   for (const e of ok) {
     if (e.i >= STEADY_FROM_ENTRY && e.net !== 0) {
-      fail(`entry ${e.i}: net displacement ${e.net > 0 ? '+' : ''}${e.net}px, expected 0 — the session does not return to where it started, so entries drift down the page as the ledger grows. Path: ${e.path.join(' -> ')}`)
+      fail(`entry ${e.i}: net displacement ${e.net > 0 ? '+' : ''}${e.net}px, expected 0 — the session does not return to where it started, so entries drift as the ledger grows. Path: ${e.path.join(' -> ')}`)
     }
   }
 
-  // ── 3. The band-height progression ──
+  // ── 3. The band / track-3 height progression ──
   const heights = m.bandHeights.map(h => (h == null ? -1 : h))
-  if (!eq(heights, BAND_HEIGHT_PROGRESSION_PX)) {
-    fail(`Save band height progression is [${heights.join(', ')}], expected [${BAND_HEIGHT_PROGRESSION_PX.join(', ')}] (before any save, then after saves 1-${ENTRIES}). The band's height drives the clearance rule, so a change here silently changes how much room the keypad has.`)
+  if (!eq(heights, expectedHeights)) {
+    fail(`${FRAME ? 'Track 3' : 'Save band'} height progression is [${heights.join(', ')}], expected [${expectedHeights.join(', ')}] (before any save, then after saves 1-${ENTRIES}). ${FRAME ? 'The frame\'s whole ledger claim is that this number never changes; growth here is the shipped band\'s 48->202 creep coming back.' : 'The band\'s height drives the clearance rule, so a change here silently changes how much room the keypad has.'}`)
   }
 
   // ── Report ──
   const maxTravel = ok.length ? Math.max(...ok.map(e => e.travel)) : null
-  console.log(`[save-band-stability] ${VIEWPORT.w}x${VIEWPORT.h} (frame self-reports ${m.frame.vw}x${m.frame.vh}, scrollW ${m.frame.scrollW}); auto-chooser was open: ${m.autoChooserWasOpen}, dismissed: ${!m.chooserOpenAtMeasureStart}`)
-  for (const e of ok) console.log(`[save-band-stability] entry ${e.i}: travel ${e.travel}px, net ${e.net >= 0 ? '+' : ''}${e.net}px, band ${e.bandProbe?.h}px  |  ${e.path.join(' -> ')}`)
-  console.log(`[save-band-stability] band heights [before, after 1..${ENTRIES}] = [${heights.join(', ')}]`)
-  console.log(`[save-band-stability] max entry travel ${maxTravel}px against a budget of ${MAX_ENTRY_TRAVEL_PX}px`)
-  if (maxTravel != null && maxTravel <= MAX_ENTRY_TRAVEL_PX - SLACK_NOTICE_PX) {
-    console.log(`[save-band-stability] NOTE — the budget is ${MAX_ENTRY_TRAVEL_PX - maxTravel}px slack and is no longer catching much. Re-baseline MAX_ENTRY_TRAVEL_PX to ${maxTravel} (see the constant's comment for the two-command procedure).`)
+  console.log(`[save-band-stability] ${VIEWPORT.w}x${VIEWPORT.h} (frame self-reports ${m.frame.vw}x${m.frame.vh}, scrollW ${m.frame.scrollW}); arm: ${m.arm}, metric: ${m.metric}; auto-chooser was open: ${m.autoChooserWasOpen}, dismissed: ${!m.chooserOpenAtMeasureStart}`)
+  for (const e of ok) console.log(`[save-band-stability] entry ${e.i}: travel ${e.travel}px, net ${e.net >= 0 ? '+' : ''}${e.net}px, ${FRAME ? 'track 3' : 'band'} ${e.bandProbe?.h}px  |  ${e.path.join(' -> ')}`)
+  console.log(`[save-band-stability] ${FRAME ? 'track 3' : 'band'} heights [before, after 1..${ENTRIES}] = [${heights.join(', ')}]`)
+  console.log(`[save-band-stability] max entry travel ${maxTravel}px against a budget of ${budget}px`)
+  if (!FRAME && maxTravel != null && maxTravel <= budget - SLACK_NOTICE_PX) {
+    console.log(`[save-band-stability] NOTE — the budget is ${budget - maxTravel}px slack and is no longer catching much. Re-baseline MAX_ENTRY_TRAVEL_PX to ${maxTravel} (see the constant's comment for the two-command procedure).`)
   }
-  if (REPORT_ONLY) console.log('\n' + JSON.stringify({ frame: m.frame, bandHeights: heights, entries: ok.map(e => ({ i: e.i, travel: e.travel, net: e.net, path: e.path, bandH: e.bandProbe?.h })) }, null, 1))
+  if (REPORT_ONLY) console.log('\n' + JSON.stringify({ arm: m.arm, metric: m.metric, frame: m.frame, bandHeights: heights, entries: ok.map(e => ({ i: e.i, travel: e.travel, net: e.net, path: e.path, bandH: e.bandProbe?.h })) }, null, 1))
 } catch (e) {
   fail(`gate could not complete: ${e.message}`)
 } finally {
