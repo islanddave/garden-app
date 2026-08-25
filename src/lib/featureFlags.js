@@ -288,28 +288,16 @@ export const SAVE_TO_DEVICE_HIDDEN = true
 // still needs a deploy; what the flag buys is that the loud arm never rots.
 export const CRITTERS_QUIET = true
 
-// V4-WEIGHWIZARDFLOW-001 (BD-055) + V4-WEIGHMOBILEVIEWPORT-001 (BD-045) — the weigh-in session as a
-// step-by-step fly-up wizard: one prompt per bottom-sheet step instead of a 2.4-viewport form.
-// Design: project-state/_hp-20260825/design-weighwizard-V100-20260825.md.
-//
-// OFF because DAVE HAS NOT SEEN THE DESIGN. This is his most-used flow and he opened the braindump
-// saying the current session is "nice now, certainly a big improvement" — this is acceleration of
-// something working, so shipping a rebuild of it on an agent's judgement alone is the wrong call.
-// The flag exists to let Slice 1 land, be measured in tests/harness, and be shown to him without
-// touching what he uses today.
-//
-// FLAG-OFF IS A TRUE NO-OP, and it is PROVEN rather than asserted: WeighWizard.flagOff.test.jsx
-// compares the WHOLE rendered weigh-in session against a byte fixture captured from EventNew at
-// base e5a8ab9, BEFORE that file had ever heard of the wizard (a94c7fd — the provenance is the git
-// history, not a comment). "No wizard testid present" would have passed just as happily on a leaked
-// wrapper div or a shifted React useId; the fixture does not.
-//
-// Every mutation this slice makes to EventNew sits inside the flag. The wizard also renders last in
-// EventNew's tree — defensively, not decisively: mutation-testing that placement showed `{false &&
-// …}` creates no fiber and shifts no useId, so the fixture is what carries the proof. Rollback is
-// this one const.
-// Criteria-gated (Dave's review, then a harness re-measure per design §4), never date-gated.
-export const WEIGH_WIZARD_ENABLED = false
+// V4-WEIGHWIZARDFLOW-001 (BD-055) asked here whether the weigh-in session should become a
+// step-by-step fly-up wizard, behind WEIGH_WIZARD_ENABLED (parked OFF, pending Dave). REMOVED
+// 2026-08-25, V4-WEIGHFLAGEXCLUSION-001. Dave saw both redesigns of this one flow and chose the
+// fixed frame below, so the wizard is deleted rather than left guarded: it and the frame were
+// independent FULL-SURFACE rebuilds of the same screen with nothing making them mutually
+// exclusive, and their own tests contradicted each other with both flags true. A design panel had
+// already returned BUILD SMALLER unanimously — the wizard removed no taps (both flows ~6 actions
+// per planting) and its lead justification, BUG-CHOOSERPADOCCLUDE-001, was withdrawn as a harness
+// measurement artifact. Its flag-off byte baseline outlived it as weighInSessionBaseBytes.test.jsx,
+// which is where the base-e5a8ab9 pin (and the cross-lane handedness proof it carries) now lives.
 
 // V4-WEIGHFRAME-001 (BD-055 / design-weighviewport, panel Option B): the weigh-in session becomes a
 // FIXED FRAME — a non-scrolling 100dvh panel with three grid tracks (chooser pinned top, the two
