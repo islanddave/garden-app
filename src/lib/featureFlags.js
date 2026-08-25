@@ -288,6 +288,29 @@ export const SAVE_TO_DEVICE_HIDDEN = true
 // still needs a deploy; what the flag buys is that the loud arm never rots.
 export const CRITTERS_QUIET = true
 
+// V4-WEIGHFRAME-001 (BD-055 / design-weighviewport, panel Option B): the weigh-in session becomes a
+// FIXED FRAME — a non-scrolling 100dvh panel with three grid tracks (chooser pinned top, the two
+// fields + their two pads in a bottom-aligned middle, a permanently 48px ledger + Save row pinned
+// bottom) — instead of today's scrolling document with three programmatic scrolls fighting each
+// other.
+//
+// WHAT IT IS FOR, measured rather than asserted: at a real 390x500 every weigh-in entry travels
+// 252px vertically and ends at the EXACT scroll offset it started at (213 -> 221 -> 339 -> 213).
+// Over a 17-planting sitting that is ~4,300px of scrolling for zero net positioning. In a fixed
+// frame neither anchor has a job, so both are deleted on this surface and the travel goes to 0.
+//
+// DEFAULT OFF, and the OFF arm is the lever rather than dead code: with it false this surface is
+// byte-identical to v4.49.0 — pinned literally, by WeighInFrame.flagOff.test.jsx, against a
+// container.innerHTML fixture captured and committed BEFORE the source was edited.
+//
+// Flip TRUE only after an on-device pass on Dave's phone. The one property the headless harness
+// cannot check is the IME show/hide TRANSITION: the frame's whole claim is that a keyboard opening
+// changes only the middle track's height and consumes the slack at the top, so the weight field and
+// weight pad do not move under the thumb. That is layout, not scroll, so it does not depend on
+// Chrome preserving scrollTop across the resize — but it has not been watched on real glass.
+// Criteria-gated, never date-gated. Rollback = flip back to false (one client revert, no data).
+export const WEIGH_IN_FRAME_ENABLED = false
+
 // BUG-HEICEXIFPASSTHRU-001 asked here whether an UPLOAD should be REFUSED when its metadata cannot
 // be stripped, behind PHOTO_STRIP_STRICT_UPLOAD (parked OFF, pending Dave). REMOVED 2026-08-21,
 // BUG-HEICREALSTRIP-001. Dave ruled against the question rather than answering it — verbatim: "I do

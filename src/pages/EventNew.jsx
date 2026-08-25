@@ -9,7 +9,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, BOTTOM_NAV_HEIGHT_PX, statusLabel } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
+import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_IN_FRAME_ENABLED } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
@@ -202,6 +202,81 @@ function anchorSectionToTop(id, behavior = 'smooth') {
   if (!el || typeof el.scrollIntoView !== 'function') return false
   el.scrollIntoView({ block: 'start', behavior })
   return true
+}
+
+// ── V4-WEIGHFRAME-001 — the fixed weigh-in frame (flag WEIGH_IN_FRAME_ENABLED) ────────────────
+//
+// TopChrome's `detail` bar is `position: sticky; top: 0` and 52px tall, and it is NOT keyboard-
+// suppressed (V4-KBCHROME-001 covers bottom chrome only). The page shell below it already sizes
+// itself `calc(100dvh - 52px)`, so that — not a bare 100dvh — is the height of "the whole viewport"
+// from inside this component. A literal 100dvh here would hang 52px of the frame below the fold and
+// push the Save row off the bottom, which is the one thing the frame exists to prevent.
+const FRAME_HEIGHT = 'calc(100dvh - 52px)'
+// The ledger + Save row. Constant FOREVER — this is the number that replaces the shipped band's
+// 48 -> 128 -> 156 -> 184 -> 202px growth across four saves.
+const FRAME_LEDGER_PX = 48
+
+// Handedness. `src/lib/handedness.js` + `useHandedness()` land in lane-handedness-20260825, which is
+// NOT merged here, so importing them would not build. This shim reads the SAME localStorage key and
+// listens for the SAME event, so the two agree at runtime the moment either ships; when the lanes
+// merge, delete this and import `useHandedness` — the call sites need no change.
+const HANDEDNESS_KEY = 'ui.handedness'
+const HANDEDNESS_EVENT = 'garden:handedness'
+function readHand() {
+  try { return localStorage.getItem(HANDEDNESS_KEY) === 'left' ? 'left' : 'right' } catch { return 'right' }
+}
+function useHandedness() {
+  const [hand, setHand] = useState(readHand)
+  useEffect(() => {
+    const onChange = () => setHand(readHand())
+    window.addEventListener(HANDEDNESS_EVENT, onChange)
+    window.addEventListener('storage', onChange)
+    return () => {
+      window.removeEventListener(HANDEDNESS_EVENT, onChange)
+      window.removeEventListener('storage', onChange)
+    }
+  }, [])
+  return hand
+}
+
+// MIRROR TASK CONTROLS, NEVER CHROME (the rule the motor seat asked to have written down). Applied
+// here to exactly two things: the Save button's edge and the ledger's Undo column. Reordered as an
+// ARRAY rather than with `flex-direction: row-reverse` deliberately — row-reverse leaves DOM order
+// and visual order disagreeing, which is a WCAG 1.3.2 / 2.4.3 defect for the sake of one property.
+// NOT mirrored: the Harvests-header Weigh-in button (Dave's explicit call), BottomNav, digit order.
+function orderByThumb(hand, underThumb, farSide) {
+  return hand === 'left' ? [underThumb, farSide] : [farSide, underThumb]
+}
+
+// BottomNav is App-level chrome and this component cannot re-render it, so the session hides it the
+// way the app's own keyboard suppression already does — `visibility: hidden` on the <nav> PLUS
+// `--bottom-nav-height: 0px`, together, so the paint and the reserved inset can never disagree for a
+// frame (BottomNav.jsx:180-189 states that invariant; this honours it rather than inventing a
+// second mechanism). Worth 68px = 13.6% of a 500px viewport, and it is the most thumb-reachable
+// strip on the device occupied entirely by targets that ABANDON the session.
+// Effect cleanup is what makes "it must return the moment he leaves" structural rather than a
+// promise: unmount, flag-off and a route change all restore it. Deliberately NOT mirrored — global
+// chrome keeps its shipped side everywhere.
+const FRAME_NAV_STYLE_ID = 'weigh-frame-nav-suppress'
+function useSuppressBottomNav(active) {
+  useEffect(() => {
+    if (!active || typeof document === 'undefined') return undefined
+    const root = document.documentElement
+    const prevInset = root.style.getPropertyValue('--bottom-nav-height')
+    const style = document.createElement('style')
+    style.id = FRAME_NAV_STYLE_ID
+    style.textContent = 'nav[aria-label="Main navigation"]{visibility:hidden !important}'
+    document.head.appendChild(style)
+    root.style.setProperty('--bottom-nav-height', '0px')
+    return () => {
+      style.remove()
+      // Restore the previous value rather than the constant: BottomNav owns this var and may have
+      // been mid-suppression (keyboard up) when the session mounted. Writing 56px back here would
+      // fight it. An empty previous value means "never set" — remove, don't invent one.
+      if (prevInset) root.style.setProperty('--bottom-nav-height', prevInset)
+      else root.style.removeProperty('--bottom-nav-height')
+    }
+  }, [active])
 }
 
 function readLastProjectId() {
@@ -533,6 +608,19 @@ export default function EventNew() {
   // V4-HARVSESSION-001: session mode is a full-page posture (the overlay keeps its own
   // confirmation strip + draft machinery, untouched).
   const inHarvestSession = harvestSessionParam && !inOverlay
+  // V4-WEIGHFRAME-001. ONE derived predicate for the whole frame, so there is no way to ship half of
+  // it: every deletion, every restructure and the nav suppression all read this single name.
+  const sessionFrame = inHarvestSession && WEIGH_IN_FRAME_ENABLED
+  const hand = useHandedness()
+  useSuppressBottomNav(sessionFrame)
+  // The frame's history drawer — the last 10 rows, opened by tapping the ledger summary. This is the
+  // first build in which "see recent history" exists at all: the shipped `+N earlier` line is a bare
+  // <div> with no handler, so it announces withheld rows and offers no way to reach them.
+  const [frameLogOpen, setFrameLogOpen] = useState(false)
+  // Track 2's scroll container. Post-save the frame RESTORES this rather than re-anchoring — the
+  // measurement is unambiguous that every entry already ends where it started, so the anchor's only
+  // effect was the 126px round trip to get there.
+  const frameBodyRef = useRef(null)
   // Session ledger — every confirmed save this mount. Undone rows stay listed struck-through
   // (excluded from totals): the ledger is an honest record of what happened, not a mutable cart.
   const [sessionRows, setSessionRows] = useState([])
@@ -1554,9 +1642,21 @@ export default function EventNew() {
     // is the event-type row, and scrolling to a picker they are not being asked to touch would be
     // a second defect of the same kind. rAF-deferred so it measures AFTER the reset's commit —
     // the confirmation banner mounts in the same pass and moves everything below it.
+    // V4-WEIGHFRAME-001: DELETED on the frame surface. In a fixed frame the picker is track 1 and is
+    // never off the fold, so the anchor has nothing to find — and it was the larger half of the
+    // measured round trip (-126px per entry at 390x500, pulling back exactly what the focus anchor
+    // had just pushed). What replaces it is a RESTORE, not a second anchor: track 2 is the only
+    // scrollable region left, and the measurement says its target is always the offset it was
+    // already at.
     if (keepMode === 'type') {
       const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn => setTimeout(fn, 0))
-      raf(() => anchorSectionToTop(PLANTING_SECTION_ID))
+      if (sessionFrame) {
+        const body = frameBodyRef.current
+        const keep = body ? body.scrollTop : 0
+        raf(() => { if (frameBodyRef.current) frameBodyRef.current.scrollTop = keep })
+      } else {
+        raf(() => anchorSectionToTop(PLANTING_SECTION_ID))
+      }
     }
     clearDraft(EVENTNEW_DRAFT_KEY)   // saved to DB — the working draft is spent
     // Operational confirmation + undo. Undo = soft-delete the just-logged event. Rewards stay
@@ -1907,8 +2007,12 @@ export default function EventNew() {
                V4-PLANTPICKER-001: the shared searchable PlantingSelect replaces the raw select.
                Scope stays project-bound (plants fed from the load effect above, which owns the
                deep-link/sticky validation); PROJHIDE/Lane 3 flips this to the unscoped source. ── */
-  const plantingBlock = (
-          <Section id={PLANTING_SECTION_ID} label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
+  /* Same frame-only flatten as the harvest panel, and the same reason: MEASURED, the Section card
+     around the chooser is 110px for a 52px control. The design's budget prices track 1 at 52px, and
+     58px of card chrome is the whole difference between the pads fitting and track 2 scrolling —
+     which would reinstate, inside the frame, exactly the movement the frame exists to remove. */
+  const plantingField = (
+          <>
             <PlantingSelect
               plants={plantsForProject}
               value={form.plant_id}
@@ -1938,7 +2042,17 @@ export default function EventNew() {
               data-testid="evtnew-planting"
               onOpenChange={handlePickerOpenChange}
             />
-          </Section>
+          </>
+  )
+
+  const plantingBlock = (
+          sessionFrame
+            ? <div id={PLANTING_SECTION_ID}>{plantingField}</div>
+            : (
+              <Section id={PLANTING_SECTION_ID} label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
+                {plantingField}
+              </Section>
+            )
   )
 
           /* ── V3-EVENTCONTSIZE-001: new-container capture for potting_up / transplant on a chosen planting ── */
@@ -2022,9 +2136,29 @@ export default function EventNew() {
   )
 
           /* ── V1.2a-2 Wave 3: Harvest panel (harvest events only) ── */
-  const harvestBlock = (
-          form.event_type === 'harvest' && (
-            <Section id={HARVEST_SECTION_ID} label="Harvest *">
+  /* V4-WEIGHFRAME-001 — FLATTENED in the frame, and this is a fit requirement, not a taste call.
+     MEASURED at a true 390x500 (tests/harness, iframe): the frame is 448px (500 − 52px TopChrome),
+     track 3 is 49px, so the fields and their two pads get ~347px once the chooser is flattened too.
+     The Section card charges 42px of header + 17px of footer for a title ("Harvest *") that is
+     redundant on a surface whose entire purpose is one harvest — 59px, or a quarter of a number pad.
+     `Section` is `components/FormSection.jsx`, which this lane does not own, so the frame swaps the
+     WRAPPER rather than teaching Section a bare mode. The children are byte-identical either way,
+     which is what keeps WeighInFrame.flagOff.test.jsx matching. The id stays on both so anything
+     addressing HARVEST_SECTION_ID still resolves. */
+  /* Hoisted so the frame can seat it in track 2's secondary region instead of between the weight pad
+     and Save. Its own note says it "must never sit between the user and Save on the fast path"
+     because it asks about 4 of 707 live picks — in the scrolling document that was satisfied by
+     being last; in a fixed frame "last" IS the fast path, directly above Save. Same element either
+     way, so the flag-OFF render is unchanged. */
+  const dispositionBlock = (
+              <HarvestDispositionChips
+                value={harvest.disposition}
+                onChange={v => setHarvest(h => ({ ...h, disposition: v }))}
+              />
+  )
+
+  const harvestFields = (
+            <>
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ flex: 2 }}>
                   <Field label="Quantity *" htmlFor="harvest-quantity">
@@ -2060,7 +2194,12 @@ export default function EventNew() {
                       // focus rather than after a resize listener so it lands BEFORE the browser's
                       // own scroll-focused-input-into-view: with the field already visible the
                       // browser has nothing left to correct, so there is no second competing scroll.
-                      onFocus={() => anchorSectionToTop(HARVEST_SECTION_ID)}
+                      // V4-WEIGHFRAME-001: DELETED on the frame surface. Its whole job was to drag
+                      // quantity, weight and Save into the space the keyboard leaves; the frame puts
+                      // them there by construction, so firing it would move content for no reason —
+                      // SC 3.2.2 On Input, layout changing as a direct consequence of entering a
+                      // field. Measured contribution to the shipped round trip: +118px per entry.
+                      onFocus={sessionFrame ? undefined : () => anchorSectionToTop(HARVEST_SECTION_ID)}
                       aria-label="Harvest quantity"
                       error={!!harvestError}
                       placeholder="e.g. 2.5"
@@ -2155,7 +2294,10 @@ export default function EventNew() {
                   into a 5px OCCLUSION — the band answered the hit test instead of the key. Restoring
                   the 8px puts every element below this pad back on its shipped coordinate, so the
                   diff moves the pad and nothing else. */}
-              <div style={{ marginTop: 8 }}>
+              {/* marginTop:8 is NOT cosmetic on the shipped path — see the note above; it cancels a
+                  margin collapse and is what makes the pad's move a pure reorder. The frame is a
+                  grid, not block flow, so nothing collapses and the 8 buys nothing there. */}
+              <div style={{ marginTop: sessionFrame ? 0 : 8 }}>
                 <NumberPad
                   value={harvest.quantity}
                   onChange={v => {
@@ -2191,10 +2333,10 @@ export default function EventNew() {
                   exactly as it was — this row is for when the bowl happens to be near the scale.
                   Its payoff is disproportionate to its size: a count AND a weight together is a
                   per-variety calibration sample, which is what retires the estimated weights. */}
-              <div style={{ marginTop: 14 }}>
+              <div style={sessionFrame ? { marginTop: 2, marginBottom: -8 } : { marginTop: 14 }}>
                 <label
                   htmlFor="harvest-weight"
-                  style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}
+                  style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: sessionFrame ? 2 : 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}
                 >
                   Weight  ·  optional
                 </label>
@@ -2256,6 +2398,13 @@ export default function EventNew() {
                     844 viewport, so it stays above the fold with both pads up, and exactly one
                     control on the surface says "Save". Slice C (the wizard) is what would collapse
                     this to one pad on screen at a time and recover the height. */}
+                {/* NumberPad carries its own `marginBottom: 8`. On the shipped path that is the gap
+                    to the helper line below it; in the frame this pad is the LAST thing above track
+                    3, so the 8px is dead space against a 5px deficit. NumberPad.jsx is owned by
+                    another lane, so the margin is cancelled from the outside rather than changed at
+                    source — a negative margin here is reversible and touches nobody else's file.
+                    Cancelled on the weight GROUP's own marginBottom (above), so neither arm gains a
+                    DOM node and the shipped render is untouched. */}
                 {inHarvestSession && (
                   <NumberPad
                     value={harvest.weight}
@@ -2273,9 +2422,15 @@ export default function EventNew() {
                     // over. Exactly one control on this surface says "Save".
                   />
                 )}
+                {/* 21px of instruction the frame does not spend. It teaches the count/weight
+                    relationship, which is worth saying on the general log form; inside a weigh-in
+                    session the user has already learned it by the second entry, and 21px is a fifth
+                    of a number pad. */}
+                {!sessionFrame && (
                 <div style={{ marginTop: 5, fontSize: '0.72rem', color: P.light, lineHeight: 1.4 }}>
                   Weigh the whole pick — the count above says how many that was.
                 </div>
+                )}
               </div>
 
               {harvestError && (
@@ -2322,11 +2477,19 @@ export default function EventNew() {
                   and Save on the fast path. Not gated by HARVEST_QUALITY_HIDDEN: quality rates a
                   good pick 1-5, this records that a pick went wrong — different questions, and the
                   flag that retired one says nothing about the other. */}
-              <HarvestDispositionChips
-                value={harvest.disposition}
-                onChange={v => setHarvest(h => ({ ...h, disposition: v }))}
-              />
-            </Section>
+              {!sessionFrame && dispositionBlock}
+            </>
+  )
+
+  /* The wrapper swap, done as a plain conditional rather than two little components. Declaring a
+     component INSIDE render gives it a new identity on every pass, so React unmounts and remounts
+     the whole subtree each time — which silently reset the pads' and picker's state. The flag-OFF
+     byte fixture is what caught it; a testid census would not have. */
+  const harvestBlock = (
+          form.event_type === 'harvest' && (
+            sessionFrame
+              ? <div id={HARVEST_SECTION_ID}>{harvestFields}</div>
+              : <Section id={HARVEST_SECTION_ID} label="Harvest *">{harvestFields}</Section>
           )
   )
 
@@ -2442,10 +2605,257 @@ export default function EventNew() {
   /* ── Photo moved to the TOP of the form — V4-LOGPHOTOFIRST-001 (BD-003). ── */
   /* ── Visibility + Private notes moved into "Add details" above (V3-EVENT-008 §8) ── */
 
-  return (
-    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 60px' }}>
+  /* ── The "Photo, notes & date" disclosure. Hoisted out of the harvest branch's inline JSX ONLY so
+        the frame can put it in a different track; the element it produces is unchanged, which is
+        what lets WeighInFrame.flagOff.test.jsx still match byte-for-byte. `showHarvestMore` is
+        deliberately never cleared by resetForNext — that non-reset is what makes entries 2..N
+        toll-free for the 1-in-5 photo path, and moving this must not disturb it. ── */
+  const frameSecondaryBlock = (
+              <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowHarvestMore(s => !s)}
+                  aria-expanded={showHarvestMore}
+                  data-testid="harvest-more-toggle"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <span aria-hidden="true">{showHarvestMore ? '▾' : '▸'}</span>
+                  <span>Photo, notes &amp; date  ·  optional</span>
+                </button>
+                {showHarvestMore && (
+                  <div data-testid="harvest-more-body" style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {photoBlock}
+                    {notesBlock}
+                    {metadataBlock}
+                    {whenBlock}
+                  </div>
+                )}
+              </div>
+  )
 
+  /* ── V4-WEIGHFRAME-001 TRACK 3 — the one-line ledger + Save row, permanently 48px ──────────────
+     Dave chose one line explicitly, and the trade is worth stating plainly: a fixed frame and a
+     three-row always-visible ledger do not both fit (500 − 52 chooser − 48 Save − 144 three-row
+     ledger = 256px against 312px of fields and pads). This buys the frame and keeps every job he
+     named for the ledger:
+       verify what I just entered → the summary NAMES the last row and is always visible;
+       undo                       → one dedicated control, always in the same place, never moving,
+                                     unlike today's three 22px buttons that shuffle as rows append;
+       recent history             → tap the summary, get the last 10 rows. This is the FIRST build
+                                     in which that exists at all — the shipped `+N earlier` line is a
+                                     bare <div> with no handler, announcing rows it cannot reach.
+     Band growth (48 → 128 → 156 → 184 → 202px across four saves) disappears: this row is 48px at
+     every N INCLUDING zero, so it never appears, grows or shifts. ── */
+  const frameLedger = (() => {
+    const live = sessionRows.filter(r => !r.undone)
+    const totalG = live.reduce((s, r) => s + (r.grams ?? 0), 0)
+    const last = live[live.length - 1] || null
+    const totalLabel = totalG >= 1000 ? `${Math.round(totalG / 100) / 10} kg` : `${Math.round(totalG)} g`
+    const lastLabel = last
+      ? `${last.plantName} ${last.grams != null ? `${last.grams} g` : `${last.qty} ${last.unit}`}`
+      : 'nothing logged yet'
+    const summary = live.length > 0
+      ? `${live.length} · ${totalG > 0 ? `${totalLabel} · ` : ''}${lastLabel}`
+      : 'Weigh-in — nothing logged yet'
+    return { live, last, summary, lastLabel }
+  })()
+
+  const frameLedgerBlock = (
+    <div
+      data-testid="weigh-frame-track3"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        height: FRAME_LEDGER_PX,
+        // BUG-SAVEBANDDEADINSET-001 is structurally absent here rather than fixed: this is a real
+        // grid track, so it has no `bottom` inset to desync from `--bottom-nav-height` in the first
+        // place. The frame also hides BottomNav outright for the session's duration, so there is no
+        // nav to clear. The static SAVE_BAND_BOTTOM_INSET_PX class of bug cannot recur on this row.
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        boxSizing: 'content-box',
+        // Opaque: this row sits at the bottom of a non-scrolling frame with the weight pad directly
+        // above it, so it must read as a distinct surface rather than floating transparently over
+        // content. The transparent shipped band is what produced the measured 178x48 dead zone.
+        backgroundColor: P.cream,
+        borderTop: `1px solid ${P.border}`,
+        // Same V4-PICKERUX-001 suppression as the shipped band, and for the same reason: a listbox
+        // opening downward can still reach this row. `visibility` does not reflow, so unlike
+        // `display:none` it cannot collapse the track and move the two above it.
+        visibility: pickerOpen ? 'hidden' : 'visible',
+        pointerEvents: pickerOpen ? 'none' : 'auto',
+      }}
+    >
+      {orderByThumb(hand,
+        /* under the thumb — Save. MIRRORS: measured, Save's right half is in the left-thumb
+           HARD/DEAD zone, and it is the control pressed once per entry. */
+        <Button
+          key="save"
+          type="button"
+          variant="primary"
+          loading={saving}
+          loadingLabel={
+            photoUploader.stage === 'preparing' ? 'Preparing photo…' :
+            photoUploader.stage === 'uploading' ? (typeof photoUploader.progress === 'number' ? `Uploading photo… ${photoUploader.progress}%` : 'Uploading photo…') :
+            photoUploader.stage === 'saving' ? 'Saving photo…' :
+            'Saving…'
+          }
+          onClick={e => handleSubmit(e, { keepMode: 'type' })}
+          style={{ minWidth: 150, flexShrink: 0 }}
+        >
+          Save
+        </Button>,
+        /* far side — the undo + summary group. The summary takes the flexible middle either way, so
+           mirroring moves Undo from row-start to row-end without the ellipsis changing sides. */
+        <div key="ledger" style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          {orderByThumb(hand,
+            /* Undo is DELIBERATELY on the offhand side of its own group: it is destructive, it is
+               pressed rarely, and the measured shipped defect is Undo sitting within one thumb-arc
+               of Save. Splitting them to opposite ends of a 48px row is the largest separation this
+               row can offer. Disambiguated accessible name — the shipped strip gives all three of
+               its Undo buttons the identical label, which over a 17-planting sitting means two or
+               three indistinguishable destructive controls. */
+            <button
+              key="summary"
+              type="button"
+              data-testid="weigh-frame-log-toggle"
+              onClick={() => setFrameLogOpen(o => !o)}
+              aria-expanded={frameLogOpen}
+              aria-controls="weigh-frame-log"
+              disabled={frameLedger.live.length === 0}
+              style={{
+                flex: 1, minWidth: 0, textAlign: hand === 'left' ? 'right' : 'left',
+                background: 'none', border: 'none', padding: '4px 0', cursor: frameLedger.live.length ? 'pointer' : 'default',
+                // P.mid, NOT P.light: `#777` on white measures 4.48:1, under the 4.5:1 AA floor at
+                // this size. That failure is live today on the `+N earlier` line this replaces.
+                color: P.mid, fontSize: '0.85rem', fontWeight: 600,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                fontFamily: 'inherit',
+              }}
+            >
+              {frameLedger.summary}
+            </button>,
+            frameLedger.last ? (
+              <button
+                key="undo"
+                type="button"
+                data-testid="weigh-frame-undo"
+                onClick={() => undoSessionRow(frameLedger.last.eventId)}
+                aria-label={`Undo ${frameLedger.lastLabel}, most recent entry`}
+                style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: 8, color: P.terra, fontWeight: 700, fontSize: '0.8rem', minHeight: 44, minWidth: 44, padding: '0 10px', cursor: 'pointer', flexShrink: 0, fontFamily: 'inherit' }}
+              >
+                <span aria-hidden="true">⟲</span>
+              </button>
+            ) : <span key="undo" />,
+          )}
+        </div>,
+      )}
+    </div>
+  )
+
+  /* The page-level banners and the post-harvest preserve offer, hoisted so the frame can OVERLAY
+     them instead of stacking them above the form. MEASURED, and it is the reason this exists: the
+     frame is a fixed-height column, so anything rendered above the form comes straight out of the
+     tracks. PreserveOffer raises itself after EVERY harvest save on the full-page path, and at entry
+     4 it had taken 126px out of track 2 — enough to push the weight pad's bottom to y508 against a
+     448px frame and start track 2 scrolling again, i.e. to reinstate the defect. Overlaying keeps
+     the same content, the same offer and the same dismissal at zero layout cost.
+     top:56 clears track 1 deliberately — an overlay covers SOMETHING, and the chooser is the very
+     next control tapped after a save, so it is the one thing that must stay clear. What it does
+     cover is the quantity field, which is empty at exactly that moment.
+     OPEN, for Dave: whether PreserveOffer should raise at all mid-sitting. It fires after EVERY
+     harvest save on the full-page path, so a 17-planting weigh-in raises it 17 times. Suppressing it
+     in-session is a product call, not a layout one, so this lane overlays it rather than deciding. */
+  const noticeBlocks = (
+        <>
+        {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
+        {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
+
+        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. On
+            the overlay path it now renders on the V4-LOGCONF-001 confirmation card (see above); here
+            it covers the full-page path and the post-"Log another" form (preserveCtx survives the
+            card dismissal so the habit-stack offer isn't lost). */}
+        {preserveCtx && (
+          <PreserveOffer
+            onOpen={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
+            onDismiss={() => setPreserveCtx(null)}
+          />
+        )}
+        </>
+  )
+
+  /* The history drawer. `position: absolute` over track 2 rather than a fourth track: it must cost
+     the standing layout ZERO px, and it is opened deliberately by the user, so it is not a jump.
+     Capped at the last 10 rows with internal scroll, so it cannot grow without bound either. */
+  const frameLogDrawer = (
+    sessionFrame && frameLogOpen && (
+      <div
+        id="weigh-frame-log"
+        data-testid="weigh-frame-log"
+        style={{
+          position: 'absolute', left: 16, right: 16, bottom: FRAME_LEDGER_PX + 8, zIndex: 2,
+          maxHeight: 260, overflowY: 'auto',
+          backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+          boxShadow: '0 2px 12px rgba(0,0,0,0.18)', padding: '10px 14px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: P.green, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+            This session
+          </span>
+          <button
+            type="button"
+            onClick={() => setFrameLogOpen(false)}
+            aria-label="Close session log"
+            style={{ background: 'none', border: 'none', color: P.mid, fontSize: '0.85rem', fontWeight: 700, minHeight: 44, minWidth: 44, cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            Close
+          </button>
+        </div>
+        {sessionRows.slice(-10).map((r, i, arr) => (
+          <div key={r.eventId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: '0.85rem', color: P.mid }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: r.undone ? 'line-through' : 'none', opacity: r.undone ? 0.5 : 1 }}>
+              {r.plantName} — {r.qty} {r.unit}{r.grams != null ? ` · ${r.grams} g` : ''}
+            </span>
+            {r.undone ? (
+              <span style={{ fontSize: '0.74rem', color: P.mid }}>removed</span>
+            ) : (
+              /* The ordinal is what makes these names distinguishable when the same crop is logged
+                 twice in one sitting — routine over 17 plantings. */
+              <button
+                type="button"
+                onClick={() => undoSessionRow(r.eventId)}
+                aria-label={`Undo ${r.plantName} ${r.qty} ${r.unit}${r.grams != null ? ` ${r.grams} g` : ''}, entry ${sessionRows.length - (arr.length - 1 - i)}`}
+                style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: 6, color: P.terra, fontWeight: 600, fontSize: '0.78rem', minHeight: 44, padding: '0 10px', cursor: 'pointer', flexShrink: 0, fontFamily: 'inherit' }}
+              >
+                Undo
+              </button>
+            )}
+            {r.undoError && <span role="alert" style={{ fontSize: '0.72rem', color: P.terra }}>{r.undoError}</span>}
+          </div>
+        ))}
+      </div>
+    )
+  )
+
+  return (
+    /* V4-WEIGHFRAME-001: `height` + `overflow: hidden`, not `minHeight`. The frame's entire claim is
+       that the document cannot scroll, so there is nothing for a scroll anchor to fight. A minHeight
+       would leave the document scrollable the moment content exceeded it and quietly restore every
+       behaviour the frame deletes. */
+    <div style={sessionFrame
+      ? { height: FRAME_HEIGHT, overflow: 'hidden', backgroundColor: P.cream }
+      : { minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
+      <div style={sessionFrame
+        // position:relative is the drawer's containing block — it renders OVER track 2 rather than
+        // as a fourth track, so the standing layout costs it nothing.
+        ? { maxWidth: 600, margin: '0 auto', padding: '0 16px', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }
+        : { maxWidth: 600, margin: '0 auto', padding: '28px 16px 60px' }}>
+
+        {/* The breadcrumb + `Log an event` heading are ~84px of browsing chrome on a surface the user
+            reached deliberately and will not leave until the bowl is empty. In the frame they are the
+            difference between the chooser being pinned to the viewport top and being pushed a third
+            of the way down it, so the frame drops them. Nothing is stranded: TopChrome's own back
+            affordance is untouched and sits above this. */}
+        {!sessionFrame && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
             <Link to="/dashboard" style={{ color: P.green, textDecoration: 'none' }}>Dashboard</Link>
@@ -2468,23 +2878,92 @@ export default function EventNew() {
               tap. Two taps instead of one, on a cross-link, in exchange for the header height on
               every visit. */}
         </div>
-
-        {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
-        {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
-
-        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. On
-            the overlay path it now renders on the V4-LOGCONF-001 confirmation card (see above); here
-            it covers the full-page path and the post-"Log another" form (preserveCtx survives the
-            card dismissal so the habit-stack offer isn't lost). */}
-        {preserveCtx && (
-          <PreserveOffer
-            onOpen={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
-            onDismiss={() => setPreserveCtx(null)}
-          />
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* V4-WEIGHFRAME-001 — these three OVERLAY the frame instead of sitting above it.
+            MEASURED, and it is the reason this branch exists: the frame is a fixed-height column, so
+            anything rendered above the form takes its height out of the tracks. PreserveOffer raises
+            itself after EVERY harvest save on the full-page path, and at entry 4 it had stolen 126px
+            from track 2 — enough to push the weight pad off the bottom of a 390x500 viewport (pad
+            bottom y508 against a 448px frame) and start track 2 scrolling again. Overlaying keeps
+            the same content, the same dismissal and the same offer, with zero effect on the tracks.
+            zIndex 3 clears the history drawer's 2. */}
+        {sessionFrame
+          ? <div data-testid="weigh-frame-notices" style={{ position: 'absolute', top: 56, left: 16, right: 16, zIndex: 3 }}>{noticeBlocks}</div>
+          : noticeBlocks}
 
+        {/* V4-WEIGHFRAME-001 — THE FRAME. Three tracks, and which track a thing is in is the whole
+            design:
+              track 1  auto  planting chooser            — pinned to the viewport TOP
+              track 2  1fr   qty + qty pad + weight + weight pad, bottom-aligned, overflow-y:auto
+              track 3  auto  one-line ledger + Save row  — pinned to the viewport BOTTOM
+            Because tracks 1 and 3 are `auto` and track 2 is `1fr`, an IME show/hide changes ONLY
+            track 2's height. Save's distance from the bottom edge and the chooser's from the top are
+            invariant across the transition, and the slack is consumed at the TOP of track 2 — so the
+            weight field and weight pad, the things the thumb is actually on, do not move. Quantity
+            slides up out of view instead. That is layout, not scroll, so it does not depend on the
+            browser preserving scrollTop across the resize.
+            gap:0 deliberately: a row gap here would be viewport height spent on nothing, and the
+            blocks carry their own margins. */}
+        <form
+          onSubmit={handleSubmit}
+          data-testid={sessionFrame ? 'weigh-frame' : undefined}
+          style={sessionFrame
+            ? { display: 'grid', gridTemplateRows: 'auto 1fr auto', flex: 1, minHeight: 0, overflow: 'hidden' }
+            : { display: 'flex', flexDirection: 'column', gap: 16 }}
+        >
+
+          {sessionFrame ? (
+            <>
+              {/* ── TRACK 1 ──
+                  projectBlock keeps its shipped position immediately before Planting. In the
+                  shipped config it renders NOTHING (PROJECTS_HIDDEN is on), so it costs the frame
+                  zero px; in the flag-OFF rollback config, where Project is a REQUIRED field, it is
+                  still the first thing on screen and still ahead of the planting it scopes. Burying
+                  it in the secondary region would make a harvest unsaveable without scrolling. */}
+              {/* minHeight is the last source of movement on this surface, and it is worth naming.
+                  PlantingSelect swaps a 52px search input for a 44px chip on pick and back again on
+                  reset — 8px, twice per entry. In the shipped scrolling document both states were
+                  52px so it measured 0; flattening the Section card exposed the difference, and it
+                  landed as ~16px of residual per-entry travel because track 1 resizing moves track
+                  2's top edge. Pinning the track to the taller of the two states makes the swap
+                  invisible. */}
+              <div data-testid="weigh-frame-chooser" style={{ minHeight: 52 }}>{projectBlock}{plantingBlock}</div>
+
+              {/* ── TRACK 2 ──
+                  Nested `minmax(0,1fr) auto`, NOT `align-content: end` on the track itself, and the
+                  difference is measured rather than stylistic. In real Chrome (151, headless, this
+                  lane) a `display:grid; align-content:end; overflow-y:auto` box whose content
+                  overflows reports `scrollHeight === clientHeight` and `scrollTop` pinned at 0 —
+                  147px of content sat ABOVE the box's top edge and was completely unreachable, with
+                  no scrollbar and no error. Bottom-anchoring by giving the SLACK to a flexible row
+                  above produces the identical picture when the content fits (empty space at the top,
+                  fields and pads sitting on the ledger) and degrades into a real scroller instead of
+                  swallowing content when it does not.
+                  Row 1 holds the session lock strip and the photo/notes disclosure — low-frequency,
+                  and `showHarvestMore` is deliberately never reset between entries, so the 1-in-5
+                  photo path stays toll-free exactly as it is today. Row 2 is the four things Dave
+                  named. */}
+              <div
+                ref={frameBodyRef}
+                data-testid="weigh-frame-body"
+                style={{ overflowY: 'auto', minHeight: 0, display: 'grid', gridTemplateRows: 'minmax(0, 1fr) auto' }}
+              >
+                <div style={{ overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {eventTypeBlock}
+                  {dispositionBlock}
+                  {frameSecondaryBlock}
+                  {addDetailsBlock}
+                </div>
+                {/* No padding: at 390x500 every one of these px comes straight off the pads. */}
+                <div>{harvestBlock}</div>
+              </div>
+
+              {/* ── TRACK 3 ── */}
+              {frameLedgerBlock}
+            </>
+          ) : (
+          <>
           {isHarvest ? (
             /* ── HARVEST order (V4-HARVFORMORDER-001) ──────────────────────────────────────────
                Planting → Quantity → Unit lead, so the two controls a harvest actually needs are on
@@ -2525,26 +3004,7 @@ export default function EventNew() {
               {harvestBlock}
               {eventTypeBlock}
 
-              <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowHarvestMore(s => !s)}
-                  aria-expanded={showHarvestMore}
-                  data-testid="harvest-more-toggle"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  <span aria-hidden="true">{showHarvestMore ? '▾' : '▸'}</span>
-                  <span>Photo, notes &amp; date  ·  optional</span>
-                </button>
-                {showHarvestMore && (
-                  <div data-testid="harvest-more-body" style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    {photoBlock}
-                    {notesBlock}
-                    {metadataBlock}
-                    {whenBlock}
-                  </div>
-                )}
-              </div>
+              {frameSecondaryBlock}
 
               {addDetailsBlock}
             </>
@@ -2752,9 +3212,11 @@ export default function EventNew() {
               </Button>
             </div>
           </div>
-
+          </>
+          )}
 
         </form>
+        {frameLogDrawer}
 
         {/* ── V4-LOSSUI-001 — the end-status offer ──
             OUTSIDE the form element deliberately: it is a post-save decision about the PLANTING,
