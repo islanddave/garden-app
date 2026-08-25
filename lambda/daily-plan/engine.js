@@ -522,7 +522,22 @@ function fertilizeRec(p, c, fm, today){
   if(phase==='establishment_0_2wk' || phase==='mg_active_3_12wk' || phase==='unknown') return null;
   // Tapering / spent: feed heavy feeders, or anything past its cadence interval with a fert history.
   const dF=daysBetween(today,p.last_fert);
-  const due = (dF!=null && c.fertilize_interval_days!=null && dF>=c.fertilize_interval_days);
+  const iv=(typeof c.fertilize_interval_days==='number')?c.fertilize_interval_days:null;
+  // BUG-FEEDRECENCY-001 — RECENCY GATE, ahead of every qualifying branch below.
+  //
+  // `due` was only ever ONE of three ORed reasons to recommend a feed. The other two — a heavy feeder
+  // in flower/fruit, and needs_feed_24wk_plus — carried NO recency check at all, so a planting that
+  // matched either was recommended EVERY DAY regardless of when it was last fed. Measured live:
+  // Armageddon (super hot pepper, fruiting, wk13) sat on the feed list 2026-08-22..25 with its last
+  // feed 6-9 days old against a 17-day Capsicum interval, and re-appeared the morning after Dave fed
+  // it. A card that returns the day after you act on it is the affordance-extinction pattern the
+  // watering canon (V100 §"Pre-F2 interim snooze semantics") already forbids on the water arm.
+  //
+  // Gated on a KNOWN interval AND a KNOWN last feed, deliberately. dF==null means "never fed" and
+  // still falls through to the branches below — that no-history case is exactly what they exist for,
+  // and suppressing it would be the dangerous direction (silence about a plant that needs feeding).
+  if(dF!=null && iv!=null && dF<iv) return null;
+  const due = (dF!=null && iv!=null && dF>=iv);
   const heavy=isHeavyFeeder(c.crop);
   if(!(due || (heavy && ['flowering','fruiting'].includes(p.status)) || (phase==='needs_feed_24wk_plus'))) return null;
   if(isMedHerb(c.crop)) return null;            // Mediterranean herbs: never force-feed
@@ -532,7 +547,12 @@ function fertilizeRec(p, c, fm, today){
   else if(heavy || ['flowering','fruiting'].includes(p.status)) rec={item:am.fruiting_feed.item, apply:am.fruiting_feed.apply, alt:am.kelp.item+' (sprayer)'};
   else if(isLeafy(c.crop)) rec={item:am.veg_feed.item, apply:am.veg_feed.apply};
   else rec={item:am.castings.item, apply:am.castings.apply};
-  return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,...rec};
+  // `interval` = this row's OWN feeding cadence, mirroring the water rows' `interval` (each row
+  // carries the clock it is judged against). BUG-BACKDATEDFEED-001 needs it on the item: the read-time
+  // check-off is cadence-aware for feeding, and daily-plan-read cannot re-resolve cadence itself.
+  // Safe on the SPA side — careNeeded.js only consults `interval` via isDailyCadence, and both of its
+  // consumers (overdueBy, reasonRedundant) are gated on need==='water_due' first.
+  return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,interval:iv,...rec};
 }
 
 function coldFor(p, cad, low){

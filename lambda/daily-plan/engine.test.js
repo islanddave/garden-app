@@ -48,6 +48,48 @@ describe('engine substrate-aware fert (regression guard, ported)', () => {
     expect(plan.users.dave.counts.fertilize).toBe(0);
     expect(plan.users.dave.substrate.on_hold).toBe(true);
   });
+
+  // BUG-FEEDRECENCY-001 — the recency gate. Reproduces the live defect: Armageddon (super hot pepper,
+  // fruiting, wk13, 17-day Capsicum interval) was recommended EVERY day 2026-08-22..25, including the
+  // morning after Dave fed it, because `heavy && fruiting` was ORed with `due` and carried no recency
+  // check of its own. Uses a plant that is PAST the MG window so the phase gate cannot mask the result.
+  describe('BUG-FEEDRECENCY-001 — nothing is recommended for feeding inside its own interval', () => {
+    const c = { crop: 'super hot pepper', fertilize_interval_days: 17 };
+    const p = (last_fert, status = 'fruiting') => ({
+      id: 'arm', name: 'Armageddon', status, substrate_start: '2026-05-24', last_fert, project: 'Peppers', project_id: 'pp',
+    });
+    const TODAY = '2026-08-26';
+
+    it('a heavy feeder in fruit, fed YESTERDAY, is not recommended again', () => {
+      expect(fertilizeRec(p('2026-08-25'), c, fm, TODAY)).toBeNull();
+    });
+
+    it('the same plant IS recommended once it reaches its interval (boundary is inclusive)', () => {
+      expect(fertilizeRec(p('2026-08-10'), c, fm, TODAY)).toBeNull();                // 16d < 17 => gated
+      expect(fertilizeRec(p('2026-08-09'), c, fm, TODAY)?.name).toBe('Armageddon');   // 17d === 17 => due
+      expect(fertilizeRec(p('2026-08-01'), c, fm, TODAY)?.name).toBe('Armageddon');   // 25d => well past
+    });
+
+    it('needs_feed_24wk_plus is gated too — the other branch that had no recency check', () => {
+      const old = { ...p('2026-08-25'), substrate_start: '2026-01-01' };       // wk 34
+      expect(fertilizeRec(old, c, fm, TODAY)).toBeNull();
+      expect(fertilizeRec({ ...old, last_fert: '2026-06-01' }, c, fm, TODAY)?.phase).toBe('needs_feed_24wk_plus');
+    });
+
+    it('a NEVER-fed planting still surfaces — the gate needs a known last feed, not an assumed one', () => {
+      expect(fertilizeRec(p(null), c, fm, TODAY)?.name).toBe('Armageddon');
+    });
+
+    it('an unknown interval cannot gate — no cadence, no suppression', () => {
+      expect(fertilizeRec(p('2026-08-25'), { crop: 'super hot pepper' }, fm, TODAY)?.name).toBe('Armageddon');
+    });
+
+    // BUG-BACKDATEDFEED-001 needs the row's own cadence on the item; daily-plan-read cannot re-resolve it.
+    it('emits the resolved interval on the recommendation', () => {
+      expect(fertilizeRec(p(null), c, fm, TODAY).interval).toBe(17);
+      expect(fertilizeRec(p(null), { crop: 'super hot pepper' }, fm, TODAY).interval).toBeNull();
+    });
+  });
   it('DB-seeded planting routes through the engine identically to a bundled one (water bucket)', () => {
     const plan = generatePlan({ plantings: [
       { id: 's', name: 'Cavendish Strawberry', variety: 'Cavendish', genus: null, status: 'fruiting', substrate_start: '2026-06-10', last_water: '2026-06-14', last_fert: null, project: 'Straw', project_id: 'ps',

@@ -249,3 +249,38 @@ describe('capStaleRows — withholds inferences, never facts', () => {
     expect(WATER_STALE_CAP).toBe(20)
   })
 })
+
+// BUG-BACKDATEDFEED-001 — engine.js now emits `interval` (the row's own FEED cadence) on fertilize
+// items so daily-plan-read can do a cadence-aware check-off. `interval` was previously a water-row
+// field, and careNeeded consults it through isDailyCadence, so this pins that the new field cannot
+// leak into how a feed row renders. Both isDailyCadence consumers are gated on need==='water_due'
+// first — that gating is the invariant here, not an accident of today's data.
+describe('BUG-BACKDATEDFEED-001 — `interval` on a fertilize item is inert to rendering', () => {
+  const feedItem = (extra = {}) => ({
+    id: 'f1', name: 'Armageddon', crop: 'super hot pepper', project: 'Peppers', project_id: 'prP',
+    item: 'Espoma Tomato-Tone 3-4-6 (granular)', apply: 'top-dress + water in', ...extra,
+  })
+  const rowFor = (extra) => buildCareNeeded({ fertilize: [feedItem(extra)] })[0]
+
+  it('a feed row renders identically with and without interval (only the field itself rides along)', () => {
+    const without = rowFor()
+    const with17 = rowFor({ interval: 17 })
+    expect({ ...with17, interval: null }).toEqual(without)
+    expect(with17.interval).toBe(17)
+    expect(without.interval).toBeNull()
+  })
+
+  // The one value that could matter: isDailyCadence(1). No feed cadence in the bundled data is 1,
+  // but pinning the OUTCOME rather than the data means a future 1-day feed interval cannot silently
+  // reclassify a feed row as a daily-cadence water row.
+  it('even interval:1 cannot make a feed row behave like a daily water row', () => {
+    const r = rowFor({ interval: 1 })
+    expect(r.need).toBe('fertilize')
+    expect(r.reason).toBe('Espoma Tomato-Tone 3-4-6 (granular) · top-dress + water in')
+    expect(r.tier).toBe('gold')
+    expect(r.overdueBy).toBeNull()
+    expect(r.reasonRedundant).toBe(false)
+    expect(needReason('fertilize', feedItem({ interval: 1 }))).not.toMatch(/Daily/)
+    expect(needTier('fertilize', feedItem({ interval: 1 }))).toBe('gold')
+  })
+})
