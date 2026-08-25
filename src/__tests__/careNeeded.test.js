@@ -278,9 +278,21 @@ describe('BUG-BACKDATEDFEED-001 — `interval` on a fertilize item is inert to r
     expect(r.need).toBe('fertilize')
     expect(r.reason).toBe('Espoma Tomato-Tone 3-4-6 (granular) · top-dress + water in')
     expect(r.tier).toBe('gold')
-    expect(r.overdueBy).toBeNull()
     expect(r.reasonRedundant).toBe(false)
     expect(needReason('fertilize', feedItem({ interval: 1 }))).not.toMatch(/Daily/)
     expect(needTier('fertilize', feedItem({ interval: 1 }))).toBe('gold')
   })
+
+  // NOTE — there is deliberately NO `expect(r.overdueBy).toBeNull()` here. That assertion WAS here
+  // and it was VACUOUS. `overdueBy` reads `(!daily && typeof it.overdue_by === 'number')`, and the
+  // `daily` half is NOT gated on need (careNeeded.js:141 runs for every bucket, unlike the other two
+  // isDailyCadence sites at :57 and :90). But a feed row carries no `overdue_by` at all, so the
+  // typeof half already yields null and deleting the `daily` term leaves the assertion green —
+  // verified by mutation. Two mechanisms suppressing one behaviour make a test green whichever you
+  // break, so asserting the outcome here proves nothing about either.
+  //
+  // The load-bearing invariant is that the ENGINE never puts `overdue_by` on a fertilize item, and it
+  // is pinned where fertilizeRec lives — `lambda/daily-plan/engine.test.js`, BUG-FEEDRECENCY-001
+  // block, "emits the resolved interval and NO overdue_by". Kept out of this file on purpose: an SPA
+  // test importing a Lambda module would cross a boundary nothing else here crosses.
 })
