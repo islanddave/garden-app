@@ -2368,13 +2368,20 @@ export default function EventNew() {
                       // keyboard shrinks the layout viewport to ~500px and drops the pad's bottom
                       // row into the band. Clear it here rather than on quantity focus: see the
                       // note in lib/saveBandLayout.js for why the anchor is left alone.
-                      // !sessionFrame (OPS-SIBLINGLANESEMANTICMERGE-001): the frame has no sticky
-                      // band to clear — track 3 is a real grid track and the pad cannot be occluded
-                      // by it — so this scroll would be pure motion, and the +171px it measured on
-                      // the shipped path is exactly the jump the frame exists to remove. This
-                      // clearance and the frame are two answers to ONE defect; running both applies
-                      // the fix on top of the cure. The two lanes branched from the same base and
-                      // neither could see the other, so git merged them clean.
+                      // !sessionFrame (OPS-SIBLINGLANESEMANTICMERGE-001). lane-weighband added this
+                      // call and lane-frame branched from the same base, so neither could see the
+                      // other and git merged them clean with no conflict here.
+                      // MEASURED, not assumed — and the measurement corrected the expectation.
+                      // Removing this predicate changes NOTHING today: the frame renders no
+                      // `[data-testid="save-sticky"]` (the band lives in the !sessionFrame arm), so
+                      // clearWeightPadOfSaveBand returns 0 at its own `if (!pad || !band)` line
+                      // before it touches a scroller. Mutation-tested at 390x500 with the flag on —
+                      // guarded and unguarded were identical: padTravel 3/0/0/0 across four entries.
+                      // It is kept because that inertness is ACCIDENTAL: it rests on a null-check in
+                      // another file, written for the picker-suppression case, that nothing states
+                      // or tests as a frame guarantee. The day track 3 takes the `save-sticky`
+                      // testid — it is the save band on that surface, and gates key off that name —
+                      // the clearance starts firing inside the frame with nothing to catch it.
                       onFocus={inHarvestSession && !sessionFrame ? (() => clearWeightPadOfSaveBand()) : undefined}
                       value={harvest.weight}
                       onChange={e => {
@@ -2432,10 +2439,10 @@ export default function EventNew() {
                       // handler above. The FIRST key press is always from a row that is clear (the
                       // band's top edge cuts the pad's LAST row), so this fires before ⌫ — the one
                       // key the pad's own header calls mandatory — is needed.
-                      // !sessionFrame — same reason as the onFocus site above
-                      // (OPS-SIBLINGLANESEMANTICMERGE-001). This one is the worse of the two in the
-                      // frame: it fires on EVERY key press, so an unguarded call would re-scroll
-                      // the frame under the thumb once per digit.
+                      // !sessionFrame — same reasoning, and the same measurement, as the onFocus
+                      // site above (OPS-SIBLINGLANESEMANTICMERGE-001). This is the worse of the two
+                      // to leave coupled: it runs on EVERY key press, so if the frame ever does
+                      // render a save-sticky this would re-scroll under the thumb once per digit.
                       if (!sessionFrame) clearWeightPadOfSaveBand()
                     }}
                     idPrefix="wt-key"
@@ -2935,7 +2942,19 @@ export default function EventNew() {
           onSubmit={handleSubmit}
           data-testid={sessionFrame ? 'weigh-frame' : undefined}
           style={sessionFrame
-            ? { display: 'grid', gridTemplateRows: 'auto 1fr auto', flex: 1, minHeight: 0, overflow: 'hidden' }
+            // gridTemplateColumns: an IMPLICIT grid column is `auto`, which sizes to MAX-CONTENT and
+            // does not shrink to its container the way a flex item does. MEASURED at 390x500 on this
+            // merged tree and, byte-identically, on lane-frame-20260825 alone — so this is the lane's
+            // defect and not the merge's: from the FIRST save the track-3 summary
+            // ("1 · 123 g · Bloomsdale Long-Standing") is `whiteSpace: nowrap`, so its max-content
+            // contribution took the single column to 563.42px inside a 358px box. `overflow: hidden`
+            // then CLIPPED rather than scrolled, so nothing reported an error while Save sat at
+            // x424-574 and the weight pad's `.` and `⌫` keys at x392-479 / x487-574 — all three
+            // entirely outside a 390px viewport, unreachable, at entries 2, 3 and 4.
+            // minmax(0, 1fr) gives the column a zero MINIMUM, which is what lets the summary's own
+            // `overflow: hidden; textOverflow: ellipsis; minWidth: 0` finally engage — that styling
+            // was already there and was dead code while the column grew to fit the string instead.
+            ? { display: 'grid', gridTemplateRows: 'auto 1fr auto', gridTemplateColumns: 'minmax(0, 1fr)', flex: 1, minHeight: 0, overflow: 'hidden' }
             : { display: 'flex', flexDirection: 'column', gap: 16 }}
         >
 
