@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>harness viewport host</title>
+<!--
+  IFRAME HOST — the only honest way to measure a 390-wide layout in headless Chrome.
+
+  `--window-size=390,500` does NOT reflow to 390px. macOS Chrome floors a window at roughly 500px
+  wide and CROPS the screenshot instead, so text that is fully laid out reads as clipped and every
+  coordinate past ~500px is silently absent. An iframe has no such floor: it is a real layout
+  viewport at whatever size the host gives it, inside a normally-sized window.
+
+  `?vw=`/`?vh=` size the frame; every other query param is forwarded to the harness page, so
+  viewport.html?vw=390&vh=500&surface=fullpage&session=harvest is the keyboard-open weigh-in
+  geometry. Drive it by reaching through `frames[0]` — same origin, so `__h` and the document are
+  both directly readable.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #333; }
+  #frame { border: 0; display: block; background: #fff; }
+</style>
+</head>
+<body>
+<iframe id="frame" title="device viewport"></iframe>
+<script>
+  const q = new URLSearchParams(location.search)
+  const vw = Number(q.get('vw') || 390)
+  const vh = Number(q.get('vh') || 844)
+  q.delete('vw'); q.delete('vh')
+  const el = document.getElementById('frame')
+  el.width = vw
+  el.height = vh
+  el.src = '/tests/harness/' + (q.toString() ? '?' + q.toString() : '')
+  window.__frameReady = () => {
+    const w = el.contentWindow
+    return !!(w && w.__h && w.document.readyState === 'complete')
+  }
+</script>
+</body>
+</html>
