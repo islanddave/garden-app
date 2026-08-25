@@ -130,7 +130,7 @@ describe('EventNew — harvest quantity pad (V4-QUICKHITRANGE-001)', () => {
     expect(qtyField().value).toBe('1')
   })
 
-  it('the . key builds a decimal and then disables itself', async () => {
+  it('the . key builds a decimal and then refuses a second one', async () => {
     renderEventNew(); await flushLoad()
     fireEvent.click(screen.getByTestId('qty-chip-2'))
     fireEvent.click(screen.getByTestId('qty-chip-dot'))
@@ -138,7 +138,17 @@ describe('EventNew — harvest quantity pad (V4-QUICKHITRANGE-001)', () => {
     expect(qtyField().value).toBe('2.5')
     // A second . would make Number() return NaN, and validateHarvest() would reject the whole
     // entry with a generic message long after the keypress that caused it.
-    expect(screen.getByTestId('qty-chip-dot').disabled).toBe(true)
+    //
+    // Refused, NOT DOM-disabled. A `disabled` button dispatches no click at all, so a refusal was
+    // observable by nothing — no event for a haptic or a live-region announcement to hang on, on a
+    // surface operated with the user's eyes on a scale. The guard moved from the DOM into press()
+    // and did not weaken; NumberPad.refusal.test.jsx owns the full argument and the mutation table.
+    expect(screen.getByTestId('qty-chip-dot').getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByTestId('qty-chip-dot').disabled).toBe(false)
+    // The guarantee that actually matters, now asserted end-to-end through EventNew rather than
+    // inferred from an attribute: pressing it again changes nothing.
+    fireEvent.click(screen.getByTestId('qty-chip-dot'))
+    expect(qtyField().value).toBe('2.5')
   })
 
   it('carries NO aria-pressed — the keys append, they do not select', async () => {

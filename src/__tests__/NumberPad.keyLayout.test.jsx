@@ -139,10 +139,11 @@ describe('NumberPad — key layout', () => {
   it('keeps . present-and-dimmed when it cannot fire, never absent', () => {
     // A vanishing key shifts every key after it — the exact thing the standing rule forbids, and
     // the reason '.' was not traded away for a double-width ⌫ (WEIGHT_UNITS has fractional units).
+    // Refused, NOT DOM-disabled: NumberPad.refusal.test.jsx owns that semantics and why.
     pad({ hand: 'left', value: '3.5' })
     const dot = screen.getByTestId('qty-chip-dot')
     expect(dot).toBeTruthy()
-    expect(dot.disabled).toBe(true)
+    expect(dot.getAttribute('aria-disabled')).toBe('true')
     expect(dot.style.opacity).toBe('0.35')
     expect(keyOrder()).toEqual(LEFT) // still in its cell, still 12 cells
   })

@@ -118,7 +118,19 @@ function PadKey({ label, ariaLabel, testId, disabled, onClick, gridColumn, tone 
       // The pad must never submit the form it lives in — EventNew's Save is a separate type="button"
       // and a stray submit here would post a half-built number.
       onClick={onClick}
-      disabled={disabled}
+      // ⚠️ aria-disabled, NEVER the DOM `disabled` attribute — and this is a behaviour decision,
+      // not an a11y garnish. A `disabled` button dispatches NO click and the event does not bubble,
+      // so a REFUSED key is observable by absolutely nothing: no event, no announcement, no
+      // feedback, only the dimming. On a surface operated with the user's eyes on a scale rather
+      // than on the phone, that silence is the mechanism by which his mental model of the weight
+      // diverges from what the field actually holds — he taps a second '.', feels and hears the
+      // same nothing an accepted digit gives him, and reads the total wrong. aria-disabled also
+      // keeps the key in TalkBack's swipe order and announces the state, which `disabled` stops
+      // doing usefully the moment focus skips the element.
+      //
+      // The VALUE guard did not disappear with the attribute — it MOVED into press(), which is the
+      // only place it ever needs to be. See the note there before touching either.
+      aria-disabled={disabled || undefined}
       aria-label={ariaLabel}
       data-testid={testId}
       style={{
@@ -127,7 +139,7 @@ function PadKey({ label, ariaLabel, testId, disabled, onClick, gridColumn, tone 
         ...(tone === 'primary'
           ? { backgroundColor: P.green, borderColor: P.green, color: P.white }
           : null),
-        // Disabled keys DIM rather than disappear: comboboxInput.js:138-144 requires that tap
+        // Refused keys DIM rather than disappear: comboboxInput.js:138-144 requires that tap
         // targets on this surface never move, and a vanishing '.' would shift every key after it.
         ...(disabled ? { opacity: 0.35, cursor: 'default' } : null),
       }}
@@ -152,7 +164,37 @@ export default function NumberPad({
   hand = 'right',
 }) {
   const opts = maxLen == null ? undefined : { maxLen }
-  const press = (key) => onChange(appendDigit(value, key, opts))
+
+  // THE REFUSAL GUARD. It moved out of the DOM `disabled` attribute (see PadKey above) and landed
+  // here; it did not weaken. Two things make that safe:
+  //
+  //   · `next === cur` IS the predicate the dimming uses — padKeyDisabled is literally
+  //     `appendDigit(cur, key, opts) === cur` (numberPad.js:38-41). One definition, so the dimmed
+  //     state and the refused state cannot drift apart, and there is no second mechanism for a
+  //     mutation to hide behind.
+  //   · Returning BEFORE onChange is the whole contract, and it is stronger than relying on
+  //     appendDigit being idempotent for a refused key. Calling onChange with an identical string
+  //     is NOT a no-op at the call site: EventNew's handler builds a fresh object and clears
+  //     harvestError, so a refused tap would silently wipe a validation message off the screen.
+  //     Pinned by "a refused key never calls onChange", which is red if this `return` goes.
+  //
+  // ⚠️ NORMALISING `cur` FIRST IS LOAD-BEARING, not tidiness. Compare against the raw `value` and
+  // one real case inverts: with value == null, ⌫ yields '' and `'' === null` is false, so an
+  // empty-field backspace would read as ACCEPTED — the exact opposite of what its dimmed key says.
+  // appendDigit normalises internally; the comparison has to as well.
+  //
+  // ── SEAM for V4-HAPTICVOCAB-001 (lane-haptic) ────────────────────────────────────────────────
+  // These two branches are the events a future wiring hooks, and they are the reason this change
+  // exists: `refused` (before the return) and `accepted` (before onChange). Deliberately NOT wired
+  // and NOT exposed as a prop here — src/lib/haptics.js is not on this branch, and a callback prop
+  // that nothing passes would be speculative API. Field advance stays silent by ruling, so the
+  // primary below gets no branch.
+  const press = (key) => {
+    const cur = value == null ? '' : String(value)
+    const next = appendDigit(cur, key, opts)
+    if (next === cur) return   // ← REFUSED: observable (the click fired), but the value is untouched
+    onChange(next)             // ← ACCEPTED
+  }
   const dis = (key) => padKeyDisabled(value, key, opts)
 
   const digitKey = (d) => (
