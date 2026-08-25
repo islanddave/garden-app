@@ -39,6 +39,16 @@ const VALID_METHODS = [
   // value in this list asserts an action Dave took, so store-bought frozen fruit previously had to
   // be logged as 'other', overloading that escape hatch until it meant two unrelated things.
   'purchased_preserved',
+  // V4-PUTUPTAXONOMY-001 (BD-034). Four values Dave's practice needed and this list did not have.
+  // quick_pickle: vinegar pickling — NOT a ferment (no lactic culture) and not necessarily
+  //   processed (a fridge pickle never is). It was already the ONLY method='other' row in prod
+  //   ('Vinegar dill pickles'), i.e. a food-safety-distinct process living in the escape hatch.
+  // pesto / hot_sauce: named by Dave. Both name a DISH rather than a process and so fail the strict
+  //   "does it move the shelf-life number" axis test — recorded in the migration header rather than
+  //   silently resolved. They ship because this is the field he reads back, and 2 of 5 live rows are
+  //   pesto currently mis-filed as passata.
+  // ferment_mash: an UNFINISHED intermediate — still working, not a finished preserve.
+  'quick_pickle', 'pesto', 'hot_sauce', 'ferment_mash',
   'other',
 ];
 
@@ -63,6 +73,38 @@ const SHELF_LIFE_MONTHS = {
   ferment:        { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 }, // fridge ferment 4–8 mo
   cure_store:     { cold_storage: 4, pantry: 3, default: 4 },      // squash 3–6, garlic 6–8, potatoes 4–9 (crop-varying; conservative default)
   cold_store:     { cold_storage: 6, fridge: 4, default: 4 },
+  // ── V4-PUTUPTAXONOMY-001 (BD-034). ───────────────────────────────────────────────────────────
+  // A CITED ENTRY HERE IS A HARD PRECONDITION FOR A NEW METHOD, not a nicety. shelfLifeMonths()
+  // returns null for a method absent from this table, which yields no use_by_target, and use-soon
+  // then never surfaces the row: the 'Vinegar dill pickles' row is already the only one of five
+  // live put-ups with use_by_target IS NULL, purely because it had to be logged as 'other'. Four
+  // uncited methods would have taken that from one-in-five to five-in-nine.
+  //
+  // Every figure below is DERIVED from a source already cited at the head of this table, never
+  // freshly invented — the derivation is named per line. `smoke` was dropped from this change for
+  // exactly this reason: no defensible published figure could be sourced, and shipping it uncited
+  // would have widened the blind spot this block exists to close.
+  //
+  // quick_pickle spans two real cases. Processed in a water-bath it IS shelf-stable, so the pantry
+  // and cold-storage figures are the high-acid canning ones; unprocessed it is a fridge item, so
+  // `fridge` takes NCHFP's refrigerator-pickle figure. The DEFAULT is the fridge number, because an
+  // unrecorded storage kind must not be read as "somebody processed this".
+  quick_pickle:   { pantry: 12, cold_storage: 12, fridge: 2, deep_freezer: 12, fridge_freezer: 4, default: 2 },
+  // pesto is a frozen product — both live pesto rows sit in a deep freezer (prod, 2026-08-25) — so
+  // it inherits the freeze family verbatim (USDA "Freezing and Food Safety", 0degF). This is also
+  // the point the crucible made against pesto as a METHOD: frozen pesto keeps exactly as long as
+  // anything else frozen, which is why these numbers are identical to whole_freeze's and not a
+  // separate judgement.
+  pesto:          { deep_freezer: 12, fridge_freezer: 4, default: 10 },
+  // hot_sauce is an acidified product — fermented or vinegar-based — so the shelf-stable kinds take
+  // the high-acid canning figures (as passata and can_water_bath do) and the fridge kind takes the
+  // fermented figure from `ferment` below-line. No new source, two existing rows recombined.
+  hot_sauce:      { pantry: 12, cold_storage: 18, fridge: 6, default: 12 },
+  // ferment_mash inherits `ferment` EXACTLY. A mash under brine is preserved by the same acidity as
+  // a finished ferment and lives in the same places, so shortening it would be an invented number
+  // dressed as caution. What makes it a distinct value is that it is UNFINISHED, which the label
+  // carries; that is a fact about the food, not about how long it keeps.
+  ferment_mash:   { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 },
   // D6: acquisition age is unknown, so there is no honest shelf-life anchor. NULL => no default
   // expiry => excluded from "use soon" until the user sets one. Same reasoning as the non-garden
   // suppression in the create path below.

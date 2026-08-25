@@ -102,6 +102,18 @@ post:
   # NOT on the list, which makes this gate red on any environment that still has it NULL. Verified
   # 2026-08-20 against both live environments: after the flip prod has 75 NULL habits and staging 40,
   # and every one of them is on the list — 0 violations in both. Before the flip it is inert.
+  #
+  # 2026-08-25 (V4-PUTUPFOODCATEGORY-001): bread, cheese, milk, butter, yogurt, meat and fish added.
+  # That seed puts seven NON-PLANT food classes into crop_types so Put-Up can browse food that never
+  # grew in a garden, and each arrives with a NULL harvest_habit — so without this the seed would
+  # have turned THIS gate red on the first gate-invariants run after the apply. Caught by rehearsing
+  # the whole corpus against an ephemeral fork of prod with the seed applied, which is the only way
+  # it was ever going to surface: 0a's own gates all passed.
+  # The alternative fix was an `AND c.category <> 'non_plant_food'` exemption, and it was rejected.
+  # An exemption lets every FUTURE food class skip the written record, which is the single thing
+  # this list exists to require — the same "narrowing an honesty list to exclude the row that broke
+  # it" move that v4-putupprov-002-fruitseed's gate comment warns against. The seven are recorded in
+  # not_harvest_tracked.slugs with their reason, and the projection binding still holds.
   - name: post_every_null_habit_is_a_recorded_decision
     sql: |
       SELECT count(*) FROM public.crop_types c
@@ -110,16 +122,17 @@ post:
          AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.35.0-harvhabitgap-001')
          AND c.slug NOT IN (
            'aloe','althaea','apple','apricot','artichoke','avocado','begonia','blackberry_lily',
-           'bok_choy','borage','brussels_sprouts','cactus','calibrachoa','carnation','carrot',
-           'celery','cherry','christmas_cactus','chrysanthemum','cobaea','coleus','columbine',
-           'cranberry','crown_of_thorns','delphinium','dogwood','dracaena','echeveria','edelweiss',
-           'elderberry','fittonia','flower_mix','four_o_clock','foxglove','geranium','ginger',
-           'grape','haworthia','helichrysum','hibiscus','hollyhock','hosta','jade','japanese_maple',
-           'lantana','lithops','luffa','marigold','milkweed','money_plant','morning_glory','mustard',
+           'bok_choy','borage','bread','brussels_sprouts','butter','cactus','calibrachoa',
+           'carnation','carrot','celery','cheese','cherry','christmas_cactus','chrysanthemum',
+           'cobaea','coleus','columbine','cranberry','crown_of_thorns','delphinium','dogwood',
+           'dracaena','echeveria','edelweiss','elderberry','fish','fittonia','flower_mix',
+           'four_o_clock','foxglove','geranium','ginger','grape','haworthia','helichrysum',
+           'hibiscus','hollyhock','hosta','jade','japanese_maple','lantana','lithops','luffa',
+           'marigold','meat','milk','milkweed','money_plant','morning_glory','mustard',
            'nectarine','parsnip','pear','perilla','petunia','pineapple','plum','poppy','pothos',
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
            'spinach','stock','succulent','sunflower','thunbergia','torenia','tradescantia','tweedia',
-           'vietnamese_coriander','viola')
+           'vietnamese_coriander','viola','yogurt')
     expect: scalar_eq
     value: 0
 

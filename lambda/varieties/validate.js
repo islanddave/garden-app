@@ -173,8 +173,16 @@ export function validateBody(body, { requireName = true } = {}) {
 
 // The categories actually in use. `crop_types.category` has NO CHECK constraint, so this is the
 // only thing keeping the facet vocabulary from fragmenting into ornamental/Ornamental/ornamentals.
+//
+// V4-PUTUPFOODCATEGORY-001 adds 'non_plant_food' — bread, cheese, milk, butter, yogurt, meat, fish.
+// It is NOT a botanical category and nothing about it is a garden facet: it is the gate the app
+// filters ON, so that food classes reach the Put-Up crop field and no other picker (useCropTypes
+// defaults to scope 'garden', which excludes exactly this value). It is listed here so that minting
+// a further food class through the app is possible rather than rejected as an invalid category —
+// the seed migration writes raw SQL and does not depend on this list.
 export const VALID_CROP_CATEGORY = [
   'vegetable', 'flower', 'herb', 'fruit', 'succulent', 'houseplant', 'tree', 'ornamental',
+  'non_plant_food',
 ];
 
 // The 9 slugs that crop-derive branches on (lambda/{varieties,tags}/crop-derive.js, kept

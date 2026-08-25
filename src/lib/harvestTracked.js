@@ -19,7 +19,7 @@
 // WHY A SLUG LIST AND NOT `harvest_habit IS NULL`. That inference is the obvious shortcut and it is
 // wrong: plantingMaturity.js's own comment claims the 54 NULL-habit live plantings are "every one an
 // ornamental", and 5 of them are edible. NULL means "nobody has said", which is not the same claim as
-// "this is not harvested". The 52 slugs below are the POSITIVE, curated statement, each one a
+// "this is not harvested". The 59 slugs below are the POSITIVE, curated statement, each one a
 // recorded decision — including the two that are edible-but-not-here: avocado will not fruit in this
 // zone, and the dogwood does fruit but was planted as a landscape tree.
 //
@@ -34,16 +34,24 @@
 // is a one-line edit here plus the JSON, and the contested register exists to make that a considered
 // act rather than a surprise.
 
+// V4-PUTUPFOODCATEGORY-001 (2026-08-25) — the seven non-plant food classes are on this list too, and
+// they are the first entries that are not plants at all. Everything above them is an ornamental or a
+// plant grown here without a harvest claim, i.e. a decision that could be revisited (bee_balm's
+// already was). Bread has no harvest to claim in any season. They can only ever reach this gate
+// through a mis-typed variety — the seed exists for Put-Up and is filtered out of every garden
+// picker by category — but the default direction below is TRACKED, so omitting them would mean a
+// loaf of bread with an "Est. harvest" countdown rather than anything failing.
+//
 // Sorted, so a diff against the JSON is readable and an insertion lands somewhere obvious.
 export const NOT_HARVEST_TRACKED_SLUGS = Object.freeze([
-  'aloe', 'avocado', 'begonia', 'blackberry_lily', 'cactus', 'calibrachoa', 'carnation',
-  'christmas_cactus', 'chrysanthemum', 'cobaea', 'coleus', 'columbine', 'crown_of_thorns',
-  'delphinium', 'dogwood', 'dracaena', 'echeveria', 'edelweiss', 'fittonia', 'flower_mix',
-  'four_o_clock', 'foxglove', 'geranium', 'haworthia', 'helichrysum', 'hibiscus', 'hollyhock',
-  'hosta', 'jade', 'japanese_maple', 'lantana', 'lithops', 'marigold', 'milkweed', 'money_plant',
-  'morning_glory', 'petunia', 'pineapple', 'poppy', 'pothos', 'rose', 'sedum', 'sempervivum',
-  'spider_plant', 'stock', 'succulent', 'sunflower', 'thunbergia', 'torenia', 'tradescantia',
-  'tweedia', 'viola',
+  'aloe', 'avocado', 'begonia', 'blackberry_lily', 'bread', 'butter', 'cactus', 'calibrachoa',
+  'carnation', 'cheese', 'christmas_cactus', 'chrysanthemum', 'cobaea', 'coleus', 'columbine',
+  'crown_of_thorns', 'delphinium', 'dogwood', 'dracaena', 'echeveria', 'edelweiss', 'fish',
+  'fittonia', 'flower_mix', 'four_o_clock', 'foxglove', 'geranium', 'haworthia', 'helichrysum',
+  'hibiscus', 'hollyhock', 'hosta', 'jade', 'japanese_maple', 'lantana', 'lithops', 'marigold',
+  'meat', 'milk', 'milkweed', 'money_plant', 'morning_glory', 'petunia', 'pineapple', 'poppy',
+  'pothos', 'rose', 'sedum', 'sempervivum', 'spider_plant', 'stock', 'succulent', 'sunflower',
+  'thunbergia', 'torenia', 'tradescantia', 'tweedia', 'viola', 'yogurt',
 ])
 
 const NOT_TRACKED = new Set(NOT_HARVEST_TRACKED_SLUGS)

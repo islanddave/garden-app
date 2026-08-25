@@ -1,0 +1,125 @@
+# gates.yml
+# V4-PUTUPTAXONOMY-001 (BD-034) — widen chk_preservation_log_method from 14 values to 18.
+#
+# PROMOTE-TIME SEQUENCING — MIGRATION FIRST, THEN THE CODE. This is the opposite order from
+# v4-putupfood-001 and the difference is not stylistic:
+#   1. STAGING: pre -> sweep -> apply 0a -> post.
+#   2. PROD:    pre -> sweep -> apply 0a -> post.
+#   3. THEN promote the bundle that offers the four new values in the picker.
+# A widening must land BEFORE the writer that uses it. Ship the code first and every attempt to save
+# a pesto is a 23514 from the database, surfacing as a failed save the UI cannot explain. Ship the
+# CHECK first and the only effect is a constraint that permits values nothing sends yet — inert.
+# This is the reverse of the arming-a-CHECK hazard: widening is safe early and unsafe late, whereas
+# a NARROWING (see 0r) is the one that must never precede its writer.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+
+pre:
+  - name: pre_method_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND conname='chk_preservation_log_method'
+    expect: rowcount_eq
+    value: 1
+
+  # Not yet applied. Named on quick_pickle rather than on a count so the failure message points at
+  # a value rather than at an arithmetic mismatch.
+  - name: pre_new_values_absent
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(oid) LIKE '%''quick_pickle''%'
+    expect: rowcount_eq
+    value: 0
+
+  # The canning SAFETY split is the one thing in this vocabulary that is not a labelling preference:
+  # water-bath is high-acid only, pressure is low-acid, and a generic `can` value would let a user
+  # record a low-acid jar as safely processed. Asserted BEFORE the DROP so that if the constraint
+  # were somehow already wrong, this migration is not the thing that gets blamed for it.
+  - name: pre_canning_safety_split_intact
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(oid) LIKE '%''can_water_bath''%'
+         AND pg_get_constraintdef(oid) LIKE '%''can_pressure''%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%''can''%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_schema_version_not_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.40.0-putupmethod-001'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: every predicate a CHECK is about to enforce must already hold. For a strict superset this
+  # is expected to be trivially true — and that is exactly why it is worth running rather than
+  # assuming. It is the only assertion in this file that would catch "the new list is not actually a
+  # superset of the old one", i.e. a value fat-fingered or dropped while retyping fourteen strings.
+  # If this returns anything, the ADD CONSTRAINT below would raise 23514 and abort the apply.
+  - name: sweep_every_live_row_satisfies_the_new_vocabulary
+    sql: |
+      SELECT count(*) FROM public.preservation_log
+       WHERE method NOT IN (
+         'roast_freeze','whole_freeze','blanch_freeze','dehydrate','powder','passata',
+         'can_water_bath','can_pressure','jam_preserve','ferment','cure_store','cold_store',
+         'purchased_preserved','quick_pickle','pesto','hot_sauce','ferment_mash','other'
+       )
+    expect: scalar_eq
+    value: 0
+
+post:
+  # WIDENED, NOT REPLACED — the whole risk of a DROP + ADD. Checks all eighteen values in one
+  # assertion by walking the expected vocabulary against the live constraint definition, so a
+  # value silently lost during the retype is named rather than merely counted. The fourteen
+  # pre-existing values are first; losing any of them is a data-destroying narrowing wearing the
+  # costume of an additive change.
+  - name: post_all_eighteen_values_present
+    sql: |
+      SELECT count(*) FROM unnest(ARRAY[
+        'roast_freeze','whole_freeze','blanch_freeze','dehydrate','powder','passata',
+        'can_water_bath','can_pressure','jam_preserve','ferment','cure_store','cold_store',
+        'purchased_preserved','other',
+        'quick_pickle','pesto','hot_sauce','ferment_mash'
+      ]) AS v(val)
+       WHERE (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+               WHERE conrelid='public.preservation_log'::regclass
+                 AND conname='chk_preservation_log_method')
+             NOT LIKE '%''' || v.val || '''%'
+    expect: scalar_eq
+    value: 0
+
+  # The negative half, and the non-vacuity proof for the gate above: if the LIKE mechanism matched
+  # everything, this would fail. It is also the standing safety invariant — a bare `can` must never
+  # appear, because it would erase the high-acid / low-acid distinction that decides whether a jar
+  # is safe.
+  - name: post_no_bare_can_value
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(oid) LIKE '%''can''%'
+    expect: rowcount_eq
+    value: 0
+
+  # The constraint must be VALIDATED, not merely present. A NOT VALID constraint would accept the
+  # migration, pass the presence gate above, and enforce nothing on rows that already exist —
+  # the widening is born valid precisely so this can be asserted rather than hoped for.
+  - name: post_method_check_is_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND conname='chk_preservation_log_method'
+         AND convalidated
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.40.0-putupmethod-001'
+    expect: rowcount_eq
+    value: 1
