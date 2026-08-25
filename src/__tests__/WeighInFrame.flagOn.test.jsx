@@ -44,6 +44,7 @@ vi.mock('react-router-dom', () => ({
 
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { SAVE_BAND_MIN_CLEARANCE_PX, FRAME_SAVE_HEIGHT_PX } from '../lib/saveBandLayout.js'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
 
@@ -324,5 +325,73 @@ describe('V4-WEIGHFRAME-001 — handedness mirrors task controls, never chrome',
     const t3 = screen.getByTestId('weigh-frame-track3')
     expect([...t3.querySelectorAll('button')].map(b => b.dataset.testid || (b.textContent || '').trim()).filter(Boolean))
       .toEqual(['weigh-frame-undo', 'weigh-frame-log-toggle', 'Save'])
+  })
+})
+
+// ── V4-WEIGHFRAME-001 R1 — the pad-to-Save clearance, reconstructed from the markup ─────────────
+//
+// The real guard is scripts/layout-gate/save-band-clearance.mjs, which measures Chrome's rects at a
+// true 390x500. This block exists because that gate runs in one CI job and takes ~90s, while the
+// five inline styles it depends on can be edited by anyone in a second — and four of the five look
+// like cosmetic padding.
+//
+// It is NOT a restatement of the constants. jsdom cannot lay out, but it CAN read inline styles, so
+// the clearance is RECOMPUTED here from the rendered DOM — track 3's height and border, Save's
+// height, the pad's own margin, the group's padding — and compared against the same policy floor the
+// legacy arm uses. Any one of those five drifting fails this. What it cannot see is height added
+// somewhere ELSE in the harvest row pushing the pad back down; that is the gate's job, and the two
+// are complementary rather than redundant.
+describe('V4-WEIGHFRAME-001 R1 — 20px between the weight pad and Save', () => {
+  const px = v => parseFloat(v || '0') || 0
+
+  async function geometry() {
+    await renderSession()
+    const t3 = screen.getByTestId('weigh-frame-track3')
+    const save = within(t3).getByText('Save')
+    const wtPad = screen.getByLabelText('Harvest weight keypad')
+    const wtGroup = wtPad.parentElement
+    const qtyPad = screen.getByLabelText('Harvest quantity quick pick')
+    return { t3, save, wtPad, wtGroup, qtyPad, qtyWrap: qtyPad.parentElement }
+  }
+
+  it('the rendered styles add up to at least the legacy arm’s floor', async () => {
+    const { t3, save, wtPad, wtGroup } = await geometry()
+    // Save is bottom-aligned in the track, so everything from the pad's bottom edge to Save's top
+    // edge is: the space below the pad inside track 2, plus track 3's border, plus the height the
+    // button gives up at the top of the track.
+    const belowPad = px(wtPad.style.marginBottom) + px(wtGroup.style.paddingBottom)
+    const clearance = belowPad + px(t3.style.borderTop) + px(t3.style.height) - px(save.style.height)
+    expect(clearance).toBeGreaterThanOrEqual(SAVE_BAND_MIN_CLEARANCE_PX)
+  })
+
+  it('the space below the pad is really below it — padding, not a margin that collapses out', async () => {
+    const { wtPad, wtGroup } = await geometry()
+    // Structural premise of the sum above. The group is the last child of a block with no padding or
+    // border of its own, so a bottom MARGIN here collapses through and lands on the grid item
+    // instead of growing it: the pad would not move and the gate would read the old 1px.
+    expect(wtGroup.lastElementChild).toBe(wtPad)
+    expect(px(wtGroup.style.paddingBottom)).toBeGreaterThan(0)
+    expect(wtGroup.style.marginBottom).toBe('')
+  })
+
+  it('Save is bottom-aligned, because centring silently halves the gap', async () => {
+    const { t3, save } = await geometry()
+    // MEASURED: track 3 is `alignItems: center`, so a 44px Save in a 48px row centres at y402-446 —
+    // 2px above and 2px wasted below a button whose bottom edge is the frame's. 18px, not 20px.
+    expect(save.style.alignSelf).toBe('flex-end')
+    expect(t3.style.alignItems).toBe('center')
+    expect(px(save.style.height)).toBe(FRAME_SAVE_HEIGHT_PX)
+    // The height was bought from a tap target, so the floor it landed on is asserted, not assumed.
+    expect(px(save.style.height)).toBeGreaterThanOrEqual(44)
+    expect(px(save.style.minWidth)).toBeGreaterThanOrEqual(44)
+  })
+
+  it('the quantity pad’s own 8px is cancelled — that is where 8 of the 20 came from', async () => {
+    const { qtyPad, qtyWrap } = await geometry()
+    // Track 2 measured 347/347 before this change: the gap could not be inserted, only funded. This
+    // pad's margin was the largest unspent padding in the harvest row. Restoring it without taking
+    // the 8px back out of the gap would push the pad down again, so the netting is pinned.
+    expect(px(qtyPad.style.marginBottom)).toBeGreaterThan(0)
+    expect(px(qtyWrap.style.marginBottom) + px(qtyPad.style.marginBottom)).toBe(0)
   })
 })

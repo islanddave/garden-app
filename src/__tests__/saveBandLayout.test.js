@@ -16,9 +16,12 @@ import { describe, it, expect, afterEach } from 'vitest'
 import {
   SAVE_BAND_BOTTOM_INSET_PX,
   SAVE_BAND_MIN_CLEARANCE_PX,
+  FRAME_SAVE_HEIGHT_PX,
   saveBandClearancePx,
   padClearanceScrollDelta,
   clearWeightPadOfSaveBand,
+  framePadGapPx,
+  frameSaveClearancePx,
 } from '../lib/saveBandLayout.js'
 import { BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 
@@ -156,5 +159,40 @@ describe('clearWeightPadOfSaveBand', () => {
     })
     expect(clearWeightPadOfSaveBand(document)).toBe(20)
     expect(scroller.scrollTop).toBe(20)
+  })
+})
+
+// ── V4-WEIGHFRAME-001 R1 — the frame arm's half of the same rule ────────────────────────────────
+//
+// Same split as above: this is the ARITHMETIC, real Chrome is the pixels
+// (scripts/layout-gate/save-band-clearance.mjs), and WeighInFrame.flagOn.test.jsx pins that
+// EventNew's markup actually carries these numbers. The point of a derived gap rather than a spelled
+// one is that changing the ledger height or Save's height cannot silently stop meaning 20px, so that
+// is what these assert — the round trip, not the literal.
+describe('V4-WEIGHFRAME-001 R1 — the frame arm has no band, and the same floor', () => {
+  it('derives a gap that lands exactly on the policy floor for the shipped geometry', () => {
+    // 48 is FRAME_LEDGER_PX (EventNew): the ledger row's content height, constant at every entry.
+    expect(framePadGapPx(48)).toBe(15)
+    expect(frameSaveClearancePx(48, framePadGapPx(48))).toBe(SAVE_BAND_MIN_CLEARANCE_PX)
+  })
+
+  it('holds the floor across ledger heights rather than only the one it was measured at', () => {
+    for (const ledger of [40, 44, 48, 56, 64]) {
+      expect(frameSaveClearancePx(ledger, framePadGapPx(ledger))).toBe(SAVE_BAND_MIN_CLEARANCE_PX)
+    }
+  })
+
+  it('counts the height Save gives up, because that is 4 of the 20', () => {
+    // A full-height Save (48 in a 48 row) leaves nothing dead at the top of the track, which is
+    // exactly the geometry that measured 1px. The 4px is not decoration.
+    expect(frameSaveClearancePx(48, framePadGapPx(48), 48)).toBe(SAVE_BAND_MIN_CLEARANCE_PX - 4)
+    expect(FRAME_SAVE_HEIGHT_PX).toBeGreaterThanOrEqual(44)
+  })
+
+  it('is the same number as the legacy arm, not a second policy', () => {
+    // Both arms ship — the frame by default, the band as the rollback lever — and a thumb does not
+    // know which one it is on. SAVE_BAND_MIN_CLEARANCE_PX's own note is the argument for one number.
+    expect(framePadGapPx(48, 12)).toBe(framePadGapPx(48) - 8)
+    expect(frameSaveClearancePx(48, framePadGapPx(48, 12))).toBe(12)
   })
 })
