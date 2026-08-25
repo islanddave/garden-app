@@ -7,7 +7,7 @@ import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, BOTTOM_NAV_HEIGHT_PX, statusLabel } from '../lib/constants.js'
+import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, statusLabel } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
@@ -55,6 +55,10 @@ import WaterDepthChips from '../components/WaterDepthChips.jsx'
 // V4-HARVDISPOSITION-001 — the optional "what went wrong with this pick" chip row.
 import HarvestDispositionChips from '../components/HarvestDispositionChips.jsx'
 import NumberPad from '../components/NumberPad.jsx'
+// BUG-WEIGHPADSAVEBAND-001 — the sticky Save band floats over this form and its height is not a
+// constant, so the keypad's clearance is resolved against the band as rendered. Rule, stated
+// minimum and the measured numbers: src/lib/saveBandLayout.js.
+import { SAVE_BAND_BOTTOM_INSET_PX, clearWeightPadOfSaveBand } from '../lib/saveBandLayout.js'
 import {
   WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
@@ -2154,7 +2158,14 @@ export default function EventNew() {
                   y384-432 (session, synthetic 390x500) that turned a 1px elementFromPoint clearance
                   into a 5px OCCLUSION — the band answered the hit test instead of the key. Restoring
                   the 8px puts every element below this pad back on its shipped coordinate, so the
-                  diff moves the pad and nothing else. */}
+                  diff moves the pad and nothing else.
+                  The "1px elementFromPoint clearance" that note treats as the safe side of the line
+                  is what BUG-WEIGHPADSAVEBAND-001 was filed about: 1px is not a margin, it is an
+                  accident that happened to hold, and by this build it had become a 15px overlap
+                  anyway (BD-063 dropped the quantity pad's Next row and lifted everything under it).
+                  Both numbers are now moot — lib/saveBandLayout.js resolves the clearance against the
+                  band as rendered, so a future edit here can move this pad without recomputing which
+                  pixel it lands on. */}
               <div style={{ marginTop: 8 }}>
                 <NumberPad
                   value={harvest.quantity}
@@ -2219,6 +2230,12 @@ export default function EventNew() {
                       onKeyDown={inHarvestSession ? (e => {
                         if (e.key === 'Enter') handleSubmit(e, { keepMode: 'type' })
                       }) : undefined}
+                      // BUG-WEIGHPADSAVEBAND-001 — focusing this field is the moment the weigh-in
+                      // commits to the keypad below, and on Android that is also the moment the
+                      // keyboard shrinks the layout viewport to ~500px and drops the pad's bottom
+                      // row into the band. Clear it here rather than on quantity focus: see the
+                      // note in lib/saveBandLayout.js for why the anchor is left alone.
+                      onFocus={inHarvestSession ? (() => clearWeightPadOfSaveBand()) : undefined}
                       value={harvest.weight}
                       onChange={e => {
                         setHarvest(h => ({ ...h, weight: e.target.value }))
@@ -2262,6 +2279,13 @@ export default function EventNew() {
                     onChange={v => {
                       setHarvest(h => ({ ...h, weight: v }))
                       if (harvestError) setHarvestError(null)
+                      // BUG-WEIGHPADSAVEBAND-001 — the second trigger, and the one that matters when
+                      // the keyboard never comes up: the pad writes the field directly, so a
+                      // pad-only weigh-in never focuses #harvest-weight and would never reach the
+                      // handler above. The FIRST key press is always from a row that is clear (the
+                      // band's top edge cuts the pad's LAST row), so this fires before ⌫ — the one
+                      // key the pad's own header calls mandatory — is needed.
+                      clearWeightPadOfSaveBand()
                     }}
                     idPrefix="wt-key"
                     ariaLabel="Harvest weight keypad"
@@ -2589,8 +2613,11 @@ export default function EventNew() {
           {/* V4-KBVIEWPORT-001 — RESOLVES the deferral that used to sit in this comment block. The
               two scroll containers need two different insets, and conflating them cost real space:
                 full page -> the sticky container is the document, the fixed BottomNav is genuinely
-                            there, so clear it. BOTTOM_NAV_HEIGHT_PX + 12, imported rather than the
-                            old magic `68` — which was 56+12 hardcoded and free to silently desync.
+                            there, so clear it. SAVE_BAND_BOTTOM_INSET_PX (= BOTTOM_NAV_HEIGHT_PX +
+                            12), imported rather than the old magic `68` — which was 56+12
+                            hardcoded and free to silently desync. Named in lib/saveBandLayout.js
+                            because BUG-WEIGHPADSAVEBAND-001's clearance rule is measured against
+                            it, so the two must not be able to drift apart.
                 overlay   -> the sticky container is the Sheet's own scrollport, and the Sheet paints
                             OVER the nav (z200 > z100), so nav clearance is dead space. The Sheet
                             already reserves `calc(12px + env(safe-area-inset-bottom))` at its foot,
@@ -2629,7 +2656,7 @@ export default function EventNew() {
             data-testid="save-sticky"
             style={{
               position: 'sticky',
-              bottom: inOverlay ? 0 : BOTTOM_NAV_HEIGHT_PX + 12,
+              bottom: inOverlay ? 0 : SAVE_BAND_BOTTOM_INSET_PX,
               zIndex: 1,
               display: 'flex',
               flexDirection: 'column',
