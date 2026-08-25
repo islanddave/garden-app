@@ -341,7 +341,18 @@ describe('EventNew — pad position is uniform: each pad follows its own field',
     )).toBe(true)
   })
 
-  it('keeps the 8px above the moved pad that makes this a PURE reorder', async () => {
+  it('drops the spacer on the shipped frame, where there is no band to clear', async () => {
+    // The frame is the shipped default, so this is the arm Dave gets. `marginTop: 0` is deliberate:
+    // track 3 is a real grid track rather than a sticky overlay, so nothing can slide under it and
+    // the 8px buys nothing — while track 2 measures 347/347 at 390x500, i.e. ZERO slack, so every
+    // spare px is a px the pads need. Asserted rather than assumed: at 8px the same measurement
+    // put the weight pad's bottom below track 3's top edge.
+    renderEventNew(SESSION_Q); await flushLoad()
+    const pad = screen.getByRole('group', { name: 'Harvest quantity quick pick' })
+    expect(pad.parentElement.style.marginTop).toBe('0px')
+  })
+
+  it('keeps the 8px above the moved pad on the rollback arm — a PURE reorder there', async () => {
     // Not cosmetic and not a style-snapshot for its own sake. NumberPad carries marginBottom:8;
     // below the field that margin COLLAPSES into the weight group's marginTop:14 (block flow), so
     // the naive move shortened the panel 8px and lifted everything under it. MEASURED consequence
@@ -350,8 +361,25 @@ describe('EventNew — pad position is uniform: each pad follows its own field',
     // note records. With this spacer, the harness reports the weight input and Save on
     // byte-identical coordinates before and after. Delete it and the occlusion comes back silently,
     // because no jsdom test can see it.
-    renderEventNew(SESSION_Q); await flushLoad()
-    const pad = screen.getByRole('group', { name: 'Harvest quantity quick pick' })
-    expect(pad.parentElement.style.marginTop).toBe('8px')
+    // Scoped to WEIGH_IN_FRAME_ENABLED=false via resetModules rather than a file-level mock: the
+    // rest of this file tests pad ORDERING, which is arm-independent and belongs on the shipped arm.
+    vi.resetModules()
+    vi.doMock('../lib/featureFlags.js', async (importActual) => ({
+      ...(await importActual()),
+      WEIGH_IN_FRAME_ENABLED: false,
+    }))
+    try {
+      const { default: EventNewOff } = await import('../pages/EventNew.jsx')
+      // Same fresh module graph, or ToastProvider is a different context object entirely.
+      const { ToastProvider: FreshToastProvider } = await import('../context/ToastContext.jsx')
+      searchParamsRef.current = new URLSearchParams(SESSION_Q)
+      render(<FreshToastProvider><EventNewOff /></FreshToastProvider>)
+      await flushLoad()
+      const pad = screen.getByRole('group', { name: 'Harvest quantity quick pick' })
+      expect(pad.parentElement.style.marginTop).toBe('8px')
+    } finally {
+      vi.doUnmock('../lib/featureFlags.js')
+      vi.resetModules()
+    }
   })
 })

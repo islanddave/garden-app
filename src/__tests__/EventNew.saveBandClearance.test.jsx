@@ -11,7 +11,7 @@
 // call it, and a real call in jsdom would read zero rects and prove nothing either way.
 // No jest-dom (L-182).
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
 const { apiFetchSpy, navigateSpy, searchParamsRef, clearSpy } = vi.hoisted(() => ({
@@ -30,10 +30,17 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 
+// WEIGH_IN_FRAME_ENABLED false, explicitly. The clearance rule exists because the shipped Save band
+// is a STICKY OVERLAY that content can slide under; the frame (now the shipped default) has no such
+// band — track 3 is a real grid track the pad cannot go beneath — so EventNew deliberately does not
+// call clearWeightPadOfSaveBand on that arm (see the `!sessionFrame` guards at both call sites).
+// This file is therefore rollback-arm coverage — and the frame arm's counterpart NEGATIVE is the
+// last describe block below, so the deliberate omission is asserted rather than merely untested.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
   PLANTING_REQUIRED_ENABLED: false,
+  WEIGH_IN_FRAME_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -127,6 +134,57 @@ describe('EventNew — sticky-band clearance wiring (BUG-WEIGHPADSAVEBAND-001)',
     await renderPanel('event_type=harvest')
     expect(screen.queryByLabelText('Harvest weight keypad')).toBeNull()
     fireEvent.focus(screen.getByLabelText('Harvest weight'))
+    expect(clearSpy).not.toHaveBeenCalled()
+  })
+})
+
+// The shipped arm. Every assertion above describes the ROLLBACK path now, so without this block the
+// live weigh-in would have no statement about the clearance scroll at all — and "the tests are
+// green" would mean the arm nobody uses is green. The frame deletes the scroll deliberately (track 3
+// is a real grid track, not a sticky overlay, so nothing can slide under it), and a deletion nothing
+// asserts is a deletion that comes back silently.
+describe('EventNew — the shipped frame does NOT scroll for a band it does not have', () => {
+  async function renderFrame(query) {
+    vi.resetModules()
+    vi.doMock('../lib/featureFlags.js', async (importActual) => ({
+      ...(await importActual()),
+      PROJECTS_HIDDEN: false, PLANTING_REQUIRED_ENABLED: false, WEIGH_IN_FRAME_ENABLED: true,
+    }))
+    // clearSpy must survive resetModules, so re-register the saveBandLayout mock on the fresh graph.
+    vi.doMock('../lib/saveBandLayout.js', async (importActual) => ({
+      ...(await importActual()),
+      clearWeightPadOfSaveBand: clearSpy,
+    }))
+    const { default: EventNewFrame } = await import('../pages/EventNew.jsx')
+    // Same fresh module graph, or ToastProvider is a different context object entirely.
+    const { ToastProvider: FreshToastProvider } = await import('../context/ToastContext.jsx')
+    searchParamsRef.current = new URLSearchParams(query)
+    const out = render(<FreshToastProvider><EventNewFrame /></FreshToastProvider>)
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
+    await act(async () => { await Promise.resolve() })
+    return out
+  }
+
+  afterEach(() => {
+    vi.doUnmock('../lib/featureFlags.js')
+    vi.doUnmock('../lib/saveBandLayout.js')
+    vi.resetModules()
+  })
+
+  it('mounts the frame and its weight keypad (else the negatives below are vacuous)', async () => {
+    await renderFrame('session=harvest')
+    expect(screen.getByTestId('weigh-frame')).not.toBeNull()
+    expect(screen.getByLabelText('Harvest weight keypad')).not.toBeNull()
+    expect(screen.queryByTestId('save-sticky')).toBeNull()
+  })
+
+  it('neither weight focus nor a weight-keypad press calls the clearance helper', async () => {
+    await renderFrame('session=harvest')
+    fireEvent.focus(screen.getByLabelText('Harvest weight'))
+    expect(clearSpy).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('wt-key-3'))
+    // The pad still writes the field — the deletion is the SCROLL, not the input path.
+    expect(screen.getByLabelText('Harvest weight').value).toBe('3')
     expect(clearSpy).not.toHaveBeenCalled()
   })
 })
