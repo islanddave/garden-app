@@ -67,7 +67,27 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   // Escape-to-close. `busy: posting` is load-bearing: this is the one surface in the app with a
   // non-idempotent in-flight action (a Facebook post), and it already disabled its Close button
   // while posting. blockOnBusy makes Escape respect the same rule.
-  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, busy: state === 'posting', layer: LAYER.OVERLAY })
+  //
+  // V4-DIRTYGUARDREST-001 — the dirty half, which Slice 2 left off. The predicate above already
+  // existed (it feeds the parent's reload gate) but was never handed to the arbiter, so up to 5000
+  // characters of composed caption — the largest single body of unsaved typing left in the app, and
+  // one with no draft stash of any kind — were discarded outright by Escape and by Android Back.
+  //
+  // THREE registration fields, not one. `dirty` because the arbiter cannot see the caption;
+  // `confirmOnDirty` because per-entry opt-in is what makes the global switch safe (dismissLayers.js
+  // :74-81); and `armsBack` because WITHOUT IT NOTHING ARMS. Nothing else is open when this sheet is
+  // up — PhotoModal's Share button clears the modal before opening it — so hasArmable() is false, no
+  // marker is pushed, and Back leaves /photos entirely with the caption on it. That reads in a test
+  // exactly like a working guard, which is why the Back suite asserts armed() before every gesture.
+  // Membership is safe by Sheet's own test: onClose is setShareOpen(false) and onPosted is
+  // exitSelectMode() — this sheet closes IN PLACE and never navigates.
+  const { registered, isTopmost, requestDismiss } = useDismissable({
+    open, onDismiss: onClose, dirty, busy: state === 'posting', layer: LAYER.OVERLAY,
+    armsBack: true,
+    confirmOnDirty: true,
+    confirmTitle: 'Discard this caption?',
+    confirmBody: 'This has not been posted yet. What you typed will be lost, and reopening the sheet starts a blank caption.',
+  })
   void registered
 
   if (!open) return null
@@ -96,23 +116,29 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
     paddingBottom: 'env(safe-area-inset-bottom)',
   }
 
+  // EVERY exit below routes through the arbiter, so there is exactly ONE dismissal mechanism on this
+  // surface to break. Leaving the backdrop or the ✕ on the raw onClose would make the two most
+  // reachable exits the ones that still discard silently, and would hand a mutation test a second
+  // suppressor to hide behind. Provably inert wherever the confirm does not apply: requestDismiss
+  // falls back to onClose when the entry is not dirty, not opted in, or unregistered — which is the
+  // whole of the Success and Blocked arms, where `dirty` is false by construction.
   return (
     <div role="dialog" aria-label="Share to Facebook" aria-modal={isTopmost ? 'true' : undefined} style={overlay}
-      onClick={(e) => { if (e.target === e.currentTarget && closable) onClose() }}>
+      onClick={(e) => { if (e.target === e.currentTarget && closable) requestDismiss() }}>
       <div style={panel}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px 8px' }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.green }}>
             Share to Gardens at Mathews
           </h2>
-          <button type="button" aria-label="Close" onClick={() => closable && onClose()} disabled={!closable}
+          <button type="button" aria-label="Close" onClick={() => closable && requestDismiss()} disabled={!closable}
             style={{ background: 'none', border: 'none', fontSize: '1.1rem', color: P.mid, cursor: closable ? 'pointer' : 'default', padding: 4 }}>✕</button>
         </div>
 
         {done ? (
-          <Success result={result} onClose={onClose} />
+          <Success result={result} onClose={requestDismiss} />
         ) : blocked ? (
-          <Blocked state={state} message={error} onClose={onClose} />
+          <Blocked state={state} message={error} onClose={requestDismiss} />
         ) : (
           <div style={{ padding: '4px 18px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             <p style={{ margin: 0, fontSize: '0.82rem', color: P.light }}>
@@ -150,7 +176,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
             )}
 
             <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => closable && onClose()} disabled={!closable}
+              <button type="button" onClick={() => closable && requestDismiss()} disabled={!closable}
                 style={{ flex: '0 0 auto', background: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 8, padding: '12px 20px', fontSize: '0.9rem', fontWeight: 600, cursor: closable ? 'pointer' : 'default' }}>
                 Cancel
               </button>
