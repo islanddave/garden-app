@@ -34,6 +34,15 @@ const PLANT_FORM_FIELDS = [
 
 const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
 
+// BUG-SILENTFAILSWEEP-001 — one line per verb, each naming the state the planting is actually LEFT
+// in. Not interchangeable: a failed Remove leaves a live planting in the garden, a failed Archive
+// leaves it visible in the garden it was being put away from, and telling someone the wrong one
+// sends them to the wrong list to check. Fixed copy rather than the raw error.message handleAdd/
+// handleEdit surface, because these two are reached from a button, not a submitted form — the
+// server's phrasing describes the request, not what the person is now looking at.
+const PLANT_DELETE_FAILED_COPY  = "Couldn't remove this planting — it's still in your garden."
+const PLANT_ARCHIVE_FAILED_COPY = "Couldn't archive this planting — it's still active."
+
 function formFromPlant(plant) {
   return {
     name:     plant.name,
@@ -262,10 +271,11 @@ export default function PlantingEditor({
   }
 
   async function handleDelete() {
-    setDeleting(true)
+    setDeleting(true); setErr(null)
     try {
       await fetch('/api/plants/' + plant.id, { method: 'DELETE' })
       onDeleted?.(plant.id)
+      onClose?.()
     } catch (error) {
       // BUG-DELCLIENT-001 — 404 = no row matched = already gone, which is what the user wanted.
       // BUG-DELNOOPOK-001 put a RETURNING gate on this route and apiFetch (src/lib/api.js:134-141)
@@ -273,29 +283,39 @@ export default function PlantingEditor({
       // skip onDeleted and leave the planting sitting in Garden's list even though the server has
       // none — the editor closes below regardless, so the stale row would look like a failed close.
       // Deliberate, 404-only, at this call site only; apiFetch must keep throwing 404s for GET/PUT.
-      if (error?.status === 404) onDeleted?.(plant.id)
-      // Anything else stays non-fatal exactly as before: no onDeleted, onClose() still fires.
+      if (error?.status === 404) { onDeleted?.(plant.id); onClose?.() }
+      // BUG-SILENTFAILSWEEP-001 — anything else now stays HERE with the reason on screen. onClose
+      // used to fire from `finally`, so a failed Remove closed the editor exactly like a successful
+      // one and the only tell was the planting still sitting in the list. The close moved onto the
+      // two success arms rather than setErr being bolted next to it, because onClose UNMOUNTS this
+      // component (see the V4-SHEETBUSY-001 note above) — an error set on the way out has nothing
+      // left to render. Same `err` -> PlantForm ErrorBanner slot handleAdd/handleEdit already use.
+      else setErr(PLANT_DELETE_FAILED_COPY)
     } finally {
       setDeleting(false)
-      onClose?.()
     }
   }
 
   // V3-ARCHIVE-001: archive = hidden-but-alive (distinct from Remove/delete). Passes the
   // planting up so Garden can offer an ambient Undo. Un-archive uses {archived:false}.
   async function handleArchive() {
-    setArchiving(true)
+    setArchiving(true); setErr(null)
     try {
       await fetch('/api/plants/' + plant.id + '/archive', {
         method: 'PATCH',
         body: JSON.stringify({ archived: true }),
       })
       onArchived?.(plant)
+      onClose?.()
     } catch {
-      // non-fatal
+      // BUG-SILENTFAILSWEEP-001 — the forward leg of the same PATCH PlantingDetail's handleArchive
+      // already calls must-be-audible. Success also fires onArchived, so Garden drops the row and
+      // raises the Undo strip; failure did neither, and the editor closed regardless, leaving the
+      // planting in the list looking untouched. Stays open with the reason instead — see the close
+      // note in handleDelete for why onClose moved onto the success arm.
+      setErr(PLANT_ARCHIVE_FAILED_COPY)
     } finally {
       setArchiving(false)
-      onClose?.()
     }
   }
 

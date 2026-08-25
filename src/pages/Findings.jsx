@@ -85,10 +85,21 @@ export default function Findings() {
     showBadges ? (caretakerMap.get(assigneeByPlant?.get(fd.plant_id) ?? null) || null) : null
   ), [showBadges, caretakerMap, assigneeByPlant])
 
-  const handleResolve = useCallback(async (eventId) => {
-    if (!eventId) return
-    await fetch(`/api/events/${eventId}`, { method: 'PATCH', body: JSON.stringify({ resolved: true }) })
-    await reload()
+  // BUG-SILENTFAILSWEEP-001 — the rejection is PROPAGATED on purpose: FindingCard awaits this and is
+  // the surface for it (it stays put, un-busies and names the failure beside the button that was
+  // tapped), and a second message here would report one tap twice. reload() stays inside the chain
+  // so a resolve that never landed cannot refresh the list and make the card look handled.
+  //
+  // The terminal handler below is the part that was missing: with no catch anywhere on this side,
+  // the card's catch was the ONLY thing between a failed resolve and an unhandled rejection, which
+  // is a guarantee this page cannot make on a child's behalf. `done` still rejects for the awaiting
+  // caller — the no-op only claims the branch nobody is holding.
+  const handleResolve = useCallback((eventId) => {
+    if (!eventId) return Promise.resolve()
+    const done = fetch(`/api/events/${eventId}`, { method: 'PATCH', body: JSON.stringify({ resolved: true }) })
+      .then(() => reload())
+    done.catch(() => {})
+    return done
   }, [fetch, reload])
 
   return (

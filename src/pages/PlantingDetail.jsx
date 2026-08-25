@@ -521,6 +521,15 @@ export default function PlantingDetail() {
       setPlanting(prev => ({ ...prev, archived_at: res?.archived_at ?? null }))
     } catch (err) {
       console.error('unarchive failed', err)
+      // BUG-SILENTFAILSWEEP-001 — audible for exactly the reason handleArchive states below: this
+      // page stays put either way, so silence left the Archived badge as the only difference
+      // between "it didn't work" and "you didn't tap it". Same error-toast pattern as handleArchive
+      // and setFeatured; retry is the same button.
+      //
+      // Its OWN copy, not a reuse of the archive line's. The two point at opposite states — telling
+      // someone whose planting is still archived that it is "still active" sends them looking in
+      // the garden list for something that is still hidden.
+      toast?.show?.({ message: "Couldn't unarchive this planting — it's still archived", tone: 'error' })
     } finally {
       setUnarchiving(false)
     }

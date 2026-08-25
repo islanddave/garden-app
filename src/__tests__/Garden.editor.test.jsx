@@ -59,7 +59,13 @@ const VARIETY = { id: 'var-1', name: 'Black Krim', species: 'Solanum lycopersicu
 // broken code, so `byId` exists to let one test spend the extra tick.
 const late = value => new Promise(resolve => { setTimeout(() => resolve(value), 0) })
 
-function primeFetch({ plants = [PLANT], byId = () => Promise.resolve(PLANT) } = {}) {
+// `archive` receives (url, opts) so a test can fail ONE direction of the PATCH — the undo sends
+// {archived:false} down the same route the forward archive uses, and the two must be separable.
+function primeFetch({
+  plants = [PLANT],
+  byId = () => Promise.resolve(PLANT),
+  archive = () => Promise.resolve({ id: 'plant-2', archived_at: '2026-06-12T00:00:00Z' }),
+} = {}) {
   fetchSpy.mockImplementation((url, opts = {}) => {
     if (url === '/api/projects') return Promise.resolve(PROJECTS)
     if (url === '/api/plants?view=grid' && !opts.method) return Promise.resolve(plants)
@@ -72,7 +78,7 @@ function primeFetch({ plants = [PLANT], byId = () => Promise.resolve(PLANT) } = 
     if (url === '/api/plants' && opts.method === 'POST') return Promise.resolve({ id: 'plant-new', name: 'X', project_id: 'proj-1' })
     if (url.startsWith('/api/plants/') && opts.method === 'PUT') return Promise.resolve({ ...PLANT, name: 'Renamed' })
     if (url.startsWith('/api/plants/') && opts.method === 'DELETE') return Promise.resolve({})
-    if (url.includes('/archive') && opts.method === 'PATCH') return Promise.resolve({ id: 'plant-2', archived_at: '2026-06-12T00:00:00Z' })
+    if (url.includes('/archive') && opts.method === 'PATCH') return archive(url, opts)
     return Promise.resolve([])
   })
 }
@@ -275,6 +281,95 @@ describe('Garden — V3-ARCHIVE-001 archive a planting (edit editor)', () => {
     const calls = fetchSpy.mock.calls.filter(c => c[0] === '/api/plants/plant-2/archive' && c[1]?.method === 'PATCH')
     expect(calls.length).toBe(2)
     expect(JSON.parse(calls[1][1].body).archived).toBe(false)
+  })
+})
+
+// BUG-SILENTFAILSWEEP-001 — the undo strip's own failure, and the worst of the six: setArchiveUndo
+// (null) fired BEFORE the request went out and the catch was `/* non-fatal */`, so a failed undo
+// tore down the only affordance that could retry it, left the planting hidden, and spent the 6s
+// window doing it. The failure destroyed its own retry path. Dismissal now belongs to the success
+// arm alone; a failure re-labels the strip in place and holds it open (EventNew's undoEvent shape).
+describe('Garden — a failed archive Undo keeps its own retry path (BUG-SILENTFAILSWEEP-001)', () => {
+  // Fails ONLY the undo leg. The forward archive has to land or there is no strip to test.
+  const failUndoOnly = (url, opts) => (
+    JSON.parse(opts.body).archived === false
+      ? Promise.reject(new Error('nope'))
+      : Promise.resolve({ id: 'plant-2', archived_at: '2026-06-12T00:00:00Z' })
+  )
+  const undoErr = () => screen.queryByTestId('archive-undo-error')
+  const strip = () => screen.queryByText(/Krim Plant/)
+
+  async function archiveThenUndo(opts) {
+    primeFetch(opts)
+    await renderGarden('edit=plant-2')
+    await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Archive$/i })) })
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Undo$/i })).toBeDefined())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Undo$/i })) })
+  }
+
+  it('a failed undo and a successful one do NOT render the same thing', async () => {
+    await archiveThenUndo({ archive: failUndoOnly })
+    // FAILURE: strip still standing, named, and offering the retry.
+    await waitFor(() => expect(undoErr()).not.toBeNull())
+    expect(undoErr().textContent).toMatch(/still archived/)
+    expect(screen.getByRole('button', { name: /^Retry$/i })).toBeDefined()
+    expect(strip()).not.toBeNull()
+  })
+
+  it('a successful undo dismisses the strip and says nothing', async () => {
+    await archiveThenUndo()
+    await waitFor(() => expect(strip()).toBeNull())
+    expect(undoErr()).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Undo$/i })).toBeNull()
+  })
+
+  it('holds the strip while the undo is on the wire — the dismissal is the SUCCESS arm', async () => {
+    // The ordering half of the fix, asserted MID-FLIGHT. Tearing the strip down first is
+    // indistinguishable from tearing it down on success once the request has settled, so a
+    // post-hoc assertion cannot see this regression at all.
+    let settle
+    await archiveThenUndo({
+      archive: (url, opts) => (
+        JSON.parse(opts.body).archived === false
+          ? new Promise((_, rej) => { settle = () => rej(new Error('nope')) })
+          : Promise.resolve({ id: 'plant-2', archived_at: '2026-06-12T00:00:00Z' })
+      ),
+    })
+    expect(strip()).not.toBeNull()
+    expect(screen.getByRole('button', { name: /Undoing/i }).disabled).toBe(true)
+    await act(async () => { settle(); await Promise.resolve() })
+    await waitFor(() => expect(undoErr()).not.toBeNull())
+  })
+
+  it('the 6s window closing does not swallow a failure that already landed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      await archiveThenUndo({ archive: failUndoOnly })
+      await waitFor(() => expect(undoErr()).not.toBeNull())
+      // Well past expiresAt. An errored strip is durable: it is the only recovery path left, and
+      // letting the auto-dismiss reclaim it puts the planting back to hidden-and-unmentioned.
+      await act(async () => { vi.advanceTimersByTime(20000) })
+      expect(undoErr()).not.toBeNull()
+      expect(screen.getByRole('button', { name: /^Retry$/i })).toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a retry clears the stale error while in flight, and dismisses on success', async () => {
+    let undoCalls = 0
+    await archiveThenUndo({
+      archive: (url, opts) => {
+        if (JSON.parse(opts.body).archived !== false) return Promise.resolve({ id: 'plant-2', archived_at: '2026-06-12T00:00:00Z' })
+        undoCalls += 1
+        return undoCalls === 1 ? Promise.reject(new Error('nope')) : Promise.resolve({ id: 'plant-2', archived_at: null })
+      },
+    })
+    await waitFor(() => expect(undoErr()).not.toBeNull())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Retry$/i })) })
+    await waitFor(() => expect(strip()).toBeNull())
+    expect(undoCalls).toBe(2)
   })
 })
 

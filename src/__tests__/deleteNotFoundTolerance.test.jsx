@@ -202,11 +202,17 @@ describe('PlantingEditor remove — 404 tolerance (BUG-DELCLIENT-001)', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 
-  it('a 500 does NOT fire onDeleted, but still closes (unchanged prior behaviour)', async () => {
+  // BUG-SILENTFAILSWEEP-001 REVERSED THE SECOND HALF OF THIS TEST. It used to read "…but still
+  // closes (unchanged prior behaviour)", which pinned the defect: onClose fired from `finally` on
+  // every path, so a failed Remove closed the editor exactly like a successful one and the only
+  // tell was the planting still sitting in Garden's list. onClose UNMOUNTS the editor, so "close
+  // and show the error" was never available — the close had to move onto the success arms.
+  it('a 500 does NOT fire onDeleted and does NOT close — the reason stays on screen instead', async () => {
     const fetchImpl = vi.fn(() => Promise.reject(apiError(500, 'Internal error')))
     const { onDeleted, onClose } = renderEditor(fetchImpl)
     fireEvent.click(screen.getByText('Remove'))
-    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Couldn't remove this planting/))
+    expect(onClose).not.toHaveBeenCalled()
     // The row may well still exist server-side; claiming it was deleted would be a lie to Garden.
     expect(onDeleted).not.toHaveBeenCalled()
   })

@@ -28,6 +28,9 @@ vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncSt
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
+// Real provider, not a spy on show(): the assertion is that the user SEES something, and a
+// useOptionalToast() with no provider silently no-ops, which is the failure mode under test.
+import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PLANTING = {
   id: 'pl1', name: 'Megatron Jalapeno', project_id: 'proj1', project_name: 'Peppers 2026',
@@ -365,6 +368,78 @@ describe('PlantingDetail — V3-ARCHIVE-001 archived restore path', () => {
     await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
     expect(screen.queryByText('Archived')).toBeNull()
     expect(screen.queryByRole('button', { name: /Unarchive/i })).toBeNull()
+  })
+
+  // BUG-SILENTFAILSWEEP-001 — handleUnarchive was a bare console.error while its own handleArchive
+  // twenty lines below already toasted, with a comment stating failure MUST be audible here. This
+  // page stays put on both paths, so the Archived badge was the whole difference between "it didn't
+  // work" and "you didn't tap it". The toast needs a real provider to render: useOptionalToast
+  // returns a NO-OP outside one, which is why renderAt() cannot see it and this helper exists.
+  function renderArchivedWithToast() {
+    return render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/projects/proj1/plantings/pl1']}>
+          <Routes>
+            <Route path="/projects/:id/plantings/:plantingId" element={<PlantingDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    )
+  }
+  const unarchiveBtn = () => screen.getByRole('button', { name: /Unarchive this planting/i })
+  const errToast = () => screen.queryByText(/Couldn't unarchive this planting/)
+
+  it('a failed unarchive and a successful one do NOT render the same thing', async () => {
+    const archived = { ...PLANTING, archived_at: '2026-06-20T00:00:00Z' }
+    apiFetchSpy.mockImplementation((path) => {
+      if (typeof path === 'string' && path.endsWith('/archive')) return Promise.reject(new Error('nope'))
+      if (path.startsWith('/api/plants/')) return Promise.resolve(archived)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const failed = renderArchivedWithToast()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(unarchiveBtn()); await Promise.resolve() })
+    // FAILURE: said out loud, still archived, and the same button is the retry.
+    await waitFor(() => expect(errToast()).not.toBeNull())
+    expect(screen.getByText('Archived')).toBeTruthy()
+    expect(unarchiveBtn().textContent).toContain('Unarchive')
+    errSpy.mockRestore()
+    failed.unmount()
+
+    apiFetchSpy.mockImplementation((path) => {
+      if (typeof path === 'string' && path.endsWith('/archive')) return Promise.resolve({ archived_at: null })
+      if (path.startsWith('/api/plants/')) return Promise.resolve(archived)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderArchivedWithToast()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(unarchiveBtn()); await Promise.resolve() })
+    // SUCCESS: badge gone, control gone, and nothing said — silence is only correct HERE.
+    await waitFor(() => expect(screen.queryByText('Archived')).toBeNull())
+    expect(screen.queryByRole('button', { name: /Unarchive this planting/i })).toBeNull()
+    expect(errToast()).toBeNull()
+  })
+
+  it('names UNARCHIVE and the state it is left in, never the archive line’s opposite state', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (typeof path === 'string' && path.endsWith('/archive')) return Promise.reject(new Error('nope'))
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, archived_at: '2026-06-20T00:00:00Z' })
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderArchivedWithToast()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(unarchiveBtn()); await Promise.resolve() })
+    const t = await waitFor(() => { const el = errToast(); expect(el).not.toBeNull(); return el })
+    // The archive line says "Couldn't archive"; reusing it here would name the wrong verb, and the
+    // state has to be the one the planting is actually in — still archived, still hidden.
+    expect(t.textContent).toMatch(/still archived/)
+    expect(t.textContent).not.toMatch(/^Couldn't archive/)
+    errSpy.mockRestore()
   })
 })
 
