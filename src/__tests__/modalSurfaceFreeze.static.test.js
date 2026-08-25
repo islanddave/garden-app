@@ -140,6 +140,11 @@ const SHEET_SITES = [
   'components/planting/OverwinterPrompt.jsx',
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',
+  // V4-WEIGHWIZARDFLOW-001 Slice 1. Registered through Sheet, which is the point: the wizard is a
+  // Sheet render site rather than a bespoke panel precisely so Escape, Android Back, the backdrop
+  // and the confirm all resolve through the one arbiter. Frozen here behind WEIGH_WIZARD_ENABLED —
+  // the scan reads SOURCE, not the flag, so this entry is required even while the flag is off.
+  'components/WeighWizard.jsx',
   'pages/AddSeeds.jsx',
   'pages/Garden.jsx',
   'pages/Harvests.jsx',

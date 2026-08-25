@@ -9,7 +9,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, BOTTOM_NAV_HEIGHT_PX, statusLabel } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
+import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_WIZARD_ENABLED } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
@@ -64,6 +64,7 @@ import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPT
 // the end-status offer the 201 may carry back. See src/lib/plantReduction.js for the wire contract.
 import PlantReductionFields from '../components/PlantReductionFields.jsx'
 import EndStatusOffer from '../components/EndStatusOffer.jsx'
+import WeighWizard from '../components/WeighWizard.jsx'
 import { validateReductionInput, buildReductionMetadata } from '../lib/plantReduction.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
@@ -559,6 +560,15 @@ export default function EventNew() {
   // ambient "preserve this?" affordance that opens /put-up carrying { prefill } (crop/variety/plant/
   // harvest_log). useOverlaySwap so an in-overlay trigger swaps the SAME overlay's content (preserving
   // the original background); full-page it degrades to a plain navigate. Reward-adjacent, no interrupt.
+  // V4-WEIGHWIZARDFLOW-001 (BD-055) Slice 1 — the fly-up wizard's step 1. Dave's first beat is
+  // "enter a weigh session -> IMMEDIATELY the planting chooser, no landing screen", so this opens
+  // at mount rather than on a tap. Lazy init, not an effect: an effect would paint the form for one
+  // frame and then cover it, which is the landing screen the row asks us to remove.
+  //
+  // ENTIRELY INSIDE THE FLAG. With WEIGH_WIZARD_ENABLED false this is `false` forever, nothing
+  // below it renders, and WeighWizard.flagOff.test.jsx compares the whole session render against a
+  // byte fixture taken before this file was touched. See featureFlags.js for why it is off.
+  const [wizardOpen, setWizardOpen] = useState(() => WEIGH_WIZARD_ENABLED && inHarvestSession)
   const putUpSwap = useOverlaySwap()
   const [preserveCtx, setPreserveCtx] = useState(null)
   // V4-LOGCONF-001 (C1+C2, supersedes the §7 inlineUndo timed banner): after an overlay save the
@@ -2782,6 +2792,56 @@ export default function EventNew() {
             showToast({ message: `Planting set to ${statusLabel(status)}` })
           }}
         />
+
+        {/* V4-WEIGHWIZARDFLOW-001 (BD-055) Slice 1 — last in the tree, defensively. React's useId
+            derives from a fiber's POSITION among its siblings and it IS rendered on this page
+            (Field.jsx:40 falls back to it for input ids; PlantingSelect.jsx:432 builds listboxId
+            from it), so an inserted sibling is the plausible way a flag-off "no-op" quietly renames
+            ids on everything after it.
+            MUTATION-TESTED, and the result was NEGATIVE — worth recording rather than leaving the
+            paragraph above as an unverified rationale. Moving this whole block above
+            <EndStatusOffer> left the flag-off render byte-identical: `{false && …}` produces no
+            fiber, so nothing renumbered. Last-in-tree is therefore belt-and-braces, NOT the thing
+            doing the work. What actually proves the no-op is the byte fixture in
+            WeighWizard.flagOff.test.jsx, which a leaked wrapper <div> around this block DID fail
+            (mutation M3) where "no wizard testid present" passed. */}
+        {WEIGH_WIZARD_ENABLED && (
+          <WeighWizard
+            open={wizardOpen}
+            plants={plantsForProject}
+            onPick={id => {
+              // Same derivation the planting field uses (see plantingBlock): plant_id implies
+              // project_id under PROJECTS_HIDDEN. Duplicated deliberately rather than hoisted —
+              // Slice 2 moves the whole entry in here and the two converge then; hoisting now
+              // would be a refactor of the shipped path inside a flagged slice.
+              setForm(f => {
+                if (!PROJECTS_HIDDEN) return { ...f, plant_id: id }
+                const derived = id ? (plantsForProject.find(p => p.id === id)?.project_id ?? f.project_id) : f.project_id
+                return { ...f, plant_id: id, project_id: derived }
+              })
+              // Slice 1's hand-off: advance() has no built step after STEP_PLANTING, so the wizard
+              // closes and the form — which already prompts for count and weight — takes over.
+              // ANCHOR, DO NOT FOCUS. Focusing #harvest-quantity would raise the numeric keypad
+              // (inputMode="numeric" since BD-063), which is the ~301-344px this whole row exists to
+              // stop spending. Anchoring puts quantity and its pad at the top of the viewport with
+              // no IME — the same thing anchorSectionToTop already does on quantity focus.
+              // rAF because the sheet is still mounted in this commit; the same idiom the post-save
+              // planting anchor uses below.
+              setWizardOpen(false)
+              const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn => setTimeout(fn, 0))
+              raf(() => anchorSectionToTop(HARVEST_SECTION_ID))
+            }}
+            onDismiss={() => setWizardOpen(false)}
+            // FALSE IN SLICE 1, deliberately, and this is not the confirm being skipped. Dismissing
+            // step 1 discards NOTHING here — the form underneath keeps every value and is the
+            // surface you land on. A ConfirmSheet raised on that would be describing a loss that is
+            // not happening, and a confirm that overstates the loss trains the user to dismiss it.
+            // The component's confirmOnDirty wiring is real and covered (WeighWizard.test.jsx);
+            // Slice 3 is where closing the wizard genuinely ends an in-flight entry, and this
+            // becomes isDirty({ plant_id, quantity, weight }) then.
+            dirty={false}
+          />
+        )}
       </div>
     </div>
   )
