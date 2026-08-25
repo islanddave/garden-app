@@ -310,17 +310,28 @@ export const CRITTERS_QUIET = true
 // Over a 17-planting sitting that is ~4,300px of scrolling for zero net positioning. In a fixed
 // frame neither anchor has a job, so both are deleted on this surface and the travel goes to 0.
 //
-// DEFAULT OFF, and the OFF arm is the lever rather than dead code: with it false this surface is
-// byte-identical to v4.49.0 — pinned literally, by WeighInFrame.flagOff.test.jsx, against a
-// container.innerHTML fixture captured and committed BEFORE the source was edited.
+// ON since 2026-08-25 (Dave's ruling, V4-WEIGHFLAGEXCLUSION-001): the frame won the flow, the
+// wizard was deleted, and this stopped being dark. It is now the weigh-in Dave gets on his phone.
 //
-// Flip TRUE only after an on-device pass on Dave's phone. The one property the headless harness
-// cannot check is the IME show/hide TRANSITION: the frame's whole claim is that a keyboard opening
-// changes only the middle track's height and consumes the slack at the top, so the weight field and
-// weight pad do not move under the thumb. That is layout, not scroll, so it does not depend on
-// Chrome preserving scrollTop across the resize — but it has not been watched on real glass.
-// Criteria-gated, never date-gated. Rollback = flip back to false (one client revert, no data).
-export const WEIGH_IN_FRAME_ENABLED = false
+// WHAT THE FLIP CHANGED ABOUT THE PROOF, stated because it is the easy thing to get wrong here.
+// While this was false, the load-bearing test was the OFF-arm byte fixture — the thing that
+// shipped was the thing pinned. It is not any more: OFF is the ROLLBACK arm, so
+// WeighInFrame.flagOff.test.jsx and weighInSessionBaseBytes.test.jsx now guard the lever, and the
+// ON path carries the verification burden. Re-measured on the shipping tree at a true 390x500
+// through the iframe harness, in VIEWPORT coordinates (scrollTop is vacuous here — the frame's
+// document is overflow:hidden, and the repo's own stability gate says so in report mode):
+// per-entry weight-pad travel 0px at steady state, entries 2-4, with only a ~3px first-render
+// settle on entry 1. The shipped scrolling arm spends 252px per entry for zero net positioning.
+//
+// STILL UNWATCHED ON REAL GLASS — the IME show/hide TRANSITION. The frame's claim is that a
+// keyboard opening changes only the middle track's height and consumes the slack at the top, so
+// the weight field and its pad do not move under the thumb. That is layout, not scroll, so it does
+// not depend on Chrome preserving scrollTop across the resize, and no headless harness can watch
+// it. Track 2 also has ZERO slack at 390x500 (scrollHeight 347 / clientHeight 347), so it becomes
+// a real scroller — not a clip — the moment anything in it grows.
+// Criteria-gated, never date-gated. Rollback = flip back to false (one client revert, no data),
+// and both arms stay covered so the lever cannot rot.
+export const WEIGH_IN_FRAME_ENABLED = true
 
 // BUG-HEICEXIFPASSTHRU-001 asked here whether an UPLOAD should be REFUSED when its metadata cannot
 // be stripped, behind PHOTO_STRIP_STRICT_UPLOAD (parked OFF, pending Dave). REMOVED 2026-08-21,
