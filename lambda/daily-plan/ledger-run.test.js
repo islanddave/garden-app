@@ -177,13 +177,15 @@ describe('resolveInvokeOptions — flagOverrides sanitization', () => {
     expect(out.dryRun).toBe(true);
     expect(out.flagOverrides).toEqual({ CARE_WATER_LEDGER_ENABLED: true });
   });
-  it('arrays/garbage/absence -> null; the whitelist is exactly the six CARE flags', () => {
+  it('arrays/garbage/absence -> null; the whitelist is exactly the seven CARE flags', () => {
     expect(resolveInvokeOptions({ flagOverrides: [true] }, OPTS).flagOverrides).toBeNull();
     expect(resolveInvokeOptions({ flagOverrides: 'CARE_WATER_LEDGER_ENABLED' }, OPTS).flagOverrides).toBeNull();
     expect(resolveInvokeOptions({}, OPTS).flagOverrides).toBeNull();
+    // Exhaustive on purpose: widening the shadow seam is a decision, so it has to be made HERE as
+    // well as at the read site. V4-COVEREDNOTMODELLED-001 added the seventh entry.
     expect(LEDGER_OVERRIDABLE_FLAGS).toEqual(['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
       'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED',
-      'CARE_RAIN_MEASURED_CREDIT_ENABLED']);
+      'CARE_RAIN_MEASURED_CREDIT_ENABLED', 'CARE_COVER_INHERIT_ENABLED']);
   });
   // DRG-INTRADAY-002 Track 0. Asserted on its own rather than left to the list pin above, because
   // the list pin passes whether or not the name is spelled the same as the read site at :939 — and
@@ -196,6 +198,18 @@ describe('resolveInvokeOptions — flagOverrides sanitization', () => {
       .toEqual({ CARE_RAIN_MEASURED_CREDIT_ENABLED: true });
     // Still hard-rejected on a live run — widening the whitelist must not widen the blast radius.
     expect(resolveInvokeOptions({ flagOverrides: { CARE_RAIN_MEASURED_CREDIT_ENABLED: false } },
+      { envDryRun: 'false', todayDefault: TODAY }).flagOverrides).toBeNull();
+  });
+  // V4-COVEREDNOTMODELLED-001, same reasoning as the block above and for the same reason: the list
+  // pin passes whether or not this name matches the read site in run(). It does not merely enable a
+  // computation here — it reshapes the plantings SELECT, so a near-miss spelling silently replays
+  // the OLD classification and reports it as the new one's blast radius.
+  it('CARE_COVER_INHERIT_ENABLED survives sanitization on a dry run, both directions', () => {
+    expect(resolveInvokeOptions({ flagOverrides: { CARE_COVER_INHERIT_ENABLED: true } }, OPTS).flagOverrides)
+      .toEqual({ CARE_COVER_INHERIT_ENABLED: true });
+    expect(resolveInvokeOptions({ flagOverrides: { CARE_COVER_INHERIT_ENABLED: false } }, OPTS).flagOverrides)
+      .toEqual({ CARE_COVER_INHERIT_ENABLED: false });
+    expect(resolveInvokeOptions({ flagOverrides: { CARE_COVER_INHERIT_ENABLED: true } },
       { envDryRun: 'false', todayDefault: TODAY }).flagOverrides).toBeNull();
   });
 });

@@ -678,6 +678,61 @@ function frostSubject(d) {
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
 }
 
+// V4-COVEREDNOTMODELLED-001 phase 2 — COVERAGE INHERITED FROM THE NEAREST STATED ANCESTOR.
+//
+// Phase 1 (migration v4-loccovered-001 + the `cov` lateral below) made coverage an editable
+// locations.covered flag instead of a name match. It left one hole, and it is the hole the row was
+// opened about: `covered` is resolved from the planting's OWN location ONLY. locations is a tree
+// (parent_id, level 0-3), the POST defaults `covered` to NULL, and NULL falls through to the
+// type_label heuristic — so a low tunnel created as a `bed` under Stable resolves EXPOSED, takes
+// rain credit for rain the cover sheds, and goes unwatered. All 21 live prod locations were
+// backfilled with a stated flag, so nothing in the garden is in that state TODAY; every location
+// Dave creates from now on is born into it.
+//
+// THE REPO HAS NO EXISTING NEAREST-ANCESTOR SCHEME TO HONOUR, and that was checked rather than
+// assumed: the only recursive walks over locations.parent_id (events/index.js By-Space scope,
+// photos/index.js location gallery) go DOWN as `loc_subtree`, and container_closure is a closure
+// table over `container`, a different entity. So this mirrors the established `loc_subtree` idiom
+// inverted — same recursive-CTE shape, same `deleted_at IS NULL` filter — rather than introducing
+// a second mechanism (a closure table, a materialised path) for one column.
+//
+// DEPTH BOUND IS LOAD-BEARING, NOT DECORATION. `level` is capped at 3 by the locations POST so a
+// real chain is at most 4 rows, but nothing in the schema forbids a parent_id CYCLE, and an
+// unbounded recursive CTE over a cycle does not error — it hangs, which on this Lambda means the
+// nightly plan never generates. `depth < 4` terminates regardless of the data.
+//
+// `c.covered is null` in the recursive term stops the walk at the FIRST stated ancestor, which is
+// what makes `distinct on (loc_id) ... order by loc_id, depth` the NEAREST one rather than an
+// arbitrary one. A location that states its own flag never recurses at all, so it contributes no
+// row here and arm 2 of the `cov` lateral continues to answer for it.
+//
+// STRICTLY BEHIND CARE_COVER_INHERIT_ENABLED, default OFF. Flag off emits the empty string for all
+// three fragments, so the plantings SQL is byte-identical to the pre-change text — pinned by
+// sha256 in cover-inherit.test.js against a hash captured from the pre-change handler, so the
+// no-op claim is executable rather than asserted.
+const COVER_INHERIT_CTE = `
+    with recursive loc_cover_chain as (
+      select l0.id as loc_id, l0.parent_id, l0.covered, 0 as depth
+        from locations l0 where l0.deleted_at is null
+      union all
+      select c.loc_id, a.parent_id, a.covered, c.depth + 1
+        from loc_cover_chain c join locations a on a.id = c.parent_id and a.deleted_at is null
+       where c.depth < 4 and c.covered is null
+    ),
+    loc_cover_inherit as (
+      select distinct on (loc_id) loc_id, covered from loc_cover_chain
+       where depth > 0 and covered is not null order by loc_id, depth
+    )`;
+const COVER_INHERIT_JOIN = `
+    left join loc_cover_inherit cinh on cinh.loc_id = l.id`;
+// Sits BELOW the location's own flag and ABOVE the type_label heuristic in the `cov` lateral: an
+// explicit answer on the row always beats an inherited one, and an inherited one always beats a
+// guess from the label. Documented here and NOT as a `--` comment beside the lateral, deliberately:
+// a SQL comment is part of the emitted statement, so it would break the byte-identity the flag-off
+// no-op proof rests on (cover-inherit.test.js pins a sha256 of the whole statement).
+const COVER_INHERIT_ARM = `
+             when cinh.covered is not null                then cinh.covered`;
+
 // V4-WATERMATH-001 F2: `flagOverrides` is the SHADOW/PARITY seam (canon Part 5 "shadow-soak that can
 // actually run"). Honored ONLY when this run is DRY — resolveInvokeOptions already refuses to emit
 // it otherwise, and the guard below re-checks so no future caller can arm a live A/B through it.
@@ -689,8 +744,17 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // DRG-NIGHTLYTIMEOUT-001 — cheap nightly progress markers (db-ready / station-fetched / space-wx)
   // pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
   const t0 = Date.now();
+  // V4-COVEREDNOTMODELLED-001 phase 2 — read here rather than beside the other CARE_* flags below
+  // because this one shapes the plantings SELECT itself, which is the first statement of the run.
+  // The three fragments are derived from ONE boolean and used in one statement, so no future edit
+  // can arm the CTE without the arm that reads it (or vice versa) and emit SQL that references an
+  // undefined relation on the nightly run.
+  const coverInheritEnabled = _flag('CARE_COVER_INHERIT_ENABLED', process.env.CARE_COVER_INHERIT_ENABLED === 'true');
+  const cinhCte = coverInheritEnabled ? COVER_INHERIT_CTE : '';
+  const cinhJoin = coverInheritEnabled ? COVER_INHERIT_JOIN : '';
+  const cinhArm = coverInheritEnabled ? COVER_INHERIT_ARM : '';
   // active plantings + last water/fert + caretaker + the planting's Space (workspace_id -> spaces).
-  const { rows: plantings } = await pg.query(`
+  const { rows: plantings } = await pg.query(`${cinhCte}
     select p.id, p.name, p.project_id, p.status, p.container_type, p.container_size, p.rain_exposed,
            pv.name as variety, pv.genus, pj.name as project, pj.status as project_status, p.workspace_id,
            -- V4-FROST-001 F2: frost sensitivity is derived from the crop type (frostClass.js), NEVER reused
@@ -798,7 +862,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     -- DRG-WXCOVERLOC-001: the planting's own location wins; fall back to the project's location only when the
     -- planting has none (0/250 active rows today, but plants.location_id is NULLABLE — coalesce keeps an
     -- un-located planting on its pre-fix classification instead of silently reclassifying it as outdoor).
-    left join locations       l  on l.id=coalesce(p.location_id, pj.location_id)
+    left join locations       l  on l.id=coalesce(p.location_id, pj.location_id)${cinhJoin}
     -- BUG-NOLOCOUTDOOR-001: the coverage three-state, evaluated once. NULL = unknown, and the two
     -- resolved flags in the SELECT read it with IS FALSE / IS TRUE — deliberately not complements.
     -- V4-COVEREDNOTMODELLED-001: l.covered — the editable flag — WINS, and the name-matching arm it
@@ -810,7 +874,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     -- test would drop it through to the type_label heuristic instead of honouring Dave's answer.
     left join lateral (select case
              when l.id is null                            then null
-             when l.covered is not null                   then l.covered
+             when l.covered is not null                   then l.covered${cinhArm}
              when l.type_label in ('shelf','rack','tray') then true
              when l.type_label is null                    then null
              else false
@@ -1171,7 +1235,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
 // Without this entry the instrument silently answers a different question than the one asked.
 const LEDGER_OVERRIDABLE_FLAGS = ['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
   'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED',
-  'CARE_RAIN_MEASURED_CREDIT_ENABLED'];
+  'CARE_RAIN_MEASURED_CREDIT_ENABLED',
+  // V4-COVEREDNOTMODELLED-001 phase 2. Listed so the dry-run shadow can A/B the inheritance against
+  // live rows before any env flip — the same seam the water-ledger flip was measured through, and
+  // the only way to re-run the blast-radius count against real data rather than a fixture.
+  'CARE_COVER_INHERIT_ENABLED'];
 function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   const envLive = String(envDryRun ?? 'true').toLowerCase() === 'false';
   const dryRun = (event && event.dryRun === true) ? true : !envLive;
@@ -1190,5 +1258,6 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
 module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX,
   writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS,
   readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS, sweepSupersededAnchors,
+  COVER_INHERIT_CTE, COVER_INHERIT_JOIN, COVER_INHERIT_ARM,
   sweepRederiveAnchors, REDERIVE_RETIRE_SQL, REDERIVE_INSERT_SQL, REDERIVE_REASON,
   ANCHOR_MODEL_VERSION, REDERIVE_LOG_MAX };
