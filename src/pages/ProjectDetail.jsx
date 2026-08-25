@@ -178,6 +178,12 @@ const PROJECT_DELETE_FAILED_COPY =
 const PROJECT_ARCHIVE_FAILED_COPY =
   'The project could not be archived — it is still active. Check your connection and try again.'
 
+// BUG-UNARCHIVESILENT-001 — the fourth member, and the return leg of the same PATCH. Its own copy
+// rather than a reuse of the archive line because the two point at opposite states: telling someone
+// whose project is still archived that it is "still active" sends them looking in the wrong list.
+const PROJECT_UNARCHIVE_FAILED_COPY =
+  'The project could not be unarchived — it is still archived. Check your connection and try again.'
+
 // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS replaced by
 // shared getStatusColors() from src/lib/status.js (single source of truth across
 // Dashboard / ProjectList / ProjectDetail).
@@ -784,6 +790,10 @@ export default function ProjectDetail() {
   }
 
   async function handleUnarchive() {
+    // BUG-UNARCHIVESILENT-001: this button is its own arm — there is no dialog between the tap and
+    // the request — so the stale-banner clear that handleDeleteClick does on open happens here, at
+    // the top. Without it a retry wears the previous attempt's failure while it is still in flight.
+    setProjectActionErr(null)
     setDeleting(true)
     try {
       const res = await fetch('/api/projects/' + id + '/archive', {
@@ -793,6 +803,12 @@ export default function ProjectDetail() {
       setProject(p => ({ ...p, archived_at: res?.archived_at ?? null }))
     } catch (err) {
       console.error('unarchive failed', err)
+      // BUG-UNARCHIVESILENT-001: fourth member of the family, and the quietest of the four — nothing
+      // here navigates or closes, so a failed unarchive left the page byte-identical to the one the
+      // user was already looking at. Unlike confirmDelete there is deliberately NO 404 tolerance:
+      // "already gone" is the outcome a delete asked for, but someone tapping Unarchive asked for
+      // the project BACK, and a vanished project is a failure of that no matter the status code.
+      setProjectActionErr(PROJECT_UNARCHIVE_FAILED_COPY)
     } finally {
       setDeleting(false)
     }
@@ -956,9 +972,10 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      {/* BUG-PROJCONFIRMDELSILENT-001: directly under the Delete/Archive/Unarchive row, so the
-          report is on screen with the control that failed at 390px rather than several scrolls
-          below it. Retry is those same buttons, still enabled — no separate Retry needed. */}
+      {/* BUG-PROJCONFIRMDELSILENT-001, and BUG-UNARCHIVESILENT-001 reusing it: directly under the
+          Delete/Archive/Unarchive row, so the report is on screen with the control that failed at
+          390px rather than several scrolls below it. Retry is those same buttons, still enabled —
+          no separate Retry needed. */}
       {projectActionErr && (
         <ErrorBanner data-testid="project-action-error" style={{ marginBottom: 16 }}>{projectActionErr}</ErrorBanner>
       )}

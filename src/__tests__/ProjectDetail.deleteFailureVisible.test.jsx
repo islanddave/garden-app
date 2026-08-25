@@ -1,4 +1,4 @@
-// Three ProjectDetail delete-path failures that used to render as benign successes.
+// Four ProjectDetail archive/delete-path failures that used to render as benign successes.
 //
 //   BUG-PROJDELORPHAN-001 — the pre-delete orphan check caught into `[]`, and `[]` is also what a
 //   project with no sub-projects reads as, so a 500/offline/expired-token check opened the dialog
@@ -11,6 +11,10 @@
 //   BUG-PROJCONFIRMDELSILENT-001 — confirmDelete's outer catch was the same bare console.error one
 //   page-level up, so a failed project delete OR archive closed the dialog and left the page
 //   indistinguishable from a successful archive-in-place.
+//
+//   BUG-UNARCHIVESILENT-001 — handleUnarchive, the return leg of that same PATCH, had the fourth
+//   bare console.error. The quietest of the four: it neither navigates nor closes anything, so a
+//   failed unarchive left the page byte-identical to the one already on screen.
 //
 // The discriminating assertion in BOTH sections is a PAIR: the failure case and the ordinary
 // success case are asserted against each other, because either one alone is satisfied by the buggy
@@ -57,6 +61,7 @@ const EVENTS = [{
   title: 'Watered deeply', notes: null, private_notes: null, quantity: null,
 }]
 const CHILD = { id: 'proj-2', name: 'Second sowing' }
+const ARCHIVED_AT = '2026-08-20T00:00:00.000Z'
 const boom = (status = 500) => Object.assign(new Error('server exploded'), { status })
 
 // Knobs are per-request-shape so a test names only the request it is breaking. `refreshFails` is
@@ -71,7 +76,9 @@ function wire({
   photos = [],
   photoDeleteFails = [],
   projectDelete = null,                // () => Promise ; overrides DELETE /api/projects/proj-1
-  projectArchive = null,               // () => Promise ; overrides PATCH /api/projects/proj-1/archive
+  projectArchive = null,               // () => Promise ; overrides PATCH .../archive {archived:true}
+  projectUnarchive = null,             // () => Promise ; overrides PATCH .../archive {archived:false}
+  archived = false,                    // the project loads already archived (Unarchive button shown)
 } = {}) {
   const log = []
   let deleteSeen = false
@@ -87,12 +94,18 @@ function wire({
         : Promise.resolve({ id: pid, deleted_at: '2026-08-23T00:00:00Z', affected: [] })
     }
     if (path === '/api/projects/proj-1/archive') {
+      // Both directions are the same PATCH; only the body says which, so the knobs split on it.
+      if (JSON.parse(opts.body ?? '{}').archived === false) {
+        return projectUnarchive ? projectUnarchive() : Promise.resolve({ archived_at: null })
+      }
       return projectArchive ? projectArchive() : Promise.resolve({ archived_at: '2026-08-23T00:00:00Z' })
     }
     if (path === '/api/projects/proj-1' && method === 'DELETE') {
       return projectDelete ? projectDelete() : Promise.resolve({ ok: true })
     }
-    if (path === '/api/projects/proj-1') return Promise.resolve(PROJECT)
+    if (path === '/api/projects/proj-1') {
+      return Promise.resolve(archived ? { ...PROJECT, archived_at: ARCHIVED_AT } : PROJECT)
+    }
     if (path.startsWith('/api/projects?parent_id=')) {
       return childCheck ? childCheck() : Promise.resolve(childProjects)
     }
@@ -402,5 +415,105 @@ describe('ProjectDetail — a failed project delete/archive is visible (BUG-PROJ
 
     await openDeleteDialog()
     expect(projBanner()).toBeNull()
+  })
+})
+
+// ── BUG-UNARCHIVESILENT-001 ─────────────────────────────────────────────────────────────────────
+// The return leg of the archive PATCH, and the quietest member of the family. The other three each
+// closed a dialog or navigated away, which at least gave the eye something to land on. This one
+// does neither: the tap leaves the page on exactly the view it started from, so a failure and a
+// success differed only by a small green badge the user has no reason to be watching.
+const unarchiveBtn = () => screen.queryByRole('button', { name: 'Unarchive' })
+const archivedBadge = () => screen.queryByText('Archived')
+
+async function tapUnarchive() {
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Unarchive' })) })
+}
+
+describe('ProjectDetail — a failed unarchive is visible (BUG-UNARCHIVESILENT-001)', () => {
+  // THE bug, stated as the contrast. Neither half proves anything alone: pre-fix the failure arm
+  // rendered an archived project page and the success arm rendered an active one, and "no banner"
+  // was true of both. The pair is what pins the difference.
+  it('a failed unarchive and a successful one do NOT render the same thing', async () => {
+    wire({ archived: true, projectUnarchive: () => Promise.reject(boom()) })
+    await renderLoaded()
+    await tapUnarchive()
+
+    expect(projBanner()).toBeTruthy()
+    expect(projBanner().textContent).toContain('it is still archived')
+    // Truthful state: it really is still archived, the badge still says so, and the button that
+    // failed is live again so the banner's "try again" points at something real.
+    expect(archivedBadge()).toBeTruthy()
+    expect(unarchiveBtn().disabled).toBe(false)
+    cleanup()
+
+    // Same surface, same tap, the unarchive lands.
+    wire({ archived: true })
+    await renderLoaded()
+    await tapUnarchive()
+
+    expect(projBanner()).toBeNull()
+    await waitFor(() => expect(archivedBadge()).toBeNull())
+    expect(unarchiveBtn()).toBeNull()
+  })
+
+  it('the failure is announced, and it names UNARCHIVE rather than the opposite state', async () => {
+    wire({ archived: true, projectUnarchive: () => Promise.reject(boom()) })
+    await renderLoaded()
+    await tapUnarchive()
+
+    expect(projBanner().getAttribute('role')).toBe('alert')  // TalkBack
+    const text = projBanner().textContent
+    expect(text).toContain('could not be unarchived')
+    // Reusing the archive line here would send someone whose project is still archived to look for
+    // it in the active list. Wrong-verb copy is its own lie, same as the delete/archive split above.
+    expect(text).not.toContain('it is still active')
+    expect(text).not.toContain('could not be deleted')
+  })
+
+  // The deliberate DIVERGENCE from confirmDelete, which treats 404 as success and navigates away.
+  // That tolerance is correct there and wrong here: a delete asked for the project to be gone, an
+  // unarchive asked for it BACK. Guards against the tolerance being copied across by symmetry.
+  it('a 404 is reported too — unlike delete, already-gone is not what Unarchive asked for', async () => {
+    wire({ archived: true, projectUnarchive: () => Promise.reject(boom(404)) })
+    await renderLoaded()
+    await tapUnarchive()
+
+    expect(projBanner()).toBeTruthy()
+    expect(projBanner().textContent).toContain('could not be unarchived')
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  // This button is its own arm — no dialog sits between the tap and the request — so the clear that
+  // handleDeleteClick does on open has to happen at the top of the handler. Asserted mid-flight
+  // rather than after, because a clear that only happens on success is indistinguishable from no
+  // clear at all once the retry has landed.
+  it('a retry clears the stale banner while it is in flight, and re-reports if it fails again', async () => {
+    let release
+    let attempt = 0
+    wire({
+      archived: true,
+      projectUnarchive: () => {
+        attempt += 1
+        if (attempt === 1) return Promise.reject(boom())
+        return new Promise((_resolve, reject) => { release = () => reject(boom()) })
+      },
+    })
+    await renderLoaded()
+    await tapUnarchive()
+    expect(projBanner()).toBeTruthy()
+
+    // Second tap, request deliberately still open. A stale failure hanging over an attempt that has
+    // not resolved reads as "it failed again" before it has.
+    await tapUnarchive()
+    expect(projBanner()).toBeNull()
+    // getAll, not get: Delete shares the same `deleting` flag, so two buttons read "Working…" here.
+    expect(unarchiveBtn()).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Working…' }).length).toBeGreaterThan(0)
+
+    // …and when it does resolve, badly, the banner comes back rather than staying cleared.
+    await act(async () => { release(); await new Promise(r => setTimeout(r, 0)) })
+    expect(projBanner()).toBeTruthy()
+    expect(unarchiveBtn().disabled).toBe(false)
   })
 })
