@@ -1,6 +1,6 @@
 import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import FindingCard from '../components/findings/FindingCard.jsx'
 
@@ -73,5 +73,61 @@ describe('FindingCard', () => {
   it('hides Treated… for an already-resolved finding', () => {
     render(<FindingCard finding={{ ...base, decay_state: 'resolved' }} onResolve={() => {}} />, wrap)
     expect(screen.queryByText('Treated…')).toBeNull()
+  })
+})
+
+// BUG-SILENTFAILSWEEP-001 — `catch { setBusy(false) }`, commented "stay put on failure so the owner
+// can retry", with nothing telling the owner there was anything to retry. Staying put IS the right
+// recovery; on its own it returned the card to the exact resting state it has when nothing was
+// tapped at all. Success unmounts the card (the parent reloads), so the two outcomes only differ
+// once the failure says something.
+describe('FindingCard — a failed resolve does not render as a success', () => {
+  const live = { ...base, finding_id: 'issue:evt-42', decay_state: 'fresh' }
+  const cardErr = () => screen.queryByTestId('finding-resolve-error')
+
+  it('a failed resolve and a successful one do NOT render the same thing', async () => {
+    const failing = vi.fn().mockRejectedValue(new Error('nope'))
+    const failed = render(<FindingCard finding={live} onResolve={failing} />, wrap)
+    fireEvent.click(screen.getByText('Mark resolved'))
+    // FAILURE: named, and the control is back — it is the retry.
+    await waitFor(() => expect(cardErr()).not.toBeNull())
+    expect(screen.getByText('Mark resolved')).toBeTruthy()
+    failed.unmount()
+
+    // SUCCESS: nothing said, and the control stays spent — in the app the parent's reload unmounts
+    // this card, which is the confirmation. Silence is only correct on this arm.
+    let settle
+    const ok = vi.fn(() => new Promise(r => { settle = () => r(undefined) }))
+    render(<FindingCard finding={live} onResolve={ok} />, wrap)
+    fireEvent.click(screen.getByText('Mark resolved'))
+    await act(async () => { settle(); await Promise.resolve() })
+    expect(cardErr()).toBeNull()
+    expect(screen.getByText('Resolving…')).toBeTruthy()
+  })
+
+  it('names this card’s own verb and the state the finding is left in', async () => {
+    render(<FindingCard finding={live} onResolve={vi.fn().mockRejectedValue(new Error('nope'))} />, wrap)
+    fireEvent.click(screen.getByText('Mark resolved'))
+    const el = await screen.findByTestId('finding-resolve-error')
+    expect(el.getAttribute('role')).toBe('alert')   // inserted on failure, so it announces
+    expect(el.textContent).toMatch(/Couldn't mark this resolved/)
+    expect(el.textContent).toMatch(/still open/)
+  })
+
+  it('a retry clears the stale message while in flight, and re-reports if it fails again', async () => {
+    // Mid-flight, not after: a clear that only happened on success is indistinguishable from no
+    // clear at all once the retry has landed.
+    let release
+    const onResolve = vi.fn()
+      .mockRejectedValueOnce(new Error('nope'))
+      .mockImplementationOnce(() => new Promise((_, rej) => { release = () => rej(new Error('again')) }))
+    render(<FindingCard finding={live} onResolve={onResolve} />, wrap)
+    fireEvent.click(screen.getByText('Mark resolved'))
+    await screen.findByTestId('finding-resolve-error')
+
+    fireEvent.click(screen.getByText('Mark resolved'))
+    await waitFor(() => expect(cardErr()).toBeNull())
+    await act(async () => { release(); await Promise.resolve() })
+    await waitFor(() => expect(cardErr()).not.toBeNull())
   })
 })

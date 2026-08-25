@@ -15,7 +15,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 
 const { fetchSpy, authMock, locationRef, navigateSpy } = vi.hoisted(() => ({
   fetchSpy:    vi.fn(),
@@ -208,5 +208,51 @@ describe('Dashboard — V3-FEED-001 recent-activity batch entries', () => {
     await waitFor(() => expect(screen.getByText('Recent activity')).toBeDefined())
     expect(screen.getByText('watering')).toBeDefined()
     expect(screen.getByText('Fig')).toBeDefined()
+  })
+})
+
+// BUG-SILENTFAILSWEEP-001 — the global Undo toast's soft-delete. `catch { console.warn(…) }`, and
+// the toast has already dismissed itself by the time the DELETE settles, so a failed undo left the
+// event logged with nothing on screen and no affordance left to try again. EventNew's undoEvent is
+// the same soft-delete and has surfaced its failure since V4-LOGCONF-001 — one feature, two
+// implementations, and this was the silent one.
+describe('Dashboard — a failed undo is said out loud (BUG-SILENTFAILSWEEP-001)', () => {
+  const errText = () => screen.queryByText(/Couldn't undo/)
+
+  async function undoWith(deleteImpl) {
+    locationRef.state = { logged: { id: 'evt-9', project_name: 'Peppers' } }
+    fetchSpy.mockImplementation((path, opts) => (
+      opts?.method === 'DELETE' ? deleteImpl(path) : Promise.resolve(BASE_DASH)
+    ))
+    const view = render(<ToastProvider><Dashboard /></ToastProvider>)
+    const undo = await screen.findByRole('button', { name: /^Undo$/ })
+    await act(async () => { fireEvent.click(undo) })
+    return view
+  }
+
+  it('a failed undo and a successful one do NOT render the same thing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const failed = await undoWith(() => Promise.reject(new Error('nope')))
+    // FAILURE: the undo toast is gone either way, so the error toast is the entire difference.
+    await waitFor(() => expect(errText()).not.toBeNull())
+    expect(screen.queryByRole('button', { name: /^Undo$/ })).toBeNull()
+    warnSpy.mockRestore()
+    failed.unmount()
+
+    await undoWith(() => Promise.resolve({ ok: true }))
+    // SUCCESS: same dismissed toast, and nothing said — silence is only correct on this arm.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Undo$/ })).toBeNull())
+    expect(errText()).toBeNull()
+  })
+
+  it('names the undo as what failed and the event as what survives it', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await undoWith(() => Promise.reject(new Error('nope')))
+    const t = await waitFor(() => { const el = errText(); expect(el).not.toBeNull(); return el })
+    // Not EventNew's "try again": the toast that offered the retry is already gone, so pointing at
+    // it would send the reader looking for a control that no longer exists. State, not affordance.
+    expect(t.textContent).toMatch(/still logged/)
+    expect(t.textContent).not.toMatch(/try again/i)
+    warnSpy.mockRestore()
   })
 })

@@ -51,6 +51,12 @@ import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
 // survives the tab's unmount/remount).
 let lastGardenScrollY = 0
 
+// BUG-SILENTFAILSWEEP-001 — names the undo's OWN resulting state. A failed undo leaves the planting
+// ARCHIVED (hidden from this list), which is the opposite of what the tap asked for; the strip's
+// success copy ("Archived <name>") describes the same state but as an accomplishment, so reusing it
+// would tell someone the archive worked when what actually failed was putting it back.
+const ARCHIVE_UNDO_FAILED_COPY = "Couldn't undo — it's still archived"
+
 export default function Garden() {
   const { fetch, getToken } = useApiFetch()
   const { profile } = useAuthOptional()
@@ -221,7 +227,9 @@ export default function Garden() {
   const [flashId, setFlashId] = useState(null)
   // V3-ARCHIVE-001: ambient archive confirmation + Undo (operational confirmation of a
   // user-initiated action — Toast carve-out; non-modal, auto-dismiss, never a reward surface).
-  const [archiveUndo, setArchiveUndo] = useState(null) // { id, name, expiresAt }
+  const [archiveUndo, setArchiveUndo] = useState(null) // { id, name, expiresAt, error? }
+  // BUG-SILENTFAILSWEEP-001: the undo is awaited now, so its in-flight window is on screen.
+  const [undoBusy, setUndoBusy] = useState(false)
 
   // Session 3.5 (§3.26): per-sprite actually-seen accumulator.
   // CritterSprite fires onIntersect ONCE per id when IO-gate trips (sprite enters viewport).
@@ -560,23 +568,37 @@ export default function Garden() {
     setArchiveUndo({ id: plant.id, name: plant.name ?? 'Planting', expiresAt: Date.now() + 6000 })
   }, [refetchPlants])
 
+  // BUG-SILENTFAILSWEEP-001 — the strip used to be torn down BEFORE the request went out, and the
+  // failure was swallowed. A failed undo therefore removed the only affordance that could retry it,
+  // left the planting hidden, and spent the 6s window: the failure destroyed its own retry path.
+  // The dismissal now belongs to the SUCCESS arm alone, and a failure re-labels the strip in place
+  // (EventNew's undoEvent shape — a mistake must never have a shame-outcome with no recovery path).
   const undoArchive = useCallback(async () => {
-    if (!archiveUndo) return
+    if (!archiveUndo || undoBusy) return
     const id = archiveUndo.id
-    setArchiveUndo(null)
+    setUndoBusy(true)
     try {
       await fetch('/api/plants/' + id + '/archive', { method: 'PATCH', body: JSON.stringify({ archived: false }) })
-    } catch { /* non-fatal */ }
+      setArchiveUndo(null)
+    } catch {
+      setArchiveUndo(u => (u ? { ...u, error: ARCHIVE_UNDO_FAILED_COPY } : u))
+    } finally {
+      setUndoBusy(false)
+    }
     refetchPlants()
-  }, [archiveUndo, fetch, refetchPlants])
+  }, [archiveUndo, undoBusy, fetch, refetchPlants])
 
   useEffect(() => {
     if (!archiveUndo) return
+    // Hold the strip while an undo is on the wire or has already failed. Expiring underneath either
+    // is what made a failed undo unrecoverable — and a strip that vanishes mid-request reads as the
+    // success it isn't. An errored strip is durable until the retry lands or the page changes.
+    if (undoBusy || archiveUndo.error) return
     const remaining = archiveUndo.expiresAt - Date.now()
     if (remaining <= 0) { setArchiveUndo(null); return }
     const t = setTimeout(() => setArchiveUndo(null), remaining)
     return () => clearTimeout(t)
-  }, [archiveUndo])
+  }, [archiveUndo, undoBusy])
 
   const toggle = useCallback((id) => {
     setExpanded(prev => {
@@ -873,13 +895,23 @@ export default function Garden() {
           fontSize: '0.9rem', boxShadow: '0 4px 16px rgba(0,0,0,0.18)', zIndex: 1000,
           display: 'flex', alignItems: 'center', gap: 14, maxWidth: '92%',
         }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            Archived <strong>{archiveUndo.name}</strong>
-          </span>
-          <button type="button" onClick={undoArchive} style={{
+          {/* The error takes its own role="alert" element rather than flipping the strip's role:
+              the alert is INSERTED when the undo fails, which is what actually announces it. */}
+          {archiveUndo.error ? (
+            <span role="alert" data-testid="archive-undo-error"
+              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {archiveUndo.error} — <strong>{archiveUndo.name}</strong>
+            </span>
+          ) : (
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Archived <strong>{archiveUndo.name}</strong>
+            </span>
+          )}
+          <button type="button" onClick={undoArchive} disabled={undoBusy} style={{
             background: 'none', border: 'none', color: P.greenLight, fontWeight: 700,
-            fontSize: '0.9rem', cursor: 'pointer', flexShrink: 0,
-          }}>Undo</button>
+            fontSize: '0.9rem', cursor: undoBusy ? 'default' : 'pointer', flexShrink: 0,
+            opacity: undoBusy ? 0.6 : 1,
+          }}>{undoBusy ? 'Undoing…' : (archiveUndo.error ? 'Retry' : 'Undo')}</button>
         </div>
       )}
     </Shell>

@@ -18,6 +18,11 @@ const DECAY_LABEL = {
 }
 const MODE_LABEL = { ask: 'Question', assert: 'Heads-up' }
 
+// BUG-SILENTFAILSWEEP-001 — names this card's own verb and the state the finding is left in. The
+// card staying put was the entire failure signal, and a card sitting there is what the card does
+// when nothing has happened at all, so "you can retry" needed saying rather than implying.
+const RESOLVE_FAILED_COPY = "Couldn't mark this resolved — it's still open."
+
 // The DrG finding's source event id is carried in finding_id as `issue:<event_id>` (assemble.js).
 // Parse it for the manual-resolve action rather than adding a contract field (keeps this change
 // off the shared engine contract that the concurrent materialization seam also touches).
@@ -30,6 +35,7 @@ function sourceEventId(findingId) {
 export default function FindingCard({ finding, onResolve, caretaker = null }) {
   const f = finding ?? {}
   const [busy, setBusy] = useState(false)
+  const [resolveErr, setResolveErr] = useState(null)
   const trend = TREND[f.trend] ?? TREND.steady
   const isAsk = f.assertion_mode === 'ask'
 
@@ -51,11 +57,16 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
   const handleResolve = async () => {
     if (busy) return
     setBusy(true)
+    setResolveErr(null)   // re-arm: a stale line from the last attempt must not outlive this tap
     try {
       await onResolve(eventId)
       // success → parent reloads findings and this card unmounts; no toast (Reward-UX: not a reward).
     } catch {
-      setBusy(false) // stay put on failure so the owner can retry
+      // BUG-SILENTFAILSWEEP-001 — staying put IS the right recovery, but on its own it returned the
+      // card to its resting state and said nothing, so "it didn't work" and "you didn't tap it"
+      // looked identical. The message is the difference; the button is still the retry.
+      setBusy(false)
+      setResolveErr(RESOLVE_FAILED_COPY)
     }
   }
 
@@ -119,6 +130,16 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
           </button>
         )}
       </div>
+
+      {/* Under the action row, on the card the tap came from — the page-level slot would report one
+          tap somewhere the finding it belongs to isn't. Inserted on failure, so role="alert"
+          announces it; removed again when the retry re-arms. */}
+      {resolveErr && (
+        <p role="alert" data-testid="finding-resolve-error"
+          style={{ margin: 0, fontSize: '0.74rem', fontWeight: 600, color: P.terra }}>
+          {resolveErr}
+        </p>
+      )}
     </div>
   )
 }

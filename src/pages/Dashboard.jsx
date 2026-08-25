@@ -73,13 +73,18 @@ const ATTENTION_LIST_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 // terra=1-2 days over, terra-bold=3+ days over OR indoor_seedling >24h over.
 // Tile 2 query only returns next_water_at < NOW(), so daysOver > 0 always.
 
+// BUG-SILENTFAILSWEEP-001 — names the UNDO as what failed and the event as what survives it. Not
+// EventNew's "Couldn't undo — try again.": there is no toast left to try again in by the time this
+// shows, so the sentence has to leave the person knowing the event is still on the record rather
+// than pointing at an affordance that is gone.
+const UNDO_FAILED_COPY = "Couldn't undo — the event is still logged."
 
 export default function Dashboard() {
   const { profile }       = useAuth()
   const { fetch: apiFetch } = useApiFetch()
   const location          = useLocation()
   const navigate          = useNavigate()
-  const { showUndo }      = useToast()
+  const { show, showUndo } = useToast()
 
   const [projects,      setProjects]      = useState([])
   const [nextAttention, setNextAttention] = useState(null)
@@ -179,6 +184,13 @@ export default function Dashboard() {
       loadDashboard(true)
     } catch (err) {
       console.warn('undo failed', err)
+      // BUG-SILENTFAILSWEEP-001 — the undo toast has already dismissed itself by the time this
+      // resolves, so silence left the event logged with nothing said and no affordance left to try
+      // again. EventNew's undoEvent, the same soft-delete, has surfaced its failure since
+      // V4-LOGCONF-001 ("a mistake must never have a shame-outcome with no recovery path"); this is
+      // the one implementation of the pair that didn't. Same global toast layer that raised the
+      // undo, and its own copy: what failed is the UNDO, so the event is still on the record.
+      show({ message: UNDO_FAILED_COPY, tone: 'error' })
     }
   }
 
