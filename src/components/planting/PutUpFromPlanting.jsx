@@ -41,6 +41,11 @@ const METHOD_LABELS = {
   can_water_bath: 'Water-bath can', can_pressure: 'Pressure can', jam_preserve: 'Jam / preserve',
   ferment: 'Ferment', cure_store: 'Cure & store', cold_store: 'Cold store',
   purchased_preserved: 'Bought already preserved',   // D6 (V4-PUTUPPROV-001)
+  // V4-PUTUPTAXONOMY-001 (BD-034). This map is the least dangerous of the three — line 165 falls
+  // back to the raw slug — so an omission surfaces as "ferment_mash" rather than as a blank. Ugly
+  // is still a defect, and the parity test binds all three regardless.
+  quick_pickle: 'Quick / vinegar pickle', pesto: 'Pesto', hot_sauce: 'Hot sauce',
+  ferment_mash: 'Fermenting mash (unfinished)',
   other: 'Other',
 }
 

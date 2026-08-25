@@ -11,13 +11,29 @@
 // V4-MATURITYBASIS-001 adds `dtm_basis` ('from-sow' | 'from-transplant' | null) to the row shape —
 // the DTM basis for the crop kind. Additive; null means uncurated.
 //
+// V4-PUTUPFOODCATEGORY-001 adds SCOPE. crop_types now also carries non-plant food classes (bread,
+// cheese, milk, butter, yogurt, meat, fish — category 'non_plant_food') so that Put-Up can record
+// and browse food that never grew in a garden. Those rows are correct in the pantry and wrong
+// everywhere else: `Bread` must never be offerable as a crop to plant, to type a variety to, or to
+// classify a garden project as.
+//
+// The default is 'garden', i.e. FAIL-CLOSED. The one surface that wants the food classes
+// (PutUp's crop field) opts in explicitly with scope: 'all'; every other caller — present and
+// future — gets the garden vocabulary without having to know this paragraph exists. The inverse
+// default would put a loaf of bread in the planting picker the first time somebody added a call
+// site without reading this file, and nothing would have failed.
+//
 // Contract: { cropTypes: [{ slug, display_name, default_lifecycle, category, sort_order, dtm_basis }], loading,
 //             createCropType(payload) -> { cropType } | { error, existing, reason } }
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApiFetch } from '../lib/api.js'
 
-export function useCropTypes() {
+// The gating category, seeded by migrations/v4-putupfood-001. Exported so the parity test can bind
+// this constant to the migration's own VALUES tuples rather than re-typing the string.
+export const NON_PLANT_FOOD_CATEGORY = 'non_plant_food'
+
+export function useCropTypes({ scope = 'garden' } = {}) {
   const { fetch } = useApiFetch()
   const [cropTypes, setCropTypes] = useState([])
   const [loading, setLoading] = useState(true)
@@ -54,5 +70,14 @@ export function useCropTypes() {
     }
   }, [fetch])
 
-  return { cropTypes, loading, createCropType }
+  // Filtered on the way OUT, never on the way in: createCropType above still reconciles against the
+  // full list, so minting a type that this scope hides cannot produce a duplicate row locally.
+  // Depends on the scope STRING rather than the options object, so an inline literal at the call
+  // site does not re-derive on every render.
+  const scoped = useMemo(
+    () => (scope === 'all' ? cropTypes : cropTypes.filter(c => c.category !== NON_PLANT_FOOD_CATEGORY)),
+    [cropTypes, scope],
+  )
+
+  return { cropTypes: scoped, loading, createCropType }
 }

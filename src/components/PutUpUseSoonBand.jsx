@@ -26,6 +26,12 @@ const METHOD_LABELS = {
   can_pressure: 'pressure-canned', jam_preserve: 'jam', ferment: 'fermented',
   cure_store: 'cured', cold_store: 'cold-stored',
   purchased_preserved: 'bought preserved',   // D6 (V4-PUTUPPROV-001) — keep in step with PutUp.jsx
+  // V4-PUTUPTAXONOMY-001 (BD-034). Lower-case past-participle phrasing here, because these read
+  // INSIDE a sentence fragment ("6 quarts · pickled · in Chest Freezer 2"), not as picker labels.
+  // Omitting any of them is silent: itemDetail() drops an unmapped method from the line entirely
+  // rather than falling back to the slug, so the jar would read as though no method were recorded.
+  quick_pickle: 'pickled', pesto: 'pesto', hot_sauce: 'hot sauce',
+  ferment_mash: 'fermenting mash',
   other: 'put up',
 }
 

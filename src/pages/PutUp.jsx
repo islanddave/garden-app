@@ -55,12 +55,24 @@ const METHOD_GROUPS = [
   ] },
   { group: 'Cook down / can', options: [
     { value: 'passata',        label: 'Passata / sauce' },
+    // V4-PUTUPTAXONOMY-001 (BD-034). Dave named pesto as a gap and said it "arguably fits sauce but
+    // really does not" — 2 of 5 live rows are pesto filed as passata, so the mis-fit is measurable
+    // and not just felt. hot_sauce sits here rather than under Store because the making of it is a
+    // cook-down, even when it starts as a ferment.
+    { value: 'pesto',          label: 'Pesto' },
+    { value: 'hot_sauce',      label: 'Hot sauce' },
     { value: 'can_water_bath', label: 'Water-bath can (high-acid)' },
     { value: 'can_pressure',   label: 'Pressure can (low-acid)' },
     { value: 'jam_preserve',   label: 'Jam / preserve' },
+    // Vinegar pickling: not a ferment (no culture), and a fridge pickle is never processed. This
+    // was the only method='other' row in prod ('Vinegar dill pickles').
+    { value: 'quick_pickle',   label: 'Quick / vinegar pickle' },
   ] },
   { group: 'Store', options: [
     { value: 'ferment',    label: 'Ferment' },
+    // Named by Dave, who was not confident plain `ferment` covered it. Labelled by what it IS
+    // rather than by the jargon — "mash" will not read back in six months.
+    { value: 'ferment_mash', label: 'Fermenting mash (unfinished)' },
     { value: 'cure_store', label: 'Cure & store' },
     { value: 'cold_store', label: 'Cold store (root cellar)' },
     // D6 (V4-PUTUPPROV-001): bought already preserved. Every other value names something you DID;
@@ -345,7 +357,11 @@ function RecentHarvestPicker({ onPick }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function PutUpForm({ prefill, onLogged }) {
   const { fetch } = useApiFetch()
-  const { cropTypes } = useCropTypes()
+  // V4-PUTUPFOODCATEGORY-001 — the ONE surface that opts into the non-plant food classes. This is
+  // the pantry, not the garden: "where's my bread?" is answerable only if bread is offerable here.
+  // The hook defaults to scope 'garden' everywhere else, including the VarietyPicker rendered a few
+  // fields below, which is why a food class can be picked as a CROP here but never as a variety.
+  const { cropTypes } = useCropTypes({ scope: 'all' })
 
   // Fast-path (2 required)
   const [cropSlug, setCropSlug]   = useState(prefill.crop_type_slug || '')
@@ -924,9 +940,16 @@ function PutUpForm({ prefill, onLogged }) {
         </Field>
         {method === 'other' && (
           <div style={{ marginTop: 12 }}>
-            <Field label="Describe the method *" htmlFor="pu-method-other">
+            {/* V4-PUTUPTAXONOMY-001. The placeholder used to read "e.g. smoked" — the form was
+                SUGGESTING a method it does not offer, and 'other' is not a free ride: no method
+                outside SHELF_LIFE_MONTHS gets a use-by date, so the row drops out of "use soon"
+                entirely. That already happened to the one 'other' row in prod, and it is why the
+                cost is now stated instead of hidden. The example is deliberately something the
+                18-value list genuinely cannot express, so it does not steer anyone here by habit. */}
+            <Field label="Describe the method *" htmlFor="pu-method-other"
+              help="Heads up: we can’t work out a use-by date for “Other”, so this one won’t show up in “use soon”.">
               <Input id="pu-method-other" value={methodOther} onChange={e => setMethodOther(e.target.value)}
-                aria-label="Describe the method" placeholder="e.g. smoked" />
+                aria-label="Describe the method" placeholder="e.g. salt-packed in oil" />
             </Field>
           </div>
         )}
