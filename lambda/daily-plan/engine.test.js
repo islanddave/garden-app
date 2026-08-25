@@ -85,9 +85,20 @@ describe('engine substrate-aware fert (regression guard, ported)', () => {
     });
 
     // BUG-BACKDATEDFEED-001 needs the row's own cadence on the item; daily-plan-read cannot re-resolve it.
-    it('emits the resolved interval on the recommendation', () => {
+    //
+    // The `overdue_by` half is load-bearing for the SPA and is asserted HERE rather than in
+    // careNeeded.test.js. src/lib/careNeeded.js:141 computes
+    // `overdueBy: (!daily && typeof it.overdue_by === 'number') ? … : null` for EVERY bucket — that
+    // `daily` term is NOT gated on need, unlike the isDailyCadence sites at :57 and :90. Adding
+    // `interval` to feed items therefore put a feed row within reach of it. Two independent things
+    // keep that harmless: no fertilize_interval_days in cadence-data-v2.json is 1 (min is 7), and a
+    // feed row carries no `overdue_by` at all. Asserting the OUTCOME in careNeeded.test.js is
+    // vacuous — mutation-verified, it stays green with the `daily` term deleted — so the invariant
+    // is pinned at its source instead. Start emitting overdue_by on a feed rec and this goes red.
+    it('emits the resolved interval and NO overdue_by on the recommendation', () => {
       expect(fertilizeRec(p(null), c, fm, TODAY).interval).toBe(17);
       expect(fertilizeRec(p(null), { crop: 'super hot pepper' }, fm, TODAY).interval).toBeNull();
+      expect(Object.keys(fertilizeRec(p(null), c, fm, TODAY))).not.toContain('overdue_by');
     });
   });
   it('DB-seeded planting routes through the engine identically to a bundled one (water bucket)', () => {

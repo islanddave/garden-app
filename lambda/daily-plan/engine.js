@@ -550,8 +550,25 @@ function fertilizeRec(p, c, fm, today){
   // `interval` = this row's OWN feeding cadence, mirroring the water rows' `interval` (each row
   // carries the clock it is judged against). BUG-BACKDATEDFEED-001 needs it on the item: the read-time
   // check-off is cadence-aware for feeding, and daily-plan-read cannot re-resolve cadence itself.
-  // Safe on the SPA side — careNeeded.js only consults `interval` via isDailyCadence, and both of its
-  // consumers (overdueBy, reasonRedundant) are gated on need==='water_due' first.
+  //
+  // SPA safety — stated precisely, because the first version of this comment got the mechanism wrong
+  // and a reviewer caught it. careNeeded.js consults `interval` at THREE sites, not two:
+  //   :57  needReason  — inside `case 'water_due':`            → gated on need
+  //   :90  needTier    — inside `if (need === 'water_due')`    → gated on need
+  //   :128 buildCareNeeded — computed for EVERY need, feeding two uses:
+  //          reasonRedundant → gated on need
+  //          overdueBy       → NOT gated on need
+  // So the "both consumers are gated" claim was false. The change is safe anyway, for two INDEPENDENT
+  // reasons: (1) fertilizeRec emits no `overdue_by`, so overdueBy's `typeof … === 'number'` arm is
+  // already false for a feed row and the `daily` term cannot change its result; (2) isDailyCadence is
+  // `=== 1` and the minimum fertilize_interval_days in cadence-data-v2.json is 7 (distribution:
+  // 7×5, 10, 14×98, 17, 18×2, 19, 20, 21×42, 28×11, 29, 30×39, 42×3, 45×4, 55, 60×5, 75, 90×4, 180).
+  //
+  // That redundancy is worth naming rather than enjoying: it makes a careNeeded test asserting
+  // `overdueBy === null` VACUOUS — verified by mutation, the assertion stays green with the `daily`
+  // term deleted. If you ever add a 1-day feed cadence, or widen isDailyCadence past `=== 1`, reason
+  // (2) dies and only (1) is holding — so check overdueBy against a feed row that actually carries
+  // `overdue_by` before assuming the suite would have told you.
   return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,interval:iv,...rec};
 }
 
