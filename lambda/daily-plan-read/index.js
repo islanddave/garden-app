@@ -159,7 +159,15 @@ export async function annotateDone(sql, plan) {
           )
   `;
   const sat = new Set(rows.map((r) => `${r.plant_id}|${r.event_type}`));
-  return applyDone(plan, sat);
+  // BUG-BACKDATEDFEED-001 — the feed bucket ALSO checks off on its own cadence, so a feeding recorded
+  // today but dated an earlier day retires the card (see doneEvents.js fedWithinInterval for why this
+  // widening is correct for feeding and wrong for watering). Scoped to the fertilize items that carry
+  // a numeric interval, so a plan stored before engine.js emitted one costs no extra query at all.
+  const fertIds = (Array.isArray(plan?.fertilize) ? plan.fertilize : [])
+    .filter((it) => it && it.id && typeof it.interval === 'number')
+    .map((it) => it.id);
+  const ctx = fertIds.length ? await lastFertByPlant(sql, fertIds) : null;
+  return applyDone(plan, sat, ctx);
 }
 
 
@@ -192,4 +200,38 @@ export async function readHouseholdPlans(sql, ids) {
     if (plan) out.push({ user_id: r.user_id, generated_at: r.generated_at, plan });
   }
   return out;
+}
+
+// BUG-BACKDATEDFEED-001 — newest fertilizing date per planting, as an ET calendar date, plus today's ET
+// date from the same round trip (one clock, so the comparison can never straddle two).
+//
+// Defined LAST on purpose. index.test.js indexes the file's tagged templates positionally (stmts[0]
+// = plan read, stmts[1] = done-derivation, stmts[2] = household read); appending here keeps every
+// existing index valid instead of silently re-pointing three guards at the wrong query. Same
+// ordering invariant readHouseholdPlans documents above — it just is not the last one any more.
+//
+// Deliberately reads event_log rather than entity_memory.last_fertilized_at: the ENGINE decides
+// due-ness from max(event_log.event_date), and a checker that consulted a different surface than the
+// generator could disagree with it — the cache is derived, and an undo that repairs one need not
+// repair the other in the same instant.
+export async function lastFertByPlant(sql, ids) {
+  const rows = await sql`
+    SELECT e.plant_id AS plant_id,
+           to_char((now() AT TIME ZONE 'America/New_York')::date, 'YYYY-MM-DD') AS today,
+           to_char(max((e.event_date AT TIME ZONE 'America/New_York')::date), 'YYYY-MM-DD') AS last_fert
+    FROM event_log e
+    WHERE e.plant_id = ANY(${ids})
+      AND e.event_type = 'fertilizing'
+      AND e.deleted_at IS NULL
+    GROUP BY e.plant_id
+  `;
+  const lastFert = new Map();
+  let today = null;
+  for (const r of rows) {
+    if (r.last_fert) lastFert.set(r.plant_id, r.last_fert);
+    if (r.today) today = r.today;
+  }
+  // A planting with no fertilizing history yields no row at all, so `today` can be null here; the
+  // fold treats a null-today ctx as "no cadence signal" and falls back to the day rule.
+  return today ? { today, lastFert } : null;
 }

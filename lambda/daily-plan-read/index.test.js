@@ -28,8 +28,8 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(SRC).toMatch(/secretKey:\s*secrets\.CLERK_SECRET_KEY/);
   });
 
-  it('is READ-ONLY — three SELECTs (plan read + V3-TODAYDONE-001 done-derivation + V4-ASSIGNLENS household read), no write verbs', () => {
-    expect(stmts.length).toBe(3);
+  it('is READ-ONLY — four SELECTs (plan read + V3-TODAYDONE-001 done-derivation + V4-ASSIGNLENS household read + BUG-BACKDATEDFEED-001 feed-cadence read), no write verbs', () => {
+    expect(stmts.length).toBe(4);
     for (const s of stmts) expect(s).toMatch(/SELECT/);
     for (const s of stmts) expect(s).not.toMatch(/\b(INSERT|UPDATE|DELETE|UPSERT|MERGE)\b/i);
   });
@@ -49,7 +49,31 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(DONE_SRC).toMatch(/no_history:\s*\[[^\]]*'rain'[^\]]*\]/);
     // annotateDone must actually apply the shared fold, not a local reimplementation of it.
     expect(SRC).toMatch(/from '\.\/doneEvents\.js'/);
-    expect(SRC).toMatch(/return applyDone\(plan, sat\)/);
+    expect(SRC).toMatch(/return applyDone\(plan, sat\b/);
+  });
+
+  // BUG-BACKDATEDFEED-001 — a feeding recorded today but DATED an earlier day must still retire the
+  // feed card. The day-scoped done query (stmts[1]) structurally cannot see it, so the feed bucket
+  // gets a second, cadence-scoped signal. Pinned positionally: the new query is appended LAST so the
+  // three existing stmts[] guards above keep pointing at the queries they were written for.
+  it('BUG-BACKDATEDFEED-001: the 4th SELECT reads each planting\'s newest fertilizing date in ET', () => {
+    expect(stmts[3]).toMatch(/event_log/);
+    expect(stmts[3]).toMatch(/e\.event_type = 'fertilizing'/);
+    expect(stmts[3]).toMatch(/e\.deleted_at IS NULL/);
+    expect(stmts[3]).toMatch(/max\(\(e\.event_date AT TIME ZONE 'America\/New_York'\)::date\)/);
+    // today's ET date rides the SAME round trip, so the comparison cannot straddle two clocks.
+    expect(stmts[3]).toMatch(/\(now\(\) AT TIME ZONE 'America\/New_York'\)::date/);
+    // and it must be WIRED — an unreferenced helper is the vacuous-guard failure this pins against.
+    expect(SRC).toMatch(/await lastFertByPlant\(sql, fertIds\)/);
+    expect(SRC).toMatch(/applyDone\(plan, sat, ctx\)/);
+  });
+
+  // The widening is FEED-ONLY. Letting a back-dated watering retire today's water card would check
+  // off a task nobody performed — the day predicate on stmts[1] is load-bearing for water and must
+  // not acquire a cadence escape hatch alongside it.
+  it('BUG-BACKDATEDFEED-001: the cadence widening is scoped to fertilizing, never watering', () => {
+    expect(stmts[3]).not.toMatch(/'watering'|'rain'|'moisture_check'/);
+    expect(SRC).toMatch(/Array\.isArray\(plan\?\.fertilize\)/);
   });
 
   // V4-WATERMATH-001 F0 — the interim pre-F2 snooze window. A moisture_check must ALSO satisfy on a

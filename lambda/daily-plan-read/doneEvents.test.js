@@ -5,7 +5,7 @@
 // nothing can import it). doneEvents.js is dependency-free precisely so the logic that decides
 // whether a plan item is done runs for real here rather than being regex-asserted.
 import { describe, it, expect } from 'vitest';
-import { DONE_EVENTS, applyDone, planItemIds } from './doneEvents.js';
+import { DONE_EVENTS, applyDone, planItemIds, fedWithinInterval, daysBetweenISO } from './doneEvents.js';
 
 const sat = (...pairs) => new Set(pairs);
 const plan = (overrides = {}) => ({
@@ -106,6 +106,73 @@ describe('pest — `doctored` is the live treatment vocabulary', () => {
       .filter(([, types]) => types.includes('doctored'))
       .map(([k]) => k);
     expect(buckets).toEqual(['pest']);
+  });
+});
+
+describe('BUG-BACKDATEDFEED-001 — a back-dated feeding still checks off Feed', () => {
+  // The live incident this reproduces: 2026-08-25, 173 fertilizing events written at 07:07 ET and all
+  // dated 08-24. `sat` (events dated TODAY) was empty for every one of them, so both feed cards on
+  // that morning's plan stayed up. Interval 14, fed 1 day ago => not due => done.
+  const feedPlan = (interval) => plan({ fertilize: [{ id: 'p4', name: 'Dill', interval }] });
+  const ctx = (last, today = '2026-08-25') => ({ today, lastFert: new Map([['p4', last]]) });
+
+  it('a feeding DATED YESTERDAY, inside the interval, retires the card', () => {
+    expect(applyDone(feedPlan(14), sat(), ctx('2026-08-24')).fertilize[0].done).toBe(true);
+  });
+
+  it('a feeding OLDER than the interval does NOT retire it (the card is genuinely due)', () => {
+    expect(applyDone(feedPlan(7), sat(), ctx('2026-08-16')).fertilize[0].done).toBe(false);
+    // ...and the boundary is exclusive: dF === interval means due, matching the engine's `dF>=iv`.
+    expect(applyDone(feedPlan(7), sat(), ctx('2026-08-18')).fertilize[0].done).toBe(false);
+    expect(applyDone(feedPlan(7), sat(), ctx('2026-08-19')).fertilize[0].done).toBe(true);
+  });
+
+  it('falls back to the day rule when the item carries no interval (plans stored pre-upgrade)', () => {
+    // Never guess a cadence: an un-priced card must not be retired by an arbitrarily old feeding.
+    expect(applyDone(feedPlan(undefined), sat(), ctx('2026-08-24')).fertilize[0].done).toBe(false);
+    // The day rule still works on that same item — this is a fallback, not a regression.
+    expect(applyDone(feedPlan(undefined), sat('p4|fertilizing'), ctx('2026-08-24')).fertilize[0].done).toBe(true);
+  });
+
+  it('a FUTURE-dated feeding is not evidence the plant has been fed', () => {
+    expect(applyDone(feedPlan(14), sat(), ctx('2026-08-26')).fertilize[0].done).toBe(false);
+  });
+
+  // The scoping guard, in the same shape as the moisture_check and doctored ones above. A watering
+  // dated three days ago does NOT mean the planting got water today; widening the water arm would
+  // check off a task nobody performed.
+  it('the cadence signal is FEED-ONLY — no other bucket can be retired by it', () => {
+    const full = {
+      ...plan(),
+      fertilize: [{ id: 'p4', name: 'Dill', interval: 14 }],
+      water_due: [{ id: 'p1', name: 'Habanero', interval: 14 }],
+      no_history: [{ id: 'p2', name: 'Sage', interval: 14 }],
+      pest: [{ id: 'p3', name: 'Basil', interval: 14 }],
+      cold: [{ id: 'p5', name: 'Fittonia', interval: 14 }],
+      overwintering: [{ id: 'p8', name: 'Kale', interval: 14 }],
+    };
+    const everyId = new Map(['p1', 'p2', 'p3', 'p4', 'p5', 'p8'].map((k) => [k, '2026-08-24']));
+    const out = applyDone(full, sat(), { today: '2026-08-25', lastFert: everyId });
+    expect(out.fertilize[0].done).toBe(true);
+    for (const b of ['water_due', 'no_history', 'pest', 'cold', 'overwintering']) {
+      expect(out[b][0].done).toBe(false);
+    }
+    const buckets = Object.keys(DONE_EVENTS).filter((k) => fedWithinInterval(k, { id: 'p4', interval: 14 }, ctx('2026-08-24')));
+    expect(buckets).toEqual(['fertilize']);
+  });
+
+  it('omitting ctx reproduces the pre-fix behaviour exactly (widening only ever ADDS done-ness)', () => {
+    expect(applyDone(feedPlan(14), sat()).fertilize[0].done).toBe(false);
+    expect(applyDone(feedPlan(14), sat('p4|fertilizing')).fertilize[0].done).toBe(true);
+  });
+
+  it('daysBetweenISO counts calendar days and rejects junk', () => {
+    expect(daysBetweenISO('2026-08-25', '2026-08-24')).toBe(1);
+    expect(daysBetweenISO('2026-08-25', '2026-08-25')).toBe(0);
+    // Spring-forward: 03-08 is a 23-hour ET day, so an hours-based diff would round to 0 here.
+    expect(daysBetweenISO('2026-03-09', '2026-03-08')).toBe(1);
+    expect(daysBetweenISO('2026-08-25', null)).toBeNull();
+    expect(daysBetweenISO('nope', '2026-08-24')).toBeNull();
   });
 });
 

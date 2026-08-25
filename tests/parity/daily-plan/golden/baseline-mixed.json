@@ -126,6 +126,7 @@
             "crop": "tomato",
             "id": "f1",
             "in_ground": false,
+            "interval": 14,
             "item": "Espoma Tomato-Tone 3-4-6 (granular)",
             "name": "Beefsteak Tomato",
             "phase": "mg_tapering_13_24wk",
