@@ -288,28 +288,16 @@ export const SAVE_TO_DEVICE_HIDDEN = true
 // still needs a deploy; what the flag buys is that the loud arm never rots.
 export const CRITTERS_QUIET = true
 
-// V4-WEIGHWIZARDFLOW-001 (BD-055) + V4-WEIGHMOBILEVIEWPORT-001 (BD-045) — the weigh-in session as a
-// step-by-step fly-up wizard: one prompt per bottom-sheet step instead of a 2.4-viewport form.
-// Design: project-state/_hp-20260825/design-weighwizard-V100-20260825.md.
-//
-// OFF because DAVE HAS NOT SEEN THE DESIGN. This is his most-used flow and he opened the braindump
-// saying the current session is "nice now, certainly a big improvement" — this is acceleration of
-// something working, so shipping a rebuild of it on an agent's judgement alone is the wrong call.
-// The flag exists to let Slice 1 land, be measured in tests/harness, and be shown to him without
-// touching what he uses today.
-//
-// FLAG-OFF IS A TRUE NO-OP, and it is PROVEN rather than asserted: WeighWizard.flagOff.test.jsx
-// compares the WHOLE rendered weigh-in session against a byte fixture captured from EventNew at
-// base e5a8ab9, BEFORE that file had ever heard of the wizard (a94c7fd — the provenance is the git
-// history, not a comment). "No wizard testid present" would have passed just as happily on a leaked
-// wrapper div or a shifted React useId; the fixture does not.
-//
-// Every mutation this slice makes to EventNew sits inside the flag. The wizard also renders last in
-// EventNew's tree — defensively, not decisively: mutation-testing that placement showed `{false &&
-// …}` creates no fiber and shifts no useId, so the fixture is what carries the proof. Rollback is
-// this one const.
-// Criteria-gated (Dave's review, then a harness re-measure per design §4), never date-gated.
-export const WEIGH_WIZARD_ENABLED = false
+// V4-WEIGHWIZARDFLOW-001 (BD-055) asked here whether the weigh-in session should become a
+// step-by-step fly-up wizard, behind WEIGH_WIZARD_ENABLED (parked OFF, pending Dave). REMOVED
+// 2026-08-25, V4-WEIGHFLAGEXCLUSION-001. Dave saw both redesigns of this one flow and chose the
+// fixed frame below, so the wizard is deleted rather than left guarded: it and the frame were
+// independent FULL-SURFACE rebuilds of the same screen with nothing making them mutually
+// exclusive, and their own tests contradicted each other with both flags true. A design panel had
+// already returned BUILD SMALLER unanimously — the wizard removed no taps (both flows ~6 actions
+// per planting) and its lead justification, BUG-CHOOSERPADOCCLUDE-001, was withdrawn as a harness
+// measurement artifact. Its flag-off byte baseline outlived it as weighInSessionBaseBytes.test.jsx,
+// which is where the base-e5a8ab9 pin (and the cross-lane handedness proof it carries) now lives.
 
 // V4-WEIGHFRAME-001 (BD-055 / design-weighviewport, panel Option B): the weigh-in session becomes a
 // FIXED FRAME — a non-scrolling 100dvh panel with three grid tracks (chooser pinned top, the two
@@ -322,17 +310,28 @@ export const WEIGH_WIZARD_ENABLED = false
 // Over a 17-planting sitting that is ~4,300px of scrolling for zero net positioning. In a fixed
 // frame neither anchor has a job, so both are deleted on this surface and the travel goes to 0.
 //
-// DEFAULT OFF, and the OFF arm is the lever rather than dead code: with it false this surface is
-// byte-identical to v4.49.0 — pinned literally, by WeighInFrame.flagOff.test.jsx, against a
-// container.innerHTML fixture captured and committed BEFORE the source was edited.
+// ON since 2026-08-25 (Dave's ruling, V4-WEIGHFLAGEXCLUSION-001): the frame won the flow, the
+// wizard was deleted, and this stopped being dark. It is now the weigh-in Dave gets on his phone.
 //
-// Flip TRUE only after an on-device pass on Dave's phone. The one property the headless harness
-// cannot check is the IME show/hide TRANSITION: the frame's whole claim is that a keyboard opening
-// changes only the middle track's height and consumes the slack at the top, so the weight field and
-// weight pad do not move under the thumb. That is layout, not scroll, so it does not depend on
-// Chrome preserving scrollTop across the resize — but it has not been watched on real glass.
-// Criteria-gated, never date-gated. Rollback = flip back to false (one client revert, no data).
-export const WEIGH_IN_FRAME_ENABLED = false
+// WHAT THE FLIP CHANGED ABOUT THE PROOF, stated because it is the easy thing to get wrong here.
+// While this was false, the load-bearing test was the OFF-arm byte fixture — the thing that
+// shipped was the thing pinned. It is not any more: OFF is the ROLLBACK arm, so
+// WeighInFrame.flagOff.test.jsx and weighInSessionBaseBytes.test.jsx now guard the lever, and the
+// ON path carries the verification burden. Re-measured on the shipping tree at a true 390x500
+// through the iframe harness, in VIEWPORT coordinates (scrollTop is vacuous here — the frame's
+// document is overflow:hidden, and the repo's own stability gate says so in report mode):
+// per-entry weight-pad travel 0px at steady state, entries 2-4, with only a ~3px first-render
+// settle on entry 1. The shipped scrolling arm spends 252px per entry for zero net positioning.
+//
+// STILL UNWATCHED ON REAL GLASS — the IME show/hide TRANSITION. The frame's claim is that a
+// keyboard opening changes only the middle track's height and consumes the slack at the top, so
+// the weight field and its pad do not move under the thumb. That is layout, not scroll, so it does
+// not depend on Chrome preserving scrollTop across the resize, and no headless harness can watch
+// it. Track 2 also has ZERO slack at 390x500 (scrollHeight 347 / clientHeight 347), so it becomes
+// a real scroller — not a clip — the moment anything in it grows.
+// Criteria-gated, never date-gated. Rollback = flip back to false (one client revert, no data),
+// and both arms stay covered so the lever cannot rot.
+export const WEIGH_IN_FRAME_ENABLED = true
 
 // BUG-HEICEXIFPASSTHRU-001 asked here whether an UPLOAD should be REFUSED when its metadata cannot
 // be stripped, behind PHOTO_STRIP_STRICT_UPLOAD (parked OFF, pending Dave). REMOVED 2026-08-21,

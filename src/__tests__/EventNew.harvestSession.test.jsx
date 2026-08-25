@@ -43,10 +43,17 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 
+// WEIGH_IN_FRAME_ENABLED false, explicitly, and it is not a workaround. What this file tests — the
+// sticky `harvest-session-strip`, its 3-row cap and its `+N earlier` note — is the LEGACY weigh-in
+// surface, and the frame (now the shipped default) does not have any of it: the strip is replaced by
+// a one-line track-3 ledger with a real history drawer, covered by WeighInFrame.flagOn.test.jsx.
+// Pinning the arm keeps this file meaningful as ROLLBACK coverage instead of quietly re-aiming it at
+// a surface it was not written for.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
   PLANTING_REQUIRED_ENABLED: false,
+  WEIGH_IN_FRAME_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({

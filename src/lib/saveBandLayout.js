@@ -44,6 +44,55 @@ export const SAVE_BAND_BOTTOM_INSET_PX = BOTTOM_NAV_HEIGHT_PX + 12
 // Material asks for, and it is 20x the clearance this bug was filed about.
 export const SAVE_BAND_MIN_CLEARANCE_PX = 20
 
+// ── V4-WEIGHFRAME-001 R1 — the same rule on the FRAME arm, which has no band ───────────────────
+// The frame's Save lives in `weigh-frame-track3`, a real grid track, so nothing can slide under
+// anything and the clearance rule above has no band to resolve against. The frame's first gate
+// therefore asserted only "the pad is not BENEATH the ledger" — a different question from the one
+// this file exists to answer, and it passed at the number below.
+//
+// MEASURED, real engine, tests/harness at a true 390x500 (iframe, self-reported 390x500/scrollW 390),
+// WEIGH_IN_FRAME_ENABLED true, weigh-in session, weight field focused:
+//   weight-pad bottom row y351-399  ·  track 3 top y399 (1px border)  ·  Save y400-448
+//   -> 1px between ⌫ and an irreversible commit, with three bottom-row keys inside Save's x-range
+//      (0 x199-252, . x260-313, ⌫ x321-374 against Save x224-374 at the default hand).
+// Every key hit-tests to itself, so this is not occlusion — it is the mis-tap that COMMITS, and it
+// is recovered only by Undo-then-redo. 1px is the same accident BUG-WEIGHPADSAVEBAND-001 was filed
+// about at a different value, on a surface whose whole point was to end that class.
+//
+// SAVE_BAND_MIN_CLEARANCE_PX is REUSED rather than a second number minted. Its own note says why:
+// one answer to "how far apart do two things a thumb can confuse have to be". The two arms ship
+// together, so a frame-only floor would be a second policy for one hazard.
+//
+// WHERE THE PIXELS COME FROM, because at 390x500 the frame had none spare (track 2 measured
+// 347/347, `overflowing: false`). Track 2 is `minmax(0,1fr) auto`: the harvest row is `auto` and the
+// disclosure row is the 1fr SPONGE, so freeing height in track 1 or track 3 does nothing — the
+// sponge absorbs it and the pad does not move. Only two things move the pad up relative to Save:
+// content removed from the harvest row, and height removed from Save itself.
+//   8px  the quantity pad's own marginBottom, cancelled at its wrapper the way the weight pad's
+//        already was — the two pads now abut the labels below them
+//   2px  the weight label's in-frame marginBottom
+//   5px  the sponge's remainder (7px at this viewport, showing 0px of content — the disclosure row
+//        was already scrolled to a sliver, 245px of content in a 7px window)
+//   4px  Save, 48 -> FRAME_SAVE_HEIGHT_PX, leaving a dead strip at the TOP of track 3
+//   1px  track 3's border-top, which was always there
+// = 20. This is the whole of what exists; there is no sixth source that does not cost a control.
+export const FRAME_SAVE_HEIGHT_PX = 44
+export const FRAME_LEDGER_BORDER_PX = 1
+
+// Space to leave below the weight pad so that pad-bottom -> Save-top is `minClearance`. Derived,
+// never spelled: the ledger height and Save's height are what make the strip above Save dead, and a
+// hardcoded gap would silently stop meaning 20px the moment either changed.
+export function framePadGapPx(ledgerPx, minClearance = SAVE_BAND_MIN_CLEARANCE_PX) {
+  return minClearance - (ledgerPx + FRAME_LEDGER_BORDER_PX - FRAME_SAVE_HEIGHT_PX)
+}
+
+// The inverse, for the guards: what a given geometry actually yields. Save is bottom-aligned in
+// track 3, so everything between the pad and Save's top edge is track 3's own container — painted,
+// but with no handler, which is what makes a low ⌫ press land on nothing instead of committing.
+export function frameSaveClearancePx(ledgerPx, padGapPx, saveHeightPx = FRAME_SAVE_HEIGHT_PX) {
+  return ledgerPx + FRAME_LEDGER_BORDER_PX - saveHeightPx + padGapPx
+}
+
 // Signed gap between a control's bottom edge and the band's top edge. Negative = the band's box
 // covers the control by that many px. Both arguments are viewport-relative DOMRects.
 export function saveBandClearancePx(controlRect, bandRect) {

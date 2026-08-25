@@ -20,7 +20,7 @@
 // Harvests CTA's rendered href), never retyped: all three land on the same predicate, and a retyped
 // string keeps passing after the file it guards is edited.
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
@@ -48,10 +48,17 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 }))
 // Mirrors EventNew.harvestSession.test.jsx: the gate under test is the draft/seed gate, and dragging
 // PlantingSelect into every mount tests something else.
+// WEIGH_IN_FRAME_ENABLED false is about the ASSERTION SURFACE, not the gate: these cases read
+// `harvest-session-strip`, which the shipped frame replaces with a one-line track-3 ledger. The
+// behaviour under test (a restored non-harvest draft still reaches the session ledger, because
+// sessionRow is gated on isHarvest) is arm-independent, so it is ALSO asserted on the shipped arm at
+// the bottom of this file — pinning here without that would have moved the only coverage of a live
+// behaviour onto the rollback path.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   PROJECTS_HIDDEN: false,
   PLANTING_REQUIRED_ENABLED: false,
+  WEIGH_IN_FRAME_ENABLED: false,
 }))
 
 import EventNew from '../pages/EventNew.jsx'
@@ -284,5 +291,46 @@ describe('BUG-SESSIONDRAFTRESTORE-001 controls — the draft stash is untouched 
     expect(screen.queryByTestId('harvest-session-lock')).toBeNull()
     await saveWith()
     expect(postCalls[0].notes).toBe('half a can on the peppers')
+  })
+})
+
+// ── The same claim on the SHIPPED arm ───────────────────────────────────
+// Everything above reads `harvest-session-strip`, which WEIGH_IN_FRAME_ENABLED=false pins to the
+// rollback surface. The behaviour under test — a parked non-harvest draft is coerced into a clean
+// harvest that still REACHES the session ledger, because sessionRow is gated on isHarvest — is
+// arm-independent, so leaving it only on the rollback path would mean the live weigh-in has no
+// statement about it at all. On the frame the ledger is track 3's one-line summary.
+describe('BUG-SESSIONDRAFTRESTORE-001 — the save reaches the SHIPPED frame ledger too', () => {
+  async function mountFrame(url) {
+    vi.resetModules()
+    vi.doMock('../lib/featureFlags.js', async (importOriginal) => ({
+      ...(await importOriginal()),
+      PROJECTS_HIDDEN: false, PLANTING_REQUIRED_ENABLED: false, WEIGH_IN_FRAME_ENABLED: true,
+    }))
+    const { default: EventNewFrame } = await import('../pages/EventNew.jsx')
+    // Same fresh module graph, or ToastProvider is a different context object entirely.
+    const { ToastProvider: FreshToastProvider } = await import('../context/ToastContext.jsx')
+    const utils = render(
+      <MemoryRouter initialEntries={[url]}>
+        <Routes><Route path="/log" element={<FreshToastProvider><EventNewFrame /></FreshToastProvider>} /></Routes>
+      </MemoryRouter>
+    )
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
+    await act(async () => { await Promise.resolve() })
+    return utils
+  }
+
+  afterEach(() => { vi.doUnmock('../lib/featureFlags.js'); vi.resetModules() })
+
+  it.each(ENTRY_POINTS)('via %s', async (_name, url) => {
+    writeDraft(EVENTNEW_DRAFT_KEY, WATERING_DRAFT)
+    await mountFrame(url)
+    // Non-vacuity: this must be the frame, not the strip the block above already covers.
+    expect(screen.getByTestId('weigh-frame')).toBeTruthy()
+    expect(screen.queryByTestId('harvest-session-strip')).toBeNull()
+    await saveWith({ qty: '4' })
+    expect(postCalls[0].event_type).toBe('harvest')
+    // The one-line ledger names the count; 'nothing logged yet' is what a lost row would read as.
+    expect(screen.getByTestId('weigh-frame-log-toggle').textContent).toContain('1 ·')
   })
 })
