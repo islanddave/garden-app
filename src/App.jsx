@@ -64,21 +64,27 @@ import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { DismissRegistryProvider } from './context/DismissRegistry.jsx'
 import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED, CRITTERS_QUIET } from './lib/featureFlags.js'
+import { loadCollectionChunk, peekCollectionChunk } from './lib/collectionChunk.js'
 
-// V4-COLLECTIONSPLIT-001 — the ONE lazy route. Every other page above is a static import on purpose:
-// they share components, so splitting them fragments the critical path into extra requests for no
-// byte win. Collection.jsx is the exception — critters-roster.json (39KB) and CritterOfDay.jsx are
-// single-owner subgraphs no other route reaches, so this import boundary moves real bytes off the
-// Android boot path while the critical path stays a SINGLE file.
+// V4-COLLECTIONSPLIT-001 — the ONE split route. Every other page above is a static import on
+// purpose: they share components, so splitting them fragments the critical path into extra requests
+// for no byte win. Collection.jsx is the exception — critters-roster.json (39KB) and CritterOfDay.jsx
+// are single-owner subgraphs no other route reaches, so this import boundary moves real bytes off
+// the Android boot path while the critical path stays a SINGLE file.
 //
-// DO NOT convert this back to a static import. A static import here is re-bundled into the entry
-// chunk silently — the tests stay green and the feature still works, which is exactly the inert-
-// regression class this repo has been bitten by (V4-CIGUARD-002). App.collectionSplit.test.jsx
-// asserts at RUNTIME that this module is NOT evaluated at App module-eval time and IS reached when
-// /collection renders; a static import turns it red.
-const Collection = React.lazy(() => import('./pages/Collection.jsx'))
+// DO NOT convert this back to a static import of the page. A static import is re-bundled into the
+// entry chunk silently — the tests stay green and the feature still works, which is exactly the
+// inert-regression class this repo has been bitten by (V4-CIGUARD-002). The import() itself lives in
+// ./lib/collectionChunk.js (statically imported here, exactly as Collection.jsx statically imports
+// critterFactsLoader.js); App.collectionSplit.test.jsx asserts at RUNTIME that the PAGE module is
+// not evaluated at App module-eval time and IS reached when /collection renders.
+//
+// V4-LAZYRETRY-001 — and DO NOT convert it back to React.lazy either. That is what it was, and it
+// made a failed fetch unrecoverable: React caches a rejected lazy payload permanently on the
+// module-scope object, so no remount, re-key or boundary retry can ever issue a second request. The
+// full citation into the installed React source is in ./lib/collectionChunk.js.
 
-// Suspense fallback for the lazy route above. Deliberately quiet: the chunk is ~40KB gzip off a
+// Loading state for the split route below. Deliberately quiet: the chunk is ~40KB gzip off a
 // warm CDN, so a spinner would flash more often than it would inform.
 function ChunkFallback() {
   return <div role="status" aria-live="polite" data-testid="route-chunk-fallback" style={{ padding: '32px 20px', textAlign: 'center', color: '#7a7266' }}>Loading…</div>
@@ -116,6 +122,46 @@ function RouteFallback({ error, retry } = {}) {
       </button>
     </div>
   )
+}
+
+// V4-LAZYRETRY-001 — the /collection chunk boundary, and the ONLY route to the page module.
+//
+// Three states, and the middle one is the whole reason this component exists rather than a
+// <Suspense> wrapper: loaded → the page; attempt failed → RouteFallback, whose "Try again" bumps
+// `attempt` and drives a genuinely NEW import() through loadCollectionChunk(); in flight →
+// ChunkFallback. A React.lazy retry cannot reach the third case at all (see collectionChunk.js).
+//
+// The failure stays INSIDE the route's slot: nothing throws, so nothing reaches the app-level
+// boundary, and the shell — bottom nav included — survives a dead chunk. That matters more than it
+// sounds: the service worker serves the bundle cache-first, so a user who lost the app shell cannot
+// reload their way out of it.
+//
+// `useState(peekCollectionChunk)` is a lazy initialiser, so a warm module cache resolves at FIRST
+// render and navigating back to /collection does not re-flash the loading state.
+// Exported for App.collectionSplit.test.jsx, which asserts it is what the route table hands off to.
+export function CollectionRoute() {
+  const [Page, setPage] = React.useState(peekCollectionChunk)
+  const [attempt, setAttempt] = React.useState(0)
+  const [failed, setFailed] = React.useState(false)
+
+  React.useEffect(() => {
+    if (Page) return undefined
+    let alive = true
+    setFailed(false)
+    // Never rejects — loadCollectionChunk resolves null on failure, which is what keeps this off the
+    // error-boundary path. `alive` guards the unmount race; the loader's own inflight guard absorbs
+    // StrictMode's double invoke, so the two together never produce a duplicate fetch.
+    loadCollectionChunk().then((mod) => {
+      if (!alive) return
+      if (mod) setPage(() => mod)
+      else setFailed(true)
+    })
+    return () => { alive = false }
+  }, [Page, attempt])
+
+  if (Page) return <Page />
+  if (failed) return <RouteFallback retry={() => setAttempt((n) => n + 1)} />
+  return <ChunkFallback />
 }
 
 // V4-PERFCLERK-001 C — the render gate is SPLIT from the fetch gate.
@@ -276,9 +322,13 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/findings',      element: <Protected><Findings /></Protected> },
     { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Today /></ErrorBoundary></Protected> },
     { path: '/capture',       element: <Protected><CaptureFlow /></Protected> },
-    // V4-COLLECTIONSPLIT-001 — the Suspense boundary belongs HERE, at the route, not at the shell:
+    // V4-COLLECTIONSPLIT-001 — the loading boundary belongs HERE, at the route, not at the shell:
     // a shell-level boundary would blank TopChrome/BottomNav while the chunk lands.
-    { path: '/collection',    element: <Protected><React.Suspense fallback={<ChunkFallback />}><Collection /></React.Suspense></Protected> },
+    // V4-LAZYRETRY-001 — /collection was the ONE route with no boundary of its own, so a throw from
+    // it (chunk miss, or anything the page itself raises) reached the app-level boundary and blanked
+    // the whole PWA. Scoped like every sibling now. CollectionRoute already handles a failed CHUNK
+    // without throwing; this catches what it cannot — a runtime throw from inside the loaded page.
+    { path: '/collection',    element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><CollectionRoute /></ErrorBoundary></Protected> },
     { path: '/admin/classify', element: <Protected><ProjectsAdminClassify /></Protected> },
     { path: '/admin/garden-activity', element: <Protected><GardenActivity /></Protected> },
     // BUG-VOICEDUPE-002 raw Web Speech capture. Unlinked + Jen-invisible, same convention as
