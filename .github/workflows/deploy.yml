@@ -283,6 +283,23 @@ jobs:
         # Required vars must be set + 401; optional (varieties/app-events/achievements) loud-skip if unset (L-109).
         # One retry per check (sleep 3) absorbs Lambda cold-start / CF cold-edge flake. Read-only, so a
         # false-fail yields a red run but never a broken prod (S3+CF already updated by the steps above).
+        #
+        # CANARY HYGIENE (2026-08-26, BUG-TOKENLESS401-001). These probes originally sent NO
+        # Authorization header. That makes verifyToken log "Invalid JWT form", which is the exact
+        # pattern of the `tokenless-request-401` metric filter behind the `garden-tokenless-requests`
+        # alarm (Sum > 5 per 15min). TEN of the thirteen probes below land in that alarm's 19 log
+        # groups, so EVERY prod deploy tripped it — three pages on 2026-08-26 alone, none of them a
+        # real user. The canary could not be read at all: its own description claimed "every datapoint
+        # is a real user request", and excluding warmOrigins' four targets was necessary but not
+        # sufficient, because nobody enumerated this step as the second synthetic tokenless source.
+        # Fix: send a well-formed-but-garbage bearer token instead. Prod still answers 401 (verified
+        # live against garden-plants: "verifyToken failed: Unexpected end of data"), so every
+        # assertion above is unchanged, and the alarm stops counting our own deploys. Deliberately
+        # choose parts that do NOT base64-decode to valid JSON — the header parse then fails BEFORE
+        # any Clerk JWKS lookup, so this stays as fast and as network-free as the empty-token path.
+        # The three probes that are already OUTSIDE the alarm's log groups (plants / locations /
+        # inventory-items are warmOrigins targets) keep the header-less form, so the no-header -> 401
+        # path is still asserted on every deploy at zero canary cost.
         env:
           VITE_API_PROJECTS:     ${{ vars.VITE_API_PROJECTS }}
           VITE_API_PLANTS:       ${{ vars.VITE_API_PLANTS }}
@@ -304,8 +321,9 @@ jobs:
           set -uo pipefail
           SMOKE_FAIL=0
           SPA_URL="https://garden.futureishere.net"
+          SMOKE_TOKEN="ci.smoke.probe"
           probe_api() {
-            local label="$1" base="$2" entity="$3" required="$4"
+            local label="$1" base="$2" entity="$3" required="$4" auth="${5:-token}"
             if [[ -z "$base" ]]; then
               if [[ "$required" == "yes" ]]; then
                 echo "FAIL $label: REQUIRED var unset"; SMOKE_FAIL=$((SMOKE_FAIL+1))
@@ -316,29 +334,35 @@ jobs:
             fi
             local url="${base%/}/api/${entity}" code="000"
             for attempt in 1 2; do
-              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 --connect-timeout 10 "$url") || code="000"
+              if [[ "$auth" == "none" ]]; then
+                code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 --connect-timeout 10 "$url") || code="000"
+              else
+                code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 --connect-timeout 10 -H "Authorization: Bearer $SMOKE_TOKEN" "$url") || code="000"
+              fi
               [[ "$code" == "401" ]] && break
               [[ "$attempt" -eq 1 ]] && sleep 3
             done
             if [[ "$code" == "401" ]]; then
-              echo "PASS $label: HTTP 401 (auth gate live)"
+              echo "PASS $label: HTTP 401 (auth gate live, auth=$auth)"
             else
-              echo "FAIL $label: HTTP $code (expected 401) -> $url"; SMOKE_FAIL=$((SMOKE_FAIL+1))
+              echo "FAIL $label: HTTP $code (expected 401, auth=$auth) -> $url"; SMOKE_FAIL=$((SMOKE_FAIL+1))
             fi
           }
-          probe_api projects     "$VITE_API_PROJECTS"     projects        yes
-          probe_api plants       "$VITE_API_PLANTS"       plants          yes
-          probe_api locations    "$VITE_API_LOCATIONS"    locations       yes
-          probe_api events       "$VITE_API_EVENTS"       events          yes
-          probe_api favorites    "$VITE_API_FAVORITES"    favorites       yes
-          probe_api photos       "$VITE_API_PHOTOS"       photos          yes
-          probe_api dashboard    "$VITE_API_DASHBOARD"    dashboard       yes
-          probe_api inventory    "$VITE_API_INVENTORY"    inventory-items yes
-          probe_api varieties    "$VITE_API_VARIETIES"    varieties       no
-          probe_api app-events   "$VITE_API_APP_EVENTS"   app-events      no
-          probe_api achievements "$VITE_API_ACHIEVEMENTS" achievements    no
-          probe_api tags         "$VITE_API_TAGS"         tags            no
-          probe_api harvests     "$VITE_API_HARVESTS"     harvests        no
+          # auth=none is reserved for endpoints OUTSIDE the garden-tokenless-requests alarm's log
+          # groups. Moving any other probe to none re-arms the false positive this step just fixed.
+          probe_api projects     "$VITE_API_PROJECTS"     projects        yes token
+          probe_api plants       "$VITE_API_PLANTS"       plants          yes none
+          probe_api locations    "$VITE_API_LOCATIONS"    locations       yes none
+          probe_api events       "$VITE_API_EVENTS"       events          yes token
+          probe_api favorites    "$VITE_API_FAVORITES"    favorites       yes token
+          probe_api photos       "$VITE_API_PHOTOS"       photos          yes token
+          probe_api dashboard    "$VITE_API_DASHBOARD"    dashboard       yes token
+          probe_api inventory    "$VITE_API_INVENTORY"    inventory-items yes none
+          probe_api varieties    "$VITE_API_VARIETIES"    varieties       no  token
+          probe_api app-events   "$VITE_API_APP_EVENTS"   app-events      no  token
+          probe_api achievements "$VITE_API_ACHIEVEMENTS" achievements    no  token
+          probe_api tags         "$VITE_API_TAGS"         tags            no  token
+          probe_api harvests     "$VITE_API_HARVESTS"     harvests        no  token
           SPA_CODE="000"; SPA_BODY=""
           for attempt in 1 2; do
             SPA_BODY=$(curl -s --max-time 25 --connect-timeout 10 -w $'\n%{http_code}' "$SPA_URL/") || SPA_BODY=$'\n000'
