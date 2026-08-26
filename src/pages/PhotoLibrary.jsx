@@ -3,6 +3,7 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import PhotoView from '../components/photo/PhotoView.jsx'
@@ -631,9 +632,9 @@ export default function PhotoLibrary() {
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '28px 16px 60px' }}>
 
         {/* ── Header ── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: T.space.lg }}>
           <div>
-            <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
+            <div style={{ fontSize: T.type.sm, color: P.light, marginBottom: 8 }}>
               <Link to="/dashboard" style={{ color: P.green, textDecoration: 'none' }}>Dashboard</Link>
               {' › Photos'}
             </div>
@@ -649,22 +650,22 @@ export default function PhotoLibrary() {
             <Link
               to="/photos/deleted"
               style={{
-                display: 'inline-flex', alignItems: 'center', minHeight: 44,
+                display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
                 color: P.mid, fontSize: '0.84rem', fontWeight: 600, textDecoration: 'none',
               }}
             >
               Recently deleted
             </Link>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: T.space.lg }}>
             {photos.length > 0 && fbShareEnabled && (
               <button
                 onClick={() => (selectMode ? exitSelectMode() : enterSelectMode())}
                 style={{
                   backgroundColor: selectMode ? P.light : P.white,
                   color: selectMode ? P.white : P.green,
-                  border: `1px solid ${selectMode ? P.light : P.green}`, borderRadius: 8,
-                  padding: '10px 16px', fontSize: '0.88rem', fontWeight: 700, cursor: 'pointer',
+                  border: `1px solid ${selectMode ? P.light : P.green}`, borderRadius: T.radiusButton,
+                  padding: '10px 16px', fontSize: T.type.sm2, fontWeight: 700, cursor: 'pointer',
                 }}
               >
                 {selectMode ? 'Cancel' : 'Select'}
@@ -674,8 +675,8 @@ export default function PhotoLibrary() {
               onClick={() => { setShowUpload(s => !s); setUploadErr(null) }}
               style={{
                 backgroundColor: showUpload ? P.light : P.green,
-                color: P.white, border: 'none', borderRadius: 8,
-                padding: '10px 16px', fontSize: '0.88rem', fontWeight: 700, cursor: 'pointer',
+                color: P.white, border: 'none', borderRadius: T.radiusButton,
+                padding: '10px 16px', fontSize: T.type.sm2, fontWeight: 700, cursor: 'pointer',
               }}
             >
               {showUpload ? 'Cancel' : '+ Upload'}
@@ -687,9 +688,9 @@ export default function PhotoLibrary() {
         {showUpload && (
           <div style={{
             backgroundColor: P.white, border: `1px solid ${P.border}`,
-            borderRadius: 10, padding: 18, marginBottom: 20,
+            borderRadius: T.radiusCard, padding: 18, marginBottom: T.space.lg,
           }}>
-            <h2 style={{ margin: '0 0 14px', fontSize: '0.95rem', fontWeight: 700, color: P.mid }}>
+            <h2 style={{ margin: '0 0 14px', fontSize: T.type.md, fontWeight: 700, color: P.mid }}>
               Upload standalone photo
             </h2>
             {uploadErr && <ErrBanner msg={uploadErr} />}
@@ -706,28 +707,28 @@ export default function PhotoLibrary() {
               />
               {/* V4-HIDECAPTURE-001: the pl-stage-take arm is removed; Choose is the only entry. */}
               {!stagedPreview ? (
-                <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ display: 'flex', gap: T.space.sm }}>
                   <button type="button" data-testid="pl-stage-choose" onClick={openStagedPicker}
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }}>
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: T.radiusButton, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: T.type.sm2, fontWeight: 600 }}>
                     <span style={{ fontSize: '1.3rem' }}>🖼️</span><span>Choose photo</span>
                   </button>
                 </div>
               ) : (
                 <div>
                   <img src={stagedPreview} alt="Upload preview" data-testid="pl-staged-preview"
-                    style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
+                    style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: T.radiusCard, display: 'block' }} />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
                     <button type="button" data-testid="pl-stage-replace" onClick={openStagedPicker}
-                      style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
+                      style={{ border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
                       Change photo
                     </button>
                     <button type="button" data-testid="pl-stage-clear" onClick={clearStaged}
-                      style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
+                      style={{ border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
                       Remove
                     </button>
                   </div>
                   {/* Now — and only now — ask where it goes. This ordering IS the fix. */}
-                  <p style={{ margin: '10px 0 0', fontSize: '0.82rem', color: P.mid }}>
+                  <p style={{ margin: '10px 0 0', fontSize: T.type.sm, color: P.mid }}>
                     Where does this one go?
                   </p>
                 </div>
@@ -808,8 +809,8 @@ export default function PhotoLibrary() {
                 disabled={!stagedFile || targetMissing || uploading}
                 style={{
                   backgroundColor: (!stagedFile || targetMissing) ? P.light : P.green,
-                  color: P.white, border: 'none', borderRadius: 8, padding: '12px 16px',
-                  fontSize: '0.9rem', fontWeight: 700, minHeight: 44,
+                  color: P.white, border: 'none', borderRadius: T.radiusButton, padding: '12px 16px',
+                  fontSize: T.type.base, fontWeight: 700, minHeight: T.tapMinHeight,
                   cursor: (!stagedFile || targetMissing || uploading) ? 'not-allowed' : 'pointer',
                   opacity: uploading ? 0.7 : 1,
                 }}
@@ -821,7 +822,7 @@ export default function PhotoLibrary() {
         )}
 
         {/* ── Filters ── */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: T.space.md, flexWrap: 'wrap', alignItems: 'center' }}>
           {[
             { mode: 'all',        label: 'All' },
             // V4-PHOTOTODAYFILTER-001: first, because it is the one people reach for. The IG
@@ -838,7 +839,7 @@ export default function PhotoLibrary() {
                 key={mode}
                 onClick={() => { setFilterMode(mode); setFilterProject(''); selectLocationFilter('') }}
                 style={{
-                  padding: '6px 14px', borderRadius: 20, fontSize: '0.82rem', fontWeight: 600,
+                  padding: '6px 14px', borderRadius: T.radiusPill, fontSize: T.type.sm, fontWeight: 600,
                   cursor: 'pointer',
                   border: `1px solid ${active ? P.green : P.border}`,
                   backgroundColor: active ? P.greenPale : P.white,
@@ -858,7 +859,7 @@ export default function PhotoLibrary() {
             onChange={e => { setFilterProject(e.target.value); selectLocationFilter(''); setFilterMode('all') }}
             style={{
               ...selectStyle,
-              fontSize: '0.82rem', padding: '6px 30px 6px 10px',
+              fontSize: T.type.sm, padding: '6px 30px 6px 10px',
               maxWidth: 200, flexShrink: 1,
               border: filterProject ? `1px solid ${P.green}` : `1px solid ${P.border}`,
               backgroundColor: filterProject ? P.greenPale : P.white,
@@ -875,7 +876,7 @@ export default function PhotoLibrary() {
             onChange={e => { selectLocationFilter(e.target.value); setFilterProject(''); setFilterMode('all') }}
             style={{
               ...selectStyle,
-              fontSize: '0.82rem', padding: '6px 30px 6px 10px',
+              fontSize: T.type.sm, padding: '6px 30px 6px 10px',
               maxWidth: 200, flexShrink: 1,
               border: filterLocation ? `1px solid ${P.green}` : `1px solid ${P.border}`,
               backgroundColor: filterLocation ? P.greenPale : P.white,
@@ -888,7 +889,7 @@ export default function PhotoLibrary() {
 
         {/* ── Grid ── */}
         {loading ? (
-          <p style={{ color: P.light, fontSize: '0.9rem' }}>Loading…</p>
+          <p style={{ color: P.light, fontSize: T.type.base }}>Loading…</p>
         ) : error ? (
           <AsyncRegion
             error={photoLoadErrorMessage(error, 'the gallery')}
@@ -898,8 +899,8 @@ export default function PhotoLibrary() {
         ) : photos.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '48px 16px', color: P.light }}>
             <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📷</div>
-            <p style={{ margin: 0, fontSize: '0.9rem' }}>No photos yet.</p>
-            <p style={{ margin: '6px 0 0', fontSize: '0.82rem' }}>Upload your first one above.</p>
+            <p style={{ margin: 0, fontSize: T.type.base }}>No photos yet.</p>
+            <p style={{ margin: '6px 0 0', fontSize: T.type.sm }}>Upload your first one above.</p>
           </div>
         ) : (
           // V3-PHOTODBG-001 (4/4): the grid render is wrapped in an ErrorBoundary so a render-time
@@ -923,8 +924,8 @@ export default function PhotoLibrary() {
             {shown < photos.length && (
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
                 <button type="button" onClick={() => setShown(s => s + PAGE)}
-                  style={{ background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: 8,
-                           padding: '11px 20px', fontSize: '0.88rem', fontWeight: 700, cursor: 'pointer', minHeight: 44 }}>
+                  style={{ background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: T.radiusButton,
+                           padding: '11px 20px', fontSize: T.type.sm2, fontWeight: 700, cursor: 'pointer', minHeight: T.tapMinHeight }}>
                   Show more ({photos.length - shown} left)
                 </button>
               </div>
@@ -994,12 +995,12 @@ export default function PhotoLibrary() {
         // cannot flicker an unmounting bar back under a finger mid-gesture. `visibility: hidden`
         // already drops the subtree from the a11y tree and the tab order, so no aria-hidden.
         <div data-testid="pl-select-bar" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 150, background: P.white, borderTop: `1px solid ${P.border}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, boxShadow: '0 -2px 10px rgba(0,0,0,0.08)', visibility: uploadPickerOpen ? 'hidden' : 'visible', pointerEvents: uploadPickerOpen ? 'none' : 'auto' }}>
-          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: P.mid }}>{selectionCount} selected</span>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            {selectionOverMax && <span style={{ fontSize: '0.72rem', color: P.terra }}>{`Max ${MAX_SHARE_PHOTOS}`}</span>}
-            <button type="button" onClick={exitSelectMode} style={{ background: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 8, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+          <span style={{ fontSize: T.type.base, fontWeight: 700, color: P.mid }}>{selectionCount} selected</span>
+          <div style={{ display: 'flex', gap: T.space.sm, alignItems: 'center' }}>
+            {selectionOverMax && <span style={{ fontSize: T.type.xs, color: P.terra }}>{`Max ${MAX_SHARE_PHOTOS}`}</span>}
+            <button type="button" onClick={exitSelectMode} style={{ background: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
             <button type="button" onClick={() => openShare(selectedPhotos)} disabled={selectionOverMax}
-              style={{ background: selectionOverMax ? P.light : P.green, color: P.white, border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 700, cursor: selectionOverMax ? 'default' : 'pointer' }}>
+              style={{ background: selectionOverMax ? P.light : P.green, color: P.white, border: 'none', borderRadius: T.radiusButton, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 700, cursor: selectionOverMax ? 'default' : 'pointer' }}>
               Post to Facebook
             </button>
           </div>
@@ -1031,7 +1032,7 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
       style={{
         background: 'none',
         border: selected ? `2px solid ${P.green}` : `1px solid ${P.border}`,
-        borderRadius: 8, overflow: 'hidden', cursor: 'pointer', padding: 0, textAlign: 'left',
+        borderRadius: T.radiusButton, overflow: 'hidden', cursor: 'pointer', padding: 0, textAlign: 'left',
       }}
     >
       <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: P.photoPlaceholder }}>
@@ -1053,7 +1054,7 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
             position: 'absolute', top: 6, left: 6, width: 22, height: 22, borderRadius: '50%',
             border: `2px solid ${P.white}`, backgroundColor: selected ? P.green : 'rgba(0,0,0,0.35)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: P.white, fontSize: '0.75rem', fontWeight: 700,
+            color: P.white, fontSize: T.type.xs2, fontWeight: 700,
           }}>{selected ? '✓' : ''}</span>
         )}
         {!photo.event_id && (
@@ -1149,7 +1150,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           the sticky photo (z30 beats the header's z1) instead of being cut at the body's top edge.
           Explicit white background on the header: content now scrolls UNDER it. */}
       <div data-testid="pl-modal-card" style={{
-        backgroundColor: P.white, borderRadius: 12,
+        backgroundColor: P.white, borderRadius: T.radiusBadge,
         maxWidth: 480, width: '100%', maxHeight: '90dvh', overflowY: 'auto',
       }}>
 
@@ -1166,7 +1167,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
               position: 'absolute', top: 10, right: 10,
               background: 'rgba(0,0,0,0.55)', color: P.onPhotoFg,
               border: 'none', borderRadius: '50%', width: 30, height: 30,
-              cursor: 'pointer', fontSize: '0.9rem',
+              cursor: 'pointer', fontSize: T.type.base,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >✕</button>
@@ -1178,24 +1179,24 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           {/* V4-PHOTOCAPTION-001: static caption only where there is no editable field (event-attached
               photos have no tag form); on the form the input below owns the caption. */}
           {hasEvent && photo.caption && (
-            <p style={{ margin: '0 0 12px', fontSize: '0.88rem', color: P.mid }}>{photo.caption}</p>
+            <p style={{ margin: '0 0 12px', fontSize: T.type.sm2, color: P.mid }}>{photo.caption}</p>
           )}
 
           {onShare && (
             <button type="button" onClick={onShare}
-              style={{ width: '100%', marginBottom: 14, background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: 8, padding: '11px', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer' }}>
+              style={{ width: '100%', marginBottom: 14, background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: T.radiusButton, padding: '11px', fontSize: T.type.base, fontWeight: 700, cursor: 'pointer' }}>
               Share to Facebook
             </button>
           )}
 
           {hasEvent ? (
-            <div style={{ backgroundColor: P.cream, borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ backgroundColor: P.cream, borderRadius: T.radiusButton, padding: '10px 12px' }}>
               <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
                 Attached to an event — tags are managed via the event log.
               </p>
             </div>
           ) : (
-            <form onSubmit={onSave} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <form onSubmit={onSave} style={{ display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
               <p style={{ margin: '0 0 4px', fontSize: '0.77rem', fontWeight: 700, color: P.mid, letterSpacing: '0.4px', textTransform: 'uppercase' }}>
                 Tags
               </p>
@@ -1288,10 +1289,10 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                 disabled={tagging}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: '100%', minHeight: 44,
+                  width: '100%', minHeight: T.tapMinHeight,
                   background: 'transparent', color: P.terra,
-                  border: `1px solid ${P.border}`, borderRadius: 8,
-                  fontSize: '0.88rem', fontWeight: 700,
+                  border: `1px solid ${P.border}`, borderRadius: T.radiusButton,
+                  fontSize: T.type.sm2, fontWeight: 700,
                   cursor: tagging ? 'not-allowed' : 'pointer',
                   opacity: tagging ? 0.6 : 1,
                 }}
@@ -1310,8 +1311,8 @@ function ErrBanner({ msg }) {
   return (
     <div style={{
       backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
-      borderRadius: 8, padding: '10px 14px', marginBottom: 8,
-      fontSize: '0.82rem', color: P.bannerInk,
+      borderRadius: T.radiusButton, padding: '10px 14px', marginBottom: 8,
+      fontSize: T.type.sm, color: P.bannerInk,
     }}>
       {msg}
     </div>
@@ -1345,21 +1346,21 @@ function PhotoModalErrorFallback({ retry, onClose }) {
       }}
     >
       <div style={{
-        backgroundColor: P.white, borderRadius: 12, maxWidth: 420, width: '100%',
+        backgroundColor: P.white, borderRadius: T.radiusBadge, maxWidth: 420, width: '100%',
         padding: '24px 22px', textAlign: 'center',
       }}>
-        <div style={{ fontSize: '2rem', marginBottom: 10 }}>⚠️</div>
-        <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '0.95rem' }}>
+        <div style={{ fontSize: '2rem', marginBottom: T.space.sm }}>⚠️</div>
+        <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: T.type.md }}>
           This photo couldn’t open
         </p>
         <p style={{ margin: '0 0 18px', color: P.mid, fontSize: '0.85rem' }}>
           Something went wrong loading the tag editor. Your photo is safe — try again, or close and reopen it.
         </p>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+        <div style={{ display: 'flex', gap: T.space.sm, justifyContent: 'center' }}>
           <button type="button" onClick={retry} style={primaryBtn(false)}>Try again</button>
           <button type="button" onClick={onClose} style={{
             backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}`,
-            borderRadius: 8, padding: '11px 24px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer',
+            borderRadius: T.radiusButton, padding: '11px 24px', fontSize: T.type.base, fontWeight: 600, cursor: 'pointer',
           }}>Close</button>
         </div>
       </div>
@@ -1369,13 +1370,13 @@ function PhotoModalErrorFallback({ retry, onClose }) {
 
 const fieldLabelStyle = {
   display: 'block', fontSize: '0.77rem', fontWeight: 700,
-  color: P.mid, marginBottom: 5, letterSpacing: '0.4px', textTransform: 'uppercase',
+  color: P.mid, marginBottom: T.space.xs, letterSpacing: '0.4px', textTransform: 'uppercase',
 }
 
 const inputStyle = {
   width: '100%', padding: '10px 12px',
   border: `1px solid ${P.border}`,
-  borderRadius: 7, fontSize: '0.9rem',
+  borderRadius: T.radiusField, fontSize: T.type.base,
   backgroundColor: P.white, boxSizing: 'border-box', fontFamily: 'inherit',
 }
 
@@ -1393,7 +1394,7 @@ const selectStyle = {
 
 const primaryBtn = (disabled) => ({
   backgroundColor: disabled ? P.light : P.green,
-  color: P.white, border: 'none', borderRadius: 8,
-  padding: '11px 24px', fontSize: '0.9rem', fontWeight: 700,
+  color: P.white, border: 'none', borderRadius: T.radiusButton,
+  padding: '11px 24px', fontSize: T.type.base, fontWeight: 700,
   cursor: disabled ? 'not-allowed' : 'pointer',
 })

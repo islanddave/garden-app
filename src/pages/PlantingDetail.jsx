@@ -45,6 +45,7 @@ import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { resolvePager, resolveSwipe } from '../lib/plantingSequence.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import Icon from '../components/Icon.jsx'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
@@ -477,13 +478,13 @@ export default function PlantingDetail() {
       <Shell>
         <Breadcrumb path={[{ label: 'Home', href: '/dashboard' }, { label: 'Planting', href: null }]} />
         <div style={{ ...cardStyle, textAlign: 'center', padding: '40px 24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: T.space.sm }}>
             <Icon name="lifecycle.sprout" size={40} decorative style={{ color: P.greenLight }} />
           </div>
-          <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
+          <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: T.type.lg }}>
             Planting not found
           </p>
-          <p style={{ margin: '0 0 20px', color: P.light, fontSize: '0.88rem' }}>
+          <p style={{ margin: '0 0 20px', color: P.light, fontSize: T.type.sm2 }}>
             This planting no longer exists, or it isn’t part of this project.
           </p>
           <Link to={projectId ? `/projects/${projectId}` : '/garden'} style={btnLink}>
@@ -500,7 +501,7 @@ export default function PlantingDetail() {
       <Shell>
         <Breadcrumb path={[{ label: 'Home', href: '/dashboard' }, { label: 'Planting', href: null }]} />
         <div style={{ ...cardStyle, textAlign: 'center', padding: '40px 24px' }}>
-          <p style={{ margin: '0 0 16px', color: P.terra, fontSize: '0.9rem' }}>{error}</p>
+          <p style={{ margin: '0 0 16px', color: P.terra, fontSize: T.type.base }}>{error}</p>
           <Link to={projectId ? `/projects/${projectId}` : '/garden'} style={btnLink}>
             Back to {projectId ? 'project' : 'garden'}
           </Link>
@@ -625,7 +626,7 @@ export default function PlantingDetail() {
     ['Variety', variety],
     ['Botanical', botanical ? (botanical.italic ? <i>{botanical.text}</i> : botanical.text) : null],
     ['Location', pl.location_path
-      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: T.space.xs }}>
           <Icon name="facet.location" size={15} decorative style={{ color: P.light }} />{pl.location_path}
         </span>
       : null],
@@ -784,17 +785,17 @@ export default function PlantingDetail() {
       {/* Secondary affordances row — Archive + Log + Edit, plus (archived) the badge and Unarchive.
           Primary name/status live ON the hero; the Favorite is the single hero heart now (dup
           removed), and the caretaker control moved below the Event log. */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10,
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: T.space.sm,
         flexWrap: 'wrap', margin: '10px 0 14px' }}>
         {pl.archived_at && (
-          <span style={{ backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`, fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600, marginRight: 'auto' }}>
+          <span style={{ backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`, fontSize: T.type.xs2, padding: '3px 10px', borderRadius: T.radiusBadge, fontWeight: 600, marginRight: 'auto' }}>
             Archived
           </span>
         )}
         {pl.archived_at && (
           <button onClick={handleUnarchive} disabled={unarchiving} aria-label="Unarchive this planting"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: P.white, color: P.green,
-              border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '8px 14px', fontSize: '0.85rem',
+              border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton, padding: '8px 14px', fontSize: '0.85rem',
               fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
             <Icon name="action.archive" size={16} decorative style={{ color: P.green }} />
             {unarchiving ? 'Working…' : 'Unarchive'}
@@ -820,9 +821,9 @@ export default function PlantingDetail() {
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               backgroundColor: P.white, color: P.mid,
-              border: `1px solid ${P.border}`, borderRadius: 8,
+              border: `1px solid ${P.border}`, borderRadius: T.radiusButton,
               padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-              minHeight: 44, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+              minHeight: T.tapMinHeight, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
             }}
           >
             <Icon name="action.archive" size={16} decorative style={{ color: P.mid }} />
@@ -848,9 +849,9 @@ export default function PlantingDetail() {
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             backgroundColor: P.white, color: P.green,
-            border: `1px solid ${P.greenLight}`, borderRadius: 8,
+            border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
             padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-            minHeight: 44, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+            minHeight: T.tapMinHeight, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
           }}
         >
           <Icon name="nav.plus" size={16} decorative style={{ color: P.green }} />
@@ -868,9 +869,9 @@ export default function PlantingDetail() {
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             backgroundColor: editing ? P.greenLight : P.white, color: P.green,
-            border: `1px solid ${P.greenLight}`, borderRadius: 8,
+            border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
             padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-            minHeight: 44, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+            minHeight: T.tapMinHeight, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
           }}
         >
           <Icon name="action.edit" size={16} decorative style={{ color: P.green }} />
@@ -1049,7 +1050,7 @@ export default function PlantingDetail() {
             when the crop key resolves, since the destination is filtered by crop_type_slug. */}
         {pl.variety_ref?.crop_type_slug && (
           <div style={{ marginTop: 12, textAlign: 'right' }}>
-            <Link to={`/harvests?crop=${encodeURIComponent(pl.variety_ref.crop_type_slug)}`} style={{ color: P.green, textDecoration: 'none', fontSize: '0.82rem', fontWeight: 700 }}>
+            <Link to={`/harvests?crop=${encodeURIComponent(pl.variety_ref.crop_type_slug)}`} style={{ color: P.green, textDecoration: 'none', fontSize: T.type.sm, fontWeight: 700 }}>
               All harvests →
             </Link>
           </div>
@@ -1078,14 +1079,14 @@ export default function PlantingDetail() {
           <SectionHeader>
             Photos
             {!photosLoading && photos.length > 0 && (
-              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>({photos.length})</span>
+              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: T.type.sm, color: P.light }}>({photos.length})</span>
             )}
           </SectionHeader>
           <div style={cardStyle}>
             {photosLoading ? (
               <div style={{ padding: '8px 0', color: P.light, fontSize: '0.875rem' }}>Loading photos…</div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: T.space.sm }}>
                 {photos.map((ph, i) => (
                   <figure key={ph.id} style={{ margin: 0 }}>
                     <button
@@ -1098,11 +1099,11 @@ export default function PlantingDetail() {
                         photoId={ph.id}
                         initialUrl={ph.view_url}
                         alt={ph.caption || `${name} photo`}
-                        style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 8, border: `1px solid ${P.border}`, display: 'block' }}
+                        style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: T.radiusButton, border: `1px solid ${P.border}`, display: 'block' }}
                       />
                     </button>
                     {ph.caption && (
-                      <figcaption style={{ marginTop: 4, fontSize: '0.72rem', color: P.light, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      <figcaption style={{ marginTop: 4, fontSize: T.type.xs, color: P.light, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                         {ph.caption}
                       </figcaption>
                     )}
@@ -1126,7 +1127,7 @@ export default function PlantingDetail() {
       <SectionHeader>
         Event log
         {!eventsLoading && !eventsError && events.length > 0 && (
-          <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>({events.length})</span>
+          <span style={{ marginLeft: 8, fontWeight: 400, fontSize: T.type.sm, color: P.light }}>({events.length})</span>
         )}
       </SectionHeader>
       <div style={cardStyle}>
@@ -1149,7 +1150,7 @@ export default function PlantingDetail() {
                 <span aria-hidden="true" style={{
                   width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
                   backgroundColor: P.cream, border: `1px solid ${P.border}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: T.type.md,
                 }}>
                   <Icon name={`event.${ev.event_type}`} size={18} decorative style={{ color: P.green }} />
                 </span>
@@ -1158,13 +1159,13 @@ export default function PlantingDetail() {
                     {ev.title || (ev.event_type || '').replace(/_/g, ' ')}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginTop: 1 }}>
-                    <span style={{ fontSize: '0.75rem', color: P.light }}>
+                    <span style={{ fontSize: T.type.xs2, color: P.light }}>
                       {fmtDate(ev.event_date) ?? ''}
                     </span>
                     <HarvestWeightChip entry={harvestByEvent?.get(ev.id)} />
                   </div>
                   {ev.notes && (
-                    <p style={{ margin: '4px 0 0', color: P.mid, fontSize: '0.82rem', lineHeight: 1.5 }}>{ev.notes}</p>
+                    <p style={{ margin: '4px 0 0', color: P.mid, fontSize: T.type.sm, lineHeight: 1.5 }}>{ev.notes}</p>
                   )}
                 </div>
               </Link>
@@ -1178,7 +1179,7 @@ export default function PlantingDetail() {
                 data-testid="event-log-show-more"
                 onClick={() => setEventsShown(n => n + EVENT_PAGE_SIZE)}
                 style={{
-                  marginTop: 4, minHeight: 44, width: '100%',
+                  marginTop: 4, minHeight: T.tapMinHeight, width: '100%',
                   backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`,
                   borderRadius: 6, fontSize: '0.85rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
                 }}
@@ -1235,14 +1236,14 @@ export default function PlantingDetail() {
                 details recorded yet." would hide the raw record on precisely the sparse planting whose
                 raw record you opened this tab to read. */}
             {tabsEmpty && tab !== 'all' ? (
-              <p style={{ margin: 0, color: P.light, fontSize: '0.88rem' }}>No additional details recorded yet.</p>
+              <p style={{ margin: 0, color: P.light, fontSize: T.type.sm2 }}>No additional details recorded yet.</p>
             ) : activeRows.length === 0 ? (
-              <p style={{ margin: 0, color: P.light, fontSize: '0.88rem' }}>Nothing recorded yet.</p>
+              <p style={{ margin: 0, color: P.light, fontSize: T.type.sm2 }}>Nothing recorded yet.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 {activeRows.map(([label, value]) => (
                   <div key={label}>
-                    <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    <div style={{ fontSize: T.type.xs, fontWeight: 600, color: P.light, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       {label}
                     </div>
                     {/* Raw values go monospace at a smaller size: it signals "this is the record, not
@@ -1331,7 +1332,7 @@ function HarvestWeightChip({ entry }) {
   if (wt.state === 'none') {
     if (!hasQty) return null
     return (
-      <span data-testid="harvest-weight-none" title={NO_WEIGHT_COPY} style={{ fontSize: '0.72rem', color: P.light, whiteSpace: 'nowrap' }}>
+      <span data-testid="harvest-weight-none" title={NO_WEIGHT_COPY} style={{ fontSize: T.type.xs, color: P.light, whiteSpace: 'nowrap' }}>
         no weight yet
       </span>
     )
@@ -1370,7 +1371,7 @@ function HarvestWeightChip({ entry }) {
         // "title/aria-label keep the FULL sentence", and this is what makes the aria half true.
         role="img"
         aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
-        style={{ fontSize: '0.72rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
+        style={{ fontSize: T.type.xs, fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
       >
         {wt.estimated ? `≈ ${wt.text}` : wt.text}
       </span>
@@ -1401,21 +1402,21 @@ function PlantingWeightTotal({ total }) {
   if (parts.length === 0) return null  // no harvests at all — the section above already says so
   const anyWeight = total.text != null
   return (
-    <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${P.border}` }}>
+    <div style={{ marginTop: 12, paddingTop: T.space.sm, borderTop: `1px solid ${P.border}` }}>
       {anyWeight ? (
         <div
           data-testid="planting-weight-total"
           // role="img" (V4-A11YGATE-001) — same discarded-label class as the row above.
           role="img"
           aria-label={`${total.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${total.text}`}
-          style={{ fontSize: '0.95rem', fontWeight: 700, color: P.green }}
+          style={{ fontSize: T.type.md, fontWeight: 700, color: P.green }}
         >
           {total.estimated > 0 ? `≈ ${total.text}` : total.text}
         </div>
       ) : (
         <div data-testid="planting-weight-none" style={{ fontSize: '0.85rem', color: P.light }}>{NO_WEIGHT_COPY}</div>
       )}
-      <div data-testid="planting-weight-basis" style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>
+      <div data-testid="planting-weight-basis" style={{ fontSize: T.type.xs2, color: P.light, marginTop: 2 }}>
         {parts.join(' · ')}
       </div>
     </div>
@@ -1429,7 +1430,7 @@ function SectionHeader({ children }) {
     <h2 style={{
       position: 'sticky', top: 52, zIndex: 2,
       margin: '24px 0 12px', padding: '6px 0',
-      fontSize: '0.95rem', fontWeight: 700, color: P.dark,
+      fontSize: T.type.md, fontWeight: 700, color: P.dark,
       backgroundColor: P.cream,
     }}>
       {children}
@@ -1445,18 +1446,18 @@ function Shell({ children }) {
   )
 }
 
-const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24 }
-const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, display: 'inline-block' }
+const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: 24 }
+const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: T.type.sm2, fontWeight: 600, display: 'inline-block' }
 // V4-PLANTINGRAWDETAIL-001 — the Details value cell, hoisted out of the JSX now that the All tab
 // needs a second variant. detailValueStyle is byte-identical to the inline object it replaces.
-const detailValueStyle = { fontSize: '0.9rem', color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }
+const detailValueStyle = { fontSize: T.type.base, color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }
 const rawValueStyle = {
   ...detailValueStyle, fontSize: '0.8rem',
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
 }
 const pagerBar = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, margin: '0 0 12px' }
 const pagerBtn = {
-  width: 44, height: 44, minWidth: 44, borderRadius: 8, border: `1px solid ${P.greenLight}`,
+  width: 44, height: 44, minWidth: 44, borderRadius: T.radiusButton, border: `1px solid ${P.greenLight}`,
   background: P.white, color: P.green, fontSize: '1.4rem', lineHeight: 1, cursor: 'pointer',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
 }

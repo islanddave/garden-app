@@ -25,6 +25,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, useId } from 
 import { useVarieties } from '../hooks/useVarieties.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import {
   useComboboxInput, looseIncludes, looseKey,
   kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingStyle,
@@ -492,7 +493,7 @@ export default function VarietyPicker({
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={chipStyle(disabled)} aria-live="polite">
-          <span style={{ fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
+          <span style={{ fontSize: T.type.sm2, fontWeight: 600, color: P.green }}>
             {value.name}
           </span>
           {cl && (
@@ -766,7 +767,7 @@ export default function VarietyPicker({
               onMouseEnter={() => setHighlight(NO_CROP_ROW)}
               style={rowStyle(highlight === NO_CROP_ROW)}
             >
-              <span style={{ color: P.light, fontStyle: 'italic', fontSize: '0.88rem' }}>
+              <span style={{ color: P.light, fontStyle: 'italic', fontSize: T.type.sm2 }}>
                 — No crop type —
               </span>
             </li>
@@ -781,7 +782,7 @@ export default function VarietyPicker({
                 style={rowStyle(highlight === i + 2)}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                  <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{ct.display_name}</span>
+                  <span style={{ fontWeight: 600, color: P.dark, fontSize: T.type.base }}>{ct.display_name}</span>
                   {ct.category && (
                     <span style={{ fontSize: '0.7rem', color: P.light, textTransform: 'capitalize' }}>{ct.category}</span>
                   )}
@@ -835,7 +836,7 @@ export default function VarietyPicker({
                     style={rowStyle(highlight === i)}
                   >
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
+                      <span style={{ fontWeight: 600, color: P.dark, fontSize: T.type.base }}>
                         {v.name}
                         {cl && <span style={cropTagStyle} title="Crop type">{cl}</span>}
                       </span>
@@ -870,7 +871,7 @@ export default function VarietyPicker({
                     <span>Creating "{query.trim()}"…</span>
                   ) : (
                     <>
-                      <span style={{ fontSize: '0.95rem' }}>＋</span>
+                      <span style={{ fontSize: T.type.md }}>＋</span>
                       <span style={{ marginLeft: 8 }}>
                         Create <strong>"{query.trim()}"</strong>
                       </span>
@@ -930,11 +931,11 @@ function ConflictModal({ query, existing, onUseExisting, onCreateAnyway, onCance
         <h2 id="vp-conflict-title" style={{ margin: '0 0 8px', fontSize: '1.05rem', color: P.green }}>
           Similar variety already exists
         </h2>
-        <p style={{ margin: '0 0 14px', fontSize: '0.9rem', color: P.mid }}>
+        <p style={{ margin: '0 0 14px', fontSize: T.type.base, color: P.mid }}>
           You're creating <strong>"{query}"</strong>. We found a close match:
         </p>
         <div style={existingCard}>
-          <div style={{ fontWeight: 700, color: P.dark, fontSize: '0.95rem' }}>{existing.name}</div>
+          <div style={{ fontWeight: 700, color: P.dark, fontSize: T.type.md }}>{existing.name}</div>
           {(existing.species || existing.common_name) && (
             <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>
               {[existing.common_name, existing.species].filter(Boolean).join(' • ')}
@@ -946,7 +947,7 @@ function ConflictModal({ query, existing, onUseExisting, onCreateAnyway, onCance
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: T.space.sm, flexWrap: 'wrap' }}>
           <button type="button" onClick={onUseExisting} disabled={creating} style={btnPrimary(creating)}>
             Use existing
           </button>
@@ -967,13 +968,13 @@ const inputStyle = (hasErr, disabled) => ({
   width: '100%',
   padding: '10px 12px',
   border: `1px solid ${hasErr ? P.terra : P.border}`,
-  borderRadius: 7,
-  fontSize: '0.9rem',
+  borderRadius: T.radiusField,
+  fontSize: T.type.base,
   backgroundColor: disabled ? '#f3eee9' : P.white,
   boxSizing: 'border-box',
   fontFamily: 'inherit',
   cursor: disabled ? 'not-allowed' : 'text',
-  minHeight: 44, // mobile-tap-friendly
+  minHeight: T.tapMinHeight, // mobile-tap-friendly
 })
 
 // V4-PICKERKB-002: the ⌨/🎤 toggle-button styles moved to lib/comboboxInput.js (shared with
@@ -990,7 +991,7 @@ const listStyle = {
   listStyle: 'none',
   backgroundColor: P.white,
   border: `1px solid ${P.border}`,
-  borderRadius: 8,
+  borderRadius: T.radiusButton,
   boxShadow: '0 6px 22px rgba(0,0,0,0.12)',
   maxHeight: 280,
   overflowY: 'auto',
@@ -1001,7 +1002,7 @@ const rowStyle = (active) => ({
   cursor: 'pointer',
   backgroundColor: active ? P.greenPale : 'transparent',
   borderBottom: `1px solid ${P.cream}`,
-  minHeight: 48,
+  minHeight: T.buttonMinHeight,
   display: 'flex',
   alignItems: 'center',
 })
@@ -1012,11 +1013,11 @@ const createRowStyle = (active, busy) => ({
   backgroundColor: active ? P.greenPale : '#fbf8f3',
   borderTop: `1px solid ${P.border}`,
   color: P.green,
-  fontSize: '0.9rem',
+  fontSize: T.type.base,
   display: 'flex',
   alignItems: 'center',
   fontWeight: 600,
-  minHeight: 48,
+  minHeight: T.buttonMinHeight,
 })
 
 // V4-CROPTYPEREACH-001 crop-chooser panel: the listbox's anchoring/elevation lifted onto a wrapper
@@ -1030,7 +1031,7 @@ const cropPanelStyle = {
   zIndex: 50,
   backgroundColor: P.white,
   border: `1px solid ${P.border}`,
-  borderRadius: 8,
+  borderRadius: T.radiusButton,
   boxShadow: '0 6px 22px rgba(0,0,0,0.12)',
   boxSizing: 'border-box',
   overflow: 'hidden',
@@ -1065,14 +1066,14 @@ const formPanelStyle = {
   padding: 12,
   backgroundColor: P.white,
   border: `1px solid ${P.border}`,
-  borderRadius: 8,
+  borderRadius: T.radiusButton,
   boxShadow: '0 6px 22px rgba(0,0,0,0.12)',
   boxSizing: 'border-box',
 }
 
 const fieldLabelStyle = {
   display: 'block',
-  fontSize: '0.72rem',
+  fontSize: T.type.xs,
   fontWeight: 700,
   color: P.mid,
   textTransform: 'uppercase',
@@ -1083,12 +1084,12 @@ const fieldLabelStyle = {
 const primaryButtonStyle = (isDisabled) => ({
   flex: 1,
   padding: '10px 12px',
-  minHeight: 44,
-  borderRadius: 7,
+  minHeight: T.tapMinHeight,
+  borderRadius: T.radiusField,
   border: 'none',
   backgroundColor: isDisabled ? P.border : P.green,
   color: isDisabled ? P.light : P.white,
-  fontSize: '0.88rem',
+  fontSize: T.type.sm2,
   fontWeight: 700,
   fontFamily: 'inherit',
   cursor: isDisabled ? 'not-allowed' : 'pointer',
@@ -1096,12 +1097,12 @@ const primaryButtonStyle = (isDisabled) => ({
 
 const secondaryButtonStyle = {
   padding: '10px 14px',
-  minHeight: 44,
-  borderRadius: 7,
+  minHeight: T.tapMinHeight,
+  borderRadius: T.radiusField,
   border: `1px solid ${P.border}`,
   backgroundColor: P.white,
   color: P.mid,
-  fontSize: '0.88rem',
+  fontSize: T.type.sm2,
   fontFamily: 'inherit',
   cursor: 'pointer',
 }
@@ -1110,7 +1111,7 @@ const adoptButtonStyle = {
   marginTop: 8,
   padding: '8px 12px',
   minHeight: 40,
-  borderRadius: 7,
+  borderRadius: T.radiusField,
   border: `1px solid ${P.green}`,
   backgroundColor: P.greenPale,
   color: P.green,
@@ -1203,12 +1204,12 @@ const modalBackdrop = {
   alignItems: 'flex-end',
   justifyContent: 'center',
   zIndex: 1000,
-  padding: 16,
+  padding: T.space.md,
 }
 
 const modalCard = {
   backgroundColor: P.white,
-  borderRadius: 12,
+  borderRadius: T.radiusBadge,
   padding: '20px 18px 18px',
   maxWidth: 460,
   width: '100%',
@@ -1227,9 +1228,9 @@ const modalCard = {
 
 const existingCard = {
   border: `1px solid ${P.border}`,
-  borderRadius: 8,
+  borderRadius: T.radiusButton,
   padding: '10px 12px',
-  marginBottom: 16,
+  marginBottom: T.space.md,
   backgroundColor: P.cream,
 }
 
@@ -1237,33 +1238,33 @@ const btnPrimary = (disabled) => ({
   backgroundColor: disabled ? P.light : P.green,
   color: P.white,
   border: 'none',
-  borderRadius: 7,
+  borderRadius: T.radiusField,
   padding: '10px 18px',
-  fontSize: '0.88rem',
+  fontSize: T.type.sm2,
   fontWeight: 700,
   cursor: disabled ? 'not-allowed' : 'pointer',
-  minHeight: 44,
+  minHeight: T.tapMinHeight,
 })
 
 const btnSecondary = (disabled) => ({
   backgroundColor: 'transparent',
   color: P.terra,
   border: `1px solid ${P.terra}`,
-  borderRadius: 7,
+  borderRadius: T.radiusField,
   padding: '10px 18px',
-  fontSize: '0.88rem',
+  fontSize: T.type.sm2,
   fontWeight: 600,
   cursor: disabled ? 'not-allowed' : 'pointer',
-  minHeight: 44,
+  minHeight: T.tapMinHeight,
 })
 
 const btnGhost = (disabled) => ({
   backgroundColor: 'transparent',
   color: P.mid,
   border: 'none',
-  borderRadius: 7,
+  borderRadius: T.radiusField,
   padding: '10px 14px',
-  fontSize: '0.88rem',
+  fontSize: T.type.sm2,
   cursor: disabled ? 'not-allowed' : 'pointer',
-  minHeight: 44,
+  minHeight: T.tapMinHeight,
 })
