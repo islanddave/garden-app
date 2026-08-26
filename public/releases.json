@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.53.0",
+    "date": "2026-08-26",
+    "highlights": [
+      "The Garden tab now paints instantly when you come back to it. It had no cache at all, so every single visit re-fetched the whole planting list and re-signed a photo link for each of the 213 plantings that have one — about 450 KB, cold, every time. It was not sometimes slow; it was always cold, and the network decided whether you noticed. It now shows the list you already had while quietly checking for changes behind it.",
+      "This uses the cache the app already ships and was already using on the planting page, the location page, Today's care list and the photo wall. Garden simply was not one of its readers."
+    ]
+  },
+  {
     "version": "4.52.1",
     "date": "2026-08-26",
     "highlights": [

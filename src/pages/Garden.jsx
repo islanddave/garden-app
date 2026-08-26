@@ -29,6 +29,9 @@ import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import { useMembers } from '../hooks/useMembers.js'
+// V4-GARDENCACHE-001 — the SWR read hook already serving PlantingDetail, LocationDetail,
+// CareNeeded and PhotosWall. Garden was simply never a consumer.
+import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import { buildProjectsById, effectiveAssignee, buildCaretakerMap, lensOptions, hasMixedCaretakers } from '../lib/caretakers.js'
 import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
@@ -244,30 +247,60 @@ export default function Garden() {
   // it reflects the user's PRIOR garden-view (used to detect "second visit" eligibility).
   const [prefs, setPrefs] = useState(null)
 
+  /* V4-GARDENCACHE-001 — Dave, 2026-08-26: "sometimes the chooser can take a couple of seconds to
+     load the list for a chooser or for the list view in Garden."
+
+     Garden's PAYLOAD was already dealt with (V4-PLANTSPAYLOAD-001's ?view=grid: 86KB of DB body
+     against the wide shape's 814KB). What was left is that this screen had no cache at all, so
+     every single visit to the tab was a cold round trip for ~450KB — the grid body plus a freshly
+     presigned URL for each of the 213-of-233 plantings that have a hero photo. It was not
+     "sometimes slow"; it was always cold, and sometimes the network made that visible.
+
+     The app already ships the fix and Garden simply was not a consumer: useCachedFetch/dataCache is
+     flag-on in prod serving PlantingDetail, LocationDetail, CareNeeded and PhotosWall. It paints
+     from cache immediately and revalidates on every mount.
+
+     SHAPE, and why it is a SEED rather than a swap. Local state stays the render source and keeps
+     owning the five optimistic mutations below (create/update/archive/delete/restore). Making the
+     hook the source would have meant rewriting every one of those write paths, for no user-visible
+     gain over this — the win is the FIRST PAINT, which is exactly what a seed provides.
+
+     PRESIGNED URLs SURVIVE CACHING, checked rather than assumed: a cached list can carry photo URLs
+     older than their 900s TTL, which sounds like it should paint broken images. It does not, because
+     PhotoView "delegates expiry self-healing downward" and re-mints on the 403 — dataCache's own
+     header names this as the reason it preserves the prior data ref across a revalidate. The hazard
+     was designed for before Garden arrived. */
+  const projectsCache  = useCachedFetch('/api/projects')
+  const plantsCache    = useCachedFetch('/api/plants?view=grid')
+  const locationsCache = useCachedFetch('/api/locations')
+
+  /* THE hazard this feature introduces, and the reason refetchPlants writes through below: once a
+     list is cached, a local mutation that is not also pushed into the cache leaves the NEXT mount
+     painting a pre-mutation list — a planting you deleted reappears for a moment. Uncached, that
+     could not happen because every mount re-fetched.
+     `acceptCache` is the other half: after any local mutation, a revalidate still in flight from
+     mount must not land on top of the user's edit. It re-opens on an explicit refetch, which is the
+     point at which server truth is genuinely newer than the local list. */
+  const acceptCache = useRef(true)
   useEffect(() => {
-    let on = true
-    Promise.all([
-      fetch('/api/projects'),
-      // V4-PLANTSPAYLOAD-001 — the grid projection, not the wide list. This screen reads 10
-      // top-level keys and 2 of variety_ref's 21 subfields; the wide shape measured 1,241,902 B /
-      // 5.19 s on Dave's live prod session. Opt-in per call site: the other ten /api/plants
-      // consumers still get the full shape, and only the two places this page fetches the list are
-      // flipped. The one row that genuinely needs the wide shape — the ?edit= target — fetches
-      // itself by id below rather than being picked out of this array.
-      fetch('/api/plants?view=grid'),
-      // Location grouping is a nicety — never let it fail the whole Garden load.
-      fetch('/api/locations').catch(() => []),
-    ])
-      .then(([proj, pl, locs]) => {
-        if (!on) return
-        setProjects(proj ?? [])
-        setPlants(pl ?? [])
-        setLocations(Array.isArray(locs) ? locs : (locs?.locations ?? []))
-        setLoading(false)
-      })
-      .catch(err => { if (!on) return; setError(err.message); setLoading(false) })
-    return () => { on = false }
-  }, [fetch])
+    if (projectsCache.data !== undefined && acceptCache.current) setProjects(projectsCache.data ?? [])
+  }, [projectsCache.data])
+  useEffect(() => {
+    if (plantsCache.data !== undefined && acceptCache.current) setPlants(plantsCache.data ?? [])
+  }, [plantsCache.data])
+  useEffect(() => {
+    // Location grouping is a nicety — never let it fail the whole Garden load. The hook resolves an
+    // error to `data: []` rather than throwing, so the old `.catch(() => [])` arm is structural now.
+    const locs = locationsCache.data
+    if (locs !== undefined) setLocations(Array.isArray(locs) ? locs : (locs?.locations ?? []))
+  }, [locationsCache.data])
+  useEffect(() => {
+    // Cold only. With a cache hit `loading` is already false on the first render, which IS the
+    // feature: no spinner, no layout jump, just the list.
+    setLoading(projectsCache.loading || plantsCache.loading)
+    const err = projectsCache.error || plantsCache.error
+    setError(err ? (err.message ?? String(err)) : null)
+  }, [projectsCache.loading, plantsCache.loading, projectsCache.error, plantsCache.error])
 
   // MVP-Critter Session 3: fetch active critters on mount + visibilitychange.
   // critterClient is fire-and-forget — silent no-op when VITE_API_CRITTERS unset.
@@ -524,17 +557,23 @@ export default function Garden() {
   // optimistic prepend shows a variety-less row until a reload. Refetching pulls the hydrated row
   // (variety_ref + server-side featured_photo_view_url auto-promote) without a tab refresh.
   // Same contract as the retired Plants.jsx.
+  // V4-GARDENCACHE-001: this now goes THROUGH the cache rather than around it. Two reasons, and the
+  // first is a correctness one rather than a tidiness one:
+  //   1. a bare fetch would refresh the local list and leave the CACHE holding the pre-mutation one,
+  //      so the next visit to the tab would paint the deleted/renamed row back. Uncached, that could
+  //      not happen; caching is what creates the obligation to write through.
+  //   2. it re-opens `acceptCache` — the point of a refetch is that server truth is now newer than
+  //      the local list, which is precisely when a cache push should be allowed to land again.
+  // The catch arm is preserved verbatim in spirit: revalidate reports errors through the hook's
+  // `error`, and a failed refresh leaves the prior list standing rather than blanking the grid.
   const refetchPlants = useCallback(async () => {
-    try {
-      const fresh = await fetch('/api/plants?view=grid')
-      setPlants(fresh ?? [])
-    } catch {
-      /* non-fatal — stale row heals on next mount */
-    }
-  }, [fetch])
+    acceptCache.current = true
+    plantsCache.refetch()
+  }, [plantsCache])
 
   const onPlantCreated = useCallback((pl) => {
     // Optimistic prepend (instant feedback) — the row is variety-less until refetch hydrates it.
+    acceptCache.current = false   // V4-GARDENCACHE-001: an in-flight revalidate must not land on this edit
     setPlants(prev => [pl, ...prev])
     // Auto-expand the new planting's project so the row is actually visible (it hangs under it).
     if (pl?.project_id != null) {
@@ -552,17 +591,20 @@ export default function Garden() {
   }, [refetchPlants, setFlashId])
 
   const onPlantUpdated = useCallback((pl) => {
+    acceptCache.current = false   // V4-GARDENCACHE-001: an in-flight revalidate must not land on this edit
     setPlants(prev => prev.map(x => x.id === pl.id ? pl : x))
     refetchPlants()
   }, [refetchPlants])
 
   const onPlantDeleted = useCallback((id) => {
+    acceptCache.current = false   // V4-GARDENCACHE-001: an in-flight revalidate must not land on this edit
     setPlants(prev => prev.filter(x => x.id !== id))
     refetchPlants()
   }, [refetchPlants])
 
   const onPlantArchived = useCallback((plant) => {
     // Remove from the active list immediately (it's now hidden), refetch for truth, offer Undo.
+    acceptCache.current = false   // V4-GARDENCACHE-001: an in-flight revalidate must not land on this edit
     setPlants(prev => prev.filter(x => x.id !== plant.id))
     refetchPlants()
     setArchiveUndo({ id: plant.id, name: plant.name ?? 'Planting', expiresAt: Date.now() + 6000 })
