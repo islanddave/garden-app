@@ -29,9 +29,19 @@ import { P } from '../lib/constants.js'
 //   • A warm session (flag already set) now renders nothing at all and hands straight to the shell.
 //     Under the old model that path was the 3.4s-of-white case; under this one it is the fast path.
 
+// V4-PERFSPLASH-001 — the brand hold is cut from 1720ms to 500ms (Dave, 2026-08-26: "cut it to
+// about half a second"). Nothing structural changes: same timer, same once-per-session flag, same
+// reduced-motion branch. Only the two durations move.
+// Why the split is 320/180 rather than an even one: this overlay is `position:fixed; inset:0` and
+// takes pointer events for its WHOLE life, so the fade is not free screen-dressing — it is a window
+// in which the shell is visibly ready and still swallows taps (a tap at 90% faded hits `dismiss`,
+// which early-returns on exitingRef). So the fade gets the smaller share. 180ms is still a dissolve
+// rather than a cut: ~11 frames at 60Hz, just under the ~195ms Material uses for a full-screen
+// surface LEAVING, and the handoff underneath is cream-on-cream so the only thing actually
+// dissolving is the arbor mark, not a background luminance step.
 const FLAG = 'gah_splash_shown'
-const HOLD_MS = 1400
-const FADE_MS = 320
+const HOLD_MS = 320
+const FADE_MS = 180
 
 function alreadyShown() {
   try { return sessionStorage.getItem(FLAG) === '1' } catch { return false }
