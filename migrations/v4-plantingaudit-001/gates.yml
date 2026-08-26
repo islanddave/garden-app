@@ -1,0 +1,155 @@
+# BUG-NOPLANTINGAUDIT-001 — gates for the audit_events arms on public.plants.
+#
+# ═══ SELF-ARMING, AND WHY EVERY ASSERTING POST GATE IS VIOLATION-SHAPED ═══
+# gate-invariants.yml runs `--all --phase post --continuous-only` on every push to dev, and there is
+# no skip-if-unapplied logic in gate_runner.py. A post gate asserting this migration's own effect
+# would go red the moment this directory reaches the branch and stay red until it is applied. So
+# every asserting post gate below is SELF-ARMING on the 0a schema_version row: vacuously true
+# before the apply, a real permanent invariant after it.
+#
+# The polarity trap: a bare `AND EXISTS (schema_version …)` conjunct only self-arms correctly for
+# VIOLATION-shaped gates expecting 0 rows. Every gate here is a PRESENCE assertion ("the arm
+# exists", "it is statement-level"), so each is written as its own violation —
+# `SELECT 1 WHERE <armed> AND NOT <the fact>`, expecting rowcount 0.
+#
+# ═══ WHAT THESE GATES CANNOT DO ═══
+# A gate is a read-only SELECT, so this file proves the triggers EXIST and are correctly SHAPED. It
+# cannot prove they CAPTURE — a gutted function body or a watched set matching nothing would keep
+# every gate here green. The behavioural half is 0b-verify-triggers.sql (fixture + assertions +
+# ROLLBACK, safe on prod), which asserts before/after values and the actor, not just rowcounts.
+
+pre:
+  # The three functions this migration ATTACHES but does not create. If any is missing, 0a fails at
+  # CREATE TRIGGER — but it fails naming only the one it reached first, so check all three up front.
+  - name: pre_shared_audit_functions_exist
+    sql: |
+      SELECT 1 FROM pg_proc
+       WHERE proname IN ('audit_stmt_delete', 'audit_stmt_update', 'audit_watched_slice')
+    expect: rowcount_eq
+    value: 3
+    note: >
+      Created by OPS-HARVESTAUDIT-001 and shared with plant_varieties / event_log / harvest_log.
+      This migration adds no functions of its own, so their presence is a precondition to CHECK.
+
+  # plants must be a TABLE. BD-022 names `garden_node`, which is a VIEW (relkind 'v') — and an
+  # AFTER … FOR EACH STATEMENT trigger cannot be attached to a view at all, so a migration written
+  # to the row's wording fails on apply. This gate pins the corrected target.
+  - name: pre_plants_is_a_table_not_a_view
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'plants' AND c.relkind = 'r'
+    expect: rowcount_eq
+    value: 1
+
+  # The columns 0b asserts on by NAME. A rename would make 0b's before/after assertions compare
+  # NULL to NULL and pass while proving nothing.
+  - name: pre_plants_has_the_audited_date_columns
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plants'
+         AND column_name IN ('sown_at','germinated_at','planted_at','transplanted_at',
+                             'planted_out_at','deleted_at','last_seen_at')
+    expect: rowcount_eq
+    value: 7
+
+sweep:
+  - name: sweep_schema_version_0a_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.56.0-plantingaudit-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+    note: Apply-window receipt for 0a. Not a continuous invariant.
+
+post:
+  - name: post_both_plants_audit_arms_present
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-plantingaudit-001')
+         AND (SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+               WHERE c.relname = 'plants' AND NOT t.tgisinternal
+                 AND t.tgname IN ('trg_audit_plants_del','trg_audit_plants_upd')) <> 2
+    expect: rowcount_eq
+    value: 0
+    note: >
+      A DELETE arm and an UPDATE arm, named exactly, so renaming one out of existence fails here
+      rather than silently halving coverage.
+
+  # STATEMENT-level is the write-amplification design, not a style choice: plants takes bulk writes
+  # (backfills, ownership sweeps, the succession paths) as single statements. tgtype bit 0 set =
+  # FOR EACH ROW.
+  - name: post_plants_audit_arms_are_statement_level
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-plantingaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+                WHERE c.relname = 'plants'
+                  AND t.tgname IN ('trg_audit_plants_del','trg_audit_plants_upd')
+                  AND (t.tgtype & 1) <> 0)
+    expect: rowcount_eq
+    value: 0
+
+  # A statement-level trigger WITHOUT transition tables sees no rows and writes nothing, while every
+  # existence gate above stays green. This is the specific vacuity this gate closes.
+  - name: post_plants_audit_arms_have_transition_tables
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-plantingaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+                WHERE c.relname = 'plants'
+                  AND t.tgname IN ('trg_audit_plants_del','trg_audit_plants_upd')
+                  AND t.tgoldtable IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # The UPDATE arm must keep a NON-EMPTY watched set. TG_ARGV empty means audit_watched_slice
+  # compares two empty slices, which are never DISTINCT — so the arm would fire on every statement
+  # and record NOTHING except deleted_at transitions. Existence and shape gates would all stay green.
+  - name: post_plants_update_arm_has_a_watched_set
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-plantingaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+                WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+                  AND t.tgnargs < 40)
+    expect: rowcount_eq
+    value: 0
+    note: >
+      46 columns are watched; 40 is a floor with headroom for deliberate pruning but not for the
+      set being emptied or gutted. The six deliberate exclusions (updated_at, version, last_seen_at,
+      the two _set_at stamps, id) are named in 0a with the measured reason for each.
+
+  # updated_at is maintained by the set_updated_at trigger on EVERY update. If it were ever added to
+  # the watched set, column scoping would collapse into "audit every write" — the audit would look
+  # healthier (far more rows) while becoming useless. Asserted as an ABSENCE for that reason.
+  - name: post_plants_watched_set_excludes_updated_at
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-plantingaudit-001')
+         AND EXISTS (
+               SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+                WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+                  -- pg_get_triggerdef, NOT unnest(tgargs): tgargs is a single NUL-separated
+                  -- `bytea`, not an array, so unnest() errors with 42883 rather than returning
+                  -- nothing. A gate that ERRORS is not a gate that passes, but it is also not one
+                  -- that reports the fact it was written to check — this was caught by running it.
+                  AND pg_get_triggerdef(t.oid) LIKE '%''updated_at''%')
+    expect: rowcount_eq
+    value: 0
+
+  # The seven pre-existing triggers on plants must survive. 0r drops exactly two by name, and this
+  # is what turns "I rolled back the audit arms" into a checkable claim rather than a hopeful one.
+  - name: post_plants_keeps_its_pre_existing_triggers
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+               WHERE c.relname = 'plants' AND NOT t.tgisinternal
+                 AND t.tgname NOT LIKE 'trg\_audit\_%') <> 7
+    expect: rowcount_eq
+    value: 0
+    note: >
+      NOT self-armed, deliberately — these seven predate this migration, so the invariant holds
+      before AND after it and should go red either way if one is dropped.
