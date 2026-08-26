@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.52.1",
+    "date": "2026-08-26",
+    "highlights": [
+      "Fixed the intermittent \"Unauthorized\" that has been interrupting Snap sessions and the Harvests page. The app was occasionally sending a request with no sign-in credential attached at all, which the server can only refuse — so you would get turned away mid-save while being perfectly online, and the only way through was to back out of the session or close and reopen the app. It now refuses to send a request it cannot sign, quietly fetches a fresh credential instead, and retries once on its own. The interruption should simply stop happening rather than becoming something you work around.",
+      "When something genuinely does go wrong with the connection, the message now says so. \"Unauthorized\" reads like a problem with your account, which it never was — you will now see \"You appear to be offline\" when the phone has no signal, and a plain \"Couldn't verify your sign-in, tap Retry\" when it does."
+    ]
+  },
+  {
     "version": "4.52.0",
     "date": "2026-08-26",
     "highlights": [

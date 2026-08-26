@@ -1,13 +1,25 @@
-// Offline token handling in src/lib/api.js — the ~15s stall, the throw that killed the request,
-// and the compose-safety property that makes issuing a tokenless request acceptable.
+// Offline token handling in src/lib/api.js — the ~15s stall, what happens when no token is
+// available, and the compose-safety property of a headerless request.
 //
-// WHAT THIS FILE IS FOR. Before this change `useApiFetch().fetch` did `await getToken()` bare.
-// Offline with a cold token cache that THROWS, so the throw escaped the hook, apiFetch was never
-// called, no fetch() was ever issued, and the service worker's fetch handler never ran — the SW API
-// cache was unreachable for exactly the rural-dead-zone case it exists to serve. Issuing the request
-// tokenless instead is only safe because V4-SWCACHEID-001 Slice 1 makes a headerless request fail
-// CLOSED at the cache; that pairing is asserted here against the real public/sw.js (group D), not
-// argued in prose.
+// ⚠ REVISED 2026-08-26 (BUG-TOKENLESS-401-001). This file used to assert that a token failure
+// produced a REQUEST WITH NO Authorization HEADER, on the premise that the service worker would
+// then answer it from cache. That premise was false on the day it shipped, and group D is what
+// proves it: sw.js keys its cache on the JWT `sub`, so a headerless request gets a null cacheName,
+// which means NO cache read — 503 offline, and a hard 401 Unauthorized online. The anonymous
+// request had no success case; it only cost a Lambda invocation and mislabelled the failure.
+// MEASURED in prod: 48 `Invalid JWT form` 401s across 7 Lambdas in one morning, surfacing to Dave
+// as "Couldn't load your harvests — Unauthorized" while he was demonstrably online.
+//
+// So the policy inverted. The hook now REFUSES to send an unauthenticated request (E1), recovers a
+// null or stale token with a forced mint (group F), and reports offline as offline. Group D is
+// retained unchanged: it is no longer the premise that licenses a tokenless request, but it is
+// still the control proving the SW cannot serve one, and it is what a future edit reintroducing
+// the anonymous path would have to defeat.
+//
+// WHAT THIS FILE IS FOR, ORIGINALLY. `useApiFetch().fetch` did `await getToken()` bare. Offline
+// with a cold token cache that THROWS, so the throw escaped the hook and no fetch() was ever
+// issued. The offline pre-empt (group B) is the surviving half of that fix and still earns its
+// keep — it stops an API call stalling ~15s on Clerk's retry ladder.
 //
 // The load-bearing test is A1. Clerk's own ClerkOfflineError.is() does NOT recognise the error this
 // app actually receives, because the throw comes from the CDN-hotloaded @clerk/clerk-js rather than
@@ -24,6 +36,7 @@ import {
   apiFetch,
   useApiFetch,
   OFFLINE_TOKEN_WAIT_MS,
+  NO_CREDENTIAL_MESSAGE,
 } from '../lib/api.js'
 
 // Group E drives the real useApiFetch, so Clerk's hook is the only thing stubbed. Without this the
@@ -187,10 +200,13 @@ describe('tokenForRequest — degrade to null, and only when offline', () => {
   })
 })
 
-describe('the request is actually ISSUED where it previously threw', () => {
+// C describes the PRIMITIVE apiFetch(path, options, token), not the hook's policy. Retained because
+// group D drives exactly this shape through the real service worker, so its behaviour has to be
+// pinned somewhere. The hook no longer composes it this way — see E1.
+describe('apiFetch — the primitive still omits the header when handed a null token', () => {
   afterEach(() => { setOnLine(true); vi.restoreAllMocks() })
 
-  it('C1: offline, a token throw yields a real fetch with NO Authorization header', async () => {
+  it('C1: a null token yields a real fetch with NO Authorization header', async () => {
     setOnLine(false)
     const fetchSpy = vi.fn(async () => new Response('[]', {
       status: 200, headers: { 'Content-Type': 'application/json' },
@@ -202,7 +218,7 @@ describe('the request is actually ISSUED where it previously threw', () => {
     const token = await tokenForRequest(getToken)
     const body = await apiFetch('/api/plants', {}, token)
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1)   // <- previously ZERO: the throw killed the request
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
     const sent = fetchSpy.mock.calls[0][1]
     expect('Authorization' in sent.headers).toBe(false)
     expect(Array.isArray(body)).toBe(true)
@@ -226,7 +242,11 @@ describe('the request is actually ISSUED where it previously threw', () => {
 describe('useApiFetch wires the offline policy in (not just the helpers)', () => {
   afterEach(() => { setOnLine(true); vi.unstubAllGlobals() })
 
-  it('E1: the HOOK issues a headerless request when the token throws offline', async () => {
+  it('E1: BUG-TOKENLESS-401-001 — the HOOK issues NO request when it has no token', async () => {
+    // INVERTED 2026-08-26. This test previously asserted the opposite (a headerless request WAS
+    // issued) on the premise that the SW would answer it from cache. D1 below proves it cannot: a
+    // headerless request gets 503 offline and a hard 401 online. The anonymous request had no
+    // success case, so the hook must not make it.
     setOnLine(false)
     clerkGetToken = vi.fn(async () => { throw cdnOffline() })
     const fetchSpy = vi.fn(async () => new Response('[]', {
@@ -235,11 +255,10 @@ describe('useApiFetch wires the offline policy in (not just the helpers)', () =>
     vi.stubGlobal('fetch', fetchSpy)
 
     const { result } = renderHook(() => useApiFetch())
-    const body = await result.current.fetch('/api/plants')
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    expect('Authorization' in fetchSpy.mock.calls[0][1].headers).toBe(false)
-    expect(Array.isArray(body)).toBe(true)
+    await expect(result.current.fetch('/api/plants')).rejects.toMatchObject({ offline: true })
+    // The whole point: no invocation is burned, and the user is told they are offline rather than
+    // being shown the word "Unauthorized".
+    expect(fetchSpy).toHaveBeenCalledTimes(0)
   })
 
   it('E2: the getToken the hook RETURNS is the offline-safe wrapper, not Clerk\'s raw one', async () => {
@@ -258,6 +277,149 @@ describe('useApiFetch wires the offline policy in (not just the helpers)', () =>
     clerkGetToken = vi.fn(async () => { throw err })
     const { result } = renderHook(() => useApiFetch())
     await expect(result.current.fetch('/api/plants')).rejects.toThrow('Unauthorized')
+  })
+})
+
+// ── F: BUG-TOKENLESS-401-001 — recovery from a null/stale token ──────────────────────────────────
+// The defect these pin: getToken() returning null, or returning a token the Lambda rejects, used to
+// produce a user-visible "Unauthorized" that persisted until the app was force-reloaded. MEASURED in
+// prod on 2026-08-26 (48 `Invalid JWT form` 401s across 7 Lambdas in one morning). Recovery is a
+// forced mint (skipCache bypasses Clerk's in-memory cache and re-establishes the session), which is
+// exactly what the manual app restart was achieving by hand.
+describe('recovery — a null or stale token heals without an app restart', () => {
+  afterEach(() => { setOnLine(true); vi.unstubAllGlobals() })
+
+  const okJson = (body = '[]') => new Response(body, {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  })
+  const unauthorized = () => new Response(JSON.stringify({ error: 'Unauthorized' }), {
+    status: 401, headers: { 'Content-Type': 'application/json' },
+  })
+
+  it('F1: ONLINE + getToken resolves null -> forced mint supplies the token', async () => {
+    setOnLine(true)
+    // The sticky shape: an intact, signed-in-looking client whose cached token is gone. The bare
+    // call keeps answering null; only skipCache goes to the network.
+    clerkGetToken = vi.fn(async (opts) => (opts?.skipCache ? 'tok_minted' : null))
+    const fetchSpy = vi.fn(async () => okJson())
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    await result.current.fetch('/api/plants')
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy.mock.calls[0][1].headers.Authorization).toBe('Bearer tok_minted')
+  })
+
+  it('F2: ONLINE + both attempts null -> a typed authPending error and NO request', async () => {
+    setOnLine(true)
+    clerkGetToken = vi.fn(async () => null)
+    const fetchSpy = vi.fn(async () => okJson())
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    const err = await result.current.fetch('/api/plants').catch((e) => e)
+
+    expect(err.authPending).toBe(true)
+    // NOT the string "Unauthorized" — that copy reads as an account problem and is what sent Dave
+    // looking for a sign-in bug that did not exist.
+    expect(err.message).toBe(NO_CREDENTIAL_MESSAGE)
+    expect(fetchSpy).toHaveBeenCalledTimes(0)
+    expect(clerkGetToken).toHaveBeenCalledTimes(2)
+  })
+
+  it('F3: a 401 RESPONSE is retried once with a freshly minted token', async () => {
+    setOnLine(true)
+    clerkGetToken = vi.fn(async (opts) => (opts?.skipCache ? 'tok_fresh' : 'tok_stale'))
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(unauthorized())
+      .mockResolvedValueOnce(okJson('[{"id":1}]'))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    const body = await result.current.fetch('/api/harvests')
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    expect(fetchSpy.mock.calls[0][1].headers.Authorization).toBe('Bearer tok_stale')
+    expect(fetchSpy.mock.calls[1][1].headers.Authorization).toBe('Bearer tok_fresh')
+    expect(body.length).toBe(1)
+  })
+
+  it('F4: a POST is replayed too — the Lambda 401s before it writes, so this cannot double-write', async () => {
+    // Not a theoretical claim: verifyToken runs ahead of every sql call in lambda/harvests and
+    // lambda/photos (the two surfaces this was reported on), so the rejected request had no effect.
+    setOnLine(true)
+    clerkGetToken = vi.fn(async (opts) => (opts?.skipCache ? 'tok_fresh' : 'tok_stale'))
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(unauthorized())
+      .mockResolvedValueOnce(okJson('{"id":"p1"}'))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    const body = await result.current.fetch('/api/photos/abc', {
+      method: 'PUT', body: JSON.stringify({ plant_id: 'x' }),
+    })
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    // The replay carries the SAME body, not a dropped or re-serialised one.
+    expect(fetchSpy.mock.calls[1][1].body).toBe(JSON.stringify({ plant_id: 'x' }))
+    expect(fetchSpy.mock.calls[1][1].method).toBe('PUT')
+    expect(body.id).toBe('p1')
+  })
+
+  it('F5: the retry is bounded — a second 401 surfaces, it does not loop', async () => {
+    setOnLine(true)
+    clerkGetToken = vi.fn(async (opts) => (opts?.skipCache ? 'tok_fresh' : 'tok_stale'))
+    const fetchSpy = vi.fn(async () => unauthorized())
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    await expect(result.current.fetch('/api/harvests')).rejects.toMatchObject({ status: 401 })
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('F6: no retry when the mint returns the SAME token — a wasted round trip is not a recovery', async () => {
+    setOnLine(true)
+    clerkGetToken = vi.fn(async () => 'tok_same')
+    const fetchSpy = vi.fn(async () => unauthorized())
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    await expect(result.current.fetch('/api/harvests')).rejects.toMatchObject({ status: 401 })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('F7: a non-401 failure is NOT retried', async () => {
+    setOnLine(true)
+    clerkGetToken = vi.fn(async () => 'tok_live')
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ error: 'Boom' }), {
+      status: 500, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    await expect(result.current.fetch('/api/harvests')).rejects.toMatchObject({ status: 500 })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('F8: OFFLINE does not spend a second wait on a mint that cannot succeed', async () => {
+    setOnLine(false)
+    vi.useFakeTimers()
+    clerkGetToken = vi.fn(() => new Promise(() => {}))
+    const fetchSpy = vi.fn(async () => okJson())
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { result } = renderHook(() => useApiFetch())
+    const p = result.current.fetch('/api/plants').catch((e) => e)
+    // ONE OFFLINE_TOKEN_WAIT_MS, not two. A forced mint needs the network, so arming it offline
+    // would double the stall to reach the identical null.
+    await vi.advanceTimersByTimeAsync(OFFLINE_TOKEN_WAIT_MS)
+    const err = await p
+
+    expect(err.offline).toBe(true)
+    expect(clerkGetToken).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(0)
+    vi.useRealTimers()
   })
 })
 

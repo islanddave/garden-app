@@ -230,15 +230,12 @@ async function tokenWithOfflineWait(getToken) {
   }
 }
 
-// The one seam every token acquisition goes through. Returns a token or null, where null means
-// "issue the request with no Authorization header".
+// The one seam every token acquisition goes through. Returns a token or null.
 //
-// Issuing it is safe only because of V4-SWCACHEID-001 Slice 1, and the two changes are a pair: no
-// header -> subFromAuthHeader() returns null -> apiCacheNameFor() returns null -> the SW performs
-// NO cache read and NO cache write (`if (!cacheName) return new Response('Offline', {status:503})`).
-// A tokenless request therefore cannot be answered out of another subject's partition. Against the
-// pre-Slice-1 single shared cache this same change would have been a credential-less read of the
-// previous user's data — which is why this must not be rebased off that base.
+// null used to mean "issue the request with no Authorization header". IT NO LONGER DOES — see
+// BUG-TOKENLESS-401-001 below. It now means "no credential is available", and the hook turns that
+// into a typed, retryable error instead of an anonymous request. The offline pre-empt above is
+// unchanged and still earns its keep: it is what stops an API call stalling ~15s on Clerk's ladder.
 export async function tokenForRequest(getToken) {
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false
   try {
@@ -249,11 +246,84 @@ export async function tokenForRequest(getToken) {
   }
 }
 
+// BUG-TOKENLESS-401-001 — why a null token must NOT become an anonymous request.
+//
+// The previous seam did `apiFetch(path, options, null)`, and apiFetch omits the Authorization
+// header entirely when the token is falsy. That was introduced (113de76, v4.39.0) so the request
+// would at least reach the service worker and be answered from its API cache. THAT PREMISE IS VOID,
+// and was already void when it shipped: sw.js derives its cache name from the JWT's `sub`, so a
+// headerless request produces a null cacheName, and a null cacheName means NO cache read at all
+// (the V4-SWCACHEID-001 fail-closed control, pinned by apiOfflineToken D1). So an anonymous request
+// has no success case anywhere:
+//   offline -> the SW answers 503 Offline
+//   online  -> it reaches the Lambda, which calls verifyToken('') and returns 401 Unauthorized
+// It cost a Lambda invocation to produce a misleading error. MEASURED in prod 2026-08-26: 48 such
+// 401s in one morning across 7 Lambdas, every one logging `Invalid JWT form` (an EMPTY token, not
+// an expired one), surfacing to Dave as "Couldn't load your harvests — Unauthorized" while online.
+//
+// Do not reintroduce the tokenless call as an offline optimisation. Throwing is strictly safer than
+// a headerless request AND strictly more useful than a guaranteed 401.
+export const OFFLINE_MESSAGE = 'You appear to be offline.'
+export const NO_CREDENTIAL_MESSAGE = 'Couldn’t verify your sign-in. Tap Retry.'
+
+// Plain Errors with flags rather than subclasses, matching the timeout error above — callers
+// discriminate on `e.offline` / `e.authPending`, and `e.message` is what error surfaces render
+// verbatim (e.g. Harvests' <ErrorState message={error} />). status 0 keeps them out of any
+// `e.status >= 400` HTTP branch.
+function noCredentialError() {
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+  const e = new Error(offline ? OFFLINE_MESSAGE : NO_CREDENTIAL_MESSAGE)
+  e.status = 0
+  if (offline) e.offline = true
+  else e.authPending = true
+  return e
+}
+
+// Acquire a token, forcing a fresh mint when the ordinary path yields nothing.
+//
+// A null from Clerk is NOT self-healing, which is the property that made this bug sticky enough to
+// need an app restart. Two states produce it and both persist:
+//   · the session object has gone away while `useUser()` still reports a signed-in user, so
+//     App.jsx's <Protected> keeps rendering the app and every request goes out anonymous;
+//   · the in-memory token cache was emptied (Android freezes the tab during the OS photo picker —
+//     the Snap flow does this on every capture) and the refresh that should refill it did not run.
+// Every later getToken() reads the same empty cache and returns null again. skipCache:true bypasses
+// it and forces a network mint, which re-establishes the session as a side effect.
+//
+// Skipped when already offline: a mint needs the network, so it could only burn a second
+// OFFLINE_TOKEN_WAIT_MS (doubling the offline stall to 3s) to reach the same null.
+async function acquireToken(getToken) {
+  const cached = await tokenForRequest(getToken)
+  if (cached) return cached
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return null
+  return tokenForRequest(() => getToken({ skipCache: true }))
+}
+
 export function useApiFetch() {
   const { getToken } = useAuth()
   const fetch = useCallback(async (path, options = {}) => {
-    const token = await tokenForRequest(getToken)
-    return apiFetch(path, options, token)
+    const token = await acquireToken(getToken)
+    if (!token) throw noCredentialError()
+
+    try {
+      return await apiFetch(path, options, token)
+    } catch (e) {
+      // A 401 with a token attached means the token was stale in a way the client could not see —
+      // a mint that raced an expiry, or a session rotated on another device. Re-mint and replay ONCE.
+      //
+      // Safe for POST/PUT/DELETE, not just reads: every Lambda calls verifyToken BEFORE it touches
+      // the database (checked against lambda/harvests/index.js and lambda/photos/index.js — the two
+      // this bug was reported on), so a 401 is always a server-side no-op and the replay cannot
+      // double-write. Bodies are JSON strings at every call site, so `options` is replayable.
+      //
+      // Bounded at one attempt by construction — the retry calls apiFetch directly, never itself.
+      // The identity check is what stops a pointless second round trip when the mint returns the
+      // same cached string, which is also the shape an infinite loop would take.
+      if (e?.status !== 401) throw e
+      const fresh = await tokenForRequest(() => getToken({ skipCache: true }))
+      if (!fresh || fresh === token) throw e
+      return apiFetch(path, options, fresh)
+    }
   }, [getToken])
   // getToken is also returned so fire-and-forget telemetry (uxEvents) can route token
   // acquisition through this same seam — component tests mock useApiFetch, which keeps
@@ -261,6 +331,9 @@ export function useApiFetch() {
   // do `if (!token) return null`, so the offline-safe null lets them bail in 1.5s instead of
   // holding a promise open for the full ladder to throw inside their own catch. Args are forwarded
   // so the wrapper stays signature-compatible with Clerk's getToken(options).
+  //
+  // Deliberately NOT acquireToken: these callers are fire-and-forget telemetry that must stay cheap
+  // and silent. Spending a forced network mint on a UX-event beacon would be the tail wagging the dog.
   const safeGetToken = useCallback((...args) => tokenForRequest(() => getToken(...args)), [getToken])
   return { fetch, getToken: safeGetToken }
 }
