@@ -1621,13 +1621,13 @@ export const handler = async (event) => {
           ${body.qty_harvested ?? 0},
           ${body.qty_lost ?? 0},
           ${body.loss_cause ?? null},
-          // V4-SEEDGERMRATE-001 (BD-057). seeds_sown arrives at CREATE because that is the sow —
-          // Dave: "I will put in seed count sown". seeds_germinated is almost always null here and
-          // filled in later ("later record germinations"), but it is accepted on create anyway so a
-          // planting logged retrospectively can carry both in one write.
-          // No `?? 0` default on either, unlike qty_harvested/qty_lost above: a NULL means "not
-          // counted" and a 0 means "none came up", and those are different answers. Defaulting
-          // would file every planting ever created as a total germination failure.
+          -- V4-SEEDGERMRATE-001 (BD-057). seeds_sown arrives at CREATE because that is the sow.
+          -- Dave: "I will put in seed count sown". seeds_germinated is usually null here and filled
+          -- in later ("later record germinations"), but it is accepted on create too so a planting
+          -- logged retrospectively can carry both in one write.
+          -- No zero-default on either, unlike qty_harvested/qty_lost above: NULL means "not
+          -- counted" and 0 means "none came up", which are different answers. Defaulting would file
+          -- every planting ever created as a total germination failure.
           ${body.seeds_sown ?? null},
           ${body.seeds_germinated ?? null},
           ${body.source_type ?? null},

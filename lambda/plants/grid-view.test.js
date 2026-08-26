@@ -122,13 +122,20 @@ function apiKeys(sqlText) {
 }
 
 // Read off live prod 2026-08-17: json_object_keys of an unscoped-list row, minus the stripped
-// storage path, plus the two substituted URL keys. 44 keys.
+// storage path, plus the two substituted URL keys. 44 keys then; 46 since V4-SEEDGERMRATE-001.
 const DEFAULT_KEYS = [
   'id', 'name', 'quantity', 'status', 'notes', 'project_id', 'variety_id',
   'source_inventory_item_id', 'metadata', 'featured_photo_id', 'featured_is_explicit',
   'created_at', 'sown_at', 'sown_at_approx', 'germinated_at', 'germinated_at_approx',
   'transplanted_at', 'transplanted_at_approx', 'planted_out_at', 'planted_out_at_approx',
   'qty_initial', 'qty_current', 'qty_harvested', 'qty_lost', 'loss_cause',
+  // V4-SEEDGERMRATE-001 (BD-057) — 44 keys became 46. A DELIBERATE widening of the two DEFAULT
+  // branches, and the reason this list is a list rather than a count: PlantingEditor round-trips
+  // both counts, so a read that omitted them would show Dave a blank box over a stored number and
+  // then overwrite it with null on the next save. The GRID projection does NOT gain them and must
+  // not — a tile shows no seed counts, and the "drops the wide-shape columns" test below is what
+  // keeps that true.
+  'seeds_sown', 'seeds_germinated',
   'source_type', 'source_ref', 'source_generation', 'parent_plant_id', 'divergence_type',
   'lineage_note', 'succession_group_id', 'succession_order', 'assignee_user_id',
   'container_type', 'container_size', 'location_id', 'acquired_mature', 'acquired_mature_source',
@@ -160,7 +167,7 @@ describe('GET /api/plants — the DEFAULT response shape is unchanged (V4-PLANTS
   // THE regression guard of this change. `?view=grid` is opt-in precisely so that Search,
   // PhotoLibrary, Favorites, ProjectDetail, Findings, CaptureFlow, EventNew, CatchUpBadge,
   // PlantingSelect, StorageDeadlineAlert and CareNeeded keep the shape they were written against.
-  it('the unscoped list returns all 44 prod keys, and no others', () => {
+  it('the unscoped list returns all 46 prod keys, and no others', () => {
     expect(apiKeys(UNSCOPED_SQL).sort()).toEqual([...DEFAULT_KEYS].sort());
   });
 
@@ -200,7 +207,9 @@ describe('GET /api/plants?view=grid — exactly the grid field set (V4-PLANTSPAY
     // assertion says what it protects instead of restating the set above.
     const keys = apiKeys(GRID_SQL);
     for (const k of ['notes', 'created_at', 'variety_id', 'source_inventory_item_id', 'project_name',
-      'metadata', 'qty_initial', 'sown_at', 'container_type', 'notes']) {
+      'metadata', 'qty_initial', 'sown_at', 'container_type', 'notes',
+      // V4-SEEDGERMRATE-001: the seed counts are editor fields, not tile fields.
+      'seeds_sown', 'seeds_germinated']) {
       expect(keys, `grid projection leaked ${k}`).not.toContain(k);
     }
   });

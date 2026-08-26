@@ -183,8 +183,13 @@ describe('ProjectDetail — V1.2a-4 S1 plantForm extension', () => {
       fireEvent.change(dateInput, { target: { value: '2026-04-01' } })
     })
 
-    // qty_initial
-    const qtyInitialInput = details.querySelector('input[type="number"]')
+    // qty_initial — BY LABEL, not `querySelector('input[type="number"]')`. That selector meant
+    // "the first number input in the disclosure", which was qty_initial only for as long as it
+    // happened to be first: V4-SEEDGERMRATE-001 added Seeds sown / Came up above it and this test
+    // silently started typing 12 into the wrong box, then asserted qty_initial had not changed.
+    // It failed loudly here, which is the good case — the same shape on a test that only READ the
+    // field would have passed against the wrong control.
+    const qtyInitialInput = screen.getByLabelText(/Initial quantity/i)
     await act(async () => {
       fireEvent.change(qtyInitialInput, { target: { value: '12' } })
     })
