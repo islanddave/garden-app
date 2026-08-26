@@ -17,7 +17,9 @@
     "action.groupBy", "action.search", "action.chevron"
   ],
   "care": [
-    "care.drop", "care.pause", "care.sun", "care.containers", "care.inground"
+    "care.drop", "care.pause", "care.sun", "care.containers", "care.inground",
+    "care.wateringCan", "care.wateringCanFill", "care.feed", "care.cloud", "care.rainPct",
+    "care.tempHigh", "care.tempLow"
   ],
   "status": [
     "status.seed", "status.rooting", "status.seedling", "status.sprouting", "status.seeding",

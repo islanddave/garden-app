@@ -392,6 +392,76 @@ const A = {
     svg24: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
     svg18: '<path d="M9.5 6 15 12l-5.5 6"/>',
   },
+  // ── V4-ICON-001 care/weather family (§9: watering-can, watering-can fill, feed, cloud,
+  //    rain+%, day-high/night-low). drop / pause / sun already shipped. All mono: the weather
+  //    surface sets `color` per condition, so hue is never baked (§6). ──
+  'care.wateringCan': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Watering can',
+    // Rim + squared D-handle + TAPERED pail + spout + rose. Two forms were drawn and rendered
+    // before this one stuck. A straight-sided body with a bump on top is a KETTLE — the taper is
+    // what makes it a can. And an ARCHED hoop handle fills in solid at both masters: a semicircle
+    // has a sagitta equal to its half-chord, so the counter-space is (sagitta - stroke) and closes
+    // long before 18px. The squared handle holds a real slot at 24 AND 18, which is why the same
+    // handle serves both masters instead of the usual drop-an-element simplification.
+    svg24: '<path d="M7.4 10.6h12.4"/><path d="M10.4 10.6V8.2a1.6 1.6 0 0 1 1.6-1.6h3.6a1.6 1.6 0 0 1 1.6 1.6v2.4"/><path d="M8.8 10.6h10.2l-1.1 7.9a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.1 13 4.6 9.6"/><path d="M3.1 11.4 5.9 7.8"/>',
+    // 18: only the rose drops (§2 names watering-can as a complexity-floor case) — it is a
+    // 4.5-unit bar at ~52deg and at 2.0px stroke it merges with the spout it caps. The spout is
+    // also re-angled steeper so it clears the rim line instead of fusing into it.
+    svg18: '<path d="M7.6 10.8h11.8"/><path d="M10.2 10.8V8a1.7 1.7 0 0 1 1.7-1.7h4a1.7 1.7 0 0 1 1.7 1.7v2.8"/><path d="M8.8 10.8h10.2l-1.1 7.7a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.2 14 4.2 9.2"/>',
+  },
+  'care.wateringCanFill': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Water remaining',
+    // §9: ONE parametric glyph, water level driven by a --fill CSS var on a clip-path — NOT N
+    // pre-rendered assets. The consumer sets it on the Icon's style, e.g. style={{'--fill':'40%'}};
+    // --fill is a PERCENTAGE of the water body's own height, because clip-path percentages on an
+    // SVG element resolve against its fill-box. Default 100% = full, so a consumer that sets
+    // nothing gets a full can rather than an empty one (and the §15 never-throws posture holds).
+    // resvg ignores basic-shape clip-path, so the CI gates measure the FULL can deterministically;
+    // the level itself is a browser-only behaviour and is not what the optical band is guarding.
+    svg24: '<path d="M10.1 12.2h7.6l-0.9 6.3a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z" fill="currentColor" stroke="none" style="clip-path:inset(calc(100% - var(--fill, 100%)) 0 0 0)"/><path d="M7.4 10.6h12.4"/><path d="M10.4 10.6V8.2a1.6 1.6 0 0 1 1.6-1.6h3.6a1.6 1.6 0 0 1 1.6 1.6v2.4"/><path d="M8.8 10.6h10.2l-1.1 7.9a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.1 13 4.6 9.6"/>',
+    svg18: '<path d="M10.1 12.4h7.4l-0.9 6a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z" fill="currentColor" stroke="none" style="clip-path:inset(calc(100% - var(--fill, 100%)) 0 0 0)"/><path d="M7.6 10.8h11.8"/><path d="M10.2 10.8V8a1.7 1.7 0 0 1 1.7-1.7h4a1.7 1.7 0 0 1 1.7 1.7v2.8"/><path d="M8.8 10.8h10.2l-1.1 7.7a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.2 14 4.2 9.2"/>',
+  },
+  // care.feed IS event.fertilizing's form — leaf + plus. iconEvents.js REUSEs this entry by
+  // reference rather than keeping its own copy, which is the house pattern (see its REUSE block)
+  // and means the two can never drift apart. The pair is ruled in iconUniqueness.test.js.
+  'care.feed': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Feed',
+    svg24: '<path d="M5.4 18.6C5.4 11.2 11.2 5.4 18.6 5.4 18.6 12.8 12.8 18.6 5.4 18.6z"/><path d="M8.4 15.6C10.8 13.2 13.6 10.4 16 8"/><path d="M17.4 16.2v3.6"/><path d="M15.6 18h3.6"/>',
+    svg18: '<path d="M5.8 17.2C5.8 11 11 5.8 17.2 5.8 17.2 12 12 17.2 5.8 17.2z"/><path d="M17.4 15.8v3.8"/><path d="M15.5 17.7h3.8"/>',
+  },
+  'care.cloud': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Cloudy',
+    // Three lobes over a flat base, same construction as event.rain's cloud but standing alone
+    // and sized to the live area. event.rain keeps its three falling streaks; a bare cloud is
+    // "the sky right now", which is a different statement from "it rained".
+    svg24: '<path d="M6.6 17.2a4.05 4.05 0 0 1 .35-8 5.2 5.2 0 0 1 9.9 1.35 3.7 3.7 0 0 1 .55 6.65z"/>',
+    svg18: '<path d="M6.4 17a4.1 4.1 0 0 1 .35-8.1 5.3 5.3 0 0 1 10.1 1.4 3.8 3.8 0 0 1 .55 6.7z"/>',
+  },
+  'care.rainPct': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Chance of rain',
+    // The FORECAST twin of event.rain, and deliberately not a second three-streak cloud: one
+    // drop under a raised cloud reads as "some chance", three streaks read as "it is raining".
+    // The two sit on different surfaces (weather widget vs event history) but share a vocabulary.
+    svg24: '<path d="M6.8 13.6a3.3 3.3 0 0 1 .3-6.6 4.3 4.3 0 0 1 8.2 1.1 3 3 0 0 1 .45 5.5z"/><path d="M12 15.2c0 0-2.5 3-2.5 4.4a2.5 2.5 0 0 0 5 0c0-1.4-2.5-4.4-2.5-4.4z"/>',
+    svg18: '<path d="M6.6 13.4a3.4 3.4 0 0 1 .3-6.8 4.4 4.4 0 0 1 8.4 1.15 3.05 3.05 0 0 1 .45 5.65z"/><path d="M12 15c0 0-2.6 3.1-2.6 4.6a2.6 2.6 0 0 0 5.2 0c0-1.5-2.6-4.6-2.6-4.6z"/>',
+  },
+  // day-high / night-low = a slim outline thermometer at left + a rising/falling arrow at right.
+  // FIRST DRAFT WAS AN ARROW MEETING A RAIL and it has to stay rejected: arrow-down-to-a-line is
+  // the universal DOWNLOAD icon, a read strong enough to beat any label. The thermometer sits
+  // near event.heat_damage (a fat CENTRED thermometer with a solid bulb and a mercury column) —
+  // a two-object compound against a one-object mark is a real difference, and the two surfaces
+  // (weather widget vs event history) do not share a screen. The day/night half of §9's wording
+  // is carried by the adjacent H/L text, which SC 1.4.1 requires to be present anyway.
+  'care.tempHigh': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'High temperature',
+    svg24: '<path d="M11.2 12.8V6.6a2.1 2.1 0 0 0-4.2 0v6.2a3.4 3.4 0 1 0 4.2 0z"/><path d="M18 18.2V10"/><path d="M15.2 12.8 18 10l2.8 2.8"/>',
+    svg18: '<path d="M11.8 12.8V6.4a2.6 2.6 0 0 0-5.2 0v6.4a3.8 3.8 0 1 0 5.2 0z"/><path d="M18 18.4V9.8"/><path d="M15 12.8 18 9.8l3 3"/>',
+  },
+  'care.tempLow': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Low temperature',
+    svg24: '<path d="M11.2 12.8V6.6a2.1 2.1 0 0 0-4.2 0v6.2a3.4 3.4 0 1 0 4.2 0z"/><path d="M18 9.8V18"/><path d="M15.2 15.2 18 18l2.8-2.8"/>',
+    svg18: '<path d="M11.8 12.8V6.4a2.6 2.6 0 0 0-5.2 0v6.4a3.8 3.8 0 1 0 5.2 0z"/><path d="M18 9.6V18.2"/><path d="M15 15.2 18 18.2l3-3"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)

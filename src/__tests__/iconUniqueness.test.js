@@ -37,6 +37,10 @@ const DELIBERATE_SYNONYMS = {
   [pk('status.harvesting', 'event.harvest')]:     'REUSE: harvest -> STATUS_GLYPHS.harvesting',
   [pk('care.drop', 'event.watering')]:            "REUSE: watering -> ANCHORS['care.drop']",
   [pk('nav.garden', 'event.potting_up')]:         "REUSE: potting_up -> ANCHORS['nav.garden']",
+  // V4-ICON-001: §9's care/weather family needs a feed glyph, and event.fertilizing already WAS
+  // one. The form moved to ANCHORS['care.feed'] and the event borrows it by reference — one mark,
+  // one meaning ("give the plant food"), reached from two vocabularies. iconEvents.js REUSE block.
+  [pk('care.feed', 'event.fertilizing')]:         "REUSE: fertilizing -> ANCHORS['care.feed']",
   // V4-LOSSEVENT-001: the X carries three keys for one idea ("these plants are gone"). Kept.
   // Caveat recorded rather than rediscovered: an unadorned X is the universal close/dismiss
   // affordance, so it survives ONLY because it is always label-adjacent and never interactive.
