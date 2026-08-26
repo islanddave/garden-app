@@ -14,6 +14,7 @@ import React, { useState, useMemo } from 'react'
 // two plant-reduction types while their capture panel is unbuilt. See constants.js for the why.
 import { P, SELECTABLE_EVENT_TYPES } from '../../lib/constants.js'
 import { buildSecondaryGroups } from '../../lib/eventTypes.js'
+import { T } from './formStyles.js'
 import Icon from '../Icon.jsx'
 
 // Primary quick-picks (V4-EVENTSEL-002, Dave 2026-07-07: first-class set reordered to
@@ -99,6 +100,12 @@ export default function EventTypePicker({ value, onChange, primaries = EVENT_TYP
           marginTop: 12, background: 'none', border: 'none',
           cursor: 'pointer', color: P.green, fontSize: '0.82rem',
           fontWeight: 600, padding: '4px 0',
+          // BUG-DISCLOSURETAPSIZE-001: 24px measured at 390x844 (4px padding + a 0.82rem line box).
+          // Found by the tap-target CENSUS in scripts/layout-gate/log-chooser-clearance.mjs, not by
+          // the manual audit that filed the bug — that audit named this control but attributed it
+          // to EventNew's harvest disclosure, so a fix list built from the ticket alone would have
+          // left it short. The census is the reason the miss surfaced.
+          minHeight: T.tapMinHeight,
           display: 'flex', alignItems: 'center', gap: 5,
         }}
       >

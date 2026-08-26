@@ -103,13 +103,18 @@ async function renderForm({ inOverlay = false } = {}) {
 // (`.style.position` on an outer sticky reads 'sticky' either way). Fragile-selector tripwire on
 // this change's own edit site.
 const saveWrapper = () => screen.getByTestId('save-sticky')
+// BUG-LOGBANDOCCLUDE-001 moved the interactivity switch DOWN a level. The wrapper used to be the
+// only thing carrying `pointerEvents`, toggled auto/none by pickerOpen; it is now `none` whenever
+// the band paints nothing, so the wrapper's value no longer answers "can Save be tapped" — Save's
+// own does. Asserting on the wrapper alone would now be asserting on the wrong node, which is the
+// same fragile-selector hazard the note above this file's `saveWrapper` was written about.
+const saveBtn = () => screen.getByText('Save').closest('button')
 
 describe('V4-PICKERUX-001 — Save is inert while the planting listbox is open', () => {
   it('leaves Save interactive when the picker is closed', async () => {
     await renderForm()
-    const w = saveWrapper()
-    expect(w.style.visibility).toBe('visible')
-    expect(w.style.pointerEvents).toBe('auto')
+    expect(saveWrapper().style.visibility).toBe('visible')
+    expect(saveBtn().style.pointerEvents).toBe('auto')
   })
 
   it('makes Save non-interactive as soon as the listbox opens', async () => {
@@ -120,6 +125,20 @@ describe('V4-PICKERUX-001 — Save is inert while the planting listbox is open',
     const w = saveWrapper()
     expect(w.style.visibility).toBe('hidden')
     expect(w.style.pointerEvents).toBe('none')
+    // Both levels, deliberately. `visibility: hidden` is what actually removes the subtree from hit
+    // testing; Save's own `none` is the belt that survives someone reworking the wrapper.
+    expect(saveBtn().style.pointerEvents).toBe('none')
+  })
+
+  // BUG-LOGBANDOCCLUDE-001 — the new contract, and the half jsdom CAN prove. The band is a
+  // full-content-width box that paints nothing before a save; it was still answering every hit
+  // test, and at 390x844 it took five of five taps aimed at the planting chooser underneath it.
+  // The pixels are gated by scripts/layout-gate/log-chooser-clearance.mjs; what belongs here is
+  // WHICH NODES DECLARE THEMSELVES TAPPABLE, which is a structural fact.
+  it('the transparent band does not hit-test, while the Save inside it does', async () => {
+    await renderForm()
+    expect(saveWrapper().style.pointerEvents).toBe('none')
+    expect(saveBtn().style.pointerEvents).toBe('auto')
   })
 
   // HONEST LIMIT, recorded rather than papered over. The point of the fix is "Save cannot write
@@ -146,9 +165,8 @@ describe('V4-PICKERUX-001 — Save is inert while the planting listbox is open',
     fireEvent.focus(screen.getByLabelText('Plant or group'))
     fireEvent.click(await screen.findByTestId('ps-opt-pl-2'))
     await act(async () => { await Promise.resolve() })
-    const w = saveWrapper()
-    expect(w.style.visibility).toBe('visible')
-    expect(w.style.pointerEvents).toBe('auto')
+    expect(saveWrapper().style.visibility).toBe('visible')
+    expect(saveBtn().style.pointerEvents).toBe('auto')
   })
 
   // Regression guard for the close path that is NOT a selection — the blur timeout. If the host

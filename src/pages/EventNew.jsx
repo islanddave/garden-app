@@ -36,6 +36,9 @@ import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS, sendUxEvent } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
+// BUG-DISCLOSURETAPSIZE-001: the tap floor is a token, not a literal repeated at four call sites.
+import { T } from '../components/forms/formStyles.js'
+import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import Section from '../components/FormSection.jsx'
@@ -58,7 +61,7 @@ import NumberPad from '../components/NumberPad.jsx'
 // BUG-WEIGHPADSAVEBAND-001 — the sticky Save band floats over this form and its height is not a
 // constant, so the keypad's clearance is resolved against the band as rendered. Rule, stated
 // minimum and the measured numbers: src/lib/saveBandLayout.js.
-import { SAVE_BAND_BOTTOM_INSET_PX, FRAME_SAVE_HEIGHT_PX, clearWeightPadOfSaveBand, framePadGapPx } from '../lib/saveBandLayout.js'
+import { SAVE_BAND_BOTTOM_INSET_PX, FRAME_SAVE_HEIGHT_PX, clearWeightPadOfSaveBand, clearControlOfSaveBand, framePadGapPx } from '../lib/saveBandLayout.js'
 import { orderByThumb } from '../lib/handedness.js'
 import { useHandedness } from '../hooks/useHandedness.js'
 import { toLocalISO, todayLocalISO } from '../lib/dateLocal.js'
@@ -192,6 +195,13 @@ const DRAFT_FORM_FIELDS = ['event_type', 'notes', 'private_notes', 'quantity', '
 // `visualViewport` entirely.
 const HARVEST_SECTION_ID = 'harvest-section'
 const PLANTING_SECTION_ID = 'planting-section'
+// BUG-LOGBANDOCCLUDE-001: the chooser's own hit target, not its Section wrapper — the wrapper's
+// label sits above the input and clearing THAT would leave the input itself still under the band.
+const PLANTING_CHOOSER_SELECTOR = '[aria-label="Plant or group"]'
+// V4-PICKERCACHE-001: one spelling of the unscoped chooser projection. PlantingSelect's self-fetch
+// builds the identical string, which is the point — dataCache keys on the path, so the two surfaces
+// share a single cache entry rather than warming two.
+const PICKER_PATH = '/api/plants?view=picker'
 // V4-HARVTRAYVIEWPORT-001: aria-controls target for the weigh-in tray's Show more/fewer disclosure.
 const HARVEST_TRAY_ID = 'harvest-session-tray'
 // BUG-TRAYFETCHSILENT-001: a REJECTION marker, deliberately not `null`. Both tray loaders used to
@@ -1141,21 +1151,116 @@ export default function EventNew() {
   // V4-PROJHIDE-001: unscoped planting source. With the project chooser hidden, the picker lists
   // EVERY live planting and project_id is DERIVED from the chosen planting (see PlantingSelect
   // onChange) — preserving the plant_id ⇒ project_id invariant without a user-visible project step.
+  // ── V4-PICKERCACHE-001 — the unscoped picker list, now SWR-cached ────────────────────────────
+  // V4-PICKERPAYLOAD-001 made this response ~10x lighter (814,399 B + ~426 presigns -> 123,348 B +
+  // zero). It did not make it WARM: PROJECTS_HIDDEN is on, so every log event and every weigh-in
+  // still paid a cold round trip through here before the chooser could open, and the chooser is the
+  // first thing Dave touches on the surface he uses most.
+  //
+  // Same SEED shape Garden.jsx adopted in V4-GARDENCACHE-001, and for the same reason: local state
+  // stays the render source, so nothing about how this list is consumed, filtered or reset changes.
+  // The hook paints from cache on the first render and revalidates on every mount.
+  //
+  // NOT a behaviour change on failure, but a better one: the hook surfaces `error` only on a COLD
+  // failure, so a transient blip during a background revalidate now KEEPS the list Dave is looking
+  // at instead of blanking it to `plantsLoadFailed`. The old catch could not tell those apart.
+  const pickerCache = useCachedFetch(PROJECTS_HIDDEN ? PICKER_PATH : null)
+  const { refetch: refetchPicker } = pickerCache
   useEffect(() => {
     if (!PROJECTS_HIDDEN) return
-    // Cancel guard mirrors the scoped loader above. It had none: this effect re-runs on every
-    // apiFetch identity change and on retry, so two responses can land out of order against one
-    // setter. Same shape as BUG-PLANTMISMATCH-001, just not yet reached in practice.
-    let cancelled = false
-    setPlantsLoadFailed(false)
-    // V4-PICKERPAYLOAD-001 — see the scoped fetch above. This is the unscoped one, and it is the
-    // one Dave actually hits: PROJECTS_HIDDEN is on, so every weigh-in and every log event loads the
-    // WHOLE planting list through here before the chooser can open.
-    apiFetch('/api/plants?view=picker')
-      .then(data => { if (!cancelled) setPlantsForProject((data ?? []).filter(p => !p.archived_at)) })
-      .catch(() => { if (!cancelled) { setPlantsForProject([]); setPlantsLoadFailed(true) } })
-    return () => { cancelled = true }
-  }, [apiFetch, plantsReloadKey])
+    if (pickerCache.error) { setPlantsForProject([]); setPlantsLoadFailed(true); return }
+    if (pickerCache.data !== undefined) {
+      setPlantsForProject((pickerCache.data ?? []).filter(p => !p.archived_at))
+      setPlantsLoadFailed(false)
+    }
+  }, [pickerCache.data, pickerCache.error])
+
+  // `plantsReloadKey` is the inline-add-planting write-through: a planting created without leaving
+  // the form must appear in the chooser immediately. Uncached that was a dep bump forcing a refetch;
+  // cached it has to be an explicit revalidate, or the next mount would paint the pre-create list —
+  // the exact stale-after-mutation hazard Garden's own adoption note calls out. Skipped on mount,
+  // where the hook already revalidates: firing both would double the request this row exists to
+  // remove.
+  const mountedReloadKey = useRef(plantsReloadKey)
+  useEffect(() => {
+    if (!PROJECTS_HIDDEN) return
+    if (plantsReloadKey === mountedReloadKey.current) return
+    refetchPicker()
+  }, [plantsReloadKey, refetchPicker])
+
+  // BUG-LOGBANDOCCLUDE-001: latches on the first sign the user is driving. `pointerdown` rather
+  // than `click` so a press that STARTS a scroll counts, and capture phase so a handler that stops
+  // propagation cannot hide the interaction from us.
+  const userActedRef = useRef(false)
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const latch = () => { userActedRef.current = true }
+    const opts = { capture: true, passive: true }
+    document.addEventListener('pointerdown', latch, opts)
+    document.addEventListener('keydown', latch, opts)
+    document.addEventListener('focusin', latch, opts)
+    window.addEventListener('scroll', latch, opts)
+    return () => {
+      document.removeEventListener('pointerdown', latch, opts)
+      document.removeEventListener('keydown', latch, opts)
+      document.removeEventListener('focusin', latch, opts)
+      window.removeEventListener('scroll', latch, opts)
+    }
+  }, [])
+
+  // ── BUG-LOGBANDOCCLUDE-001 — the SECOND half of the fix (the first is `pointerEvents` on the
+  //    band itself; see the save-sticky style block). Making the band's transparent box stop
+  //    hit-testing frees the strip to Save's LEFT, but Save is opaque and painted and genuinely
+  //    covers what is under it — measured at a true 390x844, Save occupies x179-359 while the
+  //    chooser spans x35-340, so two thirds of a REQUIRED field sat under a control that WRITES.
+  //    That is the mis-tap-that-commits hazard SAVE_BAND_MIN_CLEARANCE_PX was minted for, not a
+  //    cosmetic overlap, and no amount of pointer-events fixes it.
+  //
+  //    So: on first paint, scroll the minimum that puts the chooser clear. Deliberately narrow —
+  //    `clearControlOfSaveBand` returns 0 when there is no collision, so this is a no-op at every
+  //    viewport and scroll position where the bug does not exist, and it is instant rather than
+  //    smooth so it cannot race the V4-HARVSCROLLANCHOR-001 anchor mid-animation.
+  //
+  //    WHY THIS WATCHES LAYOUT AND NOT STATE, which cost two measured wrong answers to learn.
+  //    Draft 1 ran once on mount behind a single rAF: at that instant no list had landed, the page
+  //    was ~500px shorter, the chooser was nowhere near the band, and the helper correctly returned
+  //    0. Draft 2 added `plantsForProject.length` / `projects.length` as deps — and still never
+  //    fired, because a list that arrives EMPTY leaves its length at 0 and changes no dep at all,
+  //    while the surrounding chrome it unblocks still grows the page. Both drafts reported "no
+  //    collision" against a collision that was live in the browser the whole time.
+  //    The dependency is not any piece of state. It is the page getting taller. So watch that.
+  //
+  //    `userActedRef` keeps this from becoming a page that jumps under a thumb: once anything has
+  //    been touched, scrolled, or focused, the user owns the scroll and a late arrival must not
+  //    reposition them. It latches — this is a first-paint fix and gets exactly one chance — and
+  //    the observer disconnects the moment it does.
+  //
+  //    sessionFrame is exempt: the frame has no sticky band at all (track 3 is a real grid track),
+  //    so there is nothing to clear and `!band` would no-op anyway.
+  useEffect(() => {
+    if (sessionFrame) return undefined
+    if (typeof document === 'undefined' || typeof ResizeObserver !== 'function') return undefined
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn => setTimeout(fn, 0))
+    let frame = null
+    const attempt = () => {
+      frame = null
+      if (userActedRef.current) { obs.disconnect(); return }
+      clearControlOfSaveBand(undefined, { controlSelector: PLANTING_CHOOSER_SELECTOR })
+    }
+    // Coalesced to one rAF: a settling page fires several resize records in a burst, and each
+    // would otherwise measure a half-laid-out frame.
+    const schedule = () => {
+      if (userActedRef.current) { obs.disconnect(); return }
+      if (frame == null) frame = raf(attempt)
+    }
+    const obs = new ResizeObserver(schedule)
+    obs.observe(document.body)
+    schedule()
+    return () => {
+      obs.disconnect()
+      if (frame != null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+    }
+  }, [sessionFrame])
 
   // Load projects + locations
   useEffect(() => {
@@ -1918,6 +2023,10 @@ export default function EventNew() {
                 <button type="button" onClick={() => setForm(f => ({ ...f, event_type: 'flag_issue' }))}
                   style={{ marginTop: 12, background: 'none', border: `1px solid ${P.terra}`, borderRadius: 8,
                     color: P.terra, fontWeight: 600, fontSize: '0.85rem', padding: '8px 14px', cursor: 'pointer',
+                    /* BUG-DISCLOSURETAPSIZE-001: 36px measured — 8px padding either side of a
+                       0.85rem line box. inline-flex honours minHeight, so the chip keeps its
+                       hug-the-text width and only grows vertically. */
+                    minHeight: T.tapMinHeight,
                     display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   🚩 Flag an issue
                 </button>
@@ -2593,7 +2702,11 @@ export default function EventNew() {
               type="button"
               onClick={() => setShowAddDetails(s => !s)}
               aria-expanded={showAddDetails}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+              /* BUG-DISCLOSURETAPSIZE-001: measured 16px tall at 390x844 — the shortest tap target
+                 on the surface, and the one gating three fields. `padding: 0` with a 0.82rem line
+                 box is the whole cause. minHeight alone (no added padding) grows the collapsed card
+                 40 -> 44px and leaves the label's baseline where it was, so nothing else moves. */
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, minHeight: T.tapMinHeight, display: 'flex', alignItems: 'center', gap: 6 }}
             >
               <span aria-hidden="true">{showAddDetails ? '▾' : '▸'}</span>
               <span>Add details  ·  optional</span>
@@ -2707,7 +2820,11 @@ export default function EventNew() {
                   onClick={() => setShowHarvestMore(s => !s)}
                   aria-expanded={showHarvestMore}
                   data-testid="harvest-more-toggle"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+                  /* BUG-DISCLOSURETAPSIZE-001: 24px measured. Safe inside the frame's budget —
+                     this control sits in track 2's `1fr` sponge row (see lib/saveBandLayout.js on
+                     where the frame's pixels come from), so height added here is absorbed by the
+                     sponge and does not move the weight pad relative to Save. */
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, minHeight: T.tapMinHeight, display: 'flex', alignItems: 'center', gap: 6 }}
                 >
                   <span aria-hidden="true">{showHarvestMore ? '▾' : '▸'}</span>
                   {/* V4-WEIGHDATEREACH-001: the label drops "date" IN THE FRAME ONLY, because in the
@@ -3363,7 +3480,25 @@ export default function EventNew() {
               display: 'flex',
               flexDirection: 'column',
               visibility: pickerOpen ? 'hidden' : 'visible',
-              pointerEvents: pickerOpen ? 'none' : 'auto',
+              // BUG-LOGBANDOCCLUDE-001 — the band must not take a tap where it paints nothing.
+              //
+              // MEASURED, real Chrome, true 390x844, /log at first paint (scrollTop 0): the band
+              // is stuck at bottom:68 spanning y728-776 and x16-359, and the "Plant or group"
+              // chooser lies at y712-756, x35-340 — 28 of its 44px underneath. FIVE
+              // elementFromPoint probes across the chooser's width returned the chooser ZERO
+              // times: x50 and x111 hit this container's action row (transparent, left of Save),
+              // x188/x264/x325 hit the Save BUTTON itself (x179-359). The field was completely
+              // untappable until the user scrolled, with nothing on screen explaining why.
+              //
+              // The container is a full-content-width box that paints only when the feedback zone
+              // renders; the rest of the time it is an invisible 343x48 hit-taker floating over
+              // the form. So it hit-tests ONLY when it is opaque, and the two things that ARE
+              // painted inside it — the session ledger strip and the action row's buttons — opt
+              // back in individually. This is the general half of the fix: it retires the dead
+              // strip at every viewport and for every control that ever lands under it, not just
+              // this chooser. The painted-Save half cannot be solved here (a floating Save
+              // overlaps by design) and is handled by the mount clearance in the effect above.
+              pointerEvents: pickerOpen || !showPostSaveStrip ? 'none' : 'auto',
               // Opaque only while the feedback zone renders. Pre-save the band stays transparent —
               // byte-identical to the shipped look, where the shadowed Save floats over the form.
               ...(showPostSaveStrip ? { backgroundColor: P.cream, borderTop: `1px solid ${P.border}` } : null),
@@ -3387,8 +3522,11 @@ export default function EventNew() {
               const totalG = live.reduce((s, r) => s + (r.grams ?? 0), 0)
               const visible = sessionRows.slice(-3)
               const totalLabel = totalG >= 1000 ? `${Math.round(totalG / 100) / 10} kg` : `${Math.round(totalG)} g`
+              // BUG-LOGBANDOCCLUDE-001: this strip opts back in — it is opaque white with its own
+              // shadow, so it is a real surface and its per-row Undo buttons must stay tappable
+              // even though the band around them no longer hit-tests.
               return (
-                <div data-testid="harvest-session-strip" style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.10)' }}>
+                <div data-testid="harvest-session-strip" style={{ pointerEvents: 'auto', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.10)' }}>
                   <div style={{ fontSize: '0.78rem', fontWeight: 700, color: P.green, letterSpacing: '0.3px', textTransform: 'uppercase', marginBottom: 6 }}>
                     This session: {live.length} harvest{live.length === 1 ? '' : 's'}{totalG > 0 ? ` · ${totalLabel}` : ''}
                   </div>
@@ -3450,8 +3588,13 @@ export default function EventNew() {
                   STATED LOSS (accepted, spec §3): Done with a half-typed harvest quantity discards
                   it — DRAFT_FORM_FIELDS does not cover harvest.quantity/weight. NOT a regression;
                   Escape and Android Back already do exactly this. */}
+              {/* BUG-LOGBANDOCCLUDE-001: both buttons opt back in, and keep the pickerOpen belt
+                  the container used to carry alone. `visibility: hidden` on the band already
+                  removes them from hit testing while the listbox is open — this restates it at the
+                  control so the V4-PICKERUX-001 wrong-write guarantee does not depend on a single
+                  property on an ancestor. */}
               {inOverlay && (
-                <button type="button" onClick={dismissOverlay} style={confirmBtnGhost}>
+                <button type="button" onClick={dismissOverlay} style={{ ...confirmBtnGhost, pointerEvents: pickerOpen ? 'none' : 'auto' }}>
                   Done
                 </button>
               )}
@@ -3475,6 +3618,7 @@ export default function EventNew() {
                 style={{
                   boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
                   minWidth: 180,
+                  pointerEvents: pickerOpen ? 'none' : 'auto',
                 }}
               >
                 Save

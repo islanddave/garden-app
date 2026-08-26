@@ -1,7 +1,7 @@
 {
   "name": "garden-app",
   "private": true,
-  "version": "4.53.0",
+  "version": "4.54.0",
   "type": "module",
   "engines": {
     "node": "20.x"
@@ -15,6 +15,7 @@
     "test:ui": "vitest --ui",
     "gate:sw-mirror": "node scripts/check-sw-mirror.mjs",
     "gate:save-band": "node scripts/layout-gate/save-band-clearance.mjs",
+    "gate:log-chooser": "node scripts/layout-gate/log-chooser-clearance.mjs",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
     "lint": "eslint .",

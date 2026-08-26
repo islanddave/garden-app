@@ -26,6 +26,13 @@ export const T = {
   fieldPadX:    12,
   fontField:    '0.9rem',
   buttonMinHeight: 48, // frozen — accessibility tap target + Crucible §2
+  // BUG-DISCLOSURETAPSIZE-001 — the FLOOR, distinct from buttonMinHeight's 48 comfort target.
+  // 44 was already the number this codebase enforced (selectChrome's minHeight, PhotoHero,
+  // Lightbox, NotifyButton, PostSaveFeedback… all literal 44s); it just had no home, so four
+  // controls on Log Event were shipped under it — "Add details" at 16px, the frame's
+  // photo/notes toggle at 24, "Flag an issue" at 36, and every <Input> at 41. Named here so a
+  // fifth cannot be authored under the floor without spelling out a different number.
+  tapMinHeight: 44,
   // ── DESIGNSYS Pass A: type + space ramps (values already in use; additive) ──
   type: { xs: '0.72rem', sm: '0.82rem', base: '0.9rem', md: '0.95rem' },
   space: { xs: 5, sm: 10, md: 16, lg: 20 },
@@ -49,6 +56,10 @@ export function chevronDataUri(color = P.light) {
 export function inputChrome(hasError = false) {
   return {
     width: '100%',
+    // BUG-DISCLOSURETAPSIZE-001: 10px padding + a ~0.9rem line box computes to ~41px, under the
+    // tap floor selectChrome has enforced since V4-PLANTPICKER-001. The date control on Log Event
+    // is the measured instance (41px at 390x844), but every Input in the app was equally short.
+    minHeight: T.tapMinHeight,
     padding: `${T.fieldPadY}px ${T.fieldPadX}px`,
     border: `1px solid ${hasError ? P.terra : P.border}`,
     borderRadius: T.radiusField,
@@ -65,7 +76,8 @@ export function selectChrome(hasError = false) {
     ...inputChrome(hasError),
     // V4-PLANTPICKER-001 (spec §6.5 nit): computed height was ≈39px, under the 44pt tap minimum
     // that buttonMinHeight already froze for buttons — pages were patching it inline instead.
-    minHeight: 44,
+    // (Now inherited from inputChrome; kept explicit so this stays true if that base ever moves.)
+    minHeight: T.tapMinHeight,
     appearance: 'none',
     WebkitAppearance: 'none',
     MozAppearance: 'none',

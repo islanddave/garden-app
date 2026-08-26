@@ -137,13 +137,25 @@ function scrollParentOf(el) {
 // against a second call), it works identically on an element scrollport and on
 // `document.scrollingElement`, and jsdom implements it as a plain settable property instead of the
 // "Not implemented" console noise the scroll methods produce.
-export function clearWeightPadOfSaveBand(doc = typeof document === 'undefined' ? null : document, {
-  padSelector = '[aria-label="Harvest weight keypad"]',
+export function clearWeightPadOfSaveBand(doc = typeof document === 'undefined' ? null : document, opts = {}) {
+  return clearControlOfSaveBand(doc, { controlSelector: '[aria-label="Harvest weight keypad"]', ...opts,
+    // Back-compat: this function's option was named `padSelector`, and EventNew's two call sites
+    // plus their mock still speak that name. Honoured when passed, ignored otherwise.
+    ...(opts.padSelector ? { controlSelector: opts.padSelector } : null) })
+}
+
+// BUG-LOGBANDOCCLUDE-001 — the same rule for ANY control, because the weight keypad was never
+// special. The band floats over whatever happens to sit at `bottom: 68px` in the viewport, so the
+// occluded control is a function of scroll position and viewport height, not of which control it
+// is. Extracted rather than copied so there is still exactly one implementation of "scroll the
+// minimum that clears the band", and one place where the hidden-band no-op lives.
+export function clearControlOfSaveBand(doc = typeof document === 'undefined' ? null : document, {
+  controlSelector,
   bandSelector = '[data-testid="save-sticky"]',
   minClearance = SAVE_BAND_MIN_CLEARANCE_PX,
 } = {}) {
-  if (!doc) return 0
-  const pad = doc.querySelector(padSelector)
+  if (!doc || !controlSelector) return 0
+  const pad = doc.querySelector(controlSelector)
   const band = doc.querySelector(bandSelector)
   if (!pad || !band) return 0
   // A hidden band occludes nothing — the picker-open suppression (V4-PICKERUX-001) sets

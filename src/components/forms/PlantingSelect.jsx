@@ -27,7 +27,7 @@
 // are exactly the pieces TalkBack (Chrome/Android, the only target) needs to narrate the list.
 // Where this deviates from APG the reason is stated inline at the deviation.
 import React, { useState, useEffect, useMemo, useRef, useCallback, useId } from 'react'
-import { useApiFetch } from '../../lib/api.js'
+import { useCachedFetch } from '../../hooks/useCachedFetch.js'
 import { P } from '../../lib/constants.js'
 import { T, inputChrome } from './formStyles.js'
 import { formatQty } from '../../lib/format.js'
@@ -391,7 +391,6 @@ export default function PlantingSelect({
   'aria-describedby': ariaDescribedBy,
   'data-testid': dataTestId,
 }) {
-  const { fetch: apiFetch } = useApiFetch()
   // V4-HANDEDNESSCONTROLS-001 — which edge the ⌨/🎤/✕ slots take. BD-054's named defect was the
   // MIC sitting on the far side of this exact field during a weigh-in.
   const hand = useHandedness()
@@ -584,21 +583,33 @@ export default function PlantingSelect({
   // EventNew that means a permanently hidden Save button.
   useEffect(() => () => { onOpenChangeRef.current?.(false) }, [])
 
+  // V4-PICKERPAYLOAD-001: the self-fetch path (used where the host does not pass `plants`), on the
+  // same chooser projection EventNew uses. This component's whole field census — nine top-level
+  // keys, four of variety_ref, zero photo fields — is what defines that projection; the Lambda
+  // branch carries it. Add a field there, not by reverting to the wide shape.
+  //
+  // V4-PICKERCACHE-001: SWR-cached, so a chooser opened twice in a session pays one round trip
+  // rather than two. `null` while `controlled` puts the hook in its IDLE mode — no fetch, no cache
+  // entry — which is how a conditional data source stays inside the rules of hooks. The unscoped
+  // string is byte-identical to EventNew's PICKER_PATH deliberately: dataCache keys on the path,
+  // so host and child share one warm entry instead of each holding their own.
+  const selfPath = controlled
+    ? null
+    : (scopeProjectId ? `/api/plants?view=picker&project_id=${scopeProjectId}` : '/api/plants?view=picker')
+  const selfCache = useCachedFetch(selfPath)
+  // Read through a ref for the same reason `onOpenChange` above is: callers pass inline closures,
+  // and an effect keyed on a per-render identity is the BUG-SOWFOCUS-001 shape.
+  const onLoadErrorRef = useRef(onLoadError)
+  onLoadErrorRef.current = onLoadError
   useEffect(() => {
     if (controlled) return
-    let live = true
-    setLoading(true)
-    setFailed(false)
-    // V4-PICKERPAYLOAD-001: the self-fetch path (used where the host does not pass `plants`), on the
-    // same chooser projection EventNew uses. This component's whole field census — nine top-level
-    // keys, four of variety_ref, zero photo fields — is what defines that projection; the Lambda
-    // branch carries it. Add a field there, not by reverting to the wide shape.
-    apiFetch(scopeProjectId ? `/api/plants?view=picker&project_id=${scopeProjectId}` : '/api/plants?view=picker')
-      .then(data => { if (live) setFetched(Array.isArray(data) ? data : []) })
-      .catch(err => { if (live) { setFailed(true); onLoadError?.(err) } })
-      .finally(() => { if (live) setLoading(false) })
-    return () => { live = false }
-  }, [apiFetch, controlled, scopeProjectId]) // eslint-disable-line react-hooks/exhaustive-deps
+    setLoading(selfCache.loading)
+    if (selfCache.error) { setFailed(true); onLoadErrorRef.current?.(selfCache.error); return }
+    if (selfCache.data !== undefined) {
+      setFetched(Array.isArray(selfCache.data) ? selfCache.data : [])
+      setFailed(false)
+    }
+  }, [controlled, selfCache.loading, selfCache.data, selfCache.error])
 
   // ── Scope → search → chip filter → sort ────────────────────────────────────
   // V4-CROPFILTER-001: returns hiddenByChips alongside — the count feeds the loud active-filter

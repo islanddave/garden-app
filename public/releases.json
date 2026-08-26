@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.54.0",
+    "date": "2026-08-26",
+    "highlights": [
+      "The planting chooser on Log Event was impossible to tap when the page first opened. The Save button floats over the bottom of the form, and at phone size it landed directly on top of the chooser — covering 28 of its 44 pixels. Every point across that field, tested end to end, was answering as Save rather than as the chooser. So the first thing you reached for did nothing, and on most of its width a tap actually saved the form instead. Scrolling freed it, which is why it looked intermittent. The page now nudges the chooser clear on the way in, and the invisible part of the Save bar has stopped intercepting taps meant for whatever sits beneath it.",
+      "Four controls on Log Event were too small to hit reliably. \"Add details\" was 16 pixels tall against the 44 the app requires everywhere else, \"More event types\" 24, \"Flag an issue\" 36, and every date and text box 41. They are all at 44 now. The size is written down in one place this time, and a check measures every control on the page rather than only the four that were reported — which is how a fifth one nobody had noticed got caught and fixed alongside them.",
+      "Opening the planting chooser no longer waits on the network. The list it shows was made about ten times lighter last release, but it was still fetched from scratch every single time you opened a log event or a weigh-in. It now shows the list you already had and checks for changes behind it, the same way the Garden tab and the planting pages already do."
+    ]
+  },
+  {
     "version": "4.53.0",
     "date": "2026-08-26",
     "highlights": [
