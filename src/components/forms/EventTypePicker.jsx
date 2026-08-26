@@ -21,15 +21,19 @@ import Icon from '../Icon.jsx'
 // Watered / Transplanted / Fertilized / Flowering / Fruit Set / Harvested / Photo — and
 // unified with the Log Many selector. Supersedes the V3-EVENTZONE-001 braindump set:
 // mulched + suckered drop to "More"; flowering + photo promoted). slice(0,3) → 3-col grid;
-// slice(3) → 2-col grid. Emojis are unique across the primary set (glyphs render via Icon).
+// slice(3) → 2-col grid.
+//
+// V4-ICON-001: `emoji` removed. TypeBtn has rendered <Icon name={`event.${value}`} /> since the
+// registry landed, so these were inert strings; `value` is now the ONLY glyph key. Shape is
+// { value, label } — the same shape buildSecondaryGroups emits, which is why TypeBtn takes both.
 export const EVENT_TYPES_UI = [
-  { value: 'watering',    label: 'Watered',                 emoji: '💧' },
-  { value: 'transplant',  label: 'Transplanted\n/ Planted', emoji: '🌱' },
-  { value: 'fertilizing', label: 'Fertilized\n/ Fed',       emoji: '🌿' },
-  { value: 'flowering',   label: 'Flowering',               emoji: '🌸' },
-  { value: 'fruit_set',   label: 'Fruit Set',               emoji: '🍅' },
-  { value: 'harvest',     label: 'Harvested',               emoji: '🧺' },
-  { value: 'photo',       label: 'Photo',                   emoji: '📷' },
+  { value: 'watering',    label: 'Watered' },
+  { value: 'transplant',  label: 'Transplanted\n/ Planted' },
+  { value: 'fertilizing', label: 'Fertilized\n/ Fed' },
+  { value: 'flowering',   label: 'Flowering' },
+  { value: 'fruit_set',   label: 'Fruit Set' },
+  { value: 'harvest',     label: 'Harvested' },
+  { value: 'photo',       label: 'Photo' },
 ]
 
 const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))

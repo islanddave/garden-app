@@ -17,6 +17,9 @@ vi.mock('react-router-dom', () => ({
 
 import { EVENT_TYPES_UI, EVENT_TYPE_META, SECONDARY_GROUPS } from '../pages/EventNew.jsx'
 import { EVENT_TYPES } from '../lib/constants.js'
+// V4-ICON-001: the glyph assertions below moved off the (deleted) `emoji` field onto the registry,
+// which is where an event type's glyph actually comes from now.
+import { GLYPHS, isSvg } from '../lib/iconRegistry.js'
 
 // A label is "raw snake_case" if it is only lowercase letters/underscores —
 // i.e. the value leaked through unmapped. Human labels carry caps/spaces/glyphs.
@@ -39,14 +42,14 @@ describe('V4-EVENTSEL-002 — first-class quick-pick set (Dave 2026-07-07, unifi
 
   it('every primary pick has a glyph and a non-raw label', () => {
     for (const t of EVENT_TYPES_UI) {
-      expect(t.emoji && t.emoji.length, t.value).toBeGreaterThan(0)
+      expect(isSvg(GLYPHS[`event.${t.value}`]), t.value).toBe(true)
       expect(isRaw(t.label), t.value).toBe(false)
     }
   })
 
-  it('no emoji collision among the primary picks', () => {
-    const emojis = EVENT_TYPES_UI.map((t) => t.emoji)
-    expect(new Set(emojis).size).toBe(emojis.length)
+  it('no glyph collision among the primary picks', () => {
+    const shapes = EVENT_TYPES_UI.map((t) => GLYPHS[`event.${t.value}`].svg24)
+    expect(new Set(shapes).size).toBe(shapes.length)
   })
 })
 
@@ -57,13 +60,14 @@ describe('Phase 1 — demoted/new types render non-raw in "More"', () => {
   it('observation appears in a secondary group with a non-raw label + glyph', () => {
     expect(byValue.observation).toBeTruthy()
     expect(isRaw(byValue.observation.label)).toBe(false)
-    expect(byValue.observation.emoji.length).toBeGreaterThan(0)
+    expect(isSvg(GLYPHS['event.observation'])).toBe(true)
   })
 
-  it('no secondary value falls through to the raw 📌 fallback', () => {
+  // The fallback is now `{ label: value, category: 'Other' }` — a raw label is the whole tell,
+  // since V4-ICON-001 removed the pushpin marker that used to co-signal it.
+  it('no secondary value falls through to the raw no-META fallback', () => {
     for (const t of flat) {
-      const isRawFallback = t.label === t.value && t.emoji === '📌'
-      expect(isRawFallback, t.value).toBe(false)
+      expect(t.label === t.value, t.value).toBe(false)
     }
   })
 

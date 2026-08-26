@@ -343,10 +343,11 @@ export default function LogMany() {
 
   const onSelectionChange = useCallback((sel) => setSelection(sel), [])
 
+  // V4-ICON-001: no `emoji` — `value` is the glyph key, resolved by <Icon name={`event.${value}`} />
+  // on the result card below. Nothing ever read the emoji off this object.
   const evMeta = {
     value: eventType,
     label: EVENT_TYPE_META[eventType]?.label ?? eventType,
-    emoji: EVENT_TYPE_META[eventType]?.emoji ?? '📌',
   }
   const verbLabel = evMeta.label.toLowerCase()
   // V4-EVENTSEL-005: DERIVED, not plain state — see the useState comment above.

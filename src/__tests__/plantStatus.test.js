@@ -1,11 +1,13 @@
 // Lane D / Phase B+C slice 1 (§3.1 EVENT_ICONS fold + §3.2 PLANT_STATUS_MAP).
 // Guards: plant-status registry completeness + humanizer + the gold-fallthrough
-// fix; plus EVENT_TYPE_META emoji-completeness (the canonical icon source the
-// 4 page EVENT_ICONS copies were folded into).
+// fix; plus event-type icon completeness. V4-ICON-001 moved the canonical event
+// glyph off EVENT_TYPE_META.emoji and onto the icon registry, so the §3.1 guard
+// now asserts against the registry — see eventTypeIconWiring.test.jsx.
 import { describe, it, expect } from 'vitest'
 import { PLANT_STATUSES, PLANT_STATUS_MAP, statusLabel, PROJECT_STATUS_MAP } from '../lib/constants.js'
 import { getStatusColors, STATUS_COLORS } from '../lib/status.js'
 import { EVENT_TYPE_META, EVENT_TYPES } from '../lib/eventTypes.js'
+import { GLYPHS, isSvg } from '../lib/iconRegistry.js'
 
 describe('§3.2 plant-status registry', () => {
   it('every PLANT_STATUS has a label + emoji', () => {
@@ -29,10 +31,11 @@ describe('§3.2 plant-status registry', () => {
 })
 
 describe('§3.1 EVENT_ICONS fold', () => {
-  it('EVENT_TYPE_META supplies an emoji for every EVENT_TYPE (the canonical icon source)', () => {
+  it('the icon registry supplies an SVG glyph for every EVENT_TYPE (the canonical icon source)', () => {
     for (const t of EVENT_TYPES) {
       expect(EVENT_TYPE_META[t]).toBeDefined()
-      expect(EVENT_TYPE_META[t].emoji).toBeTruthy()
+      expect(GLYPHS[`event.${t}`], `no registry glyph for ${t}`).toBeDefined()
+      expect(isSvg(GLYPHS[`event.${t}`]), `event.${t} is not SVG-backed`).toBe(true)
     }
   })
 })
