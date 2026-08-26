@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.56.0",
+    "date": "2026-08-26",
+    "highlights": [
+      "Snap has a third choice: \"Add to a planting\". It attaches the photo to the planting and does nothing else — it does not become the planting's main picture, and it does not log an event. The two existing options are unchanged and still there; this sits beside them, one field and Save, as direct as \"Update a photo\". It turned out the app could already do this internally — \"Update a photo\" is this exact step plus one more, and \"Log on a planting\" is this exact step plus one more — so nothing new had to be built underneath, only a way in."
+    ]
+  },
+  {
     "version": "4.55.0",
     "date": "2026-08-26",
     "highlights": [

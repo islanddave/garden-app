@@ -80,6 +80,18 @@ const MODES = [
   { id: 'event',     label: 'Log on a planting', hint: 'Attach this photo to an event (Watered, Harvested…)' },
   { id: 'location',  label: 'Log on a location', hint: 'Attach this photo to a bed, area or structure — no planting needed' },
   { id: 'replace',   label: 'Update a photo',    hint: 'Set this as an existing planting’s photo' },
+  // V4-SNAPPHOTOONLY-001 (BD-065) — Dave: "I just want the photo attached to the plant. It is not
+  // the hero shot and it does not need to be an event." The two neighbouring destinations each made
+  // him pay for something he had not asked for: 'event' routes through the full event picker, and
+  // 'replace' overwrites the planting's main picture. Neither can be narrowed without taking away
+  // something he uses, so this is a THIRD option beside them, exactly as the row specifies
+  // ("I wanna keep the added to a planting and be able to select events if I want to").
+  //
+  // ORDER, per the rule this list already carries: 'inventory' stays LAST, and this sits beside
+  // 'replace' because the two are the same KIND of act — a photo aimed at a planting that already
+  // exists, with nothing else created. They are the surface's two direct paths and they read as a
+  // pair; the difference between them is one line of hint text, which is the whole point.
+  { id: 'attachonly', label: 'Add to a planting', hint: 'Attach the photo and nothing else — no event, and it stays off the main picture' },
   { id: 'inventory', label: 'Add inventory',     hint: 'Create a supply/equipment item with this photo' },
 ]
 // V4-SNAPTOAST-001 (BD-008 + BD0806-09) — "go to the thing I just saved", per destination.
@@ -191,6 +203,11 @@ export default function CaptureFlow() {
   // an event vocabulary and an event date had nothing to land in. See the save() branch.
   const [locPlace, setLocPlace] = useState('')
   const [rpPlant, setRpPlant] = useState('')
+  // V4-SNAPPHOTOONLY-001: own state, deliberately NOT shared with rpPlant. Sharing would make
+  // switching between the two photo destinations carry a selection the user made for the other one,
+  // and the whole difference between them is that one overwrites the main picture — a carried-over
+  // choice is exactly how someone replaces a hero shot they meant only to add beside.
+  const [atPlant, setAtPlant] = useState('')
   const [invName, setInvName] = useState('')
   const [invType, setInvType] = useState('consumable')
   const [invCat, setInvCat]   = useState('other')
@@ -230,6 +247,7 @@ export default function CaptureFlow() {
     if (draft.evDate)   setEvDate(draft.evDate)
     if (draft.locPlace) setLocPlace(draft.locPlace)
     if (draft.rpPlant)  setRpPlant(draft.rpPlant)
+    if (draft.atPlant)  setAtPlant(draft.atPlant)
     if (draft.invName)  setInvName(draft.invName)
     if (draft.invType)  setInvType(draft.invType)
     if (draft.invCat)   setInvCat(draft.invCat)
@@ -247,7 +265,7 @@ export default function CaptureFlow() {
   const plantFormTouched = Object.keys(SNAP_PLANT_FORM).some(k => plantForm[k] !== SNAP_PLANT_FORM[k])
   const hasDraftContent = (
     plantFormTouched ||
-    !!(evPlant || locPlace || rpPlant || invName) ||
+    !!(evPlant || locPlace || rpPlant || atPlant || invName) ||
     evType !== 'watering' || evDate !== today ||
     invType !== 'consumable' || invCat !== 'other' || invQty !== '1' || invUnit !== 'each'
   )
@@ -259,10 +277,10 @@ export default function CaptureFlow() {
   useEffect(() => {
     if (!hasDraftContent || step === 'done') return
     writeDraft(DRAFT_KEY, {
-      plantForm, evPlant, evType, evDate, locPlace, rpPlant,
+      plantForm, evPlant, evType, evDate, locPlace, rpPlant, atPlant,
       invName, invType, invCat, invQty, invUnit,
     })
-  }, [hasDraftContent, step, plantForm, evPlant, evType, evDate, locPlace, rpPlant,
+  }, [hasDraftContent, step, plantForm, evPlant, evType, evDate, locPlace, rpPlant, atPlant,
       invName, invType, invCat, invQty, invUnit])
 
   // GUARD predicate — SEPARATE from the stash and deliberately ONE term, which is both necessary
@@ -310,7 +328,11 @@ export default function CaptureFlow() {
     if (preview) URL.revokeObjectURL(preview)
     setFile(null); setPreview(null); setMode(null); setResult(null); setErr(null)
     setPlantForm(SNAP_PLANT_FORM); setEvPlant(''); setEvType('watering'); setEvDate(todayStr())
-    setRpPlant(''); setInvName(''); setInvType('consumable'); setInvCat('other'); setInvQty('1'); setInvUnit('each')
+    // V4-SNAPPHOTOONLY-001: atPlant resets with its five siblings. Omitting it would carry the last
+    // planting into the next capture, and on THIS destination that is a silent wrong-write — the
+    // save needs no other field, so a stale selection plus one Save tap files the photo against a
+    // planting the user never picked for it.
+    setRpPlant(''); setAtPlant(''); setInvName(''); setInvType('consumable'); setInvCat('other'); setInvQty('1'); setInvUnit('each')
     // PRE-EXISTING, surfaced by V4-SNAPTOAST-001: `undone` was never cleared here, so undoing a save
     // and then tapping Save & Next carried the flag into the NEXT capture — its done card opened
     // already struck through as "Undone" with Undo withdrawn, describing a save that had in fact
@@ -459,6 +481,27 @@ export default function CaptureFlow() {
         setResult({ kind: 'replace', id: pl.id, label: `Photo updated on ${pl.name}`,
           link: { to: `/plantings/${pl.id}`, label: 'View planting', name: pl.name },
           undo: () => fetch('/api/plants/' + pl.id, { method: 'PUT', body: JSON.stringify({ featured_photo_id: prior }) }) })
+      } else if (mode === 'attachonly') {
+        // V4-SNAPPHOTOONLY-001 (BD-065). The row said to check FIRST whether a photo-only path
+        // already existed, and it does — this is `attach()` with a plant_id linkage and nothing
+        // after it. 'replace' one branch up is literally this same call plus a featured_photo_id
+        // PUT; 'event' is this same call plus an /api/events POST. So no new wire contract, no new
+        // Lambda, no schema: the mechanism was already here and simply had no destination exposing
+        // it, which is why Dave's "seems like it would be pretty easy to do" was right.
+        //
+        // Dave's stated don't-care ("Behind the scenes, I don't care what it is... It can be a photo
+        // only event") licensed a photo-only EVENT as the fallback. It is not needed — a bare photo
+        // row is strictly less to undo and leaves no event in the log the user never asked for —
+        // so the licence is deliberately unused rather than spent.
+        const pl = plantings.find(p => p.id === atPlant)
+        if (!pl) throw new Error('Pick a planting')
+        const photo = await attach({ plant_id: pl.id }, 'plants', pl.id)
+        // Undo deletes the PHOTO, the same as the location destination one branch up — and unlike
+        // 'replace', whose undo restores a previous featured id. Nothing else was written here, so
+        // there is nothing else to put back.
+        setResult({ kind: 'attachonly', id: pl.id, label: `Photo added to ${pl.name}`,
+          link: { to: `/plantings/${pl.id}`, label: 'View planting', name: pl.name },
+          undo: () => fetch('/api/photos/' + photo.id, { method: 'DELETE' }) })
       } else if (mode === 'inventory') {
         if (!invName.trim()) throw new Error('Give the item a name')
         const body = { name: invName.trim(), type: invType, category: invCat }
@@ -679,6 +722,21 @@ export default function CaptureFlow() {
                     onChange={id => setRpPlant(id)} labelFormat="bare" placeholder="— pick a planting —" />
                 </Field>
                 <Note>This photo becomes the planting’s featured picture.</Note>
+              </>
+            )}
+            {/* V4-SNAPPHOTOONLY-001 (BD-065) — one field and Save, which is the requirement: "as
+                direct as update-featured-photo is, NOT a path through the event picker". So it is
+                deliberately the SAME single control as 'replace' directly above, differing only in
+                what the note promises. The note is doing real work here — these two destinations are
+                indistinguishable from their labels alone once a planting is picked, and the one
+                thing a user needs to know before tapping Save is whether the main picture changes. */}
+            {mode === 'attachonly' && (
+              <>
+                <Field label="Planting">
+                  <PlantingSelect data-testid="cap-atplant" plants={plantings} value={atPlant} cropChips={CROP_CHIPS_AUTO}
+                    onChange={id => setAtPlant(id)} labelFormat="bare" placeholder="— pick a planting —" />
+                </Field>
+                <Note>The photo is added to this planting. Its featured picture does not change, and no event is logged.</Note>
               </>
             )}
             {mode === 'inventory' && (
