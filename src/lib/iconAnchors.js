@@ -292,6 +292,65 @@ const A = {
     svg24: '<path data-region="wingUpper" d="M12 9C12.4 6 14.5 3.8 17.6 3.8C20 3.8 21.2 5.6 21 7.8C20.7 10.3 18 12.4 14.8 12.2C13.2 12.1 12 11 12 9.4Z" fill="currentColor" stroke="none"/><path data-region="wingUpper" d="M12 9C11.6 6 9.5 3.8 6.4 3.8C4 3.8 2.8 5.6 3 7.8C3.3 10.3 6 12.4 9.2 12.2C10.8 12.1 12 11 12 9.4Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.4C12.8 12.4 14.6 12.6 16.2 13C18.4 13.6 19.6 15.4 18.8 17.4C18 19.4 15.4 19.8 13.6 18.6C12.4 17.8 12 16 12 14Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.4C11.2 12.4 9.4 12.6 7.8 13C5.6 13.6 4.4 15.4 5.2 17.4C6 19.4 8.6 19.8 10.4 18.6C11.6 17.8 12 16 12 14Z" fill="currentColor" stroke="none"/><circle data-region="body" cx="12" cy="6.4" r="1.5" fill="currentColor" stroke="none"/><path data-region="body" d="M12 7.4C13.1 7.4 13.7 8.4 13.7 10L12.7 17C12.6 17.9 12.3 18.3 12 18.6C11.7 18.3 11.4 17.9 11.3 17L10.3 10C10.3 8.4 10.9 7.4 12 7.4Z" fill="currentColor" stroke="none"/><path data-region="antenna" d="M12 5.6C12.8 4 14 3.2 15.4 3" fill="none" stroke="currentColor"/><path data-region="antenna" d="M12 5.6C11.2 4 10 3.2 8.6 3" fill="none" stroke="currentColor"/>',
     svg18: '<path data-region="wingUpper" d="M12 9.2C12.2 6 14.6 4 17.4 4.4C20 4.8 20.4 7.6 19 9.8C17.8 11.6 14.6 12 12 10.6Z" fill="currentColor" stroke="none"/><path data-region="wingUpper" d="M12 9.2C11.8 6 9.4 4 6.6 4.4C4 4.8 3.6 7.6 5 9.8C6.2 11.6 9.4 12 12 10.6Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.2C13 12 15 12.4 16.6 13.4C18.4 14.6 18.4 16.8 16.6 18C14.8 19 12.6 18 12 15.6Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.2C11 12 9 12.4 7.4 13.4C5.6 14.6 5.6 16.8 7.4 18C9.2 19 11.4 18 12 15.6Z" fill="currentColor" stroke="none"/><circle data-region="body" cx="12" cy="6.6" r="1.4" fill="currentColor" stroke="none"/><path data-region="body" d="M12 7.6C13 7.6 13.5 8.5 13.5 10L12.6 16.8C12.5 17.6 12.3 18 12 18.3C11.7 18 11.5 17.6 11.4 16.8L10.5 10C10.5 8.5 11 7.6 12 7.6Z" fill="currentColor" stroke="none"/><path data-region="antenna" d="M12 5.8C12.8 4.4 13.8 3.8 15 3.6" fill="none" stroke="currentColor"/><path data-region="antenna" d="M12 5.8C11.2 4.4 10.2 3.8 9 3.6" fill="none" stroke="currentColor"/>',
   },
+  // ── V4-ICON-001 utility/action family (§9 action coverage; §2 utility-glyph signature). ──
+  // The signature move, shared with nav.plus + nav.back and stated so it stays measurable: a
+  // content-less utility glyph's dominant stroke spans 13 units (5.5..18.5) centred on 12, round
+  // terminals, and any ENCLOSURE is action.info's circle (r 8.4 at 24 / 8.6 at 18) so every
+  // enclosed utility glyph reads as one kit rather than as N borrowed stock icons.
+  // These carry accessibleName inline (iconRegistry.js falls back to it after ANCHOR_META).
+  'action.close': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Close',
+    // Bare X. DELIBERATELY NOT status.failed's X (6.2..17.8): tucked to 6.9..17.1 so the
+    // interactive dismiss control sits optically lighter than the status mark it can neighbour.
+    // The two stay distinguishable by weight, and status.failed is never interactive.
+    svg24: '<path d="M6.9 6.9 17.1 17.1"/><path d="M17.1 6.9 6.9 17.1"/>',
+    svg18: '<path d="M7.1 7.1 16.9 16.9"/><path d="M16.9 7.1 7.1 16.9"/>',
+  },
+  'action.remove': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Remove',
+    // X inside the action.info circle — the chip/tag clear affordance. The enclosure is what
+    // separates it from action.close (bare X, dismisses a whole surface) and from status.failed.
+    svg24: '<circle cx="12" cy="12" r="8.4"/><path d="M9.2 9.2 14.8 14.8"/><path d="M14.8 9.2 9.2 14.8"/>',
+    svg18: '<circle cx="12" cy="12" r="8.6"/><path d="M9.4 9.4 14.6 14.6"/><path d="M14.6 9.4 9.4 14.6"/>',
+  },
+  'action.check': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Confirm',
+    // Compact tick (legs 5.9 / 11.5). status.harvested's 18px master is ALSO a bare check
+    // (its 24 is circled) — this one is deliberately shorter and steeper so the two are told
+    // apart by proportion. They are near-synonyms at 18px; both are always label-adjacent.
+    svg24: '<path d="M6.2 12.6 10.4 16.8 17.8 8"/>',
+    svg18: '<path d="M6.4 12.6 10.4 16.6 17.6 8.2"/>',
+  },
+  'action.filter': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Filter',
+    svg24: '<path d="M4.6 5.4h14.8l-5.7 7v5.2l-3.4 2v-7.2z"/>',
+    svg18: '<path d="M4.4 5.6h15.2l-5.9 7.1v5l-3.4 2v-7.1z"/>',
+  },
+  'action.groupBy': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Group by',
+    // Two collapsible group headers, each with one indented member. The header carets are the
+    // action.chevron form at half scale, so "grouping" and "disclosure" are one kit, not two.
+    svg24: '<path d="M4.4 5.2 6.2 6.6 4.4 8"/><path d="M8 6.6h10.6"/><path d="M11 10.8h7.6"/><path d="M4.4 13.8 6.2 15.2 4.4 16.6"/><path d="M8 15.2h10.6"/><path d="M11 19.4h7.6"/>',
+    // 18: the carets drop (2.8 units tall = ~2 device px, they close to noise — §4 aperture) AND
+    // group B's member drops with them. Four bars at 2.0px stroke leave a 1.2px clear gap, which
+    // read as one solid block (verified on the contact sheet): the mark degraded to a plain list.
+    // Three bars restore the rhythm — 1.6px clear inside the group vs 3.3px between groups — so
+    // the header/member indent still carries "grouped", which is the whole meaning.
+    svg18: '<path d="M4.6 6.2h14"/><path d="M9.4 11h9.2"/><path d="M4.6 18h14"/>',
+  },
+  'action.search': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Search',
+    svg24: '<circle cx="10.8" cy="10.8" r="6.2"/><path d="M15.4 15.4 19.8 19.8"/>',
+    svg18: '<circle cx="10.6" cy="10.6" r="6.4"/><path d="M15.4 15.4 19.6 19.6"/>',
+  },
+  'action.chevron': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Show more',
+    // Disclosure ">" — the mirror of nav.back, and mirrored ON PURPOSE: back and disclose are
+    // one pair in this language and the DIRECTION is the meaning. An expander rotates it in CSS
+    // (transform), which is why there is no separate down/up key.
+    svg24: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
+    svg18: '<path d="M9.5 6 15 12l-5.5 6"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)
