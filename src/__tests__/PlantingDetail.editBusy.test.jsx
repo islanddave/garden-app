@@ -54,10 +54,21 @@ const PLANTING = {
   featured_photo_view_url: null,
 }
 
-// popstate needs >0ms to settle in jsdom; 50ms is the figure BackNav.history.test.jsx measured.
-const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+// Wait for the traversal to LAND, not for a slice of wall clock. The 50ms this used to sleep was
+// BackNav.history.test.jsx's idle-machine figure; under a parallel suite the popstate task has not
+// run yet when it expires, and this file then queries a sheet that has not closed — surfacing as
+// `Expected container to be an Element ... but got null`, which reads like a real regression.
+// Measured under load: a real traversal lands in <=128ms, so NET_MS is a net, not the wait.
+const NET_MS = 2000
+let pops = 0
+window.addEventListener('popstate', () => { pops += 1 })
+const settle = (from = pops) => act(async () => {
+  const deadline = Date.now() + NET_MS
+  while (pops === from && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2))
+  await new Promise((r) => setTimeout(r, 0))
+})
 const esc = () => act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
-const backGesture = async () => { act(() => { window.history.back() }); await settle() }
+const backGesture = async () => { const from = pops; act(() => { window.history.back() }); await settle(from) }
 
 // A floor entry so back() is never called at history index 0, where jsdom makes it a SILENT no-op —
 // which would false-PASS "the sheet stayed open" for entirely the wrong reason.

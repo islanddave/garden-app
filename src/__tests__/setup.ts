@@ -3,10 +3,27 @@
  * Vitest global test setup — runs before each test file.
  * Keep this file minimal; heavy setup goes in individual test files or fixtures.
  */
+import { configure } from '@testing-library/dom';
 
 // Tell React we're in a test environment (suppresses act() warnings)
 // @ts-expect-error — global not typed by default
 global.IS_REACT_ACT_ENVIRONMENT = true;
+
+// OPS-FLAKEFAMILYWIDER-001. Testing Library's stock 1000ms waitFor budget is an IDLE-MACHINE figure,
+// and this suite is 792 files wide — when several run in parallel (or several agent lanes run at
+// once) a render simply has not committed inside 1s. Measured 2026-08-26 under deliberate
+// contention: PlantingDetail.harvestWeight / .harvestCursor / .eventPaging and
+// PhotoLibrary.selectstale failed 3/3 runs at stock, a DIFFERENT subset each time, every one an
+// "Unable to find an element" — i.e. a red that reads as a regression and is not one.
+//
+// This costs nothing on a green run: waitFor polls and returns the instant its condition holds, so
+// the number is a ceiling, not a duration. It is paid only by a test that was going to fail anyway,
+// which then takes up to 5s rather than 1s to say so.
+//
+// THE REAL COST, stated plainly: a raised ceiling also hides a component that got GENUINELY slower.
+// A render regressing from 200ms to 3s still passes here. This buys determinism against ambient
+// load, NOT a performance guarantee — anything asserting on speed must assert on speed explicitly.
+configure({ asyncUtilTimeout: 5000 });
 
 // Node-version tolerance (Wave 0 / WS-B M1): some Node×jsdom combinations don't
 // expose a working localStorage/sessionStorage on the test global (observed under

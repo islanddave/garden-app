@@ -22,11 +22,21 @@ const entry = (eventId, photoIds) => ({
 // recognizes, which would leave every assertion here running against a path production never takes.
 // The padding lives INSIDE the entropy-coded scan (and is never 0xFF, which would read as a marker),
 // so the strip is a byte-for-byte no-op on it and the byte-budget arithmetic below stays exact.
+//
+// Written straight into the typed array rather than spread through an array literal. The 6MB
+// pre-downscale cases below build ten of these, and `[...new Array(6e6).fill(0x5A)]` spends whole
+// seconds boxing six million elements before Uint8Array ever sees them — which is what put this file
+// over the 5s testTimeout whenever the machine was busy (673ms alone, 6.7s under a loaded suite).
+// The bytes produced are identical; only the construction cost changes.
 const jpegOf = (size) => {
   if (size <= 0) return new Uint8Array(0)
   const head = [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x03, 0x01]   // SOI + a minimal SOS header
-  const scan = Math.max(0, size - head.length - 2)
-  return new Uint8Array([...head, ...new Array(scan).fill(0x5A), 0xFF, 0xD9])
+  const out = new Uint8Array(Math.max(head.length + 2, size))
+  out.set(head, 0)
+  out.fill(0x5A, head.length, out.length - 2)
+  out[out.length - 2] = 0xFF
+  out[out.length - 1] = 0xD9
+  return out
 }
 const blob = (bytes, type = 'image/jpeg') => new Blob([jpegOf(bytes)], { type })
 
