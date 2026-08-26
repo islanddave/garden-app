@@ -32,6 +32,7 @@
 import React from 'react'
 import { Field, Input, Select, Textarea, Button, StatusSelect, ErrorBanner } from './index.js'
 import VarietyPicker from '../VarietyPicker.jsx'
+import { P } from '../../lib/constants.js'
 import { PLANT_SOURCE_OPTIONS, PLANT_CONTAINER_TYPE_OPTIONS } from '../../lib/dropdownRegistry.js'
 
 
@@ -127,6 +128,53 @@ export default function PlantForm({
               Approximate date
             </label>
           </div>
+
+          {/* ── V4-SEEDGERMRATE-001 (BD-057) — the two seed counts ───────────────────────────────
+              Placed directly under the SOWN date, and above "Initial quantity", because that is the
+              order the numbers are learned in: you sow n seeds on a date, some come up, and only
+              then do you know how many plants you have. Putting them below the plant count would
+              read as a breakdown OF it, which is the one thing they are not — sow 20, get 14 up,
+              keep 12 after thinning, and all three numbers are different.
+
+              Two separate fields rather than one "rate": Dave's Q1 answer, and the reason is that
+              the app can then tell 7-from-10 apart from 70-from-100. A packet's rate is
+              SUM(germinated)/SUM(sown) across every planting that names it, so the counts have to
+              survive individually for the combining to mean anything.
+
+              `optional` on both: a planting that did not come from seed, or one Dave never counted,
+              must not be nagged. Blank stays NULL all the way down (PlantingEditor -> Lambda), and
+              NULL means "not counted" while 0 means "none came up". */}
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Field label="Seeds sown" htmlFor={`${pid}-seedsown`} optional
+                help="How many seeds went in.">
+                <Input id={`${pid}-seedsown`} type="number" min="1" inputMode="numeric"
+                  value={v.seeds_sown ?? ''}
+                  onChange={e => set({ seeds_sown: e.target.value })}
+                  placeholder="e.g. 20" />
+              </Field>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Field label="Came up" htmlFor={`${pid}-seedgerm`} optional
+                help="Fill in later.">
+                <Input id={`${pid}-seedgerm`} type="number" min="0" inputMode="numeric"
+                  value={v.seeds_germinated ?? ''}
+                  onChange={e => set({ seeds_germinated: e.target.value })}
+                  placeholder="e.g. 14" />
+              </Field>
+            </div>
+          </div>
+          {/* The rate, shown the moment both numbers exist — the whole point of collecting them,
+              and it costs nothing to show here rather than making Dave open the packet to see
+              whether what he just typed was sensible. Guarded on sown > 0 so a mid-typing state
+              never divides by zero. */}
+          {Number(v.seeds_sown) > 0 && String(v.seeds_germinated ?? '').trim() !== '' && (
+            <div data-testid="seed-rate-inline"
+              style={{ fontSize: '0.78rem', color: P.mid, marginTop: -6 }}>
+              {Math.round((Number(v.seeds_germinated) / Number(v.seeds_sown)) * 1000) / 10}% germination
+              {' '}({Number(v.seeds_germinated)} of {Number(v.seeds_sown)})
+            </div>
+          )}
 
           <Field label="Initial quantity" htmlFor={`${pid}-qtyinit`} optional
             help="Defaults to the quantity above.">

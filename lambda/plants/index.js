@@ -196,6 +196,7 @@ export const handler = async (event) => {
                p.sown_at, p.sown_at_approx, p.germinated_at, p.germinated_at_approx,
                p.transplanted_at, p.transplanted_at_approx, p.planted_out_at, p.planted_out_at_approx,
                p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+               p.seeds_sown, p.seeds_germinated,
                p.source_type, p.source_ref, p.source_generation,
                p.parent_plant_id, p.divergence_type, p.lineage_note,
                p.succession_group_id, p.succession_order,
@@ -399,6 +400,7 @@ export const handler = async (event) => {
                  p.transplanted_at, p.transplanted_at_approx,
                  p.planted_out_at, p.planted_out_at_approx,
                  p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                 p.seeds_sown, p.seeds_germinated,
                  p.source_type, p.source_ref, p.source_generation,
                  p.parent_plant_id, p.divergence_type, p.lineage_note,
                  p.succession_group_id, p.succession_order, p.assignee_user_id,
@@ -825,6 +827,13 @@ export const handler = async (event) => {
             qty_harvested            = COALESCE(${body.qty_harvested ?? null}, p.qty_harvested),
             qty_lost                 = COALESCE(${body.qty_lost ?? null}, p.qty_lost),
             loss_cause               = CASE WHEN ${clear} @> ARRAY['loss_cause'] THEN NULL ELSE COALESCE(${body.loss_cause ?? null}, p.loss_cause) END,
+            -- V4-SEEDGERMRATE-001 (BD-057). CLEARABLE, like qty_initial/qty_current above and
+            -- unlike qty_harvested/qty_lost: both are numbers Dave TYPES from memory at two
+            -- different sittings, so "I entered 20 and it was 200" needs a way back to empty.
+            -- Without the clear arm a COALESCE-only assignment can raise a value and never
+            -- unset one, which is the shape of BUG-PLANTREAD-001's sibling defects.
+            seeds_sown               = CASE WHEN ${clear} @> ARRAY['seeds_sown'] THEN NULL ELSE COALESCE(${body.seeds_sown ?? null}, p.seeds_sown) END,
+            seeds_germinated         = CASE WHEN ${clear} @> ARRAY['seeds_germinated'] THEN NULL ELSE COALESCE(${body.seeds_germinated ?? null}, p.seeds_germinated) END,
             source_type              = CASE WHEN ${clear} @> ARRAY['source_type'] THEN NULL ELSE COALESCE(${body.source_type ?? null}, p.source_type) END,
             source_ref               = CASE WHEN ${clear} @> ARRAY['source_ref'] THEN NULL ELSE COALESCE(${body.source_ref ?? null}, p.source_ref) END,
             source_generation        = CASE WHEN ${clear} @> ARRAY['source_generation'] THEN NULL ELSE COALESCE(${body.source_generation ?? null}, p.source_generation) END,
@@ -882,7 +891,7 @@ export const handler = async (event) => {
               OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
             )
             AND p.deleted_at IS NULL
-          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
+          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.seeds_sown, p.seeds_germinated, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
         `,
         ];
         if (_statusChanged) {
@@ -1264,6 +1273,7 @@ export const handler = async (event) => {
                    p.transplanted_at, p.transplanted_at_approx,
                    p.planted_out_at, p.planted_out_at_approx,
                    p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                   p.seeds_sown, p.seeds_germinated,
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
@@ -1370,6 +1380,7 @@ export const handler = async (event) => {
                    p.transplanted_at, p.transplanted_at_approx,
                    p.planted_out_at, p.planted_out_at_approx,
                    p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                   p.seeds_sown, p.seeds_germinated,
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
@@ -1576,6 +1587,7 @@ export const handler = async (event) => {
            sown_at, sown_at_approx, germinated_at, germinated_at_approx,
            transplanted_at, transplanted_at_approx, planted_out_at, planted_out_at_approx,
            qty_initial, qty_current, qty_harvested, qty_lost, loss_cause,
+           seeds_sown, seeds_germinated,
            source_type, source_ref, source_generation,
            parent_plant_id, divergence_type, lineage_note,
            succession_group_id, succession_order,
@@ -1609,6 +1621,15 @@ export const handler = async (event) => {
           ${body.qty_harvested ?? 0},
           ${body.qty_lost ?? 0},
           ${body.loss_cause ?? null},
+          // V4-SEEDGERMRATE-001 (BD-057). seeds_sown arrives at CREATE because that is the sow —
+          // Dave: "I will put in seed count sown". seeds_germinated is almost always null here and
+          // filled in later ("later record germinations"), but it is accepted on create anyway so a
+          // planting logged retrospectively can carry both in one write.
+          // No `?? 0` default on either, unlike qty_harvested/qty_lost above: a NULL means "not
+          // counted" and a 0 means "none came up", and those are different answers. Defaulting
+          // would file every planting ever created as a total germination failure.
+          ${body.seeds_sown ?? null},
+          ${body.seeds_germinated ?? null},
           ${body.source_type ?? null},
           ${body.source_ref ?? null},
           ${body.source_generation ?? null},
@@ -1630,7 +1651,7 @@ export const handler = async (event) => {
           CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE 'user' END,
           CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE now() END
         )
-        RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
+        RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, seeds_sown, seeds_germinated, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
       `;
       const newPlant = inserted[0];
 
@@ -1674,7 +1695,7 @@ export const handler = async (event) => {
           SET succession_group_id = id
           WHERE id = ${newPlant.id}
             AND succession_group_id IS NULL
-          RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
+          RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, seeds_sown, seeds_germinated, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
         `;
         if (updated.length) return resp(201, updated[0]);
       }

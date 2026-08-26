@@ -262,6 +262,60 @@ export default function InventoryDetail() {
           />
         )}
 
+        {/* ── V4-SEEDGERMRATE-001 (BD-057) — this packet's germination record ─────────────────────
+            Dave wanted the rate held per PACKET rather than per variety or crop, "because packets
+            of the same variety differ by age, vendor, and lot" — so this panel is the whole point
+            of the feature, and everything else exists to fill it.
+
+            Combined AND per-sowing, which is his Q2 answer verbatim ("combine them, keep the
+            history"). The combined number alone would hide the thing worth knowing: 80% in March
+            and 45% in July from the same packet is a packet going over, and a single averaged 62%
+            says nothing at all. So the rows stay.
+
+            Rendered only when there is something to say. A packet nobody has counted from shows
+            nothing rather than an empty scaffold or a 0% that reads as total failure. */}
+        {item.germination && item.germination.sowings?.length > 0 && (
+          <div data-testid="packet-germination" style={{
+            marginBottom: 20, padding: '14px 16px',
+            backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+          }}>
+            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: P.mid, marginBottom: 10,
+                          letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+              Germination
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+              <span data-testid="packet-germ-rate" style={{ fontSize: '1.6rem', fontWeight: 700, color: P.green }}>
+                {item.germination.rate}%
+              </span>
+              {/* The raw counts sit beside the percentage permanently, never behind a tap: 7 of 10
+                  and 70 of 100 are the same number and not the same evidence, and the decision this
+                  panel informs — re-sow from this packet or bin it — turns on which one it is. */}
+              <span style={{ fontSize: '0.85rem', color: P.light }}>
+                {item.germination.seeds_germinated} of {item.germination.seeds_sown} seeds
+                {item.germination.sowings.length > 1 ? ` · ${item.germination.sowings.length} sowings` : ''}
+              </span>
+            </div>
+            {item.germination.sowings.length > 1 && (
+              <div style={{ marginTop: 10, display: 'grid', gap: 4 }}>
+                {item.germination.sowings.map(s => {
+                  const up = Number(s.seeds_germinated ?? 0)
+                  const n = Number(s.seeds_sown ?? 0)
+                  return (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', color: P.mid }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {s.sown_at ? String(s.sown_at).slice(0, 10) : 'undated'} — {s.name}
+                      </span>
+                      <span style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                        {n > 0 ? `${Math.round((up / n) * 1000) / 10}%` : '—'} ({up}/{n})
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* V2-PHOTO-F1 Session 2: inventory item photo upload.
             Belongs just below the S4b Plant-from-packet CTA per Session 2 spec.
             Useful for capturing seed-packet photos, durable-tool photos, etc. */}

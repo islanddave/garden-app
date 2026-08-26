@@ -1,0 +1,95 @@
+# V4-SEEDGERMRATE-001 — gates for plants.seeds_sown / plants.seeds_germinated.
+#
+# Self-arming on the 0a schema_version row and violation-shaped, for the reason
+# migrations/v4-plantingaudit-001/gates.yml states at length: gate-invariants.yml runs
+# `--all --phase post --continuous-only` on every push to dev with no skip-if-unapplied logic, so a
+# post gate asserting this migration's own effect would go red the moment the directory lands and
+# stay red until it is applied. Presence assertions are therefore each re-expressed as their own
+# violation — `SELECT 1 WHERE <armed> AND NOT <fact>`, expecting 0 rows.
+#
+# What these cannot do: prove the numbers are USED. That the rate is computed and rendered is
+# src/__tests__/InventoryDetail.germination.test.jsx and lambda/plants/select-columns.test.js.
+
+pre:
+  # The view is the whole reason this migration has three objects instead of one. lambda/plants
+  # binds public.garden_node, so a column added only to the table is invisible to every API path.
+  - name: pre_garden_node_is_a_view_over_plants
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'garden_node' AND c.relkind = 'v'
+    expect: rowcount_eq
+    value: 1
+
+  # CREATE OR REPLACE VIEW can only APPEND. If anything ever depends on garden_node, 0r's
+  # DROP + CREATE stops being safe — so the fact is pinned here rather than left in a comment.
+  - name: pre_nothing_depends_on_garden_node
+    sql: |
+      SELECT 1
+        FROM pg_depend d
+        JOIN pg_rewrite r ON r.oid = d.objid
+        JOIN pg_class dependent ON dependent.oid = r.ev_class
+        JOIN pg_class source ON source.oid = d.refobjid
+       WHERE source.relname = 'garden_node' AND dependent.relname <> 'garden_node'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_both_seed_columns_on_the_table
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-germrate-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'plants'
+                 AND column_name IN ('seeds_sown','seeds_germinated')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  # The one that actually bites. A column on the table but not on the view is invisible to the API,
+  # and every other gate here would still be green — the exact write→read asymmetry class
+  # lambda/plants/select-columns.test.js exists for, one level lower down.
+  - name: post_both_seed_columns_exposed_on_the_view
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-germrate-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'garden_node'
+                 AND column_name IN ('seeds_sown','seeds_germinated')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_seed_count_checks_present
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-germrate-001')
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('chk_plants_seeds_sown_positive',
+                                 'chk_plants_seeds_germinated_nonneg')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  # Both columns are user-editable, so leaving them out of the audit watched set would reopen
+  # BUG-NOPLANTINGAUDIT-001 one row after closing it — silently, with every gate in THAT migration
+  # still green, because its watched set is baked into the trigger's arguments. Conditioned on the
+  # audit arm existing so this is inert where v4-plantingaudit-001 has not been applied.
+  - name: post_seed_columns_are_in_the_audit_watched_set
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.56.0-germrate-001')
+         AND EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+                      WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+                WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+                  AND pg_get_triggerdef(t.oid) LIKE '%''seeds_sown''%'
+                  AND pg_get_triggerdef(t.oid) LIKE '%''seeds_germinated''%')
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  - name: sweep_schema_version_0a_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.56.0-germrate-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+    note: Apply-window receipt for 0a. Not a continuous invariant.

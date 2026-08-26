@@ -287,7 +287,45 @@ export const handler = async (event) => {
           effective_featured_photo_id: _effective,
           ...rest
         } = row;
-        return resp(200, { ...rest, featured_photo_id: row.effective_featured_photo_id, featured_photo_view_url });
+        // ── V4-SEEDGERMRATE-001 (BD-057) — the packet's germination record ─────────────────────
+        // Dave's Q2 answer was "combine them, keep the history", and this is the whole of what
+        // that costs: each sowing from this packet is already its own planting row carrying
+        // source_inventory_item_id, so the combined rate is a SUM over them and the history IS
+        // those rows. No new table, no per-packet counters to keep in step with the plantings.
+        //
+        // Served from the PACKET's own endpoint rather than by filtering /api/plants, for two
+        // reasons: the plants list has no source_inventory_item_id filter (adding one would widen
+        // a payload V4-PICKERPAYLOAD-001 just spent a release narrowing), and the packet page
+        // already fetches this item — so the summary arrives with it instead of costing a second
+        // cold round trip on a page Dave opens to answer one question.
+        //
+        // Only rows that HAVE a sown count take part. A planting from this packet that Dave never
+        // counted must not drag the rate toward zero — `seeds_sown IS NOT NULL` is the difference
+        // between "70% of what I measured" and "70% if you assume the unmeasured ones all failed".
+        // germinated COALESCEs to 0 only INSIDE a row that has a sown count, where a null means he
+        // recorded the sowing and nothing came up yet.
+        let germination = null;
+        if (row.category === 'seeds') {
+          const g = await sql`
+            SELECT p.id, p.name, p.sown_at, p.seeds_sown, p.seeds_germinated
+              FROM public.garden_node p
+             WHERE p.source_inventory_item_id = ${itemId}
+               AND p.deleted_at IS NULL
+               AND p.seeds_sown IS NOT NULL
+             ORDER BY p.sown_at DESC NULLS LAST, p.id
+          `;
+          const sown = g.reduce((n, r) => n + Number(r.seeds_sown ?? 0), 0);
+          const up = g.reduce((n, r) => n + Number(r.seeds_germinated ?? 0), 0);
+          germination = {
+            sowings: g,
+            seeds_sown: sown,
+            seeds_germinated: up,
+            // null rather than 0 when nothing is measured yet: a packet with no counts has no rate,
+            // and 0 would render as a total failure on every unused packet in the drawer.
+            rate: sown > 0 ? Math.round((up / sown) * 1000) / 10 : null,
+          };
+        }
+        return resp(200, { ...rest, featured_photo_id: row.effective_featured_photo_id, featured_photo_view_url, germination });
       }
 
       if (method === 'PUT') {

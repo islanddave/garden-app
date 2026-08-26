@@ -91,6 +91,7 @@ export const SERVER_CLEARABLE = {
     'sown_at', 'sown_at_approx', 'germinated_at', 'germinated_at_approx',
     'transplanted_at_approx', 'planted_out_at_approx',
     'qty_initial', 'qty_current', 'loss_cause',
+    'seeds_sown', 'seeds_germinated',   // V4-SEEDGERMRATE-001 (BD-057)
     'source_type', 'source_ref', 'source_generation',
     'parent_plant_id', 'divergence_type', 'succession_group_id', 'succession_order',
     'source_inventory_item_id',

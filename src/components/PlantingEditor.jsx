@@ -28,11 +28,13 @@ import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 const PLANT_FORM_FIELDS = [
   'name', 'variety', 'varietyText', 'quantity', 'notes', 'status',
   'sown_at', 'sown_at_approx', 'qty_initial',
+  // V4-SEEDGERMRATE-001 (BD-057) — the sowing IS the planting, so both counts live here.
+  'seeds_sown', 'seeds_germinated',
   'source_type', 'source_ref', 'source_generation', 'lineage_note',
   'parent_plant_id', 'container_type', 'container_size', 'location_id',
 ]
 
-const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
+const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', seeds_sown: '', seeds_germinated: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
 
 // BUG-SILENTFAILSWEEP-001 — one line per verb, each naming the state the planting is actually LEFT
 // in. Not interchangeable: a failed Remove leaves a live planting in the garden, a failed Archive
@@ -54,6 +56,10 @@ function formFromPlant(plant) {
     sown_at:           (plant.sown_at ?? '').slice(0, 10),
     sown_at_approx:    !!plant.sown_at_approx,
     qty_initial:       formatQty(plant.qty_initial),
+    // Plain String, not formatQty: these are whole seeds, and formatQty renders 20 as '20.000'
+    // for the quantity family (which is numeric). An integer round-trip must survive as typed.
+    seeds_sown:        plant.seeds_sown == null ? '' : String(plant.seeds_sown),
+    seeds_germinated:  plant.seeds_germinated == null ? '' : String(plant.seeds_germinated),
     source_type:       plant.source_type ?? '',
     source_ref:        plant.source_ref ?? '',
     source_generation: plant.source_generation ?? '',
@@ -203,6 +209,11 @@ export default function PlantingEditor({
       sown_at:           form.sown_at || null,
       sown_at_approx:    !!form.sown_at_approx,
       qty_initial:       form.qty_initial.trim() ? parseInt(form.qty_initial, 10) : null,
+      // V4-SEEDGERMRATE-001: blank -> null, never 0. A blank box means "not counted";
+      // 0 means "none came up". Coercing blank to 0 would file every planting as a
+      // total germination failure, and the packet's rate would read 0% off it.
+      seeds_sown:        form.seeds_sown.trim() ? parseInt(form.seeds_sown, 10) : null,
+      seeds_germinated:  form.seeds_germinated.trim() ? parseInt(form.seeds_germinated, 10) : null,
       source_type:       form.source_type || null,
       source_ref:        form.source_ref.trim() || null,
       source_generation: form.source_generation.trim() || null,
@@ -245,6 +256,11 @@ export default function PlantingEditor({
           sown_at:           form.sown_at || null,
           sown_at_approx:    !!form.sown_at_approx,
           qty_initial:       form.qty_initial.trim() ? parseInt(form.qty_initial, 10) : null,
+          // V4-SEEDGERMRATE-001: blank -> null, never 0. A blank box means "not counted";
+          // 0 means "none came up". Coercing blank to 0 would file every planting as a
+          // total germination failure, and the packet's rate would read 0% off it.
+          seeds_sown:        form.seeds_sown.trim() ? parseInt(form.seeds_sown, 10) : null,
+          seeds_germinated:  form.seeds_germinated.trim() ? parseInt(form.seeds_germinated, 10) : null,
           source_type:       form.source_type || null,
           source_ref:        form.source_ref.trim() || null,
           source_generation: form.source_generation.trim() || null,

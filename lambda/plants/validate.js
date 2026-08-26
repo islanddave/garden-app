@@ -23,6 +23,7 @@ export const CLEARABLE_FIELDS = [
   // the repo (format.js renders '' for null); source_type's only consumer is a DENY-list, so NULL
   // falls through by design.
   'qty_initial', 'qty_current', 'loss_cause',
+  'seeds_sown', 'seeds_germinated',   // V4-SEEDGERMRATE-001 (BD-057)
   'source_type', 'source_ref', 'source_generation',
   // lineage / succession FKs. The authz gates on these are already `!= null`-guarded, so a clear
   // skips the gate harmlessly rather than bypassing it.

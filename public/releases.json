@@ -3,7 +3,10 @@
     "version": "4.56.0",
     "date": "2026-08-26",
     "highlights": [
-      "Snap has a third choice: \"Add to a planting\". It attaches the photo to the planting and does nothing else — it does not become the planting's main picture, and it does not log an event. The two existing options are unchanged and still there; this sits beside them, one field and Save, as direct as \"Update a photo\". It turned out the app could already do this internally — \"Update a photo\" is this exact step plus one more, and \"Log on a planting\" is this exact step plus one more — so nothing new had to be built underneath, only a way in."
+      "Snap has a third choice: \"Add to a planting\". It attaches the photo to the planting and does nothing else — it does not become the planting's main picture, and it does not log an event. The two existing options are unchanged and still there; this sits beside them, one field and Save, as direct as \"Update a photo\". It turned out the app could already do this internally — \"Update a photo\" is this exact step plus one more, and \"Log on a planting\" is this exact step plus one more — so nothing new had to be built underneath, only a way in.",
+      "Seed packets now track their own germination rate. Enter how many seeds you sowed when you sow them, fill in how many came up whenever you get round to it, and the packet shows the percentage. It is held per packet rather than per variety, because packets of the same seed differ by age, vendor and lot — which is the whole reason the number is worth having.",
+      "Sow from the same packet more than once and it combines them, keeping each sowing listed separately with its own rate and date. That is deliberate: 80% in March and 45% in July from one packet tells you the packet is going over, and a single averaged number would hide exactly that. A packet you have never counted from shows nothing at all rather than 0%.",
+      "Every edit to a planting is now recorded — what changed, from what to what, and who did it. Until now the table holding every planting was the one thing in the app with no history at all, so a planting's dates could be changed with no way to see what they used to be. Nothing about saving changes; the record is kept behind the scenes."
     ]
   },
   {
