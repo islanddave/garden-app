@@ -2,6 +2,7 @@ import React, { useState, useEffect, useId } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import { shareEntity } from '../lib/shareEntity.js'
@@ -463,7 +464,7 @@ export default function EventDetail() {
 
   return (
     <Shell>
-      <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 20 }}>
+      <div style={{ fontSize: T.type.sm, color: P.light, marginBottom: T.space.lg }}>
         {/* V4-PROJHIDE-001: the project crumb is not a user-facing link when projects are hidden —
             fall back to the already-present Home → /today crumb. Flag OFF keeps the project link. */}
         {project && !PROJECTS_HIDDEN ? (
@@ -480,7 +481,7 @@ export default function EventDetail() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 24 }}>
         <div style={{ minWidth: 0 }}>
-          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: T.space.sm, flexWrap: 'wrap' }}>
             <span>{icon} {event.title || eventTypeLabel(event.event_type)}</span>
             {event.flagged_as_issue && (
               <SeverityBadge reason="flagged" severity={event.severity} />
@@ -510,12 +511,12 @@ export default function EventDetail() {
         )}
       </div>
 
-      {!editing && error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
+      {!editing && error && <ErrorBanner style={{ marginBottom: T.space.md }}>{error}</ErrorBanner>}
 
       {editing ? (
         <form onSubmit={handleSave} style={cardStyle}>
-          <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>Edit event</h2>
-          {saveErr && <ErrorBanner style={{ marginBottom: 16 }}>{saveErr}</ErrorBanner>}
+          <h2 style={{ margin: '0 0 18px', fontSize: T.type.lg, fontWeight: 700, color: P.dark }}>Edit event</h2>
+          {saveErr && <ErrorBanner style={{ marginBottom: T.space.md }}>{saveErr}</ErrorBanner>}
 
           <Field label="Event type *" htmlFor="ev-event-type" style={{ marginBottom: 14 }}>
             <Select
@@ -581,11 +582,11 @@ export default function EventDetail() {
               path at all, so a mistyped harvest was permanent. Rendered only for a harvest event that
               has a harvest row — the server refuses type changes that would break that pairing. */}
           {isHarvest && (
-            <div data-testid="harvest-edit-fields" style={{ marginBottom: 14, padding: '14px 14px 2px', border: `1px solid ${P.sage}`, borderRadius: 10 }}>
-              <p style={{ margin: '0 0 12px', fontSize: '0.82rem', fontWeight: 700, color: P.dark }}>
+            <div data-testid="harvest-edit-fields" style={{ marginBottom: 14, padding: '14px 14px 2px', border: `1px solid ${P.sage}`, borderRadius: T.radiusCard }}>
+              <p style={{ margin: '0 0 12px', fontSize: T.type.sm, fontWeight: 700, color: P.dark }}>
                 Harvest amount
               </p>
-              <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ display: 'flex', gap: T.space.sm }}>
                 <Field label="Amount *" htmlFor="ev-harvest-qty" style={{ marginBottom: 14, flex: 1 }}>
                   <Input
                     id="ev-harvest-qty"
@@ -613,7 +614,7 @@ export default function EventDetail() {
               {/* V4-HARVDUAL-001 Slice B — the optional measured weight. Blank unless the user
                   previously weighed this pick themselves; clearing it removes the measurement and
                   the row falls back to the per-variety reference estimate. */}
-              <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ display: 'flex', gap: T.space.sm }}>
                 <Field label="Weight (optional)" htmlFor="ev-harvest-weight" style={{ marginBottom: 6, flex: 1 }}>
                   <Input
                     id="ev-harvest-weight"
@@ -639,7 +640,7 @@ export default function EventDetail() {
                 </Field>
               </div>
               {event.harvest?.weight_estimated === true && (
-                <p style={{ margin: '0 0 12px', fontSize: '0.72rem', color: P.light, lineHeight: 1.4 }}>
+                <p style={{ margin: '0 0 12px', fontSize: T.type.xs, color: P.light, lineHeight: 1.4 }}>
                   {estimateSourceCopy(event.harvest?.weight_basis)} Enter a real weight to replace it.
                 </p>
               )}
@@ -743,7 +744,7 @@ export default function EventDetail() {
 
           {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
-          <div style={{ display: 'flex', gap: 12, paddingTop: 16, borderTop: `1px solid ${P.border}` }}>
+          <div style={{ display: 'flex', gap: 12, paddingTop: T.space.md, borderTop: `1px solid ${P.border}` }}>
             <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
               Save changes
             </Button>
@@ -766,8 +767,8 @@ export default function EventDetail() {
           'swallow' mode mirrors EventNew's non-fatal posture — the event already
           exists, so a failed upload should NOT block the user. */}
       {!editing && (
-        <div style={{ ...cardStyle, marginTop: 20 }}>
-          <h2 style={{ margin: '0 0 12px', fontSize: '0.95rem', fontWeight: 700, color: P.dark }}>
+        <div style={{ ...cardStyle, marginTop: T.space.lg }}>
+          <h2 style={{ margin: '0 0 12px', fontSize: T.type.md, fontWeight: 700, color: P.dark }}>
             Add a photo to this event
           </h2>
           <PhotoUpload
@@ -814,7 +815,7 @@ export default function EventDetail() {
 // A shared uppercase label, so the new blocks sit in the same visual grammar as the rows they join.
 function FieldLabel({ children, style }) {
   return (
-    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: P.light, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px', ...style }}>
+    <div style={{ fontSize: T.type.xs2, fontWeight: 600, color: P.light, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px', ...style }}>
       {children}
     </div>
   )
@@ -850,7 +851,7 @@ function PlantingAnchor({ event: ev }) {
   return (
     <div data-testid="event-planting">
       <FieldLabel>Planting</FieldLabel>
-      <div style={{ fontSize: '0.95rem', fontWeight: 600, color: P.dark, lineHeight: 1.4 }}>
+      <div style={{ fontSize: T.type.md, fontWeight: 600, color: P.dark, lineHeight: 1.4 }}>
         {/* Canonical un-scoped planting route (V4-UNSCOPEDROUTES-001). Linked only when the event
             actually carries the anchor id — a name with no id is still worth showing, just not as a
             link to nowhere. */}
@@ -894,7 +895,7 @@ function HarvestReadout({ harvest }) {
         : (
           // Mirrors the Harvests log's wording for a harvest row with no amount recorded, so the
           // same state does not read two different ways on two screens.
-          <div data-testid="event-harvest-amount" style={{ fontSize: '0.9rem', color: P.light, lineHeight: 1.4 }}>
+          <div data-testid="event-harvest-amount" style={{ fontSize: T.type.base, color: P.light, lineHeight: 1.4 }}>
             harvest logged — no amount recorded
           </div>
         )}
@@ -911,7 +912,7 @@ function HarvestReadout({ harvest }) {
             // so this label was dropped and the ≈ prefix carried the estimate disclosure alone.
             role="img"
             aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
-            style={{ fontSize: '0.9rem', fontWeight: 600, color: wt.estimated ? P.light : P.green }}
+            style={{ fontSize: T.type.base, fontWeight: 600, color: wt.estimated ? P.light : P.green }}
           >
             {wt.estimated ? `≈ ${wt.text}` : wt.text}
           </div>
@@ -963,14 +964,14 @@ function EventPhotos({ photos }) {
   if (list.length === 0) return null
   return (
     <div data-testid="event-photos">
-      <FieldLabel style={{ marginBottom: 10 }}>
+      <FieldLabel style={{ marginBottom: T.space.sm }}>
         Photos
         <span style={{ marginLeft: 6, fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>({list.length})</span>
       </FieldLabel>
       {/* flex-wrap rather than a fluid grid: the thumbs are sized in px (a 1fr track would only add
           dead space around a fixed box). At the 390px Android reference width this lands three
           thumbs per row. */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm }}>
         {list.map((ph, i) => (
           <button
             key={ph.id}
@@ -1039,13 +1040,13 @@ function EventFields({ event: ev }) {
     : []
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
       <PlantingAnchor event={ev} />
       {isHarvestRead && <HarvestReadout harvest={ev.harvest} />}
       {rows.map(([label, value]) => (
         <div key={label}>
           <FieldLabel>{label}</FieldLabel>
-          <div style={{ fontSize: '0.9rem', color: P.dark, lineHeight: 1.5 }}>
+          <div style={{ fontSize: T.type.base, color: P.dark, lineHeight: 1.5 }}>
             {label === 'Private notes' ? (
               <div style={{ backgroundColor: P.warn, borderRadius: 4, padding: '8px 10px', borderLeft: `3px solid ${P.warnBorder}` }}>
                 🔒 {value}
@@ -1061,9 +1062,9 @@ function EventFields({ event: ev }) {
 
       {metadataEntries.length > 0 && (
         <div>
-          <FieldLabel style={{ marginBottom: 10 }}>Details</FieldLabel>
+          <FieldLabel style={{ marginBottom: T.space.sm }}>Details</FieldLabel>
           <div style={{
-            backgroundColor: P.cream, borderRadius: 8, padding: '12px 14px',
+            backgroundColor: P.cream, borderRadius: T.radiusButton, padding: '12px 14px',
             border: `1px solid ${P.border}`,
             display: 'flex', flexDirection: 'column', gap: 8,
           }}>
@@ -1072,11 +1073,11 @@ function EventFields({ event: ev }) {
               const value = METADATA_VALUE_FORMAT[key] ? METADATA_VALUE_FORMAT[key](rawValue) : rawValue
               return (
                 <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                  <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>
+                  <span style={{ fontSize: T.type.sm, color: P.mid, flexShrink: 0 }}>
                     {label ?? <span style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{key}</span>}
                   </span>
-                  <span style={{ fontSize: '0.9rem', color: P.dark, fontWeight: 500, textAlign: 'right' }}>
-                    {label ? String(value) : <span style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{String(value)}</span>}
+                  <span style={{ fontSize: T.type.base, color: P.dark, fontWeight: 500, textAlign: 'right' }}>
+                    {label ? String(value) : <span style={{ fontFamily: 'monospace', fontSize: T.type.sm }}>{String(value)}</span>}
                   </span>
                 </div>
               )
@@ -1098,5 +1099,5 @@ function Shell({ children }) {
   )
 }
 
-const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24 }
+const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: 24 }
 const outlineBtn = { backgroundColor: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 6, padding: '7px 18px', fontSize: '0.85rem', cursor: 'pointer' }
