@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import Icon from '../components/Icon.jsx'
-import Spinner from '../components/forms/Spinner.jsx'
 import Badge from '../components/forms/Badge.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
-import { selectChrome } from '../components/forms/formStyles.js'
+import { selectChrome, T } from '../components/forms/formStyles.js'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import { formatQty, formatMoney, formatDate } from '../lib/format.js'
@@ -28,6 +27,13 @@ import {
 
 const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS
 const CATEGORY_ORDER = INVENTORY_CATEGORIES.map(c => c.v)
+
+// Translucent white rules/ink for the DARK toast surface. Named here rather than left as
+// anonymous inline rgba() per the constants.js scrim convention: the palette token holds the
+// base color, translucency is composed at the point of use. P.onPhotoFg is the same #ffffff.
+const TOAST_RULE = 'rgba(255,255,255,0.4)'      // Undo button hairline
+const TOAST_MUTED_INK = 'rgba(255,255,255,0.6)' // dismiss glyph, de-emphasised vs the message
+const TOAST_SHADOW = '0 4px 16px rgba(0,0,0,0.22)'
 
 // Category identity: an existing registry icon where one fits, else a monogram; each paired
 // with a facet-token color trio (all from P — reinforces the section header, never the sole
@@ -238,10 +244,10 @@ export default function Inventory() {
                     backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`,
                     color: P.gold, fontWeight: 700, fontSize: '0.76rem',
                     borderRadius: 10, padding: '6px 11px', cursor: 'pointer',
-                    minHeight: 34, fontFamily: 'inherit',
+                    minHeight: T.tapMinHeight, fontFamily: 'inherit',
                   }}
                 >
-                  <span aria-hidden="true">⚠</span>
+                  <Icon name="severity.high" size={15} decorative style={{ flexShrink: 0 }} />
                   <span>{lowStockItems.length} need restock</span>
                 </button>
               ) : <span />}
@@ -264,7 +270,7 @@ export default function Inventory() {
           backgroundColor: P.dark, color: P.white,
           padding: '11px 20px', borderRadius: 8,
           fontSize: '0.875rem', fontWeight: 500,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+          boxShadow: TOAST_SHADOW,
           zIndex: 200,
           display: 'flex', alignItems: 'center', gap: 14, whiteSpace: 'nowrap',
         }}>
@@ -273,9 +279,10 @@ export default function Inventory() {
             <button
               onClick={toast.onUndo}
               style={{
-                background: 'none', border: `1px solid rgba(255,255,255,0.4)`,
-                color: P.white, borderRadius: 4, padding: '3px 10px',
+                background: 'none', border: `1px solid ${TOAST_RULE}`,
+                color: P.white, borderRadius: 4, padding: '0 12px',
                 cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                minHeight: T.tapMinHeight, fontFamily: 'inherit', flexShrink: 0,
               }}
             >
               Undo
@@ -285,8 +292,10 @@ export default function Inventory() {
             onClick={dismissToast}
             aria-label="Dismiss notification"
             style={{
-              background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)',
-              cursor: 'pointer', fontSize: '1rem', padding: 0, lineHeight: 1,
+              background: 'none', border: 'none', color: TOAST_MUTED_INK,
+              cursor: 'pointer', padding: 0, lineHeight: 1, flexShrink: 0,
+              minWidth: T.tapMinHeight, minHeight: T.tapMinHeight, fontSize: '1rem',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >
             ✕
@@ -327,7 +336,7 @@ function SectionHeader({ cat, label, count, collapsed, onToggle }) {
       style={{
         display: 'flex', alignItems: 'center', gap: 9,
         padding: '8px 11px', borderRadius: 7, margin: '16px 0 8px',
-        cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem', minHeight: 44,
+        cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem', minHeight: T.tapMinHeight,
         backgroundColor: s.bg, color: s.text, borderLeft: `3px solid ${s.border}`,
       }}
     >
@@ -401,7 +410,7 @@ function InventoryRow({ item, onAdjust }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 14 }}>
               <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>Qty on hand:</span>
               <button onClick={() => onAdjust(item.id, -1)} style={qtyBtn} aria-label="Decrease quantity">−</button>
-              <span style={{ fontWeight: 700, fontSize: '1rem', minWidth: 44, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontWeight: 700, fontSize: '1rem', minWidth: T.tapMinHeight, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
                 {formatQty(item.quantity_on_hand ?? 0)}
                 {item.unit
                   ? <span style={{ fontWeight: 400, fontSize: '0.78rem', color: P.mid }}> {item.unit}</span>
@@ -422,7 +431,7 @@ function InventoryRow({ item, onAdjust }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>Qty:</span>
                 <button onClick={() => onAdjust(item.id, -1)} style={qtyBtn} aria-label="Decrease quantity">−</button>
-                <span style={{ fontWeight: 700, fontSize: '1rem', minWidth: 44, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ fontWeight: 700, fontSize: '1rem', minWidth: T.tapMinHeight, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
                   {formatQty(item.quantity)}
                 </span>
                 <button onClick={() => onAdjust(item.id, +1)} style={qtyBtn} aria-label="Increase quantity">+</button>
@@ -507,6 +516,9 @@ function MetaLine({ item }) {
 }
 
 // Low-stock / out badge — icon shape + text + color (WCAG 1.4.1: never color alone).
+// The two states differ in SHAPE, not just hue: severity.med is a bare triangle, severity.high
+// adds the bang. Registry SVG rather than a literal ⚠ so the mark renders identically on every
+// OS (the per-OS emoji divergence the icon registry exists to close, contract §5).
 function StockBadge({ isOut }) {
   return (
     <Badge
@@ -515,7 +527,7 @@ function StockBadge({ isOut }) {
       aria-label={isOut ? 'Out of stock' : 'Low stock'}
       style={{ gap: 3, fontSize: '0.72rem', fontWeight: 700 }}
     >
-      <span aria-hidden="true">⚠</span>
+      <Icon name={isOut ? 'severity.high' : 'severity.med'} size={13} decorative style={{ flexShrink: 0 }} />
       {isOut ? 'Out' : 'Low'}
     </Badge>
   )
@@ -534,7 +546,7 @@ function FilterSelect({ label, value, onChange, children }) {
         aria-label={label}
         value={value}
         onChange={e => onChange(e.target.value)}
-        style={{ ...selectChrome(), backgroundColor: P.cream, height: 44, fontSize: '0.82rem' }}
+        style={{ ...selectChrome(), backgroundColor: P.cream, height: T.tapMinHeight, fontSize: '0.82rem' }}
       >
         {children}
       </select>
@@ -631,16 +643,18 @@ const addBtnStyle = {
   display: 'inline-flex', alignItems: 'center',
   backgroundColor: P.terra, color: P.white,
   textDecoration: 'none', borderRadius: 9,
-  padding: '0 15px', height: 44, fontSize: '0.86rem', fontWeight: 700,
+  padding: '0 15px', height: T.tapMinHeight, fontSize: '0.86rem', fontWeight: 700,
 }
 
-// Compact icon-chip variant for the "Add seeds" / "Sow now" header entries.
+// Compact icon-chip variant for the "Add seeds" / "Sow now" header entries. Height is the
+// tap floor, not the visual weight: these were 38px, under SC 2.5.8's target, while reading
+// as secondary next to the terra "+ Add". Muted fill keeps the hierarchy; the box is tappable.
 const chipActionStyle = {
   display: 'inline-flex', alignItems: 'center',
   backgroundColor: P.white, color: P.mid,
   border: `1px solid ${P.border}`,
   textDecoration: 'none', borderRadius: 9,
-  padding: '0 11px', height: 38, fontSize: '0.78rem', fontWeight: 600,
+  padding: '0 11px', height: T.tapMinHeight, fontSize: '0.78rem', fontWeight: 600,
 }
 
 const clearFiltersStyle = {
@@ -650,7 +664,7 @@ const clearFiltersStyle = {
 }
 
 const qtyBtn = {
-  width: 44, height: 44, borderRadius: 8,
+  width: T.tapMinHeight, height: T.tapMinHeight, borderRadius: T.radiusButton,
   border: `1px solid ${P.border}`,
   backgroundColor: P.cream, color: P.dark,
   cursor: 'pointer', fontSize: '1.2rem', fontWeight: 700,
