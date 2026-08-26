@@ -35,7 +35,7 @@
     "severity.low", "severity.med", "severity.high"
   ],
   "facet": [
-    "facet.type", "facet.location"
+    "facet.type", "facet.group", "facet.lifecycle", "facet.location", "facet.freeform"
   ],
   "media": [
     "media.camera", "media.play", "media.pause", "media.stop", "media.mic"

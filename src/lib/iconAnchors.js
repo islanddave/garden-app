@@ -462,6 +462,39 @@ const A = {
     svg24: '<path d="M11.2 12.8V6.6a2.1 2.1 0 0 0-4.2 0v6.2a3.4 3.4 0 1 0 4.2 0z"/><path d="M18 9.8V18"/><path d="M15.2 15.2 18 18l2.8-2.8"/>',
     svg18: '<path d="M11.8 12.8V6.4a2.6 2.6 0 0 0-5.2 0v6.4a3.8 3.8 0 1 0 5.2 0z"/><path d="M18 9.6V18.2"/><path d="M15 15.2 18 18.2l3-3"/>',
   },
+  // ── V4-ICON-001 facet family (§9: type / group / lifecycle / location / freeform).
+  //    type (leaf) + location (pin) shipped with the anchor set; these three complete it. Like
+  //    their two siblings they stay MONO and recolourable — a facet glyph takes the facet's
+  //    theme colour from the consuming TagChip, so a baked fill would break the facet→token map.
+  //    Unused until TAGSUB, which is exactly why they are drawn now rather than later: the point
+  //    of the coverage manifest is that a specified family is never silently absent. ──
+  'facet.group': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Group',
+    // Three rings in a cluster — "several things treated as one". Distinct from action.groupBy,
+    // which is the VERB (regroup this list); this is the NOUN (the group facet).
+    svg24: '<circle cx="12" cy="7.4" r="3.4"/><circle cx="7" cy="16" r="3.4"/><circle cx="17" cy="16" r="3.4"/>',
+    // 18: rings shrink and spread. At the 24 spacing the 3.15-unit gaps close to 0.36 device px
+    // against a 2.67-unit stroke and the cluster fuses into one blob (§4 aperture).
+    svg18: '<circle cx="12" cy="7" r="3"/><circle cx="6.6" cy="16.4" r="3"/><circle cx="17.4" cy="16.4" r="3"/>',
+  },
+  'facet.lifecycle': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Lifecycle',
+    // A cycle, not a stage. The four lifecycle.* glyphs ARE the stages; this is the facet that
+    // groups them, so it has to say "progression through stages" without being any one of them.
+    // Arrowhead barbs open at +/-30deg off the reverse tangent, not +/-45: at 45 the two barbs
+    // sit near-axis-aligned and the round joins fuse them into an L-shaped tab that reads as a
+    // little flag on the end of the arc (compared side by side at 110px, 24px and 18px).
+    svg24: '<path d="M20 12a8 8 0 1 1-2.35-5.65"/><path d="M16.7 2.9 17.65 6.35 14.2 5.4"/>',
+    svg18: '<path d="M20.2 12a8.2 8.2 0 1 1-2.4-5.8"/><path d="M16.9 2.9 17.8 6.2 14.5 5.2"/>',
+  },
+  'facet.freeform': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Tag',
+    // Luggage tag + eyelet. The eyelet is a FILLED dot at both masters (the §2 dot primitive)
+    // rather than a tiny ring: an outlined r 1.5 hole leaves 1.25 units of counter at 24 and
+    // none at all at 18, so it would read as a smudge exactly where the tag's tell should be.
+    svg24: '<path d="M12.4 3.8h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.4 6.4a1.8 1.8 0 0 1-2.54 0l-6-6a1.8 1.8 0 0 1 0-2.54l6.4-6.4A1.8 1.8 0 0 1 12.4 3.8z"/><circle cx="16" cy="8" r="1.5" fill="currentColor" stroke="none"/>',
+    svg18: '<path d="M12.6 3.6h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.6 6.6a1.8 1.8 0 0 1-2.54 0l-6.2-6.2a1.8 1.8 0 0 1 0-2.54l6.6-6.6A1.8 1.8 0 0 1 12.6 3.6z"/><circle cx="16.2" cy="7.8" r="1.6" fill="currentColor" stroke="none"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)
