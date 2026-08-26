@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.52.0",
+    "date": "2026-08-26",
+    "highlights": [
+      "The planting chooser and the lists behind it load about ten times less data. Opening the chooser — on a weigh-in, on any log event — was fetching the widest response the app produces: roughly 1.2 MB, including a freshly signed photo link for all 233 plantings and the full reference text for every variety. The chooser shows none of that; it is a list of names. It now asks for just the fields it draws, about 120 KB, and signs no photo links at all. Same list, same order, same behaviour.",
+      "This is the same fix the Garden tab already had. Garden was narrowed in an earlier release and the chooser was simply never included, which is why the two felt different."
+    ]
+  },
+  {
     "version": "4.51.0",
     "date": "2026-08-26",
     "highlights": [

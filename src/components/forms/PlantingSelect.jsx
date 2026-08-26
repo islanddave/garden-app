@@ -589,7 +589,11 @@ export default function PlantingSelect({
     let live = true
     setLoading(true)
     setFailed(false)
-    apiFetch(scopeProjectId ? `/api/plants?project_id=${scopeProjectId}` : '/api/plants')
+    // V4-PICKERPAYLOAD-001: the self-fetch path (used where the host does not pass `plants`), on the
+    // same chooser projection EventNew uses. This component's whole field census — nine top-level
+    // keys, four of variety_ref, zero photo fields — is what defines that projection; the Lambda
+    // branch carries it. Add a field there, not by reverting to the wide shape.
+    apiFetch(scopeProjectId ? `/api/plants?view=picker&project_id=${scopeProjectId}` : '/api/plants?view=picker')
       .then(data => { if (live) setFetched(Array.isArray(data) ? data : []) })
       .catch(err => { if (live) { setFailed(true); onLoadError?.(err) } })
       .finally(() => { if (live) setLoading(false) })

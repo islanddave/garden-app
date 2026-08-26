@@ -30,6 +30,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// V4-PICKERPAYLOAD-001's consumer-set assertion greps the client tree — the census the picker key
+// set is derived from is only true while that set is the two files it counted.
+import { execSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct (the epitaph hazard this directory already
@@ -99,7 +102,12 @@ const LIST = (() => {
   return SRC.slice(a, b);
 })();
 const BRANCHES = [...LIST.matchAll(/sql`([\s\S]*?)`/g)].map((m) => m[1]);
-const [GRID_SQL, SCOPED_SQL, UNSCOPED_SQL] = BRANCHES;
+// V4-PICKERPAYLOAD-001 inserted a FOURTH branch between grid and the two default ones. Positional
+// destructuring is what binds these names, so the count is asserted rather than assumed — silently
+// sliding SCOPED_SQL onto the picker template would leave every assertion below still "passing"
+// while checking the wrong query.
+expect(BRANCHES, 'list-branch count changed — the positional binding below is now wrong').toHaveLength(4);
+const [GRID_SQL, PICKER_SQL, SCOPED_SQL, UNSCOPED_SQL] = BRANCHES;
 
 // The per-row transform every branch's rows pass through. Asserted, not assumed: if the strip or
 // either substitution goes, the derived key sets below are wrong and this test would be lying.
@@ -246,5 +254,121 @@ describe('GET /api/plants?view=grid — exactly the grid field set (V4-PLANTSPAY
   it('preserves the list ORDER without shipping the column it sorts on', () => {
     expect(GRID_SQL).toMatch(/ORDER BY gp\.created_at DESC/);
     expect(apiKeys(GRID_SQL)).not.toContain('created_at');
+  });
+});
+
+// ── V4-PICKERPAYLOAD-001 — the PLANTING-CHOOSER projection ────────────────────────────────────────
+//
+// Why a THIRD shape rather than reusing ?view=grid: the two surfaces want opposite things. The
+// Garden grid is a wall of photographs, so grid KEEPS both presigned URLs and pays two LATERAL photo
+// joins per row. The chooser is a text list — it renders no photo at all — so for it those joins and
+// presigns are pure cost. Reusing grid would have shipped ~426 signature computations and their
+// bytes to a surface that discards every one.
+//
+// MEASURED on prod 2026-08-26, 233 live plantings (psql, both shapes replayed):
+//   wide (default) DB body  814,399 B  + ~426 presigned S3 URLs
+//   this projection         101,153 B  + ZERO presigns
+//
+// The key set below is DERIVED from the consumer field census, not invented. Its two consumers are
+// the only ones that pass ?view=picker: src/pages/EventNew.jsx (which fetches the list and hands it
+// to PlantingSelect as controlled `plants`) and src/components/forms/PlantingSelect.jsx's own
+// self-fetch. Every entry has a named reader:
+//   id / name / quantity            -> the option row and EventNew's .find() lookups
+//   project_id                      -> EventNew derives form.project_id from the chosen planting
+//   project_name                    -> the option's secondary line
+//   sown_at / succession_order      -> the chooser's sort
+//   variety_id                      -> the chooser's variety grouping
+//   archived_at                     -> EventNew's client-side !p.archived_at filter
+//   variety_ref.name/crop_type_slug -> the option label and the crop chips
+//   variety_ref.default_unit        -> V4-HARVUNITDEFAULT-001, the per-crop harvest unit
+//   variety_ref.id                  -> the chooser's variety identity
+//
+// MUTATION-PROVEN (each applied, RED observed, reverted):
+//   • drop `'default_unit', ct.default_unit` from the picker jsonb_build_object -> variety_ref RED
+//   • drop the `LEFT JOIN public.crop_types ct` line                            -> join-gate RED
+//   • add `gp.notes,` to the picker SELECT                                      -> exact-set RED
+//   • delete `gp.archived_at IS NULL` from the picker WHERE                     -> gates RED
+const PICKER_KEYS = [
+  'id', 'name', 'quantity', 'project_id', 'project_name',
+  'sown_at', 'succession_order', 'variety_id', 'archived_at', 'variety_ref',
+];
+
+describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICKERPAYLOAD-001)', () => {
+  it('returns the ten chooser keys and no others', () => {
+    // NOT apiKeys(): that helper asserts the branch selects featured_photo_storage_path and then
+    // substitutes the two URL keys. This branch deliberately selects no photo column at all, so the
+    // raw output names ARE the response's own keys.
+    expect(outputNames(PICKER_SQL).sort()).toEqual([...PICKER_KEYS].sort());
+  });
+
+  it('costs ZERO presigned URLs — the property the whole projection exists for', () => {
+    // The shared enrichment runs `featuredPhotoUrls(row.featured_photo_storage_path)` over every
+    // row of every branch. On a picker row that argument is undefined, and featuredPhotoUrls early
+    // -returns `{view_url: null, thumb_url: null}` without signing anything. So the proof that this
+    // surface pays no signature cost is precisely that it selects no storage path — assert that,
+    // and assert the early return it depends on still exists, rather than trusting either alone.
+    expect(outputNames(PICKER_SQL)).not.toContain('featured_photo_storage_path');
+    expect(PICKER_SQL).not.toMatch(/photos ph|featured_photo_id|LATERAL/);
+    expect(SRC).toMatch(/if \(!storagePath\) return \{ featured_photo_view_url: null, featured_photo_thumb_url: null \};/);
+  });
+
+  it('carries default_unit AND the crop_types join it comes from', () => {
+    // The pair, together, because either alone is a lie: the key can be present while the join that
+    // populates it is gone, in which case every planting silently reports default_unit null and the
+    // harvest unit stops defaulting per crop — with a green suite, because no unit test covers it.
+    // There is no cultivar.default_unit column; crop_types is the ONLY source.
+    expect(varietyRefKeys(PICKER_SQL)).toContain('default_unit');
+    expect(PICKER_SQL).toMatch(/LEFT JOIN public\.crop_types ct ON ct\.slug = pv\.crop_type_slug/);
+  });
+
+  it('carries species — the field that crosses two component boundaries after the fetch', () => {
+    // NOT a field either censused consumer reads. PlantingSelect.select() passes the whole
+    // variety_ref onward via onDerive({ variety }); PutUp stores it; VarietyPicker renders
+    // value.species as a visible line. A field-read grep over the two fetching files finds none of
+    // that. This assertion is the standing reminder that the census is of HANDOFFS, not reads.
+    expect(varietyRefKeys(PICKER_SQL)).toContain('species');
+    // The handoff itself, read from the CLIENT source (SRC here is the Lambda). If select() stops
+    // passing the whole object onward, species has no remaining reader and can go — but that is a
+    // deliberate change, and this is where it announces itself.
+    const PICKER_JSX = readFileSync(
+      resolve(__dirname, '..', '..', 'src', 'components', 'forms', 'PlantingSelect.jsx'), 'utf8');
+    expect(PICKER_JSX).toMatch(/variety: p\.variety_ref \?\? null,/);
+  });
+
+  it('is far narrower than grid on variety_ref, and carries none of the prose', () => {
+    expect(varietyRefKeys(PICKER_SQL).sort()).toEqual(['crop_type_slug', 'default_unit', 'id', 'name', 'species']);
+    expect(PICKER_SQL).not.toMatch(/care_notes|soil_notes|common_diseases|expected_yield_notes|source_url/);
+  });
+
+  it('keeps every ownership and soft-delete gate the wide list carries', () => {
+    // A projection is still a read of other people's rows if it drops the predicates.
+    expect(PICKER_SQL).toMatch(/gp\.deleted_at IS NULL/);
+    expect(PICKER_SQL).toMatch(/gp\.archived_at IS NULL/);
+    expect(PICKER_SQL).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\) AND pp\.deleted_at IS NULL/);
+    expect(PICKER_SQL).toMatch(/gp\.container_id IS NULL AND gp\.created_by = ANY\(\$\{householdIds\}\)/);
+    expect(PICKER_SQL).toMatch(/pv\.deleted_at IS NULL/);
+  });
+
+  it('honours project_id rather than silently ignoring it', () => {
+    expect(PICKER_SQL).toMatch(/\$\{projectId\}::uuid IS NULL OR gp\.container_id = \$\{projectId\}::uuid/);
+  });
+
+  it('is opt-in: only the exact string "picker" selects it, and it does not disturb grid', () => {
+    expect(LIST).toMatch(/view === 'picker'/);
+    expect(LIST).toMatch(/view === 'grid'/);
+    // Order matters: grid is tested first, so a ?view=grid request can never fall into this branch.
+    expect(LIST.indexOf("view === 'grid'")).toBeLessThan(LIST.indexOf("view === 'picker'"));
+  });
+
+  it('both call sites that pass it are the two censused consumers, and no others', () => {
+    // The census above is only true while the consumer set is those two files. If a third surface
+    // starts requesting ?view=picker, its field reads have not been counted and this must red.
+    const CLIENT = resolve(__dirname, '..', '..', 'src');
+    // --exclude-dir=__tests__: the census is of PRODUCTION call sites. Test files legitimately name
+    // the URL in their assertions, and counting those would make this assertion self-satisfying —
+    // it would go green forever the moment anyone wrote a test mentioning the param.
+    const hits = execSync(`grep -rl --exclude-dir=__tests__ "view=picker" ${CLIENT} || true`, { encoding: 'utf8' })
+      .split('\n').filter(Boolean).map((p) => p.replace(`${CLIENT}/`, '')).sort();
+    expect(hits).toEqual(['components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx']);
   });
 });

@@ -134,7 +134,10 @@ describe('plants Lambda — the widened predicate stays narrow (authz guard)', (
     // 10 -> 11: V4-PLANTSPAYLOAD-001's ?view=grid projection carries the same widened arm, guarded
     // by its own `gp.container_id IS NULL AND` conjunct — which the per-alias assertion above
     // proves; this line only counts it.
-    expect(total, 'expected 11 own-created_by ownership arms (list + grid + 6 by-id + 3 restore-surface)').toBe(11);
+    // 11 -> 12: V4-PICKERPAYLOAD-001's ?view=picker projection carries the same widened arm,
+    // guarded by its own `gp.container_id IS NULL AND` conjunct — proved by the per-alias
+    // assertion above; this line only counts it.
+    expect(total, 'expected 12 own-created_by ownership arms (list + grid + picker + 6 by-id + 3 restore-surface)').toBe(12);
   });
 
   it('container ownership is still asserted on every by-id route', () => {

@@ -182,9 +182,14 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
   // ct is the crop_types LEFT JOIN already present for dtm_basis; default_unit is crop-scoped
   // only (plant_varieties has unit_weights/weight_source/weight_confidence but NO default_unit
   // column), so it is read straight off ct with no COALESCE — do not add a pv. arm here.
+  // 3 -> 4 (V4-PICKERPAYLOAD-001, 2026-08-26): the chooser projection is a FOURTH variety_ref block.
+  // It carries default_unit because its consumer — EventNew — reads it as `vref?.default_unit`
+  // through a destructured alias to pick the per-crop harvest unit. That read is invisible to a
+  // `variety_ref.<field>` grep, so it was very nearly dropped from the projection; this count is now
+  // the thing that would catch it.
   it("every variety_ref block carries 'default_unit', ct.default_unit (V4-HARVUNITDEFAULT-001)", () => {
     const hits = SRC.match(/'default_unit',\s*ct\.default_unit\b/g) || [];
-    expect(hits.length, 'expected default_unit in all 3 variety_ref JSON blocks').toBe(3);
+    expect(hits.length, 'expected default_unit in all 4 variety_ref JSON blocks').toBe(4);
   });
 
   // V4-MATURITYREPEAT-001: computeMaturity() decides whether to print a CLOSING date off
@@ -193,13 +198,22 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
   // actively picked reading "Harvest window open — through Aug 12". Same write->read symmetry class
   // and same source-level guard as default_unit above. harvest_habit is crop-scoped only
   // (plant_varieties has no such column), so it reads straight off ct with no COALESCE.
+  // DELIBERATELY STILL 3, not 4, and the asymmetry with default_unit above is the point rather than
+  // an oversight: harvest_habit feeds computeMaturity, and V4-PICKERPAYLOAD-001's chooser projection
+  // has no maturity reader — neither EventNew nor PlantingSelect imports plantingMaturity. Do not
+  // "restore symmetry" by adding it to the picker block; if a chooser ever grows an est-harvest chip
+  // then this count goes to 4 at the same time as that reader appears, and not before.
   it("every variety_ref block carries 'harvest_habit', ct.harvest_habit (V4-MATURITYREPEAT-001)", () => {
     const hits = SRC.match(/'harvest_habit',\s*ct\.harvest_habit\b/g) || [];
-    expect(hits.length, 'expected harvest_habit in all 3 variety_ref JSON blocks').toBe(3);
+    expect(hits.length, 'expected harvest_habit in the 3 maturity-reading variety_ref JSON blocks').toBe(3);
   });
 
-  it('joins crop_types in all 3 reads so ct.default_unit resolves', () => {
+  // 3 -> 4 with the picker projection, which needs the join for default_unit (see above). The join
+  // and the key are counted SEPARATELY on purpose: the key can be present while the join that
+  // populates it is gone, and that combination reports default_unit null for every planting with a
+  // fully green suite.
+  it('joins crop_types in all 4 reads so ct.default_unit resolves', () => {
     const joins = SRC.match(/LEFT JOIN public\.crop_types ct ON ct\.slug = pv\.crop_type_slug/g) || [];
-    expect(joins.length, 'expected the crop_types join in all 3 reads').toBe(3);
+    expect(joins.length, 'expected the crop_types join in all 4 reads').toBe(4);
   });
 });

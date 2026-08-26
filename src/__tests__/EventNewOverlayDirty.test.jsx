@@ -107,7 +107,7 @@ describe('EventNew — dirty report to the hosting Sheet (V4-DRAFTFULLPAGE-001 b
     dataRef.plants = [PLANT_A]
     renderReporting('')
     await flushLoad()
-    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/plants?project_id=proj-1'))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/plants?view=picker&project_id=proj-1'))
     expect(reported.current).toBe(false)
   })
 

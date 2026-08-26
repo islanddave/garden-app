@@ -101,8 +101,11 @@ describe('EventNew — V4-PROJHIDE-001 (flag ON)', () => {
     renderEventNew('event_type=observation')
     await flushLoad()
     // Under the flag the picker lists every planting via the bare endpoint, never /api/plants?project_id=.
-    expect(apiFetchSpy).toHaveBeenCalledWith('/api/plants')
-    const scoped = apiFetchSpy.mock.calls.filter(([p]) => typeof p === 'string' && p.startsWith('/api/plants?project_id='))
+    // V4-PICKERPAYLOAD-001: the bare endpoint now carries the chooser projection. The CLAIM of
+    // this test is unscoped-vs-scoped, so the assertion keeps naming the exact URL rather than
+    // loosening to a prefix — a prefix would also match the ?project_id= form it exists to exclude.
+    expect(apiFetchSpy).toHaveBeenCalledWith('/api/plants?view=picker')
+    const scoped = apiFetchSpy.mock.calls.filter(([p]) => typeof p === 'string' && p.includes('project_id='))
     expect(scoped.length).toBe(0)
   })
 

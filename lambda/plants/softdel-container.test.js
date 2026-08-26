@@ -67,7 +67,10 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
     // appear with no audit at all; an ADD is a deliberate change, so bump this in the same commit.
     expect(joined.length,
       'plants container-reaching query count changed. An ADD needs this number bumped deliberately; ' +
-      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(12);
+      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(13);
+    // 12 -> 13: V4-PICKERPAYLOAD-001's ?view=picker projection. Also gp-aliased, also reaches
+    // container for ownership (pp.display_name AS project_name), and carries the same
+    // `pp.deleted_at IS NULL` gate — so it belongs in this alias-agnostic sweep, not outside it.
     // 11 -> 12: V4-PLANTSPAYLOAD-001's ?view=grid projection. It is aliased gp rather than p, so it
     // is deliberately outside the p-anchored branch census below — this alias-agnostic pass is the
     // one that keeps it swept, and it is the reason that pass was written alias-agnostic.

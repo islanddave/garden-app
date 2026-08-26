@@ -63,8 +63,8 @@ function wireTwoProjects() {
     }
     if (path === '/api/projects') return Promise.resolve([PROJ_A, PROJ_B])
     if (path === '/api/locations/with-path') return Promise.resolve([])
-    if (path === '/api/plants?project_id=proj-a') return Promise.resolve([PLANT_A])
-    if (path === '/api/plants?project_id=proj-b') return Promise.resolve([PLANT_B])
+    if (path.startsWith('/api/plants?') && path.includes('project_id=proj-a')) return Promise.resolve([PLANT_A])
+    if (path.startsWith('/api/plants?') && path.includes('project_id=proj-b')) return Promise.resolve([PLANT_B])
     if (path.startsWith('/api/plants')) return Promise.resolve([])
     return Promise.resolve(null)
   })
@@ -152,7 +152,7 @@ describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001 (flag ON)', () => {
       }
       if (path === '/api/projects') return Promise.resolve([PROJ_A, PROJ_B])
       if (path === '/api/locations/with-path') return Promise.resolve([])
-      if (path === '/api/plants?project_id=proj-b') return Promise.resolve([PLANT_B])
+      if (path.startsWith('/api/plants?') && path.includes('project_id=proj-b')) return Promise.resolve([PLANT_B])
       if (path.startsWith('/api/plants')) return Promise.resolve([PLANT_A])
       return Promise.resolve(null)
     })

@@ -71,7 +71,7 @@ function wire({ stores = STORES_FIXTURE, plants = PLANTS_FIXTURE } = {}) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
-    if (path === '/api/plants' && method === 'GET') return Promise.resolve(plants)
+    if (path.startsWith('/api/plants?') && method === 'GET') return Promise.resolve(plants)
     if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(stores)
     if (path === '/api/preservation' && method === 'POST') return Promise.resolve({ id: 'new-1' })
     if (path.startsWith('/api/preservation/') && method === 'PUT') return Promise.resolve({ id: 'rec-1' })
@@ -164,7 +164,7 @@ describe('PutUp — planting attribution (succession spine)', () => {
     renderPutUp()
     fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
     const input = await screen.findByRole('combobox', { name: 'From which planting' })
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plants'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plants?view=picker'))
     fireEvent.focus(input)
     const list = await screen.findByRole('listbox', { name: 'Plantings' })
     await waitFor(() => expect(within(list).getAllByRole('option').length).toBe(PLANTS_FIXTURE.length))
@@ -391,7 +391,7 @@ describe('PutUp — add storage location resilience (BUG-PUTUPLOC-001)', () => {
         return Promise.resolve({ id: 'loc-9', label: 'Garage freezer', kind: 'deep_freezer' })
       }
       if (path === '/api/storage-locations') return Promise.resolve([])
-      if (path === '/api/plants') return Promise.resolve(PLANTS_FIXTURE)
+      if (path.startsWith('/api/plants?')) return Promise.resolve(PLANTS_FIXTURE)
       if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(STORES_FIXTURE)
       return Promise.resolve(null)
     })
@@ -411,7 +411,7 @@ describe('PutUp — add storage location resilience (BUG-PUTUPLOC-001)', () => {
       const method = options.method || 'GET'
       if (path === '/api/storage-locations' && method === 'POST') return Promise.reject(new Error('Failed to fetch'))
       if (path === '/api/storage-locations') return Promise.resolve([])
-      if (path === '/api/plants') return Promise.resolve(PLANTS_FIXTURE)
+      if (path.startsWith('/api/plants?')) return Promise.resolve(PLANTS_FIXTURE)
       if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(STORES_FIXTURE)
       return Promise.resolve(null)
     })
@@ -432,7 +432,7 @@ describe('PutUp — add storage location resilience (BUG-PUTUPLOC-001)', () => {
         return Promise.reject(err)
       }
       if (path === '/api/storage-locations') return Promise.resolve([])
-      if (path === '/api/plants') return Promise.resolve(PLANTS_FIXTURE)
+      if (path.startsWith('/api/plants?')) return Promise.resolve(PLANTS_FIXTURE)
       if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(STORES_FIXTURE)
       return Promise.resolve(null)
     })

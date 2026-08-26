@@ -148,7 +148,7 @@ describe('self-fetch mode', () => {
   it('fetches unscoped /api/plants by default', async () => {
     fetchMock.mockResolvedValue(PLANTS)
     render(<PlantingSelect onChange={() => {}} />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plants'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plants?view=picker'))
     openPicker()
     await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(4))
   })
@@ -156,7 +156,7 @@ describe('self-fetch mode', () => {
   it('scopeProjectId narrows the fetch', async () => {
     fetchMock.mockResolvedValue([])
     render(<PlantingSelect onChange={() => {}} scopeProjectId="proj-9" />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plants?project_id=proj-9'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plants?view=picker&project_id=proj-9'))
   })
 
   it('load failure is graceful: inline note + onLoadError, still non-fatal', async () => {

@@ -1114,7 +1114,12 @@ export default function EventNew() {
     // itself become a source of wrong writes. Cancel on re-run.
     let cancelled = false
     setPlantsLoadFailed(false)
-    apiFetch('/api/plants?project_id=' + form.project_id)
+    // V4-PICKERPAYLOAD-001: the chooser projection. This list is read by exactly two consumers —
+    // this file and the PlantingSelect it feeds — and between them they touch nine top-level keys
+    // and four of variety_ref's. The wide shape was 814KB + ~426 presigned photo URLs the chooser
+    // renders none of; this is ~99KB and none. Field census is in the Lambda branch's comment; if
+    // this file starts reading a new field, add it THERE rather than dropping back to the wide shape.
+    apiFetch('/api/plants?view=picker&project_id=' + form.project_id)
       .then(data => {
         if (cancelled) return
         const live = (data ?? []).filter(p => !p.archived_at)
@@ -1143,7 +1148,10 @@ export default function EventNew() {
     // setter. Same shape as BUG-PLANTMISMATCH-001, just not yet reached in practice.
     let cancelled = false
     setPlantsLoadFailed(false)
-    apiFetch('/api/plants')
+    // V4-PICKERPAYLOAD-001 — see the scoped fetch above. This is the unscoped one, and it is the
+    // one Dave actually hits: PROJECTS_HIDDEN is on, so every weigh-in and every log event loads the
+    // WHOLE planting list through here before the chooser can open.
+    apiFetch('/api/plants?view=picker')
       .then(data => { if (!cancelled) setPlantsForProject((data ?? []).filter(p => !p.archived_at)) })
       .catch(() => { if (!cancelled) { setPlantsForProject([]); setPlantsLoadFailed(true) } })
     return () => { cancelled = true }

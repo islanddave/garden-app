@@ -1184,6 +1184,72 @@ export const handler = async (event) => {
             ORDER BY gp.created_at DESC
             LIMIT 5000
           `
+        : view === 'picker'
+        ? await sql`
+            -- V4-PICKERPAYLOAD-001 — the PLANTING-CHOOSER projection. Same additive opt-in contract
+            -- as ?view=grid above (default shape byte-identical, blast radius bounded to the call
+            -- sites that pass it), and for the same reason: the chooser is the most-opened list in
+            -- the app and was fetching the WIDEST shape in it.
+            --
+            -- MEASURED on prod 2026-08-26, 233 live plantings:
+            --   wide (default) DB body   814,399 B   + ~426 presigned S3 URLs
+            --   this projection          101,153 B   + ZERO presigned URLs
+            --
+            -- What it drops and why. The consumer set is exactly two files — EventNew (which fetches
+            -- the list and hands it to PlantingSelect as controlled data) and PlantingSelect's own
+            -- self-fetch. Between them they read nine top-level keys and FOUR of variety_ref's
+            -- twenty-odd. They read NO photo field at all, so the two LATERAL photo joins and both
+            -- presigns are dropped outright — that is not only wire bytes but 2x233 signature
+            -- computations and a UNION ALL fallback scan per request, for data the chooser cannot
+            -- render.
+            --
+            -- default_unit is the one to be careful about and is NOT droppable: it is the crop's
+            -- default harvest unit (V4-HARVUNITDEFAULT-001, read as vref?.default_unit through a
+            -- destructured alias, which is why a variety_ref.<field> grep does not find it). It
+            -- comes from crop_types, NOT from cultivar — there is no cultivar.default_unit column —
+            -- so the ct join below is load-bearing. Build this projection off cultivar alone and the
+            -- harvest unit silently stops defaulting per crop, with a green suite.
+            --
+            -- species is here for a THIRD consumer that the two-file census above does not name and
+            -- a field-read grep does not reach: PutUp. PlantingSelect's select() hands the WHOLE
+            -- variety_ref object onward through onDerive({ variety }), PutUp does setVariety(it), and
+            -- VarietyPicker renders value.species as a visible line under the variety name. So the
+            -- object crosses two component boundaries after leaving the surface that fetched it —
+            -- census the HANDOFFS, not just the reads, or this projection silently blanks that line.
+            --
+            -- dtm_basis / harvest_habit are deliberately NOT carried: no consumer on this path imports
+            -- plantingMaturity or reads them. If a chooser ever shows an est-harvest chip, they come
+            -- back here rather than the call site reverting to the wide shape.
+            SELECT gp.id, gp.display_name AS name, gp.quantity,
+                   gp.container_id AS project_id, pp.display_name AS project_name,
+                   gp.sown_at, gp.succession_order,
+                   gp.cultivar_id AS variety_id,
+                   -- Carried even though the WHERE already excludes archived rows: EventNew filters
+                   -- !p.archived_at client-side as well, and a key that is absent rather than null
+                   -- makes that filter vacuously true instead of redundant. Same visible result
+                   -- today, but the redundancy is the point — it stays a real second check.
+                   gp.archived_at,
+                   CASE WHEN pv.id IS NOT NULL THEN
+                     jsonb_build_object(
+                       'id', pv.id, 'name', pv.display_name,
+                       'crop_type_slug', pv.crop_type_slug,
+                       'default_unit', ct.default_unit,
+                       'species', pv.species)
+                   ELSE NULL END AS variety_ref
+            FROM public.garden_node gp
+            LEFT JOIN public.container pp ON pp.id = gp.container_id
+            LEFT JOIN public.cultivar pv ON pv.id = gp.cultivar_id AND pv.deleted_at IS NULL
+            LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug
+            WHERE (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
+                   OR (gp.container_id IS NULL AND gp.created_by = ANY(${householdIds})))
+              AND gp.deleted_at IS NULL
+              AND gp.archived_at IS NULL
+              -- Same ::uuid casts as the grid branch, for the same reason: an untyped NULL parameter
+              -- is what Postgres answers "could not determine data type of parameter" to.
+              AND (${projectId}::uuid IS NULL OR gp.container_id = ${projectId}::uuid)
+            ORDER BY gp.created_at DESC
+            LIMIT 5000
+          `
         : projectId
         ? await sql`
             SELECT p.id, p.display_name AS name, p.quantity,
