@@ -310,7 +310,7 @@ export default function Inventory() {
 function CategoryCoin({ cat }) {
   const s = catStyle(cat)
   return (
-    <span style={{
+    <span data-testid="inv-coin" data-category={cat} style={{
       width: 42, height: 42, flexShrink: 0, borderRadius: 11,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       backgroundColor: s.bg, color: s.text, border: `1px solid ${s.border}`,
@@ -327,6 +327,8 @@ function SectionHeader({ cat, label, count, collapsed, onToggle }) {
   const s = catStyle(cat)
   return (
     <div
+      data-testid="inv-section"
+      data-category={cat}
       role="button"
       tabIndex={0}
       aria-expanded={!collapsed}
@@ -360,7 +362,7 @@ function InventoryRow({ item, onAdjust }) {
   const isOut = isLowStock && (item.quantity_on_hand ?? 0) === 0
 
   return (
-    <div style={{
+    <div data-testid="inv-row" style={{
       backgroundColor: P.white,
       border: `1px solid ${P.border}`,
       borderRadius: 12,
