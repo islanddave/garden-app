@@ -32,6 +32,7 @@ import { useMembers } from '../hooks/useMembers.js'
 // V4-GARDENCACHE-001 — the SWR read hook already serving PlantingDetail, LocationDetail,
 // CareNeeded and PhotosWall. Garden was simply never a consumer.
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
+import { RESUME_MIN_AGE_MS } from '../hooks/useCacheLifecycle.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import { buildProjectsById, effectiveAssignee, buildCaretakerMap, lensOptions, hasMixedCaretakers } from '../lib/caretakers.js'
 import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
@@ -59,6 +60,33 @@ let lastGardenScrollY = 0
 // success copy ("Archived <name>") describes the same state but as an accomplishment, so reusing it
 // would tell someone the archive worked when what actually failed was putting it back.
 const ARCHIVE_UNDO_FAILED_COPY = "Couldn't undo — it's still archived"
+
+/* V4-PERFTHEMEA-001 — resume age gate for the two UNCACHED visibility→visible refreshes below.
+   MEASURED: alt-tabbing back into Garden re-fired GET /api/critters/active and
+   GET /api/notifications/prefs unconditionally, every single time, on a cold radio — while the
+   THREE cached lists on this same page (projects / plants?view=grid / locations) had been gated at
+   five minutes since dataCache shipped. The uncached pair were simply never brought under it.
+
+   RESUME_MIN_AGE_MS IS IMPORTED, NEVER REDECLARED. "How stale is too stale" already has an answer
+   (useCacheLifecycle.js) chosen against the 900s presign TTL; a second constant here would drift
+   from it and produce a page whose two halves disagree about whether a resume is worth a round trip.
+
+   NOT SHARED BETWEEN THE TWO EFFECTS — one gate instance each, deliberately. Both listen to the
+   same visibilitychange, so a single shared stamp would let whichever effect ran first through and
+   then block the second on the zero age that first call had just written. Same threshold, separate
+   clocks, no cross-talk.
+
+   MOUNT IS NEVER GATED: the clock starts at mount, so the initial fetch has already happened by the
+   time anything asks. This gates RESUMES only. */
+function useResumeGate() {
+  const lastRef = useRef(Date.now())
+  return useCallback(() => {
+    const now = Date.now()
+    if (now - lastRef.current < RESUME_MIN_AGE_MS) return false
+    lastRef.current = now
+    return true
+  }, [])
+}
 
 export default function Garden() {
   const { fetch, getToken } = useApiFetch()
@@ -304,53 +332,69 @@ export default function Garden() {
 
   // MVP-Critter Session 3: fetch active critters on mount + visibilitychange.
   // critterClient is fire-and-forget — silent no-op when VITE_API_CRITTERS unset.
+  // V4-PERFTHEMEA-001: the RESUME is age-gated (see useResumeGate above); the MOUNT is not.
+  // Critters are earned by nightly jobs and by the user's own logging, neither of which can produce
+  // a new one inside a five-minute alt-tab that this page would not already know about.
+  const crittersResumeGate = useResumeGate()
   useEffect(() => {
     let on = true
     function refresh() {
       fetchActiveCritters({ getToken }).then(list => { if (on) setCritters(list) })
     }
     refresh()
-    function onVis() { if (document.visibilityState === 'visible') refresh() }
+    function onVis() { if (document.visibilityState === 'visible' && crittersResumeGate()) refresh() }
     document.addEventListener('visibilitychange', onVis)
     return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
-  }, [getToken])
+  }, [getToken, crittersResumeGate])
 
   // MVP-Critter Phase B (§3.7): fetch notification prefs + record garden-view-opened.
   // ORDER MATTERS: fetch prefs FIRST (capturing prior last_garden_view_at — the "before this
   // visit" signal that gates coachmark eligibility per §3.9 second-visit rule), THEN post
   // Route 6 (updates server-side last_garden_view_at to now — next visit will see THIS value).
   // Same fire-and-forget contract as critterClient — silent no-op when VITE_API_CRITTERS unset.
+  //
+  // V4-PERFTHEMEA-001 — the PREFS READ is age-gated on resume; recordGardenViewOpened IS NOT.
+  // The POST is an analytics write, not a round trip the user is waiting on: gating it would
+  // silently redefine what garden-view telemetry counts (it would stop counting quick returns),
+  // and last_garden_view_at is the input to the second-visit coachmark rule below. The
+  // capture-then-update ORDER still holds on every pass that reads: a gated pass writes without
+  // reading, so the next reading pass still sees the previous view's timestamp, which is exactly
+  // what "before this visit" means.
+  const prefsResumeGate = useResumeGate()
   useEffect(() => {
     let on = true
-    async function refreshPrefsAndRecord() {
-      const p = await fetchNotificationPrefs({ getToken })
-      if (on) setPrefs(p)
-      // Cross-device hydrate (once): adopt the server group-by if set, caching it locally.
-      if (on && !groupByHydratedRef.current && p && typeof p.garden_group_by === 'string' && p.garden_group_by) {
-        groupByHydratedRef.current = true
-        setGroupBy(p.garden_group_by)
-        saveGroupBy(p.garden_group_by)
-      }
-      if (on && !expandedHydratedRef.current && p && typeof p.garden_expanded === 'string') {
-        try {
-          const arr = JSON.parse(p.garden_expanded)
-          if (Array.isArray(arr)) {
-            expandedHydratedRef.current = true
-            const set = new Set(arr.filter(x => typeof x === 'string'))
-            setExpanded(set); saveExpanded(set)
-          }
-        } catch { /* corrupt server value — ignore, keep local */ }
+    async function refreshPrefsAndRecord({ readPrefs = true } = {}) {
+      if (readPrefs) {
+        const p = await fetchNotificationPrefs({ getToken })
+        if (on) setPrefs(p)
+        // Cross-device hydrate (once): adopt the server group-by if set, caching it locally.
+        if (on && !groupByHydratedRef.current && p && typeof p.garden_group_by === 'string' && p.garden_group_by) {
+          groupByHydratedRef.current = true
+          setGroupBy(p.garden_group_by)
+          saveGroupBy(p.garden_group_by)
+        }
+        if (on && !expandedHydratedRef.current && p && typeof p.garden_expanded === 'string') {
+          try {
+            const arr = JSON.parse(p.garden_expanded)
+            if (Array.isArray(arr)) {
+              expandedHydratedRef.current = true
+              const set = new Set(arr.filter(x => typeof x === 'string'))
+              setExpanded(set); saveExpanded(set)
+            }
+          } catch { /* corrupt server value — ignore, keep local */ }
+        }
       }
       // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
       recordGardenViewOpened({ getToken })
     }
     refreshPrefsAndRecord()
     function onVis() {
-      if (document.visibilityState === 'visible') refreshPrefsAndRecord()
+      if (document.visibilityState !== 'visible') return
+      refreshPrefsAndRecord({ readPrefs: prefsResumeGate() })
     }
     document.addEventListener('visibilitychange', onVis)
     return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
-  }, [getToken])
+  }, [getToken, prefsResumeGate])
 
   // MVP-Critter Session 3 + 3.5: mark unviewed critters as viewed.
   // Session 3 path = bulk PATCH /api/critters/viewed (legacy, still supported when no sprites IO'd).
