@@ -319,7 +319,7 @@ export default function InventoryAdd() {
                 value={form.type}
                 onChange={handleTypeSelect}
                 error={errors.type}
-                options={TYPES.map(t => ({ value: t.value, label: t.label, icon: t.emoji, description: t.example }))}
+                options={TYPES.map(t => ({ value: t.value, label: t.label, iconName: t.iconName, description: t.example }))}
               />
             </Field>
 

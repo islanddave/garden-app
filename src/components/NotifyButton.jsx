@@ -11,15 +11,15 @@
 // Production callers (Dashboard.jsx) do NOT pass it → resolves to false → renders
 // null. Tests pass enabled={true} to exercise the full component.
 //
-// V4-ICON-001 HAND-OFF (not done here). The four bell spans below are MEANINGFUL — bell vs
-// bell-slash is the on/blocked state mark — but BLOCKED ON A DRAW: the 133-key registry has no
-// bell of any kind (the near-misses all matched "ring" inside "watering"/"flowering"). A wrong key
-// renders the silent neutral-dot fallback, so these stay literal until `action.notify` /
-// `action.notifyOff` are authored in iconAnchors.js, which is another lane's file. Low urgency:
-// NOTIFY_ENABLED is false, so none of these glyphs reaches a user today.
+// V4-ICON-001 (done). The four bells are MEANINGFUL — bell vs bell-slash is the on/blocked state
+// mark — and both were DRAWN for this: the registry had no bell of any kind. Shape carries the
+// state; the green/terra tint beside it is reinforcement, never the sole channel. The `▸`/`▾`
+// disclosure carets are NOT emoji (U+25B8/U+25BE, Geometric Shapes) and are out of this pass's
+// scope, the same call slice 3 made for the `•••` overflow affordance on Locations.
 
 import React, { useState, useEffect, useRef } from 'react'
 import { P } from '../lib/constants.js'
+import Icon from './Icon.jsx'
 import { useApiFetch } from '../lib/api.js'
 
 const NOTIFY_ENABLED = false
@@ -108,7 +108,7 @@ export default function NotifyButton({ eventCount = 0, harvestCount = 0, enabled
         data-testid="notify-button"
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: '1.4rem' }}>🔔</span>
+          <Icon name="action.notify" size={22} decorative style={{ color: P.green, flexShrink: 0 }} />
           <div>
             <div style={labelStyle}>REMINDERS</div>
             <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
@@ -222,7 +222,7 @@ export default function NotifyButton({ eventCount = 0, harvestCount = 0, enabled
         data-testid="notify-button"
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: '1.4rem' }}>🔔</span>
+          <Icon name="action.notify" size={22} decorative style={{ color: P.green, flexShrink: 0 }} />
           <div>
             <div style={labelStyle}>REMINDERS</div>
             <div style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
@@ -243,7 +243,7 @@ export default function NotifyButton({ eventCount = 0, harvestCount = 0, enabled
         data-testid="notify-button"
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: '1.4rem' }}>🔕</span>
+          <Icon name="action.notifyOff" size={22} decorative style={{ color: P.terra, flexShrink: 0 }} />
           <div>
             <div style={labelStyle}>REMINDERS</div>
             <div style={{ fontWeight: 700, color: P.terra, fontSize: '0.95rem' }}>
@@ -313,7 +313,7 @@ export default function NotifyButton({ eventCount = 0, harvestCount = 0, enabled
           cursor: requesting ? 'default' : 'pointer',
         }}
       >
-        <span style={{ fontSize: '1.4rem' }}>🔔</span>
+        <Icon name="action.notify" size={22} decorative style={{ color: P.green, flexShrink: 0 }} />
         <div>
           <div style={labelStyle}>REMINDERS</div>
           <div style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>

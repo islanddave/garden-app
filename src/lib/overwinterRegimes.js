@@ -15,34 +15,33 @@
 // Naming the interval in the picker is not decoration: it is the only place the user can see that
 // picking "cold and resting" means a monthly check rather than never.
 //
-// V4-ICON-001 HAND-OFF (not done here). `icon` is regime IDENTITY — meaningful, registry-bound.
-// Keys confirmed present for all four: protected_productive -> event.cover,
-// field_hardy -> care.inground, tender_indoors -> event.brought_inside,
-// protected_quiescent -> status.dormant. Routing renames the field to `iconName` and teaches
-// ChoiceGrid.jsx:59 to resolve a key instead of interpolating the value; that consumer is shared
-// by InventoryAdd and is outside this lane's file set, so the emoji stays until they move together.
+// V4-ICON-001 (done). `iconName` is regime IDENTITY — meaningful, so it is a registry key that
+// ChoiceGrid resolves, not a glyph this module interpolates. Each one names the SITUATION the
+// label names, not the crop: the picker's whole premise is that the four buckets are drying
+// regimes, and a crop mark (the kale/garlic/ginger emoji this replaced) argues the opposite —
+// it invites "mine isn't kale, so not this one" on a row that is really about being under cover.
 export const OVERWINTER_REGIME_OPTIONS = [
   {
     value: 'protected_productive',
-    icon: '🥬',
+    iconName: 'event.cover',
     label: 'Under cover, still growing',
     description: 'Low tunnel or cold frame — kale, spinach, mache. Check every 14 days; the cover sheds the rain.',
   },
   {
     value: 'field_hardy',
-    icon: '🧄',
+    iconName: 'care.inground',
     label: 'Hardy, out in the ground',
     description: 'Garlic, mache, established perennials. Check every 21 days — a snowless dry cold snap is the risk.',
   },
   {
     value: 'tender_indoors',
-    icon: '🫚',
+    iconName: 'event.brought_inside',
     label: 'Held indoors, tender',
     description: 'Ginger and tropicals kept above their cold floor. Check every 7 days — heated air dries a pot fast.',
   },
   {
     value: 'protected_quiescent',
-    icon: '🪴',
+    iconName: 'status.dormant',
     label: 'Cold and resting',
     // V4-OVERWINTERCARDNOISE-001 (2): "barely damp" was the second of two set-points the engine
     // guidance also carried, and the picker is where Dave forms the mental model. Both surfaces now

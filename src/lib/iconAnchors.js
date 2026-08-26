@@ -462,6 +462,36 @@ const A = {
     svg24: '<path d="M11.2 12.8V6.6a2.1 2.1 0 0 0-4.2 0v6.2a3.4 3.4 0 1 0 4.2 0z"/><path d="M18 9.8V18"/><path d="M15.2 15.2 18 18l2.8-2.8"/>',
     svg18: '<path d="M11.8 12.8V6.4a2.6 2.6 0 0 0-5.2 0v6.4a3.8 3.8 0 1 0 5.2 0z"/><path d="M18 9.6V18.2"/><path d="M15 15.2 18 18.2l3-3"/>',
   },
+  // planted-out = a plant set DOWN into a dug hollow. Lives in care.* rather than event.* on a
+  // hard constraint, not a preference: eventTypeIconWiring.test.js holds the event.* keys and
+  // EVENT_TYPES at exactly 1:1, and `planted_out` is a planting DATE FIELD, not an event type —
+  // an `event.plantedOut` key would fail that gate. care.* is the right home anyway; its nearest
+  // neighbour care.inground is the other "this plant is in the ground" mark.
+  //
+  // WHY IT IS DRAWN RATHER THAN BORROWED. lifeStory renders `transplanted` directly above
+  // `planted_out`, and event.transplant REUSEs the seedling form — so pointing this at
+  // event.transplant would put two IDENTICAL rows adjacent in one timeline. That is information
+  // loss, not a cosmetic repeat: the two rows would stop being distinguishable as different
+  // milestones. Candidates were rendered side by side against event.transplant, event.hilled and
+  // care.inground at 96/28/22/18px before this one was kept.
+  //
+  // THE TROUGH IS THE WHOLE READ, and it is concave ON PURPOSE. Every other ground-bearing glyph
+  // in this kit uses a flat rail (seedling, germination) or a convex mound (hilled, soil_amended,
+  // moisture_check), so a DIP is unclaimed silhouette space and is the inverse of hilled — soil
+  // piled up around a plant vs a plant set down into it. It is also what separates this from
+  // event.transplant at small size, where transplant is a narrow sprout over a short bar and this
+  // is a wide mark with a visible hollow. A root-ball wedge in the hollow was tried and dropped
+  // (fills to a blob at 22px), as were flanking spoil mounds (clutter at 22, and they would have
+  // had to drop at 18, so the two masters would have said different things).
+  'care.plantedOut': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Planted out',
+    svg24: '<path d="M2.6 16.8H7.4C7.4 19.6 9 20.9 12 20.9C15 20.9 16.6 19.6 16.6 16.8H21.4"/><path d="M12 20.9V12.2"/><path d="M12 13.4C9.2 13.4 7 11.2 7 8.4c2.8 0 5 2.2 5 5z"/><path d="M12 11.6c0-2.4 1.9-4.3 4.3-4.3 0 2.4-1.9 4.3-4.3 4.3z"/>',
+    // 18: keeps all four elements. The usual complexity-floor cut here would be the second
+    // cotyledon, but the seedling family's own 18 master keeps both, and dropping one would move
+    // this TOWARDS the mark it exists to be distinguished from rather than away from it. The
+    // trough is widened and the plant shortened instead, so the hollow holds its aperture.
+    svg18: '<path d="M2.6 16.4H7.2C7.2 19.4 8.8 20.7 12 20.7C15.2 20.7 16.8 19.4 16.8 16.4H21.4"/><path d="M12 20.7V12.8"/><path d="M12 14C9.4 14 7.4 12 7.4 9.4c2.6 0 4.6 2 4.6 4.6z"/><path d="M12 12.4c0-2.2 1.8-4 4-4 0 2.2-1.8 4-4 4z"/>',
+  },
   // ── V4-ICON-001 facet family (§9: type / group / lifecycle / location / freeform).
   //    type (leaf) + location (pin) shipped with the anchor set; these three complete it. Like
   //    their two siblings they stay MONO and recolourable — a facet glyph takes the facet's
@@ -494,6 +524,65 @@ const A = {
     // none at all at 18, so it would read as a smudge exactly where the tag's tell should be.
     svg24: '<path d="M12.4 3.8h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.4 6.4a1.8 1.8 0 0 1-2.54 0l-6-6a1.8 1.8 0 0 1 0-2.54l6.4-6.4A1.8 1.8 0 0 1 12.4 3.8z"/><circle cx="16" cy="8" r="1.5" fill="currentColor" stroke="none"/>',
     svg18: '<path d="M12.6 3.6h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.6 6.6a1.8 1.8 0 0 1-2.54 0l-6.2-6.2a1.8 1.8 0 0 1 0-2.54l6.6-6.6A1.8 1.8 0 0 1 12.6 3.6z"/><circle cx="16.2" cy="7.8" r="1.6" fill="currentColor" stroke="none"/>',
+  },
+  // ── V4-ICON-001 reminders pair. The registry had NO bell of any kind before this — the apparent
+  //    near-misses a text search turns up (care.wateringCan, status.flowering, event.watering) are
+  //    an artifact of "ring" inside *wate**ring*** / *flowe**ring***, not a bell. Both are drawn.
+  //
+  //    A MATCHED PAIR on one silhouette, which is the point: on-vs-blocked is a STATE, and a reader
+  //    tells the two apart by the slash rather than by hue, so the tile survives greyscale and
+  //    forced-colors (SC 1.4.1). The consuming tile tints them green/terra as reinforcement only.
+  //    The slash runs NW->SE, the opposite diagonal to status.unseen's, so the app's two negated
+  //    marks do not converge; they sit on different surfaces and different base shapes besides. ──
+  'action.notify': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Reminders on',
+    // Flared dome + rim + clapper + crown nub. The rim is a SEPARATE bar rather than the dome's
+    // closing edge: at 18 a closed dome reads as a hill, and the overhanging rim is what makes it
+    // a bell. The clapper hangs BELOW the rim (not inside the dome) for the same aperture reason.
+    svg24: '<path d="M6.6 16.1c1-1.2 1.5-2.8 1.5-4.4V10a3.9 3.9 0 0 1 7.8 0v1.7c0 1.6 0.5 3.2 1.5 4.4z"/><path d="M4.9 16.1h14.2"/><path d="M10 19.1a2 2 0 0 0 4 0"/><path d="M12 6.1V4.4"/>',
+    // 18: drops the crown nub (a 1.7-unit stub, sub-pixel at this master's inked weight) and
+    // widens the dome to hold the rim's overhang.
+    svg18: '<path d="M6.4 16c1.05-1.25 1.6-2.9 1.6-4.6V9.7a4 4 0 0 1 8 0v1.7c0 1.7 0.55 3.35 1.6 4.6z"/><path d="M4.6 16h14.8"/><path d="M10 19.1a2 2 0 0 0 4 0"/>',
+  },
+  'action.notifyOff': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Reminders blocked',
+    // Same bell, struck through. The nub is dropped at BOTH masters here, not just at 18: the
+    // slash passes through where it sits and the two fuse into a thicker stroke that reads as a
+    // drawing error rather than a crown.
+    svg24: '<path d="M6.6 16.1c1-1.2 1.5-2.8 1.5-4.4V10a3.9 3.9 0 0 1 7.8 0v1.7c0 1.6 0.5 3.2 1.5 4.4z"/><path d="M4.9 16.1h14.2"/><path d="M10 19.1a2 2 0 0 0 4 0"/><path d="M4.6 4.6 19.4 19.4"/>',
+    svg18: '<path d="M6.4 16c1.05-1.25 1.6-2.9 1.6-4.6V9.7a4 4 0 0 1 8 0v1.7c0 1.7 0.55 3.35 1.6 4.6z"/><path d="M4.6 16h14.8"/><path d="M4.4 4.4 19.6 19.6"/>',
+  },
+  // ── V4-ICON-001 inventory-type family (2 keys). The inventory_items `type` CHECK is exactly
+  //    ('consumable','durable') — a closed two-value set, not an open family — so this namespace
+  //    is complete at two and is not a stub. Both are drawn rather than borrowed: nothing in the
+  //    other 133 reads as either, and a near-miss key renders the silent neutral dot, which is
+  //    worse than the emoji it replaces. Consumer: InventoryAdd's type picker via ChoiceGrid. ──
+  'inventory.consumable': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Consumable',
+    // Cinched sack: flared open neck + tie bar over a round body. FOUR forms were rendered before
+    // this one stuck, and the rejects are worth recording because they all failed the same way —
+    // a tapered body with a closed top is a SALT SHAKER, not a bag. A domed top (take 1) and a
+    // rolled-down band (take 3) both read as a shaker/spice jar at 96px and as an anonymous
+    // blob at 22px. What makes it a sack is the OPEN neck: the mouth has to be visibly narrower
+    // than the body AND unclosed at the top, with the tie bar sitting across it rather than
+    // capping it. A fill level was also tried (the "it depletes" tell) and dropped: at 96px a
+    // stripe across a round body reads as a piggy bank, and at 22px it closes the body's counter.
+    // Distinct from action.archive (square box + rectangular lid) and care.containers (two
+    // straight-sided pots) — both compared side by side at 96, 28 and 22.
+    svg24: '<path d="M9.4 4.8h5.2"/><path d="M10.2 8.4 9.4 4.8"/><path d="M13.8 8.4 14.6 4.8"/><path d="M10.2 8.4h3.6c2.8 1.4 4.4 4 4.4 6.8 0 2.9-2.6 4.8-6.2 4.8s-6.2-1.9-6.2-4.8c0-2.8 1.6-5.4 4.4-6.8z"/>',
+    // 18: drops nothing. The neck IS the read (see above), so the usual complexity-floor cut would
+    // take the one element that distinguishes this from a ball; the body is widened instead.
+    svg18: '<path d="M9.2 4.6h5.6"/><path d="M10.1 8.4 9.2 4.6"/><path d="M13.9 8.4 14.8 4.6"/><path d="M10.1 8.4h3.8c2.9 1.5 4.6 4.2 4.6 7 0 3-2.7 5-6.5 5s-6.5-2-6.5-5c0-2.8 1.7-5.5 4.6-7z"/>',
+  },
+  'inventory.durable': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Durable',
+    // Combination wrench — one closed outline, no interior counter to close up at 18. The two
+    // diagonal neighbours were checked at 22px: event.other is a pencil (solid taper to a nib,
+    // no fork) and event.pruning is shears (two rings). The open jaw is what separates this from
+    // both, and it survives the small master because it is a notch in the silhouette rather than
+    // an enclosed hole. They also never share a surface — those two are event-history marks.
+    svg24: '<path d="M14.9 6.4a1 1 0 0 0 0 1.42l1.42 1.42a1 1 0 0 0 1.42 0l3.5-3.5a5.7 5.7 0 0 1-7.54 7.54l-6.56 6.56a2.02 2.02 0 0 1-2.85-2.85l6.56-6.56a5.7 5.7 0 0 1 7.54-7.54z"/>',
+    svg18: '<path d="M14.8 6.2a1.05 1.05 0 0 0 0 1.5l1.5 1.5a1.05 1.05 0 0 0 1.5 0l3.3-3.3a5.5 5.5 0 0 1-7.28 7.28l-6.3 6.3a2.1 2.1 0 0 1-2.97-2.97l6.3-6.3a5.5 5.5 0 0 1 7.28-7.28z"/>',
   },
 }
 

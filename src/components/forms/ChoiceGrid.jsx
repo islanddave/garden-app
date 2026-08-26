@@ -6,8 +6,16 @@
 // label+description, check right, full-width — originally ZonePicker, now OverwinterPrompt/AddSeeds;
 // the layout outlived the page). Real radio semantics: role=radiogroup/radio + aria-checked
 // + roving tabindex + arrow-key nav (the bespoke originals were plain buttons with no a11y).
+//
+// V4-ICON-001. An option carries its mark as `iconName` — a REGISTRY KEY this component resolves —
+// rather than as a glyph the caller interpolates. Two data modules (overwinterRegimes, inventoryEnums)
+// held emoji purely because their only render site was this one line, and a key that arrives as a
+// string can be checked by a static test; an emoji baked into a data module cannot. The legacy
+// `icon` field still works and still takes a node: AddSeeds passes ready-made <Icon> elements, and
+// ChoiceGrid.test.jsx passes plain strings. Both paths are live, so neither is a migration remnant.
 import React, { useRef } from 'react'
 import { P } from '../../lib/constants.js'
+import Icon from '../Icon.jsx'
 
 function cardStyle({ selected, hasError, layout }) {
   const base = {
@@ -56,7 +64,14 @@ export default function ChoiceGrid({ value, onChange, options = [], columns = 2,
             disabled={o.disabled} tabIndex={o.disabled ? -1 : tabIndex}
             ref={el => { refs.current[i] = el }} onClick={() => onChange?.(o.value)}
             style={cardStyle({ selected, hasError, layout })}>
-            {o.icon != null && <span aria-hidden="true" style={{ fontSize: layout === 'list' ? '2rem' : '1.8rem', lineHeight: 1, flexShrink: 0 }}>{o.icon}</span>}
+            {/* Sizes match what the emoji occupied (2rem / 1.8rem), so the card geometry is
+                unchanged. Both land above the 21px master crossover, i.e. the 24 master. The tint
+                tracks the label rather than carrying the selection on its own — border, fill and
+                the check mark already state it three other ways. */}
+            {o.iconName
+              ? <Icon name={o.iconName} size={layout === 'list' ? 30 : 28} decorative
+                  style={{ flexShrink: 0, color: selected ? P.green : P.dark }} />
+              : o.icon != null && <span aria-hidden="true" style={{ fontSize: layout === 'list' ? '2rem' : '1.8rem', lineHeight: 1, flexShrink: 0 }}>{o.icon}</span>}
             {layout === 'list' ? (
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: 'block', fontWeight: 700, fontSize: '1.05rem', color: selected ? P.green : P.dark, lineHeight: 1.25 }}>{o.label}</span>
@@ -68,7 +83,7 @@ export default function ChoiceGrid({ value, onChange, options = [], columns = 2,
                 {o.description && <span style={{ fontSize: '0.72rem', color: P.light, lineHeight: 1.3 }}>{o.description}</span>}
               </>
             )}
-            {layout === 'list' && selected && <span aria-hidden="true" style={{ fontSize: '1.3rem', color: P.green, flexShrink: 0 }}>✓</span>}
+            {layout === 'list' && selected && <Icon name="action.check" size={21} decorative style={{ color: P.green, flexShrink: 0 }} />}
           </button>
         )
       })}

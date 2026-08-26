@@ -16,23 +16,23 @@
 // vs the actual live CHECK — belongs in a staging schema test, noted in the plan).
 
 // ── Spec-compliant enums (inventory_items schema) ────────────────────────────
-// V4-ICON-001 HAND-OFF (not done here). `emoji` is inventory-type IDENTITY — meaningful, and it
-// wants the registry. BLOCKED ON A DRAW, not just wiring: nothing in the 133 keys reads as
-// "consumable" or "durable" (there is no tool/wrench mark at all), and picking a near-miss key
-// would be worse than the emoji. Needs two glyphs authored in iconAnchors.js first; the consumer
-// is InventoryAdd.jsx:322 -> ChoiceGrid.jsx:59, both outside this lane's file set.
+// V4-ICON-001 (done). `iconName` is inventory-type IDENTITY, so it is a registry key ChoiceGrid
+// resolves. Both marks had to be DRAWN — nothing in the pre-existing registry read as either, and
+// a near-miss key renders the silent neutral dot, which is worse than the emoji. The seedling this
+// replaced was also wrong on its own terms: it named ONE consumable category (seeds) out of six,
+// and it was the seedling form three plant-status keys already own.
 export const INVENTORY_TYPES = [
   {
     value: 'consumable',
     label: 'Consumable',
     example: 'Seeds, fertilizer, spray, grow bags',
-    emoji: '🌱',
+    iconName: 'inventory.consumable',
   },
   {
     value: 'durable',
     label: 'Durable',
     example: 'Tools, lights, trays, shelving',
-    emoji: '🔧',
+    iconName: 'inventory.durable',
   },
 ]
 

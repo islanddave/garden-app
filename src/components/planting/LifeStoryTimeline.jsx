@@ -2,6 +2,7 @@
 // timeline (lifecycle arc), distinct from the full Event log ledger below it. Current skin.
 import React from 'react'
 import { P } from '../../lib/constants.js'
+import Icon from '../Icon.jsx'
 import { buildLifeStory } from '../../lib/lifeStory.js'
 
 function fmtDate(d) {
@@ -22,10 +23,14 @@ export default function LifeStoryTimeline({ planting }) {
             <span aria-hidden="true" style={{ position: 'absolute', left: 15, top: 32, bottom: 0,
               width: 2, backgroundColor: P.greenLight }} />
           )}
+          {/* 22, not the emoji's 0.95rem/~15px: an inline SVG has no side bearings, so matching the
+              emoji's nominal size would draw a visibly smaller mark inside the same 32px node. 22
+              also clears Icon's 21px master crossover, so this takes the 24 master — the 18 master
+              closes the planted-out trough at this size. */}
           <span aria-hidden="true" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
             backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem', zIndex: 1 }}>
-            {r.glyph}
+            alignItems: 'center', justifyContent: 'center', color: P.green, zIndex: 1 }}>
+            <Icon name={r.iconName} size={22} decorative />
           </span>
           <div style={{ minWidth: 0, flex: 1, paddingTop: 4 }}>
             <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>{r.label}</div>
