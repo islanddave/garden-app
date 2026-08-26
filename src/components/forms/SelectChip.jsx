@@ -10,6 +10,7 @@
 // don't overload"). This is the pill-chip grammar only.
 import React from 'react'
 import { P } from '../../lib/constants.js'
+import { T } from './formStyles.js'
 
 // `touch` (V4-HARVQTYCHIPS-001): opt-in 48x48 minimum for chips on a one-thumb fast path where the
 // label is short enough that padding alone leaves an undersized target. Measured at 375px: a
@@ -24,18 +25,18 @@ export default function SelectChip({ active, small, touch, onClick, children, ..
       onClick={onClick}
       aria-pressed={active}
       style={{
-        minHeight: touch ? 48 : 40,
+        minHeight: touch ? T.buttonMinHeight : T.chipMinHeight,
         // 44 not 48: measured at 375px, a 48px WIDTH floor wraps a 6-chip row onto two lines and
         // takes the block from 48px to 104px tall — which pushes the primary action toward the fold
         // on the very surface this exists to speed up. 48px HEIGHT is the dimension that carries
         // thumb accuracy; 44px width is the WCAG 2.5.5 floor. Callers laying these out in a grid
         // get more than 44 anyway (the harvest row renders 45.2px/chip in one line).
         minWidth: touch ? 44 : undefined,
-        padding: small ? '6px 12px' : '8px 14px',
-        borderRadius: 20,
+        padding: small ? T.chipPadSm : T.chipPadLg,
+        borderRadius: T.radiusPill,
         cursor: 'pointer',
         fontFamily: 'inherit',
-        fontSize: small ? '0.82rem' : '0.88rem',
+        fontSize: small ? T.type.sm : T.type.sm2,
         fontWeight: 600,
         border: `1px solid ${active ? P.green : P.border}`,
         backgroundColor: active ? P.green : P.white,

@@ -23,9 +23,9 @@ function badgeChrome(tone) {
   return {
     display: 'inline-flex',
     alignItems: 'center',
-    padding: '2px 9px',
+    padding: T.badgePadSm,
     borderRadius: T.radiusButton,
-    fontSize: '0.75rem',
+    fontSize: T.type.xs2,
     fontWeight: 600,
     lineHeight: 1.4,
     whiteSpace: 'nowrap',

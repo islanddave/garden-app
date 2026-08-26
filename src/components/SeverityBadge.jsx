@@ -25,7 +25,7 @@ const STALE = {
 }
 
 const badgeStyle = (color) => ({
-  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', minHeight: 20,
+  display: 'inline-flex', alignItems: 'center', gap: 4, padding: T.badgePadXs, minHeight: T.badgeMinHeight,
   borderRadius: T.radiusCard, border: `1px solid ${color}`, color, fontSize: T.type.xs,
   fontWeight: 600, lineHeight: 1, whiteSpace: 'nowrap', backgroundColor: 'transparent',
 })
@@ -49,21 +49,9 @@ export default function SeverityBadge({ reason, severity, daysStale }) {
       title={STALE.title}
       data-testid="severity-badge"
       data-variant="stale"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: '2px 8px',
-        minHeight: 20,
-        borderRadius: T.radiusCard,
-        border: `1px solid ${STALE.color}`,
-        color: STALE.color,
-        fontSize: T.type.xs,
-        fontWeight: 600,
-        lineHeight: 1,
-        whiteSpace: 'nowrap',
-        backgroundColor: 'transparent',
-      }}
+      // Was a hand-copied duplicate of badgeStyle() — key-for-key identical, which is why
+      // the same two literals had to be fixed twice. Collapsed onto the helper.
+      style={badgeStyle(STALE.color)}
     >
       {STALE.icon(STALE.color)}
       <span>{label}</span>

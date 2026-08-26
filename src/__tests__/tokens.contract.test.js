@@ -33,8 +33,13 @@ describe('P — promoted drift literals (exact hexes)', () => {
 })
 
 describe('T — type / space / badge ramps (exact values)', () => {
+  // toEqual, not toMatchObject: the ramps are pinned SHAPE as well as value, so a Pass B
+  // retune or a quietly-added ninth size fails here rather than in someone's eyes.
   it('type ramp', () => {
-    expect(T.type).toEqual({ xs: '0.72rem', sm: '0.82rem', base: '0.9rem', md: '0.95rem' })
+    expect(T.type).toEqual({
+      xs: '0.72rem', xs2: '0.75rem', sm: '0.82rem', sm2: '0.88rem',
+      base: '0.9rem', md: '0.95rem', lg: '1rem',
+    })
   })
   it('space ramp', () => {
     expect(T.space).toEqual({ xs: 5, sm: 10, md: 16, lg: 20 })
@@ -45,6 +50,22 @@ describe('T — type / space / badge ramps (exact values)', () => {
     expect(T.badgePadSm).toBe('2px 9px')
     expect(T.badgePadLg).toBe('4px 12px')
     expect(T.radiusBadge).toBe(12)
+  })
+  // Names added by the §7 guard widening, each pinned at the literal it replaced. These
+  // ARE the parity proof for that change: a value edited here is a visible pixel change.
+  it('badge + selection-chip grammar tokens match the literals they replaced', () => {
+    expect(T.badgePadXs).toBe('2px 8px')        // SeverityBadge, TagChip
+    expect(T.badgeMinHeight).toBe(20)           // SeverityBadge
+    expect(T.radiusPill).toBe(20)               // SelectChip — contract §2 frozen value
+    expect(T.chipMinHeight).toBe(40)            // SelectChip — contract §2 frozen value
+    expect(T.chipPadSm).toBe('6px 12px')
+    expect(T.chipPadLg).toBe('8px 14px')
+  })
+  it('PhotoUpload rem scale is captured at its current values', () => {
+    expect(T.photo).toEqual({
+      triggerPad: '0.75rem 1.25rem', radius: '0.5rem', thumbRadius: '0.375rem',
+      gapMd: '0.75rem', gapSm: '0.5rem', linkFont: '0.85rem',
+    })
   })
 })
 
