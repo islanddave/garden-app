@@ -14,7 +14,7 @@ import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePi
 // V4-WATERMATH-001 F0 — batch amount class. ONE batch-level chip applies to every row; a per-row
 // override is available but never demanded. Making the class per-row-MANDATORY would put 20-40
 // forced decisions in a single burst, which is precisely the failure the chips exist to avoid.
-import WaterDepthChips from '../components/WaterDepthChips.jsx'
+import WaterDepthChips, { WaterDepthDrops } from '../components/WaterDepthChips.jsx'
 import {
   WATER_DEPTH_DEFAULT, isWaterDepth, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
@@ -675,7 +675,7 @@ function WaterDepthRowOverride({ planting, excluded, value, overridden, onChange
         display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
       }}
     >
-      <span aria-hidden="true">{chip?.drops}</span>
+      <WaterDepthDrops count={chip?.dropCount ?? 0} size={13} />
       <span aria-hidden="true">{waterDepthLabel(value)}</span>
     </button>
   )

@@ -15,8 +15,28 @@
 // control and clones ARIA onto it, so a chip group inside it would trip contractWarn.
 import React from 'react'
 import { P } from '../lib/constants.js'
+import Icon from './Icon.jsx'
 import SelectChip from './forms/SelectChip.jsx'
 import { WATER_DEPTH_CHIPS } from '../lib/waterDepth.js'
+
+// V4-ICON-001. The tier's drop row, exported because LogMany's compact per-row override chip draws
+// the same thing outside this component — one place decides how many drops a class is worth, so the
+// two surfaces cannot disagree about what "Deep" looks like.
+//
+// `filled` + color={false}, both deliberate. The base care.drop is an OUTLINE, and at the 12-14px
+// these render at its counter closes to under a pixel — it reads as a fuzzy ring, not a drop
+// (compared side by side at 11/12/13/14/16px). The filled variant is solid and stays crisp. Killing
+// the colour pass makes it inherit the chip's ink instead of the authored blue, which is what keeps
+// it legible on the ACTIVE chip, where SelectChip flips to a green fill with white text.
+export function WaterDepthDrops({ count = 0, size = 14 }) {
+  return (
+    <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+      {Array.from({ length: count }, (_, i) => (
+        <Icon key={i} name="care.drop" variant="filled" color={false} size={size} decorative />
+      ))}
+    </span>
+  )
+}
 
 // `small` is TYPOGRAPHY ONLY (tighter padding, smaller type for the per-row variant). It does NOT
 // relax the touch target: `touch` stays on by default in every variant, because a 40px chip is
@@ -53,7 +73,7 @@ export default function WaterDepthChips({
           data-testid={`${idPrefix}-${chip.value}`}
         >
           <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.25 }}>
-            <span aria-hidden="true" style={{ fontSize: small ? '0.7rem' : '0.78rem' }}>{chip.drops}</span>
+            <WaterDepthDrops count={chip.dropCount} size={small ? 12 : 14} />
             <span>{chip.label}</span>
             {showAnchors && (
               // The anchor rides ON the chip (canon Part 3), not in a legend below it: a caption

@@ -24,8 +24,10 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { GLYPHS, NEUTRAL_ICON, getIcon } from '../lib/iconRegistry.js'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
+import WaterDepthChips, { WaterDepthDrops } from '../components/WaterDepthChips.jsx'
 import { OVERWINTER_REGIME_OPTIONS } from '../lib/overwinterRegimes.js'
 import { INVENTORY_TYPES } from '../lib/inventoryEnums.js'
+import { WATER_DEPTH_CHIPS } from '../lib/waterDepth.js'
 
 // cwd-relative, not import.meta.url: under vitest the module URL is an http: one and
 // fileURLToPath rejects it. Same convention as iconWire2/3.
@@ -35,6 +37,8 @@ const WIRED = [
   'components/forms/ChoiceGrid.jsx',
   'lib/overwinterRegimes.js',
   'lib/inventoryEnums.js',
+  'lib/waterDepth.js',
+  'components/WaterDepthChips.jsx',
 ]
 
 const PICTOGRAPHIC = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}]/gu
@@ -188,6 +192,58 @@ describe('V4-ICON-001 slice 4 — ChoiceGrid resolves a key instead of interpola
   it('an option with neither field renders no icon slot at all', () => {
     const { container } = render(<ChoiceGrid layout="grid" ariaLabel="Bare" value="a"
       onChange={() => {}} options={[{ value: 'a', label: 'Bare' }]} />)
+    expect(container.querySelectorAll('svg')).toHaveLength(0)
+  })
+})
+
+describe('V4-ICON-001 slice 4 — the water-depth tier stays a COUNT, not a colour', () => {
+  afterEach(cleanup)
+
+  it('each chip draws exactly its own number of drops', () => {
+    const { container } = render(<WaterDepthChips value="normal" onChange={() => {}} />)
+    for (const chip of WATER_DEPTH_CHIPS) {
+      const drops = screen.getByTestId(`water-depth-${chip.value}`).querySelectorAll('svg')
+      expect(drops, `${chip.value} drew ${drops.length} drops, expected ${chip.dropCount}`)
+        .toHaveLength(chip.dropCount)
+    }
+    // The ladder is monotonic and non-degenerate — 1 < 2 < 3, so the tiers are countable apart.
+    expect(WATER_DEPTH_CHIPS.map(c => c.dropCount)).toEqual([1, 2, 3])
+    expect(container.textContent.match(PICTOGRAPHIC)).toBeNull()
+  })
+
+  it('the drops are the FILLED master, so they survive at chip size', () => {
+    // The base care.drop is an outline whose counter closes under ~14px; the filled variant is what
+    // keeps the count countable. Asserting the actual markup, because a silent fall back to the
+    // base would still render three somethings and still pass a count-only test.
+    render(<WaterDepthChips value="deep" onChange={() => {}} />)
+    const drop = screen.getByTestId('water-depth-deep').querySelector('svg')
+    expect(drop.innerHTML).toBe(parsed(GLYPHS['care.drop'].variants.filled.svg18))
+    expect(drop.innerHTML).not.toBe(parsed(GLYPHS['care.drop'].svg18))
+  })
+
+  it('every chip keeps its text label, so the tier never reads by mark alone', () => {
+    render(<WaterDepthChips value="light" onChange={() => {}} />)
+    for (const chip of WATER_DEPTH_CHIPS) {
+      const btn = screen.getByTestId(`water-depth-${chip.value}`)
+      expect(btn.textContent).toContain(chip.label)
+      expect(btn.textContent).toContain(chip.anchor)
+      // The accessible name carries the anchor too — the drops are aria-hidden by design.
+      expect(btn.getAttribute('aria-label')).toContain(chip.label)
+    }
+  })
+
+  it('LogMany\'s compact row chip moved in the same commit (the SECOND consumer)', () => {
+    // The sibling lane's census named WaterDepthChips as the SOLE consumer of this field. It is
+    // not: LogMany's per-row override chip reads it too, and would have rendered nothing at all.
+    const logMany = src('pages/LogMany.jsx')
+    expect(logMany).not.toMatch(/chip\?\.drops\b/)
+    expect(logMany).toMatch(/<WaterDepthDrops\s+count=/)
+    expect(logMany).toMatch(/WaterDepthChips\.jsx/)
+  })
+
+  it('WaterDepthDrops renders nothing for a missing count rather than throwing', () => {
+    // LogMany can reach it with an unrecognised stored class, where find() yields undefined.
+    const { container } = render(<WaterDepthDrops count={undefined} />)
     expect(container.querySelectorAll('svg')).toHaveLength(0)
   })
 })
