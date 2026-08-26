@@ -256,7 +256,21 @@ post:
                               -- entity_tag parent guards. Read-only by construction; asserted by
                               -- post_no_writing_before_delete_trigger_on_touched_tables above and
                               -- by that migration's post_guard_function_is_read_only.
-                              'trg_guard_entity_tag_plant','trg_guard_entity_tag_project')
+                              'trg_guard_entity_tag_plant','trg_guard_entity_tag_project',
+                              -- Added 2026-08-26 by BUG-NOPLANTINGAUDIT-001 (v4-plantingaudit-001):
+                              -- the audit arms on `plants`, executing the shared audit_stmt_update /
+                              -- audit_stmt_delete that already serve plant_varieties, event_log and
+                              -- harvest_log. They cannot defuse this migration's FK guarantees:
+                              -- they fire AFTER, they are FOR EACH STATEMENT, their only write is an
+                              -- INSERT into audit_events (never a touch of plants / plant_projects /
+                              -- tasks), and that INSERT sits inside an EXCEPTION handler so an audit
+                              -- failure cannot abort the originating statement.
+                              -- This is the SECOND allow-list the same two triggers had to be named
+                              -- in — v4-evtanchordel-001/gates.yml also scopes `plants`. Both reddened
+                              -- on the apply; naming them in one and not the other would have left a
+                              -- gate red with no owner, which is how a repo-wide sweep stops meaning
+                              -- anything. If a third migration ever scopes `plants`, it needs them too.
+                              'trg_audit_plants_upd','trg_audit_plants_del')
     expect: rowcount_eq
     value: 0
 

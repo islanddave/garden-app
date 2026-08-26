@@ -239,7 +239,21 @@ post:
                               -- statement either. Detected by this gate failing on the staging apply
                               -- (rowcount=2) -- the allow-list working exactly as its note above
                               -- describes, reddening when an undeclared trigger APPEARS.
-                              'trg_audit_event_log_upd','trg_audit_event_log_del')
+                              'trg_audit_event_log_upd','trg_audit_event_log_del',
+                              -- Added 2026-08-26 by BUG-NOPLANTINGAUDIT-001 (v4-plantingaudit-001):
+                              -- the SAME two audit arms as the OPS-HARVESTAUDIT-001 pair above, on
+                              -- `plants` this time, executing the SAME two shared functions. All
+                              -- three of that entry's structural reasons carry over unchanged: they
+                              -- fire AFTER so they cannot alter the row the statement writes; they
+                              -- are FOR EACH STATEMENT and their only write is an INSERT into
+                              -- audit_events, never a touch of plants; and audit_stmt_update/_delete
+                              -- wrap that INSERT in an EXCEPTION handler, so an audit failure cannot
+                              -- abort the originating statement.
+                              -- Detected exactly as its predecessor was — this gate reddening on the
+                              -- apply with rowcount=2, on BOTH prod and staging, which is the
+                              -- allow-list doing its job rather than a surprise. Named here rather
+                              -- than the gate being scoped away or wildcarded.
+                              'trg_audit_plants_upd','trg_audit_plants_del')
     expect: rowcount_eq
     value: 0
 
