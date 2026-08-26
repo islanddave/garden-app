@@ -41,6 +41,29 @@
         } catch (e) { /* never break boot for a preconnect */ }
       })()
     </script>
+    <!-- V4-PERFTHEMEA-001 API preconnect. The four WARM_PATHS origins, anonymous pool, derived not
+         hardcoded. Measurements, why exactly four, and why anonymous: src/lib/warmOrigins.js
+         §PRECONNECT. Guarded by bootPaint.static.test.js. Terse ON PURPOSE — this file is no-store,
+         so every byte here is re-downloaded on every load. -->
+    <script>
+      (function () {
+        try {
+          var u = ['%VITE_API_PLANTS%', '%VITE_API_DAILY_PLAN_READ%', '%VITE_API_LOCATIONS%', '%VITE_API_INVENTORY%']
+          var seen = {}
+          for (var i = 0; i < u.length; i++) {
+            var o
+            try { o = new URL(u[i]).origin } catch (e) { continue }
+            if (!o || o === 'null' || seen[o]) continue
+            seen[o] = 1
+            var l = document.createElement('link')
+            l.rel = 'preconnect'
+            l.href = o
+            l.crossOrigin = 'anonymous'
+            document.head.appendChild(l)
+          }
+        } catch (e) { /* never break boot for a preconnect */ }
+      })()
+    </script>
     <!-- V4-PERFTHEMEA-001 pre-React boot paint. #f8f5f0 is P.cream; sibling of #root, never a
          child (createRoot clears #root). Removed by src/lib/bootSplash.js — see it for the why. -->
     <style>

@@ -45,6 +45,37 @@
 // window is not unbounded. Adding one means showing it is above the fold, not that it exists.
 // Distinct from useCacheLifecycle's BOOT_WARM_PATHS, which warms the DATA CACHE post-auth and is
 // empty since OPS-BOOTWARMSTALE-001. This warms containers pre-auth and caches nothing.
+//
+// ── PRECONNECT (V4-PERFTHEMEA-001). index.html points here; this is the reasoning. ──
+// MEASURED: 21 API origins, one hostname each, EVERY one negotiating http/1.1 only — no
+// multiplexing, so a connection is per-origin and cannot be shared. Per origin: DNS 37-256ms +
+// TCP 60-200ms + TLS 70-240ms. None of it starts until the 1.4MB entry chunk has downloaded and
+// evaluated far enough to run warmApiOrigins(), so today the whole handshake sits AFTER the
+// download instead of beside it. A `<link rel="preconnect">` in <head> is the only thing that can
+// start it earlier, because it is the only part of the boot that runs before the bundle exists.
+//
+// FOUR, AND FOUR IS A CEILING NOT A STARTING POINT. The list in index.html is exactly the
+// WARM_PATHS origins above (bootPaint.static.test.js asserts the two sets are equal, deriving the
+// expected set from WARM_PATHS through api.js's FUNCTION_URLS rather than restating it). A
+// preconnect holds an idle socket for ~10s; warming all 21 would contend with the entry chunk for
+// a cellular radio's bandwidth and cost more than it saves. Adding a fifth means adding it HERE
+// first and showing it is above the fold — the same bar the path list itself is held to.
+//
+// ANONYMOUS POOL ONLY, unlike the Clerk preconnect above it in index.html, which emits both.
+// Chrome keys its socket pool on credentials mode. Every request to these origins is either
+// credentials:'omit' (the ping below) or a cross-origin fetch with the default 'same-origin',
+// which sends nothing — both land in the privacy-mode pool. A plain credentialed preconnect here
+// would warm a socket no API call can use, which is precisely the no-op V4-PERFCLERK-001 found on
+// the Clerk side.
+//
+// DERIVED FROM VITE_API_*, NEVER HARDCODED, for the reason the Clerk block derives its host from
+// the publishable key: these are per-environment Function URLs, and a prod host baked into
+// index.html would warm a socket staging never uses. An unset var leaves its placeholder in place;
+// `new URL` throws on it and that one origin is skipped rather than emitted as a broken link.
+//
+// NOT AFFECTED BY THE SW-PIN HAZARD that argues against ADDING warm pings: a ping is intercepted by
+// public/sw.js and holds a respondWith open, pinning a waiting worker (BUG-STALECLIENT-001). A
+// preconnect opens a socket and never enters the service worker at all.
 import { FUNCTION_URLS, resolveUrl } from './api.js'
 
 export const WARM_PATHS = Object.freeze([
