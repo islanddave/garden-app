@@ -91,7 +91,10 @@ describe('V4-ICON-001 — the wired files carry no pictographic characters', () 
 describe('V4-ICON-001 — every registry key named in the wired files resolves', () => {
   // Registry-key-shaped literals: <category>.<name>, restricted to the ten live categories so a
   // module path or an unrelated dotted string cannot be mistaken for one.
-  const KEY_RE = /'((?:action|care|event|facet|lifecycle|media|mode|nav|severity|status)\.[A-Za-z][A-Za-z0-9_]*)'/g
+  // BOTH quote styles, and that is not incidental: the first draft matched only `'…'` and a
+  // deliberately typo'd `name="facet.locatoin"` — a JSX attribute, which is where most of these
+  // actually live — sailed straight through it. The mutation run is what found that.
+  const KEY_RE = /['"]((?:action|care|event|facet|lifecycle|media|mode|nav|severity|status)\.[A-Za-z][A-Za-z0-9_]*)['"]/g
   const keysIn = (rel) => [...new Set([...src(rel).matchAll(KEY_RE)].map(m => m[1]))]
   // TodayBand.jsx is the one consumer of todayBand.js's renamed field and moved with it.
   const SCANNED = [...WIRED, 'components/TodayBand.jsx']
