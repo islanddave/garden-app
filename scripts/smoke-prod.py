@@ -80,6 +80,28 @@ def head_release_version(releases_json):
     return v
 
 
+def latest_release_version(latest_json):
+    """V4-PERFTHEMEA-001. /releases-latest.json is releases.json[0] alone — the object
+    useAppUpdate.js's version probe reads instead of re-downloading 141 KB of history.
+
+    This check has to exist because its failure mode is invisible from the app: CloudFront maps
+    404 to 200 /index.html on this distribution, so an object that never reached S3 answers the
+    probe with the HTML shell at HTTP 200. r.json() throws, the hook swallows it by design, and
+    the client silently stops learning about updates forever — BUG-STALECLIENT-002 with no
+    symptom. json.loads on HTML raises here, which is the point."""
+    try:
+        data = json.loads(latest_json)
+    except json.JSONDecodeError:
+        raise CheckFailed('releases-latest.json is not JSON (a 404 served as the SPA shell '
+                          'looks exactly like this — check the object reached S3)')
+    if not isinstance(data, dict):
+        raise CheckFailed(f'releases-latest.json is a {type(data).__name__}, not an object')
+    v = data.get('version')
+    if not v:
+        raise CheckFailed('releases-latest.json has no version')
+    return v
+
+
 def matrix_functions(workflow_text):
     """The 26 function names deploy-lambda.yml actually deploys.
 
@@ -171,6 +193,14 @@ def do_verify(args):
             raise CheckFailed(f'releases.json head is {got}, expected {args.version}')
         return got
 
+    def c_release_latest():
+        _, latest = fetch('/releases-latest.json')
+        got = latest_release_version(latest)
+        if got != args.version:
+            raise CheckFailed(f'releases-latest.json is {got}, expected {args.version} — the '
+                              'version probe would report a different release than /releases')
+        return got
+
     def c_sw():
         _, sw = fetch('/sw.js')
         got = cache_version(sw)
@@ -223,6 +253,7 @@ def do_verify(args):
     check('shell 200', c_shell)
     check('bundle hash changed', c_bundle)
     check('releases.json head version', c_release)
+    check('releases-latest.json version', c_release_latest)
     check('sw.js CACHE_VERSION', c_sw)
     check('deploy matrix covers every lambda dir', c_matrix_covers_dirs)
     if args.skip_aws:

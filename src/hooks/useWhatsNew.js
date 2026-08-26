@@ -13,6 +13,14 @@
 // server (cmpVersion), because "I already read the 4.31 notes on my laptop" must clear the dot on
 // the phone, while a STALE server value must never re-raise a dot the user already dismissed here.
 // Taking the max is the only merge with both properties.
+//
+// V4-PERFTHEMEA-001 — reads /releases-latest.json (releases.json[0] alone, ~1.7 KB) rather than the
+// full 141,722 B history. This hook only ever wanted d[0].version. See useAppUpdate.js for the
+// measurements, the two-files-stay-in-sync contract, and why neither file may become cacheable.
+// MOUNT SITE MATTERS FOR THE BYTE COUNT: the only consumer is WhatsNewDot inside BottomNav's More
+// sheet, and Sheet.jsx:169 returns null when closed — so this fetch does NOT fire on boot, it fires
+// the first time the More menu is opened. Moving this hook to a surface that mounts at boot would
+// re-add a per-load fetch; keep that in view if WhatsNewDot ever grows a second mount point.
 import { useEffect, useState, useCallback } from 'react'
 import { readSeen, writeSeen, isUnseen, cmpVersion, SEEN_EVENT } from '../lib/whatsNew.js'
 import { useApiFetch } from '../lib/api.js'
@@ -28,11 +36,13 @@ export function useWhatsNew() {
     // Both reads in flight together — the prefs GET must not delay the dot decision, and a failed
     // or absent prefs read (returns null, never throws) simply leaves the local answer standing.
     Promise.all([
-      fetch('/releases.json', { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+      fetch('/releases-latest.json', { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).catch(() => null),
       fetchNotificationPrefs({ getToken }).catch(() => null),
     ]).then(([d, prefs]) => {
       if (!on) return
-      const v = Array.isArray(d) && d[0] && d[0].version ? d[0].version : null
+      // Single object. Array-rejecting on purpose: releases.json's shape at this path would mean
+      // the two files have been crossed, and reading d[0] out of it would still "work" and hide it.
+      const v = d && typeof d === 'object' && !Array.isArray(d) && d.version ? d.version : null
       setLatest(v)
 
       const local = readSeen()
