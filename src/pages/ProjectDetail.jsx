@@ -5,6 +5,7 @@ import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P, PROJECT_STATUSES, APP_URL } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import { EVENT_TYPE_META, requiresPlanting, creatableEventTypes } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import Icon from '../components/Icon.jsx'
@@ -908,7 +909,7 @@ export default function ProjectDetail() {
 
       {/* Parent breadcrumb — shown when project has a parent */}
       {project.parent_project_id && project.parent_project_name && (
-        <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 12 }}>
+        <div style={{ fontSize: T.type.sm, color: P.light, marginBottom: 12 }}>
           Part of:{' '}
           <Link
             to={`/projects/${project.parent_project_id}`}
@@ -919,7 +920,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: T.space.md }}>
         <div>
           <h1 style={{ margin: '0 0 6px', color: P.green, fontSize: '1.4rem', fontWeight: 700 }}>
             {project.name}
@@ -934,7 +935,7 @@ export default function ProjectDetail() {
             {project.archived_at && (
               <span style={{
                 backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`,
-                fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600,
+                fontSize: '0.75rem', padding: '3px 10px', borderRadius: T.radiusBadge, fontWeight: 600,
               }}>
                 Archived
               </span>
@@ -977,13 +978,13 @@ export default function ProjectDetail() {
           390px rather than several scrolls below it. Retry is those same buttons, still enabled —
           no separate Retry needed. */}
       {projectActionErr && (
-        <ErrorBanner data-testid="project-action-error" style={{ marginBottom: 16 }}>{projectActionErr}</ErrorBanner>
+        <ErrorBanner data-testid="project-action-error" style={{ marginBottom: T.space.md }}>{projectActionErr}</ErrorBanner>
       )}
 
       {/* V3-REPARENT-001 inline Undo (ambient, non-toast) */}
       {lastMove && !moveOpen && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0',
-          background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 8,
+        <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, margin: '10px 0',
+          background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
           padding: '8px 12px', fontSize: '0.85rem', color: P.green }}>
           <span>Moved to {lastMove.toName === 'top level' ? 'top level' : `“${lastMove.toName}”`}.</span>
           <button data-testid="reparent-undo" onClick={handleUndoMove} disabled={moving} style={{ ...ghostBtn, padding: '4px 12px' }}>
@@ -995,20 +996,20 @@ export default function ProjectDetail() {
       {/* V3-REPARENT-001 Move modal */}
       {moveOpen && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}
+          alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: T.space.md }}
           onClick={() => !moving && setMoveOpen(false)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: P.white, borderRadius: 12,
+          <div onClick={e => e.stopPropagation()} style={{ background: P.white, borderRadius: T.radiusBadge,
             padding: 22, width: '100%', maxWidth: 420 }}>
             <h2 style={{ margin: '0 0 14px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
               Move “{project.name}”
             </h2>
             <label style={{ display: 'block', fontSize: '0.8rem', color: P.mid, marginBottom: 6 }}>New parent</label>
             <select value={moveSel} onChange={e => setMoveSel(e.target.value)} disabled={moving}
-              style={{ width: '100%', padding: '9px 10px', borderRadius: 6, border: `1px solid ${P.border}`, fontSize: '0.9rem' }}>
+              style={{ width: '100%', padding: '9px 10px', borderRadius: 6, border: `1px solid ${P.border}`, fontSize: T.type.base }}>
               <option value="">— Top level (no parent) —</option>
               <ProjectOptions projects={allProjects} />
             </select>
-            {moveErr && <p style={{ color: P.terra, fontSize: '0.82rem', marginTop: 10 }}>{moveErr}</p>}
+            {moveErr && <p style={{ color: P.terra, fontSize: T.type.sm, marginTop: T.space.sm }}>{moveErr}</p>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
               <button onClick={() => setMoveOpen(false)} disabled={moving} style={ghostBtn}>Cancel</button>
               <button data-testid="reparent-submit" onClick={handleMove} disabled={moving} style={primaryBtn(moving)}>
@@ -1092,7 +1093,7 @@ export default function ProjectDetail() {
 
           {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
-          <div style={{ display: 'flex', gap: 12, paddingTop: 16, borderTop: `1px solid ${P.border}` }}>
+          <div style={{ display: 'flex', gap: 12, paddingTop: T.space.md, borderTop: `1px solid ${P.border}` }}>
             <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
               Save changes
             </Button>
@@ -1107,11 +1108,11 @@ export default function ProjectDetail() {
 
       {/* ---- Plants ---- */}
       <div style={{ marginTop: 28 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: T.space.md }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
             Plantings
             {plants.length > 0 && (
-              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>({plants.length})</span>
+              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: T.type.sm, color: P.light }}>({plants.length})</span>
             )}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1124,7 +1125,7 @@ export default function ProjectDetail() {
         </div>
 
         {showAddPlant && (
-          <div style={{ ...cardStyle, marginBottom: 16 }}>
+          <div style={{ ...cardStyle, marginBottom: T.space.md }}>
             <PlantForm
               value={plantForm}
               onChange={patch => setPlantForm(f => ({ ...f, ...patch }))}
@@ -1145,7 +1146,7 @@ export default function ProjectDetail() {
         {plantsLoading ? (
           <div style={{ padding: '16px 0', color: P.light, fontSize: '0.875rem' }}>Loading…</div>
         ) : plants.length === 0 ? (
-          <div style={{ padding: '24px 20px', textAlign: 'center', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8, color: P.light, fontSize: '0.875rem' }}>
+          <div style={{ padding: '24px 20px', textAlign: 'center', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, color: P.light, fontSize: '0.875rem' }}>
             No plantings yet — add individuals or groups above.
           </div>
         ) : (
@@ -1158,7 +1159,7 @@ export default function ProjectDetail() {
                  the link) to avoid invalid <button>-inside-<a> and the ADHD two-target mis-tap. */
               <div key={plant.id} style={{
                 backgroundColor: P.white, border: `1px solid ${P.border}`,
-                borderRadius: 8, padding: '8px 12px', minHeight: 44,
+                borderRadius: T.radiusButton, padding: '8px 12px', minHeight: T.tapMinHeight,
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
               }}>
                 {/* Dedicated name/photo nav region → PlantingDetail. Whole region is one tap
@@ -1166,8 +1167,8 @@ export default function ProjectDetail() {
                 <Link
                   to={`/projects/${id}/plantings/${plant.id}`}
                   aria-label={`Open ${plant.name}`}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0,
-                           textDecoration: 'none', color: 'inherit', minHeight: 44 }}
+                  style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, flex: 1, minWidth: 0,
+                           textDecoration: 'none', color: 'inherit', minHeight: T.tapMinHeight }}
                 >
                   {/* V1.2a-3 Increment A (I2a-display): the plant's featured photo.
                       Read-back surface for the photo→plant linkage that already worked. */}
@@ -1176,18 +1177,18 @@ export default function ProjectDetail() {
                         photoId={plant.featured_photo_id}
                         initialUrl={plant.featured_photo_view_url}
                         alt=""
-                        style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover',
+                        style={{ width: 40, height: 40, borderRadius: T.radiusButton, objectFit: 'cover',
                                  flexShrink: 0, border: `1px solid ${P.border}` }}
                       />
                     : <span aria-hidden="true" style={{ width: 40, height: 40, flexShrink: 0,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '1.1rem', backgroundColor: P.greenPale, borderRadius: 8 }}>🌱</span>}
+                        fontSize: '1.1rem', backgroundColor: P.greenPale, borderRadius: T.radiusButton }}>🌱</span>}
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
+                    <div style={{ fontWeight: 600, color: P.dark, fontSize: T.type.base }}>
                       {plant.name}
                       {plant.quantity > 1 && (
                         <span style={{ marginLeft: 8, fontSize: '0.78rem', color: P.mid,
-                          backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 7px' }}>
+                          backgroundColor: P.greenPale, borderRadius: T.radiusCard, padding: '1px 7px' }}>
                           ×{formatQty(plant.quantity)}
                         </span>
                       )}
@@ -1215,7 +1216,7 @@ export default function ProjectDetail() {
                       width: 44, height: 44, padding: 0,
                       background: 'transparent', color: P.mid,
                       border: `1px solid ${P.border}`, borderRadius: '50%',
-                      cursor: 'pointer', fontSize: '0.95rem', userSelect: 'none',
+                      cursor: 'pointer', fontSize: T.type.md, userSelect: 'none',
                     }}
                   />
                 </div>
@@ -1227,7 +1228,7 @@ export default function ProjectDetail() {
 
       {/* ---- Project photos (V2-PHOTO-F1 Session 2) ---- */}
       <div style={{ marginTop: 28 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: T.space.md }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
             Project photos
           </h2>
@@ -1249,7 +1250,7 @@ export default function ProjectDetail() {
 
       {/* ---- Event Log ---- */}
       <div style={{ marginTop: 28 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: T.space.md }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
             Event log
             {/* The old badge read `({events.length})` against an unpaged fetch, so it displayed a
@@ -1257,7 +1258,7 @@ export default function ProjectDetail() {
                 finished the job: see the eventCountBadge derivation above for why the server total
                 is now trustworthy and where it is still deliberately not trusted. */}
             {events.length > 0 && (
-              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>
+              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: T.type.sm, color: P.light }}>
                 ({eventCountBadge})
               </span>
             )}
@@ -1275,7 +1276,7 @@ export default function ProjectDetail() {
         </div>
 
         {showLogForm && (
-          <form ref={logFormRef} onSubmit={handleLogEvent} style={{ ...cardStyle, marginBottom: 20 }}>
+          <form ref={logFormRef} onSubmit={handleLogEvent} style={{ ...cardStyle, marginBottom: T.space.lg }}>
             {logErr && <ErrBanner msg={logErr} />}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -1364,7 +1365,7 @@ export default function ProjectDetail() {
                 <div style={{ position: 'relative', display: 'inline-block' }}>
                   <img
                     src={miniPhotoPreview} alt="Preview"
-                    style={{ maxWidth: '100%', maxHeight: 180, borderRadius: 8, display: 'block', border: `1px solid ${P.border}` }}
+                    style={{ maxWidth: '100%', maxHeight: 180, borderRadius: T.radiusButton, display: 'block', border: `1px solid ${P.border}` }}
                   />
                   <button type="button" onClick={clearMiniPhoto}
                     aria-label="Remove staged photo"
@@ -1390,9 +1391,9 @@ export default function ProjectDetail() {
                     aria-label="Take or choose a photo"
                     data-testid="mini-photo-trigger"
                     style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: T.space.sm,
                       width: '100%', boxSizing: 'border-box',
-                      padding: '14px 12px', border: `2px dashed ${P.border}`, borderRadius: 8,
+                      padding: '14px 12px', border: `2px dashed ${P.border}`, borderRadius: T.radiusButton,
                       cursor: 'pointer', backgroundColor: P.cream, color: P.mid, fontSize: '0.85rem',
                       fontFamily: 'inherit', fontWeight: 'inherit', lineHeight: 'inherit',
                       margin: 0, appearance: 'none', WebkitAppearance: 'none',
@@ -1434,7 +1435,7 @@ export default function ProjectDetail() {
         {eventsLoading ? (
           <div style={{ padding: '24px 0', textAlign: 'center', color: P.light, fontSize: '0.875rem' }}>Loading…</div>
         ) : events.length === 0 ? (
-          <div style={{ padding: '32px 20px', textAlign: 'center', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8, color: P.light, fontSize: '0.875rem' }}>
+          <div style={{ padding: '32px 20px', textAlign: 'center', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, color: P.light, fontSize: '0.875rem' }}>
             No events yet — log the first one above.
           </div>
         ) : (
@@ -1463,7 +1464,7 @@ export default function ProjectDetail() {
                   onClick={loadMoreEvents}
                   disabled={eventsMore}
                   style={{
-                    marginTop: 4, minHeight: 44, width: '100%',
+                    marginTop: 4, minHeight: T.tapMinHeight, width: '100%',
                     backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`,
                     borderRadius: 6, fontSize: '0.85rem', fontWeight: 600, fontFamily: 'inherit',
                     cursor: eventsMore ? 'default' : 'pointer',
@@ -1503,7 +1504,7 @@ function DeleteDialog({ childProjects, checkFailed, rechecking, onRecheck, onArc
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
     }}>
       <div style={{
-        backgroundColor: P.white, borderRadius: 12, padding: 28,
+        backgroundColor: P.white, borderRadius: T.radiusBadge, padding: 28,
         maxWidth: 440, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
       }}>
         <h2 style={{ margin: '0 0 12px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
@@ -1523,7 +1524,7 @@ function DeleteDialog({ childProjects, checkFailed, rechecking, onRecheck, onArc
             role="alert"
             data-testid="project-delete-check-failed"
             style={{
-              marginBottom: 16, padding: '10px 12px', borderRadius: 6,
+              marginBottom: T.space.md, padding: '10px 12px', borderRadius: 6,
               backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
               fontSize: '0.85rem', color: P.terra,
             }}
@@ -1548,11 +1549,11 @@ function DeleteDialog({ childProjects, checkFailed, rechecking, onRecheck, onArc
         )}
 
         {!checkFailed && hasChildren && (
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: T.space.md }}>
             <p style={{ margin: '0 0 8px', fontSize: '0.88rem', color: P.mid }}>
               {childProjects.length} sub-project{childProjects.length !== 1 ? 's' : ''} will become top-level projects if you delete this one:
             </p>
-            <ul style={{ margin: '0 0 8px', paddingLeft: 20 }}>
+            <ul style={{ margin: '0 0 8px', paddingLeft: T.space.lg }}>
               {top3.map(c => (
                 <li key={c.id} style={{ fontSize: '0.85rem', color: P.dark, marginBottom: 3 }}>{c.name}</li>
               ))}
@@ -1573,10 +1574,10 @@ function DeleteDialog({ childProjects, checkFailed, rechecking, onRecheck, onArc
           Recommended: archive instead to keep the record without cluttering your active list.
         </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
           <button onClick={onArchive} style={{
             backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 6,
-            padding: '10px 20px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer', textAlign: 'center',
+            padding: '10px 20px', fontSize: T.type.base, fontWeight: 600, cursor: 'pointer', textAlign: 'center',
           }}>
             Archive instead (recommended)
           </button>
@@ -1611,7 +1612,7 @@ function Fields({ project: p, locPath }) {
       {rows.map(([label, value]) => (
         <div key={label}>
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: P.light, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
-          <div style={{ fontSize: '0.9rem', color: P.dark }}>{value}</div>
+          <div style={{ fontSize: T.type.base, color: P.dark }}>{value}</div>
         </div>
       ))}
       {rows.length === 0 && <p style={{ color: P.light, margin: 0 }}>No additional details.</p>}
@@ -1638,7 +1639,7 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
 
       <div style={{
         flex: 1, backgroundColor: P.white, border: `1px solid ${P.border}`,
-        borderRadius: 8, padding: '10px 14px', marginBottom: isLast ? 0 : 2,
+        borderRadius: T.radiusButton, padding: '10px 14px', marginBottom: isLast ? 0 : 2,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
           <div style={{ flex: 1 }}>
@@ -1654,7 +1655,7 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
               {ev.quantity && (
                 <span style={{
                   fontSize: '0.73rem', color: P.mid,
-                  backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 7px',
+                  backgroundColor: P.greenPale, borderRadius: T.radiusCard, padding: '1px 7px',
                 }}>
                   {ev.quantity}
                 </span>
@@ -1709,10 +1710,10 @@ function Shell({ children }) {
 }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 function ErrBanner({ msg }) {
-  return <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: P.bannerInk }}>{msg}</div>
+  return <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: T.space.md, fontSize: '0.875rem', color: P.bannerInk }}>{msg}</div>
 }
 
-const cardStyle  = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 28 }
+const cardStyle  = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: 28 }
 const primaryBtn = (disabled) => ({ backgroundColor: disabled ? P.light : P.green, color: P.white, border: 'none', borderRadius: 6, padding: '9px 20px', fontSize: '0.88rem', fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer' })
 const ghostBtn   = { backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 6, padding: '9px 20px', fontSize: '0.88rem', cursor: 'pointer' }
 const outlineBtn = { backgroundColor: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 6, padding: '7px 18px', fontSize: '0.85rem', cursor: 'pointer' }
