@@ -112,9 +112,12 @@ const noRawDesignTokens = {
           context.report({ node, messageId: 'rawEmoji' })
         }
       },
-      // (b) raw emoji in a template literal's fixed chunks (`🌱 ${name}`).
+      // (b) raw emoji in a template literal's fixed chunks (`🌱 ${name}`). Tests `cooked`,
+      // not `raw`: raw is undecoded source, so `\u{1F33F}` reads as a backslash-u sequence
+      // and slips through. cooked is the decoded string and covers both spellings; it is
+      // null only for an invalid escape in a tagged template, hence the fallback.
       TemplateLiteral(node) {
-        if (emoji && node.quasis.some(q => EMOJI_RE.test(q.value.raw))) {
+        if (emoji && node.quasis.some(q => EMOJI_RE.test(q.value.cooked ?? q.value.raw))) {
           context.report({ node, messageId: 'rawEmoji' })
         }
       },
