@@ -50,12 +50,24 @@ function apiCacheNameFor(version, sub) {
   return `api-${version}-u-${sub}`
 }
 
+// V4-PHOTOCORS-001 — the ONE cache deliberately not keyed on CACHE_VERSION, hence a literal here
+// rather than something derived from `version`. A photo is immutable content at a stable key (an S3
+// object never changes under its path, and normalizeImageUrl strips the rotating presign params), so
+// a CODE deploy is not a reason to throw its bytes away — and deploys run several times a day, often
+// enough that a version-keyed photo cache is deleted before it can repay the requests that filled it.
+// The API and STATIC caches stay version-keyed on purpose: their contents genuinely do go stale on
+// deploy and update detection depends on that. Do not generalize this to them.
+// The `-v1` is a MANUAL epoch, not the build version: bump it only to deliberately abandon every
+// stored photo (a change to the key normalization would be such a reason).
+const PHOTO_CACHE_NAME = 'photos-v1'
+
 // Predicate replacing the old equality allowlist. The allowlist deleted every key not exactly
 // equal to the three constants, so any per-sub name self-destructed on every activation. Note the
 // BARE `api-${version}` is deliberately NOT kept: unsegmented entries must not survive the upgrade
 // that exists to remove them.
 function keepCacheKey(key, version) {
   if (typeof key !== 'string' || typeof version !== 'string' || !version) return false
+  if (key === PHOTO_CACHE_NAME) return true
   if (key === `static-${version}` || key === `images-${version}`) return true
   const prefix = `api-${version}-u-`
   if (key.startsWith(prefix)) return SW_SUB_PATTERN.test(key.slice(prefix.length))
@@ -63,4 +75,4 @@ function keepCacheKey(key, version) {
 }
 /* SW-MIRROR-END */
 
-export { SW_SUB_PATTERN, subFromAuthHeader, apiCacheNameFor, keepCacheKey }
+export { SW_SUB_PATTERN, subFromAuthHeader, apiCacheNameFor, keepCacheKey, PHOTO_CACHE_NAME }

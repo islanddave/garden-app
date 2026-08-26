@@ -31,10 +31,31 @@ describe('sw.js image cache (V4-PHOTOCDN-001 P2)', () => {
     expect(SRC).toMatch(/if \(isImageResponse\(response\)\) \{/)
   })
   it('CloudFront signing params are stripped from the image cache key (match AND put)', () => {
+    // WHY THE PINNED LIST CHANGED (V4-PHOTOCORS-001, 2026-08-26). This test pinned the CloudFront
+    // params as the WHOLE of the normalization, and that pin was encoding a bug: the CDN path is
+    // dormant (the garden-photos Lambda has no PHOTO_CDN_ENABLED, so resolvePhotoViewUrl presigns
+    // S3), which means the only signing params any photo URL actually carries are X-Amz-*, and none
+    // of them were stripped. Every 900s re-mint was therefore a fresh cache key. The four CloudFront
+    // names stay — that path is dormant, not deleted — and the X-Amz family joins them.
+    //
+    // The call signature moved too, and that is the load-bearing part: normalizeImageUrl now takes a
+    // second argument saying whether this request was issued in CORS mode, because the X-Amz strip
+    // is only meaningful for a request whose response is NOT opaque. Pinning the old one-argument
+    // call would re-pin the half-fix.
     expect(SRC).toMatch(/SIGNING_PARAMS = \['Expires', 'Signature', 'Key-Pair-Id', 'Policy'\]/)
-    expect(SRC).toMatch(/normalizeImageUrl\(request\.url\)/)
+    expect(SRC).toMatch(/PRESIGN_PARAM_PREFIX = 'x-amz-'/)
+    expect(SRC).toMatch(/normalizeImageUrl\(request\.url, cors\)/)
     expect(SRC).toMatch(/cache\.match\(key\)/)
     expect(SRC).toMatch(/cache\.put\(key, response\.clone\(\)\)/)
+  })
+
+  it('the presign strip is gated on the request mode, never applied unconditionally', () => {
+    // The coupling between the two halves of PHOTO_CORS_CACHE_ENABLED is this line and nothing else:
+    // sw.js cannot import the flag, so it infers it from the request. Deleting the gate would make
+    // the SW half live against a client that never sets crossOrigin — the reachable half-state the
+    // flag design exists to prevent.
+    expect(SRC).toMatch(/const cors = request\.mode === 'cors'/)
+    expect(SRC).toMatch(/if \(corsMode\) \{/)
   })
   it('images route through imageCacheFirst (guarded path), not generic cacheFirst', () => {
     expect(SRC).toMatch(/isImage\(url\)\) \{\s*\n\s*event\.respondWith\(imageCacheFirst\(request\)\)/)

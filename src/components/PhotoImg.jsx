@@ -31,6 +31,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { TIER } from '../lib/photoModel.js'
+import { PHOTO_CORS_CACHE_ENABLED } from '../lib/featureFlags.js'
 
 export const PRESIGN_TTL_MS = 900 * 1000            // == server view-url expiresIn:900
 const MAX_CONCURRENT_MINTS = 6
@@ -64,9 +65,35 @@ const _key = (photoId, tier) => `${photoId}|${_tier(tier)}`
 // 400 against a Lambda that predates the enum. Only a non-default tier has to say so.
 const _viewUrl = (photoId, tier) => `/api/photos/view-url/${photoId}${tier === TIER.FULL ? '' : `?tier=${tier}`}`
 
+// V4-PHOTOCORS-001 — the CORS-broken latch. A CORS request that the origin refuses does NOT fall
+// back to a no-cors fetch: the image simply does not load. Each instance handles that itself (one
+// plain retry of the same url, below), but a whole grid paying an extra failed request per photo,
+// forever, would be a worse regression than the caching is a win. So the FIRST time a plain retry
+// SUCCEEDS where the CORS attempt FAILED, crossOrigin is latched off process-wide.
+//
+// That success-after-failure pair is the precise signal, and choosing it over "any error" matters:
+// an expired presign 403s in BOTH modes, so a naive latch would disable the feature app-wide on the
+// first stale URL — safe, but silently permanent. Only a same-url difference attributable to the
+// CORS mode alone trips this. It is deliberately one-way and per page load: a latched session never
+// re-probes (nothing changes mid-session that would fix CORS), and a reload re-probes for free.
+let _corsBroken = false
+export function __resetPhotoCorsLatch() { _corsBroken = false }
+export function __photoCorsBroken() { return _corsBroken }
+
+// crossOrigin is only meaningful for a cross-origin src, and only photos are cross-origin here.
+// Total function: a blob:/data: preview or an unparseable src returns false and renders as today.
+function _isCrossOrigin(src) {
+  if (typeof src !== 'string' || !src) return false
+  if (typeof window === 'undefined' || !window.location) return false
+  try { return new URL(src, window.location.href).origin !== window.location.origin } catch { return false }
+}
+
 // Test seams — reset / seed module state between cases. `tier` is trailing+defaulted so the
 // pre-tier 3-arg call sites keep seeding the full-tier slot they always meant.
-export function __resetPhotoImgCache() { _cache.clear(); _active = 0; _queue.length = 0 }
+// The CORS latch is cleared here too (not only by its own seam) because every existing suite already
+// calls this in beforeEach — leaving a latch that one case sets to leak into the next is a landmine
+// no author of a future test would think to look for.
+export function __resetPhotoImgCache() { _cache.clear(); _active = 0; _queue.length = 0; _corsBroken = false }
 export function __seedPhotoImgUrl(photoId, url, at, tier) { _cache.set(_key(photoId, tier), { url, at: at == null ? Date.now() : at, inFlight: null }) }
 
 function _drain() { _active--; const next = _queue.shift(); if (next) next() }
@@ -152,6 +179,11 @@ export default function PhotoImg({
   const imgRef = useRef(null)                       // P5: viewport gate reads the rendered <img> box
   const photoIdRef = useRef(photoId)                // P4/D1: latest identity for the stale-heal guard
   const mountFetchedForRef = useRef(null)           // P1: at most one mount-fetch per photoId
+  // V4-PHOTOCORS-001: the ONE src whose CORS attempt already failed here. Holding the URL rather
+  // than a boolean is what makes this self-resetting — a heal or a tier step changes `src`, so the
+  // comparison below goes true again and the new URL gets its own single CORS attempt, with no
+  // reset branch to keep in sync with the two places that already assign src.
+  const [corsFailedSrc, setCorsFailedSrc] = useState(null)
 
   // Render-time prop-change adoption (NEW-1; no src-watching effect → no render-loop / StrictMode
   // hazard). photoId change → full reset; same photoId but a NEW initialUrl value (Phase-B cache
@@ -165,6 +197,11 @@ export default function PhotoImg({
     photoIdRef.current = photoId                    // P4: advance identity so a late adopt from the old id no-ops
     abortRef.current?.abort()                        // stop a pending reactive heal bound to the old id
   }
+
+  // V4-PHOTOCORS-001 half (1). Ask for the photo in CORS mode so the response is not opaque and
+  // sw.js's isImageResponse() can cache it on its real content-type. Derived, never stored: flag off,
+  // latch tripped, same-origin src, or a src that already failed CORS here => render exactly as today.
+  const useCors = PHOTO_CORS_CACHE_ENABLED && !_corsBroken && corsFailedSrc !== src && _isCrossOrigin(src)
 
   useEffect(() => { _seed(photoId, initialUrl, !hasFallback, mintTier) }, [photoId, initialUrl, hasFallback, mintTier])
   // Set true on (re)mount — StrictMode runs mount→cleanup→remount, and a cleanup-only ref would leave
@@ -194,6 +231,14 @@ export default function PhotoImg({
 
   // Reactive heal: the <img> errored. Treat as expiry → one re-mint. Classify the MINT failure.
   const handleError = useCallback(async (ev) => {
+    // V4-PHOTOCORS-001 — the CORS retry, and it MUST come before everything else in this handler.
+    // A refused CORS request is not evidence that the photo is gone, so nothing downstream may act
+    // as if it were: `onError` would advance PhotoView's tier cursor and send a THUMB tile to the
+    // ~2.97 MB original (the exact saving tier=THUMB exists for), the hasFallback branch below would
+    // stand down, and the non-fallback branch would spend the one-shot mint budget on a URL that is
+    // fine. Re-render the SAME url with the attribute removed instead; if THAT fails too, this
+    // handler runs again with `useCors` false and takes the ordinary path unchanged.
+    if (useCors) { setCorsFailedSrc(src); return }
     onError?.(ev)
     // The consumer swaps in its own next source on this same event, so minting here would spend a
     // round-trip on a URL about to be replaced — and going terminal would blank the box for the frame
@@ -216,7 +261,16 @@ export default function PhotoImg({
       else if (st === 403) { setTerminal(true) }                                       // fresh URL still forbidden → terminal
       else { retriedRef.current = false }   // 429/5xx/network/offline → non-terminal, budget NOT spent; proactive/online retries
     }
-  }, [photoId, apiFetch, fallback, hasFallback, mintTier, onRemint, onError, adopt])
+  }, [photoId, apiFetch, fallback, hasFallback, mintTier, onRemint, onError, adopt, useCors, src])
+
+  // V4-PHOTOCORS-001 — latch detection. This fires only on the plain RETRY of a url whose CORS
+  // attempt failed, which is the one observation that isolates the CORS mode as the cause: same url,
+  // same network, same presign — only the attribute differs. Wrapping onLoad rather than replacing
+  // it; consumers that count loads still see every one.
+  const handleLoad = useCallback((ev) => {
+    if (PHOTO_CORS_CACHE_ENABLED && corsFailedSrc && corsFailedSrc === src) _corsBroken = true
+    onLoad?.(ev)
+  }, [corsFailedSrc, src, onLoad])
 
   // P1 — Fetch-on-mount: a photoId with NO consumer-provided url (an id-only thumb) resolves once on
   // mount so it renders without an interaction. Guarded so the initialUrl-present path (every shipped
@@ -301,16 +355,23 @@ export default function PhotoImg({
     )
   }
 
+  // `key` on the element, not just the attribute: dropping crossOrigin in place relies on the
+  // browser treating it as a relevant mutation that re-runs "update the image data", and the whole
+  // point of the retry is that the second request definitely happens. Remounting says so outright.
+  // No flash — the CORS attempt painted nothing to lose. Inert while the flag is off: `useCors` is
+  // then constant false, the key never changes, and crossOrigin is undefined (React omits it).
   const img = (
     <img
+      key={useCors ? 'cors' : 'plain'}
       ref={imgRef}
       src={src}
       alt={alt}
       loading={loading}
       className={className}
       style={style}
+      crossOrigin={useCors ? 'anonymous' : undefined}
       onError={handleError}
-      onLoad={onLoad}
+      onLoad={handleLoad}
       {...rest}
     />
   )
