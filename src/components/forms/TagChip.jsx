@@ -24,7 +24,7 @@ export default function TagChip({ tag, onRemove, onClick, active = false, style 
         display: 'inline-flex', alignItems: 'center', gap: 4,
         backgroundColor: c.bg, color: c.text,
         border: `1px solid ${active ? c.text : c.border}`,
-        fontSize: T.type.xs, padding: '2px 8px', borderRadius: T.radiusBadge,
+        fontSize: T.type.xs, padding: T.badgePadXs, borderRadius: T.radiusBadge,
         fontWeight: 600, whiteSpace: 'nowrap', cursor: onClick ? 'pointer' : 'default', ...style,
       }}
     >

@@ -34,13 +34,47 @@ export const T = {
   // fifth cannot be authored under the floor without spelling out a different number.
   tapMinHeight: 44,
   // ── DESIGNSYS Pass A: type + space ramps (values already in use; additive) ──
-  type: { xs: '0.72rem', sm: '0.82rem', base: '0.9rem', md: '0.95rem' },
+  // xs2 / sm2 are INTERSTITIAL parity steps, not new sizes: 0.75rem (forms/Badge) and
+  // 0.88rem (SelectChip's non-small branch) were already shipping with no name, so the
+  // ramp did not in fact cover the chip/badge fonts it was written for. Named at their
+  // EXACT current values — naming is parity-preserving; RETUNING them onto xs/sm/base is
+  // a visible pixel change and belongs to Pass B. Do not author new surfaces against
+  // xs2/sm2/lg; they exist so the guard has something to route the existing literals to.
+  type: { xs: '0.72rem', xs2: '0.75rem', sm: '0.82rem', sm2: '0.88rem', base: '0.9rem', md: '0.95rem', lg: '1rem' },
   space: { xs: 5, sm: 10, md: 16, lg: 20 },
   // Badge tokens — exact current PlantStatusBadge values (parity-preserving).
   badgeFontSm: '0.73rem',
   badgeFontLg: '0.85rem',
   badgePadSm:  '2px 9px',
   badgePadLg:  '4px 12px',
+  // The tighter pad SeverityBadge and TagChip both already used, plus SeverityBadge's
+  // height floor. Two primitives sharing an unnamed value is how a third gets authored at
+  // '2px 7px'; both are captured at their current values.
+  badgePadXs:  '2px 8px',
+  badgeMinHeight: 20,
+  // ── Selection-chip grammar (contract §2) ──────────────────────────────────
+  // §2 froze `minHeight 40` and `borderRadius 20` as THE selection-chip grammar, but both
+  // shipped as bare numbers inside SelectChip, so nothing stopped a sixth chip being
+  // authored at 18. Named here at the frozen values; the 48 touch variant reuses
+  // buttonMinHeight, which is the same 48 the contract froze as the tap target.
+  radiusPill:    20,
+  chipMinHeight: 40,
+  chipPadSm:     '6px 12px',
+  chipPadLg:     '8px 14px',
+  // ── PhotoUpload's rem scale (parity capture) ──────────────────────────────
+  // PhotoUpload is the one §2 primitive authored in rem rather than px, so its values have
+  // no counterpart on the px ramps above. Grouped rather than scattered into T's top level
+  // precisely so the divergence stays legible: unifying this onto the px ramp changes
+  // pixels and is a Pass B decision. linkFont duplicates badgeFontLg's value at a distinct
+  // role — a semantic alias, not a second source of truth.
+  photo: {
+    triggerPad:  '0.75rem 1.25rem',
+    radius:      '0.5rem',
+    thumbRadius: '0.375rem',
+    gapMd:       '0.75rem',
+    gapSm:       '0.5rem',
+    linkFont:    '0.85rem',
+  },
 }
 
 // Build the select chevron data-URI from a palette color (default P.light).

@@ -89,9 +89,63 @@ jobs:
 
       - name: Lint (frozen primitives)
         # DESIGNSYS Pass A (V4-DESIGNSYS-001): scoped no-raw-design-tokens guard.
-        # Fails the build if a tokenized primitive reintroduces a raw hex color or
-        # raw JSX emoji (must use lib/constants.js P / lib/tokens.js / lib/iconRegistry.js).
+        # Fails the build if a guarded primitive reintroduces a raw hex color, raw
+        # border-radius, raw padding/margin, raw font-size or a raw emoji glyph (must use
+        # lib/constants.js P / forms/formStyles.js T / lib/iconRegistry.js).
+        # Scope is a GLOB over components/forms/** plus the non-form primitives, so a new
+        # primitive is guarded by default; per-class deferrals are a dated register in
+        # eslint.config.js. Raw hex is not deferrable on any file.
         run: npm run lint
+
+      - name: Garden-render golden (V4-GARDENIA-001 / DESIGNSYS §7)
+        # GroupByControl's regression oracle, per contract §3: the legacy by-project render
+        # (buildDisplayList + buildGardenTree — the `none` path) must still reproduce parity
+        # hash 8a3d78f098e55ff2 against the 61-project/171-planting prod fixture.
+        #
+        # Unwired until 2026-08-26 because it was unwirable: the harness and golden lived in
+        # the gardening-docs repo and the harness hardcoded a Cowork sandbox path, so this CI
+        # could not reach it — while projectTree.js carried a comment asserting the code
+        # "remain[s] golden-gated" to that hash. Now vendored into scripts/parity/ with a
+        # real check mode. Verified non-vacuous: reversing the alpha sort trips 3 drifts.
+        run: npm run parity:garden-render
+
+      - name: Daily-plan parity goldens (G-PARITY)
+        # 21 frozen scenarios replayed through the current daily-plan rule engine and diffed
+        # against tests/parity/daily-plan/golden/*.json. The §13 G-PARITY exit gate for the
+        # system-of-record cutover: it is the baseline the refactor is measured against, so a
+        # silent engine change now would move the thing the cutover is diffed to.
+        # Defined in package.json since the P0 backbone work and invoked by nothing until now.
+        run: npm run parity:golden
+
+      - name: Service-worker cache-key mirror
+        # public/sw.js is a hand-maintained MIRROR of src/lib/swCacheKeys.js — the service
+        # worker cannot import from src/. Fails if the two byte-diverge, which is the shape
+        # where the app and its offline cache disagree about what is cached under which key.
+        # Defined in package.json and invoked by nothing until now.
+        run: npm run gate:sw-mirror
+
+      # ── NOT WIRED: the three real-Chrome layout gates ───────────────────────────────────
+      # gate:save-band, gate:log-chooser, gate:save-band-stability are deliberately absent
+      # from this job, not overlooked. All three PASS locally at a0ac77c (macOS,
+      # Chrome --headless=new) and all three honour CHROME_PATH, so the runner image's
+      # Chrome would be reachable. The blocker is the toolchain:
+      #
+      #   They attach to Chrome over a raw GLOBAL WebSocket ("Node 22+ ships a global
+      #   WebSocket", per each script's own header). Every workflow here pins
+      #   node-version '20.19.0', and Node 20.19.0 has NO global WebSocket — measured, not
+      #   assumed: `npx node@20.19.0 -e "typeof WebSocket"` returns `undefined`. Added as-is
+      #   they would throw ReferenceError before reaching Chrome.
+      #
+      # A second, unresolved risk: all three clear their floors by 0-1px on macOS
+      # (save-band's pad-to-Save gap is 20px against a 20px floor; log-chooser's clearance is
+      # 21px against 20). Whether Linux font metrics hold those margins was NOT testable from
+      # the authoring machine. So wiring them needs a Node-22 job AND one trial run — not a
+      # blind add, because a gate that reds for environment reasons blocks every lane's push.
+      #
+      # They are NOT wired with continue-on-error. This repo already carries 16 deploy steps
+      # that report success when they fail; a sixth pseudo-gate would be worse than the
+      # honest gap, especially for gate:save-band, whose absence from CI is why a keypad row
+      # that silently committed a harvest shipped and survived two releases.
 
       - name: Icon optical-weight golden (V4-ICON-001)
         # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
