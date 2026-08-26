@@ -14,6 +14,13 @@
 // description names the PLANTS, and the check interval is shown as the consequence of the choice.
 // Naming the interval in the picker is not decoration: it is the only place the user can see that
 // picking "cold and resting" means a monthly check rather than never.
+//
+// V4-ICON-001 HAND-OFF (not done here). `icon` is regime IDENTITY — meaningful, registry-bound.
+// Keys confirmed present for all four: protected_productive -> event.cover,
+// field_hardy -> care.inground, tender_indoors -> event.brought_inside,
+// protected_quiescent -> status.dormant. Routing renames the field to `iconName` and teaches
+// ChoiceGrid.jsx:59 to resolve a key instead of interpolating the value; that consumer is shared
+// by InventoryAdd and is outside this lane's file set, so the emoji stays until they move together.
 export const OVERWINTER_REGIME_OPTIONS = [
   {
     value: 'protected_productive',

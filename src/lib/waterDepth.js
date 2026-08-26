@@ -34,6 +34,11 @@ export const WATER_DEPTH_DEFAULT = WATER_DEPTH_NORMAL
 export const WATER_DEPTH_SOURCE_USER = 'user'
 export const WATER_DEPTH_SOURCE_DEFAULT = 'default'
 
+// V4-ICON-001 HAND-OFF (not done here). `drops` is a COUNT encoded as a repeated glyph — a
+// meaningful tier mark, so it belongs in the registry as N x `care.drop`. Routing it means the
+// chip carries `dropCount: 1|2|3` and WaterDepthChips.jsx:56 renders that many <Icon>s instead of
+// interpolating a string. That consumer is outside this lane's file set, and dropping `drops`
+// without it would silently render nothing, so the emoji stays until the two move together.
 export const WATER_DEPTH_CHIPS = [
   { value: WATER_DEPTH_LIGHT,  drops: '💧',     label: 'Light',  anchor: 'a quick pass' },
   { value: WATER_DEPTH_NORMAL, drops: '💧💧',   label: 'Normal', anchor: 'what it needed' },

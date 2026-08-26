@@ -16,6 +16,11 @@
 // vs the actual live CHECK — belongs in a staging schema test, noted in the plan).
 
 // ── Spec-compliant enums (inventory_items schema) ────────────────────────────
+// V4-ICON-001 HAND-OFF (not done here). `emoji` is inventory-type IDENTITY — meaningful, and it
+// wants the registry. BLOCKED ON A DRAW, not just wiring: nothing in the 133 keys reads as
+// "consumable" or "durable" (there is no tool/wrench mark at all), and picking a near-miss key
+// would be worse than the emoji. Needs two glyphs authored in iconAnchors.js first; the consumer
+// is InventoryAdd.jsx:322 -> ChoiceGrid.jsx:59, both outside this lane's file set.
 export const INVENTORY_TYPES = [
   {
     value: 'consumable',

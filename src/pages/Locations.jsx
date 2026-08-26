@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
 import { Field, Input, Select, Button, ErrorBanner } from '../components/forms'
+import Icon from '../components/Icon.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
@@ -447,27 +448,38 @@ function ActionMenu({ loc, canAddChild, onEdit, onAddChild, onToggleActive, onDe
       borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.14)',
       minWidth: 160, overflow: 'hidden',
     }}>
-      <MenuBtn label="✏️  Edit"      onClick={onEdit} />
-      {canAddChild && <MenuBtn label="➕  Add child" onClick={onAddChild} />}
-      <MenuBtn label={loc.is_active ? '🌙  Deactivate' : '✅  Activate'} onClick={onToggleActive} />
+      <MenuBtn iconName="action.edit" label="Edit" onClick={onEdit} />
+      {canAddChild && <MenuBtn iconName="nav.plus" label="Add child" onClick={onAddChild} />}
+      {/* The glyph tracks the TARGET state, exactly as the emoji pair did — moon/dormant for the
+          row that puts a zone to sleep, active for the one that wakes it. */}
+      <MenuBtn
+        iconName={loc.is_active ? 'status.dormant' : 'status.active'}
+        label={loc.is_active ? 'Deactivate' : 'Activate'}
+        onClick={onToggleActive}
+      />
       <div style={{ height: 1, background: P.border }} />
-      <MenuBtn label="🗑  Delete" onClick={onDelete} danger />
+      <MenuBtn iconName="action.remove" label="Delete" onClick={onDelete} danger />
     </div>
   )
 }
 
-function MenuBtn({ label, onClick, danger }) {
+// V4-ICON-001: `label` is now plain text and the glyph arrives as a registry key. The icon is
+// decorative — the label is the accessible name of the menu item, and `danger` still tints BOTH
+// (Icon draws in currentColor), so the destructive row is never signalled by hue alone.
+function MenuBtn({ iconName, label, onClick, danger }) {
   return (
     <button
       onClick={onClick}
       style={{
-        display: 'block', width: '100%', textAlign: 'left',
+        display: 'flex', alignItems: 'center', gap: 10,
+        width: '100%', textAlign: 'left',
         background: 'none', border: 'none', cursor: 'pointer',
         padding: '11px 16px', fontSize: '0.875rem',
         color: danger ? P.terra : P.dark,
         fontFamily: 'inherit',
       }}
     >
+      <Icon name={iconName} size={18} decorative />
       {label}
     </button>
   )
