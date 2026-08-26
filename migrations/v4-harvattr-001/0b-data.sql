@@ -38,6 +38,14 @@
 --   chk_crop_types_harvest_habit; no 'single' row carries a repeat_interval_days; every DOY is set
 --   in start/end PAIRS (garlic and asparagus only). Verified programmatically against the JSON.
 --
+-- ADDENDUM 2026-08-26 (V4-GARLICANNUAL-001): the garlic DOY pair below was amended in place,
+--   186-211 -> 196-217. This file is the ONE SQL path harvestAttributesSync.test.js reads, so the
+--   authoring JSON and this seed must move together or the test fails; the migration that actually
+--   applies the change to a database is migrations/v4-garlicannual-001/, which that test cannot see.
+--   The historical schema_version INSERT at the bottom is deliberately left untouched — it records
+--   what this file seeded in 2026-07, not what it says today. Same handling as the 2026-08-18
+--   bee_balm flip above.
+--
 -- APPLY ORDER: 0a -> 0b (this file) -> 0c-validate.sql. NOT applied to any environment by the
 --   authoring session — apply is Dave-gated, staging first.
 --
@@ -84,7 +92,7 @@ WITH seed(slug, harvest_habit, repeat_interval_days, loss_horizon_hours,
   ('dill','cut_and_come_again',12,48,NULL,NULL,NULL),  -- medium | Frond harvest. Bolts to seed head quickly — at which point the harvest tar...
   ('eggplant','repeat',4,72,20,NULL,NULL),  -- medium | Pick at glossy skin; dull skin = seedy and bitter. 3-5d cadence in peak.
   ('endive','cut_and_come_again',10,72,NULL,NULL,NULL),  -- medium | Outer-leaf harvest. Heading types (escarole) behave closer to 'single'; th...
-  ('garlic','single',NULL,336,NULL,186,211),  -- medium | Zone 5b lift window ~Jul 5 - Jul 30 (3-4 lower leaves browned). DOY window...
+  ('garlic','single',NULL,336,NULL,196,217),  -- medium | V4-GARLICANNUAL-001 amended 186-211 -> 196-217. Franklin County ridge lif...
   ('kale','cut_and_come_again',8,96,NULL,NULL,NULL),  -- high | 7-10d bottom-up. NOT currently planted.
   ('kohlrabi','single',NULL,336,NULL,NULL,NULL),  -- medium | Pick at 2-3in; goes woody if left much past size. Modern varieties hold be...
   ('leek','single',NULL,1440,NULL,NULL,NULL),  -- medium | Stands in the ground into winter in zone 5b; the 60d horizon reflects genu...

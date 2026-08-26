@@ -219,10 +219,10 @@
       "repeat_interval_days": null,
       "loss_horizon_hours": 336,
       "set_to_first_pick_days": null,
-      "harvest_season_start_doy": 186,
-      "harvest_season_end_doy": 211,
+      "harvest_season_start_doy": 196,
+      "harvest_season_end_doy": 217,
       "confidence": "medium",
-      "notes": "Zone 5b lift window ~Jul 5 - Jul 30 (3-4 lower leaves browned). DOY window IS set here because lifting outside it is a real loss: too early = undersized bulbs, too late = the wrapper splits and the bulb will not store. Scapes are a separate earlier harvest (~mid-June) not modeled by these columns."
+      "notes": "Lift window ~Jul 15 - Aug 5 (3-4 lower leaves browned). DOY window IS set here because lifting outside it is a real loss: too early = undersized bulbs, too late = the wrapper splits and the bulb will not store. Scapes are a separate earlier harvest (~mid-June) not modeled by these columns. V4-GARLICANNUAL-001 (2026-08-26) moved this from 186-211 (Jul 5 - Jul 30): the generic zone-5b window opened too early for Dave's Franklin County hilltown ridge, where a bulb lifted in the first week of July is likely still immature. The END was never the defective bound — Jul 30 was about right — so this SHIFTS the window later rather than widening it (26 days -> 22). Site-specific, not a catalogue figure."
     },
     "onion": {
       "harvest_habit": "single",

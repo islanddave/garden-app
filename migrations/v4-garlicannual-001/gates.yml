@@ -1,0 +1,165 @@
+# gates.yml
+# V4-GARLICANNUAL-001 — crop_types slug='garlic': default_lifecycle perennial -> annual,
+# dtm_basis NULL -> from-sow, harvest_season_doy 186-211 -> 196-217.
+#
+# DATA ONLY, no DDL, no deploy. Both envs carry an identical live garlic row (verified 2026-08-26
+# against prod and the staging branch), so unlike v4-rapinidtm-001 nothing here is vacuous on
+# staging — both environments can prove the apply on their own.
+#
+# SELF-ARMING. gate-invariants.yml fires on the `migrations/**` push to dev, which happens BEFORE the
+# apply, and it runs `--phase post --continuous-only`. So every gate below that asserts the POST-apply
+# state is wrapped in an EXISTS on this migration's own schema_version row: vacuously true until
+# applied, asserted forever after. The three gates that were already true beforehand
+# (post_shallot_*, post_garlic_cultivar_basis_*) carry no wrapper — arming them would be silencing,
+# not arming, since they must hold in both states.
+#
+# CONTRADICTION CHECK (the bee_balm trap, L-372 family): grepped the whole gate corpus for gates
+# touching garlic before writing these. Found three, none in conflict —
+# v4-sowfirstyear-001::post_garlic_and_shallot_left_null and
+# v4-croptype-002::post_deliberate_nulls_preserved both assert only first_year_harvest IS NULL, which
+# this migration does not touch; v4-harvattr-001::post_asparagus_window_correct pins asparagus's DOY
+# pair and has NO garlic counterpart. Nothing anywhere asserted garlic's 186/211, which is why this
+# change needed no gate retraction — and why post_garlic_doy_window_is_196_217 below is filling a
+# real gap rather than duplicating a sibling.
+#
+# THE VACUITY HAZARD, AND WHERE IT IS CLOSED. Every post gate here except one is a violation count
+# that must be 0, and a violation count over an ABSENT row is also 0. Two things close that:
+# pre_garlic_croptype_exists_exactly_once keeps asserting the row is there, and
+# post_garlic_row_actually_applied asserts the exact target tuple POSITIVELY.
+
+pre:
+  # Existence AND uniqueness, and both remain true after the apply — a `pre` gate defaults to
+  # continuous, so anything asserting the OLD values here would fail forever the moment it lands.
+  - name: pre_garlic_croptype_exists_exactly_once
+    sql: |
+      SELECT 1 - count(*) FROM public.crop_types
+       WHERE slug = 'garlic' AND deleted_at IS NULL
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_garlic_lifecycle_is_annual
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.41.0-garlicannual-001')
+         AND slug = 'garlic' AND deleted_at IS NULL
+         AND default_lifecycle IS DISTINCT FROM 'annual'
+    expect: scalar_eq
+    value: 0
+
+  # from-sow, never from-transplant. crop_types_dtm_basis_chk admits only those two, and there is no
+  # 'from-plant-out' for a fall-planted clove. Asserted as an equality rather than a not-null because
+  # from-transplant is the specific wrong answer: it would send plantingMaturity.js hunting for a
+  # transplanted_at that a direct-planted crop will never have, and strand every garlic card on the
+  # awaitingTransplant prompt. A NOT NULL check would have passed on exactly that mistake.
+  - name: post_garlic_dtm_basis_is_from_sow
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.41.0-garlicannual-001')
+         AND slug = 'garlic' AND deleted_at IS NULL
+         AND dtm_basis IS DISTINCT FROM 'from-sow'
+    expect: scalar_eq
+    value: 0
+
+  # No sibling gate anywhere pins garlic's window — v4-harvattr-001 pins asparagus's and stops there,
+  # so 186/211 sat unasserted from the day it was seeded. That is part of why a ten-day-early start
+  # survived a year of green runs.
+  - name: post_garlic_doy_window_is_196_217
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.41.0-garlicannual-001')
+         AND slug = 'garlic' AND deleted_at IS NULL
+         AND (harvest_season_start_doy IS DISTINCT FROM 196
+              OR harvest_season_end_doy IS DISTINCT FROM 217)
+    expect: scalar_eq
+    value: 0
+
+  # The only POSITIVE gate, and the only one that can tell "applied correctly" apart from "matched
+  # nothing". Its three siblings share the slug predicate with the UPDATE itself, so they cannot.
+  #
+  # DELIBERATELY `continuous` (the default), unlike the equivalent gate in v4-rapinidtm-001, which is
+  # continuous:false because staging carried no Rapini row and it would fail there forever. Both envs
+  # carry this row, so no such exemption applies — and leaving it out of the continuous sweep would
+  # open a real hole: gate-invariants.yml runs `--phase post`, so the `pre` existence gate above never
+  # runs there, and every other post gate is a violation count that passes just as happily over an
+  # absent row. This is the sweep's only proof the row is still present with the right values.
+  #
+  # The CASE is the self-arm. A bare `1 - count(*)` cannot be armed by an EXISTS in the WHERE clause
+  # the way the violation counts can — that would make it assert 1-0=1 before the apply and fail.
+  - name: post_garlic_row_actually_applied
+    sql: |
+      SELECT CASE
+               WHEN NOT EXISTS (SELECT 1 FROM public.schema_version
+                                 WHERE version = '4.41.0-garlicannual-001') THEN 0
+               ELSE 1 - (SELECT count(*) FROM public.crop_types
+                          WHERE slug = 'garlic' AND deleted_at IS NULL
+                            AND default_lifecycle = 'annual'
+                            AND dtm_basis = 'from-sow'
+                            AND harvest_season_start_doy = 196
+                            AND harvest_season_end_doy = 217)
+             END
+    expect: scalar_eq
+    value: 0
+
+  # BLAST-RADIUS BOUND. shallot was examined and deliberately NOT changed: it is also
+  # default_lifecycle='perennial', but shallots multiply into a carryable clump, their two cultivars
+  # disagree with each other on the botanical axis while both carry grown_as='annual', and there is
+  # no false-dormancy incident behind it. Named explicitly because it is the row most likely to be
+  # swept along by a future "fix the perennial alliums" pass without the same evidence.
+  # NOT self-armed: true before and after, so an EXISTS wrapper would only hide a pre-apply breach.
+  - name: post_shallot_left_perennial_and_unwindowed
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'shallot' AND deleted_at IS NULL
+         AND (default_lifecycle IS DISTINCT FROM 'perennial'
+              OR harvest_season_start_doy IS NOT NULL
+              OR harvest_season_end_doy IS NOT NULL)
+    expect: scalar_eq
+    value: 0
+
+  # The crop-level dtm_basis only decides anything while the cultivar's own is NULL —
+  # COALESCE(pv.dtm_basis, ct.dtm_basis), lambda/plants/index.js:417. If "Garlic (hardneck)" ever
+  # gains its own basis, the value this migration set stops being the one in force, and that should
+  # surface rather than pass silently. This is the condition under which this migration quietly stops
+  # mattering, which is exactly the kind of thing nothing else would ever report.
+  - name: post_garlic_cultivar_basis_still_defers_to_crop
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE id = '96773f51-d9bb-418e-b1d4-974f25dae60d' AND deleted_at IS NULL
+         AND dtm_basis IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  # DELIBERATELY ABSENT: a "windowed crop types are exactly asparagus and garlic" gate. That
+  # invariant is already held by v4-harvattr-001::post_doy_windows_only_asparagus_and_garlic, and a
+  # second copy would make a future mutation test green whichever one was broken.
+
+  # continuous: false — apply-time receipt only; absent from any env this has not been applied to.
+  - name: post_schema_version_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.41.0-garlicannual-001' LIMIT 1
+    expect: rowcount_gte
+    value: 1
+
+  - name: post_no_visible_change_is_the_expected_outcome
+    manual: true
+    note: |
+      PROD, and this gate exists to record a NON-observation so it is not later filed as a failed
+      apply. After this migration there is NOTHING to see in the app, by design:
+        * The garlic planting's card still shows the "Perennial" lifecycle chip. That chip comes
+          from plant_varieties.lifecycle via crop-derive.js:198 (cultivar.lifecycle ?? crop default),
+          not from the column this migration changed. Do NOT reach for plant_varieties.grown_as as
+          the fix: it reads 'annual' on 362 of 413 live cultivars including the peach tree, the
+          blueberry, the hosta, the Japanese maple and the asparagus crown, so it is a bulk default
+          rather than curated data, and preferring it would label trees and houseplants "Annual"
+          while discarding the useful tender_perennial signal on peppers and tomatoes. Closing this
+          gap is Dave's separate decision — do not "fix" it as part of this.
+        * No harvest-readiness behaviour changes. isReadyToPick short-circuits on
+          harvest_habit='single' (harvestReadiness.js:116) before the DOY window is ever consulted,
+          so 196-217 is a corrected record, not a live predicate.
+      What DOES change is what the next reader — human or agent — gets when they ask this row whether
+      garlic comes back next year.
