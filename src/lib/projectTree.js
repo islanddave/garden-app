@@ -155,6 +155,9 @@ export function nodeHasChildren(node) {
 
 // ─── V4-GARDENIA-001: faceted group-by (ADDITIVE; buildGardenTree/buildDisplayList are
 //     untouched and remain golden-gated to parity hash 8a3d78f098e55ff2) ──────────────────
+//     That gate is `npm run parity:garden-render` (scripts/parity/garden-render-golden.mjs),
+//     wired in ci.yml. Named here because until 2026-08-26 this comment asserted a gate that
+//     nothing executed — the oracle existed only in the gardening-docs repo.
 export const UNSORTED_SLUG = '__unsorted__'
 
 // Flatten a planting's bulk entity-tags entry { direct, projected } into one tag list.

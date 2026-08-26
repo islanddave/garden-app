@@ -1,0 +1,2986 @@
+{
+ "_meta": {
+  "generated": "2026-06-24",
+  "fixture": "/sessions/zealous-festive-turing/mnt/Gardening/v4-wave1.5/fixtures/prod-garden-fixture-20260624.json",
+  "fn_source": "src/lib/projectTree.js @ prod v2.16.0 (pre-buildTagGroupedList rewrite)",
+  "purpose": "Behavior baseline. After projectTree.js -> buildTagGroupedList rewrite, the legacy by-project grouping/order MUST reproduce these arrays exactly.",
+  "parity_hash": "8a3d78f098e55ff2"
+ },
+ "counts": {
+  "projects": 61,
+  "plantings": 171
+ },
+ "displayList_alpha": [
+  {
+   "id": "2ca03bab-0685-4ceb-98c1-537314cb004a",
+   "name": "Annuals",
+   "depth": 0
+  },
+  {
+   "id": "d17eb3ba-5cf5-4be0-8d60-6874301b0f5b",
+   "name": "Marigolds",
+   "depth": 1
+  },
+  {
+   "id": "b290f771-5f6f-4a3e-ae99-f44dec8f3350",
+   "name": "Fruiting Plants",
+   "depth": 0
+  },
+  {
+   "id": "6f8a049a-18ed-4e15-9b85-25a75f0aedc6",
+   "name": "Arugula",
+   "depth": 1
+  },
+  {
+   "id": "c16f65d4-dc32-4051-9733-4c79ff44a395",
+   "name": "Asparagus",
+   "depth": 1
+  },
+  {
+   "id": "ef8ff6d1-918a-44bb-8675-4c03fd147d62",
+   "name": "Beets",
+   "depth": 1
+  },
+  {
+   "id": "9ea97198-6bce-48a3-92de-720f66375190",
+   "name": "Bitter Melon",
+   "depth": 1
+  },
+  {
+   "id": "a1cba372-296c-4ccc-a117-a59ff9ab6d2e",
+   "name": "Blueberries",
+   "depth": 1
+  },
+  {
+   "id": "b3fd4472-0d8a-4fc4-a788-a7146ed86111",
+   "name": "Broccoli",
+   "depth": 1
+  },
+  {
+   "id": "c8698dbc-f2ed-4fbb-9729-d2d87cb0317a",
+   "name": "Cabbage",
+   "depth": 1
+  },
+  {
+   "id": "ef1e5ca1-302d-4a2e-b911-a2765aa2e2e8",
+   "name": "Cantaloupe",
+   "depth": 1
+  },
+  {
+   "id": "03eeb5d5-1558-4a85-b9b7-c62cb837f35f",
+   "name": "Cucamelon",
+   "depth": 1
+  },
+  {
+   "id": "53af2182-1514-4633-ae36-3c37b5fd0ed2",
+   "name": "Cucumbers",
+   "depth": 1
+  },
+  {
+   "id": "e1f866cb-7da4-4bfb-916c-d916417e83a3",
+   "name": "Eggplant",
+   "depth": 1
+  },
+  {
+   "id": "dae58daa-cd16-49b2-a897-be9998948c66",
+   "name": "Endive",
+   "depth": 1
+  },
+  {
+   "id": "6b5fa440-72f6-41a1-a116-39e7361898f2",
+   "name": "Garlic",
+   "depth": 1
+  },
+  {
+   "id": "412cd8a1-7ae9-4074-949c-ccf5e25bc136",
+   "name": "Honeydew",
+   "depth": 1
+  },
+  {
+   "id": "3bba25c9-0cd0-4b36-85da-bd0210450e16",
+   "name": "Leeks",
+   "depth": 1
+  },
+  {
+   "id": "2ebbf968-5556-4541-9dc2-ac3dfa898b4d",
+   "name": "Lettuce",
+   "depth": 1
+  },
+  {
+   "id": "dd9fe184-7a11-42e8-a559-ccc2694bb1e6",
+   "name": "Loofah Sponge",
+   "depth": 1
+  },
+  {
+   "id": "d3bd8f9f-cf32-4431-ae53-ef234ac15841",
+   "name": "Onions",
+   "depth": 1
+  },
+  {
+   "id": "18038dae-3e6b-450c-acac-993e6a512c11",
+   "name": "Peaches",
+   "depth": 1
+  },
+  {
+   "id": "896fd584-1e6b-4c10-a60f-dbe885a3f860",
+   "name": "Peppers",
+   "depth": 1
+  },
+  {
+   "id": "4a9fb36d-b6ce-4b8e-9c5d-b9e0b23ec932",
+   "name": "Potatoes",
+   "depth": 1
+  },
+  {
+   "id": "ddd01176-ad28-4319-ac21-6d9a160746f8",
+   "name": "Raspberries",
+   "depth": 1
+  },
+  {
+   "id": "1cf8870f-7765-4fcc-8197-3276fcc6ffd9",
+   "name": "Shallots",
+   "depth": 1
+  },
+  {
+   "id": "342d80f5-b6f1-4075-8b08-6c00930fc00d",
+   "name": "Spinach",
+   "depth": 1
+  },
+  {
+   "id": "01f9d3ec-997f-44a3-be20-51c0403ec6a0",
+   "name": "Squash",
+   "depth": 1
+  },
+  {
+   "id": "bb87f5d7-08ad-424b-afc0-f6d28454d851",
+   "name": "Strawberries",
+   "depth": 1
+  },
+  {
+   "id": "aec1354f-14b8-41e5-b368-b061f06e5812",
+   "name": "Sweet Potatoes",
+   "depth": 1
+  },
+  {
+   "id": "5523136c-394e-40f0-ab56-28030238ee3c",
+   "name": "Tomatillos",
+   "depth": 1
+  },
+  {
+   "id": "1c106d4d-980e-4a8b-b589-02e4dd5e69e5",
+   "name": "Tomatoes",
+   "depth": 1
+  },
+  {
+   "id": "88513b10-e82f-4beb-b42a-ca3c1c2d730d",
+   "name": "Watermelon",
+   "depth": 1
+  },
+  {
+   "id": "1b3d4e12-80df-40a5-9eb8-b7dfae48bbc0",
+   "name": "Zucchini",
+   "depth": 1
+  },
+  {
+   "id": "9de95bdf-53d8-4408-b67b-674cc8ed4b00",
+   "name": "Herb Plants",
+   "depth": 0
+  },
+  {
+   "id": "fe0818f5-527b-4f1b-be59-15447b9b2085",
+   "name": "Basil",
+   "depth": 1
+  },
+  {
+   "id": "14be64fb-1af0-42f3-9a45-def2f27b2587",
+   "name": "Bergamot",
+   "depth": 1
+  },
+  {
+   "id": "8989cd65-62ae-49bc-ad33-fb6eb4a2a606",
+   "name": "Cilantro",
+   "depth": 1
+  },
+  {
+   "id": "e0665451-db2f-4089-8342-0ebf0b150b63",
+   "name": "Culantro",
+   "depth": 1
+  },
+  {
+   "id": "6dbcea5c-8c2a-4b32-bef0-0bc97cfb5daf",
+   "name": "Dill",
+   "depth": 1
+  },
+  {
+   "id": "5e089186-142f-4cf8-aad2-316d277c4102",
+   "name": "Lemongrass",
+   "depth": 1
+  },
+  {
+   "id": "bad3801d-4608-4517-ad93-f4f1682322f1",
+   "name": "Oregano",
+   "depth": 1
+  },
+  {
+   "id": "f84dedea-c9b2-42eb-9d9a-e5cbc7fd17d7",
+   "name": "Parsley",
+   "depth": 1
+  },
+  {
+   "id": "641a3bb7-ecac-4749-b5ec-60091ea7da1d",
+   "name": "Peppermint",
+   "depth": 1
+  },
+  {
+   "id": "995183c8-e665-4bb2-8a2c-845bc5ee7bfd",
+   "name": "Rosemary",
+   "depth": 1
+  },
+  {
+   "id": "0d4174b0-fa44-43ea-91fc-c2cbec9c8bf9",
+   "name": "Sage",
+   "depth": 1
+  },
+  {
+   "id": "2bb927d9-0433-4501-98c0-7fb267877f28",
+   "name": "Tarragon",
+   "depth": 1
+  },
+  {
+   "id": "1f9a2d40-6df4-4964-b503-a2a32072208d",
+   "name": "Houseplants",
+   "depth": 0
+  },
+  {
+   "id": "a9e56948-35b0-4134-8169-d654a72542f4",
+   "name": "Avocado",
+   "depth": 1
+  },
+  {
+   "id": "7d4e2fdc-00fb-4ef1-8432-ca40900b798f",
+   "name": "Chrysanthemum",
+   "depth": 1
+  },
+  {
+   "id": "05cd95c3-e8b2-42c7-840d-e07f76ff216a",
+   "name": "Citronella",
+   "depth": 1
+  },
+  {
+   "id": "b886774c-636a-4acc-a7ef-26772c70bbf0",
+   "name": "Fittonia",
+   "depth": 1
+  },
+  {
+   "id": "d5e7a96a-811f-4e67-950c-93123465ace9",
+   "name": "Geranium",
+   "depth": 1
+  },
+  {
+   "id": "f86b3ed6-1a85-4361-ae09-b0a6f20f9765",
+   "name": "Maple",
+   "depth": 1
+  },
+  {
+   "id": "91b6021f-fc81-4283-9f3d-d358e79f9d71",
+   "name": "Pothos",
+   "depth": 1
+  },
+  {
+   "id": "da81e372-f23c-4f49-9373-185242cde5a5",
+   "name": "Tradescantia",
+   "depth": 1
+  },
+  {
+   "id": "4a299991-73c8-4a08-af04-a6b1f8d9d9b0",
+   "name": "Ornamentals",
+   "depth": 0
+  },
+  {
+   "id": "ffb5b5df-04ab-4fc6-a2cf-b605573ff3ea",
+   "name": "Begonia",
+   "depth": 1
+  },
+  {
+   "id": "be2a71a9-e0c2-4efe-bb30-b013be739bdb",
+   "name": "Hosta",
+   "depth": 1
+  },
+  {
+   "id": "3c1d180b-1efd-4beb-a407-fa78f06095a8",
+   "name": "Rose",
+   "depth": 1
+  },
+  {
+   "id": "4a6b55dd-cfef-4d77-b116-b8e3a5220dc9",
+   "name": "Succulents & Cacti",
+   "depth": 0
+  }
+ ],
+ "displayList_recency": [
+  {
+   "id": "2ca03bab-0685-4ceb-98c1-537314cb004a",
+   "name": "Annuals",
+   "depth": 0
+  },
+  {
+   "id": "d17eb3ba-5cf5-4be0-8d60-6874301b0f5b",
+   "name": "Marigolds",
+   "depth": 1
+  },
+  {
+   "id": "b290f771-5f6f-4a3e-ae99-f44dec8f3350",
+   "name": "Fruiting Plants",
+   "depth": 0
+  },
+  {
+   "id": "6f8a049a-18ed-4e15-9b85-25a75f0aedc6",
+   "name": "Arugula",
+   "depth": 1
+  },
+  {
+   "id": "c16f65d4-dc32-4051-9733-4c79ff44a395",
+   "name": "Asparagus",
+   "depth": 1
+  },
+  {
+   "id": "ef8ff6d1-918a-44bb-8675-4c03fd147d62",
+   "name": "Beets",
+   "depth": 1
+  },
+  {
+   "id": "9ea97198-6bce-48a3-92de-720f66375190",
+   "name": "Bitter Melon",
+   "depth": 1
+  },
+  {
+   "id": "a1cba372-296c-4ccc-a117-a59ff9ab6d2e",
+   "name": "Blueberries",
+   "depth": 1
+  },
+  {
+   "id": "b3fd4472-0d8a-4fc4-a788-a7146ed86111",
+   "name": "Broccoli",
+   "depth": 1
+  },
+  {
+   "id": "c8698dbc-f2ed-4fbb-9729-d2d87cb0317a",
+   "name": "Cabbage",
+   "depth": 1
+  },
+  {
+   "id": "ef1e5ca1-302d-4a2e-b911-a2765aa2e2e8",
+   "name": "Cantaloupe",
+   "depth": 1
+  },
+  {
+   "id": "03eeb5d5-1558-4a85-b9b7-c62cb837f35f",
+   "name": "Cucamelon",
+   "depth": 1
+  },
+  {
+   "id": "53af2182-1514-4633-ae36-3c37b5fd0ed2",
+   "name": "Cucumbers",
+   "depth": 1
+  },
+  {
+   "id": "e1f866cb-7da4-4bfb-916c-d916417e83a3",
+   "name": "Eggplant",
+   "depth": 1
+  },
+  {
+   "id": "dae58daa-cd16-49b2-a897-be9998948c66",
+   "name": "Endive",
+   "depth": 1
+  },
+  {
+   "id": "6b5fa440-72f6-41a1-a116-39e7361898f2",
+   "name": "Garlic",
+   "depth": 1
+  },
+  {
+   "id": "412cd8a1-7ae9-4074-949c-ccf5e25bc136",
+   "name": "Honeydew",
+   "depth": 1
+  },
+  {
+   "id": "3bba25c9-0cd0-4b36-85da-bd0210450e16",
+   "name": "Leeks",
+   "depth": 1
+  },
+  {
+   "id": "2ebbf968-5556-4541-9dc2-ac3dfa898b4d",
+   "name": "Lettuce",
+   "depth": 1
+  },
+  {
+   "id": "dd9fe184-7a11-42e8-a559-ccc2694bb1e6",
+   "name": "Loofah Sponge",
+   "depth": 1
+  },
+  {
+   "id": "d3bd8f9f-cf32-4431-ae53-ef234ac15841",
+   "name": "Onions",
+   "depth": 1
+  },
+  {
+   "id": "18038dae-3e6b-450c-acac-993e6a512c11",
+   "name": "Peaches",
+   "depth": 1
+  },
+  {
+   "id": "896fd584-1e6b-4c10-a60f-dbe885a3f860",
+   "name": "Peppers",
+   "depth": 1
+  },
+  {
+   "id": "4a9fb36d-b6ce-4b8e-9c5d-b9e0b23ec932",
+   "name": "Potatoes",
+   "depth": 1
+  },
+  {
+   "id": "ddd01176-ad28-4319-ac21-6d9a160746f8",
+   "name": "Raspberries",
+   "depth": 1
+  },
+  {
+   "id": "1cf8870f-7765-4fcc-8197-3276fcc6ffd9",
+   "name": "Shallots",
+   "depth": 1
+  },
+  {
+   "id": "342d80f5-b6f1-4075-8b08-6c00930fc00d",
+   "name": "Spinach",
+   "depth": 1
+  },
+  {
+   "id": "01f9d3ec-997f-44a3-be20-51c0403ec6a0",
+   "name": "Squash",
+   "depth": 1
+  },
+  {
+   "id": "bb87f5d7-08ad-424b-afc0-f6d28454d851",
+   "name": "Strawberries",
+   "depth": 1
+  },
+  {
+   "id": "aec1354f-14b8-41e5-b368-b061f06e5812",
+   "name": "Sweet Potatoes",
+   "depth": 1
+  },
+  {
+   "id": "5523136c-394e-40f0-ab56-28030238ee3c",
+   "name": "Tomatillos",
+   "depth": 1
+  },
+  {
+   "id": "1c106d4d-980e-4a8b-b589-02e4dd5e69e5",
+   "name": "Tomatoes",
+   "depth": 1
+  },
+  {
+   "id": "88513b10-e82f-4beb-b42a-ca3c1c2d730d",
+   "name": "Watermelon",
+   "depth": 1
+  },
+  {
+   "id": "1b3d4e12-80df-40a5-9eb8-b7dfae48bbc0",
+   "name": "Zucchini",
+   "depth": 1
+  },
+  {
+   "id": "9de95bdf-53d8-4408-b67b-674cc8ed4b00",
+   "name": "Herb Plants",
+   "depth": 0
+  },
+  {
+   "id": "fe0818f5-527b-4f1b-be59-15447b9b2085",
+   "name": "Basil",
+   "depth": 1
+  },
+  {
+   "id": "14be64fb-1af0-42f3-9a45-def2f27b2587",
+   "name": "Bergamot",
+   "depth": 1
+  },
+  {
+   "id": "8989cd65-62ae-49bc-ad33-fb6eb4a2a606",
+   "name": "Cilantro",
+   "depth": 1
+  },
+  {
+   "id": "e0665451-db2f-4089-8342-0ebf0b150b63",
+   "name": "Culantro",
+   "depth": 1
+  },
+  {
+   "id": "6dbcea5c-8c2a-4b32-bef0-0bc97cfb5daf",
+   "name": "Dill",
+   "depth": 1
+  },
+  {
+   "id": "5e089186-142f-4cf8-aad2-316d277c4102",
+   "name": "Lemongrass",
+   "depth": 1
+  },
+  {
+   "id": "bad3801d-4608-4517-ad93-f4f1682322f1",
+   "name": "Oregano",
+   "depth": 1
+  },
+  {
+   "id": "f84dedea-c9b2-42eb-9d9a-e5cbc7fd17d7",
+   "name": "Parsley",
+   "depth": 1
+  },
+  {
+   "id": "641a3bb7-ecac-4749-b5ec-60091ea7da1d",
+   "name": "Peppermint",
+   "depth": 1
+  },
+  {
+   "id": "995183c8-e665-4bb2-8a2c-845bc5ee7bfd",
+   "name": "Rosemary",
+   "depth": 1
+  },
+  {
+   "id": "0d4174b0-fa44-43ea-91fc-c2cbec9c8bf9",
+   "name": "Sage",
+   "depth": 1
+  },
+  {
+   "id": "2bb927d9-0433-4501-98c0-7fb267877f28",
+   "name": "Tarragon",
+   "depth": 1
+  },
+  {
+   "id": "1f9a2d40-6df4-4964-b503-a2a32072208d",
+   "name": "Houseplants",
+   "depth": 0
+  },
+  {
+   "id": "a9e56948-35b0-4134-8169-d654a72542f4",
+   "name": "Avocado",
+   "depth": 1
+  },
+  {
+   "id": "7d4e2fdc-00fb-4ef1-8432-ca40900b798f",
+   "name": "Chrysanthemum",
+   "depth": 1
+  },
+  {
+   "id": "05cd95c3-e8b2-42c7-840d-e07f76ff216a",
+   "name": "Citronella",
+   "depth": 1
+  },
+  {
+   "id": "b886774c-636a-4acc-a7ef-26772c70bbf0",
+   "name": "Fittonia",
+   "depth": 1
+  },
+  {
+   "id": "d5e7a96a-811f-4e67-950c-93123465ace9",
+   "name": "Geranium",
+   "depth": 1
+  },
+  {
+   "id": "f86b3ed6-1a85-4361-ae09-b0a6f20f9765",
+   "name": "Maple",
+   "depth": 1
+  },
+  {
+   "id": "91b6021f-fc81-4283-9f3d-d358e79f9d71",
+   "name": "Pothos",
+   "depth": 1
+  },
+  {
+   "id": "da81e372-f23c-4f49-9373-185242cde5a5",
+   "name": "Tradescantia",
+   "depth": 1
+  },
+  {
+   "id": "4a299991-73c8-4a08-af04-a6b1f8d9d9b0",
+   "name": "Ornamentals",
+   "depth": 0
+  },
+  {
+   "id": "ffb5b5df-04ab-4fc6-a2cf-b605573ff3ea",
+   "name": "Begonia",
+   "depth": 1
+  },
+  {
+   "id": "be2a71a9-e0c2-4efe-bb30-b013be739bdb",
+   "name": "Hosta",
+   "depth": 1
+  },
+  {
+   "id": "3c1d180b-1efd-4beb-a407-fa78f06095a8",
+   "name": "Rose",
+   "depth": 1
+  },
+  {
+   "id": "4a6b55dd-cfef-4d77-b116-b8e3a5220dc9",
+   "name": "Succulents & Cacti",
+   "depth": 0
+  }
+ ],
+ "gardenTree_alpha": [
+  {
+   "id": "2ca03bab-0685-4ceb-98c1-537314cb004a",
+   "name": "Annuals",
+   "depth": 0,
+   "plantings": [],
+   "children": [
+    {
+     "id": "d17eb3ba-5cf5-4be0-8d60-6874301b0f5b",
+     "name": "Marigolds",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "bbc6c5b6-dc20-4619-a446-e9d2b4a7987d",
+       "name": "Marigolds"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "b290f771-5f6f-4a3e-ae99-f44dec8f3350",
+   "name": "Fruiting Plants",
+   "depth": 0,
+   "plantings": [],
+   "children": [
+    {
+     "id": "6f8a049a-18ed-4e15-9b85-25a75f0aedc6",
+     "name": "Arugula",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "5239772c-7eda-4c8a-9d63-fe8350021c97",
+       "name": "Arugula"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "c16f65d4-dc32-4051-9733-4c79ff44a395",
+     "name": "Asparagus",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "87eab4df-f5e1-43cf-abd4-372ab4d3b5e6",
+       "name": "Asparagus"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "ef8ff6d1-918a-44bb-8675-4c03fd147d62",
+     "name": "Beets",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "96ff0ad6-149d-4125-83a2-27f5cd560964",
+       "name": "Beets"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "9ea97198-6bce-48a3-92de-720f66375190",
+     "name": "Bitter Melon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "5a30bb75-7fd7-4802-8966-c58e6e32c854",
+       "name": "Bitter Melon"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "a1cba372-296c-4ccc-a117-a59ff9ab6d2e",
+     "name": "Blueberries",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "9da8bb5b-5847-44a0-8bd2-57055228c9b8",
+       "name": "Blueberries"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "b3fd4472-0d8a-4fc4-a788-a7146ed86111",
+     "name": "Broccoli",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "500143cb-c67c-4cda-a274-87c743b76872",
+       "name": "Broccoli"
+      },
+      {
+       "id": "4146a122-7dad-469e-b1bc-f6fdc0362d0b",
+       "name": "Broccoli: Green Magic"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "c8698dbc-f2ed-4fbb-9729-d2d87cb0317a",
+     "name": "Cabbage",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "0e5e532c-0983-41a2-807e-5b8b7fc473fc",
+       "name": "Cabbage"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "ef1e5ca1-302d-4a2e-b911-a2765aa2e2e8",
+     "name": "Cantaloupe",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "b9fee5ae-d6d3-4c59-8e4a-7da909f6ad1b",
+       "name": "Cantaloupe"
+      },
+      {
+       "id": "5a1b8718-e4d3-4a40-9293-b5442a00dfbb",
+       "name": "Charentais"
+      },
+      {
+       "id": "7293071c-08a5-4172-971c-400f8b60deb4",
+       "name": "Minnesota Mini"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "03eeb5d5-1558-4a85-b9b7-c62cb837f35f",
+     "name": "Cucamelon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "54786dfd-554f-4b2c-a013-f09048c84c94",
+       "name": "Cucamelon"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "53af2182-1514-4633-ae36-3c37b5fd0ed2",
+     "name": "Cucumbers",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "faa55a9f-8062-4d5d-a547-b12a37b4b1e3",
+       "name": "Cucumber"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "e1f866cb-7da4-4bfb-916c-d916417e83a3",
+     "name": "Eggplant",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "f6defdf6-1bbd-4c49-89cb-75a3ff1712aa",
+       "name": "Ping Tung Long"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "dae58daa-cd16-49b2-a897-be9998948c66",
+     "name": "Endive",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "014747a9-b824-4a0c-84cd-eca6fd4384aa",
+       "name": "Endive: Tres Fine"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "6b5fa440-72f6-41a1-a116-39e7361898f2",
+     "name": "Garlic",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "7bfaea51-8ad6-4063-948c-9b6e78616418",
+       "name": "Garlic"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "412cd8a1-7ae9-4074-949c-ccf5e25bc136",
+     "name": "Honeydew",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "75aebd10-2962-4c53-8455-862723c46d72",
+       "name": "Honeydew: Green Flesh"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "3bba25c9-0cd0-4b36-85da-bd0210450e16",
+     "name": "Leeks",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "a55aaaf1-7fb4-40d9-99e6-8f50fe0a8e7a",
+       "name": "Leeks: Jaune du Poitou"
+      },
+      {
+       "id": "f97503b6-81fe-4ebf-81a8-71c67e537397",
+       "name": "Leeks: King Richard"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "2ebbf968-5556-4541-9dc2-ac3dfa898b4d",
+     "name": "Lettuce",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "d0958e0c-04e1-4590-aa8b-da3881e32119",
+       "name": "Red Leaf"
+      },
+      {
+       "id": "20e430cb-7087-402d-92a1-0a1408bd1583",
+       "name": "Romaine Roots"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "dd9fe184-7a11-42e8-a559-ccc2694bb1e6",
+     "name": "Loofah Sponge",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6d2d48c8-96b5-412e-ad06-d11339cfe1f0",
+       "name": "Loofah Sponge"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "d3bd8f9f-cf32-4431-ae53-ef234ac15841",
+     "name": "Onions",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "8e668144-1f10-4e67-8536-699e37e5117e",
+       "name": "Onion — scallion-type (thick blue-green, ID pending)"
+      },
+      {
+       "id": "11456104-c734-4a6b-bba5-062b114c4677",
+       "name": "Red Onions"
+      },
+      {
+       "id": "f1834ef6-fc85-4b8e-ba86-aa3fd02a8e85",
+       "name": "Scallion (thin clump)"
+      },
+      {
+       "id": "29c66d30-bee7-4ec1-8279-758447fd052f",
+       "name": "Yellow Onions"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "18038dae-3e6b-450c-acac-993e6a512c11",
+     "name": "Peaches",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "4b1f2362-2def-4410-8e46-a599468c43e9",
+       "name": "Peach tree"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "896fd584-1e6b-4c10-a60f-dbe885a3f860",
+     "name": "Peppers",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "f11b7a72-3d91-4842-9850-b2fccc8746e2",
+       "name": "Anaheim"
+      },
+      {
+       "id": "038be13a-ebe6-44cf-9018-094b1ef5a915",
+       "name": "Ancho"
+      },
+      {
+       "id": "90fbbdac-99c2-4cff-9b97-3143a9821b3a",
+       "name": "Armageddon"
+      },
+      {
+       "id": "e4324e33-90ef-4673-a604-057a323281a8",
+       "name": "Bhut Jolokia"
+      },
+      {
+       "id": "6ada8f32-fe3d-42a8-b4f8-1ea1cf9ea19d",
+       "name": "Biquinho"
+      },
+      {
+       "id": "71eb286b-bee9-4593-9955-c2b1f6e9cc79",
+       "name": "Bulgarian Carrot"
+      },
+      {
+       "id": "6cb08d0d-a664-437f-a4db-e581984f758f",
+       "name": "California Wonder"
+      },
+      {
+       "id": "b18d2981-30e0-4918-9006-440d83c56a1a",
+       "name": "Candlelight"
+      },
+      {
+       "id": "1c59f943-cc60-4f30-9a27-5a84468c0aeb",
+       "name": "Cayenne"
+      },
+      {
+       "id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
+       "name": "Cayenne: Rista"
+      },
+      {
+       "id": "b0480c3d-08bd-4e95-b3f6-f533eddaefe9",
+       "name": "Cherry Hot"
+      },
+      {
+       "id": "b83e0a22-71e5-4119-9ef4-c3a481aace06",
+       "name": "Cherry Stuffer"
+      },
+      {
+       "id": "937c760e-3093-4a30-a6bb-48baebbb3ab2",
+       "name": "Chili Red"
+      },
+      {
+       "id": "141d1681-d8f1-4803-8d1d-01ee124eeb5a",
+       "name": "Chinese 5-Color"
+      },
+      {
+       "id": "e22681d8-0b93-45e8-9b81-6092cc987f4a",
+       "name": "Cubanelle"
+      },
+      {
+       "id": "d3c66eaf-caf8-4236-86d3-7da6cbfd3bf4",
+       "name": "Dragon Roll"
+      },
+      {
+       "id": "e969fb61-a7fb-46f9-8d2e-2081037f9773",
+       "name": "Gatherer's Gold"
+      },
+      {
+       "id": "5bb93741-786e-4546-95d1-ea34faaafa2d",
+       "name": "Ghost Pepper"
+      },
+      {
+       "id": "917af9d7-4f1a-474c-8283-e41787fdfeb0",
+       "name": "Gong Bao"
+      },
+      {
+       "id": "2d362fc7-2d38-462a-870a-206b1056518a",
+       "name": "Green / Red Bell"
+      },
+      {
+       "id": "ad489638-a21c-49d8-aaba-ad865900345f",
+       "name": "Habanero"
+      },
+      {
+       "id": "7ca159f5-3dc5-4d3e-9f5b-c6676ecd454c",
+       "name": "Hungarian"
+      },
+      {
+       "id": "f3aa027e-48ae-4307-853f-21c93398f8cf",
+       "name": "Italian Hot"
+      },
+      {
+       "id": "6bead640-ea0e-4da8-927b-5c1ffbf30a9f",
+       "name": "Jalapeno"
+      },
+      {
+       "id": "2b09d736-54cf-4b4b-9fd7-6529422ca934",
+       "name": "Jalapeños"
+      },
+      {
+       "id": "1b9e2ab1-e947-47b5-b993-9f437b5bd2d1",
+       "name": "King of the North"
+      },
+      {
+       "id": "504144f1-83b0-4b36-8e88-d8e84c617e62",
+       "name": "Kori Sitakame"
+      },
+      {
+       "id": "dc66706b-d5c1-40c8-bf2c-c9b5604d32b1",
+       "name": "Lemon Drop"
+      },
+      {
+       "id": "d6992544-bfc5-4bc1-ab07-9a6e850e3469",
+       "name": "New Mexico"
+      },
+      {
+       "id": "26afb9e8-56e8-4e67-80b9-61138dccf357",
+       "name": "Orange Bell"
+      },
+      {
+       "id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
+       "name": "Palmetto Punch"
+      },
+      {
+       "id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
+       "name": "Pick and Pop"
+      },
+      {
+       "id": "8246960b-3512-4e22-a53e-d32b24e7705d",
+       "name": "Piquin"
+      },
+      {
+       "id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
+       "name": "Piri Piri"
+      },
+      {
+       "id": "de76f287-8ecf-4914-b246-7ad84d92edd1",
+       "name": "Portugal"
+      },
+      {
+       "id": "e730d592-a9ca-4233-89d3-92f5e534fdeb",
+       "name": "Pumpkin Jalapeno"
+      },
+      {
+       "id": "23a06ab3-8467-4415-a001-bab2220a6556",
+       "name": "Purple Tiger"
+      },
+      {
+       "id": "ffac4728-f687-4327-b431-492d88f04858",
+       "name": "Quadrato Rossi"
+      },
+      {
+       "id": "d0729dda-2879-48ff-9238-a068dbe220b2",
+       "name": "Red Mini Bell"
+      },
+      {
+       "id": "97df8805-67dd-41d6-8e50-186bc7c8a329",
+       "name": "Santaka"
+      },
+      {
+       "id": "5d031b08-fa16-4815-bf25-23804d051452",
+       "name": "Scotch Bonnet"
+      },
+      {
+       "id": "5b932e9f-2977-45dd-88d8-6387deb7018c",
+       "name": "Scotch Bonnet 2"
+      },
+      {
+       "id": "0ca5901d-d22b-4966-bdb3-ee4aba223abc",
+       "name": "Serrano 2"
+      },
+      {
+       "id": "718e9fea-a366-4103-9fad-f364b81f1772",
+       "name": "Serranos"
+      },
+      {
+       "id": "a0448c1f-9f7d-4fd1-ae27-8ed3f2d2755a",
+       "name": "Shishito"
+      },
+      {
+       "id": "d79ba37f-0db8-4ea4-944e-a29dc57b4834",
+       "name": "Shishito"
+      },
+      {
+       "id": "b077b1ed-08b5-4626-b603-ef5b68d4bef3",
+       "name": "Sugar Rush Peach"
+      },
+      {
+       "id": "2a78b09a-eeec-48df-bb02-e588a5bc3564",
+       "name": "Sunbright"
+      },
+      {
+       "id": "e3888c50-e765-4a96-a3e5-23732767c48f",
+       "name": "Sweet Chocolate"
+      },
+      {
+       "id": "1485f041-84b8-4422-bd9c-49c85b55d712",
+       "name": "Tabasco"
+      },
+      {
+       "id": "9726383b-2d3d-4015-be5f-5b269ac0cb7c",
+       "name": "Tatli Kil Sivri"
+      },
+      {
+       "id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
+       "name": "Thai Dragon"
+      },
+      {
+       "id": "bc439bc0-8610-4e20-ba30-8236db935628",
+       "name": "Yellow Bell"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "4a9fb36d-b6ce-4b8e-9c5d-b9e0b23ec932",
+     "name": "Potatoes",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "7d6358a2-13d6-475c-8d87-2ef1bfa6be9d",
+       "name": "Fingerling Potatoes"
+      },
+      {
+       "id": "42572716-57cc-4735-be2a-aaaf141ce7f0",
+       "name": "Potatoes: Gold"
+      },
+      {
+       "id": "8ca3f928-e430-4213-a2f8-af2545b6c9be",
+       "name": "Russet Potato"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "ddd01176-ad28-4319-ac21-6d9a160746f8",
+     "name": "Raspberries",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "c2d59748-240c-42f8-b1c3-50fe64dfa0fd",
+       "name": "Raspberries"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "1cf8870f-7765-4fcc-8197-3276fcc6ffd9",
+     "name": "Shallots",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "9cd590d4-05d9-4f68-9b71-b881130653d7",
+       "name": "Shallots"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "342d80f5-b6f1-4075-8b08-6c00930fc00d",
+     "name": "Spinach",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6e8517dd-4069-42ef-be28-1937942f8c63",
+       "name": "Baby Spinach"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "01f9d3ec-997f-44a3-be20-51c0403ec6a0",
+     "name": "Squash",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "fa0502b2-e5b4-4c24-9dd3-02cc89d45b30",
+       "name": "Zephyr Squash"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "bb87f5d7-08ad-424b-afc0-f6d28454d851",
+     "name": "Strawberries",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "31cf2555-5e96-473d-a625-552021838c7d",
+       "name": "Cavendish Strawberry"
+      },
+      {
+       "id": "fba9affa-dbf4-4dd6-9e85-be12b5f22411",
+       "name": "Strawberries"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "aec1354f-14b8-41e5-b368-b061f06e5812",
+     "name": "Sweet Potatoes",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "3c3fd1aa-ddcf-42d1-b8e8-33aa29b19d63",
+       "name": "Sweet Potatoes"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "5523136c-394e-40f0-ab56-28030238ee3c",
+     "name": "Tomatillos",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "56332090-5bc8-40e9-b3bc-c9a65a3bd9c8",
+       "name": "Cisneros"
+      },
+      {
+       "id": "15fbbc7f-222f-4232-a186-9948526da67a",
+       "name": "Pineapple Tomatillo"
+      },
+      {
+       "id": "d71e4421-9c71-4898-b8b0-2a19b42310e3",
+       "name": "Purple Blush Tomatillo"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "1c106d4d-980e-4a8b-b589-02e4dd5e69e5",
+     "name": "Tomatoes",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "37368072-8ce8-44a3-b40a-767993dd39b1",
+       "name": "1884"
+      },
+      {
+       "id": "fc9b6ee9-0dd4-41f7-a1db-157c30c93a4c",
+       "name": "Big Boy Slicer Tomato"
+      },
+      {
+       "id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
+       "name": "Black Cherry"
+      },
+      {
+       "id": "15bbfb67-de07-4120-ac7c-45777b357a0f",
+       "name": "Celebrity Slicer Tomato"
+      },
+      {
+       "id": "bae05057-409d-453b-addc-a218bef4f99d",
+       "name": "Cherokee Green"
+      },
+      {
+       "id": "27f44cb4-ad58-4cde-a478-e65886357bc6",
+       "name": "Cherry Falls"
+      },
+      {
+       "id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
+       "name": "Czech Bush Slicer"
+      },
+      {
+       "id": "a0a62ea6-dbbe-4775-85bc-c61c41db4fdf",
+       "name": "Del Tonet"
+      },
+      {
+       "id": "33c8c880-7e86-43fa-b083-0b9a36377c6a",
+       "name": "Delicious Slicer"
+      },
+      {
+       "id": "7146d741-4038-43b0-a4d8-13b5991d8614",
+       "name": "Granadero"
+      },
+      {
+       "id": "eb366a47-b2bb-4a69-8ca3-b97bbe00ab8c",
+       "name": "Jet Star"
+      },
+      {
+       "id": "51facc08-0635-4f86-907f-b935ba6d782b",
+       "name": "Manitoba"
+      },
+      {
+       "id": "10b345fc-fbc3-4421-9835-1c4d3a5ab384",
+       "name": "Moskvich Heirloom"
+      },
+      {
+       "id": "582d7ea9-7fde-48ef-a3d4-5c230ad0ba05",
+       "name": "Oregon Spring"
+      },
+      {
+       "id": "19f2aa28-481d-4f36-9aad-c0e8f38be056",
+       "name": "Pineapple Tomato"
+      },
+      {
+       "id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
+       "name": "Rosa Sicilian"
+      },
+      {
+       "id": "5ea70334-6dc7-41cb-98de-94e3a55953b0",
+       "name": "San Marzano Roma"
+      },
+      {
+       "id": "5e073d53-a999-4bbd-9e64-42342678770c",
+       "name": "Speckled Roman"
+      },
+      {
+       "id": "c9c42264-1293-46a7-9bbc-bb391626d42c",
+       "name": "Sub Arctic Plenty"
+      },
+      {
+       "id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
+       "name": "Sunray"
+      },
+      {
+       "id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
+       "name": "Super Sweet 100"
+      },
+      {
+       "id": "0f842b23-f70e-4f47-9c74-57eb1bd1cf6c",
+       "name": "Tie-Dye Tomato"
+      },
+      {
+       "id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
+       "name": "Ukrainian Purple"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "88513b10-e82f-4beb-b42a-ca3c1c2d730d",
+     "name": "Watermelon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "2d19f6d6-c94b-4ff4-b0d0-0b3a48526782",
+       "name": "Tender Sweet Otange"
+      },
+      {
+       "id": "02255184-b4fc-46eb-800f-6705dce9173d",
+       "name": "Watermelon: Crimson Sweet"
+      },
+      {
+       "id": "4b53ac2a-dfdd-41b0-abbb-ebf0cdbac2eb",
+       "name": "Watermelon: Sugar Baby"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "1b3d4e12-80df-40a5-9eb8-b7dfae48bbc0",
+     "name": "Zucchini",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "21d0ca02-2d18-4ea9-a489-f962934a2d98",
+       "name": "Zucchini"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "9de95bdf-53d8-4408-b67b-674cc8ed4b00",
+   "name": "Herb Plants",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "36ff8d03-681b-4036-9e48-9bb70dca7f2e",
+     "name": "Garlic Chives"
+    },
+    {
+     "id": "6def5dc1-e0df-446c-8cb7-d45f8a14ec53",
+     "name": "Vietnamese Coriander"
+    }
+   ],
+   "children": [
+    {
+     "id": "fe0818f5-527b-4f1b-be59-15447b9b2085",
+     "name": "Basil",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "c8065699-b359-448e-adbf-fb8a4399fef1",
+       "name": "Basil: Purple Petra"
+      },
+      {
+       "id": "8892b61b-3920-45e2-9dab-d4246a374722",
+       "name": "Holy Basil"
+      },
+      {
+       "id": "5b667f78-2e73-4718-9f1e-413f07a27300",
+       "name": "Italian Basil"
+      },
+      {
+       "id": "8e96c33b-5b8c-43c4-8088-f3fd5e0e175d",
+       "name": "Lettuce Leaf Basil"
+      },
+      {
+       "id": "bf4ce388-7e0d-4c52-9284-1f2ac40181c5",
+       "name": "Purple Basil"
+      },
+      {
+       "id": "f41056fb-b1ee-42f1-af6c-a6d7d2e9178f",
+       "name": "Thai Basil"
+      },
+      {
+       "id": "5666c6f7-4f43-48ba-a118-73940600f768",
+       "name": "Tulsi Basil"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "14be64fb-1af0-42f3-9a45-def2f27b2587",
+     "name": "Bergamot",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "d3139e56-ea86-4c66-b8d4-e9b2f984c044",
+       "name": "Wild Bergamot"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "8989cd65-62ae-49bc-ad33-fb6eb4a2a606",
+     "name": "Cilantro",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "0c3e5712-2496-4d0e-92a7-e76b12f804b9",
+       "name": "Cilantro"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "e0665451-db2f-4089-8342-0ebf0b150b63",
+     "name": "Culantro",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "92be69a1-09ae-433e-9797-a25dbd0106bf",
+       "name": "Culantro"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "6dbcea5c-8c2a-4b32-bef0-0bc97cfb5daf",
+     "name": "Dill",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "cad74def-a32f-4198-bcc8-2af2a3b26d7e",
+       "name": "Dill"
+      },
+      {
+       "id": "b2583931-9053-4846-b7e7-81f4b6f8d1d0",
+       "name": "Dill: Mammoth"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "5e089186-142f-4cf8-aad2-316d277c4102",
+     "name": "Lemongrass",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "feb71c98-b650-438f-92e1-496e79976b54",
+       "name": "Lemongrass"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "bad3801d-4608-4517-ad93-f4f1682322f1",
+     "name": "Oregano",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "78b064c6-027f-412e-b1c1-e6fc23f1ede2",
+       "name": "Greek Oregano"
+      },
+      {
+       "id": "3bd32f0d-bf90-4c96-b1bf-d8d3e13585cc",
+       "name": "Hot & Spicy Oregano"
+      },
+      {
+       "id": "0b477a6b-9962-4827-bdbd-36250224c539",
+       "name": "Oregano"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "f84dedea-c9b2-42eb-9d9a-e5cbc7fd17d7",
+     "name": "Parsley",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "845b0dcf-e480-4da5-bb13-e0ac7550f029",
+       "name": "Curly Parsley"
+      },
+      {
+       "id": "2d50a15d-0bc3-4a37-a9aa-5a134df7b0a9",
+       "name": "Italian Parsley"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "641a3bb7-ecac-4749-b5ec-60091ea7da1d",
+     "name": "Peppermint",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "45722de2-c652-4dcf-b397-6e62ae52bf1d",
+       "name": "Chocolate Mint"
+      },
+      {
+       "id": "5c58b9bd-657a-42f5-a130-2b5d5d2eb718",
+       "name": "Peppermint"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "995183c8-e665-4bb2-8a2c-845bc5ee7bfd",
+     "name": "Rosemary",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "ec269765-bc63-4590-abe9-cf63e36af389",
+       "name": "Rosemary"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "0d4174b0-fa44-43ea-91fc-c2cbec9c8bf9",
+     "name": "Sage",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6f73af20-2096-45e2-abe0-01cacb9a8229",
+       "name": "Garden Sage"
+      },
+      {
+       "id": "e37ab48c-f68e-448f-a6aa-fe016ecaf4fd",
+       "name": "Sage: Pineapple"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "2bb927d9-0433-4501-98c0-7fb267877f28",
+     "name": "Tarragon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6cfa5410-21ac-4023-98c9-c2dec406acd4",
+       "name": "French Tarragon"
+      },
+      {
+       "id": "d2788342-531f-4cd2-979d-a1044a4272be",
+       "name": "Russian Tarragon"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "1f9a2d40-6df4-4964-b503-a2a32072208d",
+   "name": "Houseplants",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "b0a61907-5e6d-4135-ad4a-e204f8c780d1",
+     "name": "Dracaena"
+    }
+   ],
+   "children": [
+    {
+     "id": "a9e56948-35b0-4134-8169-d654a72542f4",
+     "name": "Avocado",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "8cc7b72a-3723-4040-9b8b-851fb625bdef",
+       "name": "Avocado"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "7d4e2fdc-00fb-4ef1-8432-ca40900b798f",
+     "name": "Chrysanthemum",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "a458d170-6669-4e7a-b12b-810877fc535e",
+       "name": "Chrysanthemum"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "05cd95c3-e8b2-42c7-840d-e07f76ff216a",
+     "name": "Citronella",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "dd8476f8-1485-43a4-9bbf-16c9dbeada03",
+       "name": "Citronella"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "b886774c-636a-4acc-a7ef-26772c70bbf0",
+     "name": "Fittonia",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "688f2d80-12f0-4c20-89ea-b245a5f10086",
+       "name": "Green Fittonia"
+      },
+      {
+       "id": "776f43b0-f742-48c5-bf5e-82089b49d8d2",
+       "name": "Pink Fittonia"
+      },
+      {
+       "id": "14e08c28-ef65-4b80-9f2c-418b74a19adc",
+       "name": "Red Fittonia"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "d5e7a96a-811f-4e67-950c-93123465ace9",
+     "name": "Geranium",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "bfd67dee-5aaa-4e17-bdf9-ec0857b8ff61",
+       "name": "Geranium"
+      },
+      {
+       "id": "5fbb3198-c67a-41c9-8579-d5bdcefc0ee0",
+       "name": "Geranium Cutting"
+      },
+      {
+       "id": "87fb9750-34f4-4218-9a14-905602f9319e",
+       "name": "Zonal Geranium"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "f86b3ed6-1a85-4361-ae09-b0a6f20f9765",
+     "name": "Maple",
+     "depth": 1,
+     "plantings": [],
+     "children": []
+    },
+    {
+     "id": "91b6021f-fc81-4283-9f3d-d358e79f9d71",
+     "name": "Pothos",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "58cbd819-3023-48e4-9ac6-6013d05fd0e9",
+       "name": "Pothos"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "da81e372-f23c-4f49-9373-185242cde5a5",
+     "name": "Tradescantia",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "bdfc22eb-e5e0-4308-b003-bf2c5f5306c5",
+       "name": "Tradescantia"
+      },
+      {
+       "id": "979dcdee-2057-47ae-aa3e-eca3212e15cd",
+       "name": "Tradescantia Cuttings Experiment."
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "4a299991-73c8-4a08-af04-a6b1f8d9d9b0",
+   "name": "Ornamentals",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "8814273d-3444-4183-83b8-dad09a49c452",
+     "name": "Japanese Maple"
+    }
+   ],
+   "children": [
+    {
+     "id": "ffb5b5df-04ab-4fc6-a2cf-b605573ff3ea",
+     "name": "Begonia",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "0b61a444-bbf8-44e2-818c-816e5f45333b",
+       "name": "Tuberous Begonia (bronze-leaf, hanging)"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "be2a71a9-e0c2-4efe-bb30-b013be739bdb",
+     "name": "Hosta",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "21408041-566c-432a-a109-38e158158120",
+       "name": "Hosta"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "3c1d180b-1efd-4beb-a407-fa78f06095a8",
+     "name": "Rose",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "f4b75e5e-91e8-4466-9313-e2d95cf9d19c",
+       "name": "Red Rose (cultivar unknown)"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "4a6b55dd-cfef-4d77-b116-b8e3a5220dc9",
+   "name": "Succulents & Cacti",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "5fb2fae2-b730-4f87-aff5-86354b75f755",
+     "name": "Christmas Cactus"
+    },
+    {
+     "id": "f7cc1e5c-6a71-4a57-8969-5148da48adb1",
+     "name": "Crown of Thorns"
+    },
+    {
+     "id": "8a25017f-2678-4b02-8f66-8ae3ad7f14ef",
+     "name": "Echeveria"
+    },
+    {
+     "id": "7ea05605-e08c-4bcc-8e85-8387a965d027",
+     "name": "Jade Plant"
+    },
+    {
+     "id": "f586305f-9bbe-4a5d-a129-80b5cac66ac1",
+     "name": "Lithops"
+    },
+    {
+     "id": "6567393a-8833-4ea2-a60e-a5dba8993ef4",
+     "name": "Test Plant Debug"
+    }
+   ],
+   "children": []
+  }
+ ],
+ "gardenTree_recency": [
+  {
+   "id": "2ca03bab-0685-4ceb-98c1-537314cb004a",
+   "name": "Annuals",
+   "depth": 0,
+   "plantings": [],
+   "children": [
+    {
+     "id": "d17eb3ba-5cf5-4be0-8d60-6874301b0f5b",
+     "name": "Marigolds",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "bbc6c5b6-dc20-4619-a446-e9d2b4a7987d",
+       "name": "Marigolds"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "b290f771-5f6f-4a3e-ae99-f44dec8f3350",
+   "name": "Fruiting Plants",
+   "depth": 0,
+   "plantings": [],
+   "children": [
+    {
+     "id": "6f8a049a-18ed-4e15-9b85-25a75f0aedc6",
+     "name": "Arugula",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "5239772c-7eda-4c8a-9d63-fe8350021c97",
+       "name": "Arugula"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "c16f65d4-dc32-4051-9733-4c79ff44a395",
+     "name": "Asparagus",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "87eab4df-f5e1-43cf-abd4-372ab4d3b5e6",
+       "name": "Asparagus"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "ef8ff6d1-918a-44bb-8675-4c03fd147d62",
+     "name": "Beets",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "96ff0ad6-149d-4125-83a2-27f5cd560964",
+       "name": "Beets"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "9ea97198-6bce-48a3-92de-720f66375190",
+     "name": "Bitter Melon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "5a30bb75-7fd7-4802-8966-c58e6e32c854",
+       "name": "Bitter Melon"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "a1cba372-296c-4ccc-a117-a59ff9ab6d2e",
+     "name": "Blueberries",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "9da8bb5b-5847-44a0-8bd2-57055228c9b8",
+       "name": "Blueberries"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "b3fd4472-0d8a-4fc4-a788-a7146ed86111",
+     "name": "Broccoli",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "4146a122-7dad-469e-b1bc-f6fdc0362d0b",
+       "name": "Broccoli: Green Magic"
+      },
+      {
+       "id": "500143cb-c67c-4cda-a274-87c743b76872",
+       "name": "Broccoli"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "c8698dbc-f2ed-4fbb-9729-d2d87cb0317a",
+     "name": "Cabbage",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "0e5e532c-0983-41a2-807e-5b8b7fc473fc",
+       "name": "Cabbage"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "ef1e5ca1-302d-4a2e-b911-a2765aa2e2e8",
+     "name": "Cantaloupe",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "5a1b8718-e4d3-4a40-9293-b5442a00dfbb",
+       "name": "Charentais"
+      },
+      {
+       "id": "7293071c-08a5-4172-971c-400f8b60deb4",
+       "name": "Minnesota Mini"
+      },
+      {
+       "id": "b9fee5ae-d6d3-4c59-8e4a-7da909f6ad1b",
+       "name": "Cantaloupe"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "03eeb5d5-1558-4a85-b9b7-c62cb837f35f",
+     "name": "Cucamelon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "54786dfd-554f-4b2c-a013-f09048c84c94",
+       "name": "Cucamelon"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "53af2182-1514-4633-ae36-3c37b5fd0ed2",
+     "name": "Cucumbers",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "faa55a9f-8062-4d5d-a547-b12a37b4b1e3",
+       "name": "Cucumber"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "e1f866cb-7da4-4bfb-916c-d916417e83a3",
+     "name": "Eggplant",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "f6defdf6-1bbd-4c49-89cb-75a3ff1712aa",
+       "name": "Ping Tung Long"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "dae58daa-cd16-49b2-a897-be9998948c66",
+     "name": "Endive",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "014747a9-b824-4a0c-84cd-eca6fd4384aa",
+       "name": "Endive: Tres Fine"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "6b5fa440-72f6-41a1-a116-39e7361898f2",
+     "name": "Garlic",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "7bfaea51-8ad6-4063-948c-9b6e78616418",
+       "name": "Garlic"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "412cd8a1-7ae9-4074-949c-ccf5e25bc136",
+     "name": "Honeydew",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "75aebd10-2962-4c53-8455-862723c46d72",
+       "name": "Honeydew: Green Flesh"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "3bba25c9-0cd0-4b36-85da-bd0210450e16",
+     "name": "Leeks",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "a55aaaf1-7fb4-40d9-99e6-8f50fe0a8e7a",
+       "name": "Leeks: Jaune du Poitou"
+      },
+      {
+       "id": "f97503b6-81fe-4ebf-81a8-71c67e537397",
+       "name": "Leeks: King Richard"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "2ebbf968-5556-4541-9dc2-ac3dfa898b4d",
+     "name": "Lettuce",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "20e430cb-7087-402d-92a1-0a1408bd1583",
+       "name": "Romaine Roots"
+      },
+      {
+       "id": "d0958e0c-04e1-4590-aa8b-da3881e32119",
+       "name": "Red Leaf"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "dd9fe184-7a11-42e8-a559-ccc2694bb1e6",
+     "name": "Loofah Sponge",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6d2d48c8-96b5-412e-ad06-d11339cfe1f0",
+       "name": "Loofah Sponge"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "d3bd8f9f-cf32-4431-ae53-ef234ac15841",
+     "name": "Onions",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "8e668144-1f10-4e67-8536-699e37e5117e",
+       "name": "Onion — scallion-type (thick blue-green, ID pending)"
+      },
+      {
+       "id": "f1834ef6-fc85-4b8e-ba86-aa3fd02a8e85",
+       "name": "Scallion (thin clump)"
+      },
+      {
+       "id": "29c66d30-bee7-4ec1-8279-758447fd052f",
+       "name": "Yellow Onions"
+      },
+      {
+       "id": "11456104-c734-4a6b-bba5-062b114c4677",
+       "name": "Red Onions"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "18038dae-3e6b-450c-acac-993e6a512c11",
+     "name": "Peaches",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "4b1f2362-2def-4410-8e46-a599468c43e9",
+       "name": "Peach tree"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "896fd584-1e6b-4c10-a60f-dbe885a3f860",
+     "name": "Peppers",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "d3c66eaf-caf8-4236-86d3-7da6cbfd3bf4",
+       "name": "Dragon Roll"
+      },
+      {
+       "id": "e4324e33-90ef-4673-a604-057a323281a8",
+       "name": "Bhut Jolokia"
+      },
+      {
+       "id": "2a78b09a-eeec-48df-bb02-e588a5bc3564",
+       "name": "Sunbright"
+      },
+      {
+       "id": "23a06ab3-8467-4415-a001-bab2220a6556",
+       "name": "Purple Tiger"
+      },
+      {
+       "id": "e730d592-a9ca-4233-89d3-92f5e534fdeb",
+       "name": "Pumpkin Jalapeno"
+      },
+      {
+       "id": "8246960b-3512-4e22-a53e-d32b24e7705d",
+       "name": "Piquin"
+      },
+      {
+       "id": "504144f1-83b0-4b36-8e88-d8e84c617e62",
+       "name": "Kori Sitakame"
+      },
+      {
+       "id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
+       "name": "Piri Piri"
+      },
+      {
+       "id": "6cb08d0d-a664-437f-a4db-e581984f758f",
+       "name": "California Wonder"
+      },
+      {
+       "id": "6bead640-ea0e-4da8-927b-5c1ffbf30a9f",
+       "name": "Jalapeno"
+      },
+      {
+       "id": "ffac4728-f687-4327-b431-492d88f04858",
+       "name": "Quadrato Rossi"
+      },
+      {
+       "id": "f11b7a72-3d91-4842-9850-b2fccc8746e2",
+       "name": "Anaheim"
+      },
+      {
+       "id": "9726383b-2d3d-4015-be5f-5b269ac0cb7c",
+       "name": "Tatli Kil Sivri"
+      },
+      {
+       "id": "e969fb61-a7fb-46f9-8d2e-2081037f9773",
+       "name": "Gatherer's Gold"
+      },
+      {
+       "id": "e22681d8-0b93-45e8-9b81-6092cc987f4a",
+       "name": "Cubanelle"
+      },
+      {
+       "id": "d0729dda-2879-48ff-9238-a068dbe220b2",
+       "name": "Red Mini Bell"
+      },
+      {
+       "id": "e3888c50-e765-4a96-a3e5-23732767c48f",
+       "name": "Sweet Chocolate"
+      },
+      {
+       "id": "1485f041-84b8-4422-bd9c-49c85b55d712",
+       "name": "Tabasco"
+      },
+      {
+       "id": "141d1681-d8f1-4803-8d1d-01ee124eeb5a",
+       "name": "Chinese 5-Color"
+      },
+      {
+       "id": "038be13a-ebe6-44cf-9018-094b1ef5a915",
+       "name": "Ancho"
+      },
+      {
+       "id": "b077b1ed-08b5-4626-b603-ef5b68d4bef3",
+       "name": "Sugar Rush Peach"
+      },
+      {
+       "id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
+       "name": "Pick and Pop"
+      },
+      {
+       "id": "ad489638-a21c-49d8-aaba-ad865900345f",
+       "name": "Habanero"
+      },
+      {
+       "id": "b0480c3d-08bd-4e95-b3f6-f533eddaefe9",
+       "name": "Cherry Hot"
+      },
+      {
+       "id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
+       "name": "Thai Dragon"
+      },
+      {
+       "id": "5bb93741-786e-4546-95d1-ea34faaafa2d",
+       "name": "Ghost Pepper"
+      },
+      {
+       "id": "1b9e2ab1-e947-47b5-b993-9f437b5bd2d1",
+       "name": "King of the North"
+      },
+      {
+       "id": "917af9d7-4f1a-474c-8283-e41787fdfeb0",
+       "name": "Gong Bao"
+      },
+      {
+       "id": "0ca5901d-d22b-4966-bdb3-ee4aba223abc",
+       "name": "Serrano 2"
+      },
+      {
+       "id": "6ada8f32-fe3d-42a8-b4f8-1ea1cf9ea19d",
+       "name": "Biquinho"
+      },
+      {
+       "id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
+       "name": "Palmetto Punch"
+      },
+      {
+       "id": "71eb286b-bee9-4593-9955-c2b1f6e9cc79",
+       "name": "Bulgarian Carrot"
+      },
+      {
+       "id": "5b932e9f-2977-45dd-88d8-6387deb7018c",
+       "name": "Scotch Bonnet 2"
+      },
+      {
+       "id": "d6992544-bfc5-4bc1-ab07-9a6e850e3469",
+       "name": "New Mexico"
+      },
+      {
+       "id": "90fbbdac-99c2-4cff-9b97-3143a9821b3a",
+       "name": "Armageddon"
+      },
+      {
+       "id": "937c760e-3093-4a30-a6bb-48baebbb3ab2",
+       "name": "Chili Red"
+      },
+      {
+       "id": "5d031b08-fa16-4815-bf25-23804d051452",
+       "name": "Scotch Bonnet"
+      },
+      {
+       "id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
+       "name": "Cayenne: Rista"
+      },
+      {
+       "id": "a0448c1f-9f7d-4fd1-ae27-8ed3f2d2755a",
+       "name": "Shishito"
+      },
+      {
+       "id": "b83e0a22-71e5-4119-9ef4-c3a481aace06",
+       "name": "Cherry Stuffer"
+      },
+      {
+       "id": "1c59f943-cc60-4f30-9a27-5a84468c0aeb",
+       "name": "Cayenne"
+      },
+      {
+       "id": "97df8805-67dd-41d6-8e50-186bc7c8a329",
+       "name": "Santaka"
+      },
+      {
+       "id": "b18d2981-30e0-4918-9006-440d83c56a1a",
+       "name": "Candlelight"
+      },
+      {
+       "id": "f3aa027e-48ae-4307-853f-21c93398f8cf",
+       "name": "Italian Hot"
+      },
+      {
+       "id": "de76f287-8ecf-4914-b246-7ad84d92edd1",
+       "name": "Portugal"
+      },
+      {
+       "id": "7ca159f5-3dc5-4d3e-9f5b-c6676ecd454c",
+       "name": "Hungarian"
+      },
+      {
+       "id": "d79ba37f-0db8-4ea4-944e-a29dc57b4834",
+       "name": "Shishito"
+      },
+      {
+       "id": "718e9fea-a366-4103-9fad-f364b81f1772",
+       "name": "Serranos"
+      },
+      {
+       "id": "2b09d736-54cf-4b4b-9fd7-6529422ca934",
+       "name": "Jalapeños"
+      },
+      {
+       "id": "dc66706b-d5c1-40c8-bf2c-c9b5604d32b1",
+       "name": "Lemon Drop"
+      },
+      {
+       "id": "2d362fc7-2d38-462a-870a-206b1056518a",
+       "name": "Green / Red Bell"
+      },
+      {
+       "id": "bc439bc0-8610-4e20-ba30-8236db935628",
+       "name": "Yellow Bell"
+      },
+      {
+       "id": "26afb9e8-56e8-4e67-80b9-61138dccf357",
+       "name": "Orange Bell"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "4a9fb36d-b6ce-4b8e-9c5d-b9e0b23ec932",
+     "name": "Potatoes",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "8ca3f928-e430-4213-a2f8-af2545b6c9be",
+       "name": "Russet Potato"
+      },
+      {
+       "id": "42572716-57cc-4735-be2a-aaaf141ce7f0",
+       "name": "Potatoes: Gold"
+      },
+      {
+       "id": "7d6358a2-13d6-475c-8d87-2ef1bfa6be9d",
+       "name": "Fingerling Potatoes"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "ddd01176-ad28-4319-ac21-6d9a160746f8",
+     "name": "Raspberries",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "c2d59748-240c-42f8-b1c3-50fe64dfa0fd",
+       "name": "Raspberries"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "1cf8870f-7765-4fcc-8197-3276fcc6ffd9",
+     "name": "Shallots",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "9cd590d4-05d9-4f68-9b71-b881130653d7",
+       "name": "Shallots"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "342d80f5-b6f1-4075-8b08-6c00930fc00d",
+     "name": "Spinach",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6e8517dd-4069-42ef-be28-1937942f8c63",
+       "name": "Baby Spinach"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "01f9d3ec-997f-44a3-be20-51c0403ec6a0",
+     "name": "Squash",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "fa0502b2-e5b4-4c24-9dd3-02cc89d45b30",
+       "name": "Zephyr Squash"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "bb87f5d7-08ad-424b-afc0-f6d28454d851",
+     "name": "Strawberries",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "31cf2555-5e96-473d-a625-552021838c7d",
+       "name": "Cavendish Strawberry"
+      },
+      {
+       "id": "fba9affa-dbf4-4dd6-9e85-be12b5f22411",
+       "name": "Strawberries"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "aec1354f-14b8-41e5-b368-b061f06e5812",
+     "name": "Sweet Potatoes",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "3c3fd1aa-ddcf-42d1-b8e8-33aa29b19d63",
+       "name": "Sweet Potatoes"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "5523136c-394e-40f0-ab56-28030238ee3c",
+     "name": "Tomatillos",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "56332090-5bc8-40e9-b3bc-c9a65a3bd9c8",
+       "name": "Cisneros"
+      },
+      {
+       "id": "15fbbc7f-222f-4232-a186-9948526da67a",
+       "name": "Pineapple Tomatillo"
+      },
+      {
+       "id": "d71e4421-9c71-4898-b8b0-2a19b42310e3",
+       "name": "Purple Blush Tomatillo"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "1c106d4d-980e-4a8b-b589-02e4dd5e69e5",
+     "name": "Tomatoes",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "19f2aa28-481d-4f36-9aad-c0e8f38be056",
+       "name": "Pineapple Tomato"
+      },
+      {
+       "id": "a0a62ea6-dbbe-4775-85bc-c61c41db4fdf",
+       "name": "Del Tonet"
+      },
+      {
+       "id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
+       "name": "Rosa Sicilian"
+      },
+      {
+       "id": "37368072-8ce8-44a3-b40a-767993dd39b1",
+       "name": "1884"
+      },
+      {
+       "id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
+       "name": "Czech Bush Slicer"
+      },
+      {
+       "id": "bae05057-409d-453b-addc-a218bef4f99d",
+       "name": "Cherokee Green"
+      },
+      {
+       "id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
+       "name": "Ukrainian Purple"
+      },
+      {
+       "id": "c9c42264-1293-46a7-9bbc-bb391626d42c",
+       "name": "Sub Arctic Plenty"
+      },
+      {
+       "id": "51facc08-0635-4f86-907f-b935ba6d782b",
+       "name": "Manitoba"
+      },
+      {
+       "id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
+       "name": "Sunray"
+      },
+      {
+       "id": "582d7ea9-7fde-48ef-a3d4-5c230ad0ba05",
+       "name": "Oregon Spring"
+      },
+      {
+       "id": "eb366a47-b2bb-4a69-8ca3-b97bbe00ab8c",
+       "name": "Jet Star"
+      },
+      {
+       "id": "33c8c880-7e86-43fa-b083-0b9a36377c6a",
+       "name": "Delicious Slicer"
+      },
+      {
+       "id": "fc9b6ee9-0dd4-41f7-a1db-157c30c93a4c",
+       "name": "Big Boy Slicer Tomato"
+      },
+      {
+       "id": "15bbfb67-de07-4120-ac7c-45777b357a0f",
+       "name": "Celebrity Slicer Tomato"
+      },
+      {
+       "id": "7146d741-4038-43b0-a4d8-13b5991d8614",
+       "name": "Granadero"
+      },
+      {
+       "id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
+       "name": "Super Sweet 100"
+      },
+      {
+       "id": "5e073d53-a999-4bbd-9e64-42342678770c",
+       "name": "Speckled Roman"
+      },
+      {
+       "id": "0f842b23-f70e-4f47-9c74-57eb1bd1cf6c",
+       "name": "Tie-Dye Tomato"
+      },
+      {
+       "id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
+       "name": "Black Cherry"
+      },
+      {
+       "id": "5ea70334-6dc7-41cb-98de-94e3a55953b0",
+       "name": "San Marzano Roma"
+      },
+      {
+       "id": "27f44cb4-ad58-4cde-a478-e65886357bc6",
+       "name": "Cherry Falls"
+      },
+      {
+       "id": "10b345fc-fbc3-4421-9835-1c4d3a5ab384",
+       "name": "Moskvich Heirloom"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "88513b10-e82f-4beb-b42a-ca3c1c2d730d",
+     "name": "Watermelon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "2d19f6d6-c94b-4ff4-b0d0-0b3a48526782",
+       "name": "Tender Sweet Otange"
+      },
+      {
+       "id": "02255184-b4fc-46eb-800f-6705dce9173d",
+       "name": "Watermelon: Crimson Sweet"
+      },
+      {
+       "id": "4b53ac2a-dfdd-41b0-abbb-ebf0cdbac2eb",
+       "name": "Watermelon: Sugar Baby"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "1b3d4e12-80df-40a5-9eb8-b7dfae48bbc0",
+     "name": "Zucchini",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "21d0ca02-2d18-4ea9-a489-f962934a2d98",
+       "name": "Zucchini"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "9de95bdf-53d8-4408-b67b-674cc8ed4b00",
+   "name": "Herb Plants",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "36ff8d03-681b-4036-9e48-9bb70dca7f2e",
+     "name": "Garlic Chives"
+    },
+    {
+     "id": "6def5dc1-e0df-446c-8cb7-d45f8a14ec53",
+     "name": "Vietnamese Coriander"
+    }
+   ],
+   "children": [
+    {
+     "id": "fe0818f5-527b-4f1b-be59-15447b9b2085",
+     "name": "Basil",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "bf4ce388-7e0d-4c52-9284-1f2ac40181c5",
+       "name": "Purple Basil"
+      },
+      {
+       "id": "c8065699-b359-448e-adbf-fb8a4399fef1",
+       "name": "Basil: Purple Petra"
+      },
+      {
+       "id": "8e96c33b-5b8c-43c4-8088-f3fd5e0e175d",
+       "name": "Lettuce Leaf Basil"
+      },
+      {
+       "id": "5666c6f7-4f43-48ba-a118-73940600f768",
+       "name": "Tulsi Basil"
+      },
+      {
+       "id": "f41056fb-b1ee-42f1-af6c-a6d7d2e9178f",
+       "name": "Thai Basil"
+      },
+      {
+       "id": "8892b61b-3920-45e2-9dab-d4246a374722",
+       "name": "Holy Basil"
+      },
+      {
+       "id": "5b667f78-2e73-4718-9f1e-413f07a27300",
+       "name": "Italian Basil"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "14be64fb-1af0-42f3-9a45-def2f27b2587",
+     "name": "Bergamot",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "d3139e56-ea86-4c66-b8d4-e9b2f984c044",
+       "name": "Wild Bergamot"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "8989cd65-62ae-49bc-ad33-fb6eb4a2a606",
+     "name": "Cilantro",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "0c3e5712-2496-4d0e-92a7-e76b12f804b9",
+       "name": "Cilantro"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "e0665451-db2f-4089-8342-0ebf0b150b63",
+     "name": "Culantro",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "92be69a1-09ae-433e-9797-a25dbd0106bf",
+       "name": "Culantro"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "6dbcea5c-8c2a-4b32-bef0-0bc97cfb5daf",
+     "name": "Dill",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "b2583931-9053-4846-b7e7-81f4b6f8d1d0",
+       "name": "Dill: Mammoth"
+      },
+      {
+       "id": "cad74def-a32f-4198-bcc8-2af2a3b26d7e",
+       "name": "Dill"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "5e089186-142f-4cf8-aad2-316d277c4102",
+     "name": "Lemongrass",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "feb71c98-b650-438f-92e1-496e79976b54",
+       "name": "Lemongrass"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "bad3801d-4608-4517-ad93-f4f1682322f1",
+     "name": "Oregano",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "3bd32f0d-bf90-4c96-b1bf-d8d3e13585cc",
+       "name": "Hot & Spicy Oregano"
+      },
+      {
+       "id": "0b477a6b-9962-4827-bdbd-36250224c539",
+       "name": "Oregano"
+      },
+      {
+       "id": "78b064c6-027f-412e-b1c1-e6fc23f1ede2",
+       "name": "Greek Oregano"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "f84dedea-c9b2-42eb-9d9a-e5cbc7fd17d7",
+     "name": "Parsley",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "845b0dcf-e480-4da5-bb13-e0ac7550f029",
+       "name": "Curly Parsley"
+      },
+      {
+       "id": "2d50a15d-0bc3-4a37-a9aa-5a134df7b0a9",
+       "name": "Italian Parsley"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "641a3bb7-ecac-4749-b5ec-60091ea7da1d",
+     "name": "Peppermint",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "45722de2-c652-4dcf-b397-6e62ae52bf1d",
+       "name": "Chocolate Mint"
+      },
+      {
+       "id": "5c58b9bd-657a-42f5-a130-2b5d5d2eb718",
+       "name": "Peppermint"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "995183c8-e665-4bb2-8a2c-845bc5ee7bfd",
+     "name": "Rosemary",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "ec269765-bc63-4590-abe9-cf63e36af389",
+       "name": "Rosemary"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "0d4174b0-fa44-43ea-91fc-c2cbec9c8bf9",
+     "name": "Sage",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6f73af20-2096-45e2-abe0-01cacb9a8229",
+       "name": "Garden Sage"
+      },
+      {
+       "id": "e37ab48c-f68e-448f-a6aa-fe016ecaf4fd",
+       "name": "Sage: Pineapple"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "2bb927d9-0433-4501-98c0-7fb267877f28",
+     "name": "Tarragon",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "6cfa5410-21ac-4023-98c9-c2dec406acd4",
+       "name": "French Tarragon"
+      },
+      {
+       "id": "d2788342-531f-4cd2-979d-a1044a4272be",
+       "name": "Russian Tarragon"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "1f9a2d40-6df4-4964-b503-a2a32072208d",
+   "name": "Houseplants",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "b0a61907-5e6d-4135-ad4a-e204f8c780d1",
+     "name": "Dracaena"
+    }
+   ],
+   "children": [
+    {
+     "id": "a9e56948-35b0-4134-8169-d654a72542f4",
+     "name": "Avocado",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "8cc7b72a-3723-4040-9b8b-851fb625bdef",
+       "name": "Avocado"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "7d4e2fdc-00fb-4ef1-8432-ca40900b798f",
+     "name": "Chrysanthemum",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "a458d170-6669-4e7a-b12b-810877fc535e",
+       "name": "Chrysanthemum"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "05cd95c3-e8b2-42c7-840d-e07f76ff216a",
+     "name": "Citronella",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "dd8476f8-1485-43a4-9bbf-16c9dbeada03",
+       "name": "Citronella"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "b886774c-636a-4acc-a7ef-26772c70bbf0",
+     "name": "Fittonia",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "14e08c28-ef65-4b80-9f2c-418b74a19adc",
+       "name": "Red Fittonia"
+      },
+      {
+       "id": "776f43b0-f742-48c5-bf5e-82089b49d8d2",
+       "name": "Pink Fittonia"
+      },
+      {
+       "id": "688f2d80-12f0-4c20-89ea-b245a5f10086",
+       "name": "Green Fittonia"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "d5e7a96a-811f-4e67-950c-93123465ace9",
+     "name": "Geranium",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "87fb9750-34f4-4218-9a14-905602f9319e",
+       "name": "Zonal Geranium"
+      },
+      {
+       "id": "5fbb3198-c67a-41c9-8579-d5bdcefc0ee0",
+       "name": "Geranium Cutting"
+      },
+      {
+       "id": "bfd67dee-5aaa-4e17-bdf9-ec0857b8ff61",
+       "name": "Geranium"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "f86b3ed6-1a85-4361-ae09-b0a6f20f9765",
+     "name": "Maple",
+     "depth": 1,
+     "plantings": [],
+     "children": []
+    },
+    {
+     "id": "91b6021f-fc81-4283-9f3d-d358e79f9d71",
+     "name": "Pothos",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "58cbd819-3023-48e4-9ac6-6013d05fd0e9",
+       "name": "Pothos"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "da81e372-f23c-4f49-9373-185242cde5a5",
+     "name": "Tradescantia",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "979dcdee-2057-47ae-aa3e-eca3212e15cd",
+       "name": "Tradescantia Cuttings Experiment."
+      },
+      {
+       "id": "bdfc22eb-e5e0-4308-b003-bf2c5f5306c5",
+       "name": "Tradescantia"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "4a299991-73c8-4a08-af04-a6b1f8d9d9b0",
+   "name": "Ornamentals",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "8814273d-3444-4183-83b8-dad09a49c452",
+     "name": "Japanese Maple"
+    }
+   ],
+   "children": [
+    {
+     "id": "ffb5b5df-04ab-4fc6-a2cf-b605573ff3ea",
+     "name": "Begonia",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "0b61a444-bbf8-44e2-818c-816e5f45333b",
+       "name": "Tuberous Begonia (bronze-leaf, hanging)"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "be2a71a9-e0c2-4efe-bb30-b013be739bdb",
+     "name": "Hosta",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "21408041-566c-432a-a109-38e158158120",
+       "name": "Hosta"
+      }
+     ],
+     "children": []
+    },
+    {
+     "id": "3c1d180b-1efd-4beb-a407-fa78f06095a8",
+     "name": "Rose",
+     "depth": 1,
+     "plantings": [
+      {
+       "id": "f4b75e5e-91e8-4466-9313-e2d95cf9d19c",
+       "name": "Red Rose (cultivar unknown)"
+      }
+     ],
+     "children": []
+    }
+   ]
+  },
+  {
+   "id": "4a6b55dd-cfef-4d77-b116-b8e3a5220dc9",
+   "name": "Succulents & Cacti",
+   "depth": 0,
+   "plantings": [
+    {
+     "id": "7ea05605-e08c-4bcc-8e85-8387a965d027",
+     "name": "Jade Plant"
+    },
+    {
+     "id": "8a25017f-2678-4b02-8f66-8ae3ad7f14ef",
+     "name": "Echeveria"
+    },
+    {
+     "id": "f586305f-9bbe-4a5d-a129-80b5cac66ac1",
+     "name": "Lithops"
+    },
+    {
+     "id": "f7cc1e5c-6a71-4a57-8969-5148da48adb1",
+     "name": "Crown of Thorns"
+    },
+    {
+     "id": "5fb2fae2-b730-4f87-aff5-86354b75f755",
+     "name": "Christmas Cactus"
+    },
+    {
+     "id": "6567393a-8833-4ea2-a60e-a5dba8993ef4",
+     "name": "Test Plant Debug"
+    }
+   ],
+   "children": []
+  }
+ ],
+ "invariants": {
+  "displayList_covers_all_projects": true,
+  "tree_places_all_non_null_plantings": true,
+  "plantings_placed": 171,
+  "distinct_project_keys_with_plantings": 58,
+  "max_depth": 1
+ }
+}
