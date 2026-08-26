@@ -8,7 +8,8 @@ import { useOptionalToast } from '../../context/ToastContext.jsx'
 import GroupByControl from '../forms/GroupByControl.jsx'
 import Sheet from '../forms/Sheet.jsx'
 import Icon from '../Icon.jsx'
-import PhotoImg from '../PhotoImg.jsx'
+import PhotoView from '../photo/PhotoView.jsx'
+import { TIER } from '../../lib/photoModel.js'
 import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
   dormantRows,
@@ -134,8 +135,8 @@ function Row({ row, pending, onLog, onSkip }) {
         flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8,
         padding: '0 10px', textDecoration: 'none', color: P.dark, minHeight: ROW_TAP_MIN,
       }}>
-        {row.thumb && (
-          <PhotoImg photoId={row.photoId} initialUrl={row.thumb} alt="" style={{ width: 30, height: 30, borderRadius: 6, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
+        {row.photo && (
+          <PhotoView photo={row.photo} tier={TIER.THUMB} alt="" style={{ width: 30, height: 30, borderRadius: 6, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.9rem', fontWeight: 600, color: P.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -309,8 +310,28 @@ export default function CareNeeded({ plan }) {
         locationId: pl.location_id || null,
         locationName: (pl.location_id && nameById.get(pl.location_id)) || null,
         containerType: pl.container_type || null,
-        thumb: pl.featured_photo_view_url || null,
-        photoId: pl.featured_photo_id || null,
+        // BUG-TIERLESSPHOTOS-001 — a photo-shaped row for <PhotoView>, not a hand-picked URL. This
+        // used to be `thumb: pl.featured_photo_view_url`: a field NAMED thumb holding the full
+        // ORIGINAL, painted into a 30px box (79 device px at Dave's dpr) on the post-login landing
+        // route, on a list that runs to ~200 rows. /api/plants signs the thumbs/ companion on the
+        // SAME row (lambda/plants featuredPhotoUrls) and it was simply never read.
+        //
+        // Handing over the raw fields rather than a chosen URL is the whole point: photoModel maps
+        // featured_photo_thumb_url -> THUMB and featured_photo_view_url -> FULL, so tier=THUMB is a
+        // two-entry chain and the 16.5% of photos with no thumb OBJECT (BUG-PHOTONEWTHUMB-001 —
+        // thumb_url is a non-empty presigned string on all 1094 rows either way) degrade to the
+        // original on load failure with ZERO network, because the fallback came down in this same
+        // response. Picking here with `||` would be the bug this ticket is named for.
+        //
+        // The PHOTO id, never the planting id: photoId feeds the 900s-presign self-heal against
+        // /api/photos/view-url/<id>, so conflating the two would 404 every heal (the hazard
+        // PlantingTile's adapter documents). plant_id is the photo's real parent.
+        photo: pl.featured_photo_view_url ? {
+          id: pl.featured_photo_id ?? null,
+          featured_photo_view_url: pl.featured_photo_view_url,
+          featured_photo_thumb_url: pl.featured_photo_thumb_url ?? null,
+          plant_id: pl.id,
+        } : null,
       }
     }
     return map

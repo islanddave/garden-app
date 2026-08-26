@@ -27,7 +27,8 @@ import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
-import PhotoImg from '../components/PhotoImg.jsx'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import { useMembers } from '../hooks/useMembers.js'
 // V4-GARDENCACHE-001 — the SWR read hook already serving PlantingDetail, LocationDetail,
 // CareNeeded and PhotosWall. Garden was simply never a consumer.
@@ -1004,6 +1005,19 @@ export default function Garden() {
   )
 }
 
+// A project row reshaped into what photoModel calls a photo. The remap is the load-bearing part:
+// `p.id` is the PROJECT id, and handing that to <PhotoView> would point the 900s-presign self-heal
+// at /api/photos/view-url/<projectId> — a 404, i.e. a permanent blank the first time a URL expires,
+// invisible to jsdom and to any static test. Same hazard PlantingTile's adapter exists to avoid.
+function treePhoto(p) {
+  return {
+    id: p.featured_photo_id ?? null,
+    featured_photo_view_url: p.featured_photo_view_url,
+    featured_photo_thumb_url: p.featured_photo_thumb_url ?? null,
+    project_id: p.id,
+  }
+}
+
 function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null }) {
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
@@ -1042,8 +1056,20 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
           <span aria-hidden="true" style={thumbWrap}><Icon name="nav.inventory" size={22} decorative style={{ color: P.green }} /></span>
         ) : (
           <Link to={`/projects/${p.id}`} aria-label={`Open ${p.name}`} style={thumbWrap}>
+            {/* BUG-TIERLESSPHOTOS-001 — 40 x 40 (105 device px) asking for the full ORIGINAL. The
+                tier is requested here and the surface upgrades the moment the data exists, but be
+                clear about what that is worth TODAY: this branch is DEAD in production. GET
+                /api/projects (the list route, lambda/projects/index.js ~:863 onward) selects
+                neither featured_photo_id nor featured_photo_storage_path — only GET
+                /api/projects/:id resolves a featured URL (:582) — so `p.featured_photo_view_url` is
+                undefined on every tree row and the Icon branch below is the one that renders. The
+                fix is a Lambda change (join the featured photo into the LIST select and sign both
+                derivatives, as lambda/plants featuredPhotoUrls already does), not a client one.
+                tier=THUMB is nonetheless correct and free: photoModel builds [thumb, full] when the
+                thumb field is present and [full] when it is absent, so this reads the original
+                unchanged today and the thumb with no further client edit once the API sends it. */}
             {p.featured_photo_view_url
-              ? <PhotoImg photoId={p.featured_photo_id} initialUrl={p.featured_photo_view_url} alt="" style={thumbImg} />
+              ? <PhotoView photo={treePhoto(p)} tier={TIER.THUMB} alt="" style={thumbImg} />
               : <Icon name="nav.garden" size={24} decorative style={{ color: P.green }} />}
           </Link>
         )}

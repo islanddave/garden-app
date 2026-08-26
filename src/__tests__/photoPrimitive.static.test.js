@@ -72,9 +72,13 @@ const PHOTOIMG_ALLOWED = new Set([
   // components/PutUpPhotoThumb.jsx — MIGRATED (V4-PHOTOIDARM-001). It was here because the primitive
   // could not express an id-only photo; <PhotoView resolveById> now can, over the SAME mount-mint.
   'components/SpaceAttachPicker.jsx',      // see clause 1
-  'components/planting/GrowthStrip.jsx',   // not yet migrated
-  'components/today/CareNeeded.jsx',       // not yet migrated
-  'pages/Garden.jsx',                      // featured_photo_view_url tiles
+  // components/planting/GrowthStrip.jsx — MIGRATED (BUG-TIERLESSPHOTOS-001). The 24-element
+  // milestone strip is tier=THUMB; the compare stage and playback frame stay FULL on purpose (an
+  // 840-device-px box vs an 800px-longest-edge derivative) and are on the primitive regardless.
+  // components/today/CareNeeded.jsx — MIGRATED (BUG-TIERLESSPHOTOS-001). It was the worst
+  // size-to-box ratio in the app: the featured ORIGINAL into a 30px row thumb on the landing route.
+  // pages/Garden.jsx — MIGRATED (BUG-TIERLESSPHOTOS-001). tier=THUMB is requested but currently
+  // resolves to [full], because GET /api/projects does not send a featured photo at all.
   'pages/LocationDetail.jsx',              // see clause 1
   'pages/PlantingDetail.jsx',              // not yet migrated
   'pages/ProjectDetail.jsx',               // not yet migrated
@@ -121,7 +125,7 @@ describe('photo drift guard: one object, one primitive (V4-PHOTOMODEL-001)', () 
   it('clause 2 is a RATCHET — the allow-list may only shrink', () => {
     // Pins the count so migrating a surface without deleting its entry, or re-adding one, fails
     // here. Update this number DOWNWARD only.
-    expect(PHOTOIMG_ALLOWED.size).toBe(11)
+    expect(PHOTOIMG_ALLOWED.size).toBe(8)
     for (const rel of PHOTOIMG_ALLOWED) {
       if (rel === 'components/photo/PhotoView.jsx') continue
       expect(/<PhotoImg\b/.test(stripComments(readFileSync(join(SRC, rel), 'utf8'))),
@@ -135,9 +139,12 @@ describe('photo drift guard: one object, one primitive (V4-PHOTOMODEL-001)', () 
     // built for, and it must not quietly slide back to an allow-listed wrapper. PlantingTile joined
     // with V4-PHOTOUI-001 — it is the highest-volume photo surface in the app (24 tiles per Garden
     // group), so a silent slide back is the one that costs the most.
+    // CareNeeded / GrowthStrip / Garden joined with BUG-TIERLESSPHOTOS-001. CareNeeded is the one
+    // to watch: it is on Today, the post-login landing route, at ~200 rows.
     for (const rel of ['pages/PhotoLibrary.jsx', 'components/PhotosWall.jsx',
                        'components/PutUpPhotoThumb.jsx', 'pages/EventDetail.jsx',
-                       'components/PlantingTile.jsx']) {
+                       'components/PlantingTile.jsx', 'components/today/CareNeeded.jsx',
+                       'components/planting/GrowthStrip.jsx', 'pages/Garden.jsx']) {
       const code = stripComments(readFileSync(join(SRC, rel), 'utf8'))
       expect(code.includes('<PhotoView'), `${rel} must render <PhotoView>`).toBe(true)
       expect(/<PhotoImg\b/.test(code), `${rel} must not render <PhotoImg> directly`).toBe(false)
