@@ -18,6 +18,11 @@ import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 // so it is genuinely one action). Rows without a `plantings` array (older payloads / safety) fall back
 // to the legacy project-level row so the band never goes blank.
 //
+// V4-ICON-001 (2026-08-26): rows carry `iconName` (a registry key) instead of the former `emoji`
+// literal. The two reasons map to `care.drop` (water) and `status.unseen` (long-unseen); both are
+// drawn SVGs with their own accessibleName, so the row's meaning survives a font that has no
+// pictographs and is not carried by hue alone. TodayBand.jsx renders them through <Icon>.
+//
 // Each row carries a reason-label + a tap-to-log route. OPERATIONAL surface (harm-prevention +
 // time-sensitive opportunity), NOT a reward surface: no streaks/badges/celebration; recent-activity
 // stays on the Dashboard. Render-time cap (C5 / ADHD-overwhelm): at most TODAY_RENDER_CAP render;
@@ -49,13 +54,13 @@ function waterItem(row) {
   const p = lonePlanting(row)
   if (p) return {
     key: `water:plant:${p.id}`, kind: 'water', priority: KIND_PRIORITY.water, sort,
-    emoji: '\u{1F4A7}', label: 'Needs water',
+    iconName: 'care.drop', label: 'Needs water',
     plantId: p.id, projectId: row.project_id, projectName: p.name || projName(row),
     detail, to: `/log?project=${row.project_id}&plant=${p.id}&event_type=watering`, style,
   }
   return {
     key: `water:${row.project_id}`, kind: 'water', priority: KIND_PRIORITY.water, sort,
-    emoji: '\u{1F4A7}', label: 'Needs water',
+    iconName: 'care.drop', label: 'Needs water',
     plantId: null, projectId: row.project_id, projectName: projName(row),
     detail, to: `/log?project=${row.project_id}&event_type=watering`, style,
   }
@@ -68,13 +73,13 @@ function staleItem(row) {
   const p = lonePlanting(row)
   if (p) return {
     key: `stale:plant:${p.id}`, kind: 'stale', priority: KIND_PRIORITY.stale, sort,
-    emoji: '\u{1F440}', label: 'Not seen lately',
+    iconName: 'status.unseen', label: 'Not seen lately',
     plantId: p.id, projectId: row.project_id, projectName: p.name || projName(row),
     detail, to: `/log?project=${row.project_id}&plant=${p.id}&event_type=observation`, style: STALE_STYLE,
   }
   return {
     key: `stale:${row.project_id}`, kind: 'stale', priority: KIND_PRIORITY.stale, sort,
-    emoji: '\u{1F440}', label: 'Not seen lately',
+    iconName: 'status.unseen', label: 'Not seen lately',
     plantId: null, projectId: row.project_id, projectName: projName(row),
     detail, to: `/log?project=${row.project_id}&event_type=observation`, style: STALE_STYLE,
   }
