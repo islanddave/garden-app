@@ -17,6 +17,19 @@ const FORMS = {
   planning:   { svg24: '<path d="M6.5 5.5h11a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9.5 5.5V4.6a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v0.9z"/><path d="M8.6 11h6.8"/><path d="M8.6 14.4h6.8"/><path d="M8.6 17.8h4.2"/>', svg18: '<path d="M6 5.5h12a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9.4 5.5V4.6a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v0.9z"/><path d="M8.4 11.5h7.2"/><path d="M8.4 15.5h7.2"/>' },
   ended:      { svg24: '<path d="M6.5 4.5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z"/>', svg18: '<path d="M6 4.5h12a1.8 1.8 0 0 1 1.8 1.8v11.4a1.8 1.8 0 0 1-1.8 1.8H6a1.8 1.8 0 0 1-1.8-1.8V6.3A1.8 1.8 0 0 1 6 4.5z"/>' },
   failed:     { svg24: '<path d="M6.2 6.2l11.6 11.6"/><path d="M17.8 6.2L6.2 17.8"/>', svg18: '<path d="M6.6 6.6l10.8 10.8"/><path d="M17.4 6.6L6.6 17.4"/>' },
+  // ── V4-ICON-001: attention states. These are NOT lifecycle stages — they are what the app says
+  // about a planting right now — but they live in status.* because that is the namespace every
+  // badge already reads (`status.${x}`), and inventing a second one would split the vocabulary.
+  //
+  // unseen = the eye-off. Kin to event.observation's lens by design — "you looked at this" and
+  // "you have not looked at this lately" are opposites and SHOULD share a root form. The pupil is
+  // load-bearing, not decoration: lens + slash alone renders as Ø, the empty-set/diameter sign
+  // (seen on the contact sheet), because a near-circular lens with a corner-to-corner slash IS
+  // that character. The pupil breaks the read, so the lens is also flattened (w/h 1.73 vs 1.56).
+  // The 18 master cannot keep the pupil — lens interior 8.1 device px, pupil-plus-stroke 6.7, a
+  // 0.5px counter-space that blobbed on the sheet (§4 aperture) — so it kills the Ø the other
+  // way, with a much flatter almond (w/h 2.3) that no longer resembles a circle at all.
+  unseen:     { svg24: '<path d="M3.2 12C5.4 8.6 8.4 6.9 12 6.9s6.6 1.7 8.8 5.1c-2.2 3.4-5.2 5.1-8.8 5.1S5.4 15.4 3.2 12z"/><circle cx="12" cy="12" r="2.5"/><path d="M5.6 18.4 18.4 5.6"/>', svg18: '<path d="M3 12C5.4 9.4 8.4 8.1 12 8.1s6.6 1.3 9 3.9c-2.4 2.6-5.4 3.9-9 3.9S5.4 14.6 3 12z"/><path d="M5.2 18.8 18.8 5.2"/>' },
 }
 
 // 17 status keys -> 12 forms + a humanized name.
@@ -25,8 +38,9 @@ const KEY_FORM = {
   vegetative: 'vegetative', growing: 'vegetative', active: 'vegetative', flowering: 'flowering',
   fruiting: 'fruiting', harvesting: 'harvesting', harvested: 'harvested', dormant: 'dormant',
   planning: 'planning', ended: 'ended', failed: 'failed', dead: 'failed',
+  unseen: 'unseen',
 }
-const NAME = { seed:'Seed', rooting:'Rooting', seedling:'Seedling', sprouting:'Sprouting', seeding:'Seeding', vegetative:'Vegetative', growing:'Growing', active:'Active', flowering:'Flowering', fruiting:'Fruiting', harvesting:'Harvesting', harvested:'Harvested', dormant:'Dormant', planning:'Planning', ended:'Ended', failed:'Failed', dead:'Dead' }
+const NAME = { seed:'Seed', rooting:'Rooting', seedling:'Seedling', sprouting:'Sprouting', seeding:'Seeding', vegetative:'Vegetative', growing:'Growing', active:'Active', flowering:'Flowering', fruiting:'Fruiting', harvesting:'Harvesting', harvested:'Harvested', dormant:'Dormant', planning:'Planning', ended:'Ended', failed:'Failed', dead:'Dead', unseen:'Not seen lately' }
 
 export const STATUS_GLYPHS = Object.fromEntries(Object.entries(KEY_FORM).map(([key, form]) => [key, {
   key: `status.${key}`, glyph: null, svg24: FORMS[form].svg24, svg18: FORMS[form].svg18,

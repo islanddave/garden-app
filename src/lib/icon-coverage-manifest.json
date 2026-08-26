@@ -7,7 +7,8 @@
   ],
   "nav": [
     "nav.today", "nav.garden", "nav.back", "nav.plus", "nav.more", "nav.findings",
-    "nav.dashboard", "nav.inventory", "nav.helper", "nav.notes", "nav.signout", "nav.critters"
+    "nav.dashboard", "nav.inventory", "nav.helper", "nav.notes", "nav.signout", "nav.critters",
+    "nav.harvests", "nav.putup", "nav.space", "nav.achievements"
   ],
   "action": [
     "action.heart", "action.share", "action.info", "action.edit", "action.archive",
@@ -22,7 +23,7 @@
     "status.seed", "status.rooting", "status.seedling", "status.sprouting", "status.seeding",
     "status.vegetative", "status.growing", "status.active", "status.flowering", "status.fruiting",
     "status.harvesting", "status.harvested", "status.dormant", "status.planning", "status.ended",
-    "status.failed", "status.dead"
+    "status.failed", "status.dead", "status.unseen"
   ],
   "lifecycle": [
     "lifecycle.sprout", "lifecycle.bud", "lifecycle.bloom", "lifecycle.fruit"

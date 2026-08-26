@@ -343,6 +343,47 @@ const A = {
     svg24: '<circle cx="10.8" cy="10.8" r="6.2"/><path d="M15.4 15.4 19.8 19.8"/>',
     svg18: '<circle cx="10.6" cy="10.6" r="6.4"/><path d="M15.4 15.4 19.6 19.6"/>',
   },
+  // ── V4-ICON-001 nav destinations still rendered as emoji in BottomNav (basket/jar/house/cup). ──
+  // Key names follow the nav.* convention already in this file: one key per DESTINATION, named
+  // for the page. None of these four is a §9 family member — §9 predates the Harvests/Put-Up/
+  // Space/Achievements tabs — so they are drawn to the same grammar and enrolled in the coverage
+  // manifest's nav family, which is where a future reader will look for them.
+  //
+  // nav.harvests is deliberately NOT a basket. status.harvesting + event.harvest already own the
+  // woven-basket-with-handle form, and a nav tab wearing a content mark is the exact defect that
+  // forced the nav.today redraw (see the top of this file). A bowl of produce says "what you
+  // picked" without borrowing the mark that means "picking".
+  'nav.harvests': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Harvests',
+    // ONE fruit, centred, with a leaf — NOT two. Two circles resting on the rim line read as a
+    // smiley face at every size (verified on the contact sheet, and it is the kind of thing a
+    // coverage band cannot see). The leaf is the kit's Ø18 quadrant arc, same as facet.type's.
+    svg24: '<path d="M5.4 13.4h13.2a6.6 6.6 0 0 1-13.2 0z"/><circle cx="12" cy="10.4" r="3"/><path d="M12 7.4c0-1.5 1.2-2.7 2.7-2.7 0 1.5-1.2 2.7-2.7 2.7z"/>',
+    // 18: the leaf drops (2.7 units = ~2 device px, §2 complexity floor); bowl + fruit carries it.
+    svg18: '<path d="M5.6 13.2h12.8a6.4 6.4 0 0 1-12.8 0z"/><circle cx="12" cy="10.4" r="2.8"/>',
+  },
+  'nav.putup': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Put-Up',
+    // Canning jar: screw band + body + fill line. event.cured is the garlic bulb and
+    // event.seed_saved the envelope, so the jar is unclaimed and reads as preserving.
+    svg24: '<path d="M8.2 4.6h7.6a1.2 1.2 0 0 1 1.2 1.2v1.4a1.2 1.2 0 0 1-1.2 1.2H8.2A1.2 1.2 0 0 1 7 7.2V5.8a1.2 1.2 0 0 1 1.2-1.2z"/><path d="M8.8 8.4h6.4a1.8 1.8 0 0 1 1.8 1.8v7.6a1.8 1.8 0 0 1-1.8 1.8H8.8a1.8 1.8 0 0 1-1.8-1.8v-7.6a1.8 1.8 0 0 1 1.8-1.8z"/><path d="M7 14.8h10"/>',
+    // 18: the fill line drops — at 2.0px stroke it closes the gap to the jar shoulder (§4).
+    svg18: '<path d="M8 4.4h8a1.2 1.2 0 0 1 1.2 1.2v1.6a1.2 1.2 0 0 1-1.2 1.2H8A1.2 1.2 0 0 1 6.8 7.2V5.6A1.2 1.2 0 0 1 8 4.4z"/><path d="M8.6 8.4h6.8a1.8 1.8 0 0 1 1.8 1.8v7.8a1.8 1.8 0 0 1-1.8 1.8H8.6a1.8 1.8 0 0 1-1.8-1.8v-7.8a1.8 1.8 0 0 1 1.8-1.8z"/>',
+  },
+  'nav.space': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Space',
+    // A Space is the top-level container ABOVE locations, so the mark is a plot subdivided into
+    // zones — not a house. nav.dashboard and event.brought_inside already carry house forms, and
+    // a third would say "home" where this says "the piece of ground and everything in it".
+    svg24: '<rect x="4.4" y="6.4" width="15.2" height="11.2" rx="1.8"/><path d="M4.4 12h15.2"/><path d="M12.6 12v5.6"/>',
+    svg18: '<rect x="4" y="6.2" width="16" height="11.6" rx="1.8"/><path d="M4 12h16"/><path d="M12.8 12v5.8"/>',
+  },
+  'nav.achievements': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Achievements',
+    svg24: '<path d="M7.8 4.8h8.4v3.8a4.2 4.2 0 0 1-8.4 0z"/><path d="M7.8 6.4H5.4a3 3 0 0 0 2.9 3"/><path d="M16.2 6.4h2.4a3 3 0 0 1-2.9 3"/><path d="M12 12.8v3.6"/><path d="M9 19.6l0.8-3.2h4.4l0.8 3.2z"/>',
+    // 18: base collapses to a plinth bar (the trapezoid's 3.2-unit taper is sub-pixel at 18).
+    svg18: '<path d="M7.6 4.6h8.8v3.9a4.4 4.4 0 0 1-8.8 0z"/><path d="M7.6 6.4H5.2a3 3 0 0 0 3 3"/><path d="M16.4 6.4h2.4a3 3 0 0 1-3 3"/><path d="M12 12.9v4"/><path d="M8.4 19.4h7.2"/>',
+  },
   'action.chevron': {
     class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Show more',
     // Disclosure ">" — the mirror of nav.back, and mirrored ON PURPOSE: back and disclose are
