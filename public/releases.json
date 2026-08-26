@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.57.0",
+    "date": "2026-08-26",
+    "highlights": [
+      "Design-system guard widened to 36 files and 4 rule classes; 25 new icons and 93 emoji routed to the SVG registry; app launch ~1.2s faster; 78% smaller warm load; Collection retry no longer blanks the app"
+    ]
+  },
+  {
     "version": "4.56.0",
     "date": "2026-08-26",
     "highlights": [
