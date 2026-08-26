@@ -43,11 +43,13 @@ const ESCAPED_PICTOGRAPHIC = /\\u\{1F[0-9A-Fa-f]{3}\}|\\u2[6-7][0-9A-Fa-f]{2}/g
 //   harvestTracked — check/cross marks inside a COMMENT documenting a gating asymmetry. Prose in
 //     a comment is not an icon slot; there is nothing here to route.
 // Counts are by codepoint so this file itself contains no raw emoji.
+// CLOSED by slice 4 (see iconWire4.test.jsx), which drew the two missing glyphs and taught
+// ChoiceGrid to resolve a key: overwinterRegimes 4 -> 0, inventoryEnums 2 -> 0.
 const OPEN_HANDOFFS = {
   'lib/waterDepth.js': 6,
   'lib/lifeStory.js': 5,
-  'lib/overwinterRegimes.js': 4,
-  'lib/inventoryEnums.js': 2,
+  'lib/overwinterRegimes.js': 0,
+  'lib/inventoryEnums.js': 0,
   'lib/harvestTracked.js': 3,
   'components/NotifyButton.jsx': 4,
 }

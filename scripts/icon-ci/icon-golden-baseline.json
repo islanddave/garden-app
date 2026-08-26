@@ -81,6 +81,8 @@
     "facet.group": 27.84,
     "facet.lifecycle": 21.74,
     "facet.freeform": 23.34,
+    "inventory.consumable": 21.43,
+    "inventory.durable": 28.23,
     "status.seed": 25.33,
     "status.rooting": 21.94,
     "status.seedling": 21.75,

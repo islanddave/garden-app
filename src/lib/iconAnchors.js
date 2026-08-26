@@ -495,6 +495,38 @@ const A = {
     svg24: '<path d="M12.4 3.8h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.4 6.4a1.8 1.8 0 0 1-2.54 0l-6-6a1.8 1.8 0 0 1 0-2.54l6.4-6.4A1.8 1.8 0 0 1 12.4 3.8z"/><circle cx="16" cy="8" r="1.5" fill="currentColor" stroke="none"/>',
     svg18: '<path d="M12.6 3.6h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.6 6.6a1.8 1.8 0 0 1-2.54 0l-6.2-6.2a1.8 1.8 0 0 1 0-2.54l6.6-6.6A1.8 1.8 0 0 1 12.6 3.6z"/><circle cx="16.2" cy="7.8" r="1.6" fill="currentColor" stroke="none"/>',
   },
+  // ── V4-ICON-001 inventory-type family (2 keys). The inventory_items `type` CHECK is exactly
+  //    ('consumable','durable') — a closed two-value set, not an open family — so this namespace
+  //    is complete at two and is not a stub. Both are drawn rather than borrowed: nothing in the
+  //    other 133 reads as either, and a near-miss key renders the silent neutral dot, which is
+  //    worse than the emoji it replaces. Consumer: InventoryAdd's type picker via ChoiceGrid. ──
+  'inventory.consumable': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Consumable',
+    // Cinched sack: flared open neck + tie bar over a round body. FOUR forms were rendered before
+    // this one stuck, and the rejects are worth recording because they all failed the same way —
+    // a tapered body with a closed top is a SALT SHAKER, not a bag. A domed top (take 1) and a
+    // rolled-down band (take 3) both read as a shaker/spice jar at 96px and as an anonymous
+    // blob at 22px. What makes it a sack is the OPEN neck: the mouth has to be visibly narrower
+    // than the body AND unclosed at the top, with the tie bar sitting across it rather than
+    // capping it. A fill level was also tried (the "it depletes" tell) and dropped: at 96px a
+    // stripe across a round body reads as a piggy bank, and at 22px it closes the body's counter.
+    // Distinct from action.archive (square box + rectangular lid) and care.containers (two
+    // straight-sided pots) — both compared side by side at 96, 28 and 22.
+    svg24: '<path d="M9.4 4.8h5.2"/><path d="M10.2 8.4 9.4 4.8"/><path d="M13.8 8.4 14.6 4.8"/><path d="M10.2 8.4h3.6c2.8 1.4 4.4 4 4.4 6.8 0 2.9-2.6 4.8-6.2 4.8s-6.2-1.9-6.2-4.8c0-2.8 1.6-5.4 4.4-6.8z"/>',
+    // 18: drops nothing. The neck IS the read (see above), so the usual complexity-floor cut would
+    // take the one element that distinguishes this from a ball; the body is widened instead.
+    svg18: '<path d="M9.2 4.6h5.6"/><path d="M10.1 8.4 9.2 4.6"/><path d="M13.9 8.4 14.8 4.6"/><path d="M10.1 8.4h3.8c2.9 1.5 4.6 4.2 4.6 7 0 3-2.7 5-6.5 5s-6.5-2-6.5-5c0-2.8 1.7-5.5 4.6-7z"/>',
+  },
+  'inventory.durable': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Durable',
+    // Combination wrench — one closed outline, no interior counter to close up at 18. The two
+    // diagonal neighbours were checked at 22px: event.other is a pencil (solid taper to a nib,
+    // no fork) and event.pruning is shears (two rings). The open jaw is what separates this from
+    // both, and it survives the small master because it is a notch in the silhouette rather than
+    // an enclosed hole. They also never share a surface — those two are event-history marks.
+    svg24: '<path d="M14.9 6.4a1 1 0 0 0 0 1.42l1.42 1.42a1 1 0 0 0 1.42 0l3.5-3.5a5.7 5.7 0 0 1-7.54 7.54l-6.56 6.56a2.02 2.02 0 0 1-2.85-2.85l6.56-6.56a5.7 5.7 0 0 1 7.54-7.54z"/>',
+    svg18: '<path d="M14.8 6.2a1.05 1.05 0 0 0 0 1.5l1.5 1.5a1.05 1.05 0 0 0 1.5 0l3.3-3.3a5.5 5.5 0 0 1-7.28 7.28l-6.3 6.3a2.1 2.1 0 0 1-2.97-2.97l6.3-6.3a5.5 5.5 0 0 1 7.28-7.28z"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)

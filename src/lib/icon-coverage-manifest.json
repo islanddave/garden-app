@@ -42,5 +42,8 @@
   ],
   "mode": [
     "mode.desk"
+  ],
+  "inventory": [
+    "inventory.consumable", "inventory.durable"
   ]
 }
