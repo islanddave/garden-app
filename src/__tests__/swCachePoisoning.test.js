@@ -52,11 +52,20 @@ describe('imageCacheFirst — only real images are written to the image cache', 
     return { caches, sw }
   }
 
+  // V4-PHOTOCORS-001 made the request MODE load-bearing: imageCacheFirst now routes a 'cors' request
+  // to the photo cache and a 'no-cors' one to IMAGE_CACHE. Every case in this block is a plain <img>,
+  // which is a no-cors request in a browser — but node's Request constructor DEFAULTS to 'cors', so
+  // leaving the mode implicit here silently exercised the photo path while claiming to test the app
+  // one. Spelled out so the harness says what the browser does. (No guard changed: the opaque
+  // refusal below is untouched, and an opaque response can only ever arise from a no-cors request in
+  // the first place.)
+  const imgReq = (url) => new Request(url, { mode: 'no-cors' })
+
   it('an image/* 200 IS cached', async () => {
     // The positive control. Without it every "not cached" assertion below could pass because the
     // image cache is broken outright. Mutation: invert isImageResponse → this fails first.
     const { caches, sw } = run(res('PNGBYTES', 'image/png'))
-    await dispatchFetch(sw, new Request(IMG_URL)).responded
+    await dispatchFetch(sw, imgReq(IMG_URL)).responded
     await settle()
     expect(caches.store.get(IMAGE_CACHE).entries.has(IMG_URL)).toBe(true)
   })
@@ -65,7 +74,7 @@ describe('imageCacheFirst — only real images are written to the image cache', 
     // The bug itself. Mutation: drop the isImageResponse() call in imageCacheFirst → the login page
     // is stored under photo.jpg and served cache-first forever.
     const { caches, sw } = run(htmlRes())
-    await dispatchFetch(sw, new Request(IMG_URL)).responded
+    await dispatchFetch(sw, imgReq(IMG_URL)).responded
     await settle()
     expect(caches.store.get(IMAGE_CACHE).entries.size).toBe(0)
   })
@@ -74,7 +83,7 @@ describe('imageCacheFirst — only real images are written to the image cache', 
     // Refusing to CACHE a bad answer must not turn it into a DIFFERENT bad answer — PhotoImg's 403
     // heal reads the real status. Mutation: return a synthetic 503 on the guard-fail branch.
     const { sw } = run(htmlRes())
-    const out = await dispatchFetch(sw, new Request(IMG_URL)).responded
+    const out = await dispatchFetch(sw, imgReq(IMG_URL)).responded
     expect(out.status).toBe(200)
     expect(await out.text()).toContain('Sign in')
   })
@@ -82,7 +91,7 @@ describe('imageCacheFirst — only real images are written to the image cache', 
   it('an S3/CloudFront 403 error body (application/xml) is NOT cached', async () => {
     // The other real-world poison: an expired presign returns XML with a 403.
     const { caches, sw } = run(res('<Error><Code>AccessDenied</Code></Error>', 'application/xml', 403))
-    await dispatchFetch(sw, new Request(IMG_URL)).responded
+    await dispatchFetch(sw, imgReq(IMG_URL)).responded
     await settle()
     expect(caches.store.get(IMAGE_CACHE).entries.size).toBe(0)
   })
@@ -91,10 +100,13 @@ describe('imageCacheFirst — only real images are written to the image cache', 
     // Deliberate, documented cost: cross-origin <img> photos are not offline-cached, because an
     // opaque body cannot be told apart from a login page. Mutation: drop the `type === 'opaque'`
     // test AND relax the status test → unverifiable bodies re-enter the cache.
+    // STILL TRUE AFTER V4-PHOTOCORS-001, and that is the whole design: the flag does not relax this
+    // guard, it stops producing opaque responses by asking for the photo in CORS mode instead.
     const { caches, sw } = run(opaqueRes())
-    await dispatchFetch(sw, new Request('https://bucket.s3.amazonaws.com/photos/p1.jpg')).responded
+    await dispatchFetch(sw, imgReq('https://bucket.s3.amazonaws.com/photos/p1.jpg')).responded
     await settle()
     expect(caches.store.get(IMAGE_CACHE).entries.size).toBe(0)
+    expect(caches.store.has('photos-v1')).toBe(false)
   })
 })
 

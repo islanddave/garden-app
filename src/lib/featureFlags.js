@@ -333,6 +333,46 @@ export const CRITTERS_QUIET = true
 // and both arms stay covered so the lever cannot rot.
 export const WEIGH_IN_FRAME_ENABLED = true
 
+// V4-PHOTOCORS-001 (2026-08-26): make photos actually cacheable by the service worker. Today the
+// IMAGE_CACHE holds ZERO photos and this is the largest measured perf item in the app — the Garden
+// list fires 176 image requests on paint and re-issues 175 of them on every Back, at a ~156 KB
+// median per thumb.
+//
+// WHY NOTHING IS CACHED, precisely: a photo <img> carries no crossOrigin, so it issues a NO-CORS
+// request; the response comes back opaque (status 0, headers stripped) and sw.js's isImageResponse()
+// refuses it, deliberately — an opaque body cannot be told apart from a captive-portal login page.
+// That refusal is a real security guard and this flag does NOT weaken it. It SATISFIES it: with
+// crossOrigin="anonymous" the browser issues a CORS request, S3 answers with
+// Access-Control-Allow-Origin, and the response is no longer opaque, so the SW can read its real
+// content-type and cache it on the merits.
+//
+// TWO HALVES, USELESS APART, so they are coupled MECHANICALLY rather than by two flags:
+//   (1) HERE — crossOrigin="anonymous" on PhotoImg's <img> when the src is cross-origin.
+//   (2) public/sw.js — normalizeImageUrl() must also strip the X-Amz-* presign params, or every
+//       900s re-mint is a fresh cache key and the cache still never hits.
+// sw.js is an unbundled classic script that cannot import this module, and a postMessage'd flag does
+// not survive SW termination, so half (2) gates on `request.mode === 'cors'` instead — which is TRUE
+// exactly when half (1) put the crossOrigin attribute there. A stale-SW/new-bundle skew (or the
+// reverse) therefore degrades to today's behaviour in both directions; no half-state is reachable.
+//
+// CORS IS PROVISIONED AND VERIFIED ON THE LIVE PATH (2026-08-26). Photos are S3 presigns, not CDN
+// URLs — the garden-photos Lambda has no PHOTO_CDN_ENABLED, so resolvePhotoViewUrl takes the presign
+// branch. A real presigned GET against garden-photos-prod with `Origin: https://garden.futureishere.net`
+// returns `Access-Control-Allow-Origin: https://garden.futureishere.net` + `Content-Type: image/jpeg`.
+// Staging's bucket allows the staging CloudFront origin. LOCALHOST IS NOT IN EITHER ALLOW-LIST, so a
+// `npm run dev` session with this flag on exercises the FALLBACK path, not the cached path.
+//
+// FAILURE MODE AND WHAT THE USER SEES. A CORS request that is refused does not degrade to a no-cors
+// fetch — the image does not load at all. PhotoImg therefore retries the SAME url with the attribute
+// removed BEFORE it reports an error upward (so PhotoView's tier chain is not advanced and the mint
+// budget is not spent), and a plain retry that SUCCEEDS where the CORS attempt failed latches
+// crossOrigin off for the rest of the page session. Worst case with CORS broken in prod: the first
+// screenful of photos each pay one extra failed request, then everything is byte-identical to today.
+// Photos never blank.
+//
+// Default FALSE. Do NOT flip without a real-browser measurement on the deployed origin.
+export const PHOTO_CORS_CACHE_ENABLED = false
+
 // BUG-HEICEXIFPASSTHRU-001 asked here whether an UPLOAD should be REFUSED when its metadata cannot
 // be stripped, behind PHOTO_STRIP_STRICT_UPLOAD (parked OFF, pending Dave). REMOVED 2026-08-21,
 // BUG-HEICREALSTRIP-001. Dave ruled against the question rather than answering it — verbatim: "I do

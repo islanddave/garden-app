@@ -17,6 +17,29 @@ const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const IMAGE_CACHE   = `images-${CACHE_VERSION}`
 const MAX_IMAGE_ENTRIES = 150
 
+// V4-PHOTOCORS-001. PHOTOS get their OWN cache (PHOTO_CACHE_NAME, in the mirror block below),
+// separate from the app's own images, for two reasons that both come from measurement.
+//
+// (1) IT SURVIVES DEPLOYS. IMAGE_CACHE is `images-${CACHE_VERSION}` and every deploy rewrites
+// CACHE_VERSION, so a version-keyed photo cache is deleted several times a day — before it can
+// repay the requests that filled it. Photos do not go stale on a code deploy; app images can, and
+// public/ ships ~349 UN-hashed same-origin images (icons, 168 critter SVGs) whose only invalidation
+// mechanism IS the version-keyed name. De-versioning ONE shared image cache would have made those
+// immortal. Two caches is what lets the photo half be permanent without making that true of
+// anything else.
+//
+// (2) IT IS SIZED FOR THE PHOTO WORKING SET, which 150 is not. MEASURED on prod 2026-08-26:
+// `thumbs/plants/` holds 405 objects / 66.0 MB (~163 KB median), and the Garden list fires 176
+// image requests on one fully-expanded paint. Feeding 405 objects through a 150-slot FIFO evicts
+// continuously — a cache that hits sometimes and thrashes constantly, which reads as partial
+// success and is worse than the honest zero it replaces. 500 covers the whole measured plants
+// population with ~23% headroom for the other prefixes a session touches (all thumbs/ = 1,316 /
+// 230.7 MB, so this is deliberately NOT "cache everything").
+// KNOWN GAP, stated rather than hidden: trimCache caps by COUNT, not bytes, and a TIER.FULL
+// original runs ~3 MB. A session that pages the Lightbox hard could hold far more bytes than the
+// thumb math above implies. A byte-aware trim is the follow-up this needs BEFORE the flag flips.
+const MAX_PHOTO_ENTRIES = 500
+
 const LAMBDA_ORIGIN = 'lambda-url.us-east-1.on.aws'
 
 /* SW-MIRROR-START — byte-identical copy lives in public/sw.js; gate:sw-mirror enforces it */
@@ -58,12 +81,24 @@ function apiCacheNameFor(version, sub) {
   return `api-${version}-u-${sub}`
 }
 
+// V4-PHOTOCORS-001 — the ONE cache deliberately not keyed on CACHE_VERSION, hence a literal here
+// rather than something derived from `version`. A photo is immutable content at a stable key (an S3
+// object never changes under its path, and normalizeImageUrl strips the rotating presign params), so
+// a CODE deploy is not a reason to throw its bytes away — and deploys run several times a day, often
+// enough that a version-keyed photo cache is deleted before it can repay the requests that filled it.
+// The API and STATIC caches stay version-keyed on purpose: their contents genuinely do go stale on
+// deploy and update detection depends on that. Do not generalize this to them.
+// The `-v1` is a MANUAL epoch, not the build version: bump it only to deliberately abandon every
+// stored photo (a change to the key normalization would be such a reason).
+const PHOTO_CACHE_NAME = 'photos-v1'
+
 // Predicate replacing the old equality allowlist. The allowlist deleted every key not exactly
 // equal to the three constants, so any per-sub name self-destructed on every activation. Note the
 // BARE `api-${version}` is deliberately NOT kept: unsegmented entries must not survive the upgrade
 // that exists to remove them.
 function keepCacheKey(key, version) {
   if (typeof key !== 'string' || typeof version !== 'string' || !version) return false
+  if (key === PHOTO_CACHE_NAME) return true
   if (key === `static-${version}` || key === `images-${version}`) return true
   const prefix = `api-${version}-u-`
   if (key.startsWith(prefix)) return SW_SUB_PATTERN.test(key.slice(prefix.length))
@@ -243,10 +278,34 @@ async function fetchWithTimeout(request, ms) {
 // full URL would make every re-mint a miss + an immortal entry. Strip signing params for
 // BOTH match and put. Dormant until the photo CDN issues signed URLs; harmless today.
 const SIGNING_PARAMS = ['Expires', 'Signature', 'Key-Pair-Id', 'Policy']
-function normalizeImageUrl(url) {
+
+// V4-PHOTOCORS-001: the SAME problem for the path photos actually take TODAY. Every photo URL is an
+// S3 presign whose X-Amz-* params rotate on each 900s mint, so keying on the full URL makes every
+// re-mint a miss and the cache never hits. Prefix match, not an enumeration: SigV4 emits a variable
+// set (X-Amz-Security-Token appears only under assumed-role credentials) and no non-AWS query param
+// is spelled X-Amz-anything.
+//
+// GATED ON THE REQUEST'S OWN MODE, and that is the whole coupling mechanism — read the note on
+// PHOTO_CORS_CACHE_ENABLED in src/lib/featureFlags.js before changing it. sw.js is an unbundled
+// classic script: it cannot import that module, and a flag pushed in by postMessage does not outlive
+// an idle SW kill (same reason the API cache derives its sub from the request in hand). `corsMode`
+// answers the same question from the request already here. An <img> with no crossOrigin issues
+// 'no-cors' and gets an opaque response that isImageResponse() refuses, so nothing is ever written
+// and stripping the key would be inert; an <img> WITH crossOrigin="anonymous" issues 'cors', gets a
+// readable content-type, and is genuinely cacheable. So the strip is live exactly when the client
+// half is, in either direction of a client/SW version skew, and neither half-state is reachable.
+// A request with no `mode` at all (non-browser callers) falls through to today's behaviour.
+const PRESIGN_PARAM_PREFIX = 'x-amz-'
+function normalizeImageUrl(url, corsMode) {
   const u = new URL(url)
   if (SIGNING_PARAMS.some(p => u.searchParams.has(p))) {
     SIGNING_PARAMS.forEach(p => u.searchParams.delete(p))
+  }
+  if (corsMode) {
+    // Snapshot the names before deleting — searchParams.keys() is live over the same list.
+    for (const name of [...u.searchParams.keys()]) {
+      if (name.toLowerCase().startsWith(PRESIGN_PARAM_PREFIX)) u.searchParams.delete(name)
+    }
   }
   return u.href
 }
@@ -257,16 +316,24 @@ function normalizeImageUrl(url) {
 // The guarded response is still RETURNED to the page unmodified: refusing to cache a bad answer
 // must not turn it into a different bad answer, and PhotoImg's own 403 heal needs to see the real
 // status. Poison is denied a home here, not hidden.
+//
+// V4-PHOTOCORS-001: one predicate — `request.mode === 'cors'` — selects the key normalization, the
+// cache, AND the entry cap together, so a photo cannot land in the app-image cache or be keyed the
+// app-image way. That is the same coupling normalizeImageUrl documents: only a crossOrigin <img>
+// issues 'cors', so only a photo reaches the photo cache, and with the client flag off this whole
+// branch is unreachable and behaviour is byte-identical to before.
 async function imageCacheFirst(request) {
-  const key = normalizeImageUrl(request.url)
-  const cache = await caches.open(IMAGE_CACHE)
+  const cors = request.mode === 'cors'
+  const key = normalizeImageUrl(request.url, cors)
+  const cacheName = cors ? PHOTO_CACHE_NAME : IMAGE_CACHE
+  const cache = await caches.open(cacheName)
   const cached = await cache.match(key)
   if (cached) return cached
   try {
     const response = await fetch(request)
     if (isImageResponse(response)) {
       await cache.put(key, response.clone())
-      trimCache(IMAGE_CACHE, MAX_IMAGE_ENTRIES).catch(() => {})
+      trimCache(cacheName, cors ? MAX_PHOTO_ENTRIES : MAX_IMAGE_ENTRIES).catch(() => {})
     }
     return response
   } catch {
@@ -286,18 +353,25 @@ async function imageCacheFirst(request) {
 // poison always identifies itself: an interception/login page is text/html, an S3 403 is
 // application/xml, a stray error body is text/plain. Idempotent — a second pass finds nothing left
 // matching, and it never writes, so re-running it is free.
+//
+// V4-PHOTOCORS-001 extends the sweep to the photo cache, and that is not optional there — it is the
+// ONLY invalidation the photo cache has. IMAGE_CACHE also gets the all-or-nothing name purge every
+// time CACHE_VERSION moves; PHOTO_CACHE_NAME is stable by design, so this per-entry pass is its
+// entire eviction story for anything provably wrong.
 async function purgePoisonedImages() {
   try {
     const names = await caches.keys()
-    if (!names.includes(IMAGE_CACHE)) return   // don't materialize an empty cache on a first activate
-    const cache = await caches.open(IMAGE_CACHE)
-    const keys = await cache.keys()
-    await Promise.all(keys.map(async (key) => {
-      const stored = await cache.match(key)
-      if (!stored) return
-      const type = (stored.headers.get('content-type') ?? '').toLowerCase()
-      if (type && !type.startsWith('image/')) await cache.delete(key)
-    }))
+    for (const name of [IMAGE_CACHE, PHOTO_CACHE_NAME]) {
+      if (!names.includes(name)) continue   // don't materialize an empty cache on a first activate
+      const cache = await caches.open(name)
+      const keys = await cache.keys()
+      await Promise.all(keys.map(async (key) => {
+        const stored = await cache.match(key)
+        if (!stored) return
+        const type = (stored.headers.get('content-type') ?? '').toLowerCase()
+        if (type && !type.startsWith('image/')) await cache.delete(key)
+      }))
+    }
   } catch { /* a failed sweep must never block activation; the write guard still holds */ }
 }
 
