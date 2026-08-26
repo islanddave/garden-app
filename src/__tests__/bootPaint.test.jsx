@@ -3,7 +3,8 @@
 // MEASURED PROBLEM (prod, 2026-08-12, Chrome @375px, resource timing on garden.futureishere.net):
 //   t=348ms   index.html TTFB
 //   t=783ms   entry bundle (402 kB gzip) done → React mounts, SplashScreen paints
-//   t=2520ms  SplashScreen self-dismisses (HOLD_MS 1400 + FADE_MS 320 from mount)
+//   t=2520ms  SplashScreen self-dismisses (HOLD_MS 1400 + FADE_MS 320 from mount — those were the
+//             durations AT THAT MEASUREMENT; V4-PERFSPLASH-001 has since cut them to 320+180)
 //   t=3376ms  Clerk /v1/client resolves → isLoaded → App.jsx `Protected` stops returning null
 // So the splash was gone for ~850ms before there was anything to show, and on a WARM session
 // (sessionStorage flag already set) it never rendered at all — the full 3.4s was white.
@@ -31,8 +32,14 @@ import { render, screen, act, fireEvent } from '@testing-library/react'
 const { default: SplashScreen } = await import('../components/SplashScreen.jsx')
 const { dismissBootSplash } = await import('../lib/bootSplash.js')
 
-const HOLD_MS = 1400
-const FADE_MS = 320
+const HOLD_MS = 320
+const FADE_MS = 180
+// The BUDGET, as opposed to the two mirrors above. Dave's call, 2026-08-26: "cut it to about half a
+// second." Every duration assertion in this repo mirrors the source constants into a test file, so
+// editing the source and its mirrors together is green all the way back to 1720ms — the decision
+// itself is guarded by nothing. This is the ceiling; 600 rather than 500 so a 20ms rebalance
+// between hold and fade is not a test change.
+const BRAND_HOLD_BUDGET_MS = 600
 const splash = () => screen.queryByRole('img', { name: /welcome/i })
 
 beforeEach(() => {
@@ -50,6 +57,27 @@ describe('SplashScreen is a brand moment, NOT the boot gate (V4-PERFCLERK-001 C)
     // silently gone while every other test still passes.
     expect(/^\s*import .*AuthContext/m.test(src)).toBe(false)
     expect(/useAuthOptional|authLoading/.test(src)).toBe(false)
+  })
+
+  it('holds for no more than the brand-hold budget — the shortening cannot be lockstepped away', async () => {
+    // Read from SOURCE, not from the mirrors at the top of this file, for the reason stated there:
+    // mirrors move with whatever the source says, so they cannot hold a ceiling.
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const src = readFileSync(resolve(process.cwd(), 'src/components/SplashScreen.jsx'), 'utf8')
+    const num = (name) => {
+      const m = src.match(new RegExp(`^const ${name} = (\\d+)$`, 'm'))
+      // A regex that matched nothing would make every comparison below vacuous.
+      expect(m, `could not read ${name} out of SplashScreen.jsx — this guard is measuring nothing`).toBeTruthy()
+      return Number(m[1])
+    }
+    const hold = num('HOLD_MS'), fade = num('FADE_MS')
+    expect(hold).toBeGreaterThan(0)
+    expect(fade).toBeGreaterThan(0)
+    expect(hold + fade).toBeLessThanOrEqual(BRAND_HOLD_BUDGET_MS)
+    // ...and the mirrors this file asserts against are the source's real numbers, so the brackets
+    // below are bracketing the shipped timer rather than a stale pair.
+    expect([hold, fade]).toEqual([HOLD_MS, FADE_MS])
   })
 
   it('exits on the brand hold and does NOT wait for anything else', () => {

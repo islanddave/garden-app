@@ -133,7 +133,8 @@ describe('V4-PERFCLERK-001 C — the shell MOUNTS before isLoaded', () => {
       authState = PENDING
       renderApp('/today')
       expect(screen.queryByRole('img', { name: /welcome/i })).toBeTruthy()
-      act(() => { vi.advanceTimersByTime(1400 + 320 + 10) })
+      // SplashScreen's HOLD_MS + FADE_MS (V4-PERFSPLASH-001: 320+180, was 1400+320).
+      act(() => { vi.advanceTimersByTime(320 + 180 + 10) })
       // Still loading. Pre-change the splash stayed up until isLoaded, which is what made the shell
       // behind it worthless; if this regresses, Option C ships a change nobody can see.
       expect(authState.loading).toBe(true)
