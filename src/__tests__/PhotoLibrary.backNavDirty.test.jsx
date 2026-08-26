@@ -58,8 +58,19 @@ const PHOTO = {
   project_id: null, location_id: 'loc-1', plant_id: null, event_id: null,
 }
 
-const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 50)) })
-const backGesture = async () => { act(() => { window.history.back() }); await settle() }
+// Wait for the traversal to LAND, not for a slice of wall clock — the 50ms this used to sleep is an
+// idle-machine figure and expires before jsdom runs the popstate task under a parallel suite, which
+// leaves every assertion after it reading pre-Back state. Measured under load: a real traversal
+// lands in <=128ms, so NET_MS is a net, not the wait.
+const NET_MS = 2000
+let pops = 0
+window.addEventListener('popstate', () => { pops += 1 })
+const settle = (from = pops) => act(async () => {
+  const deadline = Date.now() + NET_MS
+  while (pops === from && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2))
+  await new Promise((r) => setTimeout(r, 0))
+})
+const backGesture = async () => { const from = pops; act(() => { window.history.back() }); await settle(from) }
 const esc = () => act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
 const armed = () => !!readMarker(window.history.state)
 

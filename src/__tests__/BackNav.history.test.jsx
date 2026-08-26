@@ -32,8 +32,30 @@ import { DismissRegistryProvider, useDismissable } from '../context/DismissRegis
 import { LAYER } from '../lib/dismissLayers.js'
 import { MARKER_KEY, readMarker } from '../lib/backNav.js'
 
-const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 50)) })
-const back = async () => { act(() => { window.history.back() }); await settle() }
+// Wait for the traversal to LAND, not for a slice of wall clock. jsdom runs a back() as a queued
+// task, and everything the provider does in response is synchronous inside that dispatch — so the
+// only thing worth awaiting is the popstate itself. The 50ms this used to sleep was measured on an
+// idle machine; when the suite runs 700+ files in parallel the task has not been scheduled yet when
+// the sleep expires, and every assertion after it reads pre-Back state. That surfaces as
+// `expected "spy" to be called 1 times, but got 0 times` — a plain AssertionError indistinguishable
+// from a real regression, which is what makes it expensive rather than merely annoying.
+//
+// NET_MS is a safety net, not the wait: 12 of the 13 traversals in this file return the moment the
+// event arrives. The one exception traverses from history index 0, where jsdom no-ops SILENTLY (the
+// measured fact in the header above) and no event is ever coming — that call, and only that call,
+// pays the net.
+const NET_MS = 2000
+let pops = 0
+window.addEventListener('popstate', () => { pops += 1 })
+
+// Defaults to the count read at call time, so a standalone `settle()` after an action that triggers
+// its own back() (the close-by-button case) still waits for that traversal rather than guessing.
+const settle = (from = pops) => act(async () => {
+  const deadline = Date.now() + NET_MS
+  while (pops === from && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2))
+  await new Promise((r) => setTimeout(r, 0))   // drain anything the handler scheduled
+})
+const back = async () => { const from = pops; act(() => { window.history.back() }); await settle(from) }
 const esc = () => act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
 
 // A floor entry, so we are never AT index 0 when a test calls back(). Its sentinel is asserted

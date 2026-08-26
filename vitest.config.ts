@@ -21,6 +21,12 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/__tests__/setup.ts'],
+    // OPS-FLAKEFAMILYWIDER-001. Must stay ABOVE the asyncUtilTimeout set in setup.ts (5000): if the
+    // per-test budget is not larger, vitest kills the test before waitFor can report WHICH element
+    // it could not find, and a diagnosable failure degrades into a bare "Test timed out in 5000ms".
+    // The headroom is deliberate — a test may run several sequential waitFors. Like that setting,
+    // this is a ceiling and not a duration: a passing test finishes when it finishes.
+    testTimeout: 20000,
     // Integration tests (tests/integration/**) run in the integration-tests workflow via
     // vitest.integration.config.ts (real Neon driver + DB). Exclude them from the unit run
     // so `npm test` doesn't try to resolve @neondatabase/serverless.
