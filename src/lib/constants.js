@@ -45,6 +45,12 @@ export const P = {
   // visible behind transparent PNGs). Was authored verbatim at 3 sites — PhotoLibrary's grid
   // tile, LocationDetail's attached-photo tile, FacebookShareSheet's 64px thumb. Parity-preserving.
   photoPlaceholder:    '#e8e2da',  // photo tile fill before/behind the image
+  // ── Pass A follow-up (2026-08-26): PhotoUpload's inline upload-error ink. It was the one
+  // hex in a §2 frozen primitive that existed in NO token file, and it survived because
+  // PhotoUpload was never in the lint scope. Promoted at its EXACT value, NOT remapped to
+  // P.terra (#b7532a) or P.severityUrgent (#9c2b1a): both are near neighbours, and swapping
+  // to one would be a visible colour change — that is a Pass B decision, not a Pass A one.
+  photoErrorInk:       '#b14a3c',  // PhotoUpload upload-error message text
   // ── FACET token set (contract §4) — additive, unused until TAGSUB. AA-checked draft. ──
   fTypeBg:     '#e6f0e8', fTypeText:     '#1f5138', fTypeBorder:     '#bcd7c4',
   fGroupBg:    '#eef0fa', fGroupText:    '#3a3f6b', fGroupBorder:    '#c9cdec',

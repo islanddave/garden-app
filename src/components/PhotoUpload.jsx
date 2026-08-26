@@ -41,15 +41,18 @@
 import React, { useCallback, useRef } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
 import { P } from '../lib/constants.js';
+import { T } from './forms/formStyles.js';
 
 const DEFAULT_BTN_STYLE = {
   display: 'inline-block',
-  padding: '0.75rem 1.25rem',
+  padding: T.photo.triggerPad,
   background: P.sage,
-  color: '#fff',
-  borderRadius: '0.5rem',
+  // P.white is '#ffffff' to the literal '#fff' this replaced — the same computed colour,
+  // so the render is unchanged; only the source of the value moves.
+  color: P.white,
+  borderRadius: T.photo.radius,
   cursor: 'pointer',
-  fontSize: '1rem',
+  fontSize: T.type.lg,
   border: 'none',
   fontWeight: 500,
   textAlign: 'center',
@@ -175,26 +178,26 @@ export function PhotoUpload({
       />
 
       {showPreview && preview && (
-        <div style={{ marginTop: '0.75rem' }}>
+        <div style={{ marginTop: T.photo.gapMd }}>
           <img
             src={preview}
             alt="Upload preview"
             data-testid="photo-upload-preview"
-            style={{ maxWidth: '100%', maxHeight: '240px', borderRadius: '0.375rem' }}
+            style={{ maxWidth: '100%', maxHeight: '240px', borderRadius: T.photo.thumbRadius }}
           />
         </div>
       )}
 
       {error && errorMode === 'surface' && (
         <div role="alert" data-testid="photo-upload-error"
-             style={{ marginTop: '0.5rem', color: '#b14a3c', fontSize: '0.9rem' }}>
+             style={{ marginTop: T.photo.gapSm, color: P.photoErrorInk, fontSize: T.type.base }}>
           {error}
         </div>
       )}
 
       {photo && (
         <button type="button" onClick={reset} data-testid="photo-upload-reset"
-                style={{ marginTop: '0.5rem', fontSize: '0.85rem',
+                style={{ marginTop: T.photo.gapSm, fontSize: T.photo.linkFont,
                          background: 'transparent', border: 'none',
                          color: P.sage, cursor: 'pointer',
                          textDecoration: 'underline' }}>

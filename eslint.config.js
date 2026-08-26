@@ -76,12 +76,13 @@ const noRawDesignTokens = {
   meta: {
     type: 'problem',
     docs: { description: 'Ban raw hex, border-radius, padding/margin, font-size and emoji in frozen design primitives; use tokens.js / iconRegistry.js.' },
+    // Per-class deferral for the debt register at the bottom of this file. `hex` is
+    // deliberately NOT deferrable: an off-palette colour is the class that actually reached
+    // production unseen, so no file gets to opt out of it.
     schema: [{
       type: 'object',
       properties: {
-        // formStyles.js DEFINES the space/radius/type ramp; banning dimensional literals
-        // there bans the tokens themselves. Colors still come from P, so hex stays banned.
-        dimensional: { type: 'boolean' },
+        defer: { type: 'array', items: { enum: ['dimensional', 'emoji'] }, uniqueItems: true },
       },
       additionalProperties: false,
     }],
@@ -94,7 +95,9 @@ const noRawDesignTokens = {
     },
   },
   create(context) {
-    const dimensional = context.options[0]?.dimensional !== false
+    const defer = new Set(context.options[0]?.defer ?? [])
+    const dimensional = !defer.has('dimensional')
+    const emoji = !defer.has('emoji')
     const src = context.sourceCode ?? context.getSourceCode()
     return {
       // (a) raw hex in any string literal, and (b) raw emoji in any string literal. The
@@ -105,22 +108,23 @@ const noRawDesignTokens = {
         if (HEX_RE.test(node.value)) {
           context.report({ node, messageId: 'rawHex', data: { value: node.value.match(HEX_RE)[0] } })
         }
-        if (EMOJI_RE.test(node.value)) {
+        if (emoji && EMOJI_RE.test(node.value)) {
           context.report({ node, messageId: 'rawEmoji' })
         }
       },
       // (b) raw emoji in a template literal's fixed chunks (`🌱 ${name}`).
       TemplateLiteral(node) {
-        if (node.quasis.some(q => EMOJI_RE.test(q.value.raw))) {
+        if (emoji && node.quasis.some(q => EMOJI_RE.test(q.value.raw))) {
           context.report({ node, messageId: 'rawEmoji' })
         }
       },
       JSXText(node) {
-        if (EMOJI_RE.test(node.value)) {
+        if (emoji && EMOJI_RE.test(node.value)) {
           context.report({ node, messageId: 'rawEmoji' })
         }
       },
       JSXAttribute(node) {
+        if (!emoji) return
         const v = node.value
         if (v && v.type === 'Literal' && typeof v.value === 'string' && EMOJI_RE.test(v.value)) {
           context.report({ node: v, messageId: 'rawEmoji' })
@@ -166,45 +170,80 @@ export default [
     plugins: { 'react-hooks': reactHooksStub },
     rules: {},
   },
-  // Scoped guard: ONLY the frozen primitives. Token/icon homes are exempt (not listed).
+  // ── Scoped guard: the frozen primitives ───────────────────────────────────────────────
+  // A GLOB over the primitive barrel, not a hand-maintained file list. The list this
+  // replaced named 9 files and MISSED FIVE SHIPPED PRIMITIVES — PhotoUpload plus all four
+  // tag primitives (TagChip, FacetGroupHeader, TagFilterBar, GroupByControl) — which is
+  // how PhotoUpload's off-palette #b14a3c reached prod invisible to CI. The failure mode of
+  // a list is SILENT omission: nothing reports that a new primitive was never added to it.
+  // With a glob, a file dropped into components/forms/ is guarded by default and has to be
+  // opted OUT deliberately, in the register below, where the omission is greppable.
   {
     files: [
+      'src/components/forms/**/*.{js,jsx}',
       'src/components/PlantStatusBadge.jsx',
       'src/components/SeverityBadge.jsx',
-      'src/components/forms/Badge.jsx',
-      'src/components/forms/SelectChip.jsx',
-      'src/components/forms/SegmentedControl.jsx',
-      'src/components/forms/Sheet.jsx',
-      'src/components/forms/TileGrid.jsx',
-      'src/components/forms/formStyles.js',
+      'src/components/PhotoUpload.jsx',
       'src/lib/status.js',
     ],
     plugins: { designsys: designsysPlugin },
     rules: { 'designsys/no-raw-design-tokens': 'error' },
   },
-  // ── Dimensional-class deferrals (hex + emoji stay ENFORCED on every file here) ─────────
-  // `dimensional: false` turns off radius/padding/font-size ONLY. It is not an `ignores`
-  // entry on purpose: an ignore would silently drop the colour and emoji coverage these
-  // files already had, and colour drift (PhotoUpload's off-palette #b14a3c) is the class
-  // that actually reached prod unseen.
+  // ── DEBT REGISTER — per-class deferrals, dated 2026-08-26 ─────────────────────────────
+  // These are NOT `ignores` entries. An ignore drops every class at once; `defer` names
+  // exactly which class is being postponed and leaves the rest enforced. Raw HEX is
+  // enforced on every file below with no opt-out available — an off-palette colour
+  // (PhotoUpload's #b14a3c) is the drift that actually reached production unseen.
   //
-  //   formStyles.js — the token HOME for space/radius/type. Its `T = { radiusField: 7, … }`
-  //     declaration is already exempt by construction (the rule keys on CSS property NAMES
-  //     and none of T's keys is one), but its chrome helpers compose pixel values inline.
-  //     Banning literals in the file that DEFINES the ramp would force ~9 single-use token
-  //     names pointing at values 90 lines above them — indirection with no drift protection.
-  //   SegmentedControl / Sheet / TileGrid — in the pre-widening scope for hex+emoji only,
-  //     so their coverage is unchanged, not reduced. 20 dimensional literals between them
-  //     (3 of which already have exact T names). Deferred to the bulk migration, NOT waived.
+  // This is a shrinking register: entries come OFF as the bulk literal migration reaches
+  // each file. Adding a file here to make a build pass inverts its purpose.
+  //
+  //   formStyles.js is the one PERMANENT entry — it is the token HOME for space/radius/
+  //   type. Its `T = { radiusField: 7, … }` declaration is already exempt by construction
+  //   (the rule keys on CSS property NAMES and none of T's keys is one), but its chrome
+  //   helpers compose pixel values inline, and banning literals in the file that DEFINES
+  //   the ramp would force ~9 single-use names pointing at values 90 lines above them.
+  //
+  //   SegmentedControl / Sheet / TileGrid were in the pre-widening scope for hex+emoji
+  //   only, so their coverage is UNCHANGED here, not reduced (20 dimensional literals
+  //   between them; 3 already have exact T names — SegmentedControl's radius 12/10 and its
+  //   0.82/0.9rem fonts). Every other file below was guarded by NOTHING before the glob.
+  //
+  //   Counts at this date, measured by this rule: 159 dimensional literals and 17 emoji
+  //   across the register. Both belong to the ~3,977-literal migration, not to standing up
+  //   the guard. EventTypePicker.jsx additionally carries the §5 case in its purest form —
+  //   a 7-entry `emoji: '💧'` data map — and is owned by a concurrent lane at this date.
   {
     files: [
       'src/components/forms/formStyles.js',
       'src/components/forms/SegmentedControl.jsx',
       'src/components/forms/Sheet.jsx',
       'src/components/forms/TileGrid.jsx',
+      'src/components/forms/Card.jsx',
+      'src/components/forms/FilterChipRow.jsx',
+      'src/components/forms/PageShell.jsx',
+      'src/components/forms/PlantForm.jsx',
+      'src/components/forms/Spinner.jsx',
+      'src/components/forms/Toast.jsx',
+      'src/components/forms/VarietyEditor.jsx',
     ],
     plugins: { designsys: designsysPlugin },
-    rules: { 'designsys/no-raw-design-tokens': ['error', { dimensional: false }] },
+    rules: { 'designsys/no-raw-design-tokens': ['error', { defer: ['dimensional'] }] },
+  },
+  // Same register, plus an emoji deferral: these six hold raw glyphs that §5 says belong in
+  // iconRegistry.js. Routing them is a behaviour-adjacent change in files this lane does
+  // not own, so it is deferred WITH the count recorded rather than silently un-guarded.
+  {
+    files: [
+      'src/components/forms/AsyncRegion.jsx',
+      'src/components/forms/ChoiceGrid.jsx',
+      'src/components/forms/EventTypePicker.jsx',
+      'src/components/forms/Field.jsx',
+      'src/components/forms/PlantingSelect.jsx',
+      'src/components/forms/ScopeChecklist.jsx',
+    ],
+    plugins: { designsys: designsysPlugin },
+    rules: { 'designsys/no-raw-design-tokens': ['error', { defer: ['dimensional', 'emoji'] }] },
   },
   // OPS-SETUPTSUNLINTED-001 — TypeScript files matched NO config object above, so ESLint
   // skipped all five of them outright: `eslint src/__tests__/setup.ts` reported "File ignored
