@@ -3,7 +3,14 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import Icon from '../components/Icon.jsx'
 
+// V4-ICON-001: `iconName` (a registry key) replaces the former `icon` emoji literal, mirroring
+// src/lib/todayBand.js. Each section glyph is ENTITY IDENTITY, not ornament — it is the same
+// mark the rest of the app uses for that entity (lifecycle.sprout is 'a planting' in
+// BottomNav's CREATE_ACTIONS, facet.location is the Zones facet, nav.inventory is the tab), so
+// a favourites section reads as the thing it links to. The label beside it carries the meaning;
+// the icon is decorative and never the sole channel.
 const TYPE_META = {
   // V3-FAV-001: plantings lead (plantings-first as projects deprecate to buckets). The row deep-links
   // to the planting's own detail page.
@@ -11,10 +18,10 @@ const TYPE_META = {
   // so a favourited Snap-created planting (no project_id) silently dropped the user on the Garden page
   // instead of the thing they tapped. The un-scoped form is CANONICAL (App.jsx:199,
   // V4-UNSCOPEDROUTES-001) and needs no project_id, so the fallback is no longer reachable.
-  plant:          { label: 'Plantings', icon: '🌿', link: i => `/plantings/${i.id}` },
-  project:        { label: 'Projects',  icon: '🌱', link: i => `/projects/${i.id}` },
-  location:       { label: 'Locations', icon: '📍', link: () => `/locations` },
-  inventory_item: { label: 'Inventory', icon: '📦', link: i => `/inventory/${i.id}` },
+  plant:          { label: 'Plantings', iconName: 'lifecycle.sprout', link: i => `/plantings/${i.id}` },
+  project:        { label: 'Projects',  iconName: 'facet.group',      link: i => `/projects/${i.id}` },
+  location:       { label: 'Locations', iconName: 'facet.location',   link: () => `/locations` },
+  inventory_item: { label: 'Inventory', iconName: 'nav.inventory',    link: i => `/inventory/${i.id}` },
 }
 
 export default function Favorites() {
@@ -99,8 +106,9 @@ export default function Favorites() {
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: '720px', margin: '0 auto', padding: '32px 20px' }}>
-        <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: '0 0 24px' }}>
-          ♥ Favorites
+        <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: '0 0 24px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon name="action.heart" variant="filled" size={20} decorative />
+          Favorites
         </h1>
         {sections.length === 0 ? (
           <div style={{
@@ -108,14 +116,23 @@ export default function Favorites() {
             borderRadius: '10px', padding: '40px 20px',
             textAlign: 'center', color: P.light, fontSize: '0.95rem',
           }}>
-            No favorites yet. Tap ♡ on any planting, project, location, or inventory item to save it here.
+            {/* The glyph here is a CONTROL REFERENCE, not prose ornament — it names the button the
+                user has to find, so it must be the same outline heart the affordance renders. Left
+                announceable (not `decorative`) so the sentence still says what to tap. The `title`
+                is NOT redundant: action.heart's accessibleName is the two-state object
+                {outline, filled}, and Icon only auto-labels from a STRING — without this it would
+                silently fall through to aria-hidden and the instruction would lose its verb. */}
+            No favorites yet. Tap{' '}
+            <Icon name="action.heart" size={16} title="Add to favorites" style={{ verticalAlign: '-3px' }} />{' '}
+            on any planting, project, location, or inventory item to save it here.
           </div>
         ) : sections.map(({ type, items }) => {
           const meta = TYPE_META[type]
           return (
             <section key={type} style={{ marginBottom: '28px' }}>
-              <h2 style={{ fontSize: '0.8rem', fontWeight: 700, color: P.mid, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px' }}>
-                {meta.icon} {meta.label}
+              <h2 style={{ fontSize: '0.8rem', fontWeight: 700, color: P.mid, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Icon name={meta.iconName} size={16} decorative />
+                {meta.label}
               </h2>
               {items.map(item => (
                 <Link key={item.id} to={meta.link(item)} style={{ textDecoration: 'none' }}>

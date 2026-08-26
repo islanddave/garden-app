@@ -10,6 +10,14 @@ function parseDate(value) {
 }
 
 // Ordered milestone definitions: [field, approxField, key, label, glyph].
+//
+// V4-ICON-001 HAND-OFF (not done here). These are lifecycle STAGES — meaningful, registry-bound.
+// Keys confirmed present: sown -> event.sowing, germinated -> event.germination,
+// transplanted -> event.transplant, first_harvest -> event.first_harvest. `planted_out` is the
+// one open call: no key reads as "moved into the ground" (event.transplant is already spoken for),
+// so it needs a design decision, not a guess. Routing swaps `glyph` for `iconName` and updates
+// LifeStoryTimeline.jsx:28 to render <Icon> — that consumer is outside this lane's file set, and
+// this module is deliberately pure, so the emoji stays until both can change together.
 const MILESTONES = [
   ['sown_at', 'sown_at_approx', 'sown', 'Sown', '🌰'],
   ['germinated_at', 'germinated_at_approx', 'germinated', 'Germinated', '🌱'],

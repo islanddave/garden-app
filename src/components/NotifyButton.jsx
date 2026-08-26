@@ -10,6 +10,13 @@
 // Testability: accepts an optional `enabled` prop defaulting to NOTIFY_ENABLED.
 // Production callers (Dashboard.jsx) do NOT pass it → resolves to false → renders
 // null. Tests pass enabled={true} to exercise the full component.
+//
+// V4-ICON-001 HAND-OFF (not done here). The four bell spans below are MEANINGFUL — bell vs
+// bell-slash is the on/blocked state mark — but BLOCKED ON A DRAW: the 133-key registry has no
+// bell of any kind (the near-misses all matched "ring" inside "watering"/"flowering"). A wrong key
+// renders the silent neutral-dot fallback, so these stay literal until `action.notify` /
+// `action.notifyOff` are authored in iconAnchors.js, which is another lane's file. Low urgency:
+// NOTIFY_ENABLED is false, so none of these glyphs reaches a user today.
 
 import React, { useState, useEffect, useRef } from 'react'
 import { P } from '../lib/constants.js'
