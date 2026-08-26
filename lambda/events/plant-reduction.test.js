@@ -108,7 +108,8 @@ describe('vocabulary membership + batch exclusion', () => {
   it('both types are first-class EVENT_TYPES values with complete META', () => {
     for (const t of PLANT_REDUCTION_EVENT_TYPES) {
       expect(EVENT_TYPES, `${t} missing from EVENT_TYPES`).toContain(t);
-      for (const f of ['label', 'emoji', 'category']) {
+      // V4-ICON-001 dropped `emoji` from META — the glyph lives in the icon registry now.
+      for (const f of ['label', 'category']) {
         expect(EVENT_TYPE_META[t]?.[f], `${t}.${f}`).toBeTruthy();
       }
     }

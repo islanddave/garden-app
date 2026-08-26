@@ -81,77 +81,83 @@ export const EVENT_TYPES = [
 ]
 
 // ── Per-type display metadata (moved from EventNew.jsx) ─────────────
-// EVERY value in EVENT_TYPES MUST have an entry here with { label, emoji,
-// category } — enforced by the EVENT_TYPE_META completeness test. The four
-// primary quick-pick types (watering, fertilizing, pruning, transplant) get
-// entries too so the picker/label resolver never falls through to a raw
-// snake_case fallback. `category` buckets the "More" secondary groups.
+// EVERY value in EVENT_TYPES MUST have an entry here with { label, category }
+// — enforced by the EVENT_TYPE_META completeness test. The four primary
+// quick-pick types (watering, fertilizing, pruning, transplant) get entries
+// too so the picker/label resolver never falls through to a raw snake_case
+// fallback. `category` buckets the "More" secondary groups.
+//
+// V4-ICON-001: the `emoji` field is GONE. The glyph for an event type is
+// `event.<value>` in the icon registry (src/lib/iconEvents.js -> iconRegistry),
+// which holds an SVG + accessibleName for all 51 values, 1:1, with no neutral
+// fallback. Nothing renders a glyph from this table — do not re-add one here;
+// eventTypeIconWiring.test.js fails the build if it comes back.
 export const EVENT_TYPE_META = {
-  sowing:          { label: 'Sowed',                emoji: '🌰', category: 'Growth & Training' },
-  seed_soak:       { label: 'Seed soak',            emoji: '💦', category: 'Growth & Training' },
-  germination:     { label: 'Germination',          emoji: '🌿', category: 'Growth & Training' },
-  thinning:        { label: 'Thinned',              emoji: '🪓', category: 'Growth & Training' },
-  potting_up:      { label: 'Potted up / Repotted', emoji: '🪴', category: 'Growth & Training' },
-  transplant:      { label: 'Transplanted / Planted', emoji: '🌱', category: 'Growth & Training' },
-  hardening_off:   { label: 'Hardening off',        emoji: '⛅', category: 'Growth & Training' },
-  watering:        { label: 'Watered',              emoji: '💧', category: 'Care' },
-  rain:            { label: 'Rain',                 emoji: '🌧️', category: 'Environmental' },
+  sowing:              { label: 'Sowed',                  category: 'Growth & Training' },
+  seed_soak:           { label: 'Seed soak',              category: 'Growth & Training' },
+  germination:         { label: 'Germination',            category: 'Growth & Training' },
+  thinning:            { label: 'Thinned',                category: 'Growth & Training' },
+  potting_up:          { label: 'Potted up / Repotted',   category: 'Growth & Training' },
+  transplant:          { label: 'Transplanted / Planted', category: 'Growth & Training' },
+  hardening_off:       { label: 'Hardening off',          category: 'Growth & Training' },
+  watering:            { label: 'Watered',                category: 'Care' },
+  rain:                { label: 'Rain',                   category: 'Environmental' },
   // V4-WATERMATH-001 F0: "I checked the soil and it does not need water." A NEGATIVE care
   // observation — it records an inspection, NOT an intervention. Deliberately NOT mapped onto
   // `observation`: the daily-plan DONE_EVENTS map treats `observation` as satisfying PEST tasks,
   // so reusing it would silently check off pest work the user never did.
-  moisture_check:  { label: 'Moisture check',       emoji: '🖐️', category: 'Care' },
-  fertilizing:     { label: 'Fertilized / Fed',     emoji: '🌿', category: 'Care' },
-  pest_treatment:  { label: 'Pest treatment',       emoji: '🐛', category: 'Pest & Health' },
-  doctored:        { label: 'Doctored / Treated',   emoji: '🩹', category: 'Pest & Health' },
-  pruning:         { label: 'Pruned / Topped',      emoji: '✂️', category: 'Growth & Training' },
-  cover:           { label: 'Covered',              emoji: '🌂', category: 'Environmental' },
-  uncover:         { label: 'Uncovered',            emoji: '🌤️', category: 'Environmental' },
-  brought_inside:  { label: 'Brought inside',       emoji: '🏠', category: 'Environmental' },
-  brought_outside: { label: 'Brought outside',      emoji: '☀️', category: 'Environmental' },
-  mulched:         { label: 'Mulched',              emoji: '🍂', category: 'Environmental' },
-  caged:           { label: 'Caged',                emoji: '🛡️', category: 'Growth & Training' },
-  staked:          { label: 'Staked',               emoji: '🪵', category: 'Growth & Training' },
-  mesh_netting:    { label: 'Mesh / Netting',       emoji: '🕸️', category: 'Environmental' },
-  trellised:       { label: 'Trellised',            emoji: '🏗️', category: 'Growth & Training' },
-  pinched:         { label: 'Pinched',              emoji: '🤌', category: 'Growth & Training' },
-  suckered:        { label: 'Suckered',             emoji: '🌿', category: 'Growth & Training' },
-  deadheaded:      { label: 'Deadheaded',           emoji: '🌸', category: 'Growth & Training' },
-  weeded:          { label: 'Weeded',               emoji: '☘️', category: 'Environmental' },
-  hand_pollinated: { label: 'Hand-pollinated',      emoji: '🐝', category: 'Growth & Training' },
-  divided:         { label: 'Divided',              emoji: '↔️', category: 'Growth & Training' },
-  cutting_taken:   { label: 'Cutting taken',        emoji: '🪚', category: 'Growth & Training' },
-  rooting:         { label: 'Rooting',              emoji: '🫚', category: 'Growth & Training' },
-  relocated:       { label: 'Relocated / Moved',    emoji: '📦', category: 'Environmental' },
-  flowering:       { label: 'Flowering',            emoji: '🌸', category: 'Growth & Training' },
-  fruit_set:       { label: 'Fruit set',            emoji: '🍅', category: 'Growth & Training' },
-  animal_damage:   { label: 'Animal damage',        emoji: '🐾', category: 'Environmental' },
-  heat_damage:     { label: 'Heat damage',          emoji: '🌡️', category: 'Environmental' },
-  frost_damage:    { label: 'Frost damage',         emoji: '❄️', category: 'Environmental' },
-  soil_amended:    { label: 'Soil amended',         emoji: '🪨', category: 'Environmental' },
-  hilled:          { label: 'Hilled / Mounded',     emoji: '⛰️', category: 'Environmental' },
-  first_harvest:   { label: 'First harvest',        emoji: '🌟', category: 'Harvest' },
-  harvest:         { label: 'Harvested',            emoji: '🧺', category: 'Harvest' },
-  scape_cut:           { label: 'Scape cut',            emoji: '➰', category: 'Growth & Training' },
-  cured:               { label: 'Cured',                emoji: '🧅', category: 'Harvest' },
-  seed_saved:          { label: 'Seed saved',           emoji: '🫘', category: 'Harvest' },
-  cloves_saved:        { label: 'Cloves saved',         emoji: '🧄', category: 'Harvest' },
-  overwinter_survived: { label: 'Overwinter survived',  emoji: '🧥', category: 'Environmental' },
+  moisture_check:      { label: 'Moisture check',         category: 'Care' },
+  fertilizing:         { label: 'Fertilized / Fed',       category: 'Care' },
+  pest_treatment:      { label: 'Pest treatment',         category: 'Pest & Health' },
+  doctored:            { label: 'Doctored / Treated',     category: 'Pest & Health' },
+  pruning:             { label: 'Pruned / Topped',        category: 'Growth & Training' },
+  cover:               { label: 'Covered',                category: 'Environmental' },
+  uncover:             { label: 'Uncovered',              category: 'Environmental' },
+  brought_inside:      { label: 'Brought inside',         category: 'Environmental' },
+  brought_outside:     { label: 'Brought outside',        category: 'Environmental' },
+  mulched:             { label: 'Mulched',                category: 'Environmental' },
+  caged:               { label: 'Caged',                  category: 'Growth & Training' },
+  staked:              { label: 'Staked',                 category: 'Growth & Training' },
+  mesh_netting:        { label: 'Mesh / Netting',         category: 'Environmental' },
+  trellised:           { label: 'Trellised',              category: 'Growth & Training' },
+  pinched:             { label: 'Pinched',                category: 'Growth & Training' },
+  suckered:            { label: 'Suckered',               category: 'Growth & Training' },
+  deadheaded:          { label: 'Deadheaded',             category: 'Growth & Training' },
+  weeded:              { label: 'Weeded',                 category: 'Environmental' },
+  hand_pollinated:     { label: 'Hand-pollinated',        category: 'Growth & Training' },
+  divided:             { label: 'Divided',                category: 'Growth & Training' },
+  cutting_taken:       { label: 'Cutting taken',          category: 'Growth & Training' },
+  rooting:             { label: 'Rooting',                category: 'Growth & Training' },
+  relocated:           { label: 'Relocated / Moved',      category: 'Environmental' },
+  flowering:           { label: 'Flowering',              category: 'Growth & Training' },
+  fruit_set:           { label: 'Fruit set',              category: 'Growth & Training' },
+  animal_damage:       { label: 'Animal damage',          category: 'Environmental' },
+  heat_damage:         { label: 'Heat damage',            category: 'Environmental' },
+  frost_damage:        { label: 'Frost damage',           category: 'Environmental' },
+  soil_amended:        { label: 'Soil amended',           category: 'Environmental' },
+  hilled:              { label: 'Hilled / Mounded',       category: 'Environmental' },
+  first_harvest:       { label: 'First harvest',          category: 'Harvest' },
+  harvest:             { label: 'Harvested',              category: 'Harvest' },
+  scape_cut:           { label: 'Scape cut',              category: 'Growth & Training' },
+  cured:               { label: 'Cured',                  category: 'Harvest' },
+  seed_saved:          { label: 'Seed saved',             category: 'Harvest' },
+  cloves_saved:        { label: 'Cloves saved',           category: 'Harvest' },
+  overwinter_survived: { label: 'Overwinter survived',    category: 'Environmental' },
   // V4-LOSSEVENT-001. The labels name the EVENT (what happened to the plants), never the cause —
   // the cause is the reason value, and Dave's ruling was that a reason naming the outcome
   // ("plant death") is not a reason at all. 'Attrition' is a NEW category: 'Pest & Health' would
   // have been a defensible home for `failed` and an actively wrong one for `given_away` (a plant
   // swap is not a health event), and the whole point of keeping the two vocabularies apart is that
   // a gift never reads as a loss. Category placement is a taste call — Dave's to overrule.
-  failed:          { label: 'Plants lost',          emoji: '🥀', category: 'Attrition' },
-  given_away:      { label: 'Plants given away',    emoji: '🎁', category: 'Attrition' },
-  observation:     { label: 'Observed / Note',      emoji: '👁️', category: 'Notes & Photos' },
-  photo:           { label: 'Photo only',           emoji: '📷', category: 'Notes & Photos' },
-  other:           { label: 'Other',                emoji: '📝', category: 'Environmental' },
+  failed:              { label: 'Plants lost',            category: 'Attrition' },
+  given_away:          { label: 'Plants given away',      category: 'Attrition' },
+  observation:         { label: 'Observed / Note',        category: 'Notes & Photos' },
+  photo:               { label: 'Photo only',             category: 'Notes & Photos' },
+  other:               { label: 'Other',                  category: 'Environmental' },
 }
 
 // ── Required META fields (named for the completeness test) ──────────
-export const REQUIRED_META_FIELDS = ['label', 'emoji', 'category']
+export const REQUIRED_META_FIELDS = ['label', 'category']
 
 // ── Unified first-class quick-pick order (V4-EVENTSEL-002, Dave 2026-07-07) ──
 // The single ordered set of "first-class" event types shown at the top of BOTH the Log One
@@ -486,18 +492,19 @@ export const CATEGORY_ORDER = [
 // ── Secondary-group builder ─────────────────────────────────────────
 // Given the set of values rendered as primary quick-picks, returns the remaining
 // values grouped by EVENT_TYPE_META category, ready for the "More" panel:
-//   [[category, [{ value, label, emoji }, ...]], ...]
+//   [[category, [{ value, label }, ...]], ...]
 // `primaryValues` may be an array or a Set. Values without a META entry fall back
-// to a raw marker (the completeness test ensures that never actually happens for
-// real EVENT_TYPES values).
+// to the raw value as its own label (the completeness test ensures that never
+// actually happens for real EVENT_TYPES values). V4-ICON-001: no `emoji` on the
+// emitted record — the consumer renders <Icon name={`event.${value}`} />.
 export function buildSecondaryGroups(primaryValues, values = EVENT_TYPES) {
   const primary = primaryValues instanceof Set ? primaryValues : new Set(primaryValues)
   const cats = {}
   values.forEach((v) => {
     if (primary.has(v)) return
-    const meta = EVENT_TYPE_META[v] ?? { label: v, emoji: '📌', category: 'Other' }
+    const meta = EVENT_TYPE_META[v] ?? { label: v, category: 'Other' }
     if (!cats[meta.category]) cats[meta.category] = []
-    cats[meta.category].push({ value: v, label: meta.label, emoji: meta.emoji })
+    cats[meta.category].push({ value: v, label: meta.label })
   })
   // V4-EVENTSEL-001: order categories by the canonical CATEGORY_ORDER; unranked
   // categories (defensive — e.g. the 'Other' fallback) keep first-appearance order.

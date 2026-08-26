@@ -29,8 +29,10 @@ describe('EVENT_TYPES master soft-enum', () => {
 });
 
 describe('EVENT_TYPE_META completeness', () => {
-  it('REQUIRED_META_FIELDS is exactly [label, emoji, category]', () => {
-    expect(REQUIRED_META_FIELDS).toEqual(['label', 'emoji', 'category']);
+  // V4-ICON-001 dropped `emoji`: the glyph is `event.<value>` in the icon registry, which is
+  // SVG-backed for all 51 values. A META field would be a second source of the same glyph.
+  it('REQUIRED_META_FIELDS is exactly [label, category]', () => {
+    expect(REQUIRED_META_FIELDS).toEqual(['label', 'category']);
   });
 
   it('every EVENT_TYPES value has a META entry', () => {
@@ -49,7 +51,7 @@ describe('EVENT_TYPE_META completeness', () => {
     }
   });
 
-  it('no META label leaks raw snake_case (no 📌 fallback in practice)', () => {
+  it('no META label leaks raw snake_case (the no-META fallback never fires in practice)', () => {
     for (const v of EVENT_TYPES) {
       expect(isRaw(EVENT_TYPE_META[v].label), `${v} label is raw`).toBe(false);
     }
@@ -157,13 +159,16 @@ describe('buildSecondaryGroups', () => {
     expect(flat.sort()).toEqual([...expected].sort());
   });
 
-  it('each emitted entry carries value/label/emoji from META', () => {
+  // V4-ICON-001: the emitted record is { value, label } — `value` doubles as the glyph key
+  // (<Icon name={`event.${value}`} />), so an `emoji` on the record would be a second, drifting
+  // source of the same glyph. Asserted absent, not merely unused.
+  it('each emitted entry carries value/label from META and no emoji', () => {
     const groups = buildSecondaryGroups(['watering']);
     for (const [, types] of groups) {
       for (const t of types) {
         expect(t).toHaveProperty('value');
         expect(t.label).toBe(EVENT_TYPE_META[t.value].label);
-        expect(t.emoji).toBe(EVENT_TYPE_META[t.value].emoji);
+        expect(t, `${t.value} re-grew an emoji field`).not.toHaveProperty('emoji');
       }
     }
   });
