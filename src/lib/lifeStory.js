@@ -9,32 +9,34 @@ function parseDate(value) {
   return isNaN(d.getTime()) ? null : d
 }
 
-// Ordered milestone definitions: [field, approxField, key, label, glyph].
+// Ordered milestone definitions: [field, approxField, key, label, iconName].
 //
-// V4-ICON-001 HAND-OFF (not done here). These are lifecycle STAGES — meaningful, registry-bound.
-// Keys confirmed present: sown -> event.sowing, germinated -> event.germination,
-// transplanted -> event.transplant, first_harvest -> event.first_harvest. `planted_out` is the
-// one open call: no key reads as "moved into the ground" (event.transplant is already spoken for),
-// so it needs a design decision, not a guess. Routing swaps `glyph` for `iconName` and updates
-// LifeStoryTimeline.jsx:28 to render <Icon> — that consumer is outside this lane's file set, and
-// this module is deliberately pure, so the emoji stays until both can change together.
+// V4-ICON-001 (done). These are lifecycle STAGES — meaningful — so each carries a registry KEY and
+// LifeStoryTimeline resolves it; this module stays pure and JSX-free.
+//
+// `planted_out` was the one open design call, and it is care.plantedOut — a NEWLY DRAWN glyph, not
+// a reuse. The obvious reuse was event.transplant, and it is wrong here for a specific reason: the
+// `transplanted` row sits DIRECTLY ABOVE this one, so the same mark twice would make two adjacent
+// milestones visually identical, which loses the distinction the timeline exists to draw. It could
+// not live under event.* either — eventTypeIconWiring.test.js pins event.* 1:1 against EVENT_TYPES,
+// and planted_out is a date field, not an event type. See iconAnchors.js for the form's rationale.
 const MILESTONES = [
-  ['sown_at', 'sown_at_approx', 'sown', 'Sown', '🌰'],
-  ['germinated_at', 'germinated_at_approx', 'germinated', 'Germinated', '🌱'],
-  ['transplanted_at', 'transplanted_at_approx', 'transplanted', 'Transplanted', '🪴'],
-  ['planted_out_at', 'planted_out_at_approx', 'planted_out', 'Planted out', '🌿'],
-  ['first_harvest_at', null, 'first_harvest', 'First harvest', '🧺'],
+  ['sown_at', 'sown_at_approx', 'sown', 'Sown', 'event.sowing'],
+  ['germinated_at', 'germinated_at_approx', 'germinated', 'Germinated', 'event.germination'],
+  ['transplanted_at', 'transplanted_at_approx', 'transplanted', 'Transplanted', 'event.transplant'],
+  ['planted_out_at', 'planted_out_at_approx', 'planted_out', 'Planted out', 'care.plantedOut'],
+  ['first_harvest_at', null, 'first_harvest', 'First harvest', 'event.first_harvest'],
 ]
 
-// buildLifeStory(planting) -> [{ key, label, glyph, date(Date), approx(bool) }] ascending by date.
-// Milestones with no date are omitted. Stable: ties keep MILESTONES declaration order.
+// buildLifeStory(planting) -> [{ key, label, iconName, date(Date), approx(bool) }] ascending by
+// date. Milestones with no date are omitted. Stable: ties keep MILESTONES declaration order.
 export function buildLifeStory(planting) {
   if (!planting) return []
   const rows = []
-  MILESTONES.forEach(([field, approxField, key, label, glyph], idx) => {
+  MILESTONES.forEach(([field, approxField, key, label, iconName], idx) => {
     const date = parseDate(planting[field])
     if (!date) return
-    rows.push({ key, label, glyph, date, approx: approxField ? Boolean(planting[approxField]) : false, _ord: idx })
+    rows.push({ key, label, iconName, date, approx: approxField ? Boolean(planting[approxField]) : false, _ord: idx })
   })
   rows.sort((a, b) => (a.date - b.date) || (a._ord - b._ord))
   return rows.map(({ _ord, ...r }) => r)

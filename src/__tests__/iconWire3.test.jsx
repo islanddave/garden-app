@@ -33,21 +33,22 @@ const WIRED = ['pages/Favorites.jsx', 'pages/Locations.jsx']
 const PICTOGRAPHIC = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}]/gu
 const ESCAPED_PICTOGRAPHIC = /\\u\{1F[0-9A-Fa-f]{3}\}|\\u2[6-7][0-9A-Fa-f]{2}/g
 
-// The lane's OPEN hand-offs, by exact remaining occurrence count. Every one is deliberate:
-//   waterDepth / lifeStory / overwinterRegimes / inventoryEnums — data maps whose ONLY render
-//     consumer (WaterDepthChips, LifeStoryTimeline, ChoiceGrid via OverwinterPrompt+InventoryAdd)
-//     sits outside this lane's file set. Dropping the field without moving the consumer in the
-//     same commit renders nothing at all, so the pair has to travel together.
-//   inventoryEnums / NotifyButton — additionally BLOCKED ON A DRAW: the 133-key registry has no
-//     consumable, durable, or bell mark, and a near-miss key is worse than the emoji.
-//   harvestTracked — check/cross marks inside a COMMENT documenting a gating asymmetry. Prose in
-//     a comment is not an icon slot; there is nothing here to route.
-// Counts are by codepoint so this file itself contains no raw emoji.
-// CLOSED by slice 4 (see iconWire4.test.jsx), which drew the missing glyphs and moved each map
-// with its consumer: overwinterRegimes 4 -> 0, inventoryEnums 2 -> 0, waterDepth 6 -> 0.
+// Slice 3's hand-offs, by exact remaining occurrence count, kept at 0 once closed so a NEW emoji
+// cannot drift back into a file this programme has already finished. Counts are by codepoint, so
+// this file itself contains no raw emoji.
+//
+// CLOSED BY SLICE 4 (iconWire4.test.jsx): waterDepth 6->0, lifeStory 5->0, overwinterRegimes 4->0,
+// inventoryEnums 2->0. That slice drew the four missing glyphs (inventory.consumable,
+// inventory.durable, care.plantedOut) and moved each data map together with its render consumer.
+//
+// STILL OPEN:
+//   NotifyButton — BLOCKED ON A DRAW at slice 3, and still open here only because it is the last
+//     item in slice 4's queue; the registry has no bell of any kind.
+//   harvestTracked — check/cross marks inside a COMMENT documenting a gating asymmetry. Prose in a
+//     comment is not an icon slot; there is nothing here to route, now or later.
 const OPEN_HANDOFFS = {
   'lib/waterDepth.js': 0,
-  'lib/lifeStory.js': 5,
+  'lib/lifeStory.js': 0,
   'lib/overwinterRegimes.js': 0,
   'lib/inventoryEnums.js': 0,
   'lib/harvestTracked.js': 3,

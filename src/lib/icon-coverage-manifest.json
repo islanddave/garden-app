@@ -19,7 +19,7 @@
   "care": [
     "care.drop", "care.pause", "care.sun", "care.containers", "care.inground",
     "care.wateringCan", "care.wateringCanFill", "care.feed", "care.cloud", "care.rainPct",
-    "care.tempHigh", "care.tempLow"
+    "care.tempHigh", "care.tempLow", "care.plantedOut"
   ],
   "status": [
     "status.seed", "status.rooting", "status.seedling", "status.sprouting", "status.seeding",

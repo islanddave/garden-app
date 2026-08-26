@@ -25,9 +25,12 @@ import { resolve } from 'path'
 import { GLYPHS, NEUTRAL_ICON, getIcon } from '../lib/iconRegistry.js'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 import WaterDepthChips, { WaterDepthDrops } from '../components/WaterDepthChips.jsx'
+import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
 import { OVERWINTER_REGIME_OPTIONS } from '../lib/overwinterRegimes.js'
 import { INVENTORY_TYPES } from '../lib/inventoryEnums.js'
 import { WATER_DEPTH_CHIPS } from '../lib/waterDepth.js'
+import { buildLifeStory } from '../lib/lifeStory.js'
+import { EVENT_TYPES } from '../lib/eventTypes.js'
 
 // cwd-relative, not import.meta.url: under vitest the module URL is an http: one and
 // fileURLToPath rejects it. Same convention as iconWire2/3.
@@ -39,6 +42,8 @@ const WIRED = [
   'lib/inventoryEnums.js',
   'lib/waterDepth.js',
   'components/WaterDepthChips.jsx',
+  'lib/lifeStory.js',
+  'components/planting/LifeStoryTimeline.jsx',
 ]
 
 const PICTOGRAPHIC = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}]/gu
@@ -245,5 +250,61 @@ describe('V4-ICON-001 slice 4 — the water-depth tier stays a COUNT, not a colo
     // LogMany can reach it with an unrecognised stored class, where find() yields undefined.
     const { container } = render(<WaterDepthDrops count={undefined} />)
     expect(container.querySelectorAll('svg')).toHaveLength(0)
+  })
+})
+
+describe('V4-ICON-001 slice 4 — the life-story timeline, and the planted_out decision', () => {
+  afterEach(cleanup)
+
+  // Every milestone dated, so all five rows render and the adjacency under test is real.
+  const FULL = {
+    sown_at: '2026-02-01', germinated_at: '2026-02-10', transplanted_at: '2026-04-15',
+    planted_out_at: '2026-05-20', first_harvest_at: '2026-06-30',
+  }
+  const rowSvg = (label) => screen.getByText(label).closest('li').querySelector('svg')
+
+  it('every milestone draws its own authored shape, never the neutral dot', () => {
+    const { container } = render(<LifeStoryTimeline planting={FULL} />)
+    expect(container.querySelectorAll('li')).toHaveLength(5)
+    for (const r of buildLifeStory(FULL)) {
+      const svg = rowSvg(r.label)
+      expect(svg, `${r.key} renders no icon`).toBeTruthy()
+      expect(isNeutral(svg), `${r.key} fell back to the neutral dot`).toBe(false)
+      // size 22 -> the 24 master.
+      expect(svg.innerHTML).toBe(parsed(GLYPHS[r.iconName].svg24))
+    }
+  })
+
+  it('THE DESIGN CALL: planted_out is NOT the transplant mark, and they are adjacent', () => {
+    render(<LifeStoryTimeline planting={FULL} />)
+    const rows = buildLifeStory(FULL).map(r => r.key)
+    // The whole reason a glyph was drawn: these two are neighbours in the rendered order, so a
+    // reuse would put two identical marks in consecutive rows.
+    expect(rows.indexOf('planted_out')).toBe(rows.indexOf('transplanted') + 1)
+    expect(rowSvg('Planted out').innerHTML).not.toBe(rowSvg('Transplanted').innerHTML)
+    expect(rowSvg('Planted out').innerHTML).toBe(parsed(GLYPHS['care.plantedOut'].svg24))
+  })
+
+  it('all five milestones are five DIFFERENT marks', () => {
+    render(<LifeStoryTimeline planting={FULL} />)
+    const shapes = buildLifeStory(FULL).map(r => rowSvg(r.label).innerHTML)
+    expect(new Set(shapes).size, 'two milestones render the same mark').toBe(5)
+  })
+
+  it('every row keeps its label and date beside the mark, and no emoji survives', () => {
+    const { container } = render(<LifeStoryTimeline planting={FULL} />)
+    for (const r of buildLifeStory(FULL)) {
+      expect(screen.getByText(r.label)).toBeTruthy()
+    }
+    expect(container.textContent.match(PICTOGRAPHIC)).toBeNull()
+  })
+
+  it('care.plantedOut could not have been an event.* key (the gate that forced care.*)', () => {
+    // Recorded as an assertion, not just a comment: eventTypeIconWiring.test.js holds event.* and
+    // EVENT_TYPES at exactly 1:1, so `planted_out` — a date field, not an event type — has no
+    // event.* slot available. If that ever changes, this test is the reminder to revisit the name.
+    expect(EVENT_TYPES).not.toContain('planted_out')
+    expect(getIcon('event.planted_out')).toBe(NEUTRAL_ICON)
+    expect(GLYPHS['care.plantedOut']).toBeTruthy()
   })
 })
