@@ -525,6 +525,33 @@ const A = {
     svg24: '<path d="M12.4 3.8h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.4 6.4a1.8 1.8 0 0 1-2.54 0l-6-6a1.8 1.8 0 0 1 0-2.54l6.4-6.4A1.8 1.8 0 0 1 12.4 3.8z"/><circle cx="16" cy="8" r="1.5" fill="currentColor" stroke="none"/>',
     svg18: '<path d="M12.6 3.6h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.6 6.6a1.8 1.8 0 0 1-2.54 0l-6.2-6.2a1.8 1.8 0 0 1 0-2.54l6.6-6.6A1.8 1.8 0 0 1 12.6 3.6z"/><circle cx="16.2" cy="7.8" r="1.6" fill="currentColor" stroke="none"/>',
   },
+  // ── V4-ICON-001 reminders pair. The registry had NO bell of any kind before this — the apparent
+  //    near-misses a text search turns up (care.wateringCan, status.flowering, event.watering) are
+  //    an artifact of "ring" inside *wate**ring*** / *flowe**ring***, not a bell. Both are drawn.
+  //
+  //    A MATCHED PAIR on one silhouette, which is the point: on-vs-blocked is a STATE, and a reader
+  //    tells the two apart by the slash rather than by hue, so the tile survives greyscale and
+  //    forced-colors (SC 1.4.1). The consuming tile tints them green/terra as reinforcement only.
+  //    The slash runs NW->SE, the opposite diagonal to status.unseen's, so the app's two negated
+  //    marks do not converge; they sit on different surfaces and different base shapes besides. ──
+  'action.notify': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Reminders on',
+    // Flared dome + rim + clapper + crown nub. The rim is a SEPARATE bar rather than the dome's
+    // closing edge: at 18 a closed dome reads as a hill, and the overhanging rim is what makes it
+    // a bell. The clapper hangs BELOW the rim (not inside the dome) for the same aperture reason.
+    svg24: '<path d="M6.6 16.1c1-1.2 1.5-2.8 1.5-4.4V10a3.9 3.9 0 0 1 7.8 0v1.7c0 1.6 0.5 3.2 1.5 4.4z"/><path d="M4.9 16.1h14.2"/><path d="M10 19.1a2 2 0 0 0 4 0"/><path d="M12 6.1V4.4"/>',
+    // 18: drops the crown nub (a 1.7-unit stub, sub-pixel at this master's inked weight) and
+    // widens the dome to hold the rim's overhang.
+    svg18: '<path d="M6.4 16c1.05-1.25 1.6-2.9 1.6-4.6V9.7a4 4 0 0 1 8 0v1.7c0 1.7 0.55 3.35 1.6 4.6z"/><path d="M4.6 16h14.8"/><path d="M10 19.1a2 2 0 0 0 4 0"/>',
+  },
+  'action.notifyOff': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Reminders blocked',
+    // Same bell, struck through. The nub is dropped at BOTH masters here, not just at 18: the
+    // slash passes through where it sits and the two fuse into a thicker stroke that reads as a
+    // drawing error rather than a crown.
+    svg24: '<path d="M6.6 16.1c1-1.2 1.5-2.8 1.5-4.4V10a3.9 3.9 0 0 1 7.8 0v1.7c0 1.6 0.5 3.2 1.5 4.4z"/><path d="M4.9 16.1h14.2"/><path d="M10 19.1a2 2 0 0 0 4 0"/><path d="M4.6 4.6 19.4 19.4"/>',
+    svg18: '<path d="M6.4 16c1.05-1.25 1.6-2.9 1.6-4.6V9.7a4 4 0 0 1 8 0v1.7c0 1.7 0.55 3.35 1.6 4.6z"/><path d="M4.6 16h14.8"/><path d="M4.4 4.4 19.6 19.6"/>',
+  },
   // ── V4-ICON-001 inventory-type family (2 keys). The inventory_items `type` CHECK is exactly
   //    ('consumable','durable') — a closed two-value set, not an open family — so this namespace
   //    is complete at two and is not a stub. Both are drawn rather than borrowed: nothing in the

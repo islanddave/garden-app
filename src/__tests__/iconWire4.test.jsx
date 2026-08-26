@@ -18,11 +18,17 @@
 //      consumer in the same commit renders NOTHING AT ALL, silently — it does not degrade. So each
 //      map is asserted against its consumer's actual output, not just against its own source text.
 import React from 'react'
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+
+// NotifyButton is the only module here that reaches the network layer; everything else in this
+// file is pure or renders a leaf component. Mocking it file-wide is therefore inert for the rest.
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn() }) }))
+
 import { GLYPHS, NEUTRAL_ICON, getIcon } from '../lib/iconRegistry.js'
+import NotifyButton from '../components/NotifyButton.jsx'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 import WaterDepthChips, { WaterDepthDrops } from '../components/WaterDepthChips.jsx'
 import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
@@ -44,6 +50,7 @@ const WIRED = [
   'components/WaterDepthChips.jsx',
   'lib/lifeStory.js',
   'components/planting/LifeStoryTimeline.jsx',
+  'components/NotifyButton.jsx',
 ]
 
 const PICTOGRAPHIC = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}]/gu
@@ -306,5 +313,47 @@ describe('V4-ICON-001 slice 4 — the life-story timeline, and the planted_out d
     expect(EVENT_TYPES).not.toContain('planted_out')
     expect(getIcon('event.planted_out')).toBe(NEUTRAL_ICON)
     expect(GLYPHS['care.plantedOut']).toBeTruthy()
+  })
+})
+
+describe('V4-ICON-001 slice 4 — the reminders bells', () => {
+  afterEach(cleanup)
+
+  it('the pair is one silhouette differing by the slash, not by hue', () => {
+    // Not a colour pair. bell vs bell-slash has to be tellable with hue removed entirely, so the
+    // two masters must actually differ — and differ by MORE than nothing, which a copy-paste
+    // regression would produce while still passing a "both keys exist" check.
+    for (const k of ['action.notify', 'action.notifyOff']) {
+      expect(GLYPHS[k], `${k} missing from the registry`).toBeTruthy()
+    }
+    const dome = (markup) => markup.match(/<path[^>]*\/>/)[0]
+    const SLASH = /M4\.\d 4\.\d 19\.\d 19\.\d/
+    for (const m of ['svg24', 'svg18']) {
+      expect(GLYPHS['action.notify'][m]).not.toBe(GLYPHS['action.notifyOff'][m])
+      // Same bell body — so the pair reads as one object in two states, not two objects...
+      expect(GLYPHS['action.notifyOff'][m]).toContain(dome(GLYPHS['action.notify'][m]))
+      // ...and the slash is the ONLY thing carrying "blocked". Asserted on both sides so a
+      // copy-paste that left the slash off the Off master cannot pass.
+      expect(GLYPHS['action.notifyOff'][m]).toMatch(SLASH)
+      expect(GLYPHS['action.notify'][m]).not.toMatch(SLASH)
+    }
+    expect(GLYPHS['action.notify'].accessibleName).toBe('Reminders on')
+    expect(GLYPHS['action.notifyOff'].accessibleName).toBe('Reminders blocked')
+  })
+
+  it('NotifyButton draws the bells in every state it can reach', () => {
+    // NOTIFY_ENABLED is false in production, so `enabled` is forced on here — otherwise the
+    // component short-circuits to null and this whole arm would pass over nothing.
+    for (const [permission, key] of [['granted', 'action.notify'], ['denied', 'action.notifyOff'],
+      ['default', 'action.notify']]) {
+      window.Notification = { permission, requestPermission: () => Promise.resolve(permission) }
+      const { container, unmount } = render(<NotifyButton enabled eventCount={5} />)
+      const svg = container.querySelector('svg')
+      expect(svg, `${permission}: no bell rendered`).toBeTruthy()
+      expect(isNeutral(svg), `${permission}: fell back to the neutral dot`).toBe(false)
+      expect(svg.innerHTML, `${permission} drew the wrong bell`).toBe(parsed(GLYPHS[key].svg24))
+      expect(container.textContent.match(PICTOGRAPHIC)).toBeNull()
+      unmount()
+    }
   })
 })

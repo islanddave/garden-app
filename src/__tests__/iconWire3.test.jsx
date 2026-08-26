@@ -52,7 +52,7 @@ const OPEN_HANDOFFS = {
   'lib/overwinterRegimes.js': 0,
   'lib/inventoryEnums.js': 0,
   'lib/harvestTracked.js': 3,
-  'components/NotifyButton.jsx': 4,
+  'components/NotifyButton.jsx': 0,
 }
 
 describe('V4-ICON-001 slice 3 — the wired pages carry no pictographic characters', () => {

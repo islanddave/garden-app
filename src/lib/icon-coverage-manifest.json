@@ -14,7 +14,7 @@
     "action.heart", "action.share", "action.info", "action.edit", "action.archive",
     "action.flag", "action.settings", "action.logmany",
     "action.close", "action.remove", "action.check", "action.filter",
-    "action.groupBy", "action.search", "action.chevron"
+    "action.groupBy", "action.search", "action.chevron", "action.notify", "action.notifyOff"
   ],
   "care": [
     "care.drop", "care.pause", "care.sun", "care.containers", "care.inground",
