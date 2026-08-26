@@ -73,6 +73,25 @@ createRoot(document.getElementById('root')).render(
 // before field use — the value moment is standing at the plant, where connectivity is worst — so
 // first CropCard paint usually resolves without pop-in. INERT ON FAILURE by design: offline or a
 // purged old-hash chunk just rejects here, and CropCard's own .catch keeps the card windowless.
+//
+// V4-PERFTHEMEA-001 — TRIGGER MOVED OFF A BARE requestIdleCallback. rIC measures MAIN-THREAD idle,
+// not network idle. On a cold boot the main thread is idle for most of the time the 1.4MB entry
+// chunk is downloading, so scheduling the import on rIC alone fired it at precisely the worst
+// moment: a second chunk fetch competing with the entry chunk for a cellular radio's bandwidth,
+// delaying the thing the user is actually waiting for in order to prefetch something they are not.
+// `load` is the trigger because it is the coarsest honest "the boot-critical downloads are done"
+// signal available at MODULE scope — there is no component here to hang off Clerk's isLoaded, and
+// a first-API-response hook would tie a purely-client prefetch to an auth state it does not need.
+// rIC is KEPT, after load, so the parse still lands in a quiet frame: the two answer different
+// questions (bandwidth vs main thread) and composing them is strictly better than either alone.
+// timeout:10000 is retained — this must be deferrable, not starvable.
 const warmHarvestWindows = () => { import('./lib/harvestWindows.js').catch(() => {}) }
-if (typeof requestIdleCallback === 'function') requestIdleCallback(warmHarvestWindows, { timeout: 10000 })
-else setTimeout(warmHarvestWindows, 3000)
+const scheduleHarvestWindows = () => {
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(warmHarvestWindows, { timeout: 10000 })
+  else setTimeout(warmHarvestWindows, 3000)
+}
+// readyState checked rather than a bare listener: a module script normally runs before `load`, but
+// a fully-cached boot can complete in the gap, and a `load` that has already fired never fires
+// again — that would retire the warm silently and permanently on exactly the fastest boots.
+if (typeof document !== 'undefined' && document.readyState === 'complete') scheduleHarvestWindows()
+else window.addEventListener('load', scheduleHarvestWindows, { once: true })

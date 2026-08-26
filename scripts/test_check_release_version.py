@@ -88,7 +88,40 @@ def test_releases_entry_not_an_object():
     assert "releases.json integrity" in rules(crv.check_releases(["3.81.1"], "3.81.1"))
 
 
-# --- C. vs origin/main -------------------------------------------------------
+# --- C. releases-latest.json == releases.json[0] (V4-PERFTHEMEA-001) ---------
+
+def test_releases_latest_ok():
+    releases = rel("3.81.1", "3.81.0")
+    assert crv.check_releases_latest(dict(releases[0]), releases) == []
+
+def test_releases_latest_stale_version_is_the_failure_that_matters():
+    # The whole hazard of the split: the probe says 3.81.0 while the history says 3.81.1, so a
+    # client on 3.81.0 never sees a banner. This is BUG-STALECLIENT-002's shape.
+    releases = rel("3.81.1", "3.81.0")
+    assert rules(crv.check_releases_latest(dict(releases[1]), releases)) == [
+        "releases-latest.json vs releases.json[0]"]
+
+def test_releases_latest_differing_highlights_also_fails():
+    # Deep equality, not version-only: drift in any field means the two files were not written by
+    # the same add-release run, and the next field to drift could be the version.
+    releases = rel("3.81.1", "3.81.0")
+    latest = dict(releases[0], highlights=["something else"])
+    assert rules(crv.check_releases_latest(latest, releases)) == [
+        "releases-latest.json vs releases.json[0]"]
+
+def test_releases_latest_rejects_the_array_shape():
+    releases = rel("3.81.1")
+    assert rules(crv.check_releases_latest(releases, releases)) == [
+        "releases-latest.json integrity"]
+
+def test_releases_latest_defers_when_the_history_head_is_already_broken():
+    # check_releases owns "releases.json[0] is not an object"; reporting it twice would send the
+    # operator chasing the wrong file.
+    assert crv.check_releases_latest({"version": "3.81.1"}, []) == []
+    assert crv.check_releases_latest({"version": "3.81.1"}, ["3.81.1"]) == []
+
+
+# --- D. vs origin/main -------------------------------------------------------
 
 TAGS = {"v3.80.0", "v3.81.0", "v3.81.1"}
 

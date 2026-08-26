@@ -46,8 +46,8 @@ EXIT CODES (house convention, cf. scripts/check-coverage-ratchet.py)
 
 Note on the asymmetry: an unparseable package.json is exit 2 (the script
 cannot even obtain a version to assert on), while an unparseable
-public/releases.json is exit 1 ("parses as a non-empty array" is itself
-assertion B).
+public/releases.json or public/releases-latest.json is exit 1 ("parses as a
+non-empty array" / "parses as an object" are themselves assertions B and C).
 
 Waivers: scripts/release-version-allowlist.json, consulted ONLY by the Tier-1.C
 tag-collision check. There is deliberately no env-var or commit-trailer bypass.
@@ -108,8 +108,9 @@ def check_shape(pkg_version):
 def check_releases(releases, pkg_version):
     """B. public/releases.json integrity. Always armed.
 
-    Load-bearing: useAppUpdate.js / useWhatsNew.js read d[0] blindly, so a
-    mis-ordered or duplicated list silently shows users the wrong release.
+    Load-bearing: ReleaseNotes.jsx renders slice(0, 10) of this list, and
+    public/releases-latest.json is derived from [0] (check C), so a mis-ordered
+    or duplicated list silently shows users the wrong release.
     """
     fix_cmd = 'rebuild the head entry with: node scripts/add-release.mjs <version> "<highlight>"'
     if not isinstance(releases, list):
@@ -167,6 +168,43 @@ def check_releases(releases, pkg_version):
     return out
 
 
+def check_releases_latest(latest, releases):
+    """C. public/releases-latest.json == public/releases.json[0]. Always armed.
+
+    V4-PERFTHEMEA-001 split the version probe off the 141,722 B history file:
+    useAppUpdate.js and useWhatsNew.js now read releases-latest.json, while
+    ReleaseNotes.jsx still reads the full releases.json. That is only safe while
+    the two agree — a stale -latest is a client that never learns it is out of
+    date, which is BUG-STALECLIENT-002 rebuilt on purpose.
+
+    DEEP equality, not just the version field. Both files are written in one
+    step by scripts/add-release.mjs and neither is meant to be hand-edited; a
+    version-only check would pass on a head entry whose date or highlights had
+    been edited in one file and not the other, which is the same drift one field
+    later. The complementary runtime check is scripts/smoke-prod.py, which reads
+    the DEPLOYED copy — this one only proves the repo is consistent.
+    """
+    fix_cmd = 'regenerate BOTH: node scripts/add-release.mjs <version> "<highlight>"'
+    if not isinstance(latest, dict):
+        return [Violation("releases-latest.json integrity",
+                          f"public/releases-latest.json is {type(latest).__name__}, not an object "
+                          "(it is releases.json[0] alone, not the array)",
+                          fix_cmd)]
+    head = releases[0] if isinstance(releases, list) and releases else None
+    if not isinstance(head, dict):
+        # check_releases already reported this; nothing further to say.
+        return []
+    if latest != head:
+        return [Violation(
+            "releases-latest.json vs releases.json[0]",
+            f"releases-latest.json (v{latest.get('version')!r}) differs from "
+            f"releases.json[0] (v{head.get('version')!r}) — the version probe and the "
+            "release-notes history would disagree about the current release",
+            fix_cmd,
+        )]
+    return []
+
+
 def next_free_version(pkg_version, tags):
     """Lowest patch bump of pkg_version whose v-tag is not already taken."""
     parsed = parse_semver(pkg_version)
@@ -221,7 +259,7 @@ def check_vs_main(pkg_version, main_version, tags, waived=()):
 
 # --- Tier 2: release-relevance classification (advisory only) ----------------
 
-_NON_RELEASE_EXACT = frozenset({"public/releases.json"})
+_NON_RELEASE_EXACT = frozenset({"public/releases.json", "public/releases-latest.json"})
 _NON_RELEASE_PREFIXES = ("docs/", ".github/ISSUE_TEMPLATE/")
 _TEST_SUFFIXES = (".test.js", ".test.jsx", ".test.ts", ".test.tsx")
 
@@ -311,9 +349,10 @@ def load_json(relpath, on_error_exit):
     except json.JSONDecodeError as exc:
         if on_error_exit == 2:
             _fatal2(f"{relpath} is not valid JSON: {exc}")
-        print(f"FATAL: releases.json integrity violated", file=sys.stderr)
+        print(f"FATAL: {relpath} integrity violated", file=sys.stderr)
         print(f"  {relpath} is not valid JSON: {exc}", file=sys.stderr)
-        print("  Fix: restore a valid JSON array (newest-first)", file=sys.stderr)
+        print('  Fix: node scripts/add-release.mjs <version> "<highlight>" rewrites both '
+              "release files from scratch", file=sys.stderr)
         sys.exit(1)
 
 
@@ -425,6 +464,13 @@ def main():
         report(violations)
         return 1
     print(f"OK: releases.json — {len(releases)} entries, strictly descending, head == {pkg_version}")
+
+    latest = load_json("public/releases-latest.json", on_error_exit=1)
+    violations = check_releases_latest(latest, releases)
+    if violations:
+        report(violations)
+        return 1
+    print(f"OK: releases-latest.json — matches releases.json[0] ({pkg_version})")
 
     main_version = main_package_version()
     main_parsed = parse_semver(main_version)
