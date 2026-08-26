@@ -904,7 +904,12 @@ export default function PlantingSelect({
   // ── Chip mode: a selection is made and the picker is at rest ──────────────
   if (selected && !open) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      // BUG-FRAMEPADOCCLUDE-001: `minWidth: 0` on the row, and the chip below is capped and
+      // ellipsized. Without it this chip is free to grow VERTICALLY in a narrow column, and in the
+      // weigh-in frame that is not cosmetic — track 1 is `auto` and track 2 is the `1fr` that pays
+      // for it, so a two-line chip took 41px straight out of the keypad's track and pushed the pad
+      // 34px underneath Save. See the header note on the chip label span.
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         {/* V4-PICKERA11Y-001: the `aria-live="polite"` that used to sit here is REMOVED, not
             relocated. It could never announce anything — this whole subtree mounts in the same
             commit as its text, and a live region created together with its content is not spoken
@@ -913,7 +918,26 @@ export default function PlantingSelect({
             (select()) onto a button that is aria-describedby the chip label below — a focus event,
             which is announced deterministically rather than by live-region timing. */}
         <div style={chipStyle(disabled)} data-testid={dataTestId ? `${dataTestId}-chip` : undefined}>
-          <span id={chipLabelId} style={{ fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
+          {/* BUG-FRAMEPADOCCLUDE-001 — ONE LINE, ellipsised. This chip's height had never been
+              bounded because until V4-WEIGHFRAME-001 put a date control and a Close beside it, it
+              always had the full form width and never needed more than one line. In the weigh-in
+              frame it now lays out in ~200px, "Lemon Thyme"-length names wrap, and each extra line
+              comes out of the KEYPAD's track. Measured at 390x500: the chooser grew 62 -> 103px on
+              pick, track 2 fell 347 -> 296 against 345px of content, and the weight pad's bottom
+              row landed 34px below track 3's top edge and -29px from Save — a low press committing
+              the harvest instead of typing a digit. Shipped in v4.51.0 and live in prod.
+              Ellipsis rather than a smaller font or a wrap allowance: the name is already on the
+              row the user just picked from, and the app ellipsises the identity line in the track-3
+              ledger for exactly this reason while never ellipsising a measurement. `title` keeps
+              the full text reachable on the surfaces that have a pointer. */}
+          <span
+            id={chipLabelId}
+            title={label(selected)}
+            style={{
+              fontSize: '0.88rem', fontWeight: 600, color: P.green,
+              minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >
             {label(selected)}
           </span>
           {/* V4-PROJHIDE-001: the secondary project_name tag is hidden when projects aren't user-facing
@@ -1254,6 +1278,12 @@ function chipStyle(disabled) {
     borderRadius: T.radiusField,
     padding: '8px 10px',
     minHeight: 44,
+    // BUG-FRAMEPADOCCLUDE-001: an inline-flex box defaults to min-width:auto, which refuses to
+    // shrink below its content — so the ellipsis on the label span above could never engage and the
+    // text wrapped instead. `minWidth: 0` is what makes the one-line cap actually hold; `maxWidth`
+    // keeps the chip inside a narrow column rather than overflowing it.
+    minWidth: 0,
+    maxWidth: '100%',
     boxSizing: 'border-box',
     opacity: disabled ? 0.6 : 1,
   }

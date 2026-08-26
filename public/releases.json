@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.55.0",
+    "date": "2026-08-26",
+    "highlights": [
+      "Fixed a weigh-in bug that could save a harvest when you meant to type a digit. Since v4.51.0 the bottom row of the weight keypad — 0, the decimal point and backspace — sat underneath the Save button rather than above it, so a press that landed slightly low committed the entry instead. It happened from the very first weigh-in of a sitting, not just later ones, and the only way back was Undo.",
+      "The cause was a wrapping label. Putting the date and the Close button beside the planting name left that name about half as much width, so a longer one ran onto a second line — and in the fixed weigh-in layout every pixel the top row takes comes straight out of the keypad's space below it. The name is now kept to a single line and shortened with an ellipsis if it does not fit, which puts the keypad back where it was, with the full clearance above Save restored."
+    ]
+  },
+  {
     "version": "4.54.0",
     "date": "2026-08-26",
     "highlights": [
