@@ -1,8 +1,46 @@
 {
-  "_doc": "V4-ICON-001 (Pass B V101 §9/§14) coverage manifest. GLYPHS must be a superset of each listed family. Anchor set ships first (§16 pre-flight gate); remaining families are added as their glyphs land.",
+  "_doc": "V4-ICON-001 (Pass B V101 §9/§14) coverage manifest. GLYPHS must be a superset of EVERY array below; a missing key fails iconRegistryV101.test.js. The §9 coverage families are now enumerated key-by-key so a family that was SPECIFIED but never DRAWN is a red test rather than an invisible gap — the failure mode that let the action/care-state/facet families sit undrawn while the harness reported green over 8 anchors. Adding an array here is all it takes to guard a new family; the test iterates every array-valued property. The event.* family is deliberately NOT listed: iconEvents.test.js already gates it against the canonical EVENT_TYPES list, which is a stronger check than a hand-copied roster.",
   "schemaVersion": 101,
   "anchorSet": [
     "nav.today", "nav.garden", "care.drop", "facet.type",
     "facet.location", "severity.high", "action.heart", "care.pause"
+  ],
+  "nav": [
+    "nav.today", "nav.garden", "nav.back", "nav.plus", "nav.more", "nav.findings",
+    "nav.dashboard", "nav.inventory", "nav.helper", "nav.notes", "nav.signout", "nav.critters",
+    "nav.harvests", "nav.putup", "nav.space", "nav.achievements"
+  ],
+  "action": [
+    "action.heart", "action.share", "action.info", "action.edit", "action.archive",
+    "action.flag", "action.settings", "action.logmany",
+    "action.close", "action.remove", "action.check", "action.filter",
+    "action.groupBy", "action.search", "action.chevron"
+  ],
+  "care": [
+    "care.drop", "care.pause", "care.sun", "care.containers", "care.inground",
+    "care.wateringCan", "care.wateringCanFill", "care.feed", "care.cloud", "care.rainPct",
+    "care.tempHigh", "care.tempLow"
+  ],
+  "status": [
+    "status.seed", "status.rooting", "status.seedling", "status.sprouting", "status.seeding",
+    "status.vegetative", "status.growing", "status.active", "status.flowering", "status.fruiting",
+    "status.harvesting", "status.harvested", "status.dormant", "status.planning", "status.ended",
+    "status.failed", "status.dead",
+    "status.unseen", "status.healthy", "status.due", "status.overdue"
+  ],
+  "lifecycle": [
+    "lifecycle.sprout", "lifecycle.bud", "lifecycle.bloom", "lifecycle.fruit"
+  ],
+  "severity": [
+    "severity.low", "severity.med", "severity.high"
+  ],
+  "facet": [
+    "facet.type", "facet.group", "facet.lifecycle", "facet.location", "facet.freeform"
+  ],
+  "media": [
+    "media.camera", "media.play", "media.pause", "media.stop", "media.mic"
+  ],
+  "mode": [
+    "mode.desk"
   ]
 }

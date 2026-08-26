@@ -292,6 +292,209 @@ const A = {
     svg24: '<path data-region="wingUpper" d="M12 9C12.4 6 14.5 3.8 17.6 3.8C20 3.8 21.2 5.6 21 7.8C20.7 10.3 18 12.4 14.8 12.2C13.2 12.1 12 11 12 9.4Z" fill="currentColor" stroke="none"/><path data-region="wingUpper" d="M12 9C11.6 6 9.5 3.8 6.4 3.8C4 3.8 2.8 5.6 3 7.8C3.3 10.3 6 12.4 9.2 12.2C10.8 12.1 12 11 12 9.4Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.4C12.8 12.4 14.6 12.6 16.2 13C18.4 13.6 19.6 15.4 18.8 17.4C18 19.4 15.4 19.8 13.6 18.6C12.4 17.8 12 16 12 14Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.4C11.2 12.4 9.4 12.6 7.8 13C5.6 13.6 4.4 15.4 5.2 17.4C6 19.4 8.6 19.8 10.4 18.6C11.6 17.8 12 16 12 14Z" fill="currentColor" stroke="none"/><circle data-region="body" cx="12" cy="6.4" r="1.5" fill="currentColor" stroke="none"/><path data-region="body" d="M12 7.4C13.1 7.4 13.7 8.4 13.7 10L12.7 17C12.6 17.9 12.3 18.3 12 18.6C11.7 18.3 11.4 17.9 11.3 17L10.3 10C10.3 8.4 10.9 7.4 12 7.4Z" fill="currentColor" stroke="none"/><path data-region="antenna" d="M12 5.6C12.8 4 14 3.2 15.4 3" fill="none" stroke="currentColor"/><path data-region="antenna" d="M12 5.6C11.2 4 10 3.2 8.6 3" fill="none" stroke="currentColor"/>',
     svg18: '<path data-region="wingUpper" d="M12 9.2C12.2 6 14.6 4 17.4 4.4C20 4.8 20.4 7.6 19 9.8C17.8 11.6 14.6 12 12 10.6Z" fill="currentColor" stroke="none"/><path data-region="wingUpper" d="M12 9.2C11.8 6 9.4 4 6.6 4.4C4 4.8 3.6 7.6 5 9.8C6.2 11.6 9.4 12 12 10.6Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.2C13 12 15 12.4 16.6 13.4C18.4 14.6 18.4 16.8 16.6 18C14.8 19 12.6 18 12 15.6Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.2C11 12 9 12.4 7.4 13.4C5.6 14.6 5.6 16.8 7.4 18C9.2 19 11.4 18 12 15.6Z" fill="currentColor" stroke="none"/><circle data-region="body" cx="12" cy="6.6" r="1.4" fill="currentColor" stroke="none"/><path data-region="body" d="M12 7.6C13 7.6 13.5 8.5 13.5 10L12.6 16.8C12.5 17.6 12.3 18 12 18.3C11.7 18 11.5 17.6 11.4 16.8L10.5 10C10.5 8.5 11 7.6 12 7.6Z" fill="currentColor" stroke="none"/><path data-region="antenna" d="M12 5.8C12.8 4.4 13.8 3.8 15 3.6" fill="none" stroke="currentColor"/><path data-region="antenna" d="M12 5.8C11.2 4.4 10.2 3.8 9 3.6" fill="none" stroke="currentColor"/>',
   },
+  // ── V4-ICON-001 utility/action family (§9 action coverage; §2 utility-glyph signature). ──
+  // The signature move, shared with nav.plus + nav.back and stated so it stays measurable: a
+  // content-less utility glyph's dominant stroke spans 13 units (5.5..18.5) centred on 12, round
+  // terminals, and any ENCLOSURE is action.info's circle (r 8.4 at 24 / 8.6 at 18) so every
+  // enclosed utility glyph reads as one kit rather than as N borrowed stock icons.
+  // These carry accessibleName inline (iconRegistry.js falls back to it after ANCHOR_META).
+  'action.close': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Close',
+    // Bare X. DELIBERATELY NOT status.failed's X (6.2..17.8): tucked to 6.9..17.1 so the
+    // interactive dismiss control sits optically lighter than the status mark it can neighbour.
+    // The two stay distinguishable by weight, and status.failed is never interactive.
+    svg24: '<path d="M6.9 6.9 17.1 17.1"/><path d="M17.1 6.9 6.9 17.1"/>',
+    svg18: '<path d="M7.1 7.1 16.9 16.9"/><path d="M16.9 7.1 7.1 16.9"/>',
+  },
+  'action.remove': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Remove',
+    // X inside the action.info circle — the chip/tag clear affordance. The enclosure is what
+    // separates it from action.close (bare X, dismisses a whole surface) and from status.failed.
+    svg24: '<circle cx="12" cy="12" r="8.4"/><path d="M9.2 9.2 14.8 14.8"/><path d="M14.8 9.2 9.2 14.8"/>',
+    svg18: '<circle cx="12" cy="12" r="8.6"/><path d="M9.4 9.4 14.6 14.6"/><path d="M14.6 9.4 9.4 14.6"/>',
+  },
+  'action.check': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Confirm',
+    // Compact tick (legs 5.9 / 11.5). status.harvested's 18px master is ALSO a bare check
+    // (its 24 is circled) — this one is deliberately shorter and steeper so the two are told
+    // apart by proportion. They are near-synonyms at 18px; both are always label-adjacent.
+    svg24: '<path d="M6.2 12.6 10.4 16.8 17.8 8"/>',
+    svg18: '<path d="M6.4 12.6 10.4 16.6 17.6 8.2"/>',
+  },
+  'action.filter': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Filter',
+    svg24: '<path d="M4.6 5.4h14.8l-5.7 7v5.2l-3.4 2v-7.2z"/>',
+    svg18: '<path d="M4.4 5.6h15.2l-5.9 7.1v5l-3.4 2v-7.1z"/>',
+  },
+  'action.groupBy': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Group by',
+    // Two collapsible group headers, each with one indented member. The header carets are the
+    // action.chevron form at half scale, so "grouping" and "disclosure" are one kit, not two.
+    svg24: '<path d="M4.4 5.2 6.2 6.6 4.4 8"/><path d="M8 6.6h10.6"/><path d="M11 10.8h7.6"/><path d="M4.4 13.8 6.2 15.2 4.4 16.6"/><path d="M8 15.2h10.6"/><path d="M11 19.4h7.6"/>',
+    // 18: the carets drop (2.8 units tall = ~2 device px, they close to noise — §4 aperture) AND
+    // group B's member drops with them. Four bars at 2.0px stroke leave a 1.2px clear gap, which
+    // read as one solid block (verified on the contact sheet): the mark degraded to a plain list.
+    // Three bars restore the rhythm — 1.6px clear inside the group vs 3.3px between groups — so
+    // the header/member indent still carries "grouped", which is the whole meaning.
+    svg18: '<path d="M4.6 6.2h14"/><path d="M9.4 11h9.2"/><path d="M4.6 18h14"/>',
+  },
+  'action.search': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Search',
+    svg24: '<circle cx="10.8" cy="10.8" r="6.2"/><path d="M15.4 15.4 19.8 19.8"/>',
+    svg18: '<circle cx="10.6" cy="10.6" r="6.4"/><path d="M15.4 15.4 19.6 19.6"/>',
+  },
+  // ── V4-ICON-001 nav destinations still rendered as emoji in BottomNav (basket/jar/house/cup). ──
+  // Key names follow the nav.* convention already in this file: one key per DESTINATION, named
+  // for the page. None of these four is a §9 family member — §9 predates the Harvests/Put-Up/
+  // Space/Achievements tabs — so they are drawn to the same grammar and enrolled in the coverage
+  // manifest's nav family, which is where a future reader will look for them.
+  //
+  // nav.harvests is deliberately NOT a basket. status.harvesting + event.harvest already own the
+  // woven-basket-with-handle form, and a nav tab wearing a content mark is the exact defect that
+  // forced the nav.today redraw (see the top of this file). A bowl of produce says "what you
+  // picked" without borrowing the mark that means "picking".
+  'nav.harvests': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Harvests',
+    // ONE fruit, centred, with a leaf — NOT two. Two circles resting on the rim line read as a
+    // smiley face at every size (verified on the contact sheet, and it is the kind of thing a
+    // coverage band cannot see). The leaf is the kit's Ø18 quadrant arc, same as facet.type's.
+    svg24: '<path d="M5.4 13.4h13.2a6.6 6.6 0 0 1-13.2 0z"/><circle cx="12" cy="10.4" r="3"/><path d="M12 7.4c0-1.5 1.2-2.7 2.7-2.7 0 1.5-1.2 2.7-2.7 2.7z"/>',
+    // 18: the leaf drops (2.7 units = ~2 device px, §2 complexity floor); bowl + fruit carries it.
+    svg18: '<path d="M5.6 13.2h12.8a6.4 6.4 0 0 1-12.8 0z"/><circle cx="12" cy="10.4" r="2.8"/>',
+  },
+  'nav.putup': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Put-Up',
+    // Canning jar: screw band + body + fill line. event.cured is the garlic bulb and
+    // event.seed_saved the envelope, so the jar is unclaimed and reads as preserving.
+    svg24: '<path d="M8.2 4.6h7.6a1.2 1.2 0 0 1 1.2 1.2v1.4a1.2 1.2 0 0 1-1.2 1.2H8.2A1.2 1.2 0 0 1 7 7.2V5.8a1.2 1.2 0 0 1 1.2-1.2z"/><path d="M8.8 8.4h6.4a1.8 1.8 0 0 1 1.8 1.8v7.6a1.8 1.8 0 0 1-1.8 1.8H8.8a1.8 1.8 0 0 1-1.8-1.8v-7.6a1.8 1.8 0 0 1 1.8-1.8z"/><path d="M7 14.8h10"/>',
+    // 18: the fill line drops — at 2.0px stroke it closes the gap to the jar shoulder (§4).
+    svg18: '<path d="M8 4.4h8a1.2 1.2 0 0 1 1.2 1.2v1.6a1.2 1.2 0 0 1-1.2 1.2H8A1.2 1.2 0 0 1 6.8 7.2V5.6A1.2 1.2 0 0 1 8 4.4z"/><path d="M8.6 8.4h6.8a1.8 1.8 0 0 1 1.8 1.8v7.8a1.8 1.8 0 0 1-1.8 1.8H8.6a1.8 1.8 0 0 1-1.8-1.8v-7.8a1.8 1.8 0 0 1 1.8-1.8z"/>',
+  },
+  'nav.space': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Space',
+    // A Space is the top-level container ABOVE locations, so the mark is a plot subdivided into
+    // zones — not a house. nav.dashboard and event.brought_inside already carry house forms, and
+    // a third would say "home" where this says "the piece of ground and everything in it".
+    svg24: '<rect x="4.4" y="6.4" width="15.2" height="11.2" rx="1.8"/><path d="M4.4 12h15.2"/><path d="M12.6 12v5.6"/>',
+    svg18: '<rect x="4" y="6.2" width="16" height="11.6" rx="1.8"/><path d="M4 12h16"/><path d="M12.8 12v5.8"/>',
+  },
+  'nav.achievements': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Achievements',
+    svg24: '<path d="M7.8 4.8h8.4v3.8a4.2 4.2 0 0 1-8.4 0z"/><path d="M7.8 6.4H5.4a3 3 0 0 0 2.9 3"/><path d="M16.2 6.4h2.4a3 3 0 0 1-2.9 3"/><path d="M12 12.8v3.6"/><path d="M9 19.6l0.8-3.2h4.4l0.8 3.2z"/>',
+    // 18: base collapses to a plinth bar (the trapezoid's 3.2-unit taper is sub-pixel at 18).
+    svg18: '<path d="M7.6 4.6h8.8v3.9a4.4 4.4 0 0 1-8.8 0z"/><path d="M7.6 6.4H5.2a3 3 0 0 0 3 3"/><path d="M16.4 6.4h2.4a3 3 0 0 1-3 3"/><path d="M12 12.9v4"/><path d="M8.4 19.4h7.2"/>',
+  },
+  'action.chevron': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Show more',
+    // Disclosure ">" — the mirror of nav.back, and mirrored ON PURPOSE: back and disclose are
+    // one pair in this language and the DIRECTION is the meaning. An expander rotates it in CSS
+    // (transform), which is why there is no separate down/up key.
+    svg24: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
+    svg18: '<path d="M9.5 6 15 12l-5.5 6"/>',
+  },
+  // ── V4-ICON-001 care/weather family (§9: watering-can, watering-can fill, feed, cloud,
+  //    rain+%, day-high/night-low). drop / pause / sun already shipped. All mono: the weather
+  //    surface sets `color` per condition, so hue is never baked (§6). ──
+  'care.wateringCan': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Watering can',
+    // Rim + squared D-handle + TAPERED pail + spout + rose. Two forms were drawn and rendered
+    // before this one stuck. A straight-sided body with a bump on top is a KETTLE — the taper is
+    // what makes it a can. And an ARCHED hoop handle fills in solid at both masters: a semicircle
+    // has a sagitta equal to its half-chord, so the counter-space is (sagitta - stroke) and closes
+    // long before 18px. The squared handle holds a real slot at 24 AND 18, which is why the same
+    // handle serves both masters instead of the usual drop-an-element simplification.
+    svg24: '<path d="M7.4 10.6h12.4"/><path d="M10.4 10.6V8.2a1.6 1.6 0 0 1 1.6-1.6h3.6a1.6 1.6 0 0 1 1.6 1.6v2.4"/><path d="M8.8 10.6h10.2l-1.1 7.9a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.1 13 4.6 9.6"/><path d="M3.1 11.4 5.9 7.8"/>',
+    // 18: only the rose drops (§2 names watering-can as a complexity-floor case) — it is a
+    // 4.5-unit bar at ~52deg and at 2.0px stroke it merges with the spout it caps. The spout is
+    // also re-angled steeper so it clears the rim line instead of fusing into it.
+    svg18: '<path d="M7.6 10.8h11.8"/><path d="M10.2 10.8V8a1.7 1.7 0 0 1 1.7-1.7h4a1.7 1.7 0 0 1 1.7 1.7v2.8"/><path d="M8.8 10.8h10.2l-1.1 7.7a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.2 14 4.2 9.2"/>',
+  },
+  'care.wateringCanFill': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Water remaining',
+    // §9: ONE parametric glyph, water level driven by a --fill CSS var on a clip-path — NOT N
+    // pre-rendered assets. The consumer sets it on the Icon's style, e.g. style={{'--fill':'40%'}};
+    // --fill is a PERCENTAGE of the water body's own height, because clip-path percentages on an
+    // SVG element resolve against its fill-box. Default 100% = full, so a consumer that sets
+    // nothing gets a full can rather than an empty one (and the §15 never-throws posture holds).
+    // resvg ignores basic-shape clip-path, so the CI gates measure the FULL can deterministically;
+    // the level itself is a browser-only behaviour and is not what the optical band is guarding.
+    svg24: '<path d="M10.1 12.2h7.6l-0.9 6.3a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z" fill="currentColor" stroke="none" style="clip-path:inset(calc(100% - var(--fill, 100%)) 0 0 0)"/><path d="M7.4 10.6h12.4"/><path d="M10.4 10.6V8.2a1.6 1.6 0 0 1 1.6-1.6h3.6a1.6 1.6 0 0 1 1.6 1.6v2.4"/><path d="M8.8 10.6h10.2l-1.1 7.9a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.1 13 4.6 9.6"/>',
+    svg18: '<path d="M10.1 12.4h7.4l-0.9 6a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z" fill="currentColor" stroke="none" style="clip-path:inset(calc(100% - var(--fill, 100%)) 0 0 0)"/><path d="M7.6 10.8h11.8"/><path d="M10.2 10.8V8a1.7 1.7 0 0 1 1.7-1.7h4a1.7 1.7 0 0 1 1.7 1.7v2.8"/><path d="M8.8 10.8h10.2l-1.1 7.7a1.5 1.5 0 0 1-1.5 1.3h-5a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9.2 14 4.2 9.2"/>',
+  },
+  // care.feed IS event.fertilizing's form — leaf + plus. iconEvents.js REUSEs this entry by
+  // reference rather than keeping its own copy, which is the house pattern (see its REUSE block)
+  // and means the two can never drift apart. The pair is ruled in iconUniqueness.test.js.
+  'care.feed': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Feed',
+    svg24: '<path d="M5.4 18.6C5.4 11.2 11.2 5.4 18.6 5.4 18.6 12.8 12.8 18.6 5.4 18.6z"/><path d="M8.4 15.6C10.8 13.2 13.6 10.4 16 8"/><path d="M17.4 16.2v3.6"/><path d="M15.6 18h3.6"/>',
+    svg18: '<path d="M5.8 17.2C5.8 11 11 5.8 17.2 5.8 17.2 12 12 17.2 5.8 17.2z"/><path d="M17.4 15.8v3.8"/><path d="M15.5 17.7h3.8"/>',
+  },
+  'care.cloud': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Cloudy',
+    // Three lobes over a flat base, same construction as event.rain's cloud but standing alone
+    // and sized to the live area. event.rain keeps its three falling streaks; a bare cloud is
+    // "the sky right now", which is a different statement from "it rained".
+    svg24: '<path d="M6.6 17.2a4.05 4.05 0 0 1 .35-8 5.2 5.2 0 0 1 9.9 1.35 3.7 3.7 0 0 1 .55 6.65z"/>',
+    svg18: '<path d="M6.4 17a4.1 4.1 0 0 1 .35-8.1 5.3 5.3 0 0 1 10.1 1.4 3.8 3.8 0 0 1 .55 6.7z"/>',
+  },
+  'care.rainPct': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Chance of rain',
+    // The FORECAST twin of event.rain, and deliberately not a second three-streak cloud: one
+    // drop under a raised cloud reads as "some chance", three streaks read as "it is raining".
+    // The two sit on different surfaces (weather widget vs event history) but share a vocabulary.
+    svg24: '<path d="M6.8 13.6a3.3 3.3 0 0 1 .3-6.6 4.3 4.3 0 0 1 8.2 1.1 3 3 0 0 1 .45 5.5z"/><path d="M12 15.2c0 0-2.5 3-2.5 4.4a2.5 2.5 0 0 0 5 0c0-1.4-2.5-4.4-2.5-4.4z"/>',
+    svg18: '<path d="M6.6 13.4a3.4 3.4 0 0 1 .3-6.8 4.4 4.4 0 0 1 8.4 1.15 3.05 3.05 0 0 1 .45 5.65z"/><path d="M12 15c0 0-2.6 3.1-2.6 4.6a2.6 2.6 0 0 0 5.2 0c0-1.5-2.6-4.6-2.6-4.6z"/>',
+  },
+  // day-high / night-low = a slim outline thermometer at left + a rising/falling arrow at right.
+  // FIRST DRAFT WAS AN ARROW MEETING A RAIL and it has to stay rejected: arrow-down-to-a-line is
+  // the universal DOWNLOAD icon, a read strong enough to beat any label. The thermometer sits
+  // near event.heat_damage (a fat CENTRED thermometer with a solid bulb and a mercury column) —
+  // a two-object compound against a one-object mark is a real difference, and the two surfaces
+  // (weather widget vs event history) do not share a screen. The day/night half of §9's wording
+  // is carried by the adjacent H/L text, which SC 1.4.1 requires to be present anyway.
+  'care.tempHigh': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'High temperature',
+    svg24: '<path d="M11.2 12.8V6.6a2.1 2.1 0 0 0-4.2 0v6.2a3.4 3.4 0 1 0 4.2 0z"/><path d="M18 18.2V10"/><path d="M15.2 12.8 18 10l2.8 2.8"/>',
+    svg18: '<path d="M11.8 12.8V6.4a2.6 2.6 0 0 0-5.2 0v6.4a3.8 3.8 0 1 0 5.2 0z"/><path d="M18 18.4V9.8"/><path d="M15 12.8 18 9.8l3 3"/>',
+  },
+  'care.tempLow': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Low temperature',
+    svg24: '<path d="M11.2 12.8V6.6a2.1 2.1 0 0 0-4.2 0v6.2a3.4 3.4 0 1 0 4.2 0z"/><path d="M18 9.8V18"/><path d="M15.2 15.2 18 18l2.8-2.8"/>',
+    svg18: '<path d="M11.8 12.8V6.4a2.6 2.6 0 0 0-5.2 0v6.4a3.8 3.8 0 1 0 5.2 0z"/><path d="M18 9.6V18.2"/><path d="M15 15.2 18 18.2l3-3"/>',
+  },
+  // ── V4-ICON-001 facet family (§9: type / group / lifecycle / location / freeform).
+  //    type (leaf) + location (pin) shipped with the anchor set; these three complete it. Like
+  //    their two siblings they stay MONO and recolourable — a facet glyph takes the facet's
+  //    theme colour from the consuming TagChip, so a baked fill would break the facet→token map.
+  //    Unused until TAGSUB, which is exactly why they are drawn now rather than later: the point
+  //    of the coverage manifest is that a specified family is never silently absent. ──
+  'facet.group': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Group',
+    // Three rings in a cluster — "several things treated as one". Distinct from action.groupBy,
+    // which is the VERB (regroup this list); this is the NOUN (the group facet).
+    svg24: '<circle cx="12" cy="7.4" r="3.4"/><circle cx="7" cy="16" r="3.4"/><circle cx="17" cy="16" r="3.4"/>',
+    // 18: rings shrink and spread. At the 24 spacing the 3.15-unit gaps close to 0.36 device px
+    // against a 2.67-unit stroke and the cluster fuses into one blob (§4 aperture).
+    svg18: '<circle cx="12" cy="7" r="3"/><circle cx="6.6" cy="16.4" r="3"/><circle cx="17.4" cy="16.4" r="3"/>',
+  },
+  'facet.lifecycle': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Lifecycle',
+    // A cycle, not a stage. The four lifecycle.* glyphs ARE the stages; this is the facet that
+    // groups them, so it has to say "progression through stages" without being any one of them.
+    // Arrowhead barbs open at +/-30deg off the reverse tangent, not +/-45: at 45 the two barbs
+    // sit near-axis-aligned and the round joins fuse them into an L-shaped tab that reads as a
+    // little flag on the end of the arc (compared side by side at 110px, 24px and 18px).
+    svg24: '<path d="M20 12a8 8 0 1 1-2.35-5.65"/><path d="M16.7 2.9 17.65 6.35 14.2 5.4"/>',
+    svg18: '<path d="M20.2 12a8.2 8.2 0 1 1-2.4-5.8"/><path d="M16.9 2.9 17.8 6.2 14.5 5.2"/>',
+  },
+  'facet.freeform': {
+    class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Tag',
+    // Luggage tag + eyelet. The eyelet is a FILLED dot at both masters (the §2 dot primitive)
+    // rather than a tiny ring: an outlined r 1.5 hole leaves 1.25 units of counter at 24 and
+    // none at all at 18, so it would read as a smudge exactly where the tag's tell should be.
+    svg24: '<path d="M12.4 3.8h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.4 6.4a1.8 1.8 0 0 1-2.54 0l-6-6a1.8 1.8 0 0 1 0-2.54l6.4-6.4A1.8 1.8 0 0 1 12.4 3.8z"/><circle cx="16" cy="8" r="1.5" fill="currentColor" stroke="none"/>',
+    svg18: '<path d="M12.6 3.6h6a1.8 1.8 0 0 1 1.8 1.8v6a1.8 1.8 0 0 1-.53 1.27l-6.6 6.6a1.8 1.8 0 0 1-2.54 0l-6.2-6.2a1.8 1.8 0 0 1 0-2.54l6.6-6.6A1.8 1.8 0 0 1 12.6 3.6z"/><circle cx="16.2" cy="7.8" r="1.6" fill="currentColor" stroke="none"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)

@@ -27,8 +27,24 @@ describe('GLYPHS — registry schema validation (§13)', () => {
 })
 
 describe('GLYPHS — coverage completeness (§9 manifest)', () => {
-  it('registry ⊇ anchor-set manifest', () => {
-    for (const key of manifest.anchorSet) expect(GLYPHS[key]).toBeTruthy()
+  // Iterates EVERY array-valued property, not just anchorSet, so adding a family to
+  // icon-coverage-manifest.json is all it takes to guard it. Until 2026-08-26 this looped over
+  // anchorSet alone — 8 of 108 keys — so the one check that exists to catch "a §9 family was
+  // specified but never drawn" could not see the four families that were in exactly that state.
+  const families = Object.entries(manifest).filter(([, v]) => Array.isArray(v))
+  for (const [family, keys] of families) {
+    it(`registry ⊇ manifest family "${family}" (${keys.length} keys)`, () => {
+      const missing = keys.filter((k) => !GLYPHS[k])
+      expect(missing, `manifest family "${family}" names key(s) the registry does not carry`).toEqual([])
+    })
+  }
+  it('the manifest is non-vacuous', () => {
+    // Same vacuity floor as scripts/icon-ci/*.mjs: every assertion above is a loop over the
+    // manifest, so emptying it (or renaming its arrays to objects) would be a clean pass over
+    // nothing. 82 non-event keys guarded at the V4-ICON-001 draw; floor is slack for churn.
+    const guarded = new Set(families.flatMap(([, keys]) => keys))
+    expect(families.length).toBeGreaterThanOrEqual(2)
+    expect(guarded.size).toBeGreaterThanOrEqual(60)
   })
 })
 

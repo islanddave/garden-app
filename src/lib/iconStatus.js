@@ -1,6 +1,8 @@
 // src/lib/iconStatus.js — V4-ICON-001 (Pass B V101) plant-status glyph forms.
-// 12 mono line forms (kit-matched to the anchor set), 24 + 18 masters. The 17 status
-// keys map onto these 12 forms (e.g. sprouting/seeding reuse the seedling sprout).
+// 16 mono line forms (kit-matched to the anchor set), 24 + 18 masters. The 21 status
+// keys map onto these 16 forms (e.g. sprouting/seeding reuse the seedling sprout).
+// 12 forms / 17 keys are the plant lifecycle; V4-ICON-001 added 4 ATTENTION-state forms
+// (unseen + the healthy/due/overdue care trio) in the same namespace — see their block.
 // Status glyphs are MONO (stroke="currentColor") so PlantStatusBadge's getStatusColors
 // ink (sc.text) flows in via currentColor — preserving the Pass A "hue never baked"
 // 3-channel contract. (Lifecycle-facet color-candidate stages are a separate concern.)
@@ -17,6 +19,38 @@ const FORMS = {
   planning:   { svg24: '<path d="M6.5 5.5h11a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9.5 5.5V4.6a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v0.9z"/><path d="M8.6 11h6.8"/><path d="M8.6 14.4h6.8"/><path d="M8.6 17.8h4.2"/>', svg18: '<path d="M6 5.5h12a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9.4 5.5V4.6a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v0.9z"/><path d="M8.4 11.5h7.2"/><path d="M8.4 15.5h7.2"/>' },
   ended:      { svg24: '<path d="M6.5 4.5h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z"/>', svg18: '<path d="M6 4.5h12a1.8 1.8 0 0 1 1.8 1.8v11.4a1.8 1.8 0 0 1-1.8 1.8H6a1.8 1.8 0 0 1-1.8-1.8V6.3A1.8 1.8 0 0 1 6 4.5z"/>' },
   failed:     { svg24: '<path d="M6.2 6.2l11.6 11.6"/><path d="M17.8 6.2L6.2 17.8"/>', svg18: '<path d="M6.6 6.6l10.8 10.8"/><path d="M17.4 6.6L6.6 17.4"/>' },
+  // ── V4-ICON-001: attention states. These are NOT lifecycle stages — they are what the app says
+  // about a planting right now — but they live in status.* because that is the namespace every
+  // badge already reads (`status.${x}`), and inventing a second one would split the vocabulary.
+  //
+  // unseen = the eye-off. Kin to event.observation's lens by design — "you looked at this" and
+  // "you have not looked at this lately" are opposites and SHOULD share a root form. The pupil is
+  // load-bearing, not decoration: lens + slash alone renders as Ø, the empty-set/diameter sign
+  // (seen on the contact sheet), because a near-circular lens with a corner-to-corner slash IS
+  // that character. The pupil breaks the read, so the lens is also flattened (w/h 1.73 vs 1.56).
+  // The 18 master cannot keep the pupil — lens interior 8.1 device px, pupil-plus-stroke 6.7, a
+  // 0.5px counter-space that blobbed on the sheet (§4 aperture) — so it kills the Ø the other
+  // way, with a much flatter almond (w/h 2.3) that no longer resembles a circle at all.
+  unseen:     { svg24: '<path d="M3.2 12C5.4 8.6 8.4 6.9 12 6.9s6.6 1.7 8.8 5.1c-2.2 3.4-5.2 5.1-8.8 5.1S5.4 15.4 3.2 12z"/><circle cx="12" cy="12" r="2.5"/><path d="M5.6 18.4 18.4 5.6"/>', svg18: '<path d="M3 12C5.4 9.4 8.4 8.1 12 8.1s6.6 1.3 9 3.9c-2.4 2.6-5.4 3.9-9 3.9S5.4 14.6 3 12z"/><path d="M5.2 18.8 18.8 5.2"/>' },
+  // ── Care state (healthy / due / overdue). These have no glyph today: CareStatus.jsx expresses
+  // care state by RECOLOURING care.drop, which is the §15 baked-colour-drift hazard — the meaning
+  // rides on hue alone, so it dies under forced-colors, greyscale, and colour-blind vision (SC
+  // 1.4.1). Shape carries the state now; the consumer's hue stays as reinforcement.
+  //
+  // healthy is care.drop's own silhouette with a tick struck in the bulb — "the drop, satisfied" —
+  // so the resolved state is visibly the same object as the need it resolves. due and overdue are
+  // a matched pair on one enclosure (clock face vs bang), which is how the reader tells "act
+  // today" from "you missed it" with no colour at all. healthy's 18 master carries a BIGGER drop
+  // (r 6.4 vs 5) and a SMALLER tick than the 24: at care.drop's own 18 proportions the tick's left
+  // terminal fused into the bulb wall (clear radius 2.33 units against a 2.67-unit stroke) and the
+  // mark rendered as a solid blob — §4's aperture bound, invisible to the coverage band.
+  healthy:    { svg24: '<path d="M12 3.4C12 3.4 6.5 9.6 6.5 13.5A5.5 5.5 0 0 0 17.5 13.5C17.5 9.6 12 3.4 12 3.4Z"/><path d="M9.2 13.6 11.2 15.6 15 11.6"/>', svg18: '<path d="M12 3.2C12 3.2 5.6 9.8 5.6 14A6.4 6.4 0 0 0 18.4 14C18.4 9.8 12 3.2 12 3.2Z"/><path d="M9.8 14.2 11.2 15.6 14.2 12.4"/>' },
+  due:        { svg24: '<circle cx="12" cy="12" r="8.2"/><path d="M12 6.8V12l3.4 2.2"/>', svg18: '<circle cx="12" cy="12" r="8.4"/><path d="M12 7V12l3.2 2"/>' },
+  // overdue is action.info inverted on purpose — dot-under-stem vs dot-over-stem is the "!" / "i"
+  // distinction every reader already owns, and reusing the r 8.4 enclosure keeps the two in one
+  // kit rather than inventing a third circle size. severity.high keeps the TRIANGLE + bang, so
+  // "this planting is late" and "this problem is severe" stay different marks.
+  overdue:    { svg24: '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.4v5.4"/><circle cx="12" cy="16.2" r="0.85" fill="currentColor" stroke="none"/>', svg18: '<circle cx="12" cy="12" r="8.4"/><path d="M12 7.4v5.2"/><circle cx="12" cy="16.2" r="0.95" fill="currentColor" stroke="none"/>' },
 }
 
 // 17 status keys -> 12 forms + a humanized name.
@@ -25,8 +59,9 @@ const KEY_FORM = {
   vegetative: 'vegetative', growing: 'vegetative', active: 'vegetative', flowering: 'flowering',
   fruiting: 'fruiting', harvesting: 'harvesting', harvested: 'harvested', dormant: 'dormant',
   planning: 'planning', ended: 'ended', failed: 'failed', dead: 'failed',
+  unseen: 'unseen', healthy: 'healthy', due: 'due', overdue: 'overdue',
 }
-const NAME = { seed:'Seed', rooting:'Rooting', seedling:'Seedling', sprouting:'Sprouting', seeding:'Seeding', vegetative:'Vegetative', growing:'Growing', active:'Active', flowering:'Flowering', fruiting:'Fruiting', harvesting:'Harvesting', harvested:'Harvested', dormant:'Dormant', planning:'Planning', ended:'Ended', failed:'Failed', dead:'Dead' }
+const NAME = { seed:'Seed', rooting:'Rooting', seedling:'Seedling', sprouting:'Sprouting', seeding:'Seeding', vegetative:'Vegetative', growing:'Growing', active:'Active', flowering:'Flowering', fruiting:'Fruiting', harvesting:'Harvesting', harvested:'Harvested', dormant:'Dormant', planning:'Planning', ended:'Ended', failed:'Failed', dead:'Dead', unseen:'Not seen lately', healthy:'Up to date', due:'Care due today', overdue:'Care overdue' }
 
 export const STATUS_GLYPHS = Object.fromEntries(Object.entries(KEY_FORM).map(([key, form]) => [key, {
   key: `status.${key}`, glyph: null, svg24: FORMS[form].svg24, svg18: FORMS[form].svg18,

@@ -109,7 +109,10 @@ export const GLYPHS = Object.fromEntries(
     variants: a.variants ?? null,
     regionIntent: a.regionIntent ?? null,
     colorFills: a.colorFills ?? null,
-    accessibleName: ANCHOR_META[key]?.accessibleName ?? key,
+    // ANCHOR_META still wins (it is where the original 40 anchors declare their names); glyphs
+    // added from V4-ICON-001 onward carry accessibleName on the anchor entry itself, next to the
+    // masters, so a new family lands in ONE file. `key` stays the last-resort floor.
+    accessibleName: ANCHOR_META[key]?.accessibleName ?? a.accessibleName ?? key,
     schemaVersion: 101,
   }])
 )
