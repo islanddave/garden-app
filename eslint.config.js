@@ -212,10 +212,16 @@ export default [
   //   between them; 3 already have exact T names — SegmentedControl's radius 12/10 and its
   //   0.82/0.9rem fonts). Every other file below was guarded by NOTHING before the glob.
   //
-  //   Counts at this date, measured by this rule: 159 dimensional literals and 17 emoji
-  //   across the register. Both belong to the ~3,977-literal migration, not to standing up
-  //   the guard. EventTypePicker.jsx additionally carries the §5 case in its purest form —
-  //   a 7-entry `emoji: '💧'` data map — and is owned by a concurrent lane at this date.
+  //   Counts at this date, measured by running this rule with the deferrals off: 162
+  //   dimensional literals + 17 emoji = 179 across the 16 non-formStyles entries
+  //   (formStyles itself holds 16 more, permanently exempt). All 179 belong to the
+  //   ~3,977-literal migration, not to standing up the guard. Every file here is already
+  //   hex-CLEAN — the deferral costs nothing on the class that reached prod.
+  //   Worst first: PlantingSelect 36, ScopeChecklist 26, VarietyEditor 23,
+  //   EventTypePicker 18, PlantForm 14, ChoiceGrid 11, AsyncRegion 9, Sheet 9,
+  //   FilterChipRow 8, PageShell 6, TileGrid 6, SegmentedControl 5, Toast 3, Card 2,
+  //   Spinner 2, Field 1. EventTypePicker.jsx additionally carries the §5 case in its
+  //   purest form — a 7-entry `emoji: '💧'` data map — and is owned by a concurrent lane.
   {
     files: [
       'src/components/forms/formStyles.js',
