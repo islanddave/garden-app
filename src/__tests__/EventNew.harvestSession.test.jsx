@@ -136,7 +136,10 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
     expect(screen.getByLabelText('Harvest quantity')).toBeTruthy()
     // …and the lock replaces the picker: no flag-mode doorway, lock copy present.
     expect(screen.getByTestId('harvest-session-lock')).toBeTruthy()
-    expect(screen.queryByText('🚩 Flag an issue')).toBeNull()
+    // V4-ICON-001: the doorway's copy lost its leading emoji when the flag moved to the registry
+    // (the label is now its own <span> beside an <Icon>). Matching the OLD string here would have
+    // gone on passing vacuously — it can no longer match anything in any state.
+    expect(screen.queryByText('Flag an issue')).toBeNull()
   })
 
   it('session=harvest beats a stray ?event_type= (the lock must never strand a non-harvest type)', async () => {

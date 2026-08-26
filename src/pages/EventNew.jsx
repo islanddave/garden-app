@@ -42,6 +42,9 @@ import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import Section from '../components/FormSection.jsx'
+// V4-ICON-001: this page's glyphs come from the one registry. Nothing here renders a pictographic
+// character except the two reward flourishes in the dead SuccessScreen (see its header).
+import Icon from '../components/Icon.jsx'
 import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedback.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { useInOverlaySurface, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
@@ -232,7 +235,7 @@ const FRAME_HEIGHT = 'calc(100dvh - 52px)'
 // The ledger + Save row. Constant FOREVER — this is the number that replaces the shipped band's
 // 48 -> 128 -> 156 -> 184 -> 202px growth across four saves.
 const FRAME_LEDGER_PX = 48
-// R1. The gap the weight pad owes Save, so a low ⌫ press lands on track 3's own container — painted
+// R1. The gap the weight pad owes Save, so a low backspace press lands on track 3's own container — painted
 // but handler-less — rather than on the commit. Derived from the ledger height and Save's height
 // (lib/saveBandLayout.js) so it cannot drift away from meaning SAVE_BAND_MIN_CLEARANCE_PX; the whole
 // accounting for where the px came from is in that file, and the real-engine gate is what holds it.
@@ -512,7 +515,9 @@ function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translate
           system as 30x30. It is deliberately NOT the handedness flip — that one is still an open
           question (whether HarvestWatchBand's left/right split, a SAFETY decision, should mirror). */}
       <span aria-hidden="true" style={{ position: 'absolute', top: -7, right: -7, bottom: -7, left: -7 }} />
-      {active ? '⏹' : '🎙️'}
+      {/* V4-ICON-001: registry glyphs, decorative — the button already carries the aria-label that
+          names both states, so a second accessible name here would only double-read. */}
+      <Icon name={active ? 'media.stop' : 'media.mic'} size={16} decorative />
     </button>
   )
 }
@@ -1468,10 +1473,10 @@ export default function EventNew() {
     }
 
     // BUG-SNAPATTACH-001: a photo event with no photo is never intentional, and prod has 22 of them
-    // out of 582. Two routes produce one outcome: "📷 Photo" is a first-class choice in the type
+    // out of 582. Two routes produce one outcome: the "Photo" tile is a first-class choice in the type
     // picker so it can simply be saved with nothing attached, and the V4-PHOTOQUICK-001 park/claim
     // seam can drop the file in transit. Both end as a permanent, silent, empty event — the app
-    // answers "✓ Logged" and there is nothing to recover, because no upload was ever attempted and
+    // answers "Logged" and there is nothing to recover, because no upload was ever attempted and
     // so nothing ever failed. Gate it like the harvest quantity gate above: refuse the save, inline,
     // while the photo can still be added. NOT a warn-and-proceed — proceeding is the bug.
     if (form.event_type === 'photo' && !photoFile) {
@@ -1751,7 +1756,7 @@ export default function EventNew() {
     const sessionRow = inHarvestSession && isHarvest && eventId
       ? {
           eventId,
-          // V4-HARVSESSION-002: plantId feeds the tray's done-✓ derivation.
+          // V4-HARVSESSION-002: plantId feeds the tray's done-tick derivation.
           plantId: form.plant_id || '',
           plantName: plantName ?? projName,
           // V4-WEIGHDATEREACH-001: the date this row was FILED UNDER, captured from the same
@@ -1824,7 +1829,11 @@ export default function EventNew() {
           // was captured before resetForNext() cleared the chip state.
           eventLabel: ((EVENT_TYPE_META[form.event_type]?.label ?? 'event').replace('\n', ' '))
             + (depthMeta.water_depth ? ` (${waterDepthLabel(depthMeta.water_depth)})` : ''),
-          eventEmoji: EVENT_TYPE_META[form.event_type]?.emoji ?? '✓',
+          // V4-ICON-001: the checkmark fallback literal is gone. This field is WRITE-ONLY — PostSaveFeedback
+          // documents it in its prop shape and never renders it (grep: one hit, the comment) — so a
+          // default glyph was decorating nothing. The value itself still comes from EVENT_TYPE_META,
+          // which is another lane's file; when that map grows an icon key this becomes `iconName`.
+          eventEmoji: EVENT_TYPE_META[form.event_type]?.emoji ?? null,
           undone: false,
           error: null,
           photoError,
@@ -1944,7 +1953,7 @@ export default function EventNew() {
                     fontSize: '0.85rem',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
-                >✕</button>
+                ><Icon name="action.remove" size={14} decorative /></button>
                 {!SAVE_TO_DEVICE_HIDDEN && <button
                   type="button"
                   onClick={() => saveFileToDevice(photoFile)}
@@ -1975,7 +1984,10 @@ export default function EventNew() {
                       color: P.mid, fontSize: '0.88rem', fontWeight: 600,
                     }}
                   >
-                    <span style={{ fontSize: '1.3rem' }}>🖼️</span>
+                    {/* V4-ICON-001: media.camera is the registry's one "add a photo" affordance —
+                        the same glyph ProjectDetail's uploaders adopted when they dropped the
+                        camera/frame emoji pair (ProjectDetail.iconLanguage.test.js). */}
+                    <Icon name="media.camera" size={20} decorative />
                     <span>Choose photo</span>
                   </button>
                 </div>
@@ -1998,7 +2010,10 @@ export default function EventNew() {
   const eventTypeBlock = inHarvestSession ? (
           <Section label="What happened? *">
             <div data-testid="harvest-session-lock" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', color: P.mid, fontWeight: 600 }}>
-              <span aria-hidden="true" style={{ fontSize: '1.2rem' }}>🧺</span>
+              {/* event.harvest, NOT nav.harvests: iconAnchors is explicit that the basket means
+                  "picking" and the bowl means the browse surface. This lock is about the ACTION
+                  every save in the session performs. */}
+              <Icon name="event.harvest" size={20} decorative />
               <span>Weigh-in session — every save logs a harvest</span>
             </div>
           </Section>
@@ -2028,7 +2043,8 @@ export default function EventNew() {
                        hug-the-text width and only grows vertically. */
                     minHeight: T.tapMinHeight,
                     display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  🚩 Flag an issue
+                  <Icon name="action.flag" size={16} decorative />
+                  <span>Flag an issue</span>
                 </button>
               </>
             )}
@@ -2416,7 +2432,7 @@ export default function EventNew() {
                   reorder, not a growth. (c) The focus anchor (anchorSectionToTop, below) exists to
                   keep quantity, weight, the error banner and Save co-visible; it used to spend its
                   first 104-160px on the pad before quantity appeared.
-                  ⚠️ MEASURED in tests/harness at a true 390x500 (iframe, not --window-size — macOS
+                  NOTE: MEASURED in tests/harness at a true 390x500 (iframe, not --window-size — macOS
                   Chrome floors a window at ~500px and CROPS rather than reflows, so a narrow window
                   measures a 500px layout), non-session, keyboard-open layout with quantity focused
                   and the section anchored. Before -> after: quantity input y161-200 -> y49-88; pad
@@ -2578,7 +2594,7 @@ export default function EventNew() {
                     V4-HARVDUAL-001 note above), and a second three-row pad there would cost the
                     common path ~160px to serve the exception. Inside the session it is the field
                     the keyboard was actually being raised for, so it is exactly where the pad pays.
-                    ⚠️ Viewport arithmetic, MEASURED in tests/harness at 390x844 (not estimated —
+                    NOTE: Viewport arithmetic, MEASURED in tests/harness at 390x844 (not estimated —
                     jsdom returns zeros): each pad is 320x160, so both together add 320px against
                     the ~301-344px of keyboard removed. That is roughly a WASH on height, NOT the
                     ~+50px net win the design doc quotes — that figure assumed one pad per wizard
@@ -2603,7 +2619,7 @@ export default function EventNew() {
                       // the keyboard never comes up: the pad writes the field directly, so a
                       // pad-only weigh-in never focuses #harvest-weight and would never reach the
                       // handler above. The FIRST key press is always from a row that is clear (the
-                      // band's top edge cuts the pad's LAST row), so this fires before ⌫ — the one
+                      // band's top edge cuts the pad's LAST row), so this fires before backspace — the one
                       // key the pad's own header calls mandatory — is needed.
                       // !sessionFrame — same reasoning, and the same measurement, as the onFocus
                       // site above (OPS-SIBLINGLANESEMANTICMERGE-001). This is the worse of the two
@@ -2975,7 +2991,7 @@ export default function EventNew() {
         color: P.mid, fontSize: '1rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
       }}
     >
-      <span aria-hidden="true">✕</span>
+      <Icon name="action.close" size={16} decorative />
     </button>
   )
 
@@ -3275,7 +3291,7 @@ export default function EventNew() {
             // ("1 · 123 g · Bloomsdale Long-Standing") is `whiteSpace: nowrap`, so its max-content
             // contribution took the single column to 563.42px inside a 358px box. `overflow: hidden`
             // then CLIPPED rather than scrolled, so nothing reported an error while Save sat at
-            // x424-574 and the weight pad's `.` and `⌫` keys at x392-479 / x487-574 — all three
+            // x424-574 and the weight pad's `.` and backspace keys at x392-479 / x487-574 — all three
             // entirely outside a 390px viewport, unreachable, at entries 2, 3 and 4.
             // minmax(0, 1fr) gives the column a zero MINIMUM, which is what lets the summary's own
             // `overflow: hidden; textOverflow: ellipsis; minWidth: 0` finally engage — that styling
@@ -3374,7 +3390,7 @@ export default function EventNew() {
                not Save's document position. ── */
             <>
               {/* V4-HARVSESSION-002: the pre-flight tray — pay the picker cost ONCE, in tap order.
-                  States: current (filled pill), queued (· N position suffix), done (✓ prefix, tap
+                  States: current (filled pill), queued (· N position suffix), done (tick prefix, tap
                   again for a second picking — same-day repeats are separate rows by design). The
                   tray is supplementary: an empty ready fetch renders nothing and the picker below
                   remains the full path for anything not on the list.
@@ -3668,7 +3684,15 @@ export default function EventNew() {
 // metadata.issue_label; severity is the DB smallint. Order per spec: severity -> issue.
 function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issueOther, onIssueOther, voice, onBack }) {
   const TONE = { gold: P.gold, terra: P.terra, red: P.severityUrgent }
-  const EMOJI = { 1: '🟡', 2: '🟠', 3: '🔴' }
+  // V4-ICON-001 — WCAG 1.4.1 fix. This was a map of three coloured-circle emoji: three identical circles that
+  // differed ONLY in hue, so the whole urgency ladder collapsed for anyone who cannot separate
+  // gold/orange/red, and it baked its own colors instead of taking P.gold/P.terra/P.severityUrgent
+  // (the §15 baked-color drift the icon spec warns about — the swatch and the button tone could
+  // disagree and nothing would catch it). The registry ladder is MONOTONIC BY SHAPE — filled dot ->
+  // open triangle -> triangle with an alert inside — so severity survives in greyscale, and each
+  // rung already renders beside its own text label. Color now reinforces a third channel instead of
+  // being the only one: the glyph takes currentColor, which is the tone on rest and white on select.
+  const SEVERITY_ICON = { 1: 'severity.low', 2: 'severity.med', 3: 'severity.high' }
   return (
     <div>
       <button type="button" onClick={onBack}
@@ -3685,10 +3709,16 @@ function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issu
           return (
             <button key={sv.value} type="button" role="radio" aria-checked={active}
               onClick={() => onSeverity(sv.value)}
-              style={{ textAlign: 'left', padding: '11px 14px', borderRadius: 10, cursor: 'pointer',
+              style={{ display: 'flex', alignItems: 'center', gap: 8,
+                textAlign: 'left', padding: '11px 14px', borderRadius: 10, cursor: 'pointer',
                 border: `2px solid ${active ? tone : P.border}`, backgroundColor: active ? tone : P.white,
                 color: active ? P.white : P.mid, fontWeight: 600, fontSize: '0.88rem', fontFamily: 'inherit' }}>
-              {EMOJI[sv.value]} {sv.label}
+              {/* Shape is the primary channel; `color` here is the SECOND channel and the label is
+                  the third. On rest the glyph takes the rung's own tone against white; on select the
+                  button fills with that tone and the glyph goes white for contrast. */}
+              <Icon name={SEVERITY_ICON[sv.value]} size={18} decorative
+                style={{ flexShrink: 0, color: active ? P.white : tone }} />
+              <span>{sv.label}</span>
             </button>
           )
         })}
@@ -3702,7 +3732,10 @@ function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issu
                 {g.options.map(o => <option key={o} value={o}>{o}</option>)}
               </optgroup>
             ))}
-            <option value="__other__">➕ Other…</option>
+            {/* No glyph: an <option> renders text only, so the leading plus could never be an
+                <Icon> here. Dropping it is the honest fix — the ONE affordance in this file that
+                cannot take a registry glyph at all. */}
+            <option value="__other__">Other…</option>
           </Select>
         </Field>
         {issueChoice === '__other__' && (
@@ -3733,6 +3766,14 @@ function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issu
 // deliberately carries no outer margin of its own.
 
 // SuccessScreen retained for reference; V1.2a-1 flow navigates straight to dashboard.
+//
+// V4-ICON-001 — the ONE place in this file that still renders pictographic characters, and
+// deliberately so. The two SIGNIFYING glyphs are routed (the save-confirm fallback and the
+// confirm check are registry entries below); what remains is the flame beside the streak count, the bolt beside
+// the XP count and the party-popper inside "Level up" — reward ornament, not icon slots. They carry no meaning
+// the adjacent text does not already carry, the icon grammar has no celebration family, and
+// minting keys for confetti is explicitly out of scope. `eventMeta?.emoji` stays as-is because
+// its source is lib/eventTypes.js, which this lane does not own.
 // eslint-disable-next-line no-unused-vars
 function SuccessScreen({ success, onDashboard }) {
   const eventMeta = EVENT_TYPES_UI.find(t => t.value === success.eventType)
@@ -3745,7 +3786,7 @@ function SuccessScreen({ success, onDashboard }) {
       maxWidth: 340,
     }}>
       <div style={{ fontSize: '3.5rem', lineHeight: 1, marginBottom: 8 }}>
-        {eventMeta?.emoji ?? '✅'}
+        {eventMeta?.emoji ?? <Icon name="action.check" size={56} decorative />}
       </div>
       <div style={{
         width: 52, height: 52,
@@ -3755,7 +3796,7 @@ function SuccessScreen({ success, onDashboard }) {
         margin: '0 auto 20px',
         fontSize: '1.4rem', color: P.white,
       }}>
-        ✓
+        <Icon name="action.check" size={22} decorative />
       </div>
 
       <h2 style={{ margin: '0 0 6px', color: P.green, fontSize: '1.5rem', fontWeight: 700 }}>

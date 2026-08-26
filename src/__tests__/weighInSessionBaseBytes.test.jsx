@@ -25,6 +25,12 @@
 // Regenerate deliberately, never to "fix" a red run — a diff is the point:
 //   WEIGHIN_BASE_BYTES_WRITE=1 npx vitest run src/__tests__/weighInSessionBaseBytes.test.jsx
 //
+// REGENERATED 2026-08-26 (V4-ICON-001, the EventNew emoji-wiring pass). The diff was read before
+// the write and is FOUR tokens: the session-lock's `<span>` basket emoji became the registry's
+// event.harvest `<svg>`. Nothing else moved — in particular NO useId shifted, so hazard (2) in the
+// note above did not fire, and NumberPad's `.`/backspace ordering (claim 1, the whole reason this
+// fixture outlived the wizard) is byte-identical either side of the regeneration.
+//
 // Two determinism hazards are handled rather than hoped away. (1) The When field defaults to today,
 // so the clock is frozen. (2) React's useId is rendered — Field.jsx:40 falls back to it for input
 // ids and PlantingSelect.jsx:432 builds listboxId from it — and useId derives from a fiber's

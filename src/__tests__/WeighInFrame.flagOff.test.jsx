@@ -16,6 +16,11 @@
 //
 // Regenerate deliberately (never to "fix" a red run): UPDATE_WEIGHIN_FIXTURE=1 npx vitest run
 // src/__tests__/WeighInFrame.flagOff.test.jsx
+//
+// REGENERATED 2026-08-26 (V4-ICON-001, the EventNew emoji-wiring pass). The diff was read before
+// the write and is the same four tokens as its sibling weighInSessionBaseBytes: the session-lock's
+// `<span>` basket emoji became the registry's event.harvest `<svg>`. No wrapper, no style property
+// and no id changed, so the grid-refactor leak this file exists to catch is still fully pinned.
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'

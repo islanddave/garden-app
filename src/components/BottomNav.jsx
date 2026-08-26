@@ -23,17 +23,19 @@ import Icon from './Icon.jsx'
 // effect is gone). More menu is grouped into labeled sections (Your garden / Rewards /
 // Help & account) instead of one flat 10-item scan. Field/Desk mode gets a mirror row
 // here (TopBar retired V4-APPBAR-003; this is now the PRIMARY mode toggle). Critters is by placement + a soft
-// subtitle only — NO badge/count/alert (Reward UX V102, ambient). Glyphs are still emoji;
-// the emoji->Icon SVG pass is the deferred Slice 9 follow-up commit.
+// subtitle only — NO badge/count/alert (Reward UX V102, ambient).
+// V4-ICON-001 (2026-08-26): the deferred Slice 9 follow-up landed — the last five emoji here
+// (Harvests, Put-Up, Space, Zones, Achievements) are registry <Icon>s, so EVERY tab and every
+// More row now draws from one SVG roster. Nothing in this file renders a pictographic character.
 // V4-NAVHARVEST-001 (design: uiux-homogenization-master-plan-V100-20260723 §1.3, CONFIRMED
 // 2026-07-23, unbuilt until now). DrG/Findings demotes OUT of the tab bar into More — its own
 // code calls the surface "sparse" and it re-explains Today — and Harvests takes the slot. The
 // design deliberately kept these two moves SEPARABLE (demote now, promote later, gated on
 // /harvests existing); both are taken together here because /harvests is already live in prod
 // and was only ever reachable buried in the More menu.
-// `glyph` instead of `iconName`: mirrors the Zones/Achievements More rows, which use raw
-// emoji precisely to avoid adding an iconAnchors entry + an icon-completeness harness case for
-// a destination that has no drawn SVG. Tabs render one or the other, never both.
+// These two tabs carried a raw `glyph` until V4-ICON-001 drew nav.harvests / nav.putup — the
+// reason for the exception (no drawn SVG for the destination) is gone, so every TABS row now
+// carries `iconName` and the glyph-or-iconName fork is retired with it.
 // V4-PUTUPENGINE-001 slice 1 (Dave ruling 2026-08-20: "I'm just gonna go to a put up tab and start
 // there the same way I'm going to the harvest tab … that is its own process that deserves its own
 // landing page"). Put-Up PROMOTES out of the More sheet into the tab bar and the bar grows to SIX
@@ -52,8 +54,8 @@ const TABS = [
   { to: '/today',    label: 'Today',    iconName: 'nav.today' },
   { to: '/garden',   label: 'Garden',   iconName: 'nav.garden' },
   { to: '/log',      label: 'Create',   iconName: 'nav.plus', highlight: true },
-  { to: '/harvests', label: 'Harvests', glyph: '🧺' },
-  { to: '/put-up',   label: 'Put-Up',   glyph: '🫙' },
+  { to: '/harvests', label: 'Harvests', iconName: 'nav.harvests' },
+  { to: '/put-up',   label: 'Put-Up',   iconName: 'nav.putup' },
 ]
 
 // +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
@@ -267,13 +269,10 @@ export default function BottomNav() {
               data-testid="create-action"
               style={{ ...menuRowStyle, padding: '12px 24px' }}
             >
-              {/* V4-HARVFAB-001: same glyph-or-iconName contract the TABS rows use — one or the
-                  other, never both. No `event.harvest` icon anchor exists, and minting one would
-                  add an iconAnchors entry plus an icon-completeness harness case for a single row.
-                  🍅 is deliberately NOT the /harvests tab's 🧺: create action vs browse surface. */}
-              {action.glyph
-                ? <span aria-hidden="true" style={{ fontSize: '1.35rem', lineHeight: 1, width: 24, textAlign: 'center' }}>{action.glyph}</span>
-                : <Icon name={action.iconName} size={24} decorative style={{ color: P.green }} />}
+              {/* V4-ICON-001: every CREATE_ACTIONS row carries `iconName`, so the V4-HARVFAB-001
+                  glyph-or-iconName fork that used to sit here is gone. A future row without a
+                  drawn anchor must draw one, not fall back to a pictographic character. */}
+              <Icon name={action.iconName} size={24} decorative style={{ color: P.green }} />
               <span style={{ display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
                 <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
@@ -329,18 +328,19 @@ export default function BottomNav() {
             (Deck/Drive/House/Pasture/Stable/Yard, measured live). Re-pointing the existing row would
             have silently stolen /locations' ONLY nav entry — the exact gap V4-PHOTOLOCFIND-001 added
             it to close (only 5 of 913 photos carried a location). Flag-gated, so flag-off renders the
-            shipped single row unchanged. Emoji glyph mirrors Harvests/Put-Up (a new row would
-            otherwise need an iconRegistry entry + the icon-completeness harness). */}
+            shipped single row unchanged. V4-ICON-001: the placeholder emoji is now nav.space — the
+            row's tier distinction (the property vs the zones beneath it) is carried by two DIFFERENT
+            drawn shapes rather than by two house-adjacent pictographs. */}
         {SPACE_PHOTOS_ENABLED && (
           <SheetRowLink to="/space" onClick={closeMore} style={menuRowStyle}>
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏡</span>Space
+            <Icon name="nav.space" size={22} decorative />Space
           </SheetRowLink>
         )}
         {/* V4-PHOTOLOCFIND-001 — /locations previously had ZERO nav entries (reachable only
             from Search/Favorites/ProjectNew/ZonePicker — the last since deleted, V4-AMBIENTZONE-001),
             which is half of why only 5 of 913 photos
-            carried a location. Emoji glyph mirrors Harvests/Put-Up (avoids the icon-completeness
-            harness for a new row).
+            carried a location. V4-ICON-001: now facet.location, the pin the rest of the app already
+            uses for a zone — the registry entry predates this row, so nothing had to be drawn.
             V4-SPACECLIENTGAP-001 (Dave 2026-08-02): the label is now UNCONDITIONALLY "Zones", not
             flag-conditional. Two rows both reading "Space(s)" pointing at different tiers is the
             §6.8 four-noun drift made worse, and the level-0 rows this page is rooted in ARE zones
@@ -349,7 +349,7 @@ export default function BottomNav() {
             RENAMES a nav row under the user, which is worse than a stable, correct name. Label
             change only; the route and the page are untouched. */}
         <SheetRowLink to="/locations" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📍</span>Zones
+          <Icon name="facet.location" size={22} decorative />Zones
         </SheetRowLink>
         <SheetRowLink to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
@@ -363,7 +363,7 @@ export default function BottomNav() {
             PutUpUseSoonBand are content affordances carrying location.state.prefill, not nav rows,
             and they still want the flyover. */}
         <SheetRowLink to="/achievements" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>Achievements
+          <Icon name="nav.achievements" size={22} decorative />Achievements
         </SheetRowLink>
         {/* Catch-up badge — gated behind CATCH_UP_EDITOR_SHIPPED (currently off).
             BUG-BACKNAVMORE-001 NOTE: if this ever ships, CatchUpBadge's inner link must adopt the
@@ -502,9 +502,7 @@ export default function BottomNav() {
           return (
             <Link key={tab.to} to={tab.to} aria-current={active ? 'page' : undefined}
               style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
-              {tab.glyph
-                ? <span aria-hidden="true" style={{ fontSize: '1.25rem', lineHeight: 1 }}>{tab.glyph}</span>
-                : <Icon name={tab.iconName} size={22} decorative />}
+              <Icon name={tab.iconName} size={22} decorative />
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
             </Link>
           )

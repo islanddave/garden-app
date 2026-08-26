@@ -7,6 +7,7 @@ import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import { todayBand } from '../lib/todayBand.js'
 import { SEVERITY_STYLES } from '../lib/waterDue.js'
 import { PROJECTS_HIDDEN, TODAY_BAND_HIDDEN } from '../lib/featureFlags.js'
+import Icon from './Icon.jsx'
 
 // Today bar — DRG-TODAY-003. The persistent, color-coded "what needs me today?" entry docked
 // directly ABOVE the bottom nav, on every authenticated screen EXCEPT /today itself (redundant
@@ -26,12 +27,15 @@ const BAND_HEIGHT = '56px'
 const URGENT_STYLES = new Set([SEVERITY_STYLES.terra, SEVERITY_STYLES['terra-bold']])
 
 // Derive the bar's color + copy tier from the ranked Today items. Exported for unit tests.
+// V4-ICON-001: `iconName` (a registry key) replaces the former `emoji` literal, mirroring the
+// same rename in lib/todayBand.js. The bar's leading glyph is now an <Icon>, so the tier reads
+// by shape as well as by the bar's color — color alone was never a sufficient channel (SC 1.4.1).
 export function barState(visible, total) {
-  if (total === 0) return { tier: 'clear', style: SEVERITY_STYLES.green, emoji: '✓' }
+  if (total === 0) return { tier: 'clear', style: SEVERITY_STYLES.green, iconName: 'action.check' }
   const urgent = visible.find(it => URGENT_STYLES.has(it.style))
-  if (urgent) return { tier: 'urgent', style: urgent.style, emoji: urgent.emoji, top: urgent }
+  if (urgent) return { tier: 'urgent', style: urgent.style, iconName: urgent.iconName, top: urgent }
   const top = visible[0]
-  return { tier: 'waiting', style: SEVERITY_STYLES.gold, emoji: (top && top.emoji) || '', top }
+  return { tier: 'waiting', style: SEVERITY_STYLES.gold, iconName: top && top.iconName, top }
 }
 
 export default function TodayBand() {
@@ -126,7 +130,9 @@ export default function TodayBand() {
             filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.12))',
           }}
         >
-          <span aria-hidden="true" style={{ fontSize: '1.15rem', flexShrink: 0 }}>{st.emoji}</span>
+          {st.iconName
+            ? <Icon name={st.iconName} size={18} decorative style={{ flexShrink: 0, color: st.style.text }} />
+            : null}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.62rem', color: P.mid, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{label}</div>
             <div style={{ fontWeight: 700, color: st.style.text, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail}</div>
