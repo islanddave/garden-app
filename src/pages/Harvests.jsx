@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { P } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
@@ -251,14 +252,14 @@ export default function Harvests() {
           <button
             type="button"
             onClick={() => setExportOpen(true)}
-            style={{ flex: '0 0 auto', minHeight: 44, padding: '0 10px', background: 'transparent', border: `1px solid ${P.greenLight}`, borderRadius: 8, color: P.green, fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer' }}
+            style={{ flex: '0 0 auto', minHeight: T.tapMinHeight, padding: '0 10px', background: 'transparent', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton, color: P.green, fontSize: T.type.sm, fontWeight: 700, cursor: 'pointer' }}
           >
             Export
           </button>
           <Link
             to="/log?session=harvest"
             data-testid="weigh-in-session-link"
-            style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 44, padding: '0 12px', border: `1px solid ${P.green}`, borderRadius: 8, color: P.white, fontWeight: 700, fontSize: '0.82rem', textDecoration: 'none', backgroundColor: P.green }}
+            style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: T.tapMinHeight, padding: '0 12px', border: `1px solid ${P.green}`, borderRadius: T.radiusButton, color: P.white, fontWeight: 700, fontSize: T.type.sm, textDecoration: 'none', backgroundColor: P.green }}
           >
             <span aria-hidden="true">⚖️</span>
             <span>Weigh-in</span>
@@ -381,7 +382,7 @@ function SnapshotStrip({ snapshot, onOpenLog, onOpenTotals }) {
     : null
 
   return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+    <div style={{ display: 'flex', gap: 8, marginBottom: T.space.md }}>
       <StatTile
         label="Last harvest"
         primary={lh ? (lhQty ? `${lhName} · ${lhQty}` : lhName) : 'None yet'}
@@ -421,7 +422,7 @@ function last7Phrase(top) {
 // ── Crop/project filters (design §3b): picker sheets rendering dismissible pills, Log-scoped ────────
 function FilterControls({ cropValue, onOpenCrop, onClearCrop, projectValue, onOpenProject, onClearProject }) {
   return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }} role="group" aria-label={PROJECTS_HIDDEN ? 'Filter by crop' : 'Filter by crop or project'}>
+    <div style={{ display: 'flex', gap: 8, marginBottom: T.space.md, flexWrap: 'wrap' }} role="group" aria-label={PROJECTS_HIDDEN ? 'Filter by crop' : 'Filter by crop or project'}>
       <FilterPill placeholder="Crop" value={cropValue} onOpen={onOpenCrop} onClear={onClearCrop} />
       {/* V4-PROJHIDE-001: the Project filter is hidden when projects aren't user-facing — crop is the axis. Flag OFF renders both pills. */}
       {!PROJECTS_HIDDEN && (
@@ -441,7 +442,7 @@ function FilterPill({ placeholder, value, onOpen, onClear }) {
         type="button"
         onClick={onOpen}
         aria-label={active ? `${placeholder}: ${value}. Change filter` : `Filter by ${placeholder.toLowerCase()}`}
-        style={{ padding: active ? '6px 8px 6px 14px' : '6px 14px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', border: 'none', backgroundColor: active ? P.greenPale : P.white, color: active ? P.green : P.mid, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+        style={{ padding: active ? '6px 8px 6px 14px' : '6px 14px', fontSize: T.type.sm, fontWeight: 600, cursor: 'pointer', border: 'none', backgroundColor: active ? P.greenPale : P.white, color: active ? P.green : P.mid, display: 'inline-flex', alignItems: 'center', gap: 6 }}
       >
         {active ? value : placeholder}
         {!active && <span aria-hidden="true" style={{ fontSize: '0.7rem', opacity: 0.7 }}>▾</span>}
@@ -492,7 +493,7 @@ function PickerRow({ label, selected, onClick }) {
       role="option"
       aria-selected={selected}
       onClick={onClick}
-      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', textAlign: 'left', padding: '12px 16px', minHeight: 44, background: selected ? P.greenPale : 'transparent', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: '0.92rem', fontWeight: selected ? 700 : 500, color: selected ? P.green : P.dark }}
+      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.space.sm, width: '100%', textAlign: 'left', padding: '12px 16px', minHeight: T.tapMinHeight, background: selected ? P.greenPale : 'transparent', border: 'none', borderRadius: T.radiusCard, cursor: 'pointer', fontSize: '0.92rem', fontWeight: selected ? 700 : 500, color: selected ? P.green : P.dark }}
     >
       <span>{label}</span>
       {selected && <span aria-hidden="true" style={{ color: P.green, fontWeight: 700 }}>✓</span>}
@@ -506,8 +507,8 @@ function LogView({ entries, filterActive, onClearFilters, hasMore, loadingMore, 
     return filterActive
       ? (
         <div style={{ textAlign: 'center', padding: '40px 20px', color: P.light }}>
-          <p style={{ margin: '0 0 12px', fontSize: '0.95rem', fontWeight: 600, color: P.mid }}>No harvests match these filters.</p>
-          <button type="button" onClick={onClearFilters} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.border}`, background: P.white, color: P.green, fontWeight: 700, cursor: 'pointer' }}>Clear filters</button>
+          <p style={{ margin: '0 0 12px', fontSize: T.type.md, fontWeight: 600, color: P.mid }}>No harvests match these filters.</p>
+          <button type="button" onClick={onClearFilters} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: T.radiusButton, border: `1px solid ${P.border}`, background: P.white, color: P.green, fontWeight: 700, cursor: 'pointer' }}>Clear filters</button>
         </div>
       )
       : <EmptyState emoji="🧺" title="Your harvests will collect here" body="The first one starts the season — log a harvest and it shows up here." />
@@ -531,7 +532,7 @@ function LogView({ entries, filterActive, onClearFilters, hasMore, loadingMore, 
           type="button"
           onClick={onLoadMore}
           disabled={loadingMore}
-          style={{ width: '100%', marginTop: 4, padding: '12px', background: P.white, color: P.green, border: `1px solid ${P.border}`, borderRadius: 10, fontSize: '0.88rem', fontWeight: 700, cursor: loadingMore ? 'default' : 'pointer' }}
+          style={{ width: '100%', marginTop: 4, padding: '12px', background: P.white, color: P.green, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, fontSize: '0.88rem', fontWeight: 700, cursor: loadingMore ? 'default' : 'pointer' }}
         >
           {loadingMore ? 'Loading…' : 'Earlier this season →'}
         </button>
@@ -563,8 +564,8 @@ function HarvestEntry({ entry: e }) {
 
   const body = (
     <>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark }}>{name}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: T.space.sm }}>
+        <span style={{ fontSize: T.type.md, fontWeight: 700, color: P.dark }}>{name}</span>
         <span style={{ fontSize: '0.88rem', fontWeight: 600, color: hasQty ? P.green : P.light, whiteSpace: 'nowrap' }}>{qtyText}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
@@ -595,13 +596,13 @@ function HarvestEntry({ entry: e }) {
             >
               {wt.estimated ? `≈ ${wt.text}` : wt.text}
             </span>
-            <span aria-hidden="true" style={{ fontSize: '0.72rem', color: P.light }}>·</span>
+            <span aria-hidden="true" style={{ fontSize: T.type.xs, color: P.light }}>·</span>
             {/* Deliberately NOT whiteSpace:nowrap. The number must never wrap mid-value, but the
                 label may — at 390px an unbreakable label widens the row's min-content past the
                 viewport, which is exactly how a prior harvest-row change overflowed horizontally
                 (min-content 399px against a 390px screen). Letting it break caps the row's
                 min-content at the widest single WORD instead of the widest string. */}
-            <span data-testid="harvest-weight-basis" style={{ fontSize: '0.72rem', color: P.light, minWidth: 0 }}>
+            <span data-testid="harvest-weight-basis" style={{ fontSize: T.type.xs, color: P.light, minWidth: 0 }}>
               {weightBasisLabel(e)}
             </span>
           </span>
@@ -634,7 +635,7 @@ function HarvestEntry({ entry: e }) {
     </>
   )
 
-  const cardStyle = { flex: 1, minWidth: 0, background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '11px 13px', textAlign: 'left', textDecoration: 'none', color: 'inherit' }
+  const cardStyle = { flex: 1, minWidth: 0, background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: '11px 13px', textAlign: 'left', textDecoration: 'none', color: 'inherit' }
 
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
@@ -645,7 +646,7 @@ function HarvestEntry({ entry: e }) {
         <Link
           to={editTo}
           aria-label="Open this harvest event"
-          style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', padding: '0 10px', background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, color: P.light, textDecoration: 'none', fontSize: '0.8rem', fontWeight: 700 }}
+          style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', padding: '0 10px', background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, color: P.light, textDecoration: 'none', fontSize: '0.8rem', fontWeight: 700 }}
         >
           Edit
         </Link>
@@ -704,10 +705,10 @@ function TotalsView({ aggregates, onSeeInLog, timeframe }) {
         />
       ))}
       {other.length > 0 && (
-        <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 14px' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.mid, marginBottom: 4 }}>Unassigned</div>
+        <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: '12px 14px' }}>
+          <div style={{ fontSize: T.type.md, fontWeight: 700, color: P.mid, marginBottom: 4 }}>Unassigned</div>
           {other.map((o) => (
-            <div key={o.project_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.84rem', color: P.mid, padding: '2px 0' }}>
+            <div key={o.project_id} style={{ display: 'flex', justifyContent: 'space-between', gap: T.space.sm, fontSize: '0.84rem', color: P.mid, padding: '2px 0' }}>
               {/* V4-PROJHIDE-001: the Unassigned breakdown is grouped by project — neutral row label
                   when projects aren't user-facing. Flag OFF keeps the project name. */}
               <span>{PROJECTS_HIDDEN ? 'Unattributed' : (o.project_name || 'A project')}</span>
@@ -753,7 +754,7 @@ function CropHeroThumb({ photoId }) {
       width={HERO_PX}
       height={HERO_PX}
       style={{
-        width: HERO_PX, height: HERO_PX, objectFit: 'cover', borderRadius: 8,
+        width: HERO_PX, height: HERO_PX, objectFit: 'cover', borderRadius: T.radiusButton,
         border: `1px solid ${P.border}`, display: 'block', flexShrink: 0,
       }}
     />
@@ -764,16 +765,16 @@ function CropHeroThumb({ photoId }) {
 // Expanded (in place) adds variety sub-rows, the per-planting first-pick table, and the See-in-log jump.
 function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog }) {
   return (
-    <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10 }}>
+    <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard }}>
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '12px 14px', cursor: 'pointer', borderRadius: 10 }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.space.sm, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '12px 14px', cursor: 'pointer', borderRadius: T.radiusCard }}
       >
         <CropHeroThumb photoId={c.hero_photo_id} />
         <span style={{ minWidth: 0, flex: 1 }}>
-          <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>{c.crop_name}</span>
+          <span style={{ display: 'block', fontSize: T.type.md, fontWeight: 700, color: P.dark, marginBottom: 2 }}>{c.crop_name}</span>
           {/* V4-HARVCROPTABLE-001 — the collapsed crop block was FIVE stacked rows (name / units /
               weight / weighed-vs-estimated / sparkline) for a fact Dave reads at a glance. The
               count line is gone (see CropWeightLine) and the weight now rides the units line, so a
@@ -816,7 +817,7 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
           <button
             type="button"
             onClick={() => onSeeInLog?.(c.crop_type_slug, c.crop_name)}
-            style={{ marginTop: 10, padding: '6px 0', background: 'transparent', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 700, cursor: 'pointer' }}
+            style={{ marginTop: T.space.sm, padding: '6px 0', background: 'transparent', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 700, cursor: 'pointer' }}
           >
             See in log →
           </button>
@@ -865,7 +866,7 @@ function countCell(units) {
   return unitsLine(units.filter((u) => !isMassUnit(u.unit_key)), null) || '—'
 }
 
-const PT_HEAD = { fontSize: '0.72rem', fontWeight: 600, color: P.light, padding: '0 0 4px', border: 'none' }
+const PT_HEAD = { fontSize: T.type.xs, fontWeight: 600, color: P.light, padding: '0 0 4px', border: 'none' }
 const PT_CELL = { border: 'none', verticalAlign: 'baseline' }
 // V4-HARVPLANTSORT-001 — every column sorts, scoped to THIS crop's table.
 //
@@ -901,7 +902,7 @@ function PlantingTable({ rows }) {
   ))
 
   return (
-    <div style={{ marginTop: 10, overflowX: 'auto' }}>
+    <div style={{ marginTop: T.space.sm, overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', border: 'none' }}>
         <thead>
           <tr>
@@ -954,14 +955,14 @@ function PlantingTable({ rows }) {
               <td data-testid="planting-count" style={{ ...PT_CELL, fontSize: '0.83rem', color: P.mid, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 8px 4px 0' }}>
                 {countCell(f.units)}
               </td>
-              <td data-testid="planting-weight" style={{ ...PT_CELL, fontSize: '0.95rem', fontWeight: 700, color: P.dark, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 8px 4px 0' }}>
+              <td data-testid="planting-weight" style={{ ...PT_CELL, fontSize: T.type.md, fontWeight: 700, color: P.dark, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 8px 4px 0' }}>
                 {formatGrams(f.weight?.grams) || '—'}
               </td>
               {/* Supporting fact, deliberately the quietest column: the weight has to stay the one
                   the eye lands on, and this sits to its right where it would otherwise win. The
                   0.72rem is width as much as hierarchy — a prior-season date is "Sep 30, 2024",
                   the widest string in the table, and at 390px those pixels come off the names. */}
-              <td data-testid="planting-first-pick" style={{ ...PT_CELL, fontSize: '0.72rem', color: P.light, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 0' }}>
+              <td data-testid="planting-first-pick" style={{ ...PT_CELL, fontSize: T.type.xs, color: P.light, textAlign: 'right', whiteSpace: 'nowrap', padding: '4px 0' }}>
                 {f.first_pick_date ? fmtFirstPick(f.first_pick_date, currentYear) : '—'}
               </td>
             </tr>
@@ -1007,7 +1008,7 @@ function TotalsWeight({ weight }) {
     ? Math.round((weight.estimated_grams / weight.grams) * 100)
     : null
   return (
-    <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 14px' }}>
+    <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: '12px 14px' }}>
       <div style={{ fontSize: '0.75rem', fontWeight: 700, color: P.light, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total weight</div>
       {text ? (
         <div
@@ -1042,7 +1043,7 @@ function TotalsWeight({ weight }) {
 function EmptyState({ emoji, title, body }) {
   return (
     <div style={{ textAlign: 'center', padding: '48px 20px', color: P.light }}>
-      <div style={{ fontSize: '2.4rem', marginBottom: 10 }} aria-hidden="true">{emoji}</div>
+      <div style={{ fontSize: '2.4rem', marginBottom: T.space.sm }} aria-hidden="true">{emoji}</div>
       <p style={{ margin: '0 0 6px', fontSize: '0.98rem', fontWeight: 700, color: P.mid }}>{title}</p>
       <p style={{ margin: 0, fontSize: '0.85rem', lineHeight: 1.5 }}>{body}</p>
     </div>
@@ -1057,7 +1058,7 @@ function LoadingSkeleton() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-hidden="true">
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} style={{ height: 62, background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, opacity: 0.6 }} />
+        <div key={i} style={{ height: 62, background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, opacity: 0.6 }} />
       ))}
     </div>
   )

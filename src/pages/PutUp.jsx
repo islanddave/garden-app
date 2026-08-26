@@ -26,6 +26,7 @@ import { useApiFetch } from '../lib/api.js'
 import { prefillFromHarvestEntry, harvestPickLabel, harvestPickAmount } from '../lib/putUpPrefill.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, SegmentedControl } from '../components/forms'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import PlantingSelect, { plantingWaveLabel } from '../components/forms/PlantingSelect.jsx'
@@ -216,8 +217,8 @@ export default function PutUp() {
         {view === 'stores' && (
           <button type="button" onClick={() => setView('log')} data-testid="putup-primary-cta"
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              width: '100%', minHeight: 48, marginBottom: 14, backgroundColor: P.green, color: P.white,
-              border: 'none', borderRadius: 10, fontSize: '0.95rem', fontWeight: 700,
+              width: '100%', minHeight: T.buttonMinHeight, marginBottom: 14, backgroundColor: P.green, color: P.white,
+              border: 'none', borderRadius: T.radiusCard, fontSize: T.type.md, fontWeight: 700,
               fontFamily: 'inherit', cursor: 'pointer' }}>
             <span aria-hidden="true">🫙</span><span>Log a put-up</span>
           </button>
@@ -244,9 +245,9 @@ export default function PutUp() {
             brings the picker back. Also serves the older PreserveOffer path, which never had one. */}
         {view === 'log' && hasPrefill && (
           <div data-testid="putup-prefill-strip"
-            style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, padding: '9px 12px',
-              backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 8 }}>
-            <span style={{ flex: 1, minWidth: 0, fontSize: '0.82rem', color: P.green, fontWeight: 600 }}>
+            style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginBottom: 14, padding: '9px 12px',
+              backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.green, fontWeight: 600 }}>
               {prefill.harvest_log_id ? 'Linked to a harvest' : 'Prefilled'}
             </span>
             <button type="button" onClick={clearPrefill} data-testid="putup-prefill-clear"
@@ -301,7 +302,7 @@ function RecentHarvestPicker({ onPick }) {
   // the sibling ready-band surface. It gets its own visible state here.
   if (failed) {
     return (
-      <div style={{ marginBottom: 16, fontSize: '0.82rem', color: P.mid }}>
+      <div style={{ marginBottom: T.space.md, fontSize: T.type.sm, color: P.mid }}>
         Couldn&rsquo;t load your recent harvests — pick a crop below instead.
       </div>
     )
@@ -318,13 +319,13 @@ function RecentHarvestPicker({ onPick }) {
       <div style={{ fontSize: '0.8rem', fontWeight: 700, color: P.mid, marginBottom: 6 }}>
         From a recent harvest
       </div>
-      <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, overflow: 'hidden' }}>
         {shown.map((e, i) => {
           const amount = harvestPickAmount(e)
           return (
             <button key={e.event_id ?? i} type="button" onClick={() => onPick(e)}
               data-testid="recent-harvest-pick"
-              style={{ display: 'flex', alignItems: 'baseline', gap: 10, width: '100%', minHeight: 44,
+              style={{ display: 'flex', alignItems: 'baseline', gap: T.space.sm, width: '100%', minHeight: T.tapMinHeight,
                 padding: '10px 14px', background: 'none', border: 'none',
                 borderTop: i === 0 ? 'none' : `1px solid ${P.cream}`, cursor: 'pointer',
                 fontFamily: 'inherit', textAlign: 'left' }}>
@@ -332,7 +333,7 @@ function RecentHarvestPicker({ onPick }) {
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {harvestPickLabel(e)}
               </span>
-              {amount && <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>{amount}</span>}
+              {amount && <span style={{ fontSize: T.type.sm, color: P.mid, flexShrink: 0 }}>{amount}</span>}
               <span style={{ fontSize: '0.76rem', color: P.light, flexShrink: 0 }}>{prettyDate(e.day_key)}</span>
             </button>
           )
@@ -343,7 +344,7 @@ function RecentHarvestPicker({ onPick }) {
       {hiddenCount > 0 && (
         <button type="button" onClick={() => setExpanded(true)}
           style={{ background: 'none', border: 'none', padding: '8px 2px', cursor: 'pointer',
-            color: P.green, fontSize: '0.82rem', fontWeight: 600, fontFamily: 'inherit',
+            color: P.green, fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit',
             textDecoration: 'underline', minHeight: 32 }}>
           Show {hiddenCount} more
         </button>
@@ -757,21 +758,21 @@ function PutUpForm({ prefill, onLogged }) {
     return (
       <div>
         <div role="status" style={{
-          backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10,
-          padding: '16px 18px', marginBottom: 16,
+          backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusCard,
+          padding: '16px 18px', marginBottom: T.space.md,
         }}>
           <div style={{ fontWeight: 700, color: P.green, fontSize: '0.98rem', marginBottom: 4 }}>✓ Put up</div>
-          <div style={{ fontSize: '0.9rem', color: P.mid }}>{success.text}</div>
+          <div style={{ fontSize: T.type.base, color: P.mid }}>{success.text}</div>
         </div>
         {/* The put-up SAVED; only the photo failed. Says so plainly rather than letting a silently
             photo-less record read as a successful attach. */}
         {photoWarning && (
-          <div role="status" style={{ fontSize: '0.82rem', color: P.bannerInk, backgroundColor: P.warn,
-            border: `1px solid ${P.warnBorder}`, borderRadius: 8, padding: '10px 12px', marginBottom: 16 }}>
+          <div role="status" style={{ fontSize: T.type.sm, color: P.bannerInk, backgroundColor: P.warn,
+            border: `1px solid ${P.warnBorder}`, borderRadius: T.radiusButton, padding: '10px 12px', marginBottom: T.space.md }}>
             {photoWarning}
           </div>
         )}
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: T.space.sm, flexWrap: 'wrap' }}>
           <Button type="button" variant="primary" onClick={resetForNext}>Log another</Button>
           <Button type="button" variant="secondary" onClick={onLogged}>See what&rsquo;s put up</Button>
         </div>
@@ -791,7 +792,7 @@ function PutUpForm({ prefill, onLogged }) {
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {offline && !error && (
         <ErrorBanner>You&rsquo;re offline — you can fill this in, but saving needs a connection.</ErrorBanner>
@@ -846,7 +847,7 @@ function PutUpForm({ prefill, onLogged }) {
           />
         </div>
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+        <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14 }}>
           <div style={{ flex: 2 }}>
             <Field label="How much *" htmlFor="pu-qty">
               <Input
@@ -892,7 +893,7 @@ function PutUpForm({ prefill, onLogged }) {
             The two-state gate is what makes the zero-friction claim honest: the common path is one
             glance at a preselected chip, no picker wheel, 44px target, wet hands. */}
         {!prefillLocksSource && (
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: T.space.md }}>
             <Field label="Where did it come from?" htmlFor="pu-source-gate">
               <SegmentedControl
                 ariaLabel="Where did it come from?"
@@ -956,7 +957,7 @@ function PutUpForm({ prefill, onLogged }) {
         {CANNING_METHODS.has(method) && (
           <div role="note" style={{
             marginTop: 12, fontSize: '0.8rem', lineHeight: 1.45, color: P.bannerInk,
-            backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: 8, padding: '10px 12px',
+            backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: T.radiusButton, padding: '10px 12px',
           }}>
             <strong>Canning safety.</strong> Water-bath canning is safe only for <strong>high-acid</strong> foods
             (tomatoes with added acid, pickles, jam). <strong>Low-acid</strong> foods — beans, most vegetables —
@@ -974,7 +975,7 @@ function PutUpForm({ prefill, onLogged }) {
           />
         </div>
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 150 }}>
             <Field label="Put-up date *" htmlFor="pu-date">
               <Input id="pu-date" type="date" value={preservedAt} max={todayYMD()}
@@ -1004,7 +1005,7 @@ function PutUpForm({ prefill, onLogged }) {
       {/* ── More: packages / notes / variety ── */}
       <Card>
         <button type="button" onClick={() => setShowMore(s => !s)} aria-expanded={showMore}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem',
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: T.type.sm,
             fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0,
             display: 'flex', alignItems: 'center', gap: 6 }}>
           <span aria-hidden="true">{showMore ? '▾' : '▸'}</span>
@@ -1167,25 +1168,25 @@ function StorageField({ value, onChange, locations, onCreated, fetch }) {
       </Field>
       {!adding ? (
         <button type="button" onClick={() => setAdding(true)}
-          style={{ background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: '0.82rem',
+          style={{ background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: T.type.sm,
             fontWeight: 600, padding: '8px 0 0', textDecoration: 'underline' }}>
           ＋ New location
         </button>
       ) : (
-        <div style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: 8, padding: '12px 14px', backgroundColor: P.cream }}>
+        <div style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '12px 14px', backgroundColor: P.cream }}>
           {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
           <Field label="Name *" htmlFor="pu-newloc-label">
             <Input id="pu-newloc-label" value={label} onChange={e => setLabel(e.target.value)}
               aria-label="New location name" placeholder="e.g. Garage freezer" />
           </Field>
-          <div style={{ marginTop: 10 }}>
+          <div style={{ marginTop: T.space.sm }}>
             <Field label="Kind" htmlFor="pu-newloc-kind">
               <Select id="pu-newloc-kind" value={kind} onChange={e => setKind(e.target.value)} aria-label="Location kind">
                 {STORAGE_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
               </Select>
             </Field>
           </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+          <div style={{ display: 'flex', gap: T.space.sm, marginTop: 12 }}>
             <Button type="button" variant="primary" loading={busy} loadingLabel="Adding…" onClick={create}>Add</Button>
             <Button type="button" variant="secondary" onClick={() => { setAdding(false); setErr(null) }}>Cancel</Button>
           </div>
@@ -1219,7 +1220,7 @@ function StoresView() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: T.space.md }}>
         <SegmentedControl
           ariaLabel="Group by"
           small
@@ -1238,7 +1239,7 @@ function StoresView() {
 
       {!loading && !error && groups.length === 0 && (
         <div style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
-          background: P.white, border: `1px solid ${P.border}`, borderRadius: 12 }}>
+          background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
           <div style={{ fontWeight: 700, color: P.dark, marginBottom: 6 }}>Nothing put up yet.</div>
           <div style={{ fontSize: '0.85rem', color: P.light }}>
             Log your first put-up and it&rsquo;ll show up here, grouped by where it&rsquo;s stored.
@@ -1256,12 +1257,12 @@ function StoresView() {
 function GroupCard({ group, onChanged, fetch }) {
   const units = (group.units ?? []).join(', ')
   return (
-    <div style={{ marginBottom: 16, backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12, overflow: 'hidden' }}>
+    <div style={{ marginBottom: T.space.md, backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge, overflow: 'hidden' }}>
       <div style={{ padding: '14px 16px', borderBottom: `1px solid ${P.border}` }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: T.space.sm }}>
           <div style={{ fontWeight: 700, color: P.dark, fontSize: '1rem' }}>{group.label}</div>
           {group.use_soon_count > 0 && (
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: P.gold,
+            <span style={{ fontSize: T.type.xs, fontWeight: 700, color: P.gold,
               backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: 999, padding: '2px 8px' }}>
               {group.use_soon_count} use soon
             </span>
@@ -1361,7 +1362,7 @@ function RecordRow({ rec, onChanged, fetch }) {
           rows without one keep their original full-width layout. */}
       <PutUpPhotoThumb photoId={rec.photo_id} fetch={fetch} alt={`Photo of ${rec.quantity_unit} put up`} />
       <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: T.space.sm, alignItems: 'baseline' }}>
         <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>
           {rec.quantity_value} {rec.quantity_unit}
           <span style={{ color: P.mid, fontWeight: 400 }}> · {METHOD_LABELS[rec.method] || rec.method}{rec.method === 'other' && rec.method_other_text ? ` (${rec.method_other_text})` : ''}</span>
@@ -1421,7 +1422,7 @@ function RowAction({ onClick, disabled, tone, children }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled}
       style={{ background: 'none', border: 'none', padding: '4px 0', cursor: disabled ? 'default' : 'pointer',
-        color: disabled ? P.light : (tone === 'terra' ? P.terra : P.green), fontSize: '0.82rem', fontWeight: 600,
+        color: disabled ? P.light : (tone === 'terra' ? P.terra : P.green), fontSize: T.type.sm, fontWeight: 600,
         fontFamily: 'inherit', textDecoration: 'underline', opacity: disabled ? 0.5 : 1, minHeight: 32 }}>
       {children}
     </button>
@@ -1459,7 +1460,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   return (
     <div style={{ padding: '14px 16px', borderTop: `1px solid ${P.cream}`, backgroundColor: P.cream }}>
       {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
-      <div style={{ display: 'flex', gap: 10 }}>
+      <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
           <Field label="How much" htmlFor={`ed-qty-${rec.id}`}>
             <Input id={`ed-qty-${rec.id}`} type="text" inputMode="decimal" value={qtyValue}
@@ -1478,13 +1479,13 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           </Field>
         </div>
       </div>
-      <div style={{ marginTop: 10 }}>
+      <div style={{ marginTop: T.space.sm }}>
         <Field label="Containers" htmlFor={`ed-pkg-${rec.id}`}>
           <Input id={`ed-pkg-${rec.id}`} type="number" min={1} value={packageCount}
             onChange={e => setPackageCount(e.target.value)} aria-label="Number of containers" />
         </Field>
       </div>
-      <div style={{ marginTop: 10 }}>
+      <div style={{ marginTop: T.space.sm }}>
         <Field label="Method" htmlFor={`ed-method-${rec.id}`}>
           <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label="Method">
             {METHOD_GROUPS.map(g => (
@@ -1498,7 +1499,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       {/* Conditionally-required partner of the Method select above. Without this the 'other' option
           is a trap: picking it makes the row un-saveable with an error the UI cannot explain. */}
       {method === 'other' && (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: T.space.sm }}>
           <Field label="What method?" htmlFor={`ed-method-other-${rec.id}`}>
             <Input id={`ed-method-other-${rec.id}`} type="text" value={methodOther}
               onChange={e => setMethodOther(e.target.value)} aria-label="Method description"
@@ -1506,13 +1507,13 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           </Field>
         </div>
       )}
-      <div style={{ marginTop: 10 }}>
+      <div style={{ marginTop: T.space.sm }}>
         <Field label="Notes" htmlFor={`ed-notes-${rec.id}`} optional>
           <Textarea id={`ed-notes-${rec.id}`} value={notes} onChange={e => setNotes(e.target.value)}
             aria-label="Notes" style={{ height: 60, resize: 'vertical' }} />
         </Field>
       </div>
-      <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+      <div style={{ display: 'flex', gap: T.space.sm, marginTop: 12 }}>
         <Button type="button" variant="primary" loading={busy} loadingLabel="Saving…" onClick={save}>Save</Button>
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
       </div>
@@ -1522,7 +1523,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
 
 function Card({ children }) {
   return (
-    <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '16px 18px' }}>
+    <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: '16px 18px' }}>
       {children}
     </div>
   )

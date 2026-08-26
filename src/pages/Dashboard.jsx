@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { severityTier, SEVERITY_STYLES } from '../lib/waterDue.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
@@ -36,22 +37,22 @@ function DashboardFallback({ error, retry } = {}) {
     <div role="alert" style={{
       padding: '20px 16px',
       margin: '12px 0',
-      backgroundColor: '#fde8e0',
-      border: '1px solid #b7532a',
-      borderRadius: 10,
+      backgroundColor: P.alert,
+      border: `1px solid ${P.alertBorder}`,
+      borderRadius: T.radiusCard,
       color: P.bannerInk,
       fontSize: '0.88rem',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>Couldn't load dashboard at {ts}.</div>
-      <div style={{ fontSize: '0.78rem', color: '#7a5c3c', marginBottom: 10 }}>Code: {code}</div>
+      <div style={{ fontSize: '0.78rem', color: P.brown, marginBottom: T.space.sm }}>Code: {code}</div>
       <button
         type="button"
         onClick={retry}
         style={{
-          minHeight: 44, minWidth: 44,
+          minHeight: T.tapMinHeight, minWidth: T.tapMinHeight,
           padding: '8px 16px',
           background: 'transparent',
-          border: '1px solid #b7532a',
+          border: `1px solid ${P.alertBorder}`,
           borderRadius: 6,
           color: P.bannerInk,
           fontWeight: 600,
@@ -223,7 +224,7 @@ export default function Dashboard() {
              same fallback the caretaker lenses have always used (src/lib/caretakers.js).
              DASH-LOC-REDUNDANT (2026-05-18): removed the "WHERE ARE YOU?" zone link below.
              The TopBar zone pill is the single source of truth for zone display + change. */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: T.space.lg }}>
           <div>
             <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: '0 0 4px' }}>
               Welcome back, {firstName(profile?.display_name) ?? NEUTRAL_CARETAKER_NAME} 🌿
@@ -268,10 +269,10 @@ export default function Dashboard() {
           {/* V4-PROJHIDE-001: the inactive-projects entry is a project surface — hidden when projects
               aren't user-facing. Flag OFF keeps the exact prior inactiveCount>0 gate (byte-identical). */}
           {!PROJECTS_HIDDEN && inactiveCount > 0 && (
-            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+            <div style={{ textAlign: 'center', marginBottom: T.space.lg }}>
               <Link to="/inactive" style={{
                 display: 'inline-block',
-                minHeight: 44,
+                minHeight: T.tapMinHeight,
                 padding: '12px 16px',
                 color: P.green,
                 fontSize: '0.85rem',
@@ -297,7 +298,7 @@ export default function Dashboard() {
             <div style={{
               backgroundColor: P.white,
               border: `1px solid ${P.border}`,
-              borderRadius: '10px',
+              borderRadius: T.radiusCard,
               overflow: 'hidden',
             }}>
               {recentEvents.map((ev, i) => {
@@ -318,14 +319,14 @@ export default function Dashboard() {
                   textDecoration: 'none',
                   color: 'inherit',
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, minWidth: 0 }}>
                     <span style={{
-                      fontSize: '0.72rem',
+                      fontSize: T.type.xs,
                       fontWeight: 600,
                       color: P.green,
                       backgroundColor: P.greenPale,
                       border: `1px solid ${P.greenLight}`,
-                      borderRadius: '10px',
+                      borderRadius: T.radiusCard,
                       padding: '2px 9px',
                       flexShrink: 0,
                       whiteSpace: 'nowrap',
@@ -449,7 +450,7 @@ function StreakModal({ stats, onClose }) {
         position: 'fixed', inset: 0,
         backgroundColor: 'rgba(0,0,0,0.45)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 20, zIndex: 1000,
+        padding: T.space.lg, zIndex: 1000,
       }}
     >
       <div
@@ -463,7 +464,7 @@ function StreakModal({ stats, onClose }) {
           boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
         }}
       >
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+        <div style={{ textAlign: 'center', marginBottom: T.space.lg }}>
           <div style={{ fontSize: '3rem', lineHeight: 1, marginBottom: 8 }}>🔥</div>
           <div style={{ fontSize: '2.2rem', fontWeight: 800, color: P.terra, lineHeight: 1 }}>{current}</div>
           <div style={{ fontSize: '0.85rem', color: P.mid, marginTop: 6 }}>
@@ -471,7 +472,7 @@ function StreakModal({ stats, onClose }) {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gap: T.space.sm, marginBottom: T.space.lg }}>
           <Row label="Longest streak"  value={`${stats.longest_streak ?? 0} day${(stats.longest_streak ?? 0) === 1 ? '' : 's'}`} />
           <Row label="Last active"     value={formatLastActive(stats.last_active_date)} />
           <Row label="Total events"    value={`${stats.total_events ?? 0}`} />
@@ -486,12 +487,12 @@ function StreakModal({ stats, onClose }) {
         <div style={{
           backgroundColor: P.cream,
           border: `1px solid ${P.border}`,
-          borderRadius: 8,
+          borderRadius: T.radiusButton,
           padding: '12px 16px',
           textAlign: 'center',
-          fontSize: '0.82rem',
+          fontSize: T.type.sm,
           color: P.mid,
-          marginBottom: 16,
+          marginBottom: T.space.md,
           lineHeight: 1.45,
         }}>
           Consecutive days you logged activity. Take a break when you need one.
@@ -500,8 +501,8 @@ function StreakModal({ stats, onClose }) {
         <button onClick={onClose} style={{
           width: '100%',
           backgroundColor: P.green, color: P.white,
-          border: 'none', borderRadius: 8,
-          padding: '12px', fontSize: '0.95rem', fontWeight: 700, cursor: 'pointer',
+          border: 'none', borderRadius: T.radiusButton,
+          padding: '12px', fontSize: T.type.md, fontWeight: 700, cursor: 'pointer',
         }}>
           Close
         </button>
@@ -522,7 +523,7 @@ function LevelRow({ stats }) {
       padding: '8px 12px',
       backgroundColor: P.cream,
       border: `1px solid ${P.border}`,
-      borderRadius: 8,
+      borderRadius: T.radiusButton,
       fontSize: '0.85rem',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -546,7 +547,7 @@ function LevelRow({ stats }) {
           backgroundColor: P.green,
         }} />
       </div>
-      <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 4 }}>
+      <div style={{ fontSize: T.type.xs, color: P.light, marginTop: 4 }}>
         {p.xpToNextLevel} XP to level {p.level + 1}
       </div>
     </div>
@@ -560,7 +561,7 @@ function Row({ label, value }) {
       padding: '8px 12px',
       backgroundColor: P.cream,
       border: `1px solid ${P.border}`,
-      borderRadius: 8,
+      borderRadius: T.radiusButton,
       fontSize: '0.85rem',
     }}>
       <span style={{ color: P.mid }}>{label}</span>
@@ -579,11 +580,11 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        gap: '10px',
+        gap: T.space.sm,
         padding: '14px 16px',
         backgroundColor: P.greenPale,
         border: `1.5px solid ${P.greenLight}`,
-        borderRadius: '10px',
+        borderRadius: T.radiusCard,
         marginBottom: '12px',
       }}>
         <span style={{ fontSize: '1.4rem' }}>🌱</span>
@@ -591,7 +592,7 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
           <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '1px' }}>
             GIVE ATTENTION TO
           </div>
-          <div style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
+          <div style={{ fontWeight: 700, color: P.green, fontSize: T.type.md }}>
             All caught up
           </div>
         </div>
@@ -608,22 +609,22 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
         padding: '12px 16px',
         backgroundColor: '#f0f7f0',
         border: `1.5px solid ${P.greenLight}`,
-        borderRadius: '10px',
+        borderRadius: T.radiusCard,
         cursor: 'pointer',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
           <span style={{ fontSize: '1.2rem' }}>🌱</span>
           <div>
             <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '1px' }}>
               GIVE ATTENTION TO
             </div>
-            <div style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
+            <div style={{ fontWeight: 700, color: P.green, fontSize: T.type.md }}>
               {nextAttention.plant_name}
             </div>
             {/* V4-PROJHIDE-001: the secondary project_name line is dropped when projects aren't
                 user-facing (the plant_name above stands alone). Flag OFF renders it exactly as before. */}
             {!PROJECTS_HIDDEN && nextAttention.project_name && (
-              <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 1 }}>
+              <div style={{ fontSize: T.type.xs, color: P.light, marginTop: 1 }}>
                 {nextAttention.project_name}
               </div>
             )}
@@ -668,7 +669,7 @@ function WaterMeTile({ waterDue, hasProjects }) {
           padding: '14px 16px',
           backgroundColor: s.bg,
           border: `1.5px solid ${s.border}`,
-          borderRadius: '10px',
+          borderRadius: T.radiusCard,
           cursor: 'pointer',
           marginBottom: '28px',
         }}
@@ -676,7 +677,7 @@ function WaterMeTile({ waterDue, hasProjects }) {
         <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '4px' }}>
           💧 WATER ME
         </div>
-        <div style={{ fontWeight: 700, color: s.text, fontSize: '0.95rem', marginBottom: '2px' }}>
+        <div style={{ fontWeight: 700, color: s.text, fontSize: T.type.md, marginBottom: '2px' }}>
           {/* V4-PROJHIDE-001: the WATER ME subject is a project/container name (queryWaterDueFromPlan
               selects only project_name — no planting scalar). When projects aren't user-facing, prefer a
               planting name if one is ever added, else a neutral subject. Flag OFF keeps w.project_name. */}
@@ -700,7 +701,7 @@ function WaterMeTile({ waterDue, hasProjects }) {
     <div style={{
       backgroundColor: s.bg,
       border: `1.5px solid ${s.border}`,
-      borderRadius: '10px',
+      borderRadius: T.radiusCard,
       marginBottom: '28px',
       overflow: 'hidden',
     }}>
@@ -716,7 +717,7 @@ function WaterMeTile({ waterDue, hasProjects }) {
         <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '4px' }}>
           💧 WATER ME
         </div>
-        <div style={{ fontWeight: 700, color: s.text, fontSize: '0.95rem', marginBottom: '2px' }}>
+        <div style={{ fontWeight: 700, color: s.text, fontSize: T.type.md, marginBottom: '2px' }}>
           {/* V4-PROJHIDE-001: the summary names the top project — replaced with a project-free count
               when projects aren't user-facing (this branch is the >1 case). Flag OFF is unchanged. */}
           {PROJECTS_HIDDEN
@@ -758,7 +759,7 @@ function WaterMeTile({ waterDue, hasProjects }) {
                         OFF keeps w.project_name (byte-identical). */}
                     {PROJECTS_HIDDEN ? (w.plant_name || 'Water due') : w.project_name}
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 1 }}>
+                  <div style={{ fontSize: T.type.xs, color: P.light, marginTop: 1 }}>
                     {w.last_watered_at
                       ? `last ${daysAgo(w.last_watered_at)}`
                       : 'never watered'}
@@ -829,7 +830,7 @@ function relativeTime(isoStr) {
 
 const sectionHeadStyle = {
   color: P.dark,
-  fontSize: '0.95rem',
+  fontSize: T.type.md,
   fontWeight: 700,
   margin: '0 0 12px',
 }
