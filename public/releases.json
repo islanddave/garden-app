@@ -1,5 +1,15 @@
 [
   {
+    "version": "4.51.0",
+    "date": "2026-08-26",
+    "highlights": [
+      "The date is now on the weigh-in screen itself, next to the planting chooser, and it says \"Today\" or \"Yesterday\" rather than a raw date. It used to be buried inside the collapsed \"Photo, notes & date\" panel, which made logging yesterday's picking a chore. It also STAYS PUT between entries now: set it once at the start of a sitting and every save in that sitting is filed under that day. Outside a weigh-in session the ordinary log form is unchanged and still resets to today for each event.",
+      "The line at the bottom of the weigh-in screen now shows only the entry you just logged — its date, the planting, the count and the weight — on two lines. The running session count and running weight total are gone. They were crowding out the thing that line is for, which is checking that what you just put on the scale went in correctly; the numbers were also being pushed off the right edge underneath the Save button, so the half you most needed to read was the half you could not see.",
+      "The weigh-in session has a Close button, top right. The session deliberately hides the bottom navigation while you are in it, so there was previously no obvious way out other than the browser's own Back. If you have a weight typed in when you tap it, it asks before discarding it.",
+      "Logging a harvest no longer raises the \"putting any of this up for later?\" banner. Putting food up is its own sitting, done at the freezer, not something decided while a bowl is still on the scale — so the prompt was appearing at the one moment it could never be acted on, once per harvest. Put-Up is still reachable from its own tab and from any planting."
+    ]
+  },
+  {
     "version": "4.50.0",
     "date": "2026-08-25",
     "highlights": [

@@ -330,7 +330,12 @@ describe('BUG-SESSIONDRAFTRESTORE-001 — the save reaches the SHIPPED frame led
     expect(screen.queryByTestId('harvest-session-strip')).toBeNull()
     await saveWith({ qty: '4' })
     expect(postCalls[0].event_type).toBe('harvest')
-    // The one-line ledger names the count; 'nothing logged yet' is what a lost row would read as.
-    expect(screen.getByTestId('weigh-frame-log-toggle').textContent).toContain('1 ·')
+    // The one-line ledger names the row that just saved; 'nothing logged yet' is what a lost row
+    // would read as. This asserted the session COUNT ('1 ·') until 2026-08-26, when
+    // V4-WEIGHLEDGERLAST-001 removed session totals from the row on Dave's directive — so it now
+    // asserts the entry itself, which is what this test was always really checking for.
+    const ledger = screen.getByTestId('weigh-frame-log-toggle').textContent
+    expect(ledger).not.toContain('nothing logged yet')
+    expect(ledger).toContain('4 count')
   })
 })

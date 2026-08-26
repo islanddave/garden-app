@@ -231,15 +231,27 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
     expect(screen.getByTestId('weigh-frame-track3').style.height).toBe('48px')
   })
 
-  it('names the last entry, the count and the running total, rolling grams into kg', async () => {
+  // V4-WEIGHLEDGERLAST-001 — this test was INVERTED on 2026-08-26. It used to require the running
+  // count and the rolled-up kg total; Dave's directive that day was "Remove the session totals",
+  // because the totals were crowding the one thing he reads off this row — the entry he just logged.
+  // The negative assertions are the load-bearing half: without them this passes just as happily with
+  // the totals restored, since the last entry would still be present in the string.
+  it('names the last entry — date, plant, count and weight — and carries NO session total', async () => {
     await renderSession()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     await saveHarvest({ qty: '12', weight: '340' })
     await saveHarvest({ qty: '5', weight: '860' })
     const summary = screen.getByTestId('weigh-frame-log-toggle').textContent
-    expect(summary).toContain('2 ·')
-    expect(summary).toContain('1.2 kg')
-    expect(summary).toContain('Tomatoes 2026 860 g')
+    // The entry: which day it lands on, which planting, how many, how heavy. Count AND weight — the
+    // shipped label showed weight OR count, dropping the number being read off the scale.
+    expect(summary).toContain('Today')
+    expect(summary).toContain('Tomatoes 2026')
+    expect(summary).toContain('5 count')
+    expect(summary).toContain('860 g')
+    // NOT the session count, and NOT the running total (12+5 rows; 340+860 = 1.2 kg).
+    expect(summary).not.toContain('2 ·')
+    expect(summary).not.toContain('1.2 kg')
+    expect(summary).not.toContain('1200 g')
   })
 
   it('undoes the most recent entry from a control that never moves, with a distinguishable name', async () => {
@@ -249,8 +261,9 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
     await saveHarvest({ qty: '5', weight: '860' })
     const undo = screen.getByTestId('weigh-frame-undo')
     // The shipped strip gives all three of its Undo buttons the identical accessible name. This one
-    // names the row it will destroy.
-    expect(undo.getAttribute('aria-label')).toBe('Undo Tomatoes 2026 860 g, most recent entry')
+    // names the row it will destroy — now including the date it was filed under, since with a sticky
+    // date the row being destroyed may not belong to today.
+    expect(undo.getAttribute('aria-label')).toBe('Undo Today Tomatoes 2026 5 count  ·  860 g, most recent entry')
     await act(async () => { fireEvent.click(undo) })
     expect(deleteCalls).toEqual(['/api/events/evt-2'])
     // Undone rows leave the totals but stay in the record; the summary falls back to the row before.
@@ -393,5 +406,156 @@ describe('V4-WEIGHFRAME-001 R1 — 20px between the weight pad and Save', () => 
     // the 8px back out of the gap would push the pad down again, so the netting is pinned.
     expect(px(qtyPad.style.marginBottom)).toBeGreaterThan(0)
     expect(px(qtyWrap.style.marginBottom) + px(qtyPad.style.marginBottom)).toBe(0)
+  })
+})
+
+// ── V4-WEIGHDATEREACH-001 + V4-WEIGHSESSIONCLOSE-001 (Dave directives, 2026-08-26) ─────────────
+// Same SCOPE caveat as the head of this file: jsdom has no layout engine, so these pin STRUCTURE
+// and BEHAVIOUR — which track the controls sit in, what the date does to the POST, where Close
+// goes. The geometric claim they cannot make (that two 44px controls beside the chooser still leave
+// track 1 at 52px and track 2 whole) is measured in real Chrome via tests/harness.
+
+const ymdOffset = n => {
+  const d = new Date(); d.setDate(d.getDate() + n)
+  const p = x => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+describe('V4-WEIGHDATEREACH-001 — the date is reachable without scrolling', () => {
+  it('lives in TRACK 1 beside the chooser, and is NOT left behind in the collapsed disclosure', async () => {
+    await renderSession()
+    const dateInput = screen.getByTestId('weigh-frame-date')
+    // In track 1 — the whole point of the directive. Being merely "present somewhere" is what the
+    // shipped build already was: it was in the collapsed "Photo, notes & date" body all along.
+    expect(screen.getByTestId('weigh-frame-chooser').contains(dateInput)).toBe(true)
+    expect(dateInput.getAttribute('type')).toBe('date')
+
+    // ...and not ALSO in the disclosure. Two controls bound to one field is how a user sets a date
+    // and watches the other one silently win.
+    expect(screen.getByTestId('harvest-more-toggle').textContent).not.toMatch(/date/i)
+    fireEvent.click(screen.getByTestId('harvest-more-toggle'))
+    const body = screen.getByTestId('harvest-more-body')
+    expect(within(body).queryByLabelText('Event date')).toBeNull()
+    expect(screen.getAllByDisplayValue(ymdOffset(0)).length).toBe(1)
+  })
+
+  it('reads Today / Yesterday rather than a raw date, and the label tracks the value', async () => {
+    await renderSession()
+    // The chip is what makes this glanceable; the raw `08/26/2026` a native input paints is what
+    // Dave has to stop and parse. aria-label carries the same phrase for the same reason.
+    expect(screen.getByTestId('weigh-frame-date').getAttribute('aria-label')).toBe('Event date — Today')
+    fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: ymdOffset(-1) } })
+    expect(screen.getByTestId('weigh-frame-date').getAttribute('aria-label')).toBe('Event date — Yesterday')
+    fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: '2026-03-04' } })
+    expect(screen.getByTestId('weigh-frame-date').getAttribute('aria-label')).toBe('Event date — Mar 4')
+  })
+
+  it('actually changes the date the harvest is FILED UNDER, not just the label', async () => {
+    await renderSession()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: ymdOffset(-1) } })
+    await saveHarvest({ qty: '4', weight: '200' })
+    // The POST body is the only thing that settles this — a control that repaints a chip and sends
+    // today's date is exactly the bug Dave is trying to escape.
+    expect(postCalls[0].event_date).toBe(ymdOffset(-1))
+  })
+
+  it('KEEPS the date across saves in a session — the sticky half of the directive', async () => {
+    await renderSession()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: ymdOffset(-1) } })
+    await saveHarvest({ qty: '4', weight: '200' })
+    await saveHarvest({ qty: '6', weight: '300' })
+    await saveHarvest({ qty: '2', weight: '100' })
+    // Without this, working through yesterday's picking means re-setting the date on every entry —
+    // the "major PITA" restated as a per-entry tax.
+    expect(postCalls.map(c => c.event_date)).toEqual([ymdOffset(-1), ymdOffset(-1), ymdOffset(-1)])
+    expect(screen.getByTestId('weigh-frame-date').getAttribute('aria-label')).toBe('Event date — Yesterday')
+  })
+
+  it('MUTATION GUARD: the stickiness is SESSION-scoped — the ordinary log form still resets to today', async () => {
+    // Without this, `event_date: f.event_date` unconditionally would pass every test above while
+    // silently backdating an unrelated event the user logs an hour later on the normal form.
+    await renderSession('event_type=harvest')       // no session=harvest -> not a weigh-in session
+    expect(screen.queryByTestId('weigh-frame')).toBeNull()
+    expect(screen.queryByTestId('weigh-frame-date')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    // Off the frame the date is back where it has always been — inside the collapsed disclosure,
+    // which is itself the thing Dave was complaining about and which is deliberately NOT changed
+    // for the ordinary log form.
+    fireEvent.click(screen.getByTestId('harvest-more-toggle'))
+    fireEvent.change(screen.getByLabelText('Event date'), { target: { value: ymdOffset(-1) } })
+    await saveHarvest({ qty: '4', weight: '200' })
+    await saveHarvest({ qty: '6', weight: '300' })
+    expect(postCalls[0].event_date).toBe(ymdOffset(-1))
+    expect(postCalls[1].event_date).toBe(ymdOffset(0))
+  })
+
+  it('the ledger names the day the row was filed under, not the day it was typed', async () => {
+    await renderSession()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: ymdOffset(-1) } })
+    await saveHarvest({ qty: '4', weight: '200' })
+    // A backdated row logged minutes ago must not read "Today" — that is the one case where the
+    // ledger's whole job (let Dave verify what just went in) turns into misinformation.
+    const ledger = screen.getByTestId('weigh-frame-log-toggle').textContent
+    expect(ledger).toContain('Yesterday')
+    expect(ledger).not.toContain('Today')
+  })
+})
+
+describe('V4-WEIGHSESSIONCLOSE-001 — the session has a way out', () => {
+  it('offers a labelled Close in track 1', async () => {
+    await renderSession()
+    const close = screen.getByTestId('weigh-frame-close')
+    expect(close.getAttribute('aria-label')).toBe('Close weigh-in session')
+    // 44px floor — this sits beside the chooser at the top of the screen, and the frame suppresses
+    // BottomNav, so it is the only deliberate exit on the surface.
+    expect(close.style.minHeight).toBe('44px')
+    expect(close.style.minWidth).toBe('44px')
+    expect(screen.getByTestId('weigh-frame-chooser').contains(close)).toBe(true)
+  })
+
+  it('goes BACK when the session was opened from inside the app', async () => {
+    window.history.replaceState({ idx: 3 }, '')
+    await renderSession()
+    fireEvent.click(screen.getByTestId('weigh-frame-close'))
+    expect(navigateSpy).toHaveBeenCalledWith(-1)
+  })
+
+  it('falls back to /harvests on a cold start, rather than leaving the app', async () => {
+    // idx 0 / absent is a PWA shortcut or a shared link — there is no app entry behind this one, so
+    // navigate(-1) would walk out of the app entirely.
+    window.history.replaceState(null, '')
+    await renderSession()
+    fireEvent.click(screen.getByTestId('weigh-frame-close'))
+    expect(navigateSpy).toHaveBeenCalledWith('/harvests')
+  })
+
+  it('confirms before discarding a weight already typed, and stays put when refused', async () => {
+    window.history.replaceState({ idx: 3 }, '')
+    await renderSession()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '9' } })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    try {
+      fireEvent.click(screen.getByTestId('weigh-frame-close'))
+      expect(confirmSpy).toHaveBeenCalled()
+      expect(navigateSpy).not.toHaveBeenCalled()   // refusing the confirm keeps the entry alive
+      confirmSpy.mockReturnValue(true)
+      fireEvent.click(screen.getByTestId('weigh-frame-close'))
+      expect(navigateSpy).toHaveBeenCalledWith(-1)
+    } finally { confirmSpy.mockRestore() }
+  })
+
+  it('does NOT confirm on an untouched form — the guard is about typed content, not about closing', async () => {
+    window.history.replaceState({ idx: 3 }, '')
+    await renderSession()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      fireEvent.click(screen.getByTestId('weigh-frame-close'))
+      expect(confirmSpy).not.toHaveBeenCalled()
+      expect(navigateSpy).toHaveBeenCalledWith(-1)
+    } finally { confirmSpy.mockRestore() }
   })
 })

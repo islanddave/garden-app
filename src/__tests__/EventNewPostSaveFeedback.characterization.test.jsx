@@ -122,17 +122,23 @@ beforeEach(() => {
   wireApiFetch()
 })
 
-// ── 1. PreserveOffer hosting (V4-HARVESTCENTER-001 L9) ───────────────────────────────────────
-// S5a: the offer had TWO independent render sites — one on the confirmation card, one in the form
-// body — and only the card's was ever mounted at a time, because the card unmounted the form.
-// S5b: the card is gone and the form stays live, so DOUBLE-HOSTING WOULD MOUNT BOTH AT ONCE. The
-// `preserve` prop was dropped from PostSaveFeedback entirely (spec §4.5) and the form-body host is
-// now the ONLY one — it already covered the full-page path and the post-dismissal form, so it
-// covers every path unchanged. Per spec §9 the count assertion is RESCOPED, not deleted: it still
-// pins "exactly one host renders", which is now a stronger claim than it was (before, the two
-// hosts were mutually exclusive by construction; now nothing but this pin stops a duplicate).
-describe('S5a/S5b characterization — exactly ONE PreserveOffer host renders', () => {
-  it('(a) a logged harvest renders the preserve offer exactly once, with the form still live', async () => {
+// ── 1. PreserveOffer hosting — INVERTED 2026-08-26 to ZERO hosts (V4-PRESERVEOFFERKILL-001) ────
+// HISTORY, because this file's whole value is that it is the only place the offer was ever pinned:
+//   S5a  the offer had TWO render sites — the confirmation card and the form body — mutually
+//        exclusive only because the card unmounted the form.
+//   S5b  the card went away and the form stayed live, so this file pinned "exactly ONE host".
+//   NOW  Dave's directive, verbatim: "hide the do you want to do a put up banner which comes up
+//        after doing a harvest event: it is never going to be used at that point, wrong process for
+//        that." The trigger, both hosts and the component are deleted, so the count is ZERO.
+//
+// This block is INVERTED rather than deleted, deliberately. A deleted test leaves nothing to stop a
+// future session re-adding the offer as a "small ambient nudge" — it was, after all, a reasonable
+// idea; it was wrong about THIS HOUSEHOLD, which is a fact only a test can carry forward. Note the
+// harvest paths are asserted separately from the non-harvest one: the shipped gate was
+// harvest-gated, so a regression that restores it would show up on the harvest paths FIRST, and a
+// single combined assertion would let the old (d) case keep passing while (a)-(c) rot.
+describe('V4-PRESERVEOFFERKILL-001 — a harvest save raises NO put-up offer, on any path', () => {
+  it('(a) overlay path: nothing offered, and the form is still live with its strip intact', async () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Roma #1', variety_ref: { id: 'v-1', crop_type_slug: 'tomato' } }]
     renderInOverlay('event_type=harvest')
     await flushLoad()
@@ -141,40 +147,22 @@ describe('S5a/S5b characterization — exactly ONE PreserveOffer host renders', 
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2' } })
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
-    // S5b INVERSION (spec §9): was `expect(queryByText('Save')).toBeNull()` — the pin on the
-    // body-replacing early return. The form surviving the save IS the slice.
+    // THE assertion of this block now — no prompt, and no residue of its two buttons.
+    expect(screen.queryByText(PRESERVE_PROMPT)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Log a put-up' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull()
+
+    // NON-VACUITY, and it is the whole reason this test is not just three queryBy nulls: the save
+    // must genuinely have happened. Without these, a save that silently failed would pass every
+    // assertion above. The S5b slice's own guarantees ride along — form live, strip present, undo
+    // reachable — so removing the offer cannot quietly take the confirmation path with it.
     expect(screen.getByText('Save')).toBeTruthy()
     expect(screen.getByRole('status').textContent).toMatch(/Logged/)
-    expect(screen.getByText(PRESERVE_PROMPT)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Log a put-up' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Not now' })).toBeTruthy()
-    // THE load-bearing assertion of this file post-S5b: exactly one host, never two
-    expect(screen.getAllByText(PRESERVE_PROMPT).length).toBe(1)
-  })
-
-  it('(b) the SURVIVING host is genuinely dismissible, and the strip is unaffected by dismissing it', async () => {
-    dataRef.plants = [{ id: 'pl-1', name: 'Roma #1', variety_ref: { id: 'v-1', crop_type_slug: 'tomato' } }]
-    renderInOverlay('event_type=harvest')
-    await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await pickPlanting('pl-1')
-    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2' } })
-    await act(async () => { fireEvent.click(screen.getByText('Save')) })
-    // NOTE: the `Log another` click that used to sit here is GONE — that dismissal is exactly the
-    // tap S5b removes, and the offer is reachable with no intervening click at all.
-    expect(screen.getByText('Save')).toBeTruthy()
-    expect(screen.getAllByText(PRESERVE_PROMPT).length).toBe(1)
-    expect(screen.getByRole('button', { name: 'Log a put-up' })).toBeTruthy()
-
-    // still dismissible from this host...
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Not now' })) })
-    expect(screen.queryByText(PRESERVE_PROMPT)).toBeNull()
-    // ...and dismissing the ambient offer does not take the confirmation/undo path with it
     expect(screen.getByTestId('post-save-strip')).toBeTruthy()
     expect(screen.getByRole('button', { name: /undo/i })).toBeTruthy()
   })
 
-  it('(c) full-page path: no strip, but the form-body host still offers it', async () => {
+  it('(b) full-page path: the form-body host is gone too, not merely the card', async () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Roma #1', variety_ref: { id: 'v-1', crop_type_slug: 'tomato' } }]
     renderFullPage('event_type=harvest')
     await flushLoad()
@@ -183,11 +171,14 @@ describe('S5a/S5b characterization — exactly ONE PreserveOffer host renders', 
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2' } })
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
-    expect(screen.getByText('Save')).toBeTruthy()               // no card on this path
-    expect(screen.getAllByText(PRESERVE_PROMPT).length).toBe(1) // offer comes from the second host
+    // The form-body host was the one that survived S5b and covered THIS path — so a fix that only
+    // removed the card's host would still leave the banner here, which is where Dave meets it.
+    expect(screen.queryByText(PRESERVE_PROMPT)).toBeNull()
+    expect(screen.getByText('Save')).toBeTruthy()
+    expect(postCalls.length).toBe(1)   // non-vacuity: the save really went out on this path too
   })
 
-  it('(d) a non-harvest save offers nothing — the offer is harvest-gated, not save-gated', async () => {
+  it('(c) a non-harvest save is unchanged — it never offered, and still does not', async () => {
     renderInOverlay('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })

@@ -41,7 +41,7 @@ import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import Section from '../components/FormSection.jsx'
 import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedback.jsx'
 import { useToast } from '../context/ToastContext.jsx'
-import { useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { useInOverlaySurface, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger — fed at the same post-save moment as
@@ -61,6 +61,7 @@ import NumberPad from '../components/NumberPad.jsx'
 import { SAVE_BAND_BOTTOM_INSET_PX, FRAME_SAVE_HEIGHT_PX, clearWeightPadOfSaveBand, framePadGapPx } from '../lib/saveBandLayout.js'
 import { orderByThumb } from '../lib/handedness.js'
 import { useHandedness } from '../hooks/useHandedness.js'
+import { toLocalISO, todayLocalISO } from '../lib/dateLocal.js'
 import {
   WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
@@ -322,6 +323,24 @@ function toDatetimeLocal(date) {
   const d = date || new Date()
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// V4-WEIGHDATEREACH-001 — compact label for a `YYYY-MM-DD` string, for the two places the weigh-in
+// frame has room to say WHICH DAY: the track-1 date control and the track-3 ledger line.
+// "Today"/"Yesterday" rather than a bare date because those are the only two values a weigh-in
+// realistically carries, and they are what the user is checking FOR. Parsed with the local-calendar
+// constructor, NOT `new Date('YYYY-MM-DD')`, which parses as UTC midnight and renders as the
+// PREVIOUS day west of Greenwich — the exact class of bug dateLocal.js exists to prevent.
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+function shortDateLabel(ymd, today = todayLocalISO()) {
+  if (!ymd) return ''
+  const iso = String(ymd).slice(0, 10)
+  if (iso === today) return 'Today'
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return iso
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
+  if (iso === toLocalISO(yesterday)) return 'Yesterday'
+  return `${SHORT_MONTHS[m - 1]} ${d}`
 }
 
 function useVoiceInput() {
@@ -612,6 +631,11 @@ export default function EventNew() {
   // first build in which "see recent history" exists at all: the shipped `+N earlier` line is a bare
   // <div> with no handler, so it announces withheld rows and offers no way to reach them.
   const [frameLogOpen, setFrameLogOpen] = useState(false)
+  // V4-WEIGHDATEREACH-001: the date control is a transparent native <input type="date"> layered over
+  // a formatted chip, so a tap opens the system picker directly with no intermediate state. An
+  // opacity-0 input takes focus invisibly, so the ring is painted on the wrapper instead — without
+  // this the control is keyboard-reachable and keyboard-INVISIBLE, which is worse than unreachable.
+  const [frameDateFocused, setFrameDateFocused] = useState(false)
   // Track 2's scroll container. Post-save the frame RESTORES this rather than re-anchoring — the
   // measurement is unambiguous that every entry already ends where it started, so the anchor's only
   // effect was the 126px round trip to get there.
@@ -638,12 +662,9 @@ export default function EventNew() {
   //     itself (lib/harvestReadiness.js) is untouched and still drives the Today ready band. Called
   //     out rather than dropped quietly: any future precision claim about the ready band has lost
   //     its instrument on this surface, and OPS-HARVFRICTIONREMEASURE-001 owes a re-measure.
-  // V4-HARVESTCENTER-001 (L9): the harvest-log habit-stack trigger. After a harvest saves, offer an
-  // ambient "preserve this?" affordance that opens /put-up carrying { prefill } (crop/variety/plant/
-  // harvest_log). useOverlaySwap so an in-overlay trigger swaps the SAME overlay's content (preserving
-  // the original background); full-page it degrades to a plain navigate. Reward-adjacent, no interrupt.
-  const putUpSwap = useOverlaySwap()
-  const [preserveCtx, setPreserveCtx] = useState(null)
+  // V4-PRESERVEOFFERKILL-001: the V4-HARVESTCENTER-001 (L9) habit-stack trigger and its `preserveCtx`
+  // state are DELETED — see the note at the capture site in handleSubmit. `putUpSwap` goes with them:
+  // it existed only to swap an in-overlay Log Event for /put-up, and this was its sole call site.
   // V4-LOGCONF-001 (C1+C2, supersedes the §7 inlineUndo timed banner): after an overlay save the
   // user gets a DURABLE confirmation — no timer, cleared only by the next save or the overlay
   // closing. Same §7 modality rationale (the global toast is AT-invisible behind aria-modal) but as
@@ -812,8 +833,6 @@ export default function EventNew() {
     setSeverity(null); setIssueChoice(''); setIssueOther('')
     // V4-TREATLOG-001: reset treatment capture on type change.
     setTreatment({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
-    // V4-HARVESTCENTER-001: a fresh type choice clears the lingering "preserve this?" affordance.
-    setPreserveCtx(null)
     // V4-WATERMATH-001 F0: a type change is a fresh entry — back to the preselected default.
     setWaterDepth(WATER_DEPTH_DEFAULT); waterDepthTouchedRef.current = false
     // V4-LOSSUI-001: same reason the treatment reset above exists. A quantity typed against
@@ -1271,7 +1290,14 @@ export default function EventNew() {
       event_type:    mode === 'type' ? f.event_type : '',
       project_id:    f.project_id,
       location_id:   '',
-      event_date:    toDatetimeLocal(new Date()),
+      // V4-WEIGHDATEREACH-001 — STICKY IN A WEIGH-IN SESSION, reset to now everywhere else.
+      // Dave: "Maybe even keep the date from the previous log." A sitting is one sitting: if he is
+      // standing at the scale on Wednesday working through Tuesday's picking, re-setting the date to
+      // today after every save means re-fixing it 17 times, which is the "major PITA" restated as a
+      // per-entry tax. Scoped to `inHarvestSession` deliberately — on the general Log Event form a
+      // sticky date would silently backdate an unrelated event the user logs an hour later, and
+      // there the date IS visible in the form, so nothing is hidden from them.
+      event_date:    inHarvestSession ? f.event_date : toDatetimeLocal(new Date()),
       notes:         '',
       private_notes: '',
       quantity:      '',
@@ -1311,7 +1337,6 @@ export default function EventNew() {
 
   async function handleSubmit(e, { keepMode = 'type' } = {}) {
     e.preventDefault()
-    setPreserveCtx(null)
     if (!form.event_type)  { setError('Select an event type above.'); return }
     // V4-LOGTARGET-001 invariant: this gate is also what enforces plant_id ⇒ project_id
     // at submit — a POST can never leave here as {project_id:'', plant_id:X} (the server's
@@ -1589,20 +1614,22 @@ export default function EventNew() {
     const reductionOffer = result?.plant_reduction ?? null
     const offerPlantId = result?.plant_id ?? form.plant_id ?? null
 
-    // V4-HARVESTCENTER-001 (L9): capture the "preserve this?" prefill BEFORE resetForNext clears
-    // form.plant_id. Provenance is best-effort — crop/variety resolve off the selected planting's
-    // variety_ref; harvest_log_id off the events response's harvest row. At least one of {crop,
-    // variety} is what Put-Up needs; if neither resolves, the affordance still opens (user picks a crop).
     // V4-HARVESTVIEW-001 S4a: the crop whose running season total the confirmation card will echo.
+    //
+    // V4-PRESERVEOFFERKILL-001 — Dave directive 2026-08-26, verbatim: "hide the do you want to do a
+    // put up banner which comes up after doing a harvest event: it is never going to be used at that
+    // point, wrong process for that." The V4-HARVESTCENTER-001 (L9) "preserve this?" prefill capture
+    // that stood here is DELETED, not flagged off. The habit-stack premise was wrong about the
+    // household: putting food up is a separate sitting from picking it, so the offer fired at the one
+    // moment it could never be accepted — after EVERY harvest save, i.e. 17 times in a 17-planting
+    // weigh-in. That is also the R7 residual OPS-WEIGHINUXFROZEN-001 parked, now answered by its owner.
+    // Put-Up's three OTHER prefill doors are untouched (PutUpFromPlanting, PutUpUseSoonBand, and a
+    // bare /put-up open — see BottomNav.jsx:362), so no route into Put-Up is stranded; only this
+    // trigger dies. Do not reintroduce it as a flag or a "quieter" variant without a fresh Dave ask.
     let seasonCropSlug = null
     if (isHarvest && eventId) {
       const selectedPlant = plantsForProject.find(p => p.id === form.plant_id)
-      const pf = {}
-      if (selectedPlant?.variety_ref?.crop_type_slug) { pf.crop_type_slug = selectedPlant.variety_ref.crop_type_slug; seasonCropSlug = selectedPlant.variety_ref.crop_type_slug }
-      if (selectedPlant?.variety_ref?.id) pf.variety_id = selectedPlant.variety_ref.id
-      if (form.plant_id) pf.plant_id = form.plant_id
-      if (result?.harvest?.id) pf.harvest_log_id = result.harvest.id
-      setPreserveCtx({ prefill: pf })
+      if (selectedPlant?.variety_ref?.crop_type_slug) seasonCropSlug = selectedPlant.variety_ref.crop_type_slug
     }
 
     // V4-HARVSESSION-001: ledger row captured BEFORE resetForNext clears the panel state. grams is
@@ -1614,6 +1641,11 @@ export default function EventNew() {
           // V4-HARVSESSION-002: plantId feeds the tray's done-✓ derivation.
           plantId: form.plant_id || '',
           plantName: plantName ?? projName,
+          // V4-WEIGHDATEREACH-001: the date this row was FILED UNDER, captured from the same
+          // `eventDateStr` the POST body carries — not from `new Date()` at render time. With the
+          // date now sticky across a burst, "which day did that one land on" is a question the
+          // ledger has to be able to answer for a row logged minutes ago under yesterday's date.
+          date: eventDateStr,
           qty: harvest.quantity,
           unit: harvest.unit,
           grams: harvest.weight !== '' ? Math.round(toGrams(Number(harvest.weight), harvest.weight_unit) * 10) / 10 : null,
@@ -2670,14 +2702,17 @@ export default function EventNew() {
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
                 >
                   <span aria-hidden="true">{showHarvestMore ? '▾' : '▸'}</span>
-                  <span>Photo, notes &amp; date  ·  optional</span>
+                  {/* V4-WEIGHDATEREACH-001: the label drops "date" IN THE FRAME ONLY, because in the
+                      frame the date is no longer in here — it is in track 1. Two date controls on one
+                      surface is how a user ends up setting one and being overridden by the other. */}
+                  <span>{sessionFrame ? 'Photo & notes  ·  optional' : 'Photo, notes & date  ·  optional'}</span>
                 </button>
                 {showHarvestMore && (
                   <div data-testid="harvest-more-body" style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
                     {photoBlock}
                     {notesBlock}
                     {metadataBlock}
-                    {whenBlock}
+                    {!sessionFrame && whenBlock}
                   </div>
                 )}
               </div>
@@ -2696,19 +2731,128 @@ export default function EventNew() {
                                      bare <div> with no handler, announcing rows it cannot reach.
      Band growth (48 → 128 → 156 → 184 → 202px across four saves) disappears: this row is 48px at
      every N INCLUDING zero, so it never appears, grows or shifts. ── */
+  /* V4-WEIGHLEDGERLAST-001 — Dave directive 2026-08-26, verbatim: "The session count/totals are
+     confusing because all I want to see there is the last thing logged so I can verify it is
+     correct… Remove the session totals." So the running count and running weight are GONE from this
+     row. They were not merely noise: they were consuming the horizontal budget that the thing Dave
+     actually reads — the entry he just logged — needed in order to be legible at all.
+
+     The second half of the same complaint is a LAYOUT fact, not a content one: "the save button is
+     over the right side of that widget, so I never see the rest of whatever specific thing was just
+     logged." Save is 150px and Undo 44px on a 358px content box, so this label has ~178px however
+     little it says — one `nowrap` line of ~28 characters. "Today · Cherokee Purple · 3 lb · 412 g"
+     is ~38, so dropping the totals ALONE would still have ellipsed the numbers off the right edge,
+     which is precisely the half of the entry he is checking. Hence TWO lines inside the same 48px
+     track (16px + 14px = 30px, centred, and the track does NOT grow — measured at 390x500 after a
+     save: track 3 scrollHeight 48 === clientHeight 48): the identity line ellipses if the plant name
+     is long, the measurement line does not. Nothing new is added to the row — this is the same
+     control, the same tap target, the same drawer.
+
+     `qty` AND `grams` both render, where the shipped label showed grams OR count. Dave asked for
+     "planting name, count, and weight" — they are different facts (12 fruit weighing 412 g), and the
+     one he is verifying against the scale is the one the old label dropped whenever a count existed. */
   const frameLedger = (() => {
     const live = sessionRows.filter(r => !r.undone)
-    const totalG = live.reduce((s, r) => s + (r.grams ?? 0), 0)
     const last = live[live.length - 1] || null
-    const totalLabel = totalG >= 1000 ? `${Math.round(totalG / 100) / 10} kg` : `${Math.round(totalG)} g`
+    const qtyPart = last && last.qty !== '' && last.qty != null ? `${last.qty}${last.unit ? ` ${last.unit}` : ''}` : ''
+    const gramPart = last && last.grams != null ? `${last.grams} g` : ''
+    const measureLabel = [qtyPart, gramPart].filter(Boolean).join('  ·  ')
+    const dateLabel = last ? shortDateLabel(last.date) : ''
+    const identityLabel = last ? [dateLabel, last.plantName].filter(Boolean).join('  ·  ') : ''
+    // Retained for the Undo button's accessible name and the drawer toggle's, where a single flat
+    // string is required and there is no width constraint.
     const lastLabel = last
-      ? `${last.plantName} ${last.grams != null ? `${last.grams} g` : `${last.qty} ${last.unit}`}`
+      ? [dateLabel, last.plantName, measureLabel].filter(Boolean).join(' ')
       : 'nothing logged yet'
-    const summary = live.length > 0
-      ? `${live.length} · ${totalG > 0 ? `${totalLabel} · ` : ''}${lastLabel}`
-      : 'Weigh-in — nothing logged yet'
-    return { live, last, summary, lastLabel }
+    return { live, last, identityLabel, measureLabel, lastLabel }
   })()
+
+  /* V4-WEIGHDATEREACH-001 — Dave directive 2026-08-26, verbatim: "pull the date out of a collapsed
+     section and find a way to get it into the viewport without scrolling. I only use it SOMETIMES
+     (rarely) but when I need to log yesterday's session instead of today, it is a major PITA to
+     change that date where it is."
+
+     WHERE, and why it is not free-floating: the date lands in TRACK 1, beside the chooser, because
+     track 1 is `auto`-height and already 52px tall for the chooser alone — so a 44px control placed
+     BESIDE it costs the frame ZERO vertical pixels. Track 2 has zero slack (347/347 measured), and
+     anything above the tracks comes straight out of it, so a header row or its own track would have
+     re-created the very defect V4-WEIGHFRAME-001 fixed. Horizontal space is what this surface has.
+
+     WHAT it renders: "Today" / "Yesterday" / "Aug 24", not `08/24/2026`. A native date input is ~100px
+     of unreadable-at-a-glance chrome; the whole job here is that Dave can SEE at a glance which day
+     the next save lands on, and act only in the rare case it is wrong. The real <input type="date">
+     is still the interactive element — transparent, filling the control, opening the system picker on
+     one tap — so no custom picker is introduced and Android's native affordance is preserved. */
+  const frameDateLabel = shortDateLabel(form.event_date)
+  const frameDateIsToday = form.event_date.slice(0, 10) === todayLocalISO()
+  const frameDateControl = (
+    <div
+      style={{
+        position: 'relative', flexShrink: 0, minHeight: 44, minWidth: 76,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        borderRadius: 8, padding: '0 10px',
+        // A date that is NOT today is the state worth seeing from across the kitchen — it means the
+        // next save is being filed under another day. Same channel the chip uses for its text.
+        border: `1px solid ${frameDateIsToday ? P.border : P.green}`,
+        backgroundColor: frameDateIsToday ? P.white : P.greenPale,
+        outline: frameDateFocused ? `2px solid ${P.green}` : 'none',
+        outlineOffset: 2,
+      }}
+    >
+      <span aria-hidden="true" style={{
+        fontSize: '0.82rem', fontWeight: 700, whiteSpace: 'nowrap',
+        color: frameDateIsToday ? P.mid : P.green, fontFamily: 'inherit',
+      }}>
+        {frameDateLabel}
+      </span>
+      <input
+        type="date"
+        data-testid="weigh-frame-date"
+        value={form.event_date.slice(0, 10)}
+        onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
+        onFocus={() => setFrameDateFocused(true)}
+        onBlur={() => setFrameDateFocused(false)}
+        aria-label={`Event date — ${frameDateLabel}`}
+        style={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          opacity: 0, border: 'none', padding: 0, margin: 0, background: 'transparent',
+          fontFamily: 'inherit', cursor: 'pointer',
+        }}
+      />
+    </div>
+  )
+
+  /* V4-WEIGHSESSIONCLOSE-001 — Dave directive 2026-08-26, verbatim: "close button". The frame
+     suppresses BottomNav for the session's whole duration and drops the breadcrumb + `Log an event`
+     heading, so from inside a weigh-in the ONLY exits were the browser's own Back and TopChrome's
+     back affordance — neither of which reads as "I am finished with this sitting."
+     Destination: back where the session was entered from, which is TopChrome's harvest circle (any
+     content page) or the Harvests CTA. `history.state.idx` is React Router's own in-app history
+     counter, so `> 0` means there IS an app entry to return to; a cold start (PWA shortcut, a shared
+     link) has idx 0 and would otherwise leave the browser, hence the explicit /harvests fallback.
+     The unsaved-input guard reuses `hasUnsavedInput` — the SAME predicate the backdrop guard and the
+     service-worker reload gate use — rather than a second one, because a close control that silently
+     discards a weight already typed onto the scale is the one way this button could do harm. */
+  const frameCloseButton = (
+    <button
+      type="button"
+      data-testid="weigh-frame-close"
+      aria-label="Close weigh-in session"
+      onClick={() => {
+        if (hasUnsavedInput && !window.confirm('Close the weigh-in? The entry you have typed will not be saved.')) return
+        const idx = window.history.state?.idx
+        if (typeof idx === 'number' && idx > 0) navigate(-1)
+        else navigate('/harvests')
+      }}
+      style={{
+        flexShrink: 0, minHeight: 44, minWidth: 44, padding: 0,
+        background: 'none', border: `1px solid ${P.border}`, borderRadius: 8,
+        color: P.mid, fontSize: '1rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+      }}
+    >
+      <span aria-hidden="true">✕</span>
+    </button>
+  )
 
   const frameLedgerBlock = (
     <div
@@ -2785,15 +2929,56 @@ export default function EventNew() {
               disabled={frameLedger.live.length === 0}
               style={{
                 flex: 1, minWidth: 0, textAlign: hand === 'left' ? 'right' : 'left',
-                background: 'none', border: 'none', padding: '4px 0', cursor: frameLedger.live.length ? 'pointer' : 'default',
+                background: 'none', border: 'none', padding: 0, cursor: frameLedger.live.length ? 'pointer' : 'default',
                 // P.mid, NOT P.light: `#777` on white measures 4.48:1, under the 4.5:1 AA floor at
                 // this size. That failure is live today on the `+N earlier` line this replaces.
-                color: P.mid, fontSize: '0.85rem', fontWeight: 600,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                fontFamily: 'inherit',
+                color: P.mid, fontFamily: 'inherit',
+                // The two lines are block children, so the button itself must not be a nowrap box.
+                // NO `overflow: hidden` here, and that is measured rather than tidy: with it, the
+                // button's content box came back scrollHeight 30 / clientHeight 29 at 390x500 and
+                // clipped 1px off the bottom of the measurement line's descenders. Each span clips
+                // ITSELF horizontally, so the button never needed to.
+                display: 'block',
               }}
             >
-              {frameLedger.summary}
+              {frameLedger.last ? (
+                <>
+                  {/* identity — ellipses under a long plant name, which is the SAFE thing to lose:
+                      the name is also on the chooser one track up, the numbers are nowhere else. */}
+                  <span style={{
+                    display: 'block', fontSize: '0.85rem', fontWeight: 600, lineHeight: '16px',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {frameLedger.identityLabel}
+                  </span>
+                  {/* measurement — the line Dave is verifying against the scale. Never truncated. */}
+                  {/* 14px line-height, not 13: MEASURED at 390x500, the descenders of "g" overran a
+                      13px box by 1px (the button reported scrollHeight 30 / clientHeight 29).
+                      16 + 14 = 30px inside a 48px track — still no growth, and the track is
+                      `alignItems: center`, so the pair simply re-centres.
+                      The ellipsis should never fire — the widest realistic string,
+                      "1200 count · 45360 g", measures 146px-wide content against 146px available —
+                      and is a BOUND rather than a feature: without it a pathological value overflows
+                      horizontally UNDER the Save button, which is invisible, whereas an ellipsis is
+                      at least legible as truncation. */}
+                  {frameLedger.measureLabel && (
+                    <span style={{
+                      display: 'block', fontSize: '0.8rem', fontWeight: 700, lineHeight: '14px',
+                      color: P.green, whiteSpace: 'nowrap',
+                      overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {frameLedger.measureLabel}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span style={{
+                  display: 'block', fontSize: '0.85rem', fontWeight: 600, lineHeight: '16px',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  Weigh-in — nothing logged yet
+                </span>
+              )}
             </button>,
             frameLedger.last ? (
               <button
@@ -2813,34 +2998,23 @@ export default function EventNew() {
     </div>
   )
 
-  /* The page-level banners and the post-harvest preserve offer, hoisted so the frame can OVERLAY
-     them instead of stacking them above the form. MEASURED, and it is the reason this exists: the
-     frame is a fixed-height column, so anything rendered above the form comes straight out of the
-     tracks. PreserveOffer raises itself after EVERY harvest save on the full-page path, and at entry
-     4 it had taken 126px out of track 2 — enough to push the weight pad's bottom to y508 against a
-     448px frame and start track 2 scrolling again, i.e. to reinstate the defect. Overlaying keeps
-     the same content, the same offer and the same dismissal at zero layout cost.
+  /* The page-level banners, hoisted so the frame can OVERLAY them instead of stacking them above the
+     form. MEASURED, and it is still the reason this exists: the frame is a fixed-height column, so
+     anything rendered above the form comes straight out of the tracks, and track 2 has zero slack.
      top:56 clears track 1 deliberately — an overlay covers SOMETHING, and the chooser is the very
      next control tapped after a save, so it is the one thing that must stay clear. What it does
      cover is the quantity field, which is empty at exactly that moment.
-     OPEN, for Dave: whether PreserveOffer should raise at all mid-sitting. It fires after EVERY
-     harvest save on the full-page path, so a 17-planting weigh-in raises it 17 times. Suppressing it
-     in-session is a product call, not a layout one, so this lane overlays it rather than deciding. */
+     The "OPEN, for Dave" question that stood here — whether PreserveOffer should raise mid-sitting at
+     all — was ANSWERED on 2026-08-26: it should not, and it is gone (V4-PRESERVEOFFERKILL-001). Its
+     126px-out-of-track-2 measurement is now history rather than a live constraint; the overlay stays
+     for the error/notice banners, which have the same zero-slack problem. */
   const noticeBlocks = (
         <>
         {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
         {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
 
-        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. On
-            the overlay path it now renders on the V4-LOGCONF-001 confirmation card (see above); here
-            it covers the full-page path and the post-"Log another" form (preserveCtx survives the
-            card dismissal so the habit-stack offer isn't lost). */}
-        {preserveCtx && (
-          <PreserveOffer
-            onOpen={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
-            onDismiss={() => setPreserveCtx(null)}
-          />
-        )}
+        {/* V4-PRESERVEOFFERKILL-001: the "preserve this?" host stood here. Deleted with its trigger
+            and its component — see the note in handleSubmit. This block is now banners only. */}
         </>
   )
 
@@ -2942,14 +3116,12 @@ export default function EventNew() {
         </div>
         )}
 
-        {/* V4-WEIGHFRAME-001 — these three OVERLAY the frame instead of sitting above it.
+        {/* V4-WEIGHFRAME-001 — the banners OVERLAY the frame instead of sitting above it.
             MEASURED, and it is the reason this branch exists: the frame is a fixed-height column, so
-            anything rendered above the form takes its height out of the tracks. PreserveOffer raises
-            itself after EVERY harvest save on the full-page path, and at entry 4 it had stolen 126px
-            from track 2 — enough to push the weight pad off the bottom of a 390x500 viewport (pad
-            bottom y508 against a 448px frame) and start track 2 scrolling again. Overlaying keeps
-            the same content, the same dismissal and the same offer, with zero effect on the tracks.
-            zIndex 3 clears the history drawer's 2. */}
+            anything rendered above the form takes its height out of the tracks, and track 2 has zero
+            slack. The original 126px measurement was taken against PreserveOffer, which is now
+            deleted (V4-PRESERVEOFFERKILL-001) — an error banner has the same effect for the same
+            structural reason, so the overlay stays. zIndex 3 clears the history drawer's 2. */}
         {sessionFrame
           ? <div data-testid="weigh-frame-notices" style={{ position: 'absolute', top: 56, left: 16, right: 16, zIndex: 3 }}>{noticeBlocks}</div>
           : noticeBlocks}
@@ -3002,7 +3174,19 @@ export default function EventNew() {
                   landed as ~16px of residual per-entry travel because track 1 resizing moves track
                   2's top edge. Pinning the track to the taller of the two states makes the swap
                   invisible. */}
-              <div data-testid="weigh-frame-chooser" style={{ minHeight: 52 }}>{projectBlock}{plantingBlock}</div>
+              {/* V4-WEIGHDATEREACH-001 + V4-WEIGHSESSIONCLOSE-001: the date control and Close ride
+                  ALONGSIDE the chooser rather than above it. Track 1 is `auto` and already pinned to
+                  52px by the chooser's own 52/44 swap, so two 44px controls placed beside it add
+                  ZERO height — the frame's tracks are unchanged and track 2 keeps every pixel.
+                  The chooser gets `flex: 1; minWidth: 0` so a long planting chip ellipses inside its
+                  own box instead of pushing Close off the right edge — the same max-content failure
+                  that put Save and two weight-pad keys outside the viewport before minmax(0,1fr)
+                  was applied to the grid column. */}
+              <div data-testid="weigh-frame-chooser" style={{ minHeight: 52, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>{projectBlock}{plantingBlock}</div>
+                {frameDateControl}
+                {frameCloseButton}
+              </div>
 
               {/* ── TRACK 2 ──
                   Nested `minmax(0,1fr) auto`, NOT `align-content: end` on the track itself, and the
@@ -3386,32 +3570,10 @@ function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issu
 // (V4-LOGCONF-001 confirmBtnPrimary/confirmBtnGhost moved to components/PostSaveFeedback.jsx in
 // S5a — the card's action footer was their only consumer.)
 
-// V4-HARVESTCENTER-001 (L9) "preserve this?" offer — ONE definition, TWO hosts: the V4-LOGCONF-001
-// confirmation card (injected into PostSaveFeedback via its `preserve` prop) and the form view
-// below. Deliberately stays in this file so the card cannot own it. Reward-adjacent, ambient,
-// dismissible. Both hosts are pinned by EventNewPostSaveFeedback.characterization.test.jsx.
-function PreserveOffer({ onOpen, onDismiss }) {
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, marginBottom: 16, flexWrap: 'wrap',
-      backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '12px 14px',
-    }}>
-      <span style={{ flex: 1, minWidth: 160, fontSize: '0.9rem', fontWeight: 600, color: P.green }}>
-        Putting any of this up for later?
-      </span>
-      <button type="button" onClick={onOpen}
-        style={{ background: P.green, color: P.white, border: 'none', borderRadius: 6,
-          padding: '7px 14px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-        Log a put-up
-      </button>
-      <button type="button" onClick={onDismiss}
-        style={{ background: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 6,
-          padding: '7px 12px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-        Not now
-      </button>
-    </div>
-  )
-}
+// V4-PRESERVEOFFERKILL-001: the V4-HARVESTCENTER-001 (L9) "preserve this?" offer component lived
+// here. Deleted 2026-08-26 with its trigger and both its hosts — full rationale at the capture site
+// in handleSubmit. The characterization test that pinned "exactly ONE host renders" now pins ZERO,
+// so a future session cannot quietly restore it.
 
 // V4-EVENTSEL-005: `Section` was declared identically here and in LogMany.jsx. It is now imported
 // from the shared components/FormSection.jsx (see the import at the top of this file). No `style`
