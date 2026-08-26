@@ -14,7 +14,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
-import PhotoImg from '../PhotoImg.jsx'
+import PhotoView from '../photo/PhotoView.jsx'
+import { TIER } from '../../lib/photoModel.js'
 import { prefersReducedMotion } from '../../lib/critterArt.js'
 
 function fmtShort(value) {
@@ -127,21 +128,31 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Compare / playback stage */}
+      {/* Compare / playback stage.
+          BUG-TIERLESSPHOTOS-001 left these three on the FULL tier DELIBERATELY, and the milestone
+          strip below is where that ticket's saving actually is. Measured box: 320 x 239.5 CSS px,
+          i.e. 840 x 629 DEVICE px at Dave's dpr 2.625. The thumb derivative is 800px on its LONGEST
+          edge (lambda/photos thumb-upload-url), so a landscape thumb is 800 wide — 0.95x of what
+          this box wants, fine — but a PORTRAIT one is 600 wide and objectFit:cover would upscale it
+          1.4x. This is the surface whose entire job is looking closely at how a plant changed, and
+          two elements is not a payload argument: the win here is 24 thumbs, not 26.
+          They are on <PhotoView> anyway (default tier=FULL, so byte-identical to the <PhotoImg>
+          this replaced) because being on the primitive is what makes the tier a prop change later
+          rather than a hand-rolled `thumb_url ||` the V4-PHOTOMODEL-001 drift guard would flag. */}
       <div ref={boxRef} style={{ position: 'relative', width: '100%', aspectRatio: '4 / 3',
         maxHeight: 360, borderRadius: 12, overflow: 'hidden', backgroundColor: P.cream,
         border: `1px solid ${P.border}` }}>
         {playing ? (
           // Playback: show the current frame full-bleed.
-          <PhotoImg photoId={list[frame]?.id} initialUrl={list[frame]?.view_url} alt={list[frame]?.caption || 'Growth photo'}
+          <PhotoView photo={list[frame]} alt={list[frame]?.caption || 'Growth photo'}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
           <>
             {/* AFTER fills the box; BEFORE is clipped to the divider position on top. */}
-            <PhotoImg photoId={after?.id} initialUrl={after?.view_url} alt={after?.caption || 'Latest photo'}
+            <PhotoView photo={after} alt={after?.caption || 'Latest photo'}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
             <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', width: `${pos}%` }}>
-              <PhotoImg photoId={before?.id} initialUrl={before?.view_url} alt={before?.caption || 'First photo'}
+              <PhotoView photo={before} alt={before?.caption || 'First photo'}
                 style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: 'auto',
                   minWidth: '100%', objectFit: 'cover' }} />
             </div>
@@ -215,7 +226,15 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
             aria-label={`Open growth photo ${i + 1}${photoDate(p) ? ` from ${fmtShort(photoDate(p))}` : ''}`}
             style={{ flex: '0 0 auto', width: 64, padding: 0, border: 'none', background: 'transparent',
               cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
-            <PhotoImg photoId={p.id} initialUrl={p.view_url} alt="" aria-hidden="true"
+            {/* BUG-TIERLESSPHOTOS-001 — 64 x 64 CSS (168 device px), rendered ONCE PER PHOTO, so a
+                24-photo planting drew 24 full ORIGINALS into postage stamps. /api/photos already
+                signs thumb_url on every one of these rows (lambda/photos, BUG-PHOTOBLANK-001), and
+                the thumb's SHORT edge is 600px — 3.5x oversampled for this box in the worst
+                orientation, so there is no sharpness left to lose. A photo whose thumb OBJECT is
+                missing (16.5% of live rows) degrades to p.view_url on load error with no network:
+                both URLs came down in the same list response, which is exactly what handing the
+                whole row to <PhotoView> buys over picking a URL here. */}
+            <PhotoView photo={p} tier={TIER.THUMB} alt="" aria-hidden="true"
               style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8,
                 border: `1px solid ${P.border}`, display: 'block' }} />
             <span style={{ fontSize: '0.62rem', color: P.light, lineHeight: 1.1, textAlign: 'center' }}>
