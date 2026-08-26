@@ -124,28 +124,64 @@ jobs:
         # Defined in package.json and invoked by nothing until now.
         run: npm run gate:sw-mirror
 
-      # ── NOT WIRED: the three real-Chrome layout gates ───────────────────────────────────
-      # gate:save-band, gate:log-chooser, gate:save-band-stability are deliberately absent
-      # from this job, not overlooked. All three PASS locally at a0ac77c (macOS,
-      # Chrome --headless=new) and all three honour CHROME_PATH, so the runner image's
-      # Chrome would be reachable. The blocker is the toolchain:
+      # ── The real-Chrome layout gates (OPS-LAYOUTGATESUNWIRED-001) ───────────────────────
+      # The WebSocket blocker that kept these unwired is FIXED, not worked around. The gates
+      # attached over a bare global WebSocket, which this job's pinned node-version '20.19.0'
+      # does not have (measured: `npx node@20.19.0 -e "typeof WebSocket"` -> undefined, and the
+      # gate exited 1 with "WebSocket is not defined"). scripts/layout-gate/cdp-socket.mjs now
+      # prefers the global and falls back to `ws`, which is a DECLARED devDependency rather than
+      # the jsdom transitive it used to be reachable as. Both gates were then re-run under a real
+      # Node 20.19.0 and PASS with measurements identical to the Node 26 run.
       #
-      #   They attach to Chrome over a raw GLOBAL WebSocket ("Node 22+ ships a global
-      #   WebSocket", per each script's own header). Every workflow here pins
-      #   node-version '20.19.0', and Node 20.19.0 has NO global WebSocket — measured, not
-      #   assumed: `npx node@20.19.0 -e "typeof WebSocket"` returns `undefined`. Added as-is
-      #   they would throw ReferenceError before reaching Chrome.
+      # The CI Node version was deliberately NOT bumped to get a global WebSocket: package.json
+      # declares "engines": { "node": "20.x" }, so a bump would run the whole suite and the build
+      # outside the declared engine range to fix a two-line transport problem.
       #
-      # A second, unresolved risk: all three clear their floors by 0-1px on macOS
-      # (save-band's pad-to-Save gap is 20px against a 20px floor; log-chooser's clearance is
-      # 21px against 20). Whether Linux font metrics hold those margins was NOT testable from
-      # the authoring machine. So wiring them needs a Node-22 job AND one trial run — not a
-      # blind add, because a gate that reds for environment reasons blocks every lane's push.
+      # NO continue-on-error on either step, by policy. This repo already carries deploy steps
+      # that report success when they fail; a pseudo-gate here would be worse than the honest gap
+      # it replaces, because gate:save-band's absence from CI is precisely why a weigh-in keypad
+      # row that silently committed a harvest shipped and survived two releases.
       #
-      # They are NOT wired with continue-on-error. This repo already carries 16 deploy steps
-      # that report success when they fail; a sixth pseudo-gate would be worse than the
-      # honest gap, especially for gate:save-band, whose absence from CI is why a keypad row
-      # that silently committed a harvest shipped and survived two releases.
+      # STILL NOT WIRED: gate:save-band-stability. Its WebSocket blocker is the same and the same
+      # one-line import fixes it, but it drives four full harvest entries and was out of scope for
+      # the lane that wired these two. It is one import and one step away.
+      - name: Resolve Chrome for the layout gates
+        # The gates drive REAL Chrome over CDP and honour CHROME_PATH, defaulting to a macOS path
+        # that does not exist here. This RESOLVES the runner's browser rather than assuming it: if
+        # the image ever stops shipping Chrome, this step FAILS the build. It must never degrade to
+        # "no browser, so nothing to check" — a layout gate that silently skips is the vacuous
+        # guard this whole directory exists to be the opposite of.
+        run: |
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
+
+      - name: Weigh-in Save-band clearance (BUG-FRAMEPADOCCLUDE-001)
+        # Real Chrome at a TRUE 390x500, four consecutive weigh-in entries. Asserts every bottom-row
+        # weight key clears Save by SAVE_BAND_MIN_CLEARANCE_PX and that each key hit-tests to itself,
+        # on whichever arm rendered (frame or the legacy sticky band) — an arm it cannot identify
+        # FAILS. This is the gate whose absence let a keypad row commit the harvest under the thumb.
+        # Verified non-vacuous: tightening framePadGapPx by 8px drops the gap to 13px and the gate
+        # fails 20+ named key/entry pairs with exit 1.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:save-band
+
+      - name: Log-chooser clearance and tap floor (BUG-LOGBANDOCCLUDE-001)
+        # Real Chrome at 390x844 and 390x667 (phone at rest, and with the keyboard up — the tighter
+        # one). Asserts the plant chooser clears the sticky Save band, that probes across its width
+        # actually hit the chooser rather than the band, and — as a census, not a named list —
+        # that no visible interactive control on /log is under the T.tapMinHeight tap floor.
+        # Verified non-vacuous: dropping inputChrome's minHeight to 30 makes it fail on the named
+        # control ("Event date" is 41px tall) at both viewports with exit 1.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:log-chooser
 
       - name: Icon optical-weight golden (V4-ICON-001)
         # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must

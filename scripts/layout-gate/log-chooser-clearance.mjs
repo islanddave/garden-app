@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { SAVE_BAND_MIN_CLEARANCE_PX } from '../../src/lib/saveBandLayout.js'
 import { T } from '../../src/components/forms/formStyles.js'
+import { resolveWebSocket } from './cdp-socket.mjs'
 
 // Read from the token, never spelled here: a gate carrying its own copy of the floor is a gate that
 // keeps passing after someone lowers the real one.
@@ -44,6 +45,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5314)
 const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9424)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// Launch flags this machine does not need but another environment does. CI passes --no-sandbox:
+// a Chrome that cannot open its sandbox never exposes CDP, which fails this gate for a reason that
+// has nothing to do with layout. Rendering-affecting flags do NOT belong here.
+const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
 
 // Both of Dave's measured device geometries. 844 is the phone at rest; 667 is the same phone with
 // the keyboard up, and it is the tighter one — the band eats a larger fraction of a shorter page.
@@ -79,7 +84,7 @@ async function startChrome(userDataDir) {
     '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`,
     '--window-size=900,1000', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
+    '--disable-renderer-backgrounding', ...EXTRA_CHROME_FLAGS,
   ], { stdio: ['ignore', 'ignore', 'ignore'] })
   for (let i = 0; i < 60; i++) {
     try {
@@ -93,7 +98,8 @@ async function startChrome(userDataDir) {
 }
 
 async function attach(wsUrl) {
-  const ws = new WebSocket(wsUrl)
+  const WS = await resolveWebSocket()
+  const ws = new WS(wsUrl)
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP socket failed')) })
   let id = 0
   const pending = new Map()
