@@ -30,9 +30,38 @@
 // It ALSO runs every final transcript through the grammar (lib/voiceHarvestGrammar.js) so the
 // classification is visible on the same screen as the raw text: that is how a "three count" that the
 // device actually hears as "3 count" or "three counts" gets caught, rather than being assumed.
+//
+// ── S0 (build plan V101, 2026-08-27) ────────────────────────────────────────────────────────────
+// THE DEBOUNCE LAYER IS NOW WIRED IN HERE, AND THIS IS THE ONLY PLACE IT RUNS. lib/voiceCommitDebounce
+// .js was written, then edited three times in one day on analysis alone, and had never executed on a
+// device — two of those edits, made in response to measurements, introduced fresh defects. The boss
+// pass froze it to reasoning-only changes until a device run exists. S0 is how that freeze ends: it
+// adds a HOST (a timer and callbacks) around the existing layer and changes not one line of it.
+// Reverting is deleting one import.
+//
+// WHY THE PROBE AND NOT A REAL SURFACE: the debouncer cannot sit above transcribe.js — that wrapper's
+// BUG-VOICEDUPE-003 fix pins `onResult` to never deliver a revised final (transcribe.rawEvents.test
+// .js:154), and the supersede rule needs exactly that revision, so behind the wrapper it would commit
+// the PREFIX ("231", not "231 G") — a silently wrong harvest weight with both suites green. The probe
+// reads the RAW stream, which is the only stream the layer is correct above.
+//
+// THE THREE INSTRUMENTS S0 OWES, all rendered on screen and all in the copyable log:
+//   * `dueAt()` — when the pending utterance would commit on its own. It was invisible, so a window
+//     that never elapsed and a window that elapsed silently looked identical.
+//   * TICK DRIFT — fired-at minus due-at. A settle window is only real if the host's timer actually
+//     fires when it says. Android freezes timers on hidden pages; a 500 ms window that fires at
+//     +40 000 ms is the staleness case `tick()` now discards, and this is what shows it happening.
+//   * HELD WRITES THAT NEVER TICKED — `sessionEnd` deliberately refuses to flush a write command, so
+//     every save depends on a tick landing. Replaying the device log produced 4 commits via
+//     sessionEnd and ZERO via tick, which means the entire command axis of this design has never
+//     been observed working. A held write that leaves the pending slot without committing is that
+//     failure, counted.
+// Commits are also split BY PATH (tick / sessionEnd / final) for the same reason: "it committed" is
+// not the finding — WHICH path committed it is.
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { classify } from '../lib/voiceHarvestGrammar.js'
+import { createCommitDebouncer, WRITE_CLASS } from '../lib/voiceCommitDebounce.js'
 
 const MAX_RESTARTS = 24          // hard stop so a forgotten probe cannot hold the mic open forever
 const MAX_RUN_MS = 4 * 60 * 1000 // ...and a wall-clock stop for the same reason
@@ -42,9 +71,32 @@ function ctor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null
 }
 
-// Chrome 139+ exposes on-device recognition (processLocally). Worth reporting because it removes the
-// network round-trip that is the likeliest cause of a long re-arm gap — if it is available on Dave's
-// device, question 2's answer may be very different from the cloud path's.
+// A pending WRITE is the only pending state that sessionEnd will not flush, so it is the only one
+// whose fate depends entirely on the host's timer. Everything held-write is keyed off this.
+const isWriteResult = (r) => !!r && r.kind === 'command' && !!WRITE_CLASS[r.command]
+
+function describe(c) {
+  if (!c) return '—'
+  return c.kind === 'quantity' ? `quantity ${c.value} ${c.unit}`
+    : c.kind === 'weight' ? `weight ${c.value} ${c.unit} (${Math.round(c.grams)}g)`
+    : c.kind === 'command' ? `COMMAND ${c.command}`
+    : c.kind === 'search' ? `search "${c.text}"`
+    : `unparsed (${c.reason})`
+}
+
+const emptyHostMetrics = () => ({
+  ticksScheduled: 0,
+  ticksFired: 0,
+  drifts: [],
+  commitsByPath: { tick: 0, sessionEnd: 0, final: 0 },
+  writesHeld: 0,
+  writesHeldCommitted: 0,
+  writesHeldSuppressed: 0,
+  writesHeldSuperseded: 0,
+  writesHeldLost: 0,
+  suppressedByReason: {},
+})
+
 async function probeOnDevice() {
   const C = ctor()
   if (!C) return 'no SpeechRecognition'
@@ -73,29 +125,128 @@ export default function ContinuousVoiceProbe() {
   const [stats, setStats] = useState({ sessions: 0, finals: 0, interims: 0, gaps: [] })
   const [env, setEnv] = useState({ onDevice: '…', permBefore: '…', permAfter: '—' })
 
+  // S0 host state. `commits` is the echo — the stand-in for the shipped harvest session ledger that
+  // S3 will use instead. It is a LEDGER, not a pending indicator: the crucible measured a pending
+  // echo rendering committed values for 3/1/276/2 ms (three below one 60 Hz frame, so they never
+  // paint) while 66% of its screen time showed values already discarded. So what persists here is
+  // what committed; what is pending is a recessive line beneath it.
+  const [commits, setCommits] = useState([])
+  const [pendingEcho, setPendingEcho] = useState(null)
+  const [dueAtMs, setDueAtMs] = useState(null)
+  const [debStats, setDebStats] = useState(null)
+  const [hostMetrics, setHostMetrics] = useState(emptyHostMetrics)
+  const [heldOutstanding, setHeldOutstanding] = useState(false)
+
   const recRef = useRef(null)
   const t0Ref = useRef(0)
   const endedAtRef = useRef(0)
   const stopRequestedRef = useRef(false)
   const restartsRef = useRef(0)
   const runTimerRef = useRef(null)
+  const wallClockTimerRef = useRef(null)
+
+  const debRef = useRef(null)
+  const tickTimerRef = useRef(null)
+  const metricsRef = useRef(emptyHostMetrics())
+  // WHICH ENTRY POINT IS ON THE STACK. onCommit fires synchronously from inside final()/sessionEnd()
+  // /tick(), so the path is knowable exactly — no inference, no heuristic.
+  const commitPathRef = useRef(null)
+  // The pending write we are currently waiting on a tick for, held BY REFERENCE. The layer builds a
+  // fresh result object per final(), so object identity is a precise token for "still the same
+  // pending utterance" without the layer having to expose an id.
+  const heldWriteRef = useRef(null)
 
   const log = useCallback((msg) => {
     const dt = t0Ref.current ? Date.now() - t0Ref.current : 0
     setLines(l => [...l, `+${String(dt).padStart(6, ' ')}ms  ${msg}`])
   }, [])
 
+  const syncStats = useCallback(() => {
+    const deb = debRef.current
+    setDebStats(deb ? deb.stats() : null)
+    setDueAtMs(deb ? deb.dueAt() : null)
+    setHostMetrics({
+      ...metricsRef.current,
+      drifts: [...metricsRef.current.drifts],
+      commitsByPath: { ...metricsRef.current.commitsByPath },
+      suppressedByReason: { ...metricsRef.current.suppressedByReason },
+    })
+    setHeldOutstanding(!!heldWriteRef.current)
+  }, [])
+
+  // Reconciles the held-write token against the layer's actual pending slot after every entry point.
+  // A held write that is gone from the slot WITHOUT onCommit or onSuppressed having cleared it did
+  // not commit — and the two ways that happens are NOT the same finding, so they are not one counter.
+  //
+  // SUPERSEDED is the design working. "next" pending, then the rest of "next to the fence" arrives
+  // inside the window: the save is correctly replaced by a search and no write fires. That is the
+  // single most valuable behaviour in the whole design, and an instrument that scored it as a failure
+  // would report the feature succeeding as the feature breaking.
+  //
+  // LOST is the real defect: the slot emptied with nothing in its place and no commit, no
+  // suppression. Nothing in this host does that, so it should read 0 for the entire device run — a
+  // non-zero value means the layer moved on its own and the model here is wrong.
+  const reconcileHeld = useCallback((ctx) => {
+    const deb = debRef.current
+    const pending = deb ? deb.peek() : null
+    if (heldWriteRef.current && pending !== heldWriteRef.current) {
+      if (pending) {
+        metricsRef.current.writesHeldSuperseded += 1
+        log(`held     write superseded (${ctx}) by ${describe(pending)} — no save fired, by design`)
+      } else {
+        metricsRef.current.writesHeldLost += 1
+        log(`HELD-WRITE LOST (${ctx}) — left the pending slot without committing`)
+      }
+      heldWriteRef.current = null
+    }
+    if (isWriteResult(pending) && heldWriteRef.current !== pending) {
+      heldWriteRef.current = pending
+      metricsRef.current.writesHeld += 1
+      log(`held     write "${pending.command}" pending — sessionEnd will not flush it, only a tick can`)
+    }
+  }, [log])
+
+  // THE HOST TIMER. The layer is a pure state machine with no clock; `dueAt()` is its contract with
+  // whoever owns one. Rescheduled after every entry point because a supersede moves the deadline.
+  const scheduleTickRef = useRef(null)
+  const scheduleTick = useCallback(() => {
+    const deb = debRef.current
+    if (tickTimerRef.current) { clearTimeout(tickTimerRef.current); tickTimerRef.current = null }
+    if (!deb) return
+    const due = deb.dueAt()
+    if (due == null) return
+    metricsRef.current.ticksScheduled += 1
+    tickTimerRef.current = setTimeout(() => {
+      tickTimerRef.current = null
+      const firedAt = Date.now()
+      const drift = firedAt - due
+      metricsRef.current.ticksFired += 1
+      metricsRef.current.drifts.push(drift)
+      commitPathRef.current = 'tick'
+      try { deb.tick(firedAt) } finally { commitPathRef.current = null }
+      log(`tick     fired ${drift >= 0 ? '+' : ''}${drift}ms vs dueAt`)
+      reconcileHeld('tick')
+      scheduleTickRef.current?.()
+      syncStats()
+    }, Math.max(0, due - Date.now()))
+  }, [log, reconcileHeld, syncStats])
+  useEffect(() => { scheduleTickRef.current = scheduleTick }, [scheduleTick])
+
   useEffect(() => {
     probeOnDevice().then(onDevice => setEnv(e => ({ ...e, onDevice })))
   }, [])
 
   // Release the mic on unmount no matter how the page is left — a probe that keeps recording after
-  // Dave navigates away is a worse bug than anything it is measuring.
+  // Dave navigates away is a worse bug than anything it is measuring. The three timers go with it:
+  // a tick firing into an unmounted host would commit against nothing and warn in React.
   useEffect(() => () => {
     stopRequestedRef.current = true
     if (runTimerRef.current) clearTimeout(runTimerRef.current)
+    if (wallClockTimerRef.current) clearTimeout(wallClockTimerRef.current)
+    if (tickTimerRef.current) clearTimeout(tickTimerRef.current)
     try { recRef.current?.abort() } catch { /* already gone */ }
     recRef.current = null
+    debRef.current = null
   }, [])
 
   const arm = useCallback(() => {
@@ -118,18 +269,25 @@ export default function ContinuousVoiceProbe() {
     }
 
     rec.onresult = (ev) => {
+      // GATE B1: resultIndex and results.length, which the first device fixture did not capture even
+      // though voiceDebug.js:99-100 was already recording them on the OTHER capture path. Without the
+      // pair, a re-delivery at the SAME index (the VOICEDUPE signature) is indistinguishable from a
+      // new result at the next one — the exact distinction the whole duplicate analysis turns on.
+      log(`result   resultIndex=${ev.resultIndex} len=${ev.results.length}`)
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i]
         const text = r[0]?.transcript ?? ''
         if (r.isFinal) {
-          const c = classify(text)
-          const detail = c.kind === 'quantity' ? `quantity ${c.value} ${c.unit}`
-            : c.kind === 'weight' ? `weight ${c.value} ${c.unit} (${Math.round(c.grams)}g)`
-            : c.kind === 'command' ? `COMMAND ${c.command}`
-            : c.kind === 'search' ? `search "${c.text}"`
-            : `unparsed (${c.reason})`
           setStats(s => ({ ...s, finals: s.finals + 1 }))
-          log(`FINAL   "${text.trim()}"  ->  ${detail}`)
+          log(`  [${i}] FINAL   "${text.trim()}"  ->  ${describe(classify(text))}`)
+          const deb = debRef.current
+          if (deb) {
+            commitPathRef.current = 'final'
+            try { deb.final(text, Date.now()) } finally { commitPathRef.current = null }
+            reconcileHeld('final')
+            scheduleTick()
+            syncStats()
+          }
         } else {
           setStats(s => ({ ...s, interims: s.interims + 1 }))
         }
@@ -141,6 +299,14 @@ export default function ContinuousVoiceProbe() {
     rec.onend = () => {
       endedAtRef.current = Date.now()
       log('onend')
+      const deb = debRef.current
+      if (deb) {
+        commitPathRef.current = 'sessionEnd'
+        try { deb.sessionEnd(Date.now()) } finally { commitPathRef.current = null }
+        reconcileHeld('sessionEnd')
+        scheduleTick()
+        syncStats()
+      }
       if (stopRequestedRef.current) { setRunning(false); log('— probe stopped —'); return }
       if (restartsRef.current >= MAX_RESTARTS) {
         setRunning(false); log(`— cap reached (${MAX_RESTARTS} re-arms) —`); return
@@ -158,15 +324,46 @@ export default function ContinuousVoiceProbe() {
     }
 
     try { rec.start() } catch (e) { log(`start threw: ${e?.message ?? String(e)}`); setRunning(false) }
-  }, [log])
+  }, [log, reconcileHeld, scheduleTick, syncStats])
 
   const start = useCallback(async () => {
     setLines([]); setStats({ sessions: 0, finals: 0, interims: 0, gaps: [] })
+    setCommits([]); setPendingEcho(null); setDueAtMs(null); setHeldOutstanding(false)
     stopRequestedRef.current = false
     restartsRef.current = 0
     endedAtRef.current = 0
     t0Ref.current = Date.now()
     setRunning(true)
+
+    if (tickTimerRef.current) { clearTimeout(tickTimerRef.current); tickTimerRef.current = null }
+    metricsRef.current = emptyHostMetrics()
+    heldWriteRef.current = null
+    commitPathRef.current = null
+
+    // A FRESH DEBOUNCER PER RUN, deliberately: `resetSession()` would clear the duplicate-suppression
+    // memory of a layer that might still be holding a pending utterance from the previous run, which
+    // is precisely the footgun its own docstring warns hosts about. A new instance has no history to
+    // mis-clear.
+    debRef.current = createCommitDebouncer({
+      onCommit: (result, meta) => {
+        const path = commitPathRef.current ?? 'unknown'
+        const m = metricsRef.current
+        m.commitsByPath[path] = (m.commitsByPath[path] ?? 0) + 1
+        if (heldWriteRef.current === result) { heldWriteRef.current = null; m.writesHeldCommitted += 1 }
+        setCommits(c => [...c, { atMs: meta?.atMs ?? Date.now(), path, result }])
+        log(`COMMIT   via ${path}: ${describe(result)}`)
+      },
+      onPending: (result) => setPendingEcho(result),
+      onSuppressed: (result, reason) => {
+        const m = metricsRef.current
+        m.suppressedByReason[reason] = (m.suppressedByReason[reason] ?? 0) + 1
+        if (heldWriteRef.current === result) { heldWriteRef.current = null; m.writesHeldSuppressed += 1 }
+        log(`SUPPRESSED (${reason}): ${describe(result)}`)
+      },
+      onCommitError: (result, err) => log(`COMMIT THREW: ${err?.message ?? String(err)}`),
+    })
+    setDebStats(debRef.current.stats())
+    setHostMetrics(emptyHostMetrics())
 
     const permBefore = await micPermission()
     setEnv(e => ({ ...e, permBefore, permAfter: '—' }))
@@ -186,16 +383,21 @@ export default function ContinuousVoiceProbe() {
     }, 6000)
 
     // Wall-clock stop.
-    setTimeout(() => {
+    wallClockTimerRef.current = setTimeout(() => {
       if (stopRequestedRef.current) return
       stopRequestedRef.current = true
       try { recRef.current?.stop() } catch { /* ignore */ }
     }, MAX_RUN_MS)
   }, [arm, log])
 
+  // NOTE: the tick timer is deliberately NOT cleared here. A write pending at the moment Dave taps
+  // stop is exactly the case the run is measuring — letting the timer land records whether it ever
+  // fires, whereas cancelling it would manufacture an un-ticked held write and score the instrument's
+  // own cleanup as the finding.
   const stop = useCallback(async () => {
     stopRequestedRef.current = true
     if (runTimerRef.current) clearTimeout(runTimerRef.current)
+    if (wallClockTimerRef.current) clearTimeout(wallClockTimerRef.current)
     try { recRef.current?.stop() } catch { /* ignore */ }
     const permAfter = await micPermission()
     setEnv(e => ({ ...e, permAfter }))
@@ -213,6 +415,21 @@ export default function ContinuousVoiceProbe() {
     : stats.sessions <= 1 ? 'CONTINUOUS HOLDS — one session carried every utterance'
     : `RE-ARMING — ${stats.sessions} sessions for ${stats.finals} utterances`
 
+  const drifts = hostMetrics.drifts
+  const driftSummary = drifts.length
+    ? `${Math.min(...drifts)} / ${Math.round(drifts.reduce((a, b) => a + b, 0) / drifts.length)} / ${Math.max(...drifts)} ms`
+    : '— (no tick fired yet)'
+
+  const dueLabel = dueAtMs == null
+    ? '— (nothing pending)'
+    : `+${dueAtMs - t0Ref.current}ms  (in ${Math.max(0, dueAtMs - Date.now())}ms)`
+
+  // The count S0 owes: a save the user asked for where the tick never came. Supersessions are
+  // deliberately NOT in this number — see reconcileHeld.
+  const heldNeverTicked = hostMetrics.writesHeldLost + (heldOutstanding ? 1 : 0)
+
+  const paths = hostMetrics.commitsByPath
+  const suppressedList = Object.entries(hostMetrics.suppressedByReason)
   const box = { background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 12, marginBottom: 12 }
   const btn = (bg) => ({
     minHeight: 44, padding: '10px 18px', borderRadius: 8, border: 'none',
@@ -240,6 +457,59 @@ export default function ContinuousVoiceProbe() {
         </div>
       </div>
 
+      {/* S0 — the debounce layer's first execution outside a test file. */}
+      <div style={box} data-testid="voice-debounce-panel">
+        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: P.dark, marginBottom: 6 }}>
+          Commit layer (S0)
+        </div>
+        <div style={{ fontSize: '0.8rem', color: P.mid, lineHeight: 1.7 }}>
+          <div data-testid="voice-commit-paths">
+            <strong>Commits by path:</strong> tick {paths.tick ?? 0} · sessionEnd {paths.sessionEnd ?? 0} · final {paths.final ?? 0}
+          </div>
+          <div data-testid="voice-due-at"><strong>dueAt:</strong> {dueLabel}</div>
+          <div data-testid="voice-tick-drift">
+            <strong>Tick drift min/avg/max:</strong> {driftSummary} · scheduled {hostMetrics.ticksScheduled} · fired {hostMetrics.ticksFired}
+          </div>
+          <div data-testid="voice-held-writes">
+            <strong>Held writes never ticked:</strong> {heldNeverTicked} (waiting {heldOutstanding ? 1 : 0} · vanished {hostMetrics.writesHeldLost}) · held {hostMetrics.writesHeld} · committed by tick {hostMetrics.writesHeldCommitted} · superseded {hostMetrics.writesHeldSuperseded} · suppressed {hostMetrics.writesHeldSuppressed}
+          </div>
+          <div data-testid="voice-debounce-stats">
+            <strong>Layer:</strong> empty {debStats?.droppedEmpty ?? 0} · superseded {debStats?.superseded ?? 0} · regressed {debStats?.regressed ?? 0} · stale-dropped {debStats?.staleDropped ?? 0} · cooldown-suppressed {debStats?.suppressedCommands ?? 0} · committed {debStats?.committed ?? 0} · commit errors {debStats?.commitErrors ?? 0}
+          </div>
+          {suppressedList.length > 0 && (
+            <div data-testid="voice-suppressed-reasons">
+              <strong>Suppressed by reason:</strong> {suppressedList.map(([k, v]) => `${k} ${v}`).join(' · ')}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* THE ECHO. Committed rows persist; the pending utterance is a recessive line beneath them,
+          never the existence condition for the strip. This is the probe's stand-in for the shipped
+          harvest session ledger that S3 uses instead of building anything new. */}
+      <div style={box} data-testid="voice-commit-ledger">
+        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: P.dark, marginBottom: 6 }}>
+          Committed ({commits.length})
+        </div>
+        {commits.length === 0 ? (
+          <div style={{ fontSize: '0.8rem', color: P.light }}>Nothing has settled yet.</div>
+        ) : (
+          <ol style={{ margin: 0, paddingLeft: 20, fontSize: '0.8rem', color: P.dark, lineHeight: 1.7 }}>
+            {commits.map((c, i) => (
+              <li key={`${c.atMs}-${i}`} data-testid="voice-commit-row">
+                {describe(c.result)} <span style={{ color: P.light }}>· {c.path} · +{c.atMs - t0Ref.current}ms</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        <div
+          data-testid="voice-pending-echo"
+          style={{ marginTop: 8, fontSize: '0.78rem', color: P.light, fontStyle: 'italic' }}
+        >
+          {pendingEcho ? `hearing: ${describe(pendingEcho)}` : 'hearing: —'}
+        </div>
+      </div>
+
       <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
         <button type="button" onClick={running ? stop : start} style={btn(running ? P.terra : P.green)}>
           {running ? 'Stop probe' : 'Start probe'}
@@ -254,7 +524,7 @@ export default function ContinuousVoiceProbe() {
         </button>
       </div>
 
-      <pre style={{
+      <pre data-testid="voice-probe-log" style={{
         maxHeight: 320, overflow: 'auto', margin: 0, padding: 10,
         background: P.white, border: `1px solid ${P.border}`, borderRadius: 8,
         fontSize: '0.72rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: P.dark,

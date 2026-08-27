@@ -1,0 +1,267 @@
+// src/__tests__/ContinuousVoiceProbe.test.jsx
+//
+// V5-HARVESTVOICEFLOW-001 (BD-068) S0 — the HOST test. voiceCommitDebounce.test.js already replays
+// the device fixture against the layer directly; this file is the thing that did not exist, and its
+// absence is why the layer had been edited three times without ever running: nothing tested the
+// COMPOSITION of a recogniser, a real host timer, and the layer's `dueAt()` contract.
+//
+// The scenarios below are the 2026-08-27 device log, not invented cases: the "three" → "three counts"
+// revision at 195 ms, the "231" → "231 G" revision at 353 ms, the byte-identical "231 G" re-delivery
+// at 274 ms, and 11 empty finals. The one case the device log CANNOT supply is the command axis —
+// the run had no "next" that survived to a tick, which is exactly the hole S0 exists to fill.
+//
+// NO MOCKS OF THE LAYER. Both voiceCommitDebounce.js and voiceHarvestGrammar.js run for real here.
+// 11 of 11 existing consumer test files `vi.mock` transcribe.js, which is why a change to it is
+// invisible to every one of them (gate B3); this file does not repeat that mistake with the layer it
+// is supposed to be exercising.
+import React from 'react'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
+import { installFakeSpeechRecognition } from './helpers/fakeSpeechRecognition.js'
+import ContinuousVoiceProbe from '../components/ContinuousVoiceProbe.jsx'
+
+let mic
+
+beforeEach(() => {
+  // `now` is deliberately non-zero: the probe treats t0 === 0 as "no run started".
+  vi.useFakeTimers({ now: 1_700_000_000_000 })
+  mic = installFakeSpeechRecognition(vi)
+  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })))
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
+
+async function startProbe() {
+  await act(async () => { render(<ContinuousVoiceProbe />) })
+  await act(async () => { fireEvent.click(screen.getByText('Start probe')) })
+  return mic.latest()
+}
+
+const advance = (ms) => act(() => { vi.advanceTimersByTime(ms) })
+
+const rows      = () => screen.queryAllByTestId('voice-commit-row').map(n => n.textContent)
+const paths     = () => screen.getByTestId('voice-commit-paths').textContent
+const held      = () => screen.getByTestId('voice-held-writes').textContent
+const layer     = () => screen.getByTestId('voice-debounce-stats').textContent
+const dueAt     = () => screen.getByTestId('voice-due-at').textContent
+const drift     = () => screen.getByTestId('voice-tick-drift').textContent
+const echo      = () => screen.getByTestId('voice-pending-echo').textContent
+const probeLog  = () => screen.getByTestId('voice-probe-log').textContent
+
+describe('ContinuousVoiceProbe — S0 debounce host', () => {
+  it('arms a recogniser in continuous mode with interim results', async () => {
+    const rec = await startProbe()
+    expect(rec.continuous).toBe(true)
+    expect(rec.interimResults).toBe(true)
+    expect(rec.started).toBe(true)
+  })
+
+  it('logs resultIndex and results.length for every event (gate B1)', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('cucumber', 0) })
+    act(() => { rec.deliverFinal('three counts', 1) })
+    expect(probeLog()).toContain('resultIndex=0 len=1')
+    expect(probeLog()).toContain('resultIndex=1 len=2')
+  })
+
+  it('a prefix and its revision commit ONCE, as the longer utterance', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('three', 0) })
+    advance(195)                                   // the measured supersede gap
+    act(() => { rec.deliverFinal('three counts', 0) })
+    act(() => { rec.endSession() })
+
+    expect(rows()).toHaveLength(1)
+    expect(rows()[0]).toContain('quantity 3 count')
+    expect(paths()).toMatch(/sessionEnd 1/)
+    expect(layer()).toMatch(/superseded 1/)
+  })
+
+  it('a byte-identical re-delivery inside one session commits ONCE', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('231', 0) })
+    advance(353)
+    act(() => { rec.deliverFinal('231 G', 0) })
+    advance(274)                                   // the measured duplicate gap
+    act(() => { rec.deliverFinal('231 G', 0) })
+    act(() => { rec.endSession() })
+
+    expect(rows()).toHaveLength(1)
+    expect(rows()[0]).toContain('weight 231 g')
+  })
+
+  it('empty finals never commit and are counted', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('', 0) })
+    act(() => { rec.deliverFinal('', 1) })
+    act(() => { rec.deliverFinal('', 2) })
+    act(() => { rec.endSession() })
+
+    expect(rows()).toHaveLength(0)
+    expect(layer()).toMatch(/empty 3/)
+  })
+
+  // THE HEADLINE. Replaying the device log through a host produced 4 commits via sessionEnd and ZERO
+  // via tick, so the entire command axis of this design had never been observed working end to end.
+  it('a write command is NOT flushed at sessionEnd — only a tick commits it', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('next', 0) })
+    act(() => { rec.endSession() })
+
+    expect(rows()).toHaveLength(0)
+    expect(held()).toMatch(/never ticked:\s*1/)
+    expect(held()).toMatch(/waiting 1/)
+    expect(dueAt()).not.toContain('nothing pending')
+
+    advance(500)
+
+    expect(rows()).toHaveLength(1)
+    expect(rows()[0]).toContain('COMMAND save_and_advance')
+    expect(paths()).toMatch(/tick 1/)
+    expect(paths()).toMatch(/sessionEnd 0/)
+    expect(held()).toMatch(/never ticked:\s*0/)
+    expect(held()).toMatch(/committed by tick 1/)
+    expect(drift()).not.toContain('no tick fired yet')
+    expect(drift()).toMatch(/fired 1/)
+  })
+
+  // The design's single most valuable behaviour, and the reason a held write leaving the pending slot
+  // is not by itself a defect: a bare "next" pends rather than saving, so the rest of the sentence can
+  // still arrive — ACROSS a session boundary, which is where the device spends all its time.
+  it('a bare "next" superseded by "next to the fence" saves nothing and becomes a search', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('next', 0) })
+    act(() => { rec.endSession() })                // held, not committed
+    act(() => { rec.deliverFinal('next to the fence', 0) })   // next session, same pending utterance
+    act(() => { rec.endSession() })
+
+    expect(rows()).toHaveLength(1)
+    expect(rows()[0]).toContain('search "next to the fence"')
+    expect(rows()[0]).not.toContain('COMMAND')
+    expect(held()).toMatch(/superseded 1/)
+    expect(held()).toMatch(/never ticked:\s*0/)   // superseded is the feature, not a lost save
+  })
+
+  it('a repeated save inside the cooldown is suppressed instead of double-committing', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('next', 0) })
+    act(() => { rec.endSession() })
+    advance(500)
+    expect(rows()).toHaveLength(1)
+
+    advance(100)
+    act(() => { rec.deliverFinal('next', 0) })
+    act(() => { rec.endSession() })
+    advance(500)
+
+    expect(rows()).toHaveLength(1)                 // still one save, not two
+    expect(screen.getByTestId('voice-suppressed-reasons').textContent).toMatch(/cooldown 1/)
+    expect(held()).toMatch(/suppressed 1/)
+  })
+
+  // The scheduled tick has to be CANCELLED when sessionEnd commits the utterance itself, which is the
+  // dominant path for data. Left standing, the orphan timer fires into an empty layer — harmless to
+  // the data, but it records a drift sample for an utterance that already committed, and drift is one
+  // of the three numbers this run exists to produce. A polluted instrument is a wrong instrument.
+  it('cancels the pending tick when sessionEnd commits the utterance itself', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('cucumber', 0) })
+    act(() => { rec.endSession() })
+
+    expect(rows()).toHaveLength(1)
+    advance(5000)
+
+    expect(drift()).toContain('no tick fired yet')
+    expect(drift()).toMatch(/fired 0/)
+    expect(rows()).toHaveLength(1)
+  })
+
+  it('renders dueAt while an utterance is pending and clears it once committed', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('cucumber', 0) })
+
+    expect(dueAt()).toMatch(/in 500ms/)
+    expect(echo()).toContain('search "cucumber"')
+
+    act(() => { rec.endSession() })
+
+    expect(dueAt()).toContain('nothing pending')
+    expect(rows()).toHaveLength(1)
+  })
+
+  it('reports tick drift against dueAt rather than assuming the timer was punctual', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('next', 0) })
+    act(() => { rec.endSession() })
+
+    // A hidden page freezes TIMERS while the CLOCK keeps running — the exact asymmetry that made
+    // `tick(60000)` commit a sixty-second-old save before C1. Fake timers fire PUNCTUALLY, so
+    // advancing them alone yields drift 0 and the instrument would look healthy on the one case it
+    // exists to catch. Skewing Date against the timer queue is what reproduces it.
+    const clockNow = Date.now
+    vi.spyOn(Date, 'now').mockImplementation(() => clockNow.call(Date) + 1900)
+    try {
+      advance(500)
+
+      const [, min, avg, max] = drift().match(/(-?\d+) \/ (-?\d+) \/ (-?\d+) ms/)
+      expect(Number(min)).toBe(1900)
+      expect(Number(avg)).toBe(1900)
+      expect(Number(max)).toBe(1900)
+    } finally {
+      Date.now.mockRestore()
+    }
+
+    // >2× settleMs, so the layer discards the write rather than resurrecting it against whatever
+    // planting is on screen when the page wakes.
+    expect(rows()).toHaveLength(0)
+    expect(layer()).toMatch(/stale-dropped 1/)
+    expect(held()).toMatch(/suppressed 1/)
+    expect(held()).toMatch(/never ticked:\s*0/)
+  })
+
+  it('the whole run replays end to end: crop, quantity, weight, save', async () => {
+    const rec = await startProbe()
+
+    act(() => { rec.deliverFinal('cucumber', 0) })
+    act(() => { rec.endSession() })
+
+    act(() => { rec.deliverFinal('three', 0) })
+    advance(195)
+    act(() => { rec.deliverFinal('three counts', 0) })
+    act(() => { rec.endSession() })
+
+    act(() => { rec.deliverFinal('231', 0) })
+    advance(353)
+    act(() => { rec.deliverFinal('231 G', 0) })
+    act(() => { rec.endSession() })
+
+    act(() => { rec.deliverFinal('next', 0) })
+    act(() => { rec.endSession() })
+    advance(500)
+
+    expect(rows().map(r => r.split(' ·')[0])).toEqual([
+      'search "cucumber"',
+      'quantity 3 count',
+      'weight 231 g (231g)',
+      'COMMAND save_and_advance',
+    ])
+    expect(paths()).toMatch(/tick 1/)
+    expect(paths()).toMatch(/sessionEnd 3/)
+  })
+
+  it('releases the mic and cancels the pending tick on unmount', async () => {
+    const rec = await startProbe()
+    act(() => { rec.deliverFinal('next', 0) })
+    act(() => { rec.endSession() })
+    expect(rec.started).toBe(true)                 // auto re-armed
+
+    act(() => { cleanup() })
+
+    expect(rec.started).toBe(false)
+    // A tick landing after unmount would commit against a dead host and warn in React.
+    expect(() => vi.advanceTimersByTime(5000)).not.toThrow()
+  })
+})
