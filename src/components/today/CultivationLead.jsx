@@ -1,25 +1,48 @@
 // src/components/today/CultivationLead.jsx
 // PANEL Q1 (harvest-panel-decisions-20260812.md): the cultivation region of Today, DEMOTED to an
-// unlabelled lead line. One or two imperative lines at the very top of Today — NO heading, NO
-// count, capped at 2, rendering NOTHING when empty. A heading plus denominator costs ~64px at
-// 390px and evicts a row; scanning cost scales with orient decisions, and a third heading is a
-// third orient decision. It shows no tail control either, and by rule rather than exception:
-// a region shows a tail iff rows are hidden, and nothing here is hidden — the full story lives
-// one tap away on /sow.
+// unlabelled lead line. One or two imperative lines — NO heading, NO count, capped at 2. A heading
+// plus denominator costs ~64px at 390px and evicts a row; scanning cost scales with orient
+// decisions, and a third heading is a third orient decision. It shows no tail control either, and
+// by rule rather than exception: a region shows a tail iff rows are hidden, and nothing here is
+// hidden — the full story lives one tap away on /sow.
 //
 // CONTENT IS A READ OF AN EXISTING ENGINE, NEVER AN INVENTION. The lines come from the same
 // sow-candidates payload and the same pure `bucketize` the /sow page runs; only entries the engine
 // itself marks `window_closing` (its own fall-sow latest-safe math, latestSafeMs) qualify. No other
 // cue is computable from existing data without fabrication (phenology capture has lapsed —
-// panel-verified), so no other cue ships. If the engine yields nothing, the region renders nothing
-// — the panel accepted an empty container as the cost of shipping the shape before the content.
+// panel-verified), so no other cue ships.
 //
-// Ambient posture, same as every band below it: self-fetching, error swallowed, hidden when empty.
-// Reward-UX: imperative + a date is information; no urgency copy, no countdown, no exclamation.
+// V4-SOWMOREMENU-001 (BD-067) — TWO PANEL Q1 DECISIONS ARE DELIBERATELY REVERSED HERE, both on
+// Dave's own report that he could not find Sow Now AT ALL ("I don't remember even where it used to
+// be"). Say what changed and why, because both were reasoned calls, not defaults:
+//
+//   1. PLACEMENT. This region no longer sits at the very top of Today. Dave: "making the top of the
+//      today show the sow now should disappear, that doesn't need to be up there." It now renders
+//      down with the ambient bands. The panel's ~64px argument was about what earns the FIRST
+//      screen; it never argued this content was worthless, and moving it costs none of the value.
+//
+//   2. "RENDERS NOTHING WHEN EMPTY" IS GONE — the link row is now UNCONDITIONAL. This is the real
+//      reversal and it is a discoverability fix, not a layout preference. The old contract meant
+//      that on every day the engine had no closing window (most of the year) Today offered no route
+//      to /sow whatsoever, and the panel's own "the full story lives one tap away on /sow" was
+//      false on those days — the lines were plain <p> text with no tap target at all, so it was
+//      never one tap away from here on ANY day. A durable, findable door is the thing Dave asked
+//      for; an intermittent one does not fix "I can't find it anywhere". The empty state is one
+//      compact link, not a blank strip with a heading over silence, so the panel's actual objection
+//      (an empty labelled container) still holds — it just is not what this renders.
+//
+// The urgency lines keep their old conditional behaviour: present only when the engine marks a
+// window closing, capped at 2, most urgent first. Only the door below them is unconditional.
+//
+// Ambient posture otherwise unchanged: self-fetching, error swallowed (a failed fetch degrades to
+// the bare link, never an error onto Today). Reward-UX: imperative + a date is information; no
+// urgency copy, no countdown, no exclamation.
 import React, { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { bucketize } from '../../lib/sowEngine.js'
+import Icon from '../Icon.jsx'
 
 export const CULTIVATION_LEAD_CAP = 2
 
@@ -74,16 +97,42 @@ export default function CultivationLead({ todayISO = null }) {
   const day = todayISO ?? todayLocalISO()
   const lines = useMemo(() => cultivationLines(items, day), [items, day])
 
-  // Renders NOTHING when empty — never a blank strip, never a heading over silence.
-  if (lines.length === 0) return null
-
+  // The whole region is the tap target, lines included — tapping an urgency line goes to the packet
+  // it is about (well, to the page listing it), which is what a line saying "Sow X by Aug 18" makes
+  // you want to do. A separate link underneath would read as a second, unrelated control.
   return (
-    <div data-testid="cultivation-lead" style={{ marginBottom: 12 }}>
-      {lines.map((l, i) => (
-        <p key={i} style={{ margin: '0 0 4px', fontSize: '0.92rem', fontWeight: 600, color: P.dark, lineHeight: 1.4 }}>
-          {l}
-        </p>
-      ))}
-    </div>
+    <Link
+      to="/sow"
+      data-testid="cultivation-lead"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
+        padding: '10px 12px', marginBottom: 12,
+        background: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+        minHeight: 44, // T.tapMinHeight — this is a real navigation control, not a chip
+      }}
+    >
+      <Icon name="lifecycle.sprout" size={20} decorative style={{ flexShrink: 0 }} />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        {lines.map((l, i) => (
+          <span key={i} style={{ display: 'block', fontSize: '0.92rem', fontWeight: 600, color: P.dark, lineHeight: 1.4 }}>
+            {l}
+          </span>
+        ))}
+        {/* The label carries the destination's NAME whenever it is the only thing here, so the row
+            is self-explanatory on a cold open. When urgency lines are present they already say what
+            this is about, and repeating "Sow now" under them is the redundant second heading PANEL
+            Q1 was right to refuse — so it drops to a quiet subtitle instead. */}
+        <span style={{
+          display: 'block',
+          fontSize: lines.length ? '0.76rem' : '0.92rem',
+          fontWeight: lines.length ? 500 : 600,
+          color: lines.length ? P.light : P.dark,
+          lineHeight: 1.4,
+          marginTop: lines.length ? 2 : 0,
+        }}>
+          {lines.length ? 'See all sow windows' : 'Sow now'}
+        </span>
+      </span>
+    </Link>
   )
 }

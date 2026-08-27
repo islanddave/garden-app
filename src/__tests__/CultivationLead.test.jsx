@@ -1,16 +1,31 @@
 // PANEL Q1 (harvest-panel-decisions-20260812.md) — the cultivation lead line: one or two
-// imperative lines, NO heading, NO count, cap 2, renders NOTHING when empty. Content is a read of
-// the sow engine's own window_closing output (latestSafeMs fall-sow close dates) — these tests run
-// the REAL engine against fixture candidates on a fixed date, so a line here is a line the engine
-// itself would print.
+// imperative lines, NO heading, NO count, cap 2. Content is a read of the sow engine's own
+// window_closing output (latestSafeMs fall-sow close dates) — these tests run the REAL engine
+// against fixture candidates on a fixed date, so a line here is a line the engine itself would
+// print.
+//
+// V4-SOWMOREMENU-001 (BD-067) — the "renders NOTHING when empty" assertions in this file were
+// INVERTED, not deleted, and they are the reason the inversion needs saying out loud: the region is
+// now Today's durable door to /sow, so the empty case renders a bare "Sow now" link instead of
+// null. The four cases that used to assert null (empty candidates, open-but-not-closing, fetch
+// error, pre-resolve) still exist below and now assert the SAME THING they always did about
+// CONTENT — no urgency lines are invented — while additionally pinning that the door survives each
+// of those states. A fetch error degrading to a working link rather than to nothing is the point of
+// the change; deleting these would have hidden exactly that.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }) }))
 
 import CultivationLead, { cultivationLines, CULTIVATION_LEAD_CAP } from '../components/today/CultivationLead.jsx'
+
+// The component renders a <Link>, so every render needs a router above it.
+const renderLead = (props = {}) => render(
+  <MemoryRouter><CultivationLead {...props} /></MemoryRouter>
+)
 
 // 2026 anchors: FF (sowing-safety margin) = 09-28, FFobs (measured median first frost) = 10-29.
 // Lettuce is fall-hardy (V4-HARDYSET-001), so a cool + annual DIRECT sow closes at FFobs - dtm:
@@ -74,39 +89,57 @@ describe('cultivationLines (pure, real engine)', () => {
 describe('CultivationLead component', () => {
   it('renders one or two imperative lines with NO heading and NO count', async () => {
     fetchMock.mockResolvedValue({ items: [lettuce()] })
-    render(<CultivationLead todayISO={TODAY} />)
-    const lead = await screen.findByTestId('cultivation-lead')
-    expect(lead.textContent).toBe('Sow Winter Density by Aug 18.')
-    expect(lead.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull()
-    expect(lead.textContent).not.toMatch(/Showing \d+|\d+ of \d+|more/i)
+    renderLead({ todayISO: TODAY })
+    const lead = await screen.findByText('Sow Winter Density by Aug 18.')
+    const region = screen.getByTestId('cultivation-lead')
+    expect(lead).toBeTruthy()
+    expect(region.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull()
+    expect(region.textContent).not.toMatch(/Showing \d+|\d+ of \d+/i)
     // No urgency grammar — a date is information, a countdown is pressure.
-    expect(lead.textContent).not.toMatch(/days left|hurry|don'?t|!/i)
+    expect(region.textContent).not.toMatch(/days left|hurry|don'?t|!/i)
   })
 
-  it('renders NOTHING when the engine yields no content (empty candidates)', async () => {
-    fetchMock.mockResolvedValue({ items: [] })
-    const { container } = render(<CultivationLead todayISO={TODAY} />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('renders NOTHING when every window is open-but-not-closing', async () => {
-    fetchMock.mockResolvedValue({ items: [lettuce({ days_to_maturity_max: 30 })] })
-    const { container } = render(<CultivationLead todayISO={TODAY} />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('swallows a fetch error — renders nothing, never throws onto Today', async () => {
-    fetchMock.mockRejectedValue(new Error('boom'))
-    const { container } = render(<CultivationLead todayISO={TODAY} />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('renders nothing before the first load resolves', () => {
+  // V4-SOWMOREMENU-001 — the door itself. Kept separate from the content assertions above so a
+  // regression tells you WHICH half broke: the route out, or what it says.
+  it('is a tap target to /sow, at the 44px floor, in every state', async () => {
     fetchMock.mockResolvedValue({ items: [lettuce()] })
-    const { container } = render(<CultivationLead todayISO={TODAY} />)
-    expect(container.firstChild).toBeNull()
+    renderLead({ todayISO: TODAY })
+    const region = await screen.findByTestId('cultivation-lead')
+    expect(region.tagName).toBe('A')
+    expect(region.getAttribute('href')).toBe('/sow')
+    expect(region.style.minHeight).toBe('44px')
+  })
+
+  it('keeps the /sow door when the engine yields no content (empty candidates)', async () => {
+    fetchMock.mockResolvedValue({ items: [] })
+    renderLead({ todayISO: TODAY })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
+    const region = screen.getByTestId('cultivation-lead')
+    expect(region.getAttribute('href')).toBe('/sow')
+    // Names its destination when it is the only thing in the row — self-explanatory on a cold open.
+    expect(region.textContent).toBe('Sow now')
+  })
+
+  it('invents no line when every window is open-but-not-closing', async () => {
+    fetchMock.mockResolvedValue({ items: [lettuce({ days_to_maturity_max: 30 })] })
+    renderLead({ todayISO: TODAY })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(screen.getByTestId('cultivation-lead').textContent).toBe('Sow now')
+  })
+
+  it('swallows a fetch error — degrades to the bare door, never throws onto Today', async () => {
+    fetchMock.mockRejectedValue(new Error('boom'))
+    renderLead({ todayISO: TODAY })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const region = screen.getByTestId('cultivation-lead')
+    expect(region.getAttribute('href')).toBe('/sow')
+    expect(region.textContent).toBe('Sow now')
+    expect(region.textContent).not.toMatch(/boom|error|failed/i)
+  })
+
+  it('shows no urgency line before the first load resolves', () => {
+    fetchMock.mockResolvedValue({ items: [lettuce()] })
+    renderLead({ todayISO: TODAY })
+    expect(screen.getByTestId('cultivation-lead').textContent).toBe('Sow now')
   })
 })

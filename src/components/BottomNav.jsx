@@ -354,6 +354,27 @@ export default function BottomNav() {
         <SheetRowLink to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
         </SheetRowLink>
+        {/* V4-SOWMOREMENU-001 (BD-067) — Dave: "we seem to have lost the sow now tab, I can't find
+            it anywhere", and on where he wants it: "preferably that is just its own listing in the
+            more menu, that would be where I'd want it." So: TOP-LEVEL here, directly under Inventory
+            rather than nested inside it.
+            THIS IS NOT A REGRESSION FIX, and the distinction matters for anyone reading the row.
+            Verified on dev/prod v4.57.0 (1c6cf21f71) before building: all three historical entry
+            points are alive — the /sow route (App.jsx), the "Sow from seed" action in the create
+            sheet (V4-SOWFAB-001, above in this file), and a Sow chip on the Inventory page
+            (Inventory.jsx). Nothing was removed. What was missing is a door in the place Dave
+            actually looks, and what made it feel VANISHED is that the one sow affordance on his
+            highest-traffic screen was plain text with no tap target at all (CultivationLead, now
+            fixed). Findability, not restoration.
+            ADDITIVE BY SCOPE GUARD: Dave did not ask to consolidate entry points, so the FAB action
+            and the Inventory chip both STAY. This is a fourth door, not a replacement — do not
+            "tidy" the others away without asking him. That makes it a deliberate exception to the
+            redundant-door-pair merging V4-NAVHARVEST-001 does two rows below; the difference is
+            that those were two doors to one destination from the SAME surface, while these are one
+            door each from four different starting points. */}
+        <SheetRowLink to="/sow" onClick={closeMore} style={menuRowStyle}>
+          <Icon name="lifecycle.sprout" size={22} decorative />Sow now
+        </SheetRowLink>
         {/* V4-NAVHARVEST-001 / V4-PUTUPENGINE-001 — BOTH the Harvests row and the Put-Up row that
             lived here were PROMOTED to the tab bar, not duplicated: two doors to one destination is
             the redundant door-pair the IA work exists to merge. Put-Up's original placement

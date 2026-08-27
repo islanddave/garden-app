@@ -184,6 +184,32 @@ describe('BottomNav — Put-Up is a first-class tab (V4-PUTUPENGINE-001)', () =>
   })
 })
 
+// V4-SOWMOREMENU-001 (BD-067) — Dave could not find Sow Now at all and asked for it as "its own
+// listing in the more menu". Two separate things are pinned here and they fail for different
+// reasons: that the row EXISTS at top level (the thing he asked for), and that adding it did NOT
+// cost the pre-existing doors (the scope guard on the row — he never asked to consolidate).
+describe('BottomNav — Sow now in the More menu', () => {
+  it('lists Sow now as a TOP-LEVEL More row, not nested under Inventory', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('Sow now').closest('a')
+    expect(link).toBeTruthy()
+    expect(link.getAttribute('href')).toBe('/sow')
+    // Sibling of the Inventory row, not a descendant of it — "nested under Inventory" is the exact
+    // placement Dave rejected, and a nested row would still satisfy a bare getByText.
+    const inventory = screen.getByText('Inventory').closest('a')
+    expect(inventory.contains(link)).toBe(false)
+  })
+
+  it('keeps the create-sheet Sow from seed action — the More row is additive', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    const fabSow = screen.getByText('Sow from seed').closest('a')
+    expect(fabSow).toBeTruthy()
+    expect(fabSow.getAttribute('href')).toBe('/sow')
+  })
+})
+
 describe('BottomNav — More menu', () => {
   it('More menu is closed by default', () => {
     render(<BottomNav />)

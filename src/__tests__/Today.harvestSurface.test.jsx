@@ -81,30 +81,39 @@ beforeEach(() => {
 })
 
 describe('Today composition (panel Q1, re-anchored post-BD-008)', () => {
-  it('renders the cultivation lead line ABOVE the watch band and the plan block', async () => {
+  // V4-SOWMOREMENU-001 (BD-067) — BOTH assertions in this pair are INVERTED from what they pinned
+  // before, on Dave's own directive, and the inversion is the point of the row rather than a side
+  // effect of it. He reported he could not find Sow Now at all; the two panel Q1 properties these
+  // guarded — top-of-page placement, and rendering nothing when empty — are precisely what made
+  // Today's only sow affordance both prime-real-estate AND absent on most days. Kept as inverted
+  // pins rather than deleted so the reversal stays visible and cannot silently revert.
+  it('renders the cultivation lead line BELOW the watch band and the plan block', async () => {
     engineState.closing = [{ candidate: { variety_name: 'Winter Density' }, action: 'direct_sow', daysLeft: 5 }]
     wire({ sowItems: [{ variety_name: 'Winter Density' }] })
     render(<Today />)
 
     const lead = await screen.findByTestId('cultivation-lead')
     const watch = await screen.findByRole('region', { name: /Worth checking soon/i })
-    // The lead line precedes the watch band in document order — the render-order pin.
-    expect(lead.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    // ...and precedes the daily-plan block: it is the top of Today, not a band among bands.
+    // The watch band now precedes the lead — Dave: "that doesn't need to be up there."
+    expect(watch.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // ...and so does the daily-plan block: it is a band among bands now, not the top of Today.
     const planBlock = screen.getByText(/on its way/i)
-    expect(lead.compareDocumentPosition(planBlock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    // Unlabelled: an imperative line, not a fourth headed section.
+    expect(planBlock.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Unlabelled: an imperative line, not a fourth headed section. UNCHANGED by the move.
     expect(lead.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull()
     expect(lead.textContent).toMatch(/^Sow Winter Density by /)
   })
 
-  it('ships NOTHING for the lead region when the engine yields no content', async () => {
+  it('keeps a /sow door in the lead region when the engine yields no content', async () => {
     engineState.closing = []
     wire({ sowItems: [{ variety_name: 'X' }] })
     render(<Today />)
     await screen.findByRole('region', { name: /Worth checking soon/i })
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(SOW))
-    expect(screen.queryByTestId('cultivation-lead')).toBeNull()
+    const lead = screen.getByTestId('cultivation-lead')
+    expect(lead.getAttribute('href')).toBe('/sow')
+    // Still invents no cue — the engine said nothing, so the row says only where it goes.
+    expect(lead.textContent).toBe('Sow now')
   })
 
   it('the watch band keeps its panel heading and no denominator prose', async () => {

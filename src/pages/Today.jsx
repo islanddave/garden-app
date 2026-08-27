@@ -68,11 +68,13 @@ export default function Today() {
           lost outranks a sow window about to close. */}
       <StorageDeadlineAlert />
 
-      {/* PANEL Q1 (harvest-panel-decisions-20260812.md) — the cultivation lead line, the demoted
-          third region of Today: one or two imperative lines at the very top, no heading, no count,
-          renders nothing when empty. Reads the sow engine's own window_closing output; invents no
-          cue. Deliberately ABOVE the plan/weather block and the harvest watch band. */}
-      <CultivationLead />
+      {/* V4-SOWMOREMENU-001 (BD-067) — <CultivationLead /> USED TO RENDER HERE, directly under the
+          date and above the plan/weather block. Dave 2026-08-24: "making the top of the today show
+          the sow now should disappear, that doesn't need to be up there." It now renders down with
+          the ambient bands (below ComposeHarvestBand). MOVED, NOT REMOVED — the same directive also
+          says "a link, a button to the sow now would be okay somewhere on that page", so Today keeps
+          a route to /sow; it just stops holding first-screen space. See the component's own header
+          for the two PANEL Q1 decisions this reverses and why. */}
 
       {loading && <div style={{ padding: 20, color: P.light, textAlign: 'center' }}>Loading&hellip;</div>}
       {error && <div style={{ padding: 20, color: '#b94a3a', textAlign: 'center' }}>{error}</div>}
@@ -173,6 +175,16 @@ export default function Today() {
           the last 18 hours. Deliberately AFTER the watch band — that one asks you to go check
           something; this one is what you reach for once you already have. */}
       <ComposeHarvestBand />
+
+      {/* V4-SOWMOREMENU-001 (BD-067) — the cultivation region, relocated from the top of the page
+          (see the note up there). Placed LAST of the ambient regions deliberately: every band above
+          it is about plants already in the ground — what needs care, what is worth checking, what
+          was just picked — while this one is about starting something new, which is the lowest-
+          frequency intent on this screen and the one Dave reaches for on purpose rather than
+          discovers. Unlike its neighbours it renders unconditionally, because it is now Today's
+          durable door to /sow rather than a band that goes quiet; the component header explains
+          that reversal. */}
+      <CultivationLead />
 
       {/* V4-ASSIGNLENS-001 — the rest of the household's care (opt-in, ambient, subordinate). Works
           whether or not the current user has their own plan today. Reuses CareNeeded so logging on
