@@ -76,36 +76,74 @@ export const DEFAULT_COMMAND_COOLDOWN_MS = 1500
  * @param {number}   [opts.settleMs]
  * @param {number}   [opts.commandCooldownMs]
  */
+// Which verbs MUTATE, grouped by what they mutate. The cooldown is keyed on this class rather than
+// on the command string: `next` and `save` are different strings that both write a harvest row, and
+// keying on the string let one spoken word heard two ways commit twice 300ms apart (measured).
+// A verb absent from this map is non-destructive and is never cooldown-suppressed.
+export const WRITE_CLASS = {
+  save_and_advance: 'write',
+  save: 'write',
+  discard: 'destroy',
+}
+
 export function createCommitDebouncer({
   onCommit,
   onPending = null,
+  onSuppressed = null,
+  onCommitError = null,
   settleMs = DEFAULT_SETTLE_MS,
   commandCooldownMs = DEFAULT_COMMAND_COOLDOWN_MS,
 } = {}) {
   let pending = null          // { text, norm, result, atMs }
-  let lastCommand = null      // { command, atMs }
-  const stats = { droppedEmpty: 0, superseded: 0, regressed: 0, suppressedCommands: 0, committed: 0 }
+  let lastWrite = null        // { klass, atMs } — see WRITE_CLASS
+  const stats = {
+    droppedEmpty: 0, superseded: 0, regressed: 0, suppressedCommands: 0, committed: 0, commitErrors: 0,
+  }
 
-  const reportPending = () => { if (onPending) onPending(pending ? pending.result : null) }
+  const reportPending = () => {
+    // Wrapped for the same reason transcribe.js wraps every consumer callback (:196, :212, :221):
+    // this fires from inside the recogniser's own handlers, and a throwing host must not be able to
+    // kill the session. The layer was asymmetric with the seam it sits beside; measured by the
+    // crucible's qa seat, which showed a throwing handler propagating out of sessionEnd().
+    if (!onPending) return
+    try { onPending(pending ? pending.result : null) } catch { /* host's problem, not the mic's */ }
+  }
 
   function commit(atMs) {
     if (!pending) return
     const { result } = pending
     pending = null
 
-    if (result.kind === 'command') {
-      // Cross-session duplicate suppression — see DEFAULT_COMMAND_COOLDOWN_MS.
-      if (lastCommand && lastCommand.command === result.command && (atMs - lastCommand.atMs) < commandCooldownMs) {
+    // COOLDOWN KEYS ON THE WRITE CLASS, NOT THE COMMAND STRING. Measured defect: `next` and `save`
+    // are different strings that both WRITE, so "next" at t and "save" at t+300 both committed —
+    // one spoken word heard two ways double-writes. Every verb that mutates shares one slot.
+    const klass = result.kind === 'command' ? WRITE_CLASS[result.command] : null
+    if (klass) {
+      if (lastWrite && lastWrite.klass === klass && (atMs - lastWrite.atMs) < commandCooldownMs) {
         stats.suppressedCommands += 1
         reportPending()
+        // A swallowed command with no signal is indistinguishable from a dead mic, an unheard
+        // utterance, or a failed save. The host needs to be able to say which.
+        if (onSuppressed) { try { onSuppressed(result, 'cooldown') } catch { /* ignore */ } }
         return
       }
-      lastCommand = { command: result.command, atMs }
     }
 
-    stats.committed += 1
     reportPending()
-    onCommit(result, { atMs })
+
+    // ARM THE COOLDOWN ONLY ON A HANDLER THAT RETURNED. Previously `lastCommand` was set BEFORE
+    // onCommit, so a save that FAILED still armed the cooldown and swallowed the user's natural
+    // recovery — saying it again — for 1500ms. Measured. The cooldown now defends against a
+    // transport duplicate without also defending against a human retry.
+    try {
+      onCommit(result, { atMs })
+    } catch (err) {
+      stats.commitErrors += 1
+      if (onCommitError) { try { onCommitError(result, err) } catch { /* ignore */ } }
+      return   // NOT armed — the write did not happen, so a repeat is legitimate.
+    }
+    if (klass) lastWrite = { klass, atMs }
+    stats.committed += 1
   }
 
   return {
@@ -162,17 +200,27 @@ export function createCommitDebouncer({
 
     /**
      * The recogniser's session ended. Chrome fires this 1-2 ms after the last final of an utterance
-     * (measured), so it is a genuine utterance boundary and the pending value can commit at once
-     * rather than waiting out the window — that is what keeps "next" from costing an extra 500 ms
-     * before the next chooser opens.
+     * (measured), so it is a genuine utterance boundary.
      *
-     * KNOWN LIMIT, worth stating rather than discovering later: this assumes a supersede never
-     * arrives AFTER the session that produced its prefix. That held for all four utterances in the
-     * device log, but it is an assumption about Chrome's emulated-continuous path, not a guarantee.
-     * If a cross-session supersede is ever observed, the fix is to stop flushing here and let the
-     * window expire — one line, at the cost of that 500 ms.
+     * DATA FLUSHES HERE; A WRITE COMMAND DOES NOT. The earlier version flushed everything, and that
+     * was wrong in a way only measurement showed: Chrome ends the session after EVERY utterance, so
+     * `sessionEnd` is the DOMINANT commit path — replaying the device log through a real host timer
+     * produced 4 commits via sessionEnd and ZERO via tick. The 500ms settle window never executed
+     * once in the whole evidence base, which means the design's own "single most valuable
+     * behaviour" — a bare "next" pending rather than saving, so "next to the fence" can supersede it
+     * — was unreachable for the command axis. A session boundary landing between a command-word
+     * prefix and its continuation committed an unrequested SAVE.
+     *
+     * So the asymmetry the rest of this file argues for is now actually paid: data commits
+     * immediately (no cost, nothing destructive), and a write command waits out the full window,
+     * which is the only thing that makes the supersede rule real rather than aspirational. It costs
+     * 500ms on the destructive verb alone, and it converts an assumption about Chrome's
+     * emulated-continuous path into a guarantee.
      */
-    sessionEnd(tMs) { commit(tMs) },
+    sessionEnd(tMs) {
+      if (pending && pending.result.kind === 'command' && WRITE_CLASS[pending.result.command]) return
+      commit(tMs)
+    },
 
     /** Drive the settle window. A host calls this from a timer; `dueAt()` says when. */
     tick(tMs) { if (pending && (tMs - pending.atMs) >= settleMs) commit(tMs) },
@@ -183,8 +231,34 @@ export function createCommitDebouncer({
     /** The utterance awaiting settle — what a confirmation UI would show. */
     peek() { return pending ? pending.result : null },
 
-    /** Drop everything without committing — for leaving the flow mid-utterance. */
-    reset() { pending = null; lastCommand = null; reportPending() },
+    /**
+     * Drop the in-flight utterance. SAFE for every in-flow transition — a chooser re-opening, a
+     * route change, the hook unmounting, the echo clearing.
+     *
+     * THIS IS THE ONE THAT HOSTS WILL REACH FOR, so it is the one that must not disarm anything.
+     * The previous single `reset()` cleared the cooldown too, and that was a live footgun on the
+     * destructive path: measured, a reset() between two "next"s 276ms apart let BOTH commit — a
+     * double save — where without it the second was correctly suppressed. Every natural host
+     * implementation (clear the echo, clean up on unmount) calls exactly this, so the safe operation
+     * had to become the obvious one and the dangerous one had to be named.
+     */
+    resetPending() { pending = null; reportPending() },
+
+    /**
+     * Drop everything INCLUDING the duplicate-suppression memory. Only for a deliberate mic-off,
+     * where the next utterance is genuinely a new intent and must not be eaten as a duplicate.
+     * Never call this on a route change, an unmount, a chooser re-open, or after a save.
+     */
+    resetSession() { pending = null; lastWrite = null; reportPending() },
+
+    /**
+     * Release the cooldown for a write that did NOT take effect — the save-failure path calls this.
+     * `commit` already declines to arm on a throwing handler, but a handler that resolves and THEN
+     * discovers the POST failed (the async case, which is the common one) needs to say so.
+     * Without it the user's natural recovery — say "next" again — is swallowed for 1500ms, which is
+     * inside the human retry interval and turns a recoverable failure into an unrecoverable one.
+     */
+    invalidateLastWrite() { lastWrite = null },
 
     stats() { return { ...stats } },
   }

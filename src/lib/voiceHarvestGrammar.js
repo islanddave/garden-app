@@ -31,8 +31,18 @@
 import { HARVEST_UNITS, WEIGHT_UNITS, MAX_PLAUSIBLE, MAX_PLAUSIBLE_WEIGHT_G } from './harvest-constants.js'
 
 // Exact-match command vocabulary. Kept SMALL on purpose: every token added here is a word that can
-// no longer be the whole of a search utterance, and the set is checked against the live crop and
-// variety vocabulary by the test file rather than assumed disjoint.
+// no longer be the whole of a search utterance.
+//
+// DISJOINTNESS — what is actually checked, corrected 2026-08-27. This previously claimed the set is
+// "checked against the live crop and variety vocabulary by the test file". It is not: the test
+// checks a hardcoded 28-name array. A crucible seat swept 2,742 distinct tokens across four bundled
+// corpora and found no true collision (its one apparent hit, `repeat`, is a `harvest_habit` enum
+// value, not a crop name), so disjointness HOLDS today — but it holds by luck of the current data,
+// not by a guard. It cannot cover the uncoverable case at all: a PLANTING NAME is free text with no
+// vocabulary file, so a planting Dave names "next" would collide with a save.
+// The guard that would actually cover it belongs at the call site, not here: do not treat a
+// whole-utterance command match as a command while the chooser's live result set contains an exact
+// name match for that same text.
 export const COMMANDS = {
   next: 'save_and_advance',
   save: 'save',

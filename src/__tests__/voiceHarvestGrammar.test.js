@@ -23,6 +23,16 @@ describe("BD-068 — Dave's stated flow, end to end", () => {
     expect(seq[3]).toMatchObject({ kind: 'command', command: 'save_and_advance' })
   })
 
+  // WHAT THE DEVICE ACTUALLY HEARD, which is NOT what Dave said — and until this test existed,
+  // deleting `counts: 'count'` from UNIT_ALIASES reddened ZERO of these 47 tests (measured). The
+  // suite pinned the spoken forms and left the heard forms covered only by a different file. Two of
+  // four phrases in the real run arrived in a form the strict map would have rejected, so these are
+  // the load-bearing aliases, not the aspirational ones.
+  it('parses the forms Chrome ACTUALLY emitted, not the ones Dave spoke', () => {
+    expect(classify('three counts')).toMatchObject({ kind: 'quantity', value: 3, unit: 'count' })
+    expect(classify('231 G')).toMatchObject({ kind: 'weight', value: 231, unit: 'g' })
+  })
+
   it('reaches the same result when the recogniser spells the number out', () => {
     // Chrome's recogniser is inconsistent about digits vs words for 3-digit numbers, so both forms
     // have to land on the same value or the flow is a coin flip.
@@ -100,13 +110,16 @@ describe('the axis question — which field a spoken unit lands in', () => {
     expect(classify('four cups').kind).toBe('quantity')
   })
 
-  it('emits only units the app and its server CHECK already accept', () => {
-    const seen = new Set()
+  // POSITIVE sweep. The previous version guarded with `if (r.unit)`, so an alias that stopped
+  // resolving was silently skipped and the assertion still passed — it was structurally unable to
+  // catch a dead alias, which is how the `counts` mutant survived. Every alias must now RESOLVE,
+  // and resolve to a unit the server CHECK accepts.
+  it('every alias resolves, and only to units the app and its server CHECK accept', () => {
     for (const alias of Object.keys(UNIT_ALIASES)) {
       const r = classify(`two ${alias}`)
-      if (r.unit) seen.add(r.unit)
+      expect(r.unit, `alias "${alias}" resolved to nothing`).toBeTruthy()
+      expect([...HARVEST_UNITS, ...WEIGHT_UNITS], `alias "${alias}"`).toContain(r.unit)
     }
-    for (const u of seen) expect([...HARVEST_UNITS, ...WEIGHT_UNITS]).toContain(u)
   })
 
   it('converts to grams the same way toGrams does', () => {

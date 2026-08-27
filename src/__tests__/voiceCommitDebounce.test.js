@@ -40,13 +40,23 @@ const DEVICE_LOG = [
   { t: 13267, end: true },
 ]
 
+// Models a REAL host, which is the thing the first version of this harness got wrong. It drove only
+// final()/sessionEnd() and never tick() — and because the old sessionEnd flushed everything, the
+// tests passed while the settle window never executed. That blind spot is exactly what let the
+// premature-command defect through. A host arms a timer on dueAt(); this advances the clock to each
+// event and then, after the stream ends, runs the timer out so anything still pending settles.
 function replay(events, opts = {}) {
   const commits = []
   const d = createCommitDebouncer({ onCommit: (r, m) => commits.push({ ...r, atMs: m.atMs }), ...opts })
+  let last = 0
   for (const e of events) {
+    last = e.t
+    d.tick(e.t)                       // the host's timer, firing on its way to this event
     if (e.end) d.sessionEnd(e.t)
     else d.final(e.f, e.t)
   }
+  const due = d.dueAt()
+  if (due != null) d.tick(Math.max(due, last + 1))
   return { commits, d }
 }
 
@@ -87,18 +97,38 @@ describe('replaying the real device log', () => {
     expect(commits.filter(c => c.kind === 'weight')).toHaveLength(1)
   })
 
-  it('fires save_and_advance exactly once', () => {
+  // HONESTY NOTE, and it limits what this fixture can be cited for: the device log contains exactly
+  // ONE non-empty `next` final, so this assertion also passes with the layer removed entirely
+  // (measured by the crucible). It evidences that the layer does not INVENT a second command — real,
+  // but weaker than "prevents a double save". The log's one true duplicate is on the WEIGHT axis,
+  // which is idempotent. Duplicate-COMMAND suppression is evidenced ONLY by the synthetic
+  // cross-session case below, i.e. by exactly the kind of invented stream this file's header warns
+  // about. A duplicate command has never been captured on a device.
+  it('does not invent a second command from a stream containing one', () => {
     const { commits } = replay(DEVICE_LOG)
     expect(commits.filter(c => c.kind === 'command')).toHaveLength(1)
   })
 
-  // Proves the fixture is load-bearing rather than decorative: an unguarded consumer — which is what
-  // every current caller of transcribe.js's onResult is — gets a materially worse result from the
-  // SAME stream. If this ever matches the guarded count, the layer has stopped doing anything.
-  it('an unguarded consumer would act 7 times on the same stream, twice wrongly', () => {
-    const naive = DEVICE_LOG.filter(e => e.f).filter(e => e.f.trim() !== '')
+  // WAS VACUOUS — REWRITTEN. The previous version only filtered the fixture array and never called
+  // createCommitDebouncer at all, so it stayed GREEN when the crucible replaced the whole layer with
+  // a pass-through. Its own comment claimed "if this ever matches the guarded count, the layer has
+  // stopped doing anything", which was exactly the assurance it could not provide. Both counts now
+  // come from the same fixture, one through real code.
+  //
+  // The claim about unguarded consumers was ALSO wrong and is corrected here: transcribe.js:194 has
+  // guarded onResult since BUG-VOICEDUPE-003, and transcribe.rawEvents.test.js:154 pins it. This
+  // fixture is the RAW recogniser stream (what the probe measured by bypassing that wrapper), not
+  // what a transcribe.js consumer sees — which is a difference that decides where this layer may sit.
+  it('turns the raw stream into strictly fewer, better actions than acting per final', () => {
+    const naive = DEVICE_LOG.filter(e => e.f && e.f.trim() !== '')
+    const { commits } = replay(DEVICE_LOG)
     expect(naive).toHaveLength(7)
-    expect(naive.map(e => e.f)).toEqual(['cucumber', 'three', 'three counts', '231', '231 G', '231 G', 'next'])
+    expect(commits).toHaveLength(4)
+    expect(commits.length).toBeLessThan(naive.length)
+    // The two the naive path gets WRONG, named rather than counted.
+    expect(naive.map(e => e.f)).toContain('three')
+    expect(naive.map(e => e.f)).toContain('231')
+    expect(commits.filter(c => c.kind === 'search').map(c => c.text)).toEqual(['cucumber'])
   })
 })
 
@@ -126,24 +156,43 @@ describe('cross-session duplicate suppression — the gap transcribe.js cannot c
   // transcribe.js:183 dedupes byte-identical re-delivery, but finalsByIndex (line 134) lives INSIDE
   // startLiveTranscription, so it resets on every re-arm. A duplicate landing after a 16-133ms
   // re-arm meets an empty slot map and passes straight through. Measured duplicate gap: 274ms.
-  it('suppresses a duplicate "next" that arrives in the NEXT session', () => {
+  // NOTE THE MECHANISM CHANGED, and for the better. Now that a write command holds the settle
+  // window past sessionEnd, a duplicate arriving 133ms later (the measured re-arm gap) lands while
+  // the first is STILL PENDING and is absorbed as an exact repeat — it never becomes a second
+  // commit at all, so the cooldown never has to fire. The cooldown is now the backstop for a
+  // duplicate arriving AFTER the window has already closed and the write has landed.
+  it('absorbs a duplicate "next" arriving in the NEXT session, committing once', () => {
     const { commits, d } = replay([
       { t: 13265, f: 'next' },
-      { t: 13267, end: true },       // session ends, commits
+      { t: 13267, end: true },       // Chrome's per-utterance boundary — command held, not flushed
       { t: 13400, f: 'next' },       // re-armed 133ms later; the duplicate lands here
       { t: 13405, end: true },
     ])
+    expect(commits).toHaveLength(1)
+    expect(d.stats().superseded).toBe(1)         // absorbed, not suppressed
+    expect(d.stats().suppressedCommands).toBe(0)
+  })
+
+  it('suppresses a duplicate that arrives after the write has already landed', () => {
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: r => commits.push(r) })
+    d.final('next', 1000)
+    d.tick(1500)                                  // window closes, write lands at 1500
+    expect(commits).toHaveLength(1)
+    d.final('next', 1600); d.tick(2200)           // 700ms after the commit — inside the cooldown
     expect(commits).toHaveLength(1)
     expect(d.stats().suppressedCommands).toBe(1)
   })
 
   it('allows the same command again once the cooldown has passed', () => {
-    const { commits } = replay([
-      { t: 1000, f: 'next' }, { t: 1005, end: true },
-      { t: 1000 + DEFAULT_COMMAND_COOLDOWN_MS + 50, f: 'next' },
-      { t: 1000 + DEFAULT_COMMAND_COOLDOWN_MS + 55, end: true },
-    ])
+    // Timed from the COMMIT, not from the utterance: the first write lands at 1500 (settle window),
+    // so the second must land after 3000. Second utterance at 2600 -> commits at 3100.
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: r => commits.push(r) })
+    d.final('next', 1000); d.tick(1500)
+    d.final('next', 2600); d.tick(3100)
     expect(commits).toHaveLength(2)
+    expect(3100 - 1500).toBeGreaterThan(DEFAULT_COMMAND_COOLDOWN_MS)
   })
 
   // The cooldown is COMMAND-ONLY on purpose. Two identical harvests in a row is a real thing Dave
@@ -155,6 +204,90 @@ describe('cross-session duplicate suppression — the gap transcribe.js cannot c
       { t: 1100, f: 'three counts' }, { t: 1105, end: true },
     ])
     expect(commits).toHaveLength(2)
+  })
+})
+
+// Every case below is a defect the crucible MEASURED in the first version of this layer. Each one
+// was a silent double-write or a swallowed recovery — the exact class the layer exists to prevent,
+// reached through the layer itself.
+describe('crucible-found defects', () => {
+  it('holds a WRITE command past sessionEnd so a continuation can still supersede it', () => {
+    // Was: sessionEnd flushed everything, and since Chrome ends the session after every utterance,
+    // it was the dominant path — the settle window never ran, and a session boundary between "next"
+    // and "next to the fence" committed an unrequested SAVE.
+    const { commits } = replay([
+      { t: 1000, f: 'next' },
+      { t: 1002, end: true },              // Chrome's per-utterance boundary
+      { t: 1200, f: 'next to the fence' }, // the continuation, next session
+      { t: 1202, end: true },
+    ])
+    expect(commits).toHaveLength(1)
+    expect(commits[0].kind).toBe('search')
+  })
+
+  it('still flushes DATA at sessionEnd — the 500ms is paid only on the destructive verb', () => {
+    const { commits } = replay([{ t: 1000, f: '231 grams' }, { t: 1002, end: true }])
+    expect(commits).toEqual([expect.objectContaining({ kind: 'weight', value: 231 })])
+  })
+
+  it('resetPending does NOT disarm duplicate suppression', () => {
+    // Was: a single reset() cleared the cooldown, so a reset between two "next"s 276ms apart let
+    // BOTH commit. Every natural host implementation calls this on a chooser re-open or an unmount.
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: r => commits.push(r) })
+    d.final('next', 1000); d.tick(1600)
+    d.resetPending()
+    d.final('next', 1876); d.tick(2500)
+    expect(commits).toHaveLength(1)
+    expect(d.stats().suppressedCommands).toBe(1)
+  })
+
+  it('suppresses across DIFFERENT write verbs — the cooldown keys on class, not string', () => {
+    // Was: `next` -> save_and_advance and `save` -> save are different strings that both write, so
+    // one spoken word heard two ways committed twice 300ms apart.
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: r => commits.push(r) })
+    d.final('next', 1000); d.tick(1600)
+    d.final('save', 1700); d.tick(2300)
+    expect(commits).toHaveLength(1)
+  })
+
+  it('does NOT arm the cooldown when the commit handler throws, so a retry is admitted', () => {
+    const seen = []
+    const errs = []
+    const d = createCommitDebouncer({
+      onCommit: r => { if (seen.length === 0) { seen.push(r); throw new Error('save failed') } seen.push(r) },
+      onCommitError: (r, e) => errs.push(e.message),
+    })
+    d.final('next', 1000); d.tick(1600)
+    expect(errs).toEqual(['save failed'])
+    d.final('next', 1700); d.tick(2300)   // inside the cooldown, but the first write never landed
+    expect(seen).toHaveLength(2)
+    expect(d.stats().committed).toBe(1)   // only the one that returned counts
+  })
+
+  it('invalidateLastWrite releases the cooldown for an async save that failed after returning', () => {
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: r => commits.push(r) })
+    d.final('next', 1000); d.tick(1600)
+    d.invalidateLastWrite()               // the POST rejected a moment later
+    d.final('next', 1900); d.tick(2500)   // well inside 1500ms
+    expect(commits).toHaveLength(2)
+  })
+
+  it('reports a suppressed command instead of swallowing it silently', () => {
+    // Was: a suppressed command produced no onCommit, no pending, nothing — indistinguishable from
+    // a dead mic, an unheard utterance, or a failed save.
+    const suppressed = []
+    const d = createCommitDebouncer({ onCommit: () => {}, onSuppressed: (r, why) => suppressed.push(why) })
+    d.final('next', 1000); d.tick(1600)
+    d.final('next', 1700); d.tick(2300)
+    expect(suppressed).toEqual(['cooldown'])
+  })
+
+  it('a throwing onPending cannot kill the session', () => {
+    const d = createCommitDebouncer({ onCommit: () => {}, onPending: () => { throw new Error('render blew up') } })
+    expect(() => { d.final('cucumber', 1000); d.tick(1600) }).not.toThrow()
   })
 })
 
@@ -227,7 +360,7 @@ describe('the pending channel — what a confirmation UI would read', () => {
     const onCommit = vi.fn()
     const d = createCommitDebouncer({ onCommit })
     d.final('next', 1000)
-    d.reset()
+    d.resetPending()
     d.tick(5000)
     expect(onCommit).not.toHaveBeenCalled()
   })
