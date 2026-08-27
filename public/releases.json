@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.60.1",
+    "date": "2026-08-27",
+    "highlights": [
+      "Restores the Lambda config drift guard, which had been failing since the weather-station config moved out of the public repo into an environment variable"
+    ]
+  },
+  {
     "version": "4.60.0",
     "date": "2026-08-27",
     "highlights": [

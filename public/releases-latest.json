@@ -1,7 +1,7 @@
 {
-  "version": "4.60.0",
+  "version": "4.60.1",
   "date": "2026-08-27",
   "highlights": [
-    "Voice debug probe now runs the harvest commit layer for real: it shows what would have been saved, when each utterance settles, and whether the settle timer ever fires — plus an opt-in long-run mode for the 20-utterance outdoor fixture. Admin diagnostics only, no user-facing voice feature yet"
+    "Restores the Lambda config drift guard, which had been failing since the weather-station config moved out of the public repo into an environment variable"
   ]
 }

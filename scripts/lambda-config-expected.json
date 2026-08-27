@@ -55,7 +55,7 @@
       "SECRET_NAME": null,
       "UPDATE_LEDGER_GOLDENS": null,
       "AWN_SECRET_NAME": null,
-      "AWN_STATIONS_JSON": null,
+      "AWN_STATIONS_JSON": true,
       "AWN_FRESHNESS_MAX_MIN": null,
       "AWN_RAIN_MIN_DAILY_IN": null,
       "AWN_RAIN_MAX_DAILY_IN": null
