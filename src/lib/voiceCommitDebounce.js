@@ -1,0 +1,191 @@
+// src/lib/voiceCommitDebounce.js
+//
+// V5-HARVESTVOICEFLOW-001 (BD-068) — INVESTIGATION ARTIFACT, STILL UNWIRED. Nothing in src/ imports
+// this but its own test file. Built on Dave's instruction after the on-device probe run of
+// 2026-08-27, whose log is the fixture the tests replay (project-state/voiceflow-feasibility-V100
+// -20260826.md §Device log, gardening-docs).
+//
+// WHY THIS EXISTS. The probe answered the question the feature hung on — Chrome Android re-arms the
+// mic in 16-133 ms, gesture-free, with no permission re-prompt — and then surfaced a different
+// problem that no amount of desk reasoning had predicted: THE RESULT STREAM IS NOISY AND
+// NON-MONOTONIC. In 13 seconds of speaking four phrases, Chrome delivered:
+//
+//   * 11 finals with an EMPTY transcript;
+//   * finals for a PREFIX of what Dave was still saying, superseded 195 ms and 353 ms later
+//       6385ms FINAL "three"        ->  6580ms FINAL "three counts"
+//      10323ms FINAL "231"          -> 10676ms FINAL "231 G"
+//   * the same final twice — "231 G" at 10676 ms and again at 10950 ms.
+//
+// A consumer that acts on each final as it lands therefore searches for "three" and for "231", and —
+// the serious case — fires save_and_advance TWICE off one spoken "next", silently skipping a
+// planting. `isFinal` does not mean settled. This layer is what makes it mean settled.
+//
+// THE DUPLICATE IS THE VOICEDUPE BUG. Dave, 2026-08-27, on reading the probe log: "I suspect the
+// 'emitted twice' is the same bug we've been chasing in the mic inputs for weeks." He is right, and
+// the repo already proves it — `transcribe.js:183-185` carries an explicit guard whose own comment
+// reads "Byte-identical re-delivery: not new speech, nothing changed, drop it entirely", added for
+// BUG-VOICEDUPE-003 after his 2026-08-24 "bitter bitter melon" report. So Chrome genuinely
+// re-delivers a final at the SAME result index, and a consumer that appends turns that into a
+// doubled WORD ("Chinese Chinese") while a consumer that acts turns it into a doubled ACTION. Same
+// root cause, two symptoms, seen at two layers. The probe reproduced it because it iterates
+// `ev.results` from `ev.resultIndex` exactly as transcribe.js does but WITHOUT the slot guard — an
+// earlier note in this investigation hedged that the duplicate might be a probe artifact; it is not,
+// and that hedge is withdrawn.
+//
+// WHAT THE EXISTING FIX CANNOT COVER, and the reason this layer needs its own cross-session defence:
+// `finalsByIndex` is declared INSIDE startLiveTranscription (transcribe.js:134), so it is PER
+// SESSION and resets on every re-arm. For the single-capture flow it was written for — one session
+// per press-and-hold — that is complete. In a continuous flow re-arming every 16-133 ms it is not:
+// a duplicate that lands in the NEXT session meets a fresh, empty slot map at index 0 and passes the
+// guard untouched. The measured duplicate gap was 274 ms and the measured re-arm gap 16-133 ms, so a
+// duplicate crossing a session boundary is not hypothetical — it is well inside the observed range.
+// That gap is exactly what DEFAULT_COMMAND_COOLDOWN_MS below closes, and it is why the cooldown is
+// keyed on wall-clock rather than on session identity.
+//
+// THE ONE INVARIANT WORTH STATING UP FRONT, because every rule below serves it: an utterance commits
+// AT MOST ONCE, and only after nothing has superseded it. Dave's own framing — "a silent wrong save
+// is worse than a slow form" — decides every tie in favour of committing later or not at all.
+//
+// PURE STATE MACHINE, TIME PASSED IN. There is no clock and no timer here: every entry point takes
+// the timestamp as an argument. That is what lets the tests replay the device log literally, at its
+// real inter-event gaps, with no fake timers and no flake — the fixture IS the evidence. A
+// production host would own the timer and call `tick()`; `dueAt()` tells it when. That host is
+// deliberately NOT built (BD-068: "do not ship a half-flow off this row").
+import { classify, normalise } from './voiceHarvestGrammar.js'
+
+// Settle window. The observed supersede gaps were 195 ms and 353 ms, so 500 ms clears both with
+// margin. It is the single latency/safety dial: shorter feels quicker and risks committing a prefix,
+// longer is safer and adds dead time between "next" and the following chooser.
+export const DEFAULT_SETTLE_MS = 500
+
+// A command that commits cannot commit again for this long. This is the ONLY defence against the
+// duplicate-final case, and it has to be cross-session: the duplicate "231 G" arrived 274 ms after
+// its twin, and at a 16-133 ms re-arm a duplicate can easily land in the NEXT session, where the
+// pending-supersede logic cannot see it. The cost is that a genuine double "next" inside 1.5 s is
+// swallowed and Dave says it again; the cost of the alternative is two saves and a skipped planting
+// he never sees. Not symmetric, so not a tunable.
+export const DEFAULT_COMMAND_COOLDOWN_MS = 1500
+
+/**
+ * @param {object}   opts
+ * @param {function} opts.onCommit  (result, meta) => void — fires ONCE per settled utterance.
+ * @param {function} [opts.onPending] (result|null) => void — the not-yet-committed utterance, for a
+ *   live echo. This is the channel a confirmation UI would read (investigation question 4, still
+ *   undecided); it is offered because the debounce is what makes such an echo honest — before this,
+ *   there was no moment at which "what is about to be saved" was a stable value.
+ * @param {number}   [opts.settleMs]
+ * @param {number}   [opts.commandCooldownMs]
+ */
+export function createCommitDebouncer({
+  onCommit,
+  onPending = null,
+  settleMs = DEFAULT_SETTLE_MS,
+  commandCooldownMs = DEFAULT_COMMAND_COOLDOWN_MS,
+} = {}) {
+  let pending = null          // { text, norm, result, atMs }
+  let lastCommand = null      // { command, atMs }
+  const stats = { droppedEmpty: 0, superseded: 0, regressed: 0, suppressedCommands: 0, committed: 0 }
+
+  const reportPending = () => { if (onPending) onPending(pending ? pending.result : null) }
+
+  function commit(atMs) {
+    if (!pending) return
+    const { result } = pending
+    pending = null
+
+    if (result.kind === 'command') {
+      // Cross-session duplicate suppression — see DEFAULT_COMMAND_COOLDOWN_MS.
+      if (lastCommand && lastCommand.command === result.command && (atMs - lastCommand.atMs) < commandCooldownMs) {
+        stats.suppressedCommands += 1
+        reportPending()
+        return
+      }
+      lastCommand = { command: result.command, atMs }
+    }
+
+    stats.committed += 1
+    reportPending()
+    onCommit(result, { atMs })
+  }
+
+  return {
+    /**
+     * A final result from the recogniser. `tMs` is the event's timestamp.
+     */
+    final(text, tMs) {
+      const norm = normalise(text)
+
+      // 1. EMPTY FINALS — 11 of them in a 13-second run. Dropped before anything else, so they can
+      //    neither commit, supersede, nor restart a settle window.
+      if (!norm) { stats.droppedEmpty += 1; return }
+
+      const result = classify(text)
+
+      if (pending) {
+        // 2. SUPERSEDE. A later final whose text EXTENDS the pending one is the same utterance,
+        //    more completely heard — replace it and restart the window. Identical text is a prefix
+        //    of itself, so this is also the in-session de-duplication: "231 G" twice replaces once
+        //    and commits once.
+        //
+        //    This is also the rule that makes a premature COMMAND safe, which is the whole point:
+        //    a bare "next" pends rather than saving, and if the utterance was really "next to the
+        //    fence" the extension arrives inside the window and the pending command is replaced by
+        //    a search. Without the window, that save has already happened.
+        if (norm !== pending.norm && norm.startsWith(pending.norm)) {
+          stats.superseded += 1
+          pending = { text, norm, result, atMs: tMs }
+          reportPending()
+          return
+        }
+        if (norm === pending.norm) {
+          // Exact repeat: refresh the window without counting a supersede, so a stream of identical
+          // finals cannot commit twice and cannot inflate the supersede stat.
+          stats.superseded += 1
+          pending = { text, norm, result, atMs: tMs }
+          reportPending()
+          return
+        }
+        // 3. REGRESSION — the new final is a TRUNCATION of what is pending ("three counts" then
+        //    "three"). DEFENSIVE, NOT OBSERVED: it did not occur in the device log, and it is
+        //    handled by keeping the longer pending text rather than by trusting arrival order,
+        //    because the alternative silently downgrades a fully-heard utterance to a partial one.
+        if (pending.norm.startsWith(norm)) { stats.regressed += 1; return }
+
+        // 4. A genuinely different utterance. The pending one is finished — commit it, then pend
+        //    the new one. This is what keeps two real phrases inside one session from collapsing.
+        commit(tMs)
+      }
+
+      pending = { text, norm, result, atMs: tMs }
+      reportPending()
+    },
+
+    /**
+     * The recogniser's session ended. Chrome fires this 1-2 ms after the last final of an utterance
+     * (measured), so it is a genuine utterance boundary and the pending value can commit at once
+     * rather than waiting out the window — that is what keeps "next" from costing an extra 500 ms
+     * before the next chooser opens.
+     *
+     * KNOWN LIMIT, worth stating rather than discovering later: this assumes a supersede never
+     * arrives AFTER the session that produced its prefix. That held for all four utterances in the
+     * device log, but it is an assumption about Chrome's emulated-continuous path, not a guarantee.
+     * If a cross-session supersede is ever observed, the fix is to stop flushing here and let the
+     * window expire — one line, at the cost of that 500 ms.
+     */
+    sessionEnd(tMs) { commit(tMs) },
+
+    /** Drive the settle window. A host calls this from a timer; `dueAt()` says when. */
+    tick(tMs) { if (pending && (tMs - pending.atMs) >= settleMs) commit(tMs) },
+
+    /** When the pending utterance would commit on its own, or null. */
+    dueAt() { return pending ? pending.atMs + settleMs : null },
+
+    /** The utterance awaiting settle — what a confirmation UI would show. */
+    peek() { return pending ? pending.result : null },
+
+    /** Drop everything without committing — for leaving the flow mid-utterance. */
+    reset() { pending = null; lastCommand = null; reportPending() },
+
+    stats() { return { ...stats } },
+  }
+}
