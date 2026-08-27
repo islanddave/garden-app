@@ -252,6 +252,73 @@ describe('ContinuousVoiceProbe — S0 debounce host', () => {
     expect(paths()).toMatch(/sessionEnd 3/)
   })
 
+  // C3 — the short budget hard-stops inside gate B6's own fixture, so V101's gate could not be run by
+  // V101's instrument. These pin that the raise is real, opt-in, and still bounded.
+  describe('run budget (C3)', () => {
+    const budget = () => screen.getByTestId('voice-run-budget').textContent
+    const toggle = () => screen.getByTestId('voice-longrun-toggle')
+
+    // Drive N complete utterance cycles the way the device does: a final, then a session end that
+    // the host auto-re-arms from.
+    const cycles = (rec, n) => {
+      for (let i = 0; i < n; i++) act(() => { rec.deliverFinal('cucumber', 0); rec.endSession() })
+    }
+
+    it('defaults OFF, with the short budget shown', async () => {
+      await act(async () => { render(<ContinuousVoiceProbe />) })
+      expect(toggle().checked).toBe(false)
+      expect(budget()).toContain('24 re-arms / 4 min')
+      expect(budget()).not.toContain('LONG RUN')
+    })
+
+    it('shows the raised budget once armed', async () => {
+      await act(async () => { render(<ContinuousVoiceProbe />) })
+      act(() => { fireEvent.click(toggle()) })
+      expect(budget()).toContain('150 re-arms / 20 min')
+      expect(budget()).toContain('LONG RUN')
+    })
+
+    it('stops at 24 re-arms on the short budget — the B6 fixture would die mid-run', async () => {
+      const rec = await startProbe()
+      cycles(rec, 24)
+      expect(rec.started).toBe(true)          // the 24th re-arm is still allowed
+      act(() => { rec.endSession() })
+      expect(rec.started).toBe(false)
+      expect(probeLog()).toMatch(/cap reached \(24 re-arms\)/)
+      expect(screen.getByText('Start probe')).toBeTruthy()
+    })
+
+    it('survives past 24 re-arms on the long budget', async () => {
+      await act(async () => { render(<ContinuousVoiceProbe />) })
+      act(() => { fireEvent.click(screen.getByTestId('voice-longrun-toggle')) })
+      await act(async () => { fireEvent.click(screen.getByText('Start probe')) })
+      const rec = mic.latest()
+
+      cycles(rec, 40)
+
+      expect(rec.started).toBe(true)
+      expect(probeLog()).not.toContain('cap reached')
+      expect(probeLog()).toContain('LONG RUN')
+    })
+
+    it('cannot be changed mid-run, so the captured budget and the shown one never disagree', async () => {
+      await startProbe()
+      expect(screen.getByTestId('voice-longrun-toggle').disabled).toBe(true)
+    })
+
+    it('the long budget is still a hard stop, not an unbounded mic', async () => {
+      await act(async () => { render(<ContinuousVoiceProbe />) })
+      act(() => { fireEvent.click(screen.getByTestId('voice-longrun-toggle')) })
+      await act(async () => { fireEvent.click(screen.getByText('Start probe')) })
+      const rec = mic.latest()
+
+      advance(20 * 60 * 1000)
+
+      expect(probeLog()).toContain('wall-clock budget reached')
+      expect(rec.started).toBe(false)
+    })
+  })
+
   it('releases the mic and cancels the pending tick on unmount', async () => {
     const rec = await startProbe()
     act(() => { rec.deliverFinal('next', 0) })

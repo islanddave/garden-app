@@ -63,8 +63,19 @@ import { P } from '../lib/constants.js'
 import { classify } from '../lib/voiceHarvestGrammar.js'
 import { createCommitDebouncer, WRITE_CLASS } from '../lib/voiceCommitDebounce.js'
 
-const MAX_RESTARTS = 24          // hard stop so a forgotten probe cannot hold the mic open forever
-const MAX_RUN_MS = 4 * 60 * 1000 // ...and a wall-clock stop for the same reason
+// RUN BUDGETS (C3). Two hard stops, so a forgotten probe cannot hold the mic open forever: a re-arm
+// count and a wall clock. The short pair is right for the 4-phrase fixture and WRONG for gate B6.
+const SHORT_BUDGET = { restarts: 24, runMs: 4 * 60 * 1000, label: '24 re-arms / 4 min' }
+
+// B6 asks for ≥20 utterances outdoors, in one session, with Jen's voice and an offline segment. The
+// device re-arms roughly 5 sessions per 4 utterances, so 20 utterances is ~25 re-arms — meaning the
+// short budget hard-stops INSIDE the fixture it exists to measure, and V101's own gate could not be
+// executed by V101's own instrument. This is sized for that run plus mis-hears and retries.
+//
+// IT IS STILL BOUNDED, deliberately. "Long run" must not mean "no stop": twenty minutes of live mic
+// is the cost of the measurement, not a licence, and it is opt-in per run because the person who
+// forgets a 4-minute probe will also forget a 20-minute one.
+const LONG_BUDGET = { restarts: 150, runMs: 20 * 60 * 1000, label: '150 re-arms / 20 min' }
 
 function ctor() {
   if (typeof window === 'undefined') return null
@@ -136,6 +147,7 @@ export default function ContinuousVoiceProbe() {
   const [debStats, setDebStats] = useState(null)
   const [hostMetrics, setHostMetrics] = useState(emptyHostMetrics)
   const [heldOutstanding, setHeldOutstanding] = useState(false)
+  const [longRun, setLongRun] = useState(false)
 
   const recRef = useRef(null)
   const t0Ref = useRef(0)
@@ -144,6 +156,10 @@ export default function ContinuousVoiceProbe() {
   const restartsRef = useRef(0)
   const runTimerRef = useRef(null)
   const wallClockTimerRef = useRef(null)
+  // CAPTURED AT START, never read live. A budget that can change under a run in progress makes the
+  // run's own stop condition unknowable after the fact; the toggle is also disabled while running,
+  // so the two can never disagree.
+  const budgetRef = useRef(SHORT_BUDGET)
 
   const debRef = useRef(null)
   const tickTimerRef = useRef(null)
@@ -308,8 +324,10 @@ export default function ContinuousVoiceProbe() {
         syncStats()
       }
       if (stopRequestedRef.current) { setRunning(false); log('— probe stopped —'); return }
-      if (restartsRef.current >= MAX_RESTARTS) {
-        setRunning(false); log(`— cap reached (${MAX_RESTARTS} re-arms) —`); return
+      if (restartsRef.current >= budgetRef.current.restarts) {
+        setRunning(false)
+        log(`— cap reached (${budgetRef.current.restarts} re-arms) — turn on Long run for the ≥20-utterance fixture`)
+        return
       }
       restartsRef.current += 1
       // THE RESTART, called with NO user gesture. Whether this succeeds is itself a finding: if
@@ -339,6 +357,8 @@ export default function ContinuousVoiceProbe() {
     metricsRef.current = emptyHostMetrics()
     heldWriteRef.current = null
     commitPathRef.current = null
+    budgetRef.current = longRun ? LONG_BUDGET : SHORT_BUDGET
+    log(`run budget: ${budgetRef.current.label}${longRun ? '  (LONG RUN — mic can stay live for 20 minutes)' : ''}`)
 
     // A FRESH DEBOUNCER PER RUN, deliberately: `resetSession()` would clear the duplicate-suppression
     // memory of a layer that might still be holding a pending utterance from the previous run, which
@@ -386,9 +406,10 @@ export default function ContinuousVoiceProbe() {
     wallClockTimerRef.current = setTimeout(() => {
       if (stopRequestedRef.current) return
       stopRequestedRef.current = true
+      log('— wall-clock budget reached —')
       try { recRef.current?.stop() } catch { /* ignore */ }
-    }, MAX_RUN_MS)
-  }, [arm, log])
+    }, budgetRef.current.runMs)
+  }, [arm, log, longRun])
 
   // NOTE: the tick timer is deliberately NOT cleared here. A write pending at the moment Dave taps
   // stop is exactly the case the run is measuring — letting the timer land records whether it ever
@@ -454,8 +475,36 @@ export default function ContinuousVoiceProbe() {
           <div><strong>Re-arm gap min/avg/max:</strong> {gapSummary}</div>
           <div><strong>Mic permission before / after:</strong> {env.permBefore} / {env.permAfter}</div>
           <div><strong>On-device:</strong> {env.onDevice}</div>
+          <div data-testid="voice-run-budget">
+            <strong>Run budget:</strong> {(longRun ? LONG_BUDGET : SHORT_BUDGET).label}
+            {longRun ? ' — LONG RUN' : ''}
+          </div>
         </div>
       </div>
+
+      {/* C3. The short budget hard-stops inside gate B6's own fixture, so the gate could not be
+          executed by the instrument that is supposed to execute it. Opt-in per run, disabled while
+          running, and it says out loud how long the mic can stay live — a 20-minute recorder is a
+          thing you choose, not a default you inherit. */}
+      <label
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, minHeight: 44, marginBottom: 12,
+          fontSize: '0.85rem', color: running ? P.light : P.dark, cursor: running ? 'not-allowed' : 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          data-testid="voice-longrun-toggle"
+          checked={longRun}
+          disabled={running}
+          onChange={(e) => setLongRun(e.target.checked)}
+          style={{ width: 22, height: 22, flex: '0 0 auto' }}
+        />
+        <span>
+          <strong>Long run</strong> — for the ≥20-utterance outdoor fixture (gate B6).
+          Raises the caps to {LONG_BUDGET.label}; the mic can stay live for the whole of it.
+        </span>
+      </label>
 
       {/* S0 — the debounce layer's first execution outside a test file. */}
       <div style={box} data-testid="voice-debounce-panel">
