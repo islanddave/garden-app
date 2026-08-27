@@ -450,6 +450,28 @@ function useVoiceInput() {
     setFieldKey(null)
   }, [])
 
+  // RELEASE THE MIC ON UNMOUNT. This hook had no useEffect at all, so a recogniser started here
+  // outlived the component: navigate away mid-dictation and nothing stopped it. The engine ends the
+  // session on its own silence timeout, so the leak was bounded rather than permanent — but for
+  // those seconds the mic indicator stays lit on a page the user has already left, the handlers
+  // still hold the OLD onResult and set state on a dead component, and a remount can put a SECOND
+  // recogniser alongside the first. The probe (ContinuousVoiceProbe) has had this cleanup since it
+  // was written; the hook that Dave actually dictates through did not.
+  //
+  // DETACH BEFORE ABORTING, for the same reason start() detaches the outgoing instance above: a
+  // teardown can still dispatch, and a handler that runs after unmount writes into a form that is
+  // gone. abort() rather than stop(): stop() is the graceful shutdown that asks the engine to
+  // FINALIZE, which is exactly the dispatch we are trying not to receive.
+  useEffect(() => () => {
+    const rec = recRef.current
+    if (!rec) return
+    rec.onresult = null
+    rec.onend    = null
+    rec.onerror  = null
+    try { rec.abort() } catch { /* already gone */ }
+    recRef.current = null
+  }, [])
+
   return { start, stop, listening, fieldKey, supported }
 }
 
