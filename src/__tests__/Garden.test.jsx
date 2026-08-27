@@ -91,8 +91,10 @@ describe('Garden — unified accordion tree', () => {
   it('a planting row opens its own PlantingDetail page (V3-NAV-001)', async () => {
     await renderGarden()
     fireEvent.click(screen.getByLabelText(/Expand Tomatoes/))
-    // Sungold (p1) under project a → /projects/a/plantings/p1, not /projects/a.
-    expect(screen.getByLabelText('Open Sungold').getAttribute('href')).toBe('/projects/a/plantings/p1')
+    // Sungold (p1) → /plantings/p1: its OWN page, not the container's, and reached DIRECT rather
+    // than through the /projects/:id/plantings/:id redirect shim, which lands in the same place
+    // but shows a project id in the address bar for the hop.
+    expect(screen.getByLabelText('Open Sungold').getAttribute('href')).toBe('/plantings/p1')
   })
 })
 

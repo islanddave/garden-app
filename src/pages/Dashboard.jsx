@@ -304,7 +304,7 @@ export default function Dashboard() {
               {recentEvents.map((ev, i) => {
                 const single = (ev.batch_count ?? 1) <= 1
                 const to = single && ev.plant_id
-                  ? `/projects/${ev.project_id}/plantings/${ev.plant_id}`
+                  ? `/plantings/${ev.plant_id}`
                   // V4-PROJHIDE-001: no bare project link when projects are hidden — the activity
                   // feed is the neutral destination. Flag OFF keeps the project link.
                   : (PROJECTS_HIDDEN ? '/feed' : `/projects/${ev.project_id}`)
@@ -601,7 +601,7 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
   }
 
   return (
-    <Link to={`/projects/${nextAttention.project_id}/plantings/${nextAttention.plant_id}`} style={{ textDecoration: 'none', display: 'block', marginBottom: '12px' }}>
+    <Link to={`/plantings/${nextAttention.plant_id}`} style={{ textDecoration: 'none', display: 'block', marginBottom: '12px' }}>
       <div style={{
         display: 'flex',
         alignItems: 'center',

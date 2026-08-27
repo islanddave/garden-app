@@ -25,7 +25,10 @@ describe('V4-TAPCARD-001 — whole-card tap target', () => {
     render(<PlantingTile planting={pl} />)
     const links = screen.getAllByRole('link', { name: 'Open Bhut Jolokia' })
     expect(links.length).toBe(1)
-    expect(links[0].getAttribute('href')).toBe('/projects/pr3/plantings/pl9')
+    // Direct, NOT through the /projects/:id/plantings/:id redirect shim. The shim lands in the
+    // right place but shows a project id in the address bar for the hop, and the standing
+    // "no more Projects" directive is about what Dave sees, not only about controls.
+    expect(links[0].getAttribute('href')).toBe('/plantings/pl9')
     expect(links[0].getAttribute('data-testid')).toBe('planting-tile-link')
   })
 

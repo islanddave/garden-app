@@ -209,6 +209,18 @@ describe('V4-BATCHUNDO-001 — the three honest states of the undoable set', () 
     expect(screen.getByTestId('batch-undo-notice').textContent).toContain('None of the bulk logs below')
   })
 
+  // The fourth and last of the redirect-shim link sites. A solo (non-batch) row is the shape that
+  // reaches it, which is why the assertion lives in this file — the fixture that proves the notice
+  // is absent is also the only fixture in the suite that renders the link.
+  it('links a solo event DIRECT, never through the /projects redirect shim', async () => {
+    install({ events: [{ id: 'solo', event_type: 'watering', created_at: '2026-08-18T14:02:00.000Z', project_id: 'p1', project_name: 'Bed 3' }], batches: { batches: [] } })
+    await openFeed()
+    await waitFor(() => expect(screen.getAllByText('watering').length).toBeGreaterThan(1))
+    const links = Array.from(document.querySelectorAll('a'))
+    expect(links.some((a) => a.getAttribute('href') === '/events/solo')).toBe(true)
+    expect(links.filter((a) => (a.getAttribute('href') || '').startsWith('/projects'))).toHaveLength(0)
+  })
+
   it('says nothing at all when the feed shows no bulk logs', async () => {
     install({ events: [{ id: 'solo', event_type: 'watering', created_at: '2026-08-18T14:02:00.000Z', project_id: 'p1', project_name: 'Bed 3' }], batches: { batches: [] } })
     await openFeed()

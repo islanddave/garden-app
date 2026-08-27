@@ -96,7 +96,11 @@ export default function PlantingTile({
           retagged from a Link to a plain div). Non-interactive body spans (name/variety/status/
           caretaker) stay under the overlay so tapping them opens the planting. */}
       <Link
-        to={`/projects/${pl.project_id}/plantings/${pl.id}`}
+        // V4-ARCHIVEBROWSE-001 follow-on: link DIRECT, not through the /projects redirect shim.
+        // The shim lands in the right place, but the project id is visible in the address bar for
+        // the hop — and "no more Projects" is a standing directive about what Dave should ever see,
+        // not only about controls. The shim route stays registered for old bookmarks.
+        to={`/plantings/${pl.id}`}
         aria-label={`Open ${pl.name}`}
         data-testid="planting-tile-link"
         onClick={onOpen || undefined}

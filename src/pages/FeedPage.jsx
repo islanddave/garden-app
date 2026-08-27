@@ -298,7 +298,7 @@ export default function FeedPage() {
                 )
                 // Single-event rows deep-link to their event detail; batch rows are not individually addressable.
                 return (!isBatch && ev.project_id)
-                  ? <Link key={ev.id} to={`/projects/${ev.project_id}/events/${ev.id}`} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{inner}</Link>
+                  ? <Link key={ev.id} to={`/events/${ev.id}`} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{inner}</Link>
                   : <div key={ev.id}>{inner}</div>
               })}
             </div>

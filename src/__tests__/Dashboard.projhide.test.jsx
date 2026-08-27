@@ -130,10 +130,22 @@ describe('Dashboard — V4-PROJHIDE-001 (flag ON)', () => {
   })
 
   it('renders no link into the retired /projects tree', async () => {
+    // FIXTURE WIDENED, and this is the point of the change rather than setup noise: as written,
+    // this guard passed while Dashboard still carried TWO /projects links, because neither
+    // recent_events nor give_attention was populated so neither code path ever rendered. A guard
+    // whose fixture cannot reach the lines it forbids is not a guard. Both are now present.
     primeDash({
       inactive_projects_count: 4,
       water_due: [{ project_id: 'pr1', project_name: 'Bed Alpha', plant_id: 'pl1', plant_name: 'Sungold' }],
       active_projects: [{ id: 'pr1', name: 'Bed Alpha', status: 'growing', last_activity_at: '2026-08-01' }],
+      recent_events: [{
+        id: 'ev1', plant_id: 'pl1', project_id: 'pr1', plant_name: 'Sungold',
+        event_type: 'water', batch_count: 1, created_at: '2026-08-26T12:00:00Z',
+      }],
+      give_attention: {
+        project_id: 'pr1', plant_id: 'pl1', plant_name: 'Sungold', project_name: 'Bed Alpha',
+        days_since: 9,
+      },
     })
     render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled())

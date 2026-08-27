@@ -3,7 +3,7 @@
     "version": "4.61.0",
     "date": "2026-08-27",
     "highlights": [
-      "Archived plantings finally have a home: a new Archived page reachable from the Garden action row lists everything you have archived, with its crop, status and archive date, and an Unarchive button on every row — until now the only way back was a 6-second Undo strip"
+      "Archived plantings finally have a home: a new Archived page reachable from the Garden action row lists everything you have archived, with its crop, status and archive date, and an Unarchive button on every row — until now the only way back was a 6-second Undo strip. Also: pressing Enter twice while a harvest is saving no longer logs it twice, and links to a planting or event no longer route through a project URL"
     ]
   },
   {

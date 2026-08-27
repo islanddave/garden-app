@@ -1453,14 +1453,36 @@ export default function EventNew() {
     setPickerResetNonce(n => n + 1)
   }
 
+  // RETURNS { ok, reason? , eventId? } — V5-HARVESTVOICEFLOW-001 gate B5 / condition C6.
+  //
+  // It returned `undefined` on all nine paths: success, POST failure, and every one of the eight
+  // validation refusals. Nothing could tell them apart, so a caller that saves and then advances
+  // would advance over a FAILED save — the chooser opens on top of the inline error, the next
+  // spoken crop overwrites plant_id, and the harvest is silently abandoned. No current caller reads
+  // the return (all four are event handlers), so this is purely additive today; it exists so the
+  // first caller that needs to know cannot be written against a contract that does not exist.
+  //
+  // THE RE-ENTRANCY GUARD IS THE LOAD-BEARING LINE. The disabled Save button was the only defence,
+  // and it only covers a double-tap ON THAT BUTTON: the Enter-key path (`e.key === 'Enter'` →
+  // handleSubmit, below) bypasses it entirely, as would any programmatic caller. `saving` is true
+  // only between setSaving(true) and its reset, and BOTH exits from that window reset it — the
+  // catch around the POST, and the end of the success path — so this cannot strand the form in a
+  // permanently unsubmittable state. Verified: exactly one `return` sits inside that window and it
+  // resets first.
+  //
+  // AN IDEMPOTENCY KEY IS DELIBERATELY NOT HERE. B5 asks for one alongside these two, but it is a
+  // server contract (the events Lambda would have to honour and de-duplicate it), and nothing can
+  // fire a duplicate save programmatically until the voice flow's S3 slice exists. Adding a key the
+  // server ignores would look like protection and be none.
   async function handleSubmit(e, { keepMode = 'type' } = {}) {
     e.preventDefault()
-    if (!form.event_type)  { setError('Select an event type above.'); return }
+    if (saving) return { ok: false, reason: 'in_flight' }
+    if (!form.event_type)  { setError('Select an event type above.'); return { ok: false, reason: 'no_event_type' } }
     // V4-LOGTARGET-001 invariant: this gate is also what enforces plant_id ⇒ project_id
     // at submit — a POST can never leave here as {project_id:'', plant_id:X} (the server's
     // exactly_one_parent CHECK would 500 on it). Sticky seeding preserves the same
     // invariant at mount (a remembered plant only seeds alongside its remembered project).
-    if (!form.project_id)  { setError('Select a project.'); return }
+    if (!form.project_id)  { setError('Select a project.'); return { ok: false, reason: 'no_project' } }
 
     // V4-PLANTREQUIRED-001 (Lane 3, flag-gated): per-type required-planting gate (D2 matrix).
     // Inert unless PLANTING_REQUIRED_ENABLED — the planting field is otherwise optional (Lane 2).
@@ -1469,7 +1491,7 @@ export default function EventNew() {
     // planting is structurally required for those types — implied HERE, independent of the telemetry-
     // gated PLANTING_REQUIRED_ENABLED (the two gates stay decoupled by design).
     if ((PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) && !form.plant_id) {
-      setError('Choose a planting for this event.'); return
+      setError('Choose a planting for this event.'); return { ok: false, reason: 'no_planting' }
     }
 
     // BUG-SNAPATTACH-001: a photo event with no photo is never intentional, and prod has 22 of them
@@ -1480,14 +1502,14 @@ export default function EventNew() {
     // so nothing ever failed. Gate it like the harvest quantity gate above: refuse the save, inline,
     // while the photo can still be added. NOT a warn-and-proceed — proceeding is the bug.
     if (form.event_type === 'photo' && !photoFile) {
-      setError('Add a photo for a photo event — or pick a different event type.'); return
+      setError('Add a photo for a photo event — or pick a different event type.'); return { ok: false, reason: 'no_photo' }
     }
 
     // V1.2a-2 Wave 3: harvest panel gate — block the POST on invalid quantity,
     // surface an inline error near the quantity field.
     if (form.event_type === 'harvest') {
       const hErr = validateHarvest()
-      if (hErr) { setHarvestError(hErr); return }
+      if (hErr) { setHarvestError(hErr); return { ok: false, reason: 'harvest_invalid' } }
       setHarvestError(null)
     }
 
@@ -1502,15 +1524,15 @@ export default function EventNew() {
     // V4-LOSSEVENT-001 expressly refused.
     if (isPlantReductionEventType(form.event_type)) {
       const rErr = validateReductionInput(form.event_type, reduction)
-      if (rErr) { setReductionError(rErr); return }
+      if (rErr) { setReductionError(rErr); return { ok: false, reason: 'reduction_invalid' } }
       setReductionError(null)
     }
 
     // V4-FLAG-001: flag-mode gates — a flag must target a specific planting (so DrG surfaces it)
     // and must carry a severity (required by the events validator + drives DrG urgency).
     if (form.event_type === 'flag_issue') {
-      if (!form.plant_id) { setError("Choose the plant you're flagging."); return }
-      if (!severity)      { setError('Pick how urgent it is.'); return }
+      if (!form.plant_id) { setError("Choose the plant you're flagging."); return { ok: false, reason: 'no_planting' } }
+      if (!severity)      { setError('Pick how urgent it is.'); return { ok: false, reason: 'no_severity' } }
     }
 
     if (form.event_type === 'watering') ux.tap()  // submit tap (watering flow only)
@@ -1609,7 +1631,7 @@ export default function EventNew() {
     } catch (err) {
       setSaving(false)
       setError(friendlyError(err))
-      return
+      return { ok: false, reason: 'post_failed' }
     }
 
     // V1.2a-2 Wave 3: remember the chosen harvest unit for next time.
@@ -1885,6 +1907,10 @@ export default function EventNew() {
     } else {
       showToast({ message: keepMode === 'type' ? 'Saved — pick the next plant' : 'Saved — log the next event' })
     }
+    // The ninth path, and the only one that means the row exists. `eventId` is the id the POST
+    // returned, so a caller that saves and advances has the thing it just created rather than only
+    // the knowledge that nothing threw.
+    return { ok: true, eventId }
   }
 
   // ── V4-HARVFEEDBACK-001 S5b: the body-replacing early return is DELETED ────────────────────

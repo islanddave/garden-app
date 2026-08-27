@@ -119,7 +119,8 @@ describe('Garden — per-planting photo uploader (V3-IA restore)', () => {
     const input = document.getElementById('plant-list-photo-p1')
     expect(input.closest('a')).toBeNull()
     const navLink = screen.getByLabelText('Open Sungold')
-    expect(navLink.getAttribute('href')).toBe('/projects/a/plantings/p1')
+    // Direct, not through the /projects redirect shim (see PlantingTile.test.jsx).
+    expect(navLink.getAttribute('href')).toBe('/plantings/p1')
   })
 
   it('driving the hidden input runs the 3-step wire contract with old Plants.jsx payload semantics', async () => {
