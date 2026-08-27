@@ -51,6 +51,13 @@ import { recordVoiceEvent, recordVoiceMark } from './voiceDebug.js'
 export const START_TIMEOUT_MS = 3500
 export const NO_SPEECH_TIMEOUT_MS = 8000
 
+// BUG-VOICEDUPE-004 — how long after a final an identical final at a DIFFERENT slot is treated as
+// the engine echoing rather than the user repeating. Measured device intervals for the echo: 272 ms
+// (2026-08-27) and 274 ms (the run before it). A deliberate repeat has to wait out a segment-closing
+// pause first, so it lands far outside this. n=2 and loose against it on purpose — see the guard in
+// onresult for what to revisit if a longer echo ever appears in a log.
+export const DUPLICATE_ECHO_WINDOW_MS = 600
+
 function getSpeechRecognitionCtor() {
   if (typeof window === 'undefined') return null
   return window.SpeechRecognition || window.webkitSpeechRecognition || null
@@ -130,8 +137,19 @@ export function startLiveTranscription(opts = {}) {
   // -001's stated fear — that keying on index ALONE would delete words the user really said — is
   // what the slot model answers. A revision does not drop the second delivery; it REPLACES the slot
   // and the transcript is re-joined from the slots, so the revised text wins and nothing is lost.
-  // Saying the same word twice for real still lands on two different indices and is preserved.
+  //
+  // QUALIFIED BY -004 (2026-08-27). This block used to end "saying the same word twice for real
+  // still lands on two different indices and is preserved", full stop. That is still true for a
+  // deliberate repeat, which has to wait out a segment-closing pause — but it was ALSO true of the
+  // engine echoing a settled final onto the next index 272 ms later, which a device capture finally
+  // timed. The cross-slot guard below is bounded by that interval so the sentence keeps holding for
+  // the case it was written about and stops covering the case it was not.
   const finalsByIndex  = []
+  // Session-scoped, and session-scoped is a real limit worth naming: a continuous flow that re-arms
+  // every 15-22 ms gets a FRESH one per session, so an echo that crosses a session boundary is not
+  // covered here. lib/voiceCommitDebounce.js's wall-clock cooldown is what covers that case for the
+  // consumer that needs it; this guard is for the single-capture flows.
+  let lastFinal = null   // { text, at } — the most recent NON-EMPTY final
   let startWatchdog    = null
   let noSpeechWatchdog = null
   let started   = false
@@ -181,9 +199,44 @@ export function startLiveTranscription(opts = {}) {
       const isFinal    = !!r.isFinal
       if (isFinal) {
         const prev = finalsByIndex[i]
-        // Byte-identical re-delivery: not new speech, nothing changed, drop it entirely.
+        // Byte-identical re-delivery AT THE SAME SLOT: not new speech, nothing changed, drop it.
         if (prev === transcript) continue
+
+        // ...AND THE SAME TEXT AT A NEW SLOT WITHIN A SHORT WINDOW.
+        //
+        // THIS PATH WAS KNOWN AND DELIBERATELY LEFT OPEN. transcribe.rawEvents.test.js pinned it as
+        // a "residual blind spot", declining to fix it on the grounds that it is "indistinguishable
+        // from speech Dave genuinely repeated, and dropping it would delete real words to remove
+        // fake ones." That reasoning was right on the evidence available: with only text and index,
+        // the two cases are the same event.
+        //
+        // WHAT CHANGED IS THE EVIDENCE, not the argument. The 2026-08-27 device run — the first
+        // capture to record resultIndex per event (gate B1) — timed the pair:
+        //     9916ms  resultIndex=4 len=5   [4] FINAL "310 G"
+        //    10188ms  resultIndex=5 len=6   [5] FINAL "310 G"
+        // 272 ms apart, and the run before it measured the same pair at 274 ms. A human repeating a
+        // phrase cannot produce a second final that fast: the first has to END, which takes a pause
+        // long enough to close the segment, before the words can be said again. A repeat inside one
+        // breath ("very very ripe") arrives as ONE final and never reaches this branch at all.
+        //
+        // So the discriminator the earlier decision lacked is TIME, and the guard uses exactly that
+        // and nothing else. Outside the window a repeat is treated as real speech and kept — the
+        // deliberate-repeat case the blind spot was protecting is still protected, by measurement
+        // rather than by leaving the bug in.
+        //
+        // CALIBRATION IS n=2 (272 ms, 274 ms) and the threshold is deliberately loose against it.
+        // If a longer engine interval ever shows up in a device log, this number is the thing to
+        // revisit — not the rule.
+        if (transcript && lastFinal &&
+            lastFinal.text === transcript &&
+            (Date.now() - lastFinal.at) <= DUPLICATE_ECHO_WINDOW_MS) continue
+
         finalsByIndex[i] = transcript
+        // Tracks the most recent non-empty final, which is NOT the same as slot i-1: the device run
+        // carried 9 empty finals interleaved with the real ones, so i-1 is very often ''. Real
+        // speech in between replaces this and breaks the comparison, which is what keeps two
+        // genuine identical readings either side of a different value from collapsing.
+        if (transcript) lastFinal = { text: transcript, at: Date.now() }
         // Re-join from the slots rather than appending, so a revision REPLACES its slot instead of
         // extending the transcript. Never carries a stale prefix, because it is recomputed whole.
         finalTranscript = finalsByIndex.filter(Boolean).map((s) => s.trim()).filter(Boolean).join(' ')

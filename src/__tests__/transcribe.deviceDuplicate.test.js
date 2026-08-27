@@ -51,29 +51,49 @@ describe('transcribe.js vs the duplicate the device actually emits', () => {
     expect(emitted).toEqual(['310'])
   })
 
-  // THE DEVICE SEQUENCE, verbatim from the 2026-08-27 log.
-  it('does NOT drop the same duplicate when it arrives at the NEXT slot', () => {
+  // THE DEVICE SEQUENCE, verbatim from the 2026-08-27 log. This was CHARACTERIZATION when written
+  // — it asserted ['310', '310 G', '310 G'] and passed — and the expectation flipping is the whole
+  // record of the fix. The two assertions above did NOT change with it, which is the property that
+  // says the original guard was extended rather than replaced.
+  it('drops the same duplicate when it arrives at the NEXT slot', () => {
     const emitted = run((rec) => {
       rec.deliverFinal('310', 3)
       rec.deliverFinal('310 G', 4)
       rec.deliverFinal('310 G', 5)   // 272ms later on the device — a new index, same text
     })
-    // Documented as CHARACTERIZATION of today's behaviour, not as desired behaviour: the slot guard
-    // is index-keyed, so index 5 is a fresh slot and the duplicate emits. A consumer that appends
-    // therefore builds "310 G 310 G". If a fix lands, this expectation is what changes — and the
-    // two assertions above are what must NOT change with it.
-    expect(emitted).toEqual(['310', '310 G', '310 G'])
+    expect(emitted).toEqual(['310', '310 G'])
   })
 
-  it('and the joined transcript carries the doubling too', () => {
-    let last = null
-    startLiveTranscription({ onResult: (r) => { if (r.isFinal) last = r } })
-    const rec = mic.latest()
-    rec.deliverFinal('310 G', 4)
-    rec.deliverFinal('310 G', 5)
-    expect(last.transcript).toBe('310 G')
-    // The slots are re-joined whole on every final, so both entries are in the accumulated text.
-    // This is the value a consumer reading the full transcript would show.
-    expect(mic.latest()).toBeTruthy()
+  it('scans past the empty finals the device interleaves, not just slot i-1', () => {
+    // The same run carried 9 empty finals among the real ones, so the slot immediately before a
+    // duplicate is very often ''. A guard that only looked at i-1 would miss the real case.
+    const emitted = run((rec) => {
+      rec.deliverFinal('310 G', 4)
+      rec.deliverFinal('', 5)
+      rec.deliverFinal('', 6)
+      rec.deliverFinal('310 G', 7)
+    })
+    expect(emitted.filter(Boolean)).toEqual(['310 G'])
+  })
+
+  it('does NOT drop a repeat with real speech in between', () => {
+    // The scan stops at the first non-empty slot, so an intervening utterance breaks the comparison.
+    // Two genuine "310 G" readings either side of a different value are two real values.
+    const emitted = run((rec) => {
+      rec.deliverFinal('310 G', 0)
+      rec.deliverFinal('blueberries', 1)
+      rec.deliverFinal('310 G', 2)
+    })
+    expect(emitted).toEqual(['310 G', 'blueberries', '310 G'])
+  })
+
+  it('leaves a DIFFERENT value at the next slot alone', () => {
+    // The non-vacuity floor: a guard that dropped every next-slot final would pass the duplicate
+    // tests above and silently eat half of what the user says.
+    const emitted = run((rec) => {
+      rec.deliverFinal('310 G', 4)
+      rec.deliverFinal('2.5 cups', 5)
+    })
+    expect(emitted).toEqual(['310 G', '2.5 cups'])
   })
 })

@@ -15,7 +15,7 @@ import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
 installStoragePolyfill()
 
-import { startLiveTranscription } from '../lib/transcribe.js'
+import { startLiveTranscription, DUPLICATE_ECHO_WINDOW_MS } from '../lib/transcribe.js'
 import { setVoiceDebugEnabled, readVoiceDebugLog } from '../lib/voiceDebug.js'
 
 class FakeSR {
@@ -171,16 +171,20 @@ describe('transcribe.js — a revised final replaces its slot (BUG-VOICEDUPE-003
   })
 })
 
-// ── CHARACTERIZATION — current behavior, NOT desired behavior ──────────────────────────────────
-// One residual duplication path remains, deliberately NOT fixed: it is indistinguishable from
-// speech Dave genuinely repeated, and dropping it would delete real words to remove fake ones —
-// exactly the trade BUG-VOICEDUPE-001's key was chosen to avoid. The slot model does not reach it,
-// because the two deliveries land on genuinely different indices.
-describe('transcribe.js — residual blind spot: repeat at a NEW index (characterization)', () => {
-  it('CHARACTERIZATION: the same text re-emitted at a NEW index is counted twice', () => {
-    // An on-device recognizer restart can replay the tail of an utterance at a fresh index. Indices
-    // differ, so neither an index key nor an index+text key suppresses it — and it is byte-identical
-    // to a user who really did say the word twice.
+// ── BUG-VOICEDUPE-004 — the residual blind spot, CLOSED by time rather than by text ────────────
+//
+// This block used to be a CHARACTERIZATION that asserted the doubling, deliberately unfixed because
+// the echo "is indistinguishable from speech Dave genuinely repeated, and dropping it would delete
+// real words to remove fake ones." That reasoning was correct on the evidence then available: with
+// only text and index, the two cases ARE the same event.
+//
+// The 2026-08-27 device capture added the missing axis. The echo lands 272 ms after its twin (274 ms
+// in the run before it), and a deliberate repeat cannot: the first final has to END, which needs a
+// pause long enough to close the segment, before the words can be said again. So the guard keys on
+// the interval and nothing else — and the case the blind spot was protecting is still protected,
+// now by measurement instead of by leaving the bug in.
+describe('transcribe.js — BUG-VOICEDUPE-004: the echo at a NEW index', () => {
+  it('drops an identical final at a new index inside the echo window', () => {
     const { sr, onEnd } = session()
     sr.emit(0, [{ text: 'check the beans', final: true }])
     sr.emit(1, [
@@ -188,6 +192,29 @@ describe('transcribe.js — residual blind spot: repeat at a NEW index (characte
       { text: 'check the beans', final: true },
     ])
     sr.onend()
+    expect(finalText(onEnd)).toBe('check the beans')
+  })
+
+  it('KEEPS a genuine repeat that arrives after the window — the blind spot existed to protect this', () => {
+    // The whole point of the original refusal to fix. Skewing Date forward past the window is what
+    // separates a person saying it again from the engine saying it for them; advancing a fake timer
+    // would not, because the deliveries here are synchronous.
+    const { sr, onEnd } = session()
+    sr.emit(0, [{ text: 'check the beans', final: true }])
+    const realNow = Date.now
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow.call(Date) + DUPLICATE_ECHO_WINDOW_MS + 200)
+    try {
+      // Two entries: emit() sets results = items, so index 1 is only reachable when the array has
+      // one. A single-item emit at resultIndex 1 never enters the loop at all — which is how the
+      // first version of this test passed for the wrong reason.
+      sr.emit(1, [
+        { text: 'check the beans', final: true },
+        { text: 'check the beans', final: true },
+      ])
+      sr.onend()
+    } finally {
+      Date.now.mockRestore()
+    }
     expect(finalText(onEnd)).toBe('check the beans check the beans')
   })
 })
