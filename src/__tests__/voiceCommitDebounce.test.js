@@ -45,18 +45,29 @@ const DEVICE_LOG = [
 // tests passed while the settle window never executed. That blind spot is exactly what let the
 // premature-command defect through. A host arms a timer on dueAt(); this advances the clock to each
 // event and then, after the stream ends, runs the timer out so anything still pending settles.
-function replay(events, opts = {}) {
+// `host: 'timer'` (default) models a PERFECT host — the timer always fires. `host: 'no-timer'`
+// models a host whose timer never arrives, which is not hypothetical: Chrome Android throttles and
+// freezes timers on hidden pages, and the production host does not exist yet.
+//
+// BOTH MODES EXIST BECAUSE THE DEFAULT ONE HIDES THE RISK. When write commands moved off sessionEnd
+// and onto tick(), the harness was rebuilt to always run the timer — on exactly the axis where the
+// risk had just moved, in the direction that conceals it. Every green test for that change was green
+// because the harness guaranteed the thing the change now depends on. The no-timer mode is the
+// falsifying half, and the characterisation test below states plainly what it shows.
+function replay(events, { host = 'timer', ...opts } = {}) {
   const commits = []
   const d = createCommitDebouncer({ onCommit: (r, m) => commits.push({ ...r, atMs: m.atMs }), ...opts })
   let last = 0
   for (const e of events) {
     last = e.t
-    d.tick(e.t)                       // the host's timer, firing on its way to this event
+    if (host === 'timer') d.tick(e.t)
     if (e.end) d.sessionEnd(e.t)
     else d.final(e.f, e.t)
   }
-  const due = d.dueAt()
-  if (due != null) d.tick(Math.max(due, last + 1))
+  if (host === 'timer') {
+    const due = d.dueAt()
+    if (due != null) d.tick(Math.max(due, last + 1))
+  }
   return { commits, d }
 }
 
@@ -288,6 +299,92 @@ describe('crucible-found defects', () => {
   it('a throwing onPending cannot kill the session', () => {
     const d = createCommitDebouncer({ onCommit: () => {}, onPending: () => { throw new Error('render blew up') } })
     expect(() => { d.final('cucumber', 1000); d.tick(1600) }).not.toThrow()
+  })
+})
+
+// The boss pass found that holding write commands past sessionEnd — itself a fix for a measured
+// defect — created two new ones and invalidated a docstring. These pin the second round.
+describe('boss-found defects introduced BY the sessionEnd fix', () => {
+  // CHARACTERISATION, not a wish. This is what the layer does when the host timer never arrives,
+  // which Chrome Android makes real by freezing timers on hidden pages. Stated so the next reader
+  // does not have to discover it: a held write is LOST, silently. The default harness force-runs the
+  // timer and cannot see this — which is why the no-timer mode exists.
+  it('CHARACTERISATION: with no host timer, a held write is silently lost', () => {
+    const { commits, d } = replay([
+      { t: 1000, f: 'next' },
+      { t: 1002, end: true },
+    ], { host: 'no-timer' })
+    expect(commits).toHaveLength(0)
+    expect(d.peek()).toMatchObject({ command: 'save_and_advance' })  // still pending, forever
+  })
+
+  it('but DATA still lands without a timer, because sessionEnd flushes it', () => {
+    const { commits } = replay([
+      { t: 1000, f: '231 grams' },
+      { t: 1002, end: true },
+    ], { host: 'no-timer' })
+    expect(commits).toHaveLength(1)
+  })
+
+  it('discards a stale pending write rather than resurrecting it', () => {
+    // Was: tick(60000) on a write pended at t=0 committed a SIXTY-SECOND-OLD save, stamped with the
+    // tick's timestamp. On a platform that freezes timers on hidden pages that fires against
+    // whatever planting is on screen when the page wakes.
+    const commits = []
+    const suppressed = []
+    const d = createCommitDebouncer({
+      onCommit: r => commits.push(r),
+      onSuppressed: (r, why) => suppressed.push(why),
+    })
+    d.final('next', 0)
+    d.sessionEnd(2)
+    d.tick(60000)
+    expect(commits).toHaveLength(0)
+    expect(suppressed).toEqual(['stale'])
+    expect(d.stats().staleDropped).toBe(1)
+  })
+
+  it('still commits a write that ticks inside the staleness bound', () => {
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: r => commits.push(r) })
+    d.final('next', 0); d.sessionEnd(2); d.tick(600)   // past settle (500), inside stale (1000)
+    expect(commits).toHaveLength(1)
+  })
+
+  it('invalidateLastWrite is token-scoped — a failed save cannot clear a different save cooldown', () => {
+    // Was: save A fails async and clears the cooldown that save B armed, admitting a duplicate of B.
+    // Three commits where two are correct.
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: (r, m) => commits.push({ r, atMs: m.atMs }) })
+    d.final('next', 0); d.tick(500)                    // A commits at 500
+    const tokenA = commits[0].atMs
+    d.final('next', 1600); d.tick(2100)                // B commits at 2100 (cooldown expired)
+    expect(commits).toHaveLength(2)
+    d.invalidateLastWrite(tokenA)                      // A's POST failed — must NOT clear B's arm
+    d.final('next', 2300); d.tick(2800)                // duplicate of B, inside B's cooldown
+    expect(commits).toHaveLength(2)
+    expect(d.stats().suppressedCommands).toBe(1)
+  })
+
+  it('invalidateLastWrite with the CURRENT token does release the cooldown', () => {
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: (r, m) => commits.push({ r, atMs: m.atMs }) })
+    d.final('next', 0); d.tick(500)
+    d.invalidateLastWrite(commits[0].atMs)
+    d.final('next', 700); d.tick(1200)
+    expect(commits).toHaveLength(2)
+  })
+
+  // The docstring on resetPending said it was "SAFE for every in-flow transition". Holding writes
+  // past sessionEnd falsified that: the window in which a host can silently destroy a requested save
+  // went from ~2ms to >=500ms, and the docstring names four hosts that call it inside that window.
+  it('CHARACTERISATION: resetPending during a held write destroys it', () => {
+    const commits = []
+    const d = createCommitDebouncer({ onCommit: r => commits.push(r) })
+    d.final('next', 0); d.sessionEnd(2)
+    d.resetPending()
+    d.tick(1000)
+    expect(commits).toHaveLength(0)
   })
 })
 

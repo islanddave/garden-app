@@ -81,6 +81,23 @@ describe('command vs data — the discrimination that prevents a silent wrong sa
   })
 })
 
+// Removed 2026-08-27 on the boss pass. `undo`/`cancel`/`scratch that` pointed `discard` at the
+// CURRENT form, so the moment someone said "undo" after a bad save it would have discarded the next
+// blank record while the mistake stayed saved. `repeat` contradicted the no-read-back non-goal.
+// Pinned as absent so they cannot drift back in unwired — and so that when `undo` returns, it is
+// obvious it must be re-added deliberately, pointing at undoSessionRow.
+describe('verbs deliberately NOT in the vocabulary', () => {
+  it.each(['undo', 'cancel', 'scratch that', 'repeat', 'read it back'])('treats %j as data, not a command', (u) => {
+    expect(classify(u).kind).not.toBe('command')
+  })
+
+  it('exposes no discard or read_back verb at all', () => {
+    const verbs = new Set([...Object.values(COMMANDS), ...Object.values(COMMAND_PHRASES)])
+    expect(verbs.has('discard')).toBe(false)
+    expect(verbs.has('read_back')).toBe(false)
+  })
+})
+
 describe('homophones — the to/two/too case Dave named explicitly', () => {
   it.each([
     ['to count', 2], ['too count', 2], ['two count', 2],

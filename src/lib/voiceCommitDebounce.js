@@ -93,10 +93,13 @@ export function createCommitDebouncer({
   onCommitError = null,
   settleMs = DEFAULT_SETTLE_MS,
   commandCooldownMs = DEFAULT_COMMAND_COOLDOWN_MS,
+  staleMs = DEFAULT_SETTLE_MS * 2,
 } = {}) {
+  const isWrite = (r) => r.kind === 'command' && !!WRITE_CLASS[r.command]
   let pending = null          // { text, norm, result, atMs }
   let lastWrite = null        // { klass, atMs } — see WRITE_CLASS
   const stats = {
+    staleDropped: 0,
     droppedEmpty: 0, superseded: 0, regressed: 0, suppressedCommands: 0, committed: 0, commitErrors: 0,
   }
 
@@ -222,8 +225,31 @@ export function createCommitDebouncer({
       commit(tMs)
     },
 
-    /** Drive the settle window. A host calls this from a timer; `dueAt()` says when. */
-    tick(tMs) { if (pending && (tMs - pending.atMs) >= settleMs) commit(tMs) },
+    /**
+     * Drive the settle window. A host calls this from a timer; `dueAt()` says when.
+     *
+     * A PENDING WRITE PAST ITS STALENESS BOUND IS DISCARDED, NOT COMMITTED. Measured: before this,
+     * `tick(60000)` on a write pended at t=0 committed a SIXTY-SECOND-OLD save_and_advance, stamped
+     * with the tick's own timestamp. That became reachable only when write commands started waiting
+     * out the window instead of flushing at sessionEnd — a defect introduced by the fix before it.
+     * A commit later than the window is not a settled utterance, it is a resurrected one, and on a
+     * platform that freezes timers on hidden pages it would fire against whatever planting is on
+     * screen when the page wakes.
+     */
+    tick(tMs) {
+      if (!pending) return
+      const age = tMs - pending.atMs
+      if (age < settleMs) return
+      if (isWrite(pending.result) && age > staleMs) {
+        const dropped = pending.result
+        pending = null
+        stats.staleDropped += 1
+        reportPending()
+        if (onSuppressed) { try { onSuppressed(dropped, 'stale') } catch { /* ignore */ } }
+        return
+      }
+      commit(tMs)
+    },
 
     /** When the pending utterance would commit on its own, or null. */
     dueAt() { return pending ? pending.atMs + settleMs : null },
@@ -232,8 +258,17 @@ export function createCommitDebouncer({
     peek() { return pending ? pending.result : null },
 
     /**
-     * Drop the in-flight utterance. SAFE for every in-flow transition — a chooser re-opening, a
-     * route change, the hook unmounting, the echo clearing.
+     * Drop the in-flight utterance.
+     *
+     * NO LONGER SAFE ON THE DESTRUCTIVE PATH, and the docstring used to claim it was. Once write
+     * commands began waiting out the settle window instead of flushing at sessionEnd, the window in
+     * which this silently destroys a REQUESTED save went from ~2 ms to >=500 ms — and the four hosts
+     * named below are exactly the ones that fire inside it. A host that calls this while a write is
+     * pending is cancelling a save the user asked for, with no signal. Check `peek()` first, or
+     * commit it. Pinned as characterisation in the test file rather than papered over.
+     *
+     * Safe for every in-flow transition on the DATA path — a chooser re-opening, a route change, the
+     * hook unmounting, the echo clearing.
      *
      * THIS IS THE ONE THAT HOSTS WILL REACH FOR, so it is the one that must not disarm anything.
      * The previous single `reset()` cleared the cooldown too, and that was a live footgun on the
@@ -258,7 +293,15 @@ export function createCommitDebouncer({
      * Without it the user's natural recovery — say "next" again — is swallowed for 1500ms, which is
      * inside the human retry interval and turns a recoverable failure into an unrecoverable one.
      */
-    invalidateLastWrite() { lastWrite = null },
+    invalidateLastWrite(token) {
+      // TOKEN-SCOPED, and it must be. Measured race in the identity-free version: save A commits,
+      // save B legitimately commits after the cooldown expires, THEN A's async POST fails and the
+      // host calls this — clearing the cooldown B armed, so a transport duplicate of B is admitted.
+      // Three commits where two are correct: a double save of B, caused by A's failure. The token is
+      // the `atMs` the host already receives in onCommit's meta.
+      if (token != null && (!lastWrite || lastWrite.atMs !== token)) return
+      lastWrite = null
+    },
 
     stats() { return { ...stats } },
   }

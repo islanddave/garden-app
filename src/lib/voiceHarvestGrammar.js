@@ -43,24 +43,35 @@ import { HARVEST_UNITS, WEIGHT_UNITS, MAX_PLAUSIBLE, MAX_PLAUSIBLE_WEIGHT_G } fr
 // The guard that would actually cover it belongs at the call site, not here: do not treat a
 // whole-utterance command match as a command while the chooser's live result set contains an exact
 // name match for that same text.
+// FOUR VERBS WERE REMOVED 2026-08-27, not deferred. `undo`, `cancel`, `scratch that` and `repeat`
+// all shipped classified-but-unwired, and two of them were actively dangerous:
+//
+//   `undo`/`cancel` -> `discard` is a SEMANTIC TRAP. After a save the row is committed server-side
+//   and the form has reset, so the moment anyone says "undo" is the moment they just noticed a bad
+//   save — and this would have discarded the NEXT, BLANK record while the mistake stayed saved.
+//   The word that means "fix my mistake" did the opposite of the user's intent at the only moment
+//   they would ever say it, and produced no error. The app already has the right mechanism
+//   (`undoSessionRow`, a per-row undo on the harvest session ledger); when undo returns it must
+//   point THERE, as its own slice with its own test.
+//
+//   `repeat` -> `read_back` contradicted the design's own non-goal: spoken read-back was explicitly
+//   ruled out, yet saying "read it back" still classified as a command and did nothing.
+//
+// Removing them also widens the search vocabulary back — every token here is a word that can no
+// longer be the whole of a spoken crop name.
 export const COMMANDS = {
   next: 'save_and_advance',
   save: 'save',
   done: 'finish',
   stop: 'finish',
-  cancel: 'discard',
-  undo: 'discard',
   clear: 'clear_field',
-  repeat: 'read_back',
 }
 
 // Multi-word command phrases, matched exactly like the single tokens above. "scratch that" earns its
 // place because it is what people actually say mid-dictation; it is not a synonym anyone would utter
 // as a crop name.
 export const COMMAND_PHRASES = {
-  'scratch that': 'discard',
   'start over': 'clear_field',
-  'read it back': 'read_back',
   'next one': 'save_and_advance',
   'save and next': 'save_and_advance',
 }
