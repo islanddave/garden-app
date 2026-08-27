@@ -44,7 +44,8 @@ export default function Login() {
             Garden Tracker
           </h1>
           <p style={{ color: P.light, marginTop: '6px', fontSize: '0.875rem', margin: '6px 0 0' }}>
-            Dave &amp; Jen · Conway, MA
+            {/* Served UNAUTHENTICATED — anyone who loads the app sees this. No names, no town. */}
+            Gardens at Mathews
           </p>
         </div>
 

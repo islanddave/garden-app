@@ -15,7 +15,6 @@ export default function ProjectPublic() {
   const { slug } = useParams()
   const [project, setProject] = useState(null)
   const [events,  setEvents]  = useState([])
-  const [locPath, setLocPath] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound,setNotFound]= useState(false)
 
@@ -27,7 +26,6 @@ export default function ProjectPublic() {
         if (!proj) { setNotFound(true); setLoading(false); return }
         setProject(proj)
         setEvents((proj.events || []).filter(Boolean))
-        setLocPath(proj.location_path ?? null)
         setLoading(false)
       })
       .catch(() => {
@@ -58,8 +56,9 @@ export default function ProjectPublic() {
             {project.species && <span style={{ fontSize: '0.85rem', color: P.light, fontStyle: 'italic' }}>{project.species}</span>}
             <ProjectStatusBadge status={project.status} />
           </div>
-          {locPath && <div style={{ fontSize: '0.875rem', color: P.mid, marginBottom: 8 }}>📍 {locPath}</div>}
-          {project.start_date && <div style={{ fontSize: '0.82rem', color: P.light }}>Started {formatDate(project.start_date)}</div>}
+          {/* No location line. The route stopped sending location_path 2026-08-27 — see the
+              removal note in lambda/projects/index.js handlePublicProject. */}
+          {project.start_date &&<div style={{ fontSize: '0.82rem', color: P.light }}>Started {formatDate(project.start_date)}</div>}
           {project.description && <p style={{ marginTop: 16, color: P.dark, lineHeight: 1.6, fontSize: '0.95rem' }}>{project.description}</p>}
         </div>
         <hr style={{ border: 'none', borderTop: `1px solid ${P.border}`, margin: '0 0 28px' }} />

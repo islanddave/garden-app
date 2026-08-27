@@ -70,7 +70,12 @@ describe('WS-A1 public share route', () => {
 
     // The security assertion: none of these sensitive columns may appear in the public
     // handler's SELECTs or its response object.
-    for (const forbidden of ['private_notes', 'created_by', 'assignee_user_id', 'workspace_id', 'cover_photo_path']) {
+    // location_path joined this list 2026-08-27. It was previously PUBLISHED here, so unlike the
+    // others it is a removal being pinned, not a column that never shipped: the top-level location
+    // names on this site are House / Stable / Drive / Pasture, which disclose the property rather
+    // than the garden. Asserted against decommented source, so the explanatory comment left at the
+    // removal site in index.js cannot satisfy this guard.
+    for (const forbidden of ['private_notes', 'created_by', 'assignee_user_id', 'workspace_id', 'cover_photo_path', 'location_path']) {
       it(`never references ${forbidden}`, () => {
         expect(publicFn, `public handler leaks ${forbidden}`).not.toContain(forbidden);
       });
@@ -81,7 +86,7 @@ describe('WS-A1 public share route', () => {
       expect(publicFn).not.toMatch(/\.\.\.\s*row\b/);
       expect(publicFn).not.toMatch(/\.\.\.\s*rows\[/);
       // The response object carries the expected public keys.
-      for (const key of ['name:', 'slug:', 'status:', 'species:', 'variety:', 'description:', 'start_date:', 'location_path:', 'events:']) {
+      for (const key of ['name:', 'slug:', 'status:', 'species:', 'variety:', 'description:', 'start_date:', 'events:']) {
         expect(publicFn, `response missing ${key}`).toContain(key);
       }
     });

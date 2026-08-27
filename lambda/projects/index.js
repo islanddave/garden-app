@@ -160,7 +160,11 @@ export async function reparentCore(sql, { subjectId, newParentId, opId, expected
 async function handlePublicProject(slug, secrets) {
   try {
     const sql = neon(secrets.NEON_DATABASE_URL);
-    // Location comes via a LEFT JOIN taking ONLY full_path; raw location_id is never returned.
+    // NO location of any kind. location_path was published here until 2026-08-27; on a site whose
+    // top-level locations are named House / Stable / Drive / Pasture it does not describe a garden
+    // layout, it tells an anonymous reader this is a farmstead with a house and a stable — in a
+    // named town. Dropped with the LEFT JOIN that existed solely to feed it. The forbidden-column
+    // guard in public-route.test.js now pins its absence, so re-adding it fails a test.
     const rows = await sql`
       SELECT /* public-slug: deny-by-default allowlist */
              c.id,
@@ -170,11 +174,8 @@ async function handlePublicProject(slug, secrets) {
              c.species,
              c.variety,
              c.description,
-             to_char(c.start_date, 'YYYY-MM-DD') AS start_date,
-             lwp.full_path AS location_path
+             to_char(c.start_date, 'YYYY-MM-DD') AS start_date
       FROM public.container c
-      LEFT JOIN locations_with_path lwp
-        ON lwp.id = c.location_id AND lwp.deleted_at IS NULL
       WHERE c.slug = ${slug}
         AND c.is_public IS TRUE
         AND c.deleted_at IS NULL
@@ -205,7 +206,6 @@ async function handlePublicProject(slug, secrets) {
       variety: row.variety,
       description: row.description,
       start_date: row.start_date,
-      location_path: row.location_path ?? null,
       events: events.map((e) => ({
         id: e.id,
         event_type: e.event_type,

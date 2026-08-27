@@ -1,7 +1,12 @@
 // WS-A1 — ProjectPublic is the UNAUTHENTICATED `/garden/:slug` share page. It fetches
 // GET /api/projects/public/:slug via apiFetch WITHOUT a token and renders the deny-by-default
-// public projection: name/species/variety/status/location_path + an events timeline. A 404
+// public projection: name/species/variety/status + an events timeline. A 404
 // (apiFetch rejects with err.status = 404) renders the not-found state.
+//
+// location_path was dropped from this route 2026-08-27. PUBLIC_PAYLOAD deliberately STILL carries
+// it: the assertion below is that the page renders no location even when handed one, so the client
+// half of the guard holds independently of the server half in lambda/projects/public-route.test.js.
+// Deleting the field would make that test vacuous.
 //
 // apiFetch is mocked (we control the payload); react-router-dom is REAL — MemoryRouter supplies
 // the :slug param. No jest-dom (L-182): assert with .toBeTruthy() / queryByText.
@@ -48,7 +53,7 @@ function renderAt(slug) {
 }
 
 describe('ProjectPublic (public share page)', () => {
-  it('fetches the public endpoint UNauthenticated and renders species / location / events', async () => {
+  it('fetches the public endpoint UNauthenticated and renders species / events, never a location', async () => {
     apiFetchSpy.mockResolvedValueOnce(PUBLIC_PAYLOAD)
     renderAt('sungold-2026')
 
@@ -60,7 +65,11 @@ describe('ProjectPublic (public share page)', () => {
 
     expect(screen.getByText('Solanum lycopersicum')).toBeTruthy()
     expect(screen.getByText('Sungold')).toBeTruthy()
-    expect(screen.getByText(/Backyard > Raised Bed 3/)).toBeTruthy()
+    // The payload carries location_path and the page must ignore it — neither the path nor the
+    // pin glyph that used to precede it may appear anywhere in the rendered output.
+    expect(screen.queryByText(/Backyard/)).toBeNull()
+    expect(screen.queryByText(/Raised Bed 3/)).toBeNull()
+    expect(document.body.textContent).not.toContain('📍')
     // Events timeline rendered from the allowlisted event fields.
     expect(screen.getByText('Deep soak')).toBeTruthy()
     expect(screen.getByText('First ripe cluster')).toBeTruthy()

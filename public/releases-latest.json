@@ -1,7 +1,8 @@
 {
-  "version": "4.61.0",
+  "version": "4.62.0",
   "date": "2026-08-27",
   "highlights": [
-    "Archived plantings finally have a home: a new Archived page reachable from the Garden action row lists everything you have archived, with its crop, status and archive date, and an Unarchive button on every row. Dictation no longer doubles a word when the recogniser echoes it back — the fix that was supposed to catch that only checked one case, and a phone recording finally showed the other. Also: pressing Enter twice while a harvest is saving no longer logs it twice, the mic is released when you navigate away mid-dictation, and links to a planting or event no longer route through a project URL"
+    "The public garden pages no longer show where in the property a planting lives",
+    "The sign-in page and link previews no longer carry our names or the town"
   ]
 }
