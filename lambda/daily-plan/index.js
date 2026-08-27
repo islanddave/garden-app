@@ -253,6 +253,9 @@ async function fetchStation() {
     const keys = await getAwnKeys();
     if (!keys) return null;
     const st = stationConfig()[0];
+    // AWN_STATIONS_JSON unset/malformed: no gauge to fetch. Return null (== gauge offline) rather than
+    // throwing on st.mac inside this try, so the failure is named in the log instead of swallowed.
+    if (!st) { console.warn('station: no station config (AWN_STATIONS_JSON unset?) — skipping gauge fetch'); return null; }
     const mac = st.mac;
     const base = `https://api.ambientweather.net/v1/devices/${encodeURIComponent(mac)}` +
       `?apiKey=${encodeURIComponent(keys.apiKey)}&applicationKey=${encodeURIComponent(keys.appKey)}`;

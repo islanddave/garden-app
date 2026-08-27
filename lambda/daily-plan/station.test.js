@@ -1,8 +1,26 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import station from './station.js';
 const { deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, remainingHourlyIn, effectiveHour } = station;
 
 const MAC = 'AA:BB:CC:DD:EE:FF';
+const LAT = 41.8888;
+const LNG = -70.7777;
+
+// station.js ships an EMPTY DEFAULT_STATIONS on purpose — the real record (gauge MAC + site coordinate)
+// lives only in the deployed env, because this repo is public. So these tests must supply their own
+// config; they used to inherit the shipped default, which silently coupled every assertion here to
+// production values. Synthetic on both sides asserts exactly the same behaviour.
+let prevStations;
+beforeEach(() => {
+  prevStations = process.env.AWN_STATIONS_JSON;
+  process.env.AWN_STATIONS_JSON = JSON.stringify([
+    { mac: MAC, tz: 'America/New_York', lat: LAT, lng: LNG, schema_version: 1 },
+  ]);
+});
+afterEach(() => {
+  if (prevStations === undefined) delete process.env.AWN_STATIONS_JSON;
+  else process.env.AWN_STATIONS_JSON = prevStations;
+});
 // ET is EDT (-04:00) for all July fixtures. rec(day,'HH',dailyrainin,tempf) at that ET wall-clock.
 const rec = (day, hh, dailyrainin, tempf) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf });
 const NOW = Date.parse('2026-07-06T06:10:00Z'); // 02:10 ET on 2026-07-06 -> D0=07-06 D1=07-05 D2=07-04

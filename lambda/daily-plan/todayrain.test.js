@@ -10,7 +10,7 @@
 // THE ORACLE IS THE INCIDENT. On 2026-08-03 the stored prod plan held recent=0, today=0.98 @ 84% PoP,
 // tomorrow=0, and emitted 200 water_due. A live re-run at 08:37 with today=3.8 @ 92% produced 18, all of
 // them `covered` (Shelf 4 ×15, Stable ×2, Shelf 2 ×1). Those are real figures, used here as fixtures.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import engine from './engine.js';
 import station from './station.js';
 import _cf from './_coverFlags.js';
@@ -18,6 +18,20 @@ const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 
 const { generatePlanForUser, generatePlan, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN } = engine;
 const { deriveStation, mergeStationHydrology } = station;
+
+// station.js ships an EMPTY DEFAULT_STATIONS (public repo — see its header), so deriveStation() needs a
+// config supplied here. The MAC below must match the one the gauge fixtures use further down.
+let prevStations;
+beforeEach(() => {
+  prevStations = process.env.AWN_STATIONS_JSON;
+  process.env.AWN_STATIONS_JSON = JSON.stringify([
+    { mac: 'AA:BB:CC:DD:EE:FF', tz: 'America/New_York', lat: 41.8888, lng: -70.7777, schema_version: 1 },
+  ]);
+});
+afterEach(() => {
+  if (prevStations === undefined) delete process.env.AWN_STATIONS_JSON;
+  else process.env.AWN_STATIONS_JSON = prevStations;
+});
 
 const TODAY = '2026-08-03';
 // resolveCadence spreads cad.default, and the engine reads the _container/_inground variants — a bare

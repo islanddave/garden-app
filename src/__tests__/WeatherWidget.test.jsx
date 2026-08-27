@@ -349,7 +349,10 @@ describe('WeatherWidget — DRG-WXSTATION-002 weather-station source on Today (V
     })
     const { container } = render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
     const text = container.textContent
-    for (const leak of ['F8:B3:B7', 'station+forecast', 'station_floor', 'hourly', '61.2', '-1.4', '4 min']) {
+    // MUST match the station_mac set on the fixture above, or this assertion is vacuous — it would pass
+    // while the real MAC rendered. (It was pinned to the old hardcoded MAC and silently went vacuous the
+    // moment the fixture moved to a synthetic one.)
+    for (const leak of ['AA:BB:CC', 'station+forecast', 'station_floor', 'hourly', '61.2', '-1.4', '4 min']) {
       expect(text).not.toContain(leak)
     }
   })

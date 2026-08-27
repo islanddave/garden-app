@@ -36,11 +36,15 @@
 
 const DAY = 86400000;
 
-// Site latitude. Mirrors station.js DEFAULT_STATIONS[0].lat (42.5089, Conway MA) — duplicated as a
-// plain constant rather than imported because the window dates must not move if the weather-station
-// config is edited or overridden by AWN_STATIONS_JSON. The daylength wall is a property of the
-// GARDEN, not of the rain gauge.
-const SITE_LAT = 42.5089;
+// Site latitude, deliberately COARSE (1dp ~ 11 km — a region, not a dooryard). This repo is public and
+// the full-precision coordinate is the house, so it lives only in env AWN_STATIONS_JSON; this constant
+// does NOT read that env on purpose — the window dates must not move if the weather-station config is
+// edited or overridden. The daylength wall is a property of the GARDEN, not of the rain gauge.
+//
+// Coarsening is free here because daylength is insensitive at this scale: 0.01 deg of latitude moves
+// sunrise/sunset by well under a second, so the Persephone crossing lands on the same civil date. Do not
+// "restore precision" — there is no precision to gain, only a house to disclose.
+const SITE_LAT = 42.5;
 
 // The Persephone threshold. Below ~10 hours of daylight, cool-season growth effectively stops: a crop
 // that is not already near size will not gain any, and its water demand collapses with its growth

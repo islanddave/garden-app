@@ -730,13 +730,22 @@ jobs:
             fail=1
             ENVJSON="{}"
           fi
-          for k in DRY_RUN SYSTEM_CLERK_SUB OWNER_FALLBACK_SUB; do
+          # AWN_STATIONS_JSON is load-bearing AND lives ONLY here: station.js ships an EMPTY default on
+          # purpose (public repo — the record is the gauge MAC + the site coordinate, i.e. the house), so
+          # a wiped env does not fall back to a working config, it silently unbinds the rain gauge and
+          # drops the engine to forecast hydrology. This assertion is the only thing that catches that.
+          for k in DRY_RUN SYSTEM_CLERK_SUB OWNER_FALLBACK_SUB AWN_STATIONS_JSON; do
             v=$(echo "$ENVJSON" | jq -r --arg k "$k" '.[$k] // empty')
             if [[ -z "$v" ]]; then
               echo "::error::INVARIANT 1 BROKEN: $FN env is missing key $k (set-not-merge wipe hazard)"
               fail=1
             fi
           done
+          # Shape, not just presence: a truncated or non-array value parses as "set" above but binds nothing.
+          if ! echo "$ENVJSON" | jq -e '(.AWN_STATIONS_JSON // "") | fromjson? | (type=="array" and length>0 and (.[0] | has("mac") and has("tz") and has("lat") and has("lng")))' >/dev/null; then
+            echo "::error::INVARIANT 1 BROKEN: $FN AWN_STATIONS_JSON is not a non-empty array of {mac,tz,lat,lng}"
+            fail=1
+          fi
           DR=$(echo "$ENVJSON" | jq -r '.DRY_RUN // empty')
           if [[ "$DR" != "false" ]]; then
             echo "::error::INVARIANT 2 BROKEN: $FN DRY_RUN='$DR' (expected 'false') — nightly engine would be dark"

@@ -6,10 +6,18 @@
 
 // Single-station config. schema_version supports the single-MAC -> array-of-stations evolution (V200 §3).
 // MAC + tz are NOT in the DB (no DDL — V200 Out-of-scope); coords ARE (spaces.weather_lat/lng) and are the
-// binding key. Overridable via env AWN_STATIONS_JSON for a future station without redeploying this module.
-const DEFAULT_STATIONS = [
-  { mac: 'F8:B3:B7:82:1F:0D', tz: 'America/New_York', lat: 42.5089, lng: -72.6466, schema_version: 1 },
-];
+// binding key.
+//
+// The real config lives ONLY in env AWN_STATIONS_JSON and is deliberately NOT in this repo: the repo is
+// PUBLIC, and this record is the gauge MAC plus the site coordinate to 4dp — which, for a garden at a
+// house, is the house. Set on garden-daily-plan 2026-08-27; the deploy workflow's env step is a jq
+// read-merge, so it survives deploys, and verify-daily-plan invariant 1 now hard-fails if it goes missing
+// (which is the ONLY thing standing between a wiped env and a silently gauge-less engine).
+//
+// Empty default = fail SAFE, not fail SILENT: with no config the engine binds no station and falls back to
+// forecast hydrology, which is exactly the pre-DRG-WXSTATION-001 behaviour. Callers must handle [] — see
+// the explicit guards in deriveStation() below and fetchStation() in index.js.
+const DEFAULT_STATIONS = [];
 function stationConfig() {
   const raw = process.env.AWN_STATIONS_JSON;
   if (raw) { try { const a = JSON.parse(raw); if (Array.isArray(a) && a.length) return a; } catch (_) { /* fall through to default */ } }
@@ -28,7 +36,7 @@ const COORD_TOL = 0.02; // ~1.5km: bind a station to a Space by matching stored 
 // Anchored on the PHYSICAL ceiling for this location, deliberately NOT on this site's recent weather. The
 // Massachusetts 24-hour rainfall record is 18.15" (Westfield, 1955-08-18/19, Hurricane Diane); 20" clears it
 // with headroom, so no locally possible event can ever be rejected. For scale on the other side: the 94 days
-// of weather_daily for this Space (2026-05-14..2026-08-15, 42.5089/-72.6466) top out at 2.23" with p99 1.31",
+// of weather_daily for this Space (2026-05-14..2026-08-15, [site lat]/[site lon]) top out at 2.23" with p99 1.31",
 // mean 0.16", and exactly ONE day above 2" — a fault has to read ~9x anything the site has actually seen to
 // trip this. A tighter, distribution-fitted bound (say 4-5") was rejected: it would throw away a genuine
 // tropical remnant — Irene put 5-10" on western MA in 2011 — and discarding real rain during a flood is the
@@ -88,6 +96,9 @@ function dayBefore(dayStr) {
 function deriveStation(raw, { nowMs }) {
   if (!raw || !Array.isArray(raw.records) || !raw.records.length) return null;
   const cfg = stationConfig().find((s) => s.mac === raw.mac) || stationConfig()[0];
+  // No configured station (AWN_STATIONS_JSON unset/malformed) — fall back to forecast hydrology rather
+  // than throwing on cfg.tz. Warn, because this is a config fault, not a normal offline gauge.
+  if (!cfg) { console.warn('station: no station config (AWN_STATIONS_JSON unset?) — no gauge bound'); return null; }
   const tz = cfg.tz;
   const recs = raw.records.filter((r) => r && Number.isFinite(r.dateutc)).sort((a, b) => b.dateutc - a.dateutc);
   if (!recs.length) return null;
