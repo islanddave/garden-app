@@ -40,6 +40,7 @@ import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
 import VoiceDebug from './pages/VoiceDebug.jsx'
+import DebugMenu from './pages/DebugMenu.jsx'
 import GardenHelper from './pages/GardenHelper.jsx'
 import FieldCapture from './pages/FieldCapture.jsx'
 import Settings from './pages/Settings.jsx'
@@ -334,6 +335,11 @@ export function renderRoutes({ overlay, user, loading }) {
     // BUG-VOICEDUPE-002 raw Web Speech capture. Unlinked + Jen-invisible, same convention as
     // /admin/garden-activity. Shows only this browser's own localStorage — no server call.
     { path: '/admin/voice-debug', element: <Protected><VoiceDebug /></Protected> },
+    // OPS-DEBUGMENU-001 — the index for the three routes above. They were all built "unlinked,
+    // reachable by URL", which in an INSTALLED PWA means not reachable at all: there is no address
+    // bar on Dave's home-screen app. This page is the address bar. Any new /admin/* route must get a
+    // row in its LINKS list or it ships unreachable on the app's actual platform.
+    { path: '/admin',         element: <Protected><DebugMenu /></Protected> },
     { path: '/helper',        element: <Protected><GardenHelper /></Protected> },
     { path: '/settings',      element: <Protected><Settings /></Protected> },
     { path: '/settings/notifications', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected> },

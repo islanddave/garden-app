@@ -31,7 +31,7 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 53-route set with no duplicates', () => {
+  it('the page tree has the full 54-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
     // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
@@ -55,9 +55,14 @@ describe('App route table (single source of truth)', () => {
     // is titled Notifications and is about critter visits. /settings itself still redirects to
     // notifications, so Settings.test.jsx is untouched; the parent-index refactor its header has
     // anticipated since MVP-Critter Session 4 was deliberately NOT done here.
+    // 53 → 54: OPS-DEBUGMENU-001 adds /admin, the index for the three /admin/* pages that were each
+    // shipped "unlinked, reachable by URL". That convention silently meant UNREACHABLE on the app's
+    // real platform — an installed PWA has no address bar — so this route is the address bar. The
+    // reachability invariant that keeps the set honest lives in DebugMenu.reachability.test.jsx: a
+    // new /admin/* route with no row on the menu fails there, not here.
     const paths = pagePaths()
-    expect(paths).toHaveLength(53)
-    expect(new Set(paths).size).toBe(53)
+    expect(paths).toHaveLength(54)
+    expect(new Set(paths).size).toBe(54)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

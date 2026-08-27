@@ -430,6 +430,21 @@ export default function BottomNav() {
           <Icon name="nav.notes" size={22} decorative />Release Notes<WhatsNewDot variant="inline" />
         </SheetRowLink>
 
+        {/* OPS-DEBUGMENU-001 — the ONLY nav entry to the diagnostic surfaces, and the reason it has
+            to exist at all: /admin/classify, /admin/garden-activity and /admin/voice-debug were each
+            shipped "unlinked, reachable by URL", which is fine on a desktop and means UNREACHABLE in
+            an installed PWA. Dave runs this from the Android home screen — no address bar — so a
+            session shipped him a voice probe and then twice told him to type a URL he could not
+            type. Dave 2026-08-27: "add a Debug / Smoke menu with quick links we can build in."
+            LAST ROW BY DESIGN, below Release Notes and above Sign out: it is the least-used entry in
+            the menu and must not push a daily one down. NOT client-gated — the app's convention is
+            server-side ADMIN_CLERK_SUBS with no client admin list (GardenActivity.jsx,
+            useShareToFacebook.js), and hiding a row is discoverability, not authorisation. Dave
+            2026-08-27: "this is still only me using it right now." */}
+        <SheetRowLink to="/admin" onClick={closeMore} style={menuRowStyle}>
+          <Icon name="mode.desk" size={22} decorative />Debug &amp; smoke
+        </SheetRowLink>
+
         {/* Sign Out — inline 2-step confirm (BottomNav-owned; Sheet stays a dumb container).
             A session-ending action must not be an impulsive mis-tap target. */}
         {!confirmSignOut ? (

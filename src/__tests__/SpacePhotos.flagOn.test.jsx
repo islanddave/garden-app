@@ -66,8 +66,8 @@ describe('flag ON — the /space routes appear', () => {
     expect(paths).toContain('/space/:spaceId')
     // 51 shipped (incl. /admin/voice-debug and /settings/controls, excl. /zone — deleted in
     // V4-AMBIENTZONE-001) + 2
-    expect(paths).toHaveLength(53)
-    expect(new Set(paths).size).toBe(53)
+    expect(paths).toHaveLength(54)
+    expect(new Set(paths).size).toBe(54)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {

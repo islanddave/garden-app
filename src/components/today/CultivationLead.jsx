@@ -106,6 +106,13 @@ export default function CultivationLead({ todayISO = null }) {
       data-testid="cultivation-lead"
       style={{
         display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
+        // BUG-LINKICONBLUE-001 — an explicit ink is REQUIRED on any <Link> containing an <Icon>, and
+        // this shipped wrong in v4.58.0. Icon renders `<svg stroke="currentColor">` and substitutes a
+        // palette hex only on elements carrying data-region, so inside an <a> with no color of its
+        // own every unregioned stroke inherits the browser's default link blue (#0000EE, measured).
+        // A mono icon comes out ENTIRELY blue. textDecoration:'none' does not cover this — it kills
+        // the underline and leaves the colour, which is why it read as fixed.
+        color: P.dark,
         padding: '10px 12px', marginBottom: 12,
         background: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
         minHeight: 44, // T.tapMinHeight — this is a real navigation control, not a chip

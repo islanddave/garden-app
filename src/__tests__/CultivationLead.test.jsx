@@ -108,6 +108,11 @@ describe('CultivationLead component', () => {
     expect(region.tagName).toBe('A')
     expect(region.getAttribute('href')).toBe('/sow')
     expect(region.style.minHeight).toBe('44px')
+    // BUG-LINKICONBLUE-001 — this row shipped in v4.58.0 with no ink of its own, so its sprout
+    // inherited the browser's default link blue through Icon's `stroke="currentColor"`. jsdom
+    // applies no UA stylesheet and would have reported that as black, so the check is on the inline
+    // style — the property whose absence was the bug — not on a computed colour.
+    expect(region.style.color, 'a Link wrapping an Icon must set its own color').not.toBe('')
   })
 
   it('keeps the /sow door when the engine yields no content (empty candidates)', async () => {

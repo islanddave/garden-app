@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.59.0",
+    "date": "2026-08-27",
+    "highlights": [
+      "Debug & smoke menu in More \u2014 every diagnostic page now reachable from the installed app, with live build, service-worker and API status; sow row icon no longer renders in browser link-blue"
+    ]
+  },
+  {
     "version": "4.58.0",
     "date": "2026-08-26",
     "highlights": [
