@@ -77,8 +77,13 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
   // 3 -> 5: V4-RESTORESURFACE-001 added the GET /deleted list and the restore preflight. The
   // list carries the full PROJ_RESCOPE column set like every other client-facing read, which is
   // the property the per-column assertions below actually enforce.
-  it('exposes exactly 4 SELECT...FROM plants p blocks (by-id + list+pid + list-all + deleted-list)', () => {
-    expect(selectBlocks.length).toBe(4);
+  // 4 -> 5: V4-ARCHIVEBROWSE-001's GET /api/plants/archived is a fifth p-aliased client-facing
+  // read. It carries the full PROJ_RESCOPE set like the other four; what it does NOT carry is a
+  // variety_ref JSON block, because the archive page has no harvest-unit selector and no maturity
+  // reader — see the default_unit/harvest_habit counts at the bottom of this file, which track
+  // READERS rather than reads and are therefore deliberately unchanged by this addition.
+  it('exposes exactly 5 SELECT...FROM plants p blocks (by-id + list+pid + list-all + deleted-list + archived-list)', () => {
+    expect(selectBlocks.length).toBe(5);
   });
 
   for (const col of PROJ_RESCOPE_PLANT_COLUMNS) {
@@ -163,10 +168,14 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
     [/p\.container_id AS project_id\b/g, 'p.container_id AS project_id'],
     [/p\.cultivar_id AS variety_id\b/g, 'p.cultivar_id AS variety_id'],
   ]) {
-    it(`aliases back ${label} in all 4 reads`, () => {
+    it(`aliases back ${label} in all 5 reads`, () => {
       // 3 -> 4: V4-RESTORESURFACE-001's GET /deleted list is a fourth client-facing read and
       // aliases the same trio back, which is exactly what this guard wants of it.
-      expect((readSrc.match(needle) || []).length, `expected 4 of ${label} across the read SELECT blocks`).toBe(4);
+      // 4 -> 5: V4-ARCHIVEBROWSE-001's GET /archived list is a fifth, and aliases the same trio.
+      // project_id is aliased even though the archive page never renders it: the guard is about the
+      // renamed-column JSON contract holding for every client-facing plant read, and a read that
+      // opted out while leaving the count at 4 would drain the guard rather than satisfy it.
+      expect((readSrc.match(needle) || []).length, `expected 5 of ${label} across the read SELECT blocks`).toBe(5);
     });
   }
 

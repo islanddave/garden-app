@@ -31,7 +31,7 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 54-route set with no duplicates', () => {
+  it('the page tree has the full 55-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
     // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
@@ -61,8 +61,11 @@ describe('App route table (single source of truth)', () => {
     // reachability invariant that keeps the set honest lives in DebugMenu.reachability.test.jsx: a
     // new /admin/* route with no row on the menu fails there, not here.
     const paths = pagePaths()
-    expect(paths).toHaveLength(54)
-    expect(new Set(paths).size).toBe(54)
+    // 54 -> 55: V4-ARCHIVEBROWSE-001 adds /plantings/archived, the browse surface for archived
+    // plantings. It is declared ABOVE /plantings/:plantingId so the static segment is visibly
+    // ordered ahead of the dynamic one rather than relying on router ranking alone.
+    expect(paths).toHaveLength(55)
+    expect(new Set(paths).size).toBe(55)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

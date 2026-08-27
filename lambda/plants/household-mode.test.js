@@ -42,7 +42,10 @@ describe('plants Lambda — Household Mode scope widening', () => {
       // 12 -> 13: V4-PICKERPAYLOAD-001's ?view=picker projection is a thirteenth
       // container-reaching read (it joins container for project_name) and carries the same
       // widened arm as the list it projects from.
-      .toBe(13); // 8 at d9afab95; 11 after V4-RESTORESURFACE-001 added the /deleted list, the
+      // 13 -> 14: V4-ARCHIVEBROWSE-001's GET /api/plants/archived is a fourteenth
+      // container-reaching read. It joins container for ownership only — it deliberately does NOT
+      // project project_name — and carries the same widened arm as the /deleted list it copies.
+      .toBe(14); // 8 at d9afab95; 11 after V4-RESTORESURFACE-001 added the /deleted list, the
                  // restore preflight and the restore UPDATE — three new container-ownership
                  // sites, each carrying the F4 `pp.deleted_at IS NULL` gate. Deliberate bump.
   });

@@ -26,6 +26,7 @@ import EventNew from './pages/EventNew.jsx'
 import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import RecentlyDeleted from './pages/RecentlyDeleted.jsx'
 import Favorites from './pages/Favorites.jsx'
+import ArchivedPlantings from './pages/ArchivedPlantings.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Garden from './pages/Garden.jsx'
 import FeedPage from './pages/FeedPage.jsx'
@@ -315,6 +316,13 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/plants',        element: <PlantsRedirect /> },
     { path: '/plants/catch-up', element: <Protected><PlantsCatchUp /></Protected> },
     { path: '/events/:eventId', element: <Protected><EventDetail /></Protected> },
+    // V4-ARCHIVEBROWSE-001. Declared BEFORE /plantings/:plantingId. React Router v6 ranks a static
+    // segment above a dynamic one regardless of declaration order, so this is belt-and-braces rather
+    // than load-bearing — but the failure it guards against is silent (PlantingDetail would fetch
+    // planting id "archived" and render a not-found), so the ordering is made obvious rather than
+    // left to ranking rules a future edit might not know about. Boundaried like its data-fetching
+    // siblings: this is a recovery surface, so it is the worst place to white-screen the PWA.
+    { path: '/plantings/archived', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><ArchivedPlantings /></ErrorBoundary></Protected> },
     { path: '/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
     { path: '/varieties/:varietyId/edit', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><VarietyEdit /></ErrorBoundary></Protected> },
     { path: '/projects/:id/events/:eventId', element: <ScopedEventRedirect /> },

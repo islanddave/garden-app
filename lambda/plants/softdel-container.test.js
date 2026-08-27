@@ -67,7 +67,11 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
     // appear with no audit at all; an ADD is a deliberate change, so bump this in the same commit.
     expect(joined.length,
       'plants container-reaching query count changed. An ADD needs this number bumped deliberately; ' +
-      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(13);
+      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(14);
+    // 13 -> 14: V4-ARCHIVEBROWSE-001's GET /api/plants/archived. Container-reaching for ownership
+    // and carrying the F4 `pp.deleted_at IS NULL` gate, copied from the /deleted list rather than
+    // relaxed — measured on live prod 2026-08-27, all 30 archived-live plantings sit under a live
+    // container, so the gate hides none of them and is here to keep it that way.
     // 12 -> 13: V4-PICKERPAYLOAD-001's ?view=picker projection. Also gp-aliased, also reaches
     // container for ownership (pp.display_name AS project_name), and carries the same
     // `pp.deleted_at IS NULL` gate — so it belongs in this alias-agnostic sweep, not outside it.

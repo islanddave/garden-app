@@ -38,8 +38,20 @@ describe('V4-RESTORESURFACE-001 — the deleted/restore paths are served by the 
       // The hazard this whole surface sits on: `/api/<x>/deleted` is a single trailing segment, so a
       // bare-:id matcher captures it and answers 404 from the by-id GET. Every one of the four
       // Lambdas has to opt it out explicitly.
-      expect(SRC[kind.key], `${kind.key} would parse "deleted" as an id`)
-        .toContain(`rawPath !== '${kind.listPath}'`)
+      //
+      // TWO SPELLINGS ARE ACCEPTED, and both are checked as an EXCLUSION rather than as a mention.
+      // Three Lambdas chain `rawPath !== '<path>'`; plants — which grew a SECOND collection route
+      // with V4-ARCHIVEBROWSE-001 — hoisted them into a COLLECTION_PATHS list. Pinning the one
+      // spelling failed on a refactor that preserved the behaviour exactly, i.e. the guard was
+      // reporting on style rather than on the property it is named after. The list arm is the
+      // stricter of the two: it requires the list to exist, the path to be IN it, AND idMatch to be
+      // gated on it — where the string arm only ever proved the literal appeared somewhere.
+      const src = SRC[kind.key]
+      const chained = src.includes(`rawPath !== '${kind.listPath}'`)
+      const listed =
+        new RegExp(`COLLECTION_PATHS\\s*=\\s*\\[[^\\]]*'${kind.listPath}'[^\\]]*\\]`).test(src) &&
+        /const idMatch = !COLLECTION_PATHS\.includes\(rawPath\) &&/.test(src)
+      expect(chained || listed, `${kind.key} would parse "deleted" as an id`).toBe(true)
     })
 
     it(`${kind.key}: the Lambda declares a :id/restore matcher`, () => {

@@ -66,8 +66,10 @@ describe('flag ON — the /space routes appear', () => {
     expect(paths).toContain('/space/:spaceId')
     // 51 shipped (incl. /admin/voice-debug and /settings/controls, excl. /zone — deleted in
     // V4-AMBIENTZONE-001) + 2
-    expect(paths).toHaveLength(54)
-    expect(new Set(paths).size).toBe(54)
+    // 54 -> 55: V4-ARCHIVEBROWSE-001 adds /plantings/archived, flag-independent (see the flag-OFF
+    // counterpart, which moves 52 -> 53 for the same route).
+    expect(paths).toHaveLength(55)
+    expect(new Set(paths).size).toBe(55)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {

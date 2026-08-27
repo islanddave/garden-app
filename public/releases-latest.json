@@ -1,7 +1,7 @@
 {
-  "version": "4.60.1",
+  "version": "4.61.0",
   "date": "2026-08-27",
   "highlights": [
-    "Restores the Lambda config drift guard, which had been failing since the weather-station config moved out of the public repo into an environment variable"
+    "Archived plantings finally have a home: a new Archived page reachable from the Garden action row lists everything you have archived, with its crop, status and archive date, and an Unarchive button on every row — until now the only way back was a 6-second Undo strip"
   ]
 }

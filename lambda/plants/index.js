@@ -135,10 +135,13 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/plants';
 
-  // `/api/plants/deleted` is a single trailing segment, so this matcher would otherwise capture it
-  // as a planting id and 404 from the by-id GET. Excluded here; the route is handled inside the try
-  // below, mirroring lambda/locations and lambda/photos.
-  const idMatch = rawPath !== '/api/plants/deleted' && rawPath.match(/^\/api\/plants\/([^/]+)$/);
+  // `/api/plants/deleted` and `/api/plants/archived` are single trailing segments, so this matcher
+  // would otherwise capture each as a planting id and 404 from the by-id GET. Excluded here; both
+  // routes are handled inside the try below, mirroring lambda/locations and lambda/photos.
+  // Add any future literal collection route to this list AND to archived-route.test.js's exclusion
+  // assertion — the failure is silent (a 404 that looks like an empty archive, not like a bug).
+  const COLLECTION_PATHS = ['/api/plants/deleted', '/api/plants/archived'];
+  const idMatch = !COLLECTION_PATHS.includes(rawPath) && rawPath.match(/^\/api\/plants\/([^/]+)$/);
   // V3-SEEN-001 (Lane A Foundation): seen-contract write path. New-endpoint-only,
   // additive — does NOT touch any existing GET/PUT/POST/DELETE handler. idMatch's
   // /^\/api\/plants\/([^/]+)$/ does NOT match the /seen suffix, so no route collision.
@@ -212,6 +215,75 @@ export const handler = async (event) => {
          LIMIT ${limit}
       `;
       return resp(200, { plants: rows });
+    }
+
+    // ── V4-ARCHIVEBROWSE-001 — the browse surface for archived plantings ─────────────────────────
+    //
+    // Archive is hidden-but-alive, and until now it was hidden with no way back. All four active
+    // list reads carry a literal `archived_at IS NULL`, so once the 6-second Undo strip on Garden
+    // closes, an archived planting is unreachable unless you already hold its URL. 30 live rows on
+    // prod sat in exactly that state.
+    //
+    // A SEPARATE BRANCH, NOT AN `include_archived` PARAM, and the reason is the guards rather than
+    // taste: archive-route.test.js asserts `expect(m.length).toBe(2)` over the literal
+    // `AND p.archived_at IS NULL` + `ORDER BY p.created_at DESC`, and grid-view.test.js pins the two
+    // gp-aliased ones. Making those predicates conditional would keep the string present while
+    // draining it of meaning — the guards would still pass and would no longer guard anything. A
+    // separate read leaves all four literals exactly as they are, and keeps PlantingSelect's
+    // "no client can ever receive an archived row" comment true of every path that comment is about.
+    //
+    // DELETED ROWS ARE EXCLUDED, and that is a correctness rule rather than a tidiness one: 2 prod
+    // rows are both archived and deleted, they already appear in Recently Deleted, and the archive
+    // PATCH refuses a deleted row — so an Unarchive button on one would 404 with nothing to say.
+    //
+    // Same F4 container-deleted gate as every other container-reaching read here, copied from the
+    // /deleted list above rather than relaxed. Measured on live prod 2026-08-27: all 30 archived-live
+    // plantings sit under a live container, so the gate hides none of them today; it is here so this
+    // read cannot become the one that sees through a deleted container.
+    if (rawPath === '/api/plants/archived' && method === 'GET') {
+      const rawLimit = Number(event?.queryStringParameters?.limit);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 500) : 200;
+      // Carries the full proj-rescope column set like every other client-facing plant read
+      // (select-columns.test.js) — a plant row returned to a client is a plant row.
+      //
+      // pv is joined for the SUBTITLE and nothing else. Measured on the real 30: display_name is the
+      // variety name in 21 of them, so the crop slug ("pepper", "culantro") is the field that
+      // actually adds information, and the variety name is worth showing only in the 9 where the two
+      // differ. NOT a variety_ref JSON block: this page has no harvest-unit selector and no maturity
+      // reader, so pulling in ct.default_unit / ct.harvest_habit would add a crop_types join whose
+      // only purpose is to satisfy a guard that is counting readers, not reads.
+      //
+      // project_name is DELIBERATELY NOT SELECTED, unlike the /deleted list which uses it as its
+      // subtitle. The container is not a user-facing noun in this app; a row here says what the
+      // planting is, not what it hangs under.
+      const rows = await sql`
+        SELECT p.id, p.display_name AS name, p.container_id AS project_id, p.status,
+               p.archived_at, p.created_at,
+               pv.name AS variety_name, pv.crop_type_slug,
+               p.sown_at, p.sown_at_approx, p.germinated_at, p.germinated_at_approx,
+               p.transplanted_at, p.transplanted_at_approx, p.planted_out_at, p.planted_out_at_approx,
+               p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+               p.seeds_sown, p.seeds_germinated,
+               p.source_type, p.source_ref, p.source_generation,
+               p.parent_plant_id, p.divergence_type, p.lineage_note,
+               p.succession_group_id, p.succession_order,
+               p.container_type, p.container_size, p.location_id,
+               p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at,
+               p.cultivar_id AS variety_id
+          FROM public.garden_node p
+          LEFT JOIN public.container pp ON pp.id = p.container_id
+          LEFT JOIN public.plant_varieties pv ON pv.id = p.cultivar_id
+         WHERE p.archived_at IS NOT NULL
+           AND p.deleted_at IS NULL
+           AND ( (pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL)
+                 OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+         ORDER BY p.archived_at DESC, p.id DESC
+         LIMIT ${limit}
+      `;
+      // A list that silently stops at its own LIMIT is a list that lies about being complete, and an
+      // archive is exactly the surface where "it isn't there" gets believed. The client says so out
+      // loud rather than the user concluding a planting is gone.
+      return resp(200, { plants: rows, truncated: rows.length === limit });
     }
 
     if (restoreMatch && method === 'POST') {

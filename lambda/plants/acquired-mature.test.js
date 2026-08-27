@@ -92,7 +92,9 @@ describe('V4-ACQMATURE-001 — write path', () => {
 describe('V4-ACQMATURE-001 — read path (round trip through the view)', () => {
   it('every column written is read back by the by-id GET, the 2 lists and the deleted list', () => {
     const blocks = [...SRC.matchAll(/SELECT\s+((?:(?!\bFROM\b)[\s\S])*?)\s+FROM\s+public\.garden_node\s+p/g)];
-    expect(blocks.length, 'expected the 4 client-facing plant reads').toBe(4);
+    // 4 -> 5: V4-ARCHIVEBROWSE-001's GET /api/plants/archived is a fifth client-facing plant read
+    // and carries the full column set for the same reason the other four do.
+    expect(blocks.length, 'expected the 5 client-facing plant reads').toBe(5);
     for (const col of COLUMNS) {
       for (const [idx, b] of blocks.entries()) {
         expect(new RegExp(`\\bp\\.${col}\\b`).test(b[1]), `read block #${idx} missing p.${col}`).toBe(true);

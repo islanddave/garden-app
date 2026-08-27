@@ -854,6 +854,14 @@ export default function Garden() {
           <Link to="/favorites" aria-label="Favorites" style={btnGhostIcon}>
             <Icon name="action.heart" size={16} decorative style={{ color: P.green }} />Favorites
           </Link>
+          {/* V4-ARCHIVEBROWSE-001: the way back in. Archiving is reachable from this page and its
+              only undo was a 6-second strip, so the browse surface belongs on the same page as the
+              action that fills it. Deliberately NO count badge: it would cost a second network
+              fetch on the app's hottest surface to render decoration, and the number is not a thing
+              anyone acts on. */}
+          <Link to="/plantings/archived" aria-label="Archived plantings" style={btnGhostIcon}>
+            <Icon name="action.archive" size={16} decorative style={{ color: P.green }} />Archived
+          </Link>
         </div>
       </div>
 
@@ -983,14 +991,18 @@ export default function Garden() {
           display: 'flex', alignItems: 'center', gap: 14, maxWidth: '92%',
         }}>
           {/* The error takes its own role="alert" element rather than flipping the strip's role:
-              the alert is INSERTED when the undo fails, which is what actually announces it. */}
+              the alert is INSERTED when the undo fails, which is what actually announces it.
+              Both branches carry a testid. The success copy is split across two elements
+              ("Archived " + a <strong>), so a text query cannot reach it as one string — and since
+              V4-ARCHIVEBROWSE-001 put an "Archived" link in the action row, a loose /Archived/
+              query now matches two things. */}
           {archiveUndo.error ? (
             <span role="alert" data-testid="archive-undo-error"
               style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {archiveUndo.error} — <strong>{archiveUndo.name}</strong>
             </span>
           ) : (
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span data-testid="archive-undo" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Archived <strong>{archiveUndo.name}</strong>
             </span>
           )}

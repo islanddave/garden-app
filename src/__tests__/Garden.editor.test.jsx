@@ -267,7 +267,12 @@ describe('Garden — V3-ARCHIVE-001 archive a planting (edit editor)', () => {
     expect(JSON.parse(arc[1].body).archived).toBe(true)
     expect(screen.queryByText(/Edit Krim Plant/)).toBeNull()
     // Ambient confirmation + Undo affordance (operational confirmation, non-modal).
-    await waitFor(() => expect(screen.getByText(/Archived/)).toBeDefined())
+    // NARROWED from a loose /Archived/ text query to the strip itself. V4-ARCHIVEBROWSE-001 put an
+    // "Archived" link in the action row, so /Archived/ now matches two elements — and the one this
+    // test is about is the undo strip. Stronger, not weaker: it was only ever proving the word
+    // appeared somewhere on the page, and it now proves the strip names the planting it archived.
+    await waitFor(() => expect(screen.getByTestId('archive-undo')).toBeDefined())
+    expect(screen.getByTestId('archive-undo').textContent).toMatch(/Archived\s*Krim Plant/)
     expect(screen.getByRole('button', { name: /^Undo$/i })).toBeDefined()
   })
 
