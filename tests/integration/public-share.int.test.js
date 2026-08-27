@@ -24,12 +24,29 @@ const RUN = testRunId()
 const OWNER = `pubshare_owner_${RUN}`
 const SLUG = `pub-share-${RUN}`
 let projectId
+let locationId
 
-const ALLOWED_TOP = ['name', 'slug', 'status', 'species', 'variety', 'description', 'start_date', 'location_path', 'events'].sort()
+// location_path was REMOVED from this projection 2026-08-27 (V4-PUBLICDISCLOSURE-001). It is
+// absent from ALLOWED_TOP and named in FORBIDDEN_TOP below, so this file now fails in BOTH
+// directions: the exact-set assertion catches it reappearing, and the explicit check states why.
+// The site's top-level locations are House / Stable / Drive / Pasture — on an anonymous page that
+// describes the property, not the garden.
+const ALLOWED_TOP = ['name', 'slug', 'status', 'species', 'variety', 'description', 'start_date', 'events'].sort()
+const FORBIDDEN_TOP = ['location_path', 'location_id', 'created_by', 'private_notes']
 const ALLOWED_EVENT = ['id', 'event_type', 'event_date', 'notes', 'quantity'].sort()
 
 beforeAll(async () => {
   projectId = (await insertProject({ name: 'pub-share-' + RUN, slug: SLUG, createdBy: OWNER })).id
+  // NON-VACUITY for the location assertion. The project is given a REAL location with a tracer in
+  // its name, so the pre-2026-08-27 handler would have returned location_path = that tracer. Without
+  // this the fixture's location_id is NULL, the old code would have returned location_path: null,
+  // and "no location leaked" would pass for a project that simply has no location — proving nothing.
+  const loc = await directSql`
+    INSERT INTO locations (name, slug, level, is_active, sort_order, created_by)
+    VALUES (${'LOCTRACER-' + RUN}, ${'loctracer-' + RUN}, 0, true, 999, ${OWNER})
+    RETURNING id`
+  locationId = loc[0].id
+  await directSql`UPDATE plant_projects SET location_id = ${locationId} WHERE id = ${projectId}`
   // PUBLIC event carrying SENSITIVE columns — private_notes, flagged_as_issue. It passes the row
   // gate on purpose, so the column allowlist is the only thing standing between those values and
   // the response. This is what keeps the leak-gate non-vacuous.
@@ -46,6 +63,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await directSql`DELETE FROM event_log WHERE created_by = ${OWNER}`
   await directSql`DELETE FROM plant_projects WHERE created_by = ${OWNER}`
+  await directSql`DELETE FROM locations WHERE created_by = ${OWNER}`
 })
 
 describe('LEAK-GATE public share — GET /api/projects/public/:slug row gate + deny-by-default column projection', () => {
@@ -54,6 +72,14 @@ describe('LEAK-GATE public share — GET /api/projects/public/:slug row gate + d
     expect(status).toBe(200)
     expect(body.slug).toBe(SLUG)
     expect(Object.keys(body).sort()).toEqual(ALLOWED_TOP) // no created_by / is_public / location_id / project-id leak
+  })
+
+  it('leaks NO location — not the key, not the path, not the tracer (V4-PUBLICDISCLOSURE-001)', async () => {
+    const { body } = await callHandler(handler, { method: 'GET', path: `/api/projects/public/${SLUG}` })
+    // The fixture project HAS a location (see beforeAll), so the pre-removal handler would have
+    // returned its full_path here. That is what makes this assertion mean something.
+    for (const k of FORBIDDEN_TOP) expect(Object.keys(body)).not.toContain(k)
+    expect(JSON.stringify(body)).not.toContain('LOCTRACER-' + RUN)
   })
 
   it('event rows expose ONLY the 5 allowlisted columns — private_notes/flagged/created_by NEVER leak', async () => {
