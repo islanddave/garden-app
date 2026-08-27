@@ -55,11 +55,11 @@ const app1Exif = seg(0xE1, [
   0x00, 0x00, 0x01, 0xFE, 0x00, 0x00, 0x00, 0x64,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
-const app1Xmp = seg(0xE1, [...A('http://ns.adobe.com/xap/1.0/\0'), ...A('<x:xmpmeta gps="42.5087"/>')]);
+const app1Xmp = seg(0xE1, [...A('http://ns.adobe.com/xap/1.0/\0'), ...A('<x:xmpmeta gps="41.8888"/>')]);
 const app2Mpf = seg(0xE2, [...A('MPF\0'), 0x4D, 0x4D, 0x00, 0x2A, 0, 0, 0, 8, 0, 0]);
 const app11Jumbf = seg(0xEB, [...A('JP'), 0, 0, 0, 0x20, ...A('jumbc2pa'), 1, 2, 3, 4]);
 const app13Iptc = seg(0xED, [...A('Photoshop 3.0\0'), ...A('8BIM'), 0x04, 0x04, 0, 0, 0, 4, 1, 2, 3, 4]);
-const com = seg(0xFE, A('Pixel 8 Pro shot at 42.5087,-72.6470'));
+const com = seg(0xFE, A('Pixel 8 Pro shot at 41.8888,-70.7777'));
 
 // Samsung's raw trailer: not EXIF, not in any APP segment, appended past the primary EOI.
 const samsungTrailer = [
@@ -102,8 +102,8 @@ const LEAK_NEEDLES = [
   ['APP2 MPF gain-map index', A('MPF\0')],
   ['APP11 JUMBF / C2PA container', A('jumbc2pa')],
   ['APP13 Photoshop IRB / IPTC', A('Photoshop 3.0\0')],
-  ['COM comment carrying coordinates', A('42.5087,-72.6470')],
-  ['XMP GPS in APP1', A('<x:xmpmeta gps="42.5087"/>')],
+  ['COM comment carrying coordinates', A('41.8888,-70.7777')],
+  ['XMP GPS in APP1', A('<x:xmpmeta gps="41.8888"/>')],
 ];
 
 describe('exif.js strips a phone-shaped JPEG — BUG-FBSHAREDENYLIST-001', () => {

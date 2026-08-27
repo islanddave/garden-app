@@ -2,7 +2,7 @@
 // V4-PHOTOEXIFSTRIP-001 — remove capture metadata from image bytes before they leave the device.
 //
 // WHY: Dave's garden IS his home, so a GPS tag is his home address. Measured on his own camera
-// originals (2026-08-20, 22 files): every Pixel file carries EXIF GPS at 42.5087 / -72.6470 —
+// originals (2026-08-20, 22 files): every Pixel file carries EXIF GPS at [site lat] / [site lon] —
 // the house. Those bytes reach S3 unmodified on five paths (imageDownscale returns the ORIGINAL
 // File for anything under MIN_BYTES, for an undecodable codec, for a missing canvas, and for a
 // re-encode that came out bigger; useUploadPhoto's DOWNSCALE_DEADLINE_MS adds a fifth), and the

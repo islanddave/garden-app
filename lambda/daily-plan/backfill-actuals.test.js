@@ -125,7 +125,7 @@ describe('run() — backfill wired in, current-day plan untouched', () => {
     const q = vi.fn(async (sql) => {
       if (/^\s*update daily_plan/i.test(sql)) { if (failBackfill) throw new Error('backfill boom'); return { rows: [] }; }
       if (sql.includes('select items, generated_at')) return { rows: [] };
-      if (sql.includes('from spaces')) return { rows: [{ id: 'sp1', postal_code: null, ...(atStation ? { weather_lat: 42.5089, weather_lng: -72.6466 } : { weather_lat: 42.5, weather_lng: -72.6 }) }] };
+      if (sql.includes('from spaces')) return { rows: [{ id: 'sp1', postal_code: null, ...(atStation ? { weather_lat: 41.8888, weather_lng: -70.7777 } : { weather_lat: 42.5, weather_lng: -72.6 }) }] };
       if (sql.includes('from plants')) return { rows: [PLANT_ROW] };
       return { rows: [] };
     });
@@ -167,18 +167,31 @@ describe('run() — backfill wired in, current-day plan untouched', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     // deriveStation is anchored to Date.now(); pin it so station freshness is deterministic (15:30 ET 08-04).
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-04T19:30:00Z'));
-    const at = (day, hh, dailyrainin) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf: 70 });
-    const pg = mkPg({ atStation: true });
-    await run({
-      ...runArgs(pg, { hy: { ...HY(4.63), today_precip_in: 0.4 } }),
-      today: '2026-08-04',
-      fetchStation: async () => ({ mac: 'F8:B3:B7:82:1F:0D', records: [
-        at('2026-08-04', '15', 0.10), at('2026-08-03', '23', 2.22), at('2026-08-02', '18', 0.05), at('2026-08-01', '18', 0.0),
-      ] }),
-    });
-    const updates = callsOf(pg, /update daily_plan/i);
-    expect(updates).toHaveLength(1);
-    expect(updates[0][1]).toEqual([USER, '2026-08-03', '2.22', '"station"']);
+    // Bind via the AWN_STATIONS_JSON override rather than station.js's shipped default, so this fixture
+    // owns both sides of the COORD_TOL match. Previously the fixture's coords had to equal the real
+    // deployed station's, which coupled the test to production config and put the site coordinate and
+    // the gauge MAC in the repo. Synthetic on both sides asserts the same binding.
+    const prevStations = process.env.AWN_STATIONS_JSON;
+    process.env.AWN_STATIONS_JSON = JSON.stringify([
+      { mac: 'AA:BB:CC:DD:EE:FF', tz: 'America/New_York', lat: 41.8888, lng: -70.7777, schema_version: 1 },
+    ]);
+    try {
+      const at = (day, hh, dailyrainin) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf: 70 });
+      const pg = mkPg({ atStation: true });
+      await run({
+        ...runArgs(pg, { hy: { ...HY(4.63), today_precip_in: 0.4 } }),
+        today: '2026-08-04',
+        fetchStation: async () => ({ mac: 'AA:BB:CC:DD:EE:FF', records: [
+          at('2026-08-04', '15', 0.10), at('2026-08-03', '23', 2.22), at('2026-08-02', '18', 0.05), at('2026-08-01', '18', 0.0),
+        ] }),
+      });
+      const updates = callsOf(pg, /update daily_plan/i);
+      expect(updates).toHaveLength(1);
+      expect(updates[0][1]).toEqual([USER, '2026-08-03', '2.22', '"station"']);
+    } finally {
+      if (prevStations === undefined) delete process.env.AWN_STATIONS_JSON;
+      else process.env.AWN_STATIONS_JSON = prevStations;
+    }
   });
 
   it('P3 a failing backfill write leaves the run + upsert intact', async () => {

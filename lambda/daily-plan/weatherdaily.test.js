@@ -29,7 +29,7 @@ const TODAY = '2026-08-12';
 const YESTERDAY = '2026-08-11';
 const DAY_BEFORE = '2026-08-10';
 
-// VERBATIM live Open-Meteo values for this Space's coordinates (42.5087,-72.6471), read from the real
+// VERBATIM live Open-Meteo values for this Space's coordinates ([site lat],[site lon]), read from the real
 // endpoint on 2026-08-12 with the exact URL lambda/daily-plan/index.js now sends. Using the real
 // numbers rather than round ones keeps the fixture from drifting into a shape the API never produces —
 // note in particular that et0 differs between the two days in the THIRD decimal (0.186 vs 0.193), which

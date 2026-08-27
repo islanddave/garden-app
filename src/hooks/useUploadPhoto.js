@@ -203,7 +203,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
 
       // V4-PHOTOEXIFSTRIP-001 — nothing reaches S3 carrying the camera's capture metadata. Dave's
       // garden IS his home, so a GPS tag is his home address (measured on his own originals:
-      // 42.5087 / -72.6470, the house).
+      // [site lat] / [site lon], the house).
       //
       // PLACED AFTER THE DOWNSCALE ON PURPOSE. The canvas path already emits a bare EXIF-free JPEG,
       // so on the common path this is a cheap no-op. It exists for the FIVE paths that hand back

@@ -344,7 +344,7 @@ describe('WeatherWidget — DRG-WXSTATION-002 weather-station source on Today (V
     const h = withProv({
       recent_source: 'station', today_source: 'station+forecast', yesterday_actual_source: 'station',
       today_remaining_basis: 'hourly', today_remaining_from_hour: 14, station_age_min: 4,
-      station_fresh: true, station_mac: 'F8:B3:B7:82:1F:0D', station_temp_f: 61.2, microclimate_offset: -1.4,
+      station_fresh: true, station_mac: 'AA:BB:CC:DD:EE:FF', station_temp_f: 61.2, microclimate_offset: -1.4,
       low_source: 'station_floor',
     })
     const { container } = render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)

@@ -12,7 +12,7 @@
 
 // ── Demand family ────────────────────────────────────────────────────────────────────────────────
 // ET0_REF_PEAK: ONE site-wide climatological reference, inches/day, for the one live Space
-// (42.5087,-72.6471, W. MA). NEVER a rolling median — canon Decision 2: a rolling median is a
+// ([site lat],[site lon], W. MA). NEVER a rolling median — canon Decision 2: a rolling median is a
 // high-pass filter that re-centers onto a heat wave by day ~7-10 (demand -> 1.0 exactly in the lethal
 // window) and deletes the fall decline.
 //
@@ -35,8 +35,8 @@
 // PROVENANCE — MEASURED, not estimated. 0.1775 in/day = the mean of every July day, 2015-01-01..
 // 2025-12-31 (n=341), from the Open-Meteo ERA5 archive at the Space's exact coordinates, via the
 // SAME endpoint/fields/units scripts/backfill-weather-daily.mjs writes weather_daily from:
-//   https://archive-api.open-meteo.com/v1/archive?latitude=42.508744987687344
-//     &longitude=-72.64706648619953&start_date=2015-01-01&end_date=2025-12-31
+//   https://archive-api.open-meteo.com/v1/archive?latitude=[site lat]
+//     &longitude=[site lon]&start_date=2015-01-01&end_date=2025-12-31
 //     &daily=et0_fao_evapotranspiration&temperature_unit=fahrenheit&precipitation_unit=inch
 //     &timezone=America/New_York
 // July is the annual peak (11y monthly means: Jan .031 Feb .043 Mar .070 Apr .103 May .145 Jun .173

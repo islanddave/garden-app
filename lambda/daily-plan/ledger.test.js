@@ -269,7 +269,7 @@ describe('demand (through the fold)', () => {
 // as pinned values, so they survive a retune of the reference and fail only if the seasonal shape
 // dies again.
 describe('seasonal amplitude (BUG-ETNOAMPLITUDE-001)', () => {
-  // Observed site climatology for the one live Space (42.5087,-72.6471): mean ET0_FAO in/day for
+  // Observed site climatology for the one live Space ([site lat],[site lon]): mean ET0_FAO in/day for
   // the named half-month, Open-Meteo ERA5 archive 2015-01-01..2025-12-31 (n=4018 days), same
   // endpoint/fields/units as scripts/backfill-weather-daily.mjs. TEST INPUT ONLY — deliberately not
   // exported from ledgerParams, because a per-period ET0 table reachable from the fold is precisely

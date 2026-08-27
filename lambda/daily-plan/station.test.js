@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import station from './station.js';
 const { deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, remainingHourlyIn, effectiveHour } = station;
 
-const MAC = 'F8:B3:B7:82:1F:0D';
+const MAC = 'AA:BB:CC:DD:EE:FF';
 // ET is EDT (-04:00) for all July fixtures. rec(day,'HH',dailyrainin,tempf) at that ET wall-clock.
 const rec = (day, hh, dailyrainin, tempf) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf });
 const NOW = Date.parse('2026-07-06T06:10:00Z'); // 02:10 ET on 2026-07-06 -> D0=07-06 D1=07-05 D2=07-04
@@ -294,7 +294,7 @@ describe('mergeStationHydrology — today split + yesterday actual (BUG-RAINACTU
 // forecast, so on the very event that started this work — gauge 2.22", forecast 4.63" — it reproduced the
 // broken number exactly. Every number in the REAL fixture below is live Open-Meteo/AWN data for 2026-08-03.
 describe('H5 remaining-from-hourly (BUG-RAINACTUAL-001)', () => {
-  // Live Open-Meteo hourly `precipitation` (inch) for 2026-08-03 at 42.5089,-72.6466, fetched 2026-08-04.
+  // Live Open-Meteo hourly `precipitation` (inch) for 2026-08-03 at 41.8888,-70.7777, fetched 2026-08-04.
   // Sums to 4.635 == the 4.634 daily total the app recorded as "actual" for a day the gauge measured at 2.22.
   const AUG3_HOURLY = { 2: 0.028, 3: 0.016, 4: 0.169, 5: 3.358, 6: 0.028, 7: 0.016, 8: 0.665, 12: 0.028, 16: 0.327 };
   const AUG3_DAILY = 4.634;
@@ -729,9 +729,9 @@ describe('DRG-GAUGENEG-001 — a negative dailyrainin is dropped, never laundere
 });
 
 describe('bindStationToSpace', () => {
-  const s = { mac: MAC, lat: 42.5089, lng: -72.6466 };
+  const s = { mac: MAC, lat: 41.8888, lng: -70.7777 };
   it('matches a Space whose stored coords are within tolerance', () => {
-    expect(bindStationToSpace({ weather_lat: 42.5089, weather_lng: -72.6466 }, s)).toBe(s);
+    expect(bindStationToSpace({ weather_lat: 41.8888, weather_lng: -70.7777 }, s)).toBe(s);
   });
   it('does not bind a far Space', () => {
     expect(bindStationToSpace({ weather_lat: 40.0, weather_lng: -74.0 }, s)).toBeNull();

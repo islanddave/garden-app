@@ -270,7 +270,7 @@ describe('BUG-TODAYWATER-001 — invariants', () => {
 // flag-ON soak basis excluded measured rain and then a PoP gate vetoed it. So these fixtures are built the
 // way the Lambda builds them (handler.js: mergeStationHydrology -> generatePlan) and never by hand.
 describe('BUG-TODAYWATER-001 2nd pass — measured rain is water, not a probability', () => {
-  const MAC = 'F8:B3:B7:82:1F:0D';
+  const MAC = 'AA:BB:CC:DD:EE:FF';
   const rec = (day, hh, dailyrainin, tempf = 70) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf });
   const NOW_PM = Date.parse('2026-08-03T19:30:00Z');   // 15:30 ET on the plan day = the intraday run that STORES the plan
 
@@ -371,7 +371,7 @@ describe('BUG-TODAYWATER-001 2nd pass — measured rain is water, not a probabil
 });
 
 describe('BUG-TODAYWATER-001 2nd pass — the PoP gates the remainder, and only the remainder', () => {
-  const MAC = 'F8:B3:B7:82:1F:0D';
+  const MAC = 'AA:BB:CC:DD:EE:FF';
   const rec = (day, hh, dailyrainin) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf: 70 });
   const gauge = observed => deriveStation({ mac: MAC, records: [
     rec('2026-08-03', '15', observed), rec('2026-08-02', '23', 0), rec('2026-08-01', '23', 0), rec('2026-07-31', '18', 0),

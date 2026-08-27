@@ -45,7 +45,7 @@ const BAND_THRESHOLDS = Object.freeze({
   // 45F night). Both are true.
   //
   // They are overridden anyway, on ALERT-FATIGUE grounds. Measured against four years of
-  // Open-Meteo actuals at the site (42.5087N, -72.6471W), Sep 1 - Nov 15:
+  // Open-Meteo actuals at the site ([site lat]N, [site lon]W), Sep 1 - Nov 15:
   //     <= 50F (tropical imminent)        49 / 44 / 53 / 51 nights of 76   -- first trip Sep 1-4 EVERY year
   //     <= 45F (chill_sensitive imminent) 33 / 33 / 31 / 38 nights
   //     <= 38F (tender imminent)          14 / 15 / 16 / 19 nights

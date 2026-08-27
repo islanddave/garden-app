@@ -236,7 +236,7 @@ frosted AS (
 -- This file asks the second question and was answering with the first one's number. The identifier
 -- sweep that fixed the JS consumers missed it because it is SQL.
 --
--- The measurement (11 years ERA5 at 42.5087,-72.6471; the same executable `query` carried on
+-- The measurement (11 years ERA5 at [site lat],[site lon]; the same executable `query` carried on
 -- OBSERVED_FIRST_FALL_FROST.measured_basis and storageDeadlines.json): first <=32F night has never
 -- fallen before 10-10, median 10-29, latest 11-08. ZERO September nights at or below 32F, coldest
 -- September night in the whole record 38.2F. So the margin sat 12 to 41 days ahead of any frost
