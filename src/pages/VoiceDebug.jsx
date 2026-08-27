@@ -17,6 +17,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import { P } from '../lib/constants.js'
+import ContinuousVoiceProbe from '../components/ContinuousVoiceProbe.jsx'
 import {
   isVoiceDebugEnabled,
   setVoiceDebugEnabled,
@@ -129,6 +130,15 @@ export default function VoiceDebug() {
           whiteSpace: 'pre', overflow: 'auto',
         }}
       />
+
+      {/* V5-HARVESTVOICEFLOW-001 (BD-068) — the continuous-mode probe. Same purpose as the log
+          above and the same reason for living on THIS route: a question about what Chrome actually
+          does on Dave's Android can only be settled by his Android. The section above answers "what
+          did the recogniser emit for one dictated phrase"; this one answers "does the recogniser
+          stay alive across several, and how much speech is lost when it does not" — which is the
+          question a hands-free harvest flow stands or falls on. Investigation instrument, not a
+          feature: nothing outside this unlinked admin route renders it. */}
+      <ContinuousVoiceProbe />
     </div>
   )
 }
