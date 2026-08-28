@@ -62,7 +62,14 @@ beforeAll(async () => {
   sharePhotoId = ph2[0].id
   const sl = await directSql`
     INSERT INTO share_log (post_group_id, photo_id, target, status, requested_by)
-    VALUES (gen_random_uuid(), ${sharePhotoId}, 'facebook_page', 'posted', ${USER}) RETURNING id`
+    // 'facebook', not 'facebook_page'. The fixture carried a target value the app has NEVER written
+    // — lambda/facebook-share/index.js:301 inserts 'facebook' — and share_log_target_valid allows
+    // only facebook / instagram / threads / pinterest. It passed from 2026-08-13 until the
+    // constraint reached staging, at which point every integration run started failing here: this
+    // suite forks its ephemeral branch FROM STAGING and applies no migrations, so a schema change
+    // made out-of-band lands on the next run whatever the commit contains. The constraint is right
+    // and the fixture was wrong, so the fixture moved.
+    VALUES (gen_random_uuid(), ${sharePhotoId}, 'facebook', 'posted', ${USER}) RETURNING id`
   shareRowId = sl[0].id
 
   // ── user_achievements.achievement_id fixtures ────────────────────────────────────────────────
