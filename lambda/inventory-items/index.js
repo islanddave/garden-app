@@ -307,7 +307,7 @@ export const handler = async (event) => {
         let germination = null;
         if (row.category === 'seeds') {
           const g = await sql`
-            SELECT p.id, p.name, p.sown_at, p.seeds_sown, p.seeds_germinated
+            SELECT p.id, p.display_name AS name, p.sown_at, p.seeds_sown, p.seeds_germinated
               FROM public.garden_node p
              WHERE p.source_inventory_item_id = ${itemId}
                AND p.deleted_at IS NULL
