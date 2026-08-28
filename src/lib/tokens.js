@@ -72,4 +72,22 @@ export const ICON_COLORS = {
   bflyWingLower: P.terra,     // #b7532a lower wing — deeper burnt orange, ~4.65:1
   bflyBody:      '#4a3520',   // head+thorax+abdomen — deep brown, ~10.9:1
   bflyAntenna:   '#4a3520',   // antennae stroke — deep brown
+  // ── Bottom-bar `filled` variants (Dave 2026-08-28). The tab bar went all-mono on 0bddf91, which
+  // replaced the last two COLOUR tab glyphs — the 🧺 and 🫙 emoji — with mono line art for
+  // completeness. Dave read those two as the target the rest should rise to, so these level the bar
+  // UP rather than restoring two. Every value below is measured on cream and clears the 3:1
+  // silhouette floor; two candidates were rejected for failing it (P.sage 2.89:1 for the checklist
+  // rows, a #cfe0ef pale-glass jar body at 1.24:1 — the jar is drawn full instead, see nav.putup).
+  navTick:       P.green,     // #2d6a4f checklist tick — 5.88:1
+  navRow:        '#6f8a78',   // minted — checklist row bar, 3.46:1 (P.sage #7c9885 fails at 2.89:1)
+  navPending:    P.gold,      // #8a6e2a the one un-ticked item — 4.44:1
+  navPot:        P.terra,     // #b7532a terracotta pot body — 4.51:1
+  navPotRim:     '#a8481f',   // minted — pot rim one step darker than its body so the lip still reads at 22px, 5.35:1
+  navLeaf:       '#349160',   // fresh-growth green (shares lcSproutLeaf's value; P.greenLight fails) — 3.60:1
+  navStem:       P.greenDeep, // #1f5138 stem + the back leaf that sits behind it — 8.42:1
+  navBowl:       P.brown,     // #7a5c3c harvest bowl — 5.64:1
+  navFruit:      P.terra,     // #b7532a fruit in the bowl — 4.51:1
+  navJarBand:    P.gold,      // #8a6e2a screw band — 4.44:1
+  navJarGlass:   P.blue,      // #4a7fb5 glass outline — 3.87:1
+  navJarFill:    P.terra,     // #b7532a preserves — 4.51:1
 }

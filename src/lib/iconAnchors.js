@@ -29,6 +29,20 @@ const A = {
     // tick shallower + wider (vertex ~88°->101°, keeps the short leg legible), rows re-pitched to
     // clear the bigger ring, line column pulled right off the widened tick tips.
     svg18: '<path d="M3.4 6l1.8 1.3 3.7-2.9"/><path d="M11.6 6h8.8"/><path d="M3.4 11.4l1.8 1.3 3.7-2.9"/><path d="M11.6 11.4h8.8"/><circle cx="5.9" cy="18.1" r="2.5"/><path d="M11.6 18.2h6.2"/>',
+    // Bottom-bar colour (Dave 2026-08-28). BASE STAYS MONO on purpose — colour rides a `filled`
+    // variant, the care.drop pattern, so only the consumer that asks for it gets colour.
+    regionIntent: { row: 'list rows — muted green bar', tick: 'completed ticks — app green', pending: 'the one open item — gold' },
+    colorFills: { row: 'navRow', tick: 'navTick', pending: 'navPending' },
+    variants: {
+      filled: {
+        class: 'color-candidate',
+        // Rows become solid bars so the glyph carries mass at 22px; the ticks stay STROKES (a filled
+        // tick at this size is a blob) and the open item's ring closes to a solid dot, which is what
+        // makes "two done, one waiting" readable rather than three identical rows.
+        svg24: '<path data-region="row" d="M11 6.5h9.4a.9.9 0 0 1 0 1.8H11a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="row" d="M11 12.3h9.4a.9.9 0 0 1 0 1.8H11a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="row" d="M11 17.9h6.4a.9.9 0 0 1 0 1.8H11a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="tick" d="M3.6 7.6l1.6 1.6 3.2-3.4" fill="none" stroke="currentColor"/><path data-region="tick" d="M3.6 13.4l1.6 1.6 3.2-3.4" fill="none" stroke="currentColor"/><circle data-region="pending" cx="5.4" cy="18.6" r="2.2" fill="currentColor" stroke="none"/>',
+        svg18: '<path data-region="row" d="M11.6 5.1h8.8a.9.9 0 0 1 0 1.8h-8.8a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="row" d="M11.6 10.5h8.8a.9.9 0 0 1 0 1.8h-8.8a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="row" d="M11.6 17.3h6.2a.9.9 0 0 1 0 1.8h-6.2a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="tick" d="M3.4 6l1.8 1.3 3.7-2.9" fill="none" stroke="currentColor"/><path data-region="tick" d="M3.4 11.4l1.8 1.3 3.7-2.9" fill="none" stroke="currentColor"/><circle data-region="pending" cx="5.9" cy="18.1" r="2.5" fill="currentColor" stroke="none"/>',
+      },
+    },
   },
   // garden = potted plant. mono. RES-3: pot-dominant; 18 master drops the right sprig.
   'nav.garden': {
@@ -36,6 +50,22 @@ const A = {
     svg24: '<path d="M6.4 13.6h11.2"/><path d="M7.5 13.6l1 5.9a1 1 0 0 0 1 .8h5a1 1 0 0 0 1-.8l1-5.9z"/><path d="M12 13.6V8.6"/><path d="M12 10.8C9.6 10.8 7.7 8.9 7.7 6.5c2.4 0 4.3 1.9 4.3 4.3z"/><path d="M12 9.6c1-1.9 3.1-3 5.2-2.7-.3 2.1-2 3.8-4.1 4"/>',
     // 18: pot + ONE centered leaf (right sprig dropped per §2 complexity floor + RES-3).
     svg18: '<path d="M6.6 13.4h10.8"/><path d="M7.6 13.4l1 6a1 1 0 0 0 1 .8h4.8a1 1 0 0 0 1-.8l1-6z"/><path d="M12 13.4V8.2"/><path d="M12 10.6C9.5 10.6 7.5 8.6 7.5 6.1c2.5 0 4.5 2 4.5 4.5z"/>',
+    // Bottom-bar colour (Dave 2026-08-28). BASE STAYS MONO — and here that is load-bearing, not
+    // just convention: iconEvents.js:78 maps `potting_up` to this same anchor, so colouring the base
+    // would colour a plant-timeline event nobody asked to change. Only the tab bar passes `filled`.
+    regionIntent: { pot: 'terracotta pot body', rim: 'pot lip — one step darker', stem: 'stem', leaf: 'front leaf — fresh green', leafBack: 'back leaf — deep green for depth' },
+    colorFills: { pot: 'navPot', rim: 'navPotRim', stem: 'navStem', leaf: 'navLeaf', leafBack: 'navStem' },
+    variants: {
+      filled: {
+        class: 'color-candidate',
+        // The rim is a separate darker bar rather than the mono version's single line, because a
+        // stroked lip over a filled pot of the same hue vanishes; two greens on the leaves give the
+        // plant depth at a size where a single green reads flat.
+        svg24: '<path data-region="pot" d="M7.5 13.6l1 5.9a1 1 0 0 0 1 .8h5a1 1 0 0 0 1-.8l1-5.9z" fill="currentColor" stroke="none"/><path data-region="rim" d="M6.4 12.7h11.2a.9.9 0 0 1 0 1.8H6.4a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="stem" d="M12 13.6V8.6" fill="none" stroke="currentColor"/><path data-region="leafBack" d="M12 9.6c1-1.9 3.1-3 5.2-2.7-.3 2.1-2 3.8-4.1 4z" fill="currentColor" stroke="none"/><path data-region="leaf" d="M12 10.8C9.6 10.8 7.7 8.9 7.7 6.5c2.4 0 4.3 1.9 4.3 4.3z" fill="currentColor" stroke="none"/>',
+        // 18 keeps the back leaf dropped, per the mono 18's §2 complexity floor.
+        svg18: '<path data-region="pot" d="M7.6 13.4l1 6a1 1 0 0 0 1 .8h4.8a1 1 0 0 0 1-.8l1-6z" fill="currentColor" stroke="none"/><path data-region="rim" d="M6.6 12.5h10.8a.9.9 0 0 1 0 1.8H6.6a.9.9 0 0 1 0-1.8z" fill="currentColor" stroke="none"/><path data-region="stem" d="M12 13.4V8.2" fill="none" stroke="currentColor"/><path data-region="leaf" d="M12 10.6C9.5 10.6 7.5 8.6 7.5 6.1c2.5 0 4.5 2 4.5 4.5z" fill="currentColor" stroke="none"/>',
+      },
+    },
   },
   // drop. DEFAULT = line/mono (matches set weight). `filled` variant = color-candidate (blue), multi-region.
   'care.drop': {
@@ -361,6 +391,20 @@ const A = {
     svg24: '<path d="M5.4 13.4h13.2a6.6 6.6 0 0 1-13.2 0z"/><circle cx="12" cy="10.4" r="3"/><path d="M12 7.4c0-1.5 1.2-2.7 2.7-2.7 0 1.5-1.2 2.7-2.7 2.7z"/>',
     // 18: the leaf drops (2.7 units = ~2 device px, §2 complexity floor); bowl + fruit carries it.
     svg18: '<path d="M5.6 13.2h12.8a6.4 6.4 0 0 1-12.8 0z"/><circle cx="12" cy="10.4" r="2.8"/>',
+    // Bottom-bar colour (Dave 2026-08-28) — this is one of the two tabs that LOST its colour on
+    // 0bddf91, where a 🧺 emoji became mono line art. Base stays mono; colour rides `filled`.
+    regionIntent: { bowl: 'harvest bowl — brown', fruit: 'the one fruit — ripe terra', leaf: 'leaf on the fruit — fresh green' },
+    colorFills: { bowl: 'navBowl', fruit: 'navFruit', leaf: 'navLeaf' },
+    variants: {
+      filled: {
+        class: 'color-candidate',
+        // Still ONE fruit, not two — the mono note applies unchanged and is if anything stronger
+        // filled: two solid circles on a rim read as a face at every size.
+        svg24: '<path data-region="bowl" d="M5.4 13.4h13.2a6.6 6.6 0 0 1-13.2 0z" fill="currentColor" stroke="none"/><circle data-region="fruit" cx="12" cy="10.4" r="3" fill="currentColor" stroke="none"/><path data-region="leaf" d="M12 7.4c0-1.5 1.2-2.7 2.7-2.7 0 1.5-1.2 2.7-2.7 2.7z" fill="currentColor" stroke="none"/>',
+        // 18 drops the leaf, same as the mono 18: 2.7 units is ~2 device px.
+        svg18: '<path data-region="bowl" d="M5.6 13.2h12.8a6.4 6.4 0 0 1-12.8 0z" fill="currentColor" stroke="none"/><circle data-region="fruit" cx="12" cy="10.4" r="2.8" fill="currentColor" stroke="none"/>',
+      },
+    },
   },
   'nav.putup': {
     class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Put-Up',
@@ -369,6 +413,28 @@ const A = {
     svg24: '<path d="M8.2 4.6h7.6a1.2 1.2 0 0 1 1.2 1.2v1.4a1.2 1.2 0 0 1-1.2 1.2H8.2A1.2 1.2 0 0 1 7 7.2V5.8a1.2 1.2 0 0 1 1.2-1.2z"/><path d="M8.8 8.4h6.4a1.8 1.8 0 0 1 1.8 1.8v7.6a1.8 1.8 0 0 1-1.8 1.8H8.8a1.8 1.8 0 0 1-1.8-1.8v-7.6a1.8 1.8 0 0 1 1.8-1.8z"/><path d="M7 14.8h10"/>',
     // 18: the fill line drops — at 2.0px stroke it closes the gap to the jar shoulder (§4).
     svg18: '<path d="M8 4.4h8a1.2 1.2 0 0 1 1.2 1.2v1.6a1.2 1.2 0 0 1-1.2 1.2H8A1.2 1.2 0 0 1 6.8 7.2V5.6A1.2 1.2 0 0 1 8 4.4z"/><path d="M8.6 8.4h6.8a1.8 1.8 0 0 1 1.8 1.8v7.8a1.8 1.8 0 0 1-1.8 1.8H8.6a1.8 1.8 0 0 1-1.8-1.8v-7.8a1.8 1.8 0 0 1 1.8-1.8z"/>',
+    // Bottom-bar colour (Dave 2026-08-28) — the other tab that lost its colour on 0bddf91 (🫙).
+    // THE JAR IS DRAWN FULL TO THE SHOULDER, and that is two measurements, not a styling whim.
+    // (1) CONTRAST: the obvious filled reading — a pale glass body — puts #cfe0ef at 1.24:1 on
+    // cream, far under the 3:1 silhouette floor, so the largest area of the glyph would contribute
+    // nothing to its shape. Filling with preserves makes the dominant mass terra at 4.51:1.
+    // (2) SEAM: a partly-filled jar leaves headspace that is enclosed by the band above and the
+    // glass wall around it, which scripts/icon-ci/region-seam.mjs correctly flood-fills as an
+    // INTERIOR HOLE — measured at 2.708% of canvas against a 0.05% threshold. `preserve` therefore
+    // shares the glass path exactly: contents painted first, glass stroked over them, no gap for a
+    // seam to live in. It reads better too — a full jar says "put up", an empty one says
+    // "container". Base stays mono; colour rides `filled`.
+    regionIntent: { band: 'screw band — gold', preserve: 'contents — terra, the mass that carries the silhouette', glass: 'glass wall — blue outline over the fill' },
+    colorFills: { band: 'navJarBand', preserve: 'navJarFill', glass: 'navJarGlass' },
+    variants: {
+      filled: {
+        class: 'color-candidate',
+        // Paint order matters: contents, then the glass wall OVER them, so the stroke reads as the
+        // jar in front of what it holds rather than a rim sitting beside it.
+        svg24: '<path data-region="band" d="M8.2 4.6h7.6a1.2 1.2 0 0 1 1.2 1.2v1.4a1.2 1.2 0 0 1-1.2 1.2H8.2A1.2 1.2 0 0 1 7 7.2V5.8a1.2 1.2 0 0 1 1.2-1.2z" fill="currentColor" stroke="none"/><path data-region="preserve" d="M8.8 8.4h6.4a1.8 1.8 0 0 1 1.8 1.8v7.6a1.8 1.8 0 0 1-1.8 1.8H8.8a1.8 1.8 0 0 1-1.8-1.8v-7.6a1.8 1.8 0 0 1 1.8-1.8z" fill="currentColor" stroke="none"/><path data-region="glass" d="M8.8 8.4h6.4a1.8 1.8 0 0 1 1.8 1.8v7.6a1.8 1.8 0 0 1-1.8 1.8H8.8a1.8 1.8 0 0 1-1.8-1.8v-7.6a1.8 1.8 0 0 1 1.8-1.8z" fill="none" stroke="currentColor"/>',
+        svg18: '<path data-region="band" d="M8 4.4h8a1.2 1.2 0 0 1 1.2 1.2v1.6a1.2 1.2 0 0 1-1.2 1.2H8A1.2 1.2 0 0 1 6.8 7.2V5.6A1.2 1.2 0 0 1 8 4.4z" fill="currentColor" stroke="none"/><path data-region="preserve" d="M8.6 8.4h6.8a1.8 1.8 0 0 1 1.8 1.8v7.8a1.8 1.8 0 0 1-1.8 1.8H8.6a1.8 1.8 0 0 1-1.8-1.8v-7.8a1.8 1.8 0 0 1 1.8-1.8z" fill="currentColor" stroke="none"/><path data-region="glass" d="M8.6 8.4h6.8a1.8 1.8 0 0 1 1.8 1.8v7.8a1.8 1.8 0 0 1-1.8 1.8H8.6a1.8 1.8 0 0 1-1.8-1.8v-7.8a1.8 1.8 0 0 1 1.8-1.8z" fill="none" stroke="currentColor"/>',
+      },
+    },
   },
   'nav.space': {
     class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Space',

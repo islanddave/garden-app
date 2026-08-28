@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Tab-bar colour treatments — real browser at phone width</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #f8f5f0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #1a1a1a; }
+      #root { padding: 14px 10px 28px; }
+      h2 { font-size: .95rem; margin: 20px 0 4px; }
+      p.note { font-size: .72rem; color: #4a4a4a; margin: 0 0 10px; line-height: 1.5; }
+      .bar { display: flex; background: #f8f5f0; border-top: 1px solid #d4c9be;
+        border-bottom: 1px solid #d4c9be; padding: 6px 0 5px; }
+      .tab { flex: 1; display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 2px; min-height: 44px; }
+      .tab span { font-size: .62rem; color: #777; }
+      .tab.active span { color: #2d6a4f; font-weight: 700; }
+      .fab { width: 44px; height: 44px; border-radius: 50%; background: #2d6a4f;
+        display: flex; align-items: center; justify-content: center; }
+      .big { display: flex; gap: 18px; padding: 10px 4px 2px; align-items: flex-end; }
+      .big figure { margin: 0; text-align: center; }
+      .big figcaption { font-size: .6rem; color: #777; margin-top: 3px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/iconcolor.jsx"></script>
+  </body>
+</html>

@@ -538,7 +538,17 @@ export default function BottomNav() {
           return (
             <Link key={tab.to} to={tab.to} aria-current={active ? 'page' : undefined}
               style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
-              <Icon name={tab.iconName} size={22} decorative />
+              {/* V4-ICONCOLOR-001 tab-bar pass (Dave 2026-08-28). `filled` is the colour variant;
+                  the four browse tabs are the ONLY consumer that asks for it, which is what keeps
+                  nav.garden mono where iconEvents.js:78 reuses it for potting_up on the timeline.
+                  Dave: "there were two with nice color/style - harvest and put up - which I thought
+                  we would match other items to - we've regressed afaict" — 0bddf91 had replaced
+                  those two emoji with mono line art for set-completeness, levelling DOWN the only
+                  two coloured tabs instead of levelling the rest up.
+                  NO `style` colour here, deliberately: a colour glyph must not be re-tinted by tab
+                  state or every region collapses back to one hue. Active/inactive is carried by the
+                  LABEL's colour and weight below, and by aria-current on the Link. */}
+              <Icon name={tab.iconName} variant="filled" size={22} decorative />
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
             </Link>
           )

@@ -191,14 +191,25 @@ describe('V4-ICON-001 — BottomNav draws a real glyph in every slot', () => {
     }
   })
 
+  // V4-ICONCOLOR-001 (Dave 2026-08-28): the tab bar now asks for the `filled` colour variant, so the
+  // rendered markup is deliberately no longer byte-identical to the base master — Icon.jsx swaps a
+  // resolved hex in for `currentColor` on each [data-region]. UPDATED, NOT WEAKENED: the property
+  // this test exists for is still that each tab draws ITS OWN authored shape rather than the neutral
+  // dot or its neighbour's, and it is still asserted over the whole markup. Only the baseline moved,
+  // from the base master to the variant the bar actually requests.
+  const decolour = (html) => html.replace(/#[0-9a-f]{6}/gi, 'currentColor')
   it('the two newly-wired tabs draw their own authored shape', () => {
     render(<BottomNav />)
     const nav = screen.getByRole('navigation')
     const svgOf = (label) => within(nav).getByText(label).closest('a').querySelector('svg')
-    expect(svgOf('Harvests').innerHTML).toBe(parsed(GLYPHS['nav.harvests'].svg24))
-    expect(svgOf('Put-Up').innerHTML).toBe(parsed(GLYPHS['nav.putup'].svg24))
+    expect(decolour(svgOf('Harvests').innerHTML)).toBe(parsed(GLYPHS['nav.harvests'].variants.filled.svg24))
+    expect(decolour(svgOf('Put-Up').innerHTML)).toBe(parsed(GLYPHS['nav.putup'].variants.filled.svg24))
     // Distinct shapes, not one glyph reused across two adjacent tabs.
     expect(svgOf('Harvests').innerHTML).not.toBe(svgOf('Put-Up').innerHTML)
+    // And the colour actually landed. Without this the assertions above pass just as happily on a
+    // silent mono fallback — which is the whole thing Dave asked to have fixed.
+    expect(svgOf('Harvests').innerHTML).toMatch(/#[0-9a-f]{6}/i)
+    expect(svgOf('Put-Up').innerHTML).toMatch(/#[0-9a-f]{6}/i)
   })
 
   it('the three newly-wired More rows draw their own authored shape', () => {

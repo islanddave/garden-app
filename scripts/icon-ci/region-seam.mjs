@@ -13,7 +13,15 @@ let fail = 0, checked = 0
 const checkedByKey = new Map() // key -> targets actually checked; backs the vacuity floor below
 
 for (const [key, e] of Object.entries(GLYPHS)) {
-  if (e.class !== 'color-candidate') continue
+  // A glyph counts if its BASE is a color-candidate OR any VARIANT is. The base-only filter this
+  // replaces had a hole exactly the shape of the V4-ICONCOLOR-001 tab-bar pass (2026-08-28): those
+  // four keep a mono base on purpose (nav.garden is also potting_up on the plant timeline) and
+  // carry colour on a `filled` variant — so four newly-coloured, multi-region glyphs enumerated as
+  // zero targets here and were silently exempt from the one gate that checks colour geometry.
+  // Same class the vacuity floor below was added for, one level further in.
+  const colourful = e.class === 'color-candidate'
+    || Object.values(e.variants ?? {}).some(v => v.class === 'color-candidate')
+  if (!colourful) continue
   checkedByKey.set(key, 0)
   // targets: top-level master if it declares regions, plus every multi-region variant.
   const targets = []
@@ -57,7 +65,8 @@ for (const [key, e] of Object.entries(GLYPHS)) {
 //     rest, so stripping the region markup REMOVED the glyph from its own gate.
 // Per-key rather than a bare total, so (b) still fails when only one glyph is stripped.
 // Region-less VARIANTS stay legitimately skippable — the assertion is per glyph key.
-const MIN_TARGETS = 6 // 7 targets across 7 color-candidate glyphs at d9afab95.
+const MIN_TARGETS = 10 // 11 targets across 11 color-candidate glyphs (7 at d9afab95 + the 4 tab-bar
+                       // `filled` variants added 2026-08-28, which the old base-only filter missed).
 const unchecked = [...checkedByKey].filter(([, n]) => n === 0).map(([k]) => k)
 if (unchecked.length) {
   console.log(`✗ coverage: color-candidate glyph(s) contributed NO checked target: ${unchecked.join(', ')}. Their data-region markup is missing, so they are silently exempt from the seam gate.`)
