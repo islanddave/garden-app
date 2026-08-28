@@ -131,6 +131,31 @@ check("DISTINCT FROM: alias `l` is not a relation", "l" not in r)
 check("DISTINCT FROM: alias `sl` is not a relation", "sl" not in r)
 check("DISTINCT FROM: the real relation event_log IS found", "event_log" in r)
 
+# 5b. The two guards above are INDEPENDENT, and the cases below are what separate them.
+# Written after a mutation run showed both SURVIVING: each one alone suppresses the
+# dotted `FROM l.entity_id` case, so removing either changed nothing and neither was
+# actually under test. Stated plainly: NEITHER construct below occurs in the codebase
+# today (checked 2026-08-28), so both guards are currently defensive. They are kept
+# because both are legal SQL a schema auditor must not mis-read as a relation, and
+# EXTRACT(EPOCH FROM x.col) in particular is one commit away from existing.
+
+# Only _DISTINCT_FROM catches this: the right-hand side is a BARE column, no dot, so
+# the no-dot lookahead cannot help.
+r = rels("""
+const q = sql`SELECT * FROM event_log e WHERE e.a IS NOT DISTINCT FROM crop_type_slug`;
+""")
+check("DISTINCT FROM (bare column): `crop_type_slug` is not a relation",
+      "crop_type_slug" not in r)
+check("DISTINCT FROM (bare column): event_log still found", "event_log" in r)
+
+# Only the no-dot lookahead catches this: EXTRACT's FROM is not a DISTINCT FROM, so
+# stripping that operator does nothing here.
+r = rels("""
+const q = sql`SELECT EXTRACT(EPOCH FROM e.created_at) AS age FROM event_log e`;
+""")
+check("EXTRACT(EPOCH FROM e.created_at): alias `e` is not a relation", "e" not in r)
+check("EXTRACT(EPOCH FROM ...): event_log still found", "event_log" in r)
+
 # ── 6. Ordinary extraction behaviours ─────────────────────────────────────────────────
 r = rels("""
 const q = sql`
@@ -176,9 +201,14 @@ if gn.exists():
           "display_name" in cols)
     check("garden-node guard does NOT declare `name` (the column that did not exist)",
           "name" not in cols)
-    # The widened Phase 1 glob is what makes the file visible at all.
-    check("garden-node guard matches the Phase 1 discovery glob",
-          gn.match("*columns.test.js"))
+    # The widened Phase 1 glob is what makes the file visible at all. Assert against the
+    # auditor's OWN constant, not a copy of the pattern -- a test that hardcodes the glob
+    # passes just as happily after the glob is narrowed back, which is the one regression
+    # that would silently un-audit this file again.
+    check("garden-node guard matches the auditor's Phase 1 discovery glob",
+          gn.match(audit.PHASE1_GLOB))
+    check("Phase 1 glob still finds the ordinary select-columns files",
+          (REPO_ROOT / "lambda" / "plants" / "select-columns.test.js").match(audit.PHASE1_GLOB))
 
 print()
 if FAILURES:

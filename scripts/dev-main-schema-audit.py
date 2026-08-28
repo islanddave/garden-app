@@ -72,6 +72,12 @@ def load_neon_url(env_path: Path | None) -> str | None:
     return None
 
 
+# Phase 1 discovery pattern. A module constant, not an inline literal, so a test can assert
+# against the pattern this auditor will actually use. It was `select-columns.test.js` until
+# 2026-08-28, which made lambda/inventory-items/garden-node-columns.test.js -- written that
+# same day precisely to guard a JOINed relation -- invisible: the guard guarded nothing.
+PHASE1_GLOB = "*columns.test.js"
+
 # Declared audit contract: `const AUDIT_TABLES = ['table1', ...]` in the test file.
 _AUDIT_TABLES_DECL = re.compile(r"const\s+AUDIT_TABLES\s*=\s*\[(.*?)\]", re.DOTALL)
 # Keyed contract (added 2026-08-28, BUG-SEEDDETAIL500-001 class):
@@ -337,7 +343,7 @@ def main() -> int:
     # precisely to guard a JOINed relation -- invisible to this auditor, so the
     # guard existed and audited nothing. Widened to any `*columns.test.js`.
     test_files = sorted(
-        glob.glob(str(repo / "lambda" / "**" / "*columns.test.js"), recursive=True)
+        glob.glob(str(repo / "lambda" / "**" / PHASE1_GLOB), recursive=True)
     )
     # Phase 2 globbed ONLY `index.js` until 2026-08-19, which made every INSERT in a non-index
     # handler module invisible to this audit — `lambda/harvests/watch-route.js` writes to
