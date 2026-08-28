@@ -29,6 +29,11 @@ export const stubState = {
   s3Puts: [],
   s3Deletes: [],
   s3DeleteThrows: false,
+  // VersionId PutObject hands back. Non-null by default because the real bucket is versioned;
+  // null emulates an unversioned bucket.
+  s3PutVersionId: 'VER-STUB-1',
+  // Emulates the exec role's actual permissions today: s3:DeleteObject yes, DeleteObjectVersion no.
+  s3DeleteVersionDenied: false,
   presigns: [],
 };
 
@@ -53,6 +58,8 @@ export function resetStubs() {
   stubState.s3Puts = [];
   stubState.s3Deletes = [];
   stubState.s3DeleteThrows = false;
+  stubState.s3PutVersionId = 'VER-STUB-1';
+  stubState.s3DeleteVersionDenied = false;
   stubState.presigns = [];
 }
 

@@ -152,6 +152,51 @@ describe('instagram publish path', () => {
     expect(stubState.s3Deletes.map((d) => d.Key)).toEqual(stubState.s3Puts.map((p) => p.Key));
   });
 
+  // ── The staging sweep must remove BYTES, not just visibility ──
+  //
+  // garden-photos-prod has versioning ENABLED (verified 2026-08-28). On a versioned bucket a
+  // DeleteObject with no VersionId writes a DELETE MARKER: the key stops listing and the object
+  // survives as a non-current version, forever. Since the staged object is an EXIF-stripped copy of
+  // a private photo, "swept" meaning "invisible" is the failure mode that reads as success — and
+  // there is no lifecycle rule on the bucket to catch it later either.
+  it('deletes the staged VERSION, not just the key', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    mockSingleOk();
+    await handler(igPost({ photo_ids: ['p1'] }));
+    expect(stubState.s3Deletes).toHaveLength(1);
+    expect(stubState.s3Deletes[0].VersionId).toBe('VER-STUB-1');
+    expect(stubState.s3Deletes[0].Key).toBe(stubState.s3Puts[0].Key);
+  });
+
+  it('falls back to a plain delete on an UNVERSIONED bucket rather than sending VersionId undefined', async () => {
+    stubState.s3PutVersionId = null;       // staging bucket shape
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    mockSingleOk();
+    await handler(igPost({ photo_ids: ['p1'] }));
+    expect(stubState.s3Deletes).toHaveLength(1);
+    expect('VersionId' in stubState.s3Deletes[0]).toBe(false);
+  });
+
+  it('when DeleteObjectVersion is DENIED it tombstones and says the bytes remain', async () => {
+    // The live state today: the exec role has s3:DeleteObject but NOT s3:DeleteObjectVersion.
+    stubState.s3DeleteVersionDenied = true;
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    mockSingleOk();
+    const errors = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a) => errors.push(a.join(' ')));
+
+    const { status } = parse(await handler(igPost({ photo_ids: ['p1'] })));
+    expect(status).toBe(201);                       // the post still succeeded
+    // Two attempts: the versioned delete (denied), then the tombstone fallback.
+    expect(stubState.s3Deletes).toHaveLength(2);
+    expect(stubState.s3Deletes[0].VersionId).toBe('VER-STUB-1');
+    expect('VersionId' in stubState.s3Deletes[1]).toBe(false);
+    // And it must be LOUD and actionable — a silent "best effort" here is how bytes stay forever.
+    expect(errors.join('\n')).toMatch(/s3:DeleteObjectVersion/);
+    expect(errors.join('\n')).toMatch(/BYTES REMAIN/i);
+    spy.mockRestore();
+  });
+
   it('a failed sweep never masks the real outcome', async () => {
     stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
     stubState.s3DeleteThrows = true;
@@ -262,6 +307,58 @@ describe('instagram publish path', () => {
     expect(status).toBe(422);
     expect(containers()).toHaveLength(0);
     expect(stubState.s3Puts).toHaveLength(0);   // not even staged
+  });
+
+  // ── Time budget: the carousel arithmetic that did not fit the function ──
+  //
+  // POLL_CEILING_MS is 60s per container and a carousel polls every child and then the parent, so a
+  // 10-photo post budgeted up to 11 x 60s = 660s inside a 180s Lambda. Being killed is not a clean
+  // failure: the `finally` never runs, staging is stranded, rows stay 'queued', and every container
+  // already created still counts against the 400/24h creation quota.
+  const ctx = (remainingMs) => ({ getRemainingTimeInMillis: () => remainingMs });
+
+  it('refuses a carousel that cannot fit the remaining time, BEFORE creating any container', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: ['p1', 'p2', 'p3'].map(photoRow) });
+    // 26s left: past the 25s publish reserve there is ~1s of polling for 4 containers.
+    const res = await handler(igPost({ photo_ids: ['p1', 'p2', 'p3'] }), ctx(26_000));
+    const { status, body } = parse(res);
+    expect(status).toBe(422);
+    expect(body.message).toMatch(/not enough time/i);
+    expect(body.message).toMatch(/Try fewer photos/);
+    // The whole point: nothing was spent.
+    expect(containers()).toHaveLength(0);
+    expect(publishes()).toHaveLength(0);
+  });
+
+  it('still sweeps staging when it refuses on time', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: ['p1', 'p2', 'p3'].map(photoRow) });
+    await handler(igPost({ photo_ids: ['p1', 'p2', 'p3'] }), ctx(26_000));
+    expect(stubState.s3Puts.length).toBeGreaterThan(0);
+    expect(stubState.s3Deletes.map((d) => d.Key).sort()).toEqual(stubState.s3Puts.map((p) => p.Key).sort());
+  });
+
+  it('proceeds when the budget is ample', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    mockSingleOk();
+    const { status } = parse(await handler(igPost({ photo_ids: ['p1'] }), ctx(180_000)));
+    expect(status).toBe(201);
+  });
+
+  it('reserves time for the publish tail — a budget that only covers polling is refused', async () => {
+    // 24s remaining is under PUBLISH_TAIL_RESERVE_MS (25s), so there is no polling time at all. The
+    // reserve exists because a Lambda killed between media_publish and the status writes leaves a
+    // LIVE Instagram post with no audit row, on a surface where posts cannot be deleted via the API.
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    const { status, body } = parse(await handler(igPost({ photo_ids: ['p1'] }), ctx(24_000)));
+    expect(status).toBe(422);
+    expect(body.message).toMatch(/not enough time/i);
+    expect(containers()).toHaveLength(0);
+  });
+
+  it('works with NO context at all (local invocation) rather than throwing', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    mockSingleOk();
+    expect(parse(await handler(igPost({ photo_ids: ['p1'] }))).status).toBe(201);
   });
 
   // ── The pre-publish content assertion, on the path that cannot be un-published ──

@@ -20,10 +20,21 @@ export class S3Client {
     // a staged object that is never deleted is a stripped copy of a private photo left in the bucket.
     if (cmd instanceof PutObjectCommand) {
       stubState.s3Puts.push(cmd.input);
-      return {};
+      // A versioned bucket returns VersionId on PutObject, and garden-photos-prod IS versioned
+      // (verified 2026-08-28). Returning it by default is what lets a test see whether the sweep
+      // deletes the VERSION or merely tombstones the key. Set s3PutVersionId = null to emulate an
+      // unversioned bucket (staging).
+      return stubState.s3PutVersionId == null ? {} : { VersionId: stubState.s3PutVersionId };
     }
     if (cmd instanceof DeleteObjectCommand) {
       stubState.s3Deletes.push(cmd.input);
+      // Emulates the exec role lacking s3:DeleteObjectVersion: a versioned delete is denied while a
+      // plain tombstone succeeds. This is the LIVE state as of 2026-08-28, not a hypothetical.
+      if (stubState.s3DeleteVersionDenied && cmd.input.VersionId) {
+        const e = new Error('User is not authorized to perform: s3:DeleteObjectVersion');
+        e.name = 'AccessDenied';
+        throw e;
+      }
       if (stubState.s3DeleteThrows) throw new Error('stub: delete failed');
       return {};
     }

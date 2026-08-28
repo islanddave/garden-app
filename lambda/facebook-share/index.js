@@ -225,7 +225,9 @@ function altField(alt) {
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────────────────────────────
-export const handler = async (event) => {
+// `context` is used only for its remaining-time budget (see pollDeadline). It is optional so the
+// handler stays invocable from tests and local scripts without a synthetic Lambda context.
+export const handler = async (event, context) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   if (method === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
 
@@ -283,7 +285,7 @@ export const handler = async (event) => {
       return await withShareMetrics('facebook', () => share(event, secrets, userId));
     }
     if (method === 'POST' && rawPath === '/api/share/instagram') {
-      return await withShareMetrics('instagram', () => instagramShare(event, secrets, userId));
+      return await withShareMetrics('instagram', () => instagramShare(event, secrets, userId, context));
     }
     return resp(405, { error: 'Method not allowed' });
   } catch (err) {
@@ -609,23 +611,52 @@ async function cleanupOrphans(media, pageToken, groupId, sql) {
 
 async function stageAndSign(prepared, groupId) {
   const key = stagingKey(groupId, prepared.photo_id);
-  await s3.send(new PutObjectCommand({
+  // The PutObject RESPONSE carries VersionId on a versioned bucket. Capture it here: it is the only
+  // moment we can learn it without a second ListObjectVersions call, and without it the sweep below
+  // cannot remove the bytes at all. See cleanupStaging.
+  const put = await s3.send(new PutObjectCommand({
     Bucket: BUCKET, Key: key, Body: prepared.bytes, ContentType: 'image/jpeg',
   }));
   const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }),
     { expiresIn: STAGING_URL_TTL_SECONDS });
-  return { key, url };
+  return { key, url, versionId: put?.VersionId ?? null };
 }
 
-// Best-effort staging sweep. Never throws: a cleanup failure must not mask the real outcome, and the
-// ig-staging/ prefix is segregated so a lifecycle rule can catch whatever a mid-run timeout leaves
-// behind. NOTE: that lifecycle rule is NOT yet provisioned (Track A, boss condition 1), so today a
-// timeout between PutObject and this sweep leaks a stripped-bytes object under ig-staging/ until it
-// is swept by hand. Stripped, private, and presign-expired — but not zero.
-async function cleanupStaging(keys) {
-  await Promise.all(keys.map(async (Key) => {
-    try { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key })); }
-    catch (err) { console.warn('ig staging cleanup failed for', Key, err?.message ?? String(err)); }
+// Best-effort staging sweep. Never throws: a cleanup failure must not mask the real outcome.
+//
+// VERSION-AWARE ON PURPOSE — a plain DeleteObject here does NOT delete anything.
+// garden-photos-prod has versioning ENABLED (verified 2026-08-28 via get-bucket-versioning). On a
+// versioned bucket, DeleteObject without a VersionId writes a DELETE MARKER: the key stops being
+// listable and the object still exists as a non-current version, forever. So the obvious sweep — the
+// one this function shipped with earlier today — makes an EXIF-stripped copy of a private photo
+// invisible rather than gone, which is the failure mode that reads as success. Passing VersionId
+// removes that specific version permanently and writes no marker.
+//
+// PREREQUISITE, NOT YET GRANTED: the exec role (garden-app-lambda-exec) allows s3:DeleteObject but
+// NOT s3:DeleteObjectVersion (verified 2026-08-28 against the three inline policies). Until that is
+// granted, the versioned branch below fails AccessDenied and we fall through to the tombstone —
+// which is why the failure is logged loudly and counted, rather than swallowed as "best effort".
+// There is also NO lifecycle configuration on the bucket at all (NoSuchLifecycleConfiguration), so
+// nothing expires non-current versions in the background either. Both are prepared in
+// scripts/ig-staging-retention.sh; neither is applied.
+async function cleanupStaging(staged) {
+  await Promise.all(staged.map(async ({ key: Key, versionId }) => {
+    try {
+      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key, ...(versionId ? { VersionId: versionId } : {}) }));
+    } catch (err) {
+      const denied = /accessdenied|not authorized/i.test(`${err?.name ?? ''} ${err?.message ?? ''}`);
+      if (versionId && denied) {
+        // The one case worth separating: we KNOW the version and are not allowed to remove it. Fall
+        // back so the key at least stops being listable, and say plainly that bytes remain.
+        console.error(`ig staging: DeleteObjectVersion DENIED for ${Key} (version ${versionId}) — grant s3:DeleteObjectVersion; STRIPPED BYTES REMAIN as a non-current version`);
+        shareMetric('staging_version_retained', { target: 'instagram', reason: 'delete_version_denied' });
+        try { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key })); }
+        catch (e2) { console.error('ig staging: tombstone fallback also failed for', Key, e2?.message ?? String(e2)); }
+        return;
+      }
+      console.error('ig staging cleanup FAILED for', Key, err?.message ?? String(err));
+      shareMetric('staging_version_retained', { target: 'instagram', reason: 'delete_failed' });
+    }
   }));
 }
 
@@ -638,11 +669,38 @@ async function igPost(url, fields) {
   return json;
 }
 
+// How much of the invocation is held back for everything AFTER the last poll: media_publish, the
+// permalink read, the per-photo status writes, and the staging sweep. Publishing is the step that
+// must not be cut off midway — a Lambda killed between media_publish and the status writes leaves a
+// LIVE Instagram post with no audit row, on a surface where posts cannot be deleted through the API.
+const PUBLISH_TAIL_RESERVE_MS = 25_000;
+// Used when the Lambda context is absent (unit tests, local invocation). Prod is 180s; staging is
+// 60s, which is why this is derived from the context at runtime rather than hardcoded to prod.
+const ASSUMED_BUDGET_MS = 180_000;
+
+// The polling deadline for the WHOLE request, not per container.
+//
+// THE ARITHMETIC THAT DID NOT WORK. POLL_CEILING_MS is 60s and a carousel polls every child and then
+// the parent, so a 10-photo post budgeted up to 11 x 60s = 660s against a 180s function. The failure
+// is not a clean error: the Lambda is KILLED, so the `finally` never runs, staging objects are
+// stranded, share_log rows stay 'queued' forever, and every container created still counts against
+// the 400/24h creation quota. Sharing one deadline across all polls makes the ceiling mean what it
+// says — an upper bound on the request, not on each of an unbounded number of steps.
+function pollDeadline(context) {
+  const remaining = typeof context?.getRemainingTimeInMillis === 'function'
+    ? context.getRemainingTimeInMillis()
+    : ASSUMED_BUDGET_MS;
+  return Date.now() + Math.max(0, remaining - PUBLISH_TAIL_RESERVE_MS);
+}
+
 // D4 polling contract. A container is not publishable the moment it is created — Meta fetches the
 // URL asynchronously. Only FINISHED may be published; IN_PROGRESS past the ceiling ABORTS rather
 // than looping; ERROR and EXPIRED are terminal and are kept distinct by classifyContainerStatus.
-async function pollContainer(containerId, token) {
-  const deadline = Date.now() + POLL_CEILING_MS;
+//
+// `budgetDeadline` is the request-wide bound; POLL_CEILING_MS still caps a SINGLE container so one
+// slow item cannot eat the whole budget and starve its siblings. Whichever comes first wins.
+async function pollContainer(containerId, token, budgetDeadline = Infinity) {
+  const deadline = Math.min(Date.now() + POLL_CEILING_MS, budgetDeadline);
   for (;;) {
     const r = await graphGet(`${igNodeUrl(containerId)}?fields=status_code,status&access_token=${encodeURIComponent(token)}`);
     const last = classifyContainerStatus(r.json);
@@ -663,7 +721,7 @@ async function pollContainer(containerId, token) {
 }
 
 // POST /api/share/instagram — { photo_ids: [...], caption?, client_request_id? }
-async function instagramShare(event, secrets, userId) {
+async function instagramShare(event, secrets, userId, context) {
   let body;
   try { body = JSON.parse(event.body ?? '{}'); } catch { return resp(400, { error: 'invalid_json' }); }
 
@@ -789,18 +847,41 @@ async function instagramShare(event, secrets, userId) {
     const staged = [];
     for (const p of prepared) {
       const s = await stageAndSign(p, groupId);
-      stagedKeys.push(s.key);
+      stagedKeys.push({ key: s.key, versionId: s.versionId });
       staged.push({ photo_id: p.photo_id, url: s.url });
     }
 
     const isCarousel = staged.length >= IG_MIN_CAROUSEL;
+    // One deadline for every poll in this request. Computed HERE, after prepare and staging have
+    // already spent part of the invocation, so it reflects what is actually left rather than what
+    // the function started with.
+    const budget = pollDeadline(context);
+
+    // FEASIBILITY PRE-FLIGHT, before the first container exists.
+    //
+    // A carousel polls each child and then the parent, so it needs at least one poll interval per
+    // container to have any chance. If the remaining budget cannot cover that, the request is going
+    // to be killed part-way — and the expensive part of being killed is not the failure, it is that
+    // every container already created still counts against the 400/24h creation quota and the
+    // `finally` never runs to sweep staging. Refusing now costs nothing and spends nothing.
+    const pollsNeeded = isCarousel ? staged.length + 1 : 1;
+    const minimumNeeded = pollsNeeded * POLL_INTERVAL_MS;
+    if (budget - Date.now() < minimumNeeded) {
+      const e = new Error(
+        `not enough time left to publish ${staged.length} photo${staged.length === 1 ? '' : 's'} to Instagram `
+        + `(needs at least ${Math.ceil(minimumNeeded / 1000)}s of polling, `
+        + `${Math.max(0, Math.round((budget - Date.now()) / 1000))}s available). Try fewer photos.`);
+      e.userFacing = true;
+      throw e;
+    }
+
     let creationId;
 
     if (!isCarousel) {
       const c = await igPost(igMediaUrl(igUserId), singleImageFields(staged[0].url, caption, token));
       creationId = c.id;
       await setStatus(staged[0].photo_id, { status: 'queued', fb_media_id: creationId });
-      await pollContainer(creationId, token);
+      await pollContainer(creationId, token, budget);
     } else {
       // D3: children first (each is_carousel_item, NO caption), then a parent CAROUSEL container
       // referencing them in display order. Publishing the CHILD instead of the parent is the classic
@@ -812,12 +893,12 @@ async function instagramShare(event, secrets, userId) {
         await setStatus(s.photo_id, { status: 'queued', fb_media_id: c.id });
       }
       // All-or-nothing: every child must reach FINISHED before the parent is created, so a partial
-      // carousel is never published.
-      for (const cid of childIds) await pollContainer(cid, token);
+      // carousel is never published. All of these share ONE budget — see pollDeadline.
+      for (const cid of childIds) await pollContainer(cid, token, budget);
 
       const parent = await igPost(igMediaUrl(igUserId), carouselParentFields(childIds, caption, token));
       creationId = parent.id;
-      await pollContainer(creationId, token);
+      await pollContainer(creationId, token, budget);
     }
 
     // D5: the container id is already persisted (fb_media_id) BEFORE this call, so a lost response on
