@@ -1,7 +1,7 @@
 {
-  "version": "4.63.3",
+  "version": "4.63.4",
   "date": "2026-08-28",
   "highlights": [
-    "Seed packet provenance — vendor, SKU and origin — now saves when you add seeds in the app instead of being silently dropped"
+    "Seed packet pages open again — every seed item was showing 'Internal server error' instead of its details"
   ]
 }
