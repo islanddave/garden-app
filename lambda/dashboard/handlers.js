@@ -985,6 +985,19 @@ export function likeEscape(q) {
   return q.replace(/[\\%_]/g, (m) => '\\' + m);
 }
 
+// V4-SEARCHCROPTYPE-001 (BD-072) — a planting is now findable by WHAT IT IS, not only by what it was
+// named. Three terms added over two LEFT JOINs: the cultivar's name, the crop-type slug, and the
+// crop type's display name.
+//
+// THE CULTIVAR-NAME TERM IS A JUDGMENT CALL and is called out rather than buried. The ticket says
+// "match on crop type, NOT JUST cultivar name", which presumes cultivar name is already matched —
+// for plantings it only ever was by coincidence, via display_name. Measured on prod: of 231 live
+// plantings carrying a cultivar, 140 are named exactly after it and 199 contain it, so 32 are
+// findable by their variety today only if you know the name someone typed into the planting.
+//
+// LEFT JOINs throughout: a planting with no cultivar_id (a bare container, a rescue with no ID yet)
+// must keep appearing for the four terms it already matched on. Neither join can fan out —
+// cultivar.id is a key and crop_types has 150 rows with 150 distinct slugs.
 export function searchPlantings(sql, userId, pat, prefixPat) {
   const householdIds = householdScope(userId);
   return sql`
@@ -993,13 +1006,18 @@ export function searchPlantings(sql, userId, pat, prefixPat) {
              LEFT(COALESCE(p.notes, ''), 160) AS snippet
       FROM public.garden_node p
       JOIN public.container pp ON pp.id = p.container_id
+      LEFT JOIN public.cultivar cv ON cv.id = p.cultivar_id
+      LEFT JOIN public.crop_types ct ON ct.slug = cv.crop_type_slug
       WHERE pp.created_by = ANY(${householdIds})
         AND p.deleted_at IS NULL AND p.archived_at IS NULL
         AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
         AND (p.display_name ILIKE ${pat} ESCAPE '\\'
              OR p.notes ILIKE ${pat} ESCAPE '\\'
              OR p.lineage_note ILIKE ${pat} ESCAPE '\\'
-             OR p.container_type ILIKE ${pat} ESCAPE '\\')
+             OR p.container_type ILIKE ${pat} ESCAPE '\\'
+             OR cv.display_name ILIKE ${pat} ESCAPE '\\'
+             OR cv.crop_type_slug ILIKE ${pat} ESCAPE '\\'
+             OR ct.display_name ILIKE ${pat} ESCAPE '\\')
       ORDER BY CASE WHEN p.display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
                p.display_name ASC
       LIMIT 20
@@ -1043,19 +1061,36 @@ export function searchLocations(sql, userId, pat, prefixPat) {
 
 // Varieties are globally readable — no created_by filter (verbatim from
 // lambda/varieties GET list: "Globally readable — no created_by filter.").
+// V4-SEARCHCROPTYPE-001 (BD-072, Dave 2026-08-28) — CROP TYPE IS A MATCH AXIS, not just a column we
+// happen to select. Dave: "I don't always remember spelling — is it charentais? charantais?
+// chantareis? but I know it is a cantaloupe." The cultivar name is the unreliable handle; the crop
+// type is the reliable one, so crop-type matching is the fallback that makes search work at all for
+// heirloom and imported names, not a nicety layered on top.
+//
+// BOTH the slug AND crop_types.display_name are matched, and the display name is the load-bearing
+// half: 'bunching_onion' displays as "Onion (bunching / scallion)" and 'mache' as "Mache (Corn
+// Salad)", so slug-only matching would miss every search for "scallion" or "corn salad". Measured on
+// prod: Suyo Long matches NONE of the five columns this query used before for q='cucumber' — not
+// display_name, species, genus, care_notes or soil_notes — so Dave's stated case genuinely failed.
+//
+// LEFT JOIN, not JOIN: a cultivar with a null or dangling crop_type_slug must not vanish from search
+// results it already appeared in. Cannot fan out — crop_types is 150 rows with 150 distinct slugs.
 export function searchVarieties(sql, pat, prefixPat) {
   return sql`
-      SELECT id, display_name AS name, species, crop_type_slug, lifecycle,
-             LEFT(COALESCE(care_notes, ''), 160) AS snippet
-      FROM public.cultivar
-      WHERE deleted_at IS NULL
-        AND (display_name ILIKE ${pat} ESCAPE '\\'
-             OR species ILIKE ${pat} ESCAPE '\\'
-             OR genus ILIKE ${pat} ESCAPE '\\'
-             OR care_notes ILIKE ${pat} ESCAPE '\\'
-             OR soil_notes ILIKE ${pat} ESCAPE '\\')
-      ORDER BY CASE WHEN display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
-               display_name ASC
+      SELECT c.id, c.display_name AS name, c.species, c.crop_type_slug, c.lifecycle,
+             LEFT(COALESCE(c.care_notes, ''), 160) AS snippet
+      FROM public.cultivar c
+      LEFT JOIN public.crop_types ct ON ct.slug = c.crop_type_slug
+      WHERE c.deleted_at IS NULL
+        AND (c.display_name ILIKE ${pat} ESCAPE '\\'
+             OR c.species ILIKE ${pat} ESCAPE '\\'
+             OR c.genus ILIKE ${pat} ESCAPE '\\'
+             OR c.care_notes ILIKE ${pat} ESCAPE '\\'
+             OR c.soil_notes ILIKE ${pat} ESCAPE '\\'
+             OR c.crop_type_slug ILIKE ${pat} ESCAPE '\\'
+             OR ct.display_name ILIKE ${pat} ESCAPE '\\')
+      ORDER BY CASE WHEN c.display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
+               c.display_name ASC
       LIMIT 20
     `;
 }

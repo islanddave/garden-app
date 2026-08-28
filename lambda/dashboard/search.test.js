@@ -167,3 +167,65 @@ describe('handleSearch composition (S10–S11)', () => {
     expect(Object.keys(body.results).length).toBe(SEARCH_SECTIONS.length);
   });
 });
+
+// ── V4-SEARCHCROPTYPE-001 (BD-072) ────────────────────────────────────────────────────────────
+// WHAT THESE CAN AND CANNOT PROVE. This suite is DB-free by design: `makeSql` records the resolved
+// query text and returns []. So these assert the SHAPE of the query — that the joins exist and that
+// crop type is bound into the predicate — and they cannot assert that a search for 'cucumber'
+// returns Suyo Long. That was proved directly against prod Neon while building this, read-only:
+//   • Suyo Long matched NONE of the five columns the variety search used before (display_name,
+//     species, genus, care_notes, soil_notes) for q='cucumber', and appears with the new terms.
+//   • q='scallion' now returns Tokyo Long White, which carries that word in no column of its own —
+//     it is reachable ONLY through crop_types.display_name ("Onion (bunching / scallion)"), which
+//     is why matching the slug alone would not have been enough.
+//   • Live plantings matching 'cucumber' went 0 -> 1.
+// Anyone tightening these should re-run those three against prod rather than trusting the shapes.
+describe('V4-SEARCHCROPTYPE-001 — crop type is a match axis (BD-072)', () => {
+  it('varieties match the crop-type slug AND the crop type display name', async () => {
+    await searchVarieties(makeSql(), PAT, PREFIX);
+    const sql = sqlCalls[sqlCalls.length - 1].resolved;
+    expect(sql).toMatch(/LEFT JOIN public\.crop_types ct ON ct\.slug = c\.crop_type_slug/);
+    expect(sql).toMatch(/c\.crop_type_slug ILIKE/);
+    // The display-name term is the load-bearing half — slug-only misses "scallion" and "corn salad".
+    expect(sql).toMatch(/ct\.display_name ILIKE/);
+  });
+
+  it('plantings reach crop type over two joins, and match the cultivar name too', async () => {
+    await searchPlantings(makeSql(), USER, PAT, PREFIX);
+    const sql = sqlCalls[sqlCalls.length - 1].resolved;
+    expect(sql).toMatch(/LEFT JOIN public\.cultivar cv ON cv\.id = p\.cultivar_id/);
+    expect(sql).toMatch(/LEFT JOIN public\.crop_types ct ON ct\.slug = cv\.crop_type_slug/);
+    expect(sql).toMatch(/cv\.display_name ILIKE/);
+    expect(sql).toMatch(/cv\.crop_type_slug ILIKE/);
+    expect(sql).toMatch(/ct\.display_name ILIKE/);
+  });
+
+  // LEFT, not INNER. An inner join would silently DROP every planting with no cultivar_id and every
+  // cultivar with a null or dangling crop_type_slug — turning a search improvement into a search
+  // regression for rows that already matched on their own name.
+  it('uses LEFT joins so rows without a cultivar or crop type do not vanish', async () => {
+    for (const build of [() => searchVarieties(makeSql(), PAT, PREFIX),
+                         () => searchPlantings(makeSql(), USER, PAT, PREFIX)]) {
+      await build();
+      const sql = sqlCalls[sqlCalls.length - 1].resolved;
+      expect(sql).not.toMatch(/(?<!LEFT )JOIN public\.crop_types/);
+      expect(sql).not.toMatch(/(?<!LEFT )JOIN public\.cultivar/);
+    }
+  });
+
+  // Every new term must carry ESCAPE, or a query containing % or _ wildcards past the new columns
+  // — exactly what likeEscape and S12 exist to prevent on the original terms.
+  it('every new ILIKE term carries the ESCAPE clause', async () => {
+    for (const build of [() => searchVarieties(makeSql(), PAT, PREFIX),
+                         () => searchPlantings(makeSql(), USER, PAT, PREFIX)]) {
+      await build();
+      const sql = sqlCalls[sqlCalls.length - 1].resolved;
+      // Backslash-agnostic on purpose: the resolved text carries ESCAPE '\' with a single
+      // backslash, and hard-coding the count made this assert the wrong thing rather than the
+      // right thing — it reported every term as unescaped.
+      const ilikes = sql.match(/ILIKE \$\d+(?: ESCAPE '[^']*')?/g) ?? [];
+      expect(ilikes.length).toBeGreaterThan(0);
+      for (const t of ilikes) expect(t, `unescaped ILIKE in: ${sql}`).toMatch(/ESCAPE/);
+    }
+  });
+});
