@@ -58,3 +58,16 @@ export async function cleanupOrphanMedia({ media, deleteMedia, markCleaned, mark
 export function strandedError(mediaFbid) {
   return `orphan cleanup failed — unpublished media ${mediaFbid} is still on the Page and must be removed manually`;
 }
+
+// share_log status vocabulary for this path, declared HERE rather than inline at the SQL call sites
+// so it is importable by a test. shareLogStatusContract.test.js reads these and asserts every one is
+// permitted by the live share_log_status_valid CHECK, which is the guard against the hazard that
+// governs any status change on this table: a handler writing a value the DEPLOYED constraint
+// forbids raises 23514 AFTER the post has already reached a public Page, leaving a live post with
+// no audit row. The DDL must always widen first (V4-SHARETARGETS-001, applied to staging and prod
+// 2026-08-28); the code follows on the next deploy.
+export const STATUS_ORPHAN_CLEANED = 'orphan_cleaned';
+// Was 'failed' until the CHECK was widened — 'failed' carried no way to distinguish "the post did
+// not go out" from "the post did not go out AND a real unpublished object is stranded on a public
+// Page", which is the one that needs a human.
+export const STATUS_ORPHAN_STRANDED = 'orphan_cleanup_failed';

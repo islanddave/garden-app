@@ -12,7 +12,7 @@
 //   Graph upload. Single photo: POST /{page}/photos published (caption inline). Multi: POST
 //   /{page}/photos published=false (parallel) -> POST /{page}/feed with message + attached_media[].
 //   On /feed failure: delete the orphaned published=false media. Best-effort read-back asserts the
-//   attached media count. Rows -> posted | failed | orphan_cleaned.
+//   attached media count. Rows -> posted | failed | orphan_cleaned | orphan_cleanup_failed.
 //
 // CONSENT/PRIVACY: reads photo BYTES server-side (never url=), so no S3 object is made public and
 // photos.is_public is neither read nor written. EXIF stripped before any byte leaves for Facebook.
@@ -34,7 +34,7 @@ import {
 } from './graph.js';
 import { mapInBatches } from './batch.js';
 import { buildPhotoAltText } from './altText.js';
-import { cleanupOrphanMedia, strandedError } from './orphans.js';
+import { cleanupOrphanMedia, strandedError, STATUS_ORPHAN_CLEANED, STATUS_ORPHAN_STRANDED } from './orphans.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // WHEN_REQUIRED: same rationale as lambda/photos — avoid the SDK injecting a checksum header S3
@@ -467,20 +467,23 @@ async function share(event, secrets, userId) {
 // generic Graph message, losing the one fact that has to survive — that a real object is stranded
 // on the Page and needs removing by hand.
 //
-// Deliberately NOT introducing an 'orphan_cleanup_failed' status: the deployed CHECK constraint
-// (share_log_status_valid) enumerates exactly pending|uploading|posted|failed|orphan_cleaned, so a
-// writer emitting a sixth value would 23514 against the live database. Widening that CHECK is a
-// migration that must land BEFORE any handler writes the new value; until it does, 'failed' plus a
-// specific error message carries the same information without the ordering hazard.
+// A stranded object now gets its OWN status rather than being overloaded onto 'failed'.
+// V4-SHARETARGETS-001 widened share_log_status_valid to admit 'orphan_cleanup_failed', and that DDL
+// is applied to staging and prod as of 2026-08-28 — which is the ordering this change depends on.
+// The constraint must always widen BEFORE a handler emits the new value: the reverse order raises
+// 23514 AFTER the post has reached a public Page, leaving a live post with no audit row.
+// 'failed' could not distinguish "the post did not go out" from "the post did not go out AND a real
+// unpublished object is stranded on a public Page and needs removing by hand" — the second is the
+// only one that requires a human, and it was unqueryable.
 async function cleanupOrphans(media, pageToken, groupId, sql) {
   return cleanupOrphanMedia({
     media,
     deleteMedia: (mediaFbid) => graphDelete(`${nodeUrl(mediaFbid)}?access_token=${encodeURIComponent(pageToken)}`),
     markCleaned: (photoId) => sql`
-      UPDATE share_log SET status = 'orphan_cleaned', updated_at = now()
+      UPDATE share_log SET status = ${STATUS_ORPHAN_CLEANED}, updated_at = now()
       WHERE post_group_id = ${groupId} AND photo_id = ${photoId} AND status = 'uploading'`,
     markStranded: (photoId, mediaFbid) => sql`
-      UPDATE share_log SET status = 'failed', updated_at = now(), error = ${strandedError(mediaFbid)}
+      UPDATE share_log SET status = ${STATUS_ORPHAN_STRANDED}, updated_at = now(), error = ${strandedError(mediaFbid)}
       WHERE post_group_id = ${groupId} AND photo_id = ${photoId} AND status = 'uploading'`,
     // Loud: the only signal that a real object was left on a public Page.
     log: (msg, detail) => console.error(`${msg} on group ${groupId}:`, detail),
