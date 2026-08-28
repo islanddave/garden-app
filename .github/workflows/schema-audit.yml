@@ -30,10 +30,18 @@ on:
   push:
     branches: [dev]
     paths:
-      - 'lambda/**/index.js'
-      - 'lambda/**/select-columns.test.js'
+      # Widened 2026-08-28. The filter had drifted BEHIND the audit twice, and a gate that
+      # does not run on the files it audits is the same shape of blind spot as one that
+      # cannot see them:
+      #   - Phase 2 was widened to every non-test lambda/**/*.js on 2026-08-19, but this
+      #     filter still watched only index.js -- so editing e.g. lambda/harvests/watch-route.js
+      #     (which carries INSERT column lists) never triggered the audit.
+      #   - Phase 1 discovery is now '*columns.test.js', so the garden_node joined-relation
+      #     guard would not have triggered a run either.
+      - 'lambda/**/*.js'
       - 'migrations/**'
       - 'scripts/dev-main-schema-audit.py'
+      - 'scripts/schema-audit-join-baseline.json'
       - '.github/workflows/schema-audit.yml'
   workflow_dispatch:
 
