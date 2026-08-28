@@ -417,6 +417,49 @@ describe('instagram publish path', () => {
     expect(containers()).toHaveLength(0);
   });
 
+  // THE CASE THE BUDGET EXISTS FOR. The pre-flight only refuses what is impossible up front; this is
+  // what happens when time runs out MID-POLL. Without the shared deadline the loop would keep polling
+  // until the Lambda was KILLED — and a kill means the `finally` never runs, so staging is stranded,
+  // rows stay 'queued' and the containers stay spent with no record of why. Converting that into an
+  // ordinary 422 with the staging swept is the entire point of the fix.
+  it('runs out of budget DURING polling as a clean error, with staging swept', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    // 28s remaining: 3s of polling after the 25s publish reserve — enough to pass the pre-flight for
+    // one photo (which needs exactly one interval) and not enough to actually finish.
+    fetchMock
+      .mockResolvedValueOnce(okJson({ id: 'CONTAINER1' }))
+      .mockResolvedValue(okJson({ status_code: 'IN_PROGRESS' }));   // never finishes
+
+    const { status, body } = parse(await handler(igPost({ photo_ids: ['p1'] }), ctx(28_000)));
+
+    expect(status).toBe(422);
+    expect(publishes()).toHaveLength(0);          // nothing was published
+    expect(stubState.s3Deletes.map((d) => d.Key)).toEqual(stubState.s3Puts.map((p) => p.Key));
+
+    // And it must name the RIGHT limit. Reporting the 60s per-image ceiling here would send the
+    // reader to tune a number that was never reached.
+    expect(body.message).toMatch(/remaining budget/i);
+    expect(body.message).not.toMatch(/within 60s/);
+  });
+
+  it('names the PER-IMAGE ceiling when that is the bound that ran out', async () => {
+    // Ample request budget, so the 60s per-image ceiling is the smaller bound. Proves the two
+    // messages are actually distinguished rather than one of them being dead code.
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    fetchMock
+      .mockResolvedValueOnce(okJson({ id: 'CONTAINER1' }))
+      .mockResolvedValue(okJson({ status_code: 'IN_PROGRESS' }));
+    vi.useFakeTimers({ shouldAdvanceTime: true, shouldClearNativeTimers: true });
+    try {
+      const p = handler(igPost({ photo_ids: ['p1'] }), ctx(600_000));
+      await vi.advanceTimersByTimeAsync(70_000);
+      const { status, body } = parse(await p);
+      expect(status).toBe(422);
+      expect(body.message).toMatch(/within 60s/);
+      expect(publishes()).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('works with NO context at all (local invocation) rather than throwing', async () => {
     stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
     mockSingleOk();

@@ -700,7 +700,9 @@ function pollDeadline(context) {
 // `budgetDeadline` is the request-wide bound; POLL_CEILING_MS still caps a SINGLE container so one
 // slow item cannot eat the whole budget and starve its siblings. Whichever comes first wins.
 async function pollContainer(containerId, token, budgetDeadline = Infinity) {
-  const deadline = Math.min(Date.now() + POLL_CEILING_MS, budgetDeadline);
+  const startedAt = Date.now();
+  const ownCeiling = startedAt + POLL_CEILING_MS;
+  const deadline = Math.min(ownCeiling, budgetDeadline);
   for (;;) {
     const r = await graphGet(`${igNodeUrl(containerId)}?fields=status_code,status&access_token=${encodeURIComponent(token)}`);
     const last = classifyContainerStatus(r.json);
@@ -712,7 +714,16 @@ async function pollContainer(containerId, token, budgetDeadline = Infinity) {
       throw err;
     }
     if (Date.now() + POLL_INTERVAL_MS > deadline) {
-      const err = new Error(`Instagram did not finish processing within ${POLL_CEILING_MS / 1000}s (last status ${last.code ?? 'unknown'}).`);
+      // NAME THE BOUND THAT ACTUALLY RAN OUT. This used to report POLL_CEILING_MS unconditionally —
+      // "did not finish processing within 60s" — which is false whenever the request-wide budget is
+      // the smaller of the two, and on a carousel the budget is the USUAL one to hit, so the
+      // misleading message was the common case rather than the edge. A diagnostic that names the
+      // wrong limit sends the reader to tune the wrong number.
+      const waited = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+      const hitOwnCeiling = deadline === ownCeiling;
+      const err = new Error(hitOwnCeiling
+        ? `Instagram did not finish processing this image within ${POLL_CEILING_MS / 1000}s (last status ${last.code ?? 'unknown'}).`
+        : `Ran out of time waiting for Instagram after ${waited}s — the request's remaining budget, not the per-image limit (last status ${last.code ?? 'unknown'}). Try fewer photos.`);
       err.userFacing = true;
       throw err;
     }
