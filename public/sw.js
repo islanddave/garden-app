@@ -35,10 +35,39 @@ const MAX_IMAGE_ENTRIES = 150
 // success and is worse than the honest zero it replaces. 500 covers the whole measured plants
 // population with ~23% headroom for the other prefixes a session touches (all thumbs/ = 1,316 /
 // 230.7 MB, so this is deliberately NOT "cache everything").
-// KNOWN GAP, stated rather than hidden: trimCache caps by COUNT, not bytes, and a TIER.FULL
-// original runs ~3 MB. A session that pages the Lightbox hard could hold far more bytes than the
-// thumb math above implies. A byte-aware trim is the follow-up this needs BEFORE the flag flips.
+// The count cap is only sound because of the THUMBS-ONLY write rule below: 500 x the 176,963 B
+// measured thumb median is ~84 MB, which is what "sized for the photo working set" means. Without
+// that rule trimCache caps by COUNT, not bytes, and 500 x the 4,147,674 B measured ORIGINAL median
+// is ~2.07 GB on an Android phone — the gap this file used to state as a known one.
 const MAX_PHOTO_ENTRIES = 500
+
+// BUG-PHOTOCACHEUNGATED-001. The photo cache accepts THUMBS ONLY, and this predicate is the whole
+// of that rule.
+//
+// The gap it closes: PHOTO_CORS_CACHE_ENABLED gates only the <img> half, and this file cannot import
+// it (unbundled classic script — see normalizeImageUrl). imageCacheFirst therefore decides purely on
+// `request.mode === 'cors'`, and the share composer's own fetch is a cors request that no flag ever
+// touched: src/lib/harvestPostPhotos.js issues `fetch(url, { credentials: 'omit' })` with no `mode`,
+// which DEFAULTS to cors, against a TIER.FULL original. So originals were landing in photos-v1 in
+// prod with the flag off, at ~4.15 MB each.
+//
+// WHY A KEY TEST AND NOT A BYTE TEST: the size is only knowable after the body is read, by which
+// point it is already in hand; the key says what the object IS before anything is stored. `thumbs/`
+// is the SERVER-OWNED prefix (lambda/photos/viewTier.js TIER_PREFIX) and it is not caller-nameable —
+// uploadKeyPolicy.js's closed allowlist has six prefixes and `thumbs` is not among them — so an
+// original can never present as one.
+//
+// Reads are deliberately NOT gated: an entry an older sw.js already wrote is bytes already paid for,
+// and serving it is free. evictNonThumbPhotos() below is what removes it.
+//
+// FAILS CLOSED. Photo URLs are virtual-hosted S3 presigns (no forcePathStyle anywhere in lambda/),
+// so the key is exactly the pathname minus its leading slash. If that ever changed — path-style
+// addressing, a CDN rewrite — this returns false, the photo cache goes cold, and NOTHING leaks. The
+// failure direction is a cache that stops helping, never one that stops being bounded.
+const THUMB_PATH_PREFIX = '/thumbs/'
+function isThumbObjectUrl(url) {
+  try { return new URL(url).pathname.startsWith(THUMB_PATH_PREFIX) } catch { return false }
+}
 
 const LAMBDA_ORIGIN = 'lambda-url.us-east-1.on.aws'
 
@@ -176,6 +205,9 @@ self.addEventListener('install', (event) => {
 // V4-PHOTOSWHARDEN-001: the two passes are complementary, not redundant. The name filter is
 // all-or-nothing and only fires when CACHE_VERSION actually moved; purgePoisonedImages is the
 // per-entry one and is the only thing that cleans a client activating under an UNCHANGED name.
+// BUG-PHOTOCACHEUNGATED-001 adds a THIRD, evictNonThumbPhotos — neither of the two above can reach
+// a full original in photos-v1: the name filter KEEPS that cache by design, and an original is
+// valid image/jpeg so the poison predicate correctly leaves it alone.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     // V4-SWCACHEID-001: keepCacheKey REJECTS the bare `api-${CACHE_VERSION}`, so the sweep itself
@@ -191,7 +223,7 @@ self.addEventListener('activate', (event) => {
           .filter(k => !keepCacheKey(k, CACHE_VERSION)) // old garden-images + prior images-* + every prior-version per-sub partition
           .map(k => caches.delete(k))
       )
-    }).then(() => purgePoisonedImages()).then(() => self.clients.claim())
+    }).then(() => purgePoisonedImages()).then(() => evictNonThumbPhotos()).then(() => self.clients.claim())
   )
 })
 
@@ -322,18 +354,28 @@ function normalizeImageUrl(url, corsMode) {
 // app-image way. That is the same coupling normalizeImageUrl documents: only a crossOrigin <img>
 // issues 'cors', so only a photo reaches the photo cache, and with the client flag off this whole
 // branch is unreachable and behaviour is byte-identical to before.
+//
+// BUG-PHOTOCACHEUNGATED-001: the photo half of that predicate now also has to earn its write. A
+// cors request for anything OTHER than a thumbs/ object is fetched and returned exactly as before
+// and simply not stored (see isThumbObjectUrl). The app-image half is untouched — IMAGE_CACHE holds
+// same-origin public/ assets whose sizes the 150-entry cap was already sized against.
 async function imageCacheFirst(request) {
   const cors = request.mode === 'cors'
   const key = normalizeImageUrl(request.url, cors)
   const cacheName = cors ? PHOTO_CACHE_NAME : IMAGE_CACHE
+  // Storable, not merely image-shaped. Computed from the REQUEST, before any body exists, so the
+  // decision cannot depend on having already downloaded the thing it is deciding about.
+  const storable = cors ? isThumbObjectUrl(request.url) : true
   const cache = await caches.open(cacheName)
   const cached = await cache.match(key)
   if (cached) return cached
   try {
     const response = await fetch(request)
     if (isImageResponse(response)) {
-      await cache.put(key, response.clone())
-      trimCache(cacheName, cors ? MAX_PHOTO_ENTRIES : MAX_IMAGE_ENTRIES).catch(() => {})
+      if (storable) {
+        await cache.put(key, response.clone())
+        trimCache(cacheName, cors ? MAX_PHOTO_ENTRIES : MAX_IMAGE_ENTRIES).catch(() => {})
+      }
     }
     return response
   } catch {
@@ -373,6 +415,27 @@ async function purgePoisonedImages() {
       }))
     }
   } catch { /* a failed sweep must never block activation; the write guard still holds */ }
+}
+
+// BUG-PHOTOCACHEUNGATED-001 part (b). The write rule in imageCacheFirst stops NEW originals; this
+// removes the ones prod v4.57.0 already wrote to a real device. It is not optional and it is not
+// cosmetic: photos-v1 is stable by design (no CACHE_VERSION in its name), so nothing else will ever
+// evict them — a phone that ran ~50 share composes is holding those bytes permanently, and
+// purgePoisonedImages cannot help because an original is perfectly valid image/jpeg, just wrong to
+// keep. FIFO trim would only reach them after 500 more thumbs arrive.
+//
+// Same shape as the poison sweep on purpose: same per-entry pass, same "never delete the whole
+// cache", same swallow-and-continue. Idempotent — a second activate finds no non-thumb key left.
+async function evictNonThumbPhotos() {
+  try {
+    const names = await caches.keys()
+    if (!names.includes(PHOTO_CACHE_NAME)) return   // don't materialize an empty cache on a first activate
+    const cache = await caches.open(PHOTO_CACHE_NAME)
+    const keys = await cache.keys()
+    await Promise.all(keys.map(async (key) => {
+      if (!isThumbObjectUrl(typeof key === 'string' ? key : key.url)) await cache.delete(key)
+    }))
+  } catch { /* same contract as the poison sweep: never block activation */ }
 }
 
 // V4-PHOTOSWHARDEN-001: same poisoning class, different cache. This path is only ever reached for

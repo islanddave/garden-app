@@ -29,13 +29,19 @@ const PHOTO_CACHE = 'photos-v1'
 // the credential's date scope, the signature and the session token — i.e. in everything except the
 // path, which is exactly why the full URL is a useless cache key.
 const OBJ = 'https://garden-photos-prod.s3.us-east-1.amazonaws.com/thumbs/plants/014747a9-b824-4a0c-84cd-eca6fd4384aa/d30a7590-95bc-4085-8047-1802afb04678.jpg'
-const presign = (date, sig) =>
-  `${OBJ}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLE%2F${date}%2Fus-east-1%2Fs3%2Faws4_request` +
+// The SAME photo's ORIGINAL — byte-identical URL minus the server-owned `thumbs/` prefix, which is
+// the only thing that distinguishes the two objects. ~4.15 MB against the thumb's ~177 KB (measured
+// prod medians, 2026-08-26). BUG-PHOTOCACHEUNGATED-001 is entirely about this key.
+const FULL_OBJ = OBJ.replace('/thumbs/', '/')
+const presignOf = (obj, date, sig) =>
+  `${obj}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLE%2F${date}%2Fus-east-1%2Fs3%2Faws4_request` +
   `&X-Amz-Date=${date}T213345Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Signature=${sig}` +
   `&X-Amz-Security-Token=FwoGEXAMPLE${sig}`
+const presign = (date, sig) => presignOf(OBJ, date, sig)
 
 const MINT_A = presign('20260826', 'aaaa1111')
 const MINT_B = presign('20260827', 'bbbb2222')
+const FULL_MINT = presignOf(FULL_OBJ, '20260826', 'cccc3333')
 
 // A crossOrigin="anonymous" <img>. The Request constructor already defaults to 'cors', but spelling
 // it out is the point of the test — this is the attribute's only observable at this layer.
@@ -153,6 +159,89 @@ describe('photo cache — the two halves are coupled by request mode', () => {
     expect([...caches.store.get(PHOTO_CACHE).entries.keys()]).toEqual([OBJ])
     expect([...caches.store.get(IMAGE_CACHE).entries.keys()])
       .toEqual(['https://garden.futureishere.net/critters/c155.png'])
+  })
+})
+
+// BUG-PHOTOCACHEUNGATED-001 — the photo cache accepts thumbs/ keys ONLY.
+//
+// The bug: PHOTO_CORS_CACHE_ENABLED gates the <img> half only. sw.js cannot import it, so it reads
+// `request.mode === 'cors'` instead — and the /today share composer's own fetch is a cors request
+// that no flag ever touched, carrying a TIER.FULL original. Every one of those was written to
+// photos-v1 in prod v4.57.0 with the flag OFF, at ~4.15 MB against a 500-entry COUNT cap.
+describe('photo cache — thumbs only, in and out', () => {
+  it('refuses to store a FULL original, and still returns it to the page', async () => {
+    // THE HEADLINE FOR THIS BUG. The response must be delivered unmodified — refusing to cache a
+    // 4 MB photo may not turn it into a missing photo. Mutation: drop the `storable` guard in
+    // imageCacheFirst → the original lands in photos-v1 and the size assertion below fails.
+    const caches = makeFakeCaches()
+    const netFetch = vi.fn(async () => jpeg('ORIGINAL-BYTES'))
+    const sw = loadServiceWorker({ caches, fetchImpl: netFetch })
+    const out = await dispatchFetch(sw, corsReq(FULL_MINT)).responded
+    await settle()
+    expect(netFetch).toHaveBeenCalledTimes(1)
+    expect(await out.text()).toBe('ORIGINAL-BYTES')
+    expect(caches.store.get(PHOTO_CACHE)?.entries.size ?? 0).toBe(0)
+    expect(caches.store.get(IMAGE_CACHE)?.entries.size ?? 0).toBe(0)   // nor does it fall into the app cache
+  })
+
+  it('the share composer\'s own fetch shape is the one refused', async () => {
+    // Not a paraphrase of the mechanism — the literal call from src/lib/harvestPostPhotos.js:83,
+    // `fetch(url, { credentials: 'omit' })` with NO mode. `mode` DEFAULTS to 'cors', which is the
+    // entire reason a flag-off build was writing originals. If a future Request default ever made
+    // this no-cors, this case would stop exercising the photo branch at all — so it asserts the
+    // mode it depends on rather than assuming it.
+    const composerReq = new Request(FULL_MINT, { credentials: 'omit' })
+    expect(composerReq.mode).toBe('cors')
+    const caches = makeFakeCaches()
+    const sw = loadServiceWorker({ caches, fetchImpl: vi.fn(async () => jpeg('ORIGINAL-BYTES')) })
+    await dispatchFetch(sw, composerReq).responded
+    await settle()
+    expect(caches.store.get(PHOTO_CACHE)?.entries.size ?? 0).toBe(0)
+  })
+
+  it('still stores the thumb — the guard is a filter, not an off switch', async () => {
+    // The over-correction guard. A predicate that refused everything would "fix" the leak by
+    // deleting the feature, and every hit test above would still pass for the wrong reason.
+    const caches = makeFakeCaches()
+    const sw = loadServiceWorker({ caches, fetchImpl: vi.fn(async () => jpeg()) })
+    await dispatchFetch(sw, corsReq(MINT_A)).responded
+    await settle()
+    expect([...caches.store.get(PHOTO_CACHE).entries.keys()]).toEqual([OBJ])
+  })
+
+  it('a full original already in the cache is still SERVED — reads are not gated', async () => {
+    // Bytes an older sw.js already paid for are free to serve. Gating the read as well would spend
+    // 4 MB re-downloading something already on the device, on the way to deleting it.
+    const caches = makeFakeCaches({ [PHOTO_CACHE]: { [FULL_OBJ]: jpeg('ALREADY-PAID') } })
+    const netFetch = vi.fn(async () => jpeg('FROM-NETWORK'))
+    const sw = loadServiceWorker({ caches, fetchImpl: netFetch })
+    const out = await dispatchFetch(sw, corsReq(FULL_MINT)).responded
+    await settle()
+    expect(netFetch).not.toHaveBeenCalled()
+    expect(await out.text()).toBe('ALREADY-PAID')
+  })
+
+  it('activate evicts the originals prod already wrote, and keeps the thumbs', async () => {
+    // The write rule alone leaves a shipped device holding whatever v4.57.0 put there FOREVER:
+    // photos-v1 carries no CACHE_VERSION, so the name purge never reaches it, purgePoisonedImages
+    // sees a perfectly valid image/jpeg, and FIFO trim only bites after 500 more thumbs arrive.
+    // Mutation: drop evictNonThumbPhotos() from the activate chain → FULL_OBJ survives here.
+    const caches = makeFakeCaches({
+      [PHOTO_CACHE]: { [FULL_OBJ]: jpeg('4MB-ORIGINAL'), [OBJ]: jpeg('177KB-THUMB') },
+    })
+    await dispatchActivate(loadServiceWorker({ caches }))
+    const entries = caches.store.get(PHOTO_CACHE).entries
+    expect(entries.has(FULL_OBJ)).toBe(false)
+    expect(entries.has(OBJ)).toBe(true)
+  })
+
+  it('the eviction pass does not materialize photos-v1 on a first activate', async () => {
+    // Matches purgePoisonedImages' own contract. Creating an empty cache on every activate of a
+    // client that has never cached a photo is pure churn, and it would mask a "was it ever written"
+    // question later.
+    const caches = makeFakeCaches({ [IMAGE_CACHE]: {} })
+    await dispatchActivate(loadServiceWorker({ caches }))
+    expect(caches.store.has(PHOTO_CACHE)).toBe(false)
   })
 })
 
