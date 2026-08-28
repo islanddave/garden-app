@@ -408,11 +408,18 @@ async function share(event, secrets, userId) {
     await Promise.all(prepared.map(async (p) => {
       // alt_text_custom rides on the published=false upload because THIS is the call that creates the
       // Photo node; /feed below only attaches it by id and carries the caption, which is post-level
-      // text, not per-image text. UNVERIFIED against live Graph (this lane makes no external calls):
-      // that the field is honoured on an unpublished upload is read from Meta's Photo-node docs, not
-      // measured. It is fail-soft either way — Graph ignores a parameter it does not accept on
-      // /photos, so the worst case is alt text that does not stick, never a post that does not go.
-      // Verify with one real multi-photo post, then GET /{fb_media_id}?fields=alt_text_custom.
+      // text, not per-image text.
+      //
+      // VERIFIED against live Graph 2026-08-28 (was UNVERIFIED, inferred from Meta's Photo-node docs).
+      // Measured without publishing anything: uploaded a synthetic image to the live Page with
+      // published=false + alt_text_custom, then GET /{media_id}?fields=alt_text_custom returned the
+      // string verbatim, then deleted the media. So the field IS honoured on an unpublished upload —
+      // which is the case that matters, because this is the only call in the multi-photo path that
+      // can carry per-image alt text. V4-SHAREALTTEXT-001's accessibility promise holds.
+      //
+      // While measuring: `published` is NOT a readable field on a photo node — GET ?fields=published
+      // returns "(#100) Tried accessing nonexisting field". Do not add it to a read-back assertion.
+      // Readable on an unpublished node: id, created_time, alt_text_custom, images, link.
       const r = await graphMultipart(photoUploadUrl(pageId), [
         ['access_token', pageToken],
         ...altField(p.alt),
