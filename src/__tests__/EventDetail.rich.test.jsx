@@ -60,7 +60,11 @@ beforeEach(() => {
   apiFetchSpy.mockImplementation((path) => {
     if (path === '/api/events/e1') return Promise.resolve(dataRef.event)
     if (path.startsWith('/api/photos/view-url/')) {
-      return Promise.resolve({ view_url: `https://example.test/${path.split('/').pop()}.jpg` })
+      // BUG-TIERLESSPHOTOS-001: the mint URL now carries `?tier=thumb`, so the id is the path
+      // SEGMENT — `split('/').pop()` would yield 'ph-1?tier=thumb' and fabricate a plausible-looking
+      // but wrong src.
+      const id = String(path).slice('/api/photos/view-url/'.length).split('?')[0]
+      return Promise.resolve({ view_url: `https://example.test/${id}.jpg` })
     }
     return Promise.resolve(null)
   })
@@ -229,10 +233,13 @@ describe('EventDetail — the event’s own photos', () => {
   })
 
   it('resolves each id-only thumb through the photos view-url route (no view_url on the event GET)', async () => {
+    // `?tier=thumb` since BUG-TIERLESSPHOTOS-001. The bare path was not neutral spelling: absent
+    // tier means 'full' server-side, so it pinned the ~4.15 MB original into a 96 px box. The
+    // degrade that makes the thumb safe on this arm is pinned in EventDetail.photoPrimitive.test.jsx.
     dataRef.event = { ...HARVEST, photos: PHOTOS }
     await renderDetail()
-    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-1', expect.anything()))
-    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-2', expect.anything()))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-1?tier=thumb', expect.anything()))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-2?tier=thumb', expect.anything()))
   })
 
   it('opens the shared Lightbox on tap', async () => {

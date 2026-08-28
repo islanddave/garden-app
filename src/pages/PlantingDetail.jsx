@@ -62,7 +62,8 @@ import CropCard from '../components/planting/CropCard.jsx'
 import CareStatus from '../components/CareStatus.jsx'
 import OverwinterPrompt from '../components/planting/OverwinterPrompt.jsx'
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
-import PhotoImg from '../components/PhotoImg.jsx'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { plantingIsHarvestTracked } from '../lib/harvestTracked.js'
@@ -588,7 +589,12 @@ export default function PlantingDetail() {
       const updated = await fetch('/api/plants/' + plantingId, {
         method: 'PUT', body: JSON.stringify({ featured_photo_id: ph.id }),
       })
-      setPlanting(prev => ({ ...prev, featured_photo_id: updated?.featured_photo_id ?? ph.id, featured_photo_view_url: ph.view_url }))
+      // Both URL fields move together or the pair describes two different photos: the hero slide
+      // reads the view_url and the filmstrip reads the thumb, so advancing one alone would show the
+      // PREVIOUS featured photo in the strip until the next refetch. Copied straight across, with no
+      // `?? null` coalesce — /api/photos always sends the key, and a defaulting expression here
+      // would read as (and to the clause-1 matcher, IS) a surface picking its own derivative.
+      setPlanting(prev => ({ ...prev, featured_photo_id: updated?.featured_photo_id ?? ph.id, featured_photo_view_url: ph.view_url, featured_photo_thumb_url: ph.thumb_url }))
       toast?.show?.({ message: 'Featured photo updated', tone: 'success' })
     } catch {
       toast?.show?.({ message: "Couldn't set featured photo", tone: 'error' })
@@ -599,11 +605,14 @@ export default function PlantingDetail() {
 
   // ── Gallery: one shared image list for the hero + Photos grid + GrowthStrip. The featured
   // hero photo is index 0 (unshifted if not already represented in the photo set). ──────────
-  const galleryFromPhotos = photos.map(p => ({ src: p.view_url, view_url: p.view_url, id: p.id, alt: p.caption || name, caption: p.caption }))
+  // `thumbSrc` is the FILMSTRIP's source (BUG-TIERLESSPHOTOS-001) and nothing else's: `src` stays the
+  // original because the Lightbox's main image is full-screen. Optional by contract — a slide without
+  // it renders exactly as before.
+  const galleryFromPhotos = photos.map(p => ({ src: p.view_url, thumbSrc: p.thumb_url, view_url: p.view_url, id: p.id, alt: p.caption || name, caption: p.caption }))
   const featuredUrl = pl.featured_photo_view_url
   const featuredInSet = pl.featured_photo_id != null && photos.some(p => p.id === pl.featured_photo_id)
   const galleryImages = featuredUrl && !featuredInSet
-    ? [{ src: featuredUrl, view_url: featuredUrl, id: pl.featured_photo_id, alt: `${name} photo`, caption: null }, ...galleryFromPhotos]
+    ? [{ src: featuredUrl, thumbSrc: pl.featured_photo_thumb_url ?? null, view_url: featuredUrl, id: pl.featured_photo_id, alt: `${name} photo`, caption: null }, ...galleryFromPhotos]
     : galleryFromPhotos
   // Freeze the slide array at open (regression I4): a background revalidate that prepends/reorders
   // photos must not shift the controlled index onto a different photo mid-view. `openLb` snapshots
@@ -1095,10 +1104,19 @@ export default function PlantingDetail() {
                       aria-label={`Open ${ph.caption || `${name} photo`}`}
                       style={{ display: 'block', width: '100%', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
                     >
-                      <PhotoImg
-                        photoId={ph.id}
-                        initialUrl={ph.view_url}
+                      {/* BUG-TIERLESSPHOTOS-001 — the worst size-to-box ratio left in the app. This
+                          grid is UNWINDOWED (`photos.map`, no useImageWindow) at
+                          minmax(96px, 1fr) — ~252-264 device px at Dave's dpr 2.625 — and it was
+                          loading `view_url`, the FULL original, for every photo the planting has:
+                          24 photos = ~99.5 MB against ~4.2 MB of thumbs (prod medians measured
+                          2026-08-26). `ph` is a /api/photos row, so thumb_url arrived in the SAME
+                          response and PhotoView's chain degrades to the original with ZERO extra
+                          network on the 2.7% of rows whose thumb object does not exist. */}
+                      <PhotoView
+                        photo={ph}
+                        tier={TIER.THUMB}
                         alt={ph.caption || `${name} photo`}
+                        decoding="async"
                         style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: T.radiusButton, border: `1px solid ${P.border}`, display: 'block' }}
                       />
                     </button>
