@@ -183,6 +183,36 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:log-chooser
 
+      - name: Photo-tier payload budget (BUG-TIERLESSPHOTOS-001)
+        # THE ONLY THING IN THIS REPO THAT PRODUCES A REAL PAYLOAD NUMBER, and until now it was
+        # wired to nothing — `rg "phototier-bytes"` returned only the file's own self-references.
+        # vitest can prove which URL a surface ASKED for and can never prove a byte moved, because
+        # jsdom never loads an image. This drives real Chrome at Dave's 390x844 @ dpr 2.625 and reads
+        # CDP Network.loadingFinished encodedDataLength — the transferred size on the wire.
+        #
+        # It could not simply be added as it stood: it opened its CDP session with a bare global
+        # WebSocket, which node-version '20.19.0' does not have, so it would have thrown at attach()
+        # after paying for a Vite boot and a Chrome launch. Same blocker, same one-line fix
+        # (cdp-socket.mjs) as the two gates above.
+        #
+        # A BUDGET, NOT A REPORT. Without --max-bytes the script prints a number and fails only on
+        # instrument faults, which would be a step that cannot fail on the thing it measures — the
+        # `gate:` script passes the ceiling. Verified non-vacuous by running the BEFORE arm
+        # (`npm run phototier-bytes:before`, --tier none, byte-for-byte what the pre-fix code
+        # requested): 82,957,060 B against the 4,000,000 B ceiling, exit 1, naming 20 of 20 requests
+        # as full originals. The passing arm measured 3,542,820 B. NO continue-on-error, per the
+        # policy note above.
+        #
+        # Pillow is the fixture generator's only dependency and is not on the runner image. Plain
+        # form first, --break-system-packages for a PEP-668 image — same shape as the pytest step.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow \
+            || python3 -m pip install --quiet --break-system-packages pillow
+          npm run gate:phototier-bytes
+
       - name: Icon optical-weight golden (V4-ICON-001)
         # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
         # stay within +/-tolerance of its approved baseline (scripts/icon-ci/icon-golden-baseline.json).

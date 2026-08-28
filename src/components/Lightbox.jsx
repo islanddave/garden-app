@@ -25,6 +25,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import PhotoImg from './PhotoImg.jsx'
+import PhotoView from './photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 
@@ -114,6 +116,27 @@ const CONTROL_BTN = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   padding: 0,
 }
+
+// BUG-TIERLESSPHOTOS-001 — call-site adapter turning ONE gallery slide into the photo shape
+// photoModel understands. The filmstrip renders 52x52 boxes (136.5 device px at Dave's dpr 2.625)
+// and was binding `im.src` — the FULL original, ~4.15 MB median measured on prod — straight into a
+// bare <img>, unwindowed. A 24-photo gallery mounted 24 originals to draw 24 postage stamps.
+//
+// IT WAS INVISIBLE TO BOTH STATIC GUARDS AND THAT IS WHY IT SURVIVED: noBareViewUrlImg keys on the
+// FIELD NAME in `src={…}` and this one is aliased to `im.src`, and photoPrimitive's clause 2 only
+// bans raw <PhotoImg>. Neither has anything to say about an <img> bound to an alias.
+//
+// A SLIDE IS NOT A PHOTO ROW, and the callers disagree with each other about the id field —
+// PhotosWall sends `photoId`, PlantingDetail sends `id` — so the remap is explicit rather than
+// `photo={im}`. Getting it wrong points the 900s-presign self-heal at the wrong /view-url/:id.
+// `thumbSrc` is OPTIONAL: a caller with no thumb in hand yields a one-entry [full] chain and renders
+// exactly what it renders today. The MAIN image stays FULL and stays on raw PhotoImg (a thumb there
+// would paint 163 KB at 94vw — PhotoImg.jsx:146).
+const slidePhoto = (im) => ({
+  id: im?.photoId ?? im?.id ?? null,
+  view_url: im?.src ?? null,
+  thumb_url: im?.thumbSrc ?? null,
+})
 
 export default function Lightbox({
   open,
@@ -590,11 +613,13 @@ export default function Lightbox({
               background: '#000', opacity: i === curIndex ? 1 : 0.6,
             }}
           >
-            <img
-              src={im.src}
+            <PhotoView
+              photo={slidePhoto(im)}
+              tier={TIER.THUMB}
               alt=""
               aria-hidden="true"
               draggable={false}
+              fallback="none"
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           </button>

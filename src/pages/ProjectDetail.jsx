@@ -21,7 +21,8 @@ import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
-import PhotoImg from '../components/PhotoImg.jsx'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 // DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with EventDetail —
 // the two event-delete surfaces must stay behaviorally identical).
 import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
@@ -1172,11 +1173,24 @@ export default function ProjectDetail() {
                 >
                   {/* V1.2a-3 Increment A (I2a-display): the plant's featured photo.
                       Read-back surface for the photo→plant linkage that already worked. */}
+                  {/* BUG-TIERLESSPHOTOS-001 — a 40x40 box (105 device px at dpr 2.625) was loading
+                      the FULL original. These rows come from GET /api/plants?project_id=… (see the
+                      plants fetch above), NOT /api/projects, so lambda/plants featuredPhotoUrls has
+                      already signed the thumbs/ companion onto every row and this needs no server
+                      change. `plant` is a PLANTING, not a photo — photoModel reads `raw.id`, so
+                      passing it through would point the presign self-heal at
+                      /api/photos/view-url/<plantId> and 404. Same remap PlantingTile documents. */}
                   {plant.featured_photo_view_url
-                    ? <PhotoImg
-                        photoId={plant.featured_photo_id}
-                        initialUrl={plant.featured_photo_view_url}
+                    ? <PhotoView
+                        photo={{
+                          id: plant.featured_photo_id ?? null,
+                          featured_photo_view_url: plant.featured_photo_view_url,
+                          featured_photo_thumb_url: plant.featured_photo_thumb_url ?? null,
+                          plant_id: plant.id,
+                        }}
+                        tier={TIER.THUMB}
                         alt=""
+                        decoding="async"
                         style={{ width: 40, height: 40, borderRadius: T.radiusButton, objectFit: 'cover',
                                  flexShrink: 0, border: `1px solid ${P.border}` }}
                       />

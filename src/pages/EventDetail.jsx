@@ -19,6 +19,7 @@ import PhotoUpload from '../components/PhotoUpload.jsx'
 //
 // <PhotoView>, the mandated primitive, on its id-only arm — see EventPhotos below.
 import PhotoView from '../components/photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import Lightbox from '../components/Lightbox.jsx'
 import { formatEntry } from '../lib/harvestSummary.js'
 // DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with ProjectDetail's
@@ -952,6 +953,13 @@ function HarvestReadout({ harvest }) {
 // hole and a count that disagrees with what is on screen. The placeholder inherits the style below,
 // so the 96px box is reserved while the mint is in flight and does not reflow when it lands.
 //
+// `tier` was ABSENT until BUG-TIERLESSPHOTOS-001, which meant TIER.FULL by default (PhotoView's
+// signature) — the ~4.15 MB original into a 96 CSS px box, 252 device px at Dave's dpr 2.625. On the
+// id-only arm a tier is not merely a field swap: it makes `idTiers` a real two-rung chain
+// (thumb -> original) walked by the same cursor, so a row whose thumbs/ object does not exist (37 of
+// 1351 live rows, 2.7%) still renders — it costs that row a second mint instead of blanking. The 96px
+// box is 3.1x the thumb derivative's 800px longest edge, so there is no sharpness argument here.
+//
 // Tap opens the SAME shared Lightbox gallery the planting page uses; Lightbox resolves a slide by
 // `photoId ?? id` and tolerates a missing `src`, so the id-only rows feed it unmodified.
 // (PlantingDetail's lbFrozen snapshot is unnecessary here: this list comes off the event payload and
@@ -982,6 +990,7 @@ function EventPhotos({ photos }) {
           >
             <PhotoView
               photo={ph}
+              tier={TIER.THUMB}
               resolveById
               alt={`Photo ${i + 1} of ${list.length} on this event`}
               width={PHOTO_THUMB_PX}

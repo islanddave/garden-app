@@ -3,7 +3,20 @@
 // list and a planting's growth strip actually pull, in real Chrome at phone geometry.
 //
 //   node scripts/layout-gate/phototier-bytes.mjs [--surface today|growth] [--tier none] \
-//        [--miss N] [--count N] [--out path.png] [--label TEXT]
+//        [--miss N] [--count N] [--out path.png] [--label TEXT] [--max-bytes N]
+//
+// REPORTER vs GATE — read this before wiring it anywhere. Without --max-bytes this run PRINTS a
+// payload number and fails only on instrument faults (emulation refused, a broken <img>, fixtures
+// off the prod medians). That is the right shape for a comparison run and the WRONG shape for CI: a
+// step that cannot fail on the thing it measures is decoration. --max-bytes is the assertion, and
+// it is what npm run gate:phototier-bytes passes. `npm run phototier-bytes:before` is the same
+// budget against the pre-fix request shape and is EXPECTED to fail — it is how the ceiling gets
+// re-proven non-vacuous, deliberately kept out of the `gate:` namespace so nothing wires it.
+//
+// WHAT IT DOES NOT COVER, stated so a green run is not over-read: the harness mounts CareNeeded
+// (--surface today) and GrowthStrip (--surface growth) and NOTHING ELSE. The PlantingDetail photo
+// grid, the Lightbox filmstrip, EventDetail's thumbs and ProjectDetail's 40px rows are guarded by
+// photoPrimitive.static.test.js clauses 3 and 4, not by a byte measurement.
 //
 // WHY THIS EXISTS: jsdom never loads an image, so the whole vitest suite can prove which URL a
 // surface asked for and can never prove a byte moved. The unit tests are the correctness gate; this
@@ -34,12 +47,20 @@ import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
+// Transport, not decoration: CI pins node-version '20.19.0', which has NO global WebSocket, so the
+// bare `new WebSocket()` this file used to open its CDP session with threw at attach() — after
+// paying for a Vite boot and a Chrome launch. That is the same blocker that kept gate:save-band and
+// gate:log-chooser out of CI (OPS-LAYOUTGATESUNWIRED-001), and it is why this instrument could not
+// simply be added to the workflow as it stood.
+import { resolveWebSocket } from './cdp-socket.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5316)
 const IMG_PORT = Number(process.env.GATE_IMG_PORT || 5321)
 const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9427)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// Same seam the sibling gates use — CI needs --no-sandbox and resolves CHROME_PATH in its own step.
+const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
 
 // Dave is Android-only; 390x844 at dpr 2.625 is his geometry and what the sibling gates measure at.
 const VIEWPORT = { w: 390, h: 844, dpr: 2.625 }
@@ -53,6 +74,16 @@ const MISS = arg('miss', '0')
 const COUNT = arg('count', '20')
 const LABEL = arg('label', TIER === 'none' ? 'BEFORE (no thumb field)' : 'AFTER (thumb tier)')
 const OUT = arg('out', '')
+// The budget that turns this from a reporter into a gate. Absent => report only.
+//
+// THE CI CEILING IS 4,000,000 B (package.json gate:phototier-bytes, surface=today, count=20) and it
+// is derived from two runs of this instrument, not chosen. MEASURED on this harness 2026-08-28:
+//   thumb tier  3,542,820 B  (20 x 200, 0 orig / 20 thumb)   <- the ceiling sits ~13% above this
+//   full tier  82,957,060 B  (--tier none, the pre-fix request shape)  <- 21x ABOVE the ceiling
+// Nothing lives between those two numbers: a SINGLE tile falling back to an original overshoots by
+// ~4.15 MB, so the band needs no tolerance and a passing run cannot be a near-miss. Re-derive it
+// from a measurement if COUNT or the prod medians move; do not nudge it to make a run pass.
+const MAX_BYTES = Number(arg('max-bytes', '')) || 0
 
 const failures = []
 const fail = m => failures.push(m)
@@ -126,7 +157,7 @@ async function startChrome(userDataDir) {
     // Deliberately LARGER than the viewport under test — emulation imposes the geometry (trap 1).
     '--window-size=900,1000', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
+    '--disable-renderer-backgrounding', ...EXTRA_CHROME_FLAGS,
   ], { stdio: ['ignore', 'ignore', 'ignore'] })
   for (let i = 0; i < 60; i++) {
     try { const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`); if (r.ok) return { proc, version: await r.json() } } catch { /* not up */ }
@@ -137,7 +168,8 @@ async function startChrome(userDataDir) {
 }
 
 async function attach(wsUrl, onEvent) {
-  const ws = new WebSocket(wsUrl)
+  const WS = await resolveWebSocket()
+  const ws = new WS(wsUrl)
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP socket failed')) })
   let id = 0
   const pending = new Map()
@@ -230,6 +262,26 @@ try {
   console.log(`  rendered tier ${Object.entries(tiers).map(([k, v]) => `${k}=${v}`).join(' ')} · broken=${broken.length}`)
   console.log(`  requests      ${ok.length} x 200 (${nOrig} orig, ${nThumb} thumb) + ${notFound.length} x 404`)
   console.log(`  BYTES         ${bytes.toLocaleString()} (${(bytes / 1048576).toFixed(2)} MB) transferred`)
+
+  // ── The budget. Everything above is a report; this is the gate ──
+  //
+  // A CEILING ON THE WIRE, not a tier census, and the difference is the point: a surface can regress
+  // to full-tier bytes in ways a `src` inspection does not see (an extra hero, a duplicated request,
+  // a degrade storm from thumbs that 404), and all of them show up here as bytes. The ceiling is set
+  // in the caller (package.json) against the measured thumb median, so a single tile falling back to
+  // an original is ~4.15 MB — a 23x overshoot, not a rounding error. There is no tolerance band
+  // because there is nothing near the boundary to be tolerant of.
+  //
+  // ALSO ASSERTS A FLOOR, and that is not paranoia: `bytes` is a sum over requests, so a page that
+  // rendered nothing scores a perfect zero. The imgs.length and broken checks above already refuse
+  // that case; this one refuses the subtler version where images render from somewhere other than
+  // the instrumented server and the byte count silently measures nothing.
+  if (MAX_BYTES) {
+    if (bytes > MAX_BYTES) {
+      fail(`${bytes.toLocaleString()} B transferred, budget ${MAX_BYTES.toLocaleString()} B — ${nOrig} of ${ok.length} requests were full originals`)
+    }
+    if (!ok.length) fail('the budget passed on ZERO successful image requests — nothing was measured')
+  }
 
   if (OUT) {
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, cdp.sessionId)

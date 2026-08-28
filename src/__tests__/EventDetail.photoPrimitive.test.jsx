@@ -12,6 +12,14 @@
 //      presigning, the URL wins and NO mint fires — with no change to this call site. That is the
 //      fallback-not-override contract, asserted at the surface rather than only at the unit.
 //
+// UPDATED 2026-08-28 (BUG-TIERLESSPHOTOS-001). Property 1's URL pin was `/api/photos/view-url/:id`
+// with no `?tier=`, and that was not incidental spelling — it ENCODED the decision that this surface
+// asks for the original. Absent tier means 'full' (lambda/photos/viewTier.js normalizeViewTier), so
+// a 96 CSS px box was minting the ~4.15 MB original. The pin now reads `?tier=thumb`, and the
+// DEGRADE that makes asking for a thumb safe here is pinned alongside it: on the id-only arm the
+// tier is a two-rung chain, so a row whose thumbs/ object does not exist spends a second mint on
+// the original rather than blanking.
+//
 // No jest-dom (L-182) — plain DOM assertions. Mock shape mirrors EventDetail.rich.test.jsx.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -50,10 +58,16 @@ beforeEach(() => {
   apiFetchSpy.mockReset()
   __resetPhotoImgCache()
   dataRef.event = { ...EVENT }
-  dataRef.viewUrl = (id) => Promise.resolve({ view_url: `https://example.test/${id}.jpg` })
+  // The mint URL now carries `?tier=`, so the id is the last SEGMENT, not the last slash-chunk —
+  // `split('/').pop()` would hand the fixture 'ph-1?tier=thumb' and quietly fabricate a URL that
+  // still looks plausible. `tier` is passed through so a case can answer differently per derivative.
+  dataRef.viewUrl = (id, tier) => Promise.resolve({ view_url: `https://example.test/${id}${tier ? `.${tier}` : ''}.jpg` })
   apiFetchSpy.mockImplementation((path) => {
     if (path === '/api/events/e1') return Promise.resolve(dataRef.event)
-    if (path.startsWith('/api/photos/view-url/')) return dataRef.viewUrl(path.split('/').pop())
+    if (path.startsWith('/api/photos/view-url/')) {
+      const [tail, query] = String(path).slice('/api/photos/view-url/'.length).split('?')
+      return dataRef.viewUrl(tail, new URLSearchParams(query ?? '').get('tier'))
+    }
     return Promise.resolve(null)
   })
 })
@@ -71,13 +85,33 @@ async function renderDetail() {
 const thumbButtons = () => screen.getAllByRole('button', { name: /^Open photo/ })
 
 describe('EventDetail photos — the id-only arm on the real surface', () => {
-  it('resolves every id-only photo through GET /api/photos/view-url/:id and renders it', async () => {
+  it('resolves every id-only photo through GET /api/photos/view-url/:id AT THE THUMB TIER', async () => {
+    // BUG-TIERLESSPHOTOS-001: `?tier=thumb` is the assertion, not decoration. Absent, the server
+    // mints the original — the ~4.15 MB object into a 96 px box. Mutation: drop tier={TIER.THUMB}
+    // from EventPhotos → both waitFors below time out on the bare path.
     await renderDetail()
-    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-1', { cache: 'no-store' }))
-    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-2', { cache: 'no-store' }))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-1?tier=thumb', { cache: 'no-store' }))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph-2?tier=thumb', { cache: 'no-store' }))
     await waitFor(() => {
       const srcs = thumbButtons().map(b => b.querySelector('img')?.getAttribute('src'))
-      expect(srcs).toEqual(['https://example.test/ph-1.jpg', 'https://example.test/ph-2.jpg'])
+      expect(srcs).toEqual(['https://example.test/ph-1.thumb.jpg', 'https://example.test/ph-2.thumb.jpg'])
+    })
+    // NOTHING asks for the original while the thumb is fine — the whole point of the change.
+    expect(apiFetchSpy.mock.calls.filter(([p]) => /view-url\/[^?]+$/.test(String(p))).length).toBe(0)
+  })
+
+  it('a photo with NO thumbs/ object degrades to the original rather than blanking', async () => {
+    // 37 of 1351 live rows (2.7%) presign a thumb URL whose S3 object does not exist and 404s. On
+    // the id-only arm the recovery is a second mint at the full tier, walked by the same cursor —
+    // which is what makes asking for a thumb safe on a surface that holds no fallback URL.
+    dataRef.viewUrl = (id, tier) => {
+      if (tier === 'thumb') { const e = new Error('no such object'); e.status = 404; return Promise.reject(e) }
+      return Promise.resolve({ view_url: `https://example.test/${id}.orig.jpg` })
+    }
+    await renderDetail()
+    await waitFor(() => {
+      const srcs = thumbButtons().map(b => b.querySelector('img')?.getAttribute('src'))
+      expect(srcs).toEqual(['https://example.test/ph-1.orig.jpg', 'https://example.test/ph-2.orig.jpg'])
     })
   })
 
