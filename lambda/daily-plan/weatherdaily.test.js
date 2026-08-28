@@ -413,11 +413,25 @@ describe('rain auto-log — reached by run(), and correctly gated (V4-RAINAUTOLO
     expect(forbidden.map((c) => c.sql)).toEqual([]);
   });
 
-  it('maintains the care cache, because that part IS factual state', async () => {
+  it('maintains BOTH care-cache arms, and neither bakes next_water_at', async () => {
+    // entity_memory is keyed plant-first but also carries a project-keyed row, and they are not
+    // interchangeable. The first version of this code updated only the plant arm and set
+    // next_water_at on it — wrong twice, caught by the gate-invariants sweep rather than here.
+    // See migrations/v4-rainbackfill-001/0c-cachearms.sql.
     const { pg } = await drive({ event: { rainLog: true }, pgOpts: { weatherRows: RAINY } });
-    const cache = pg.calls.filter((c) => /update entity_memory/i.test(c.sql));
-    expect(cache).toHaveLength(1);
-    expect(cache[0].sql).toMatch(/greatest/i);   // forward-only; never walks the cache backwards
+    const cache = pg.calls.filter((c) => /into entity_memory/i.test(c.sql));
+    expect(cache, 'both arms must be maintained — plant AND project').toHaveLength(2);
+    // UPSERTS, not UPDATEs: a plant whose FIRST event is this rain row has no cache row to update,
+    // and an UPDATE skips it silently. That is how staging failed the missing-cache-row invariant
+    // while prod, where every row already existed, stayed green.
+    expect(cache.some((c) => /on conflict \(plant_id\)/i.test(c.sql))).toBe(true);
+    expect(cache.some((c) => /on conflict \(project_id\)/i.test(c.sql))).toBe(true);
+    for (const c of cache) {
+      expect(c.sql, 'forward-only; never walks the cache backwards').toMatch(/greatest/i);
+      // next_water_at is PROJECT-ARM-ONLY and belongs to the daily-plan engine. v4-carekey-001 pins
+      // plant-row next_water_at at zero, so an event writer must not set it on either arm here.
+      expect(c.sql, 'next_water_at belongs to the engine, not to this writer').not.toMatch(/next_water_at/i);
+    }
   });
 
   it('a model-sourced day writes NOTHING, however wet', async () => {

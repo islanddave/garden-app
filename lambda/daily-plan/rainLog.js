@@ -55,6 +55,16 @@
 // lambda/events/batchSideEffects.js. If a future change routes this through POST /api/events/batch,
 // it re-introduces exactly that defect.
 
+// All three env vars this module reads — RAIN_AUTOLOG_ENABLED, RAIN_LOG_THRESHOLD_IN and
+// RAIN_RUN_END_HOUR — are declared in scripts/lambda-config-expected.json as expected-ABSENT (null),
+// i.e. the defaults below are the shipped behaviour. That declaration is not optional bookkeeping:
+// scripts/test_check_lambda_config.py walks this directory for process.env reads and fails CI on any
+// that are undeclared, because "a read-but-undeclared var is how CARE_WATER_LEDGER_ENABLED stayed
+// invisible". Note its regex only matches the dotted static form (process dot env dot THE_NAME), so
+// the two read through numEnv's bracket lookup were invisible to it and were declared by hand. If
+// you add another, add it there too — the manifest's own note claims to be the COMPLETE set.
+// (Spelled out in words above on purpose: that scanner reads COMMENTS too, so writing the dotted
+// form here would have declared a variable named NAME. It did, once.)
 const THRESHOLD_IN = numEnv('RAIN_LOG_THRESHOLD_IN', 0.10);
 const RAIN_RUN_END_HOUR = numEnv('RAIN_RUN_END_HOUR', 5);   // inclusive; 00:00–05:59 ET is the nightly slot
 const GAUGE_SOURCE = 'gauge_merged';

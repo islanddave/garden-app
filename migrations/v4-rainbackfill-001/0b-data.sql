@@ -246,11 +246,16 @@ SELECT pp.id,
 -- and can never annex V4-CARECACHEUNDO-001's rows. next_water_at = +4 days matches the batch path.
 -- Recomputed FROM event_log rather than from the _gauge list, so it is correct even if step 3's
 -- re-run guard skipped some rows: the cache follows the log, never this file's intent.
+-- CORRECTED 2026-08-28 — see 0c-cachearms.sql. This statement originally ALSO set next_water_at,
+-- copied from the batch writer's column list. That was a category error: the batch writer maintains
+-- the PROJECT arm and this updates the PLANT arm, and next_water_at is project-arm-only —
+-- v4-carekey-001 pins plant-row next_water_at at zero and v4-carecacheundo-001 records that the
+-- column "belongs to the nightly daily-plan engine". An event writer must not bake it. The project
+-- arm is advanced by 0c; it is not folded in here because 0b is already applied and idempotent, so
+-- an edit to this statement would never re-run.
 UPDATE public.entity_memory em
    SET last_watered_at = GREATEST(COALESCE(em.last_watered_at, t.mx), t.mx),
        last_event_at   = GREATEST(COALESCE(em.last_event_at,   t.mx), t.mx),
-       next_water_at   = GREATEST(COALESCE(em.next_water_at,   t.mx + INTERVAL '4 days'),
-                                  t.mx + INTERVAL '4 days'),
        updated_at      = now()
   FROM (
         SELECT e.plant_id, MAX(e.event_date) AS mx

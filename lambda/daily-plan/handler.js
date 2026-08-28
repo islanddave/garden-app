@@ -827,18 +827,49 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount
     // above — so it stays correct even if the insert matched fewer rows than expected, and can never
     // walk the cache backwards into V4-CARECACHEUNDO-001's territory.
-    const { rowCount: cached } = await pg.query(
-      `update entity_memory em
-          set last_watered_at = greatest(coalesce(em.last_watered_at, t.mx), t.mx),
-              last_event_at   = greatest(coalesce(em.last_event_at,   t.mx), t.mx),
-              next_water_at   = greatest(coalesce(em.next_water_at, t.mx + interval '4 days'),
-                                         t.mx + interval '4 days'),
-              updated_at      = now()
-         from (select e.plant_id, max(e.event_date) as mx from event_log e
-                where e.event_type in ('watering','rain') and e.deleted_at is null
-                  and e.plant_id is not null group by e.plant_id) t
-        where em.plant_id = t.plant_id
-          and (em.last_watered_at is null or em.last_watered_at < t.mx)`);
+    //
+    // BOTH ARMS, and NEITHER touches next_water_at. entity_memory is keyed plant-first but also
+    // carries a project-keyed row, and they are not interchangeable. The first version of this code
+    // updated only the plant arm AND set next_water_at on it — wrong twice over, caught by the
+    // scheduled gate-invariants sweep (see migrations/v4-rainbackfill-001/0c-cachearms.sql):
+    //   * next_water_at is PROJECT-ARM-ONLY and belongs to the daily-plan engine, not to an event
+    //     writer. v4-carekey-001 pins plant-row next_water_at at zero.
+    //   * the rain rows carry project_id, so every container's latest event moves and its cache row
+    //     must move with it, or the cache sits BEHIND the log.
+    // UPSERTS, not UPDATEs. A plant or container whose FIRST event is this rain row has no cache row
+    // to update, and an UPDATE silently skips it — which is how staging failed
+    // post_every_non_deleted_planting_with_events_has_a_cache_row while prod (where every row already
+    // existed) stayed green. Shape mirrors the deployed batch writer's two upserts in
+    // lambda/events/index.js: ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL, and
+    // ON CONFLICT (project_id).
+    const { rowCount: cachedPlant } = await pg.query(
+      `insert into entity_memory (plant_id, last_event_at, last_watered_at)
+       select e.plant_id, max(e.event_date), max(e.event_date)
+         from event_log e
+        where e.event_type in ('watering','rain') and e.deleted_at is null and e.plant_id is not null
+        group by e.plant_id
+       on conflict (plant_id) where plant_id is not null do update set
+         last_event_at   = greatest(coalesce(entity_memory.last_event_at,   excluded.last_event_at),   excluded.last_event_at),
+         last_watered_at = greatest(coalesce(entity_memory.last_watered_at, excluded.last_watered_at), excluded.last_watered_at),
+         updated_at      = now()`);
+
+    // BUG-EMPROJGUARD-001: project_id IS NOT NULL in the subquery is load-bearing — a project-less
+    // planting would otherwise contribute a ZERO-parent row, violate entity_memory_exactly_one_parent
+    // and abort the statement.
+    const { rowCount: cachedProject } = await pg.query(
+      `insert into entity_memory (project_id, last_event_at, last_watered_at)
+       select e.project_id,
+              max(e.event_date),
+              max(e.event_date) filter (where e.event_type in ('watering','rain'))
+         from event_log e
+        where e.deleted_at is null and e.project_id is not null
+        group by e.project_id
+       having max(e.event_date) filter (where e.event_type in ('watering','rain')) is not null
+       on conflict (project_id) do update set
+         last_event_at   = greatest(coalesce(entity_memory.last_event_at,   excluded.last_event_at),   excluded.last_event_at),
+         last_watered_at = greatest(coalesce(entity_memory.last_watered_at, excluded.last_watered_at), excluded.last_watered_at),
+         updated_at      = now()`);
+    const cached = cachedPlant + cachedProject;
 
     return say({ day, logged: inserted, cache_rows: cached, amount_in: d.amountIn, slot: decisionRun.slot });
   } catch (e) {
