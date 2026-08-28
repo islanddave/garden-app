@@ -16,6 +16,8 @@
     "gate:sw-mirror": "node scripts/check-sw-mirror.mjs",
     "gate:save-band": "node scripts/layout-gate/save-band-clearance.mjs",
     "gate:log-chooser": "node scripts/layout-gate/log-chooser-clearance.mjs",
+    "gate:phototier-bytes": "node scripts/layout-gate/phototier-bytes.mjs --surface today --count 20 --max-bytes 4000000",
+    "phototier-bytes:before": "node scripts/layout-gate/phototier-bytes.mjs --surface today --count 20 --tier none --max-bytes 4000000",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
     "lint": "eslint .",
