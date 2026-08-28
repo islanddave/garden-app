@@ -7,6 +7,15 @@ const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine'
 const { deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
 const { frostEval, isFrostSeason, resolveFrostRun } = require('./frostEval');    // V4-FROST-001 F1/F3
+const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
+
+// The machine actor for rows this Lambda writes on nobody's behalf. Same source as the SYSTEM_SUBS
+// set built further down, and FIRST-of-list because that variable is documented as accepting a
+// comma-separated list while set_config needs exactly one sub. Note this is the ACTOR (who is
+// writing), not the OWNER: rain rows are created_by the PLANTING's owner so they sit in the right
+// household, and their machine provenance is carried by source='import' instead.
+const SYSTEM_ACTOR_FALLBACK =
+  (process.env.SYSTEM_CLERK_SUB || 'user_3D7uvqWjyxdq3jgVwTZs0mKT7Xd').split(',')[0].trim();
 const cadence = require('./cadence-data-v2.json'); // per-variety research cadence (161). Swap to v_resolved_care once care_profile is seeded (CARE-CADENCE-001).
 const fertModel = require('./fertilization-model.json'); // substrate-aware feed model. REQUIRED by engine.generatePlan (it derefs fertModel.water_quality / .amendments_in_inventory); omitting it crashes every run.
 
@@ -737,6 +746,108 @@ const COVER_INHERIT_ARM = `
 // actually run"). Honored ONLY when this run is DRY — resolveInvokeOptions already refuses to emit
 // it otherwise, and the guard below re-checks so no future caller can arm a live A/B through it.
 // An env flip arms the LIVE 02:00/12:00/15:30 runs; this is the only safe replay path.
+// ── V4-RAINAUTOLOG-001 part 2 — turn yesterday's gauge reading into rain EVENTS ──────────────────
+// Every DECISION lives in rainLog.js and is unit-tested without a database; this function is only
+// the SQL. Read that file's header before changing anything here — in particular the gauge-only rule
+// and the binding prohibition on reward side effects.
+//
+// FAIL-OPEN, by construction. The daily plan is already durable when this runs, and rain logging is
+// a convenience on top of it: a station outage, a schema surprise or a lock must never cost Dave his
+// plan. Every exit path logs a structured line with a REASON, because "no rain logged last night"
+// and "the rain logger crashed last night" look identical from the outside.
+//
+// NOT a call to POST /api/events/batch, deliberately — see rainLog.js. The care cache is maintained
+// here exactly as the batch path maintains it; XP, streaks, achievements, critters and app_events
+// telemetry are NOT fired, because auto-logged rain is not a logging action Dave performed.
+async function logRainEvents(pg, { today, dryRun, event, etHour }) {
+  const t0 = Date.now();
+  const say = (o) => console.log(JSON.stringify({ msg: 'rain-log', today, ...o, ms: Date.now() - t0 }));
+  try {
+    const decisionRun = resolveRainRun(event, { etHour });
+    if (!decisionRun.log) return say({ logged: 0, skipped: decisionRun.reason, slot: decisionRun.slot });
+
+    const day = previousDay(today);
+    if (!day) return say({ logged: 0, skipped: 'bad_plan_date' });
+
+    // Gauge-sourced rows only, and ordered so a multi-Space future takes the wettest rather than an
+    // arbitrary one. Prod has a single Space today; this is not a guess about which is right for
+    // several, it is a deterministic choice so the behaviour is at least reproducible if one appears.
+    const { rows: wrows } = await pg.query(
+      `select precip_in, precip_source from weather_daily
+        where "date" = $1 order by precip_in desc nulls last limit 1`, [day]);
+    const d = rainDecision(wrows[0]);
+    if (!d.log) return say({ day, logged: 0, skipped: d.reason, amount_in: d.amountIn });
+
+    // ── the once-a-day cap. LOAD-BEARING, not belt-and-braces ──────────────────────────────────
+    // resolveRainRun's window is 00:00–05:59 ET and BOTH the nightly (02:00) and intraday-am (05:30)
+    // runs fall inside it — rainLog.test.js pins that overlap on purpose. This guard is the only
+    // thing standing between Dave's "once a day at most" and two identical fan-outs 3.5 hours apart.
+    // It also makes a manual re-run via scripts/rerun-daily-plan.sh safe.
+    const { rows: already } = await pg.query(
+      `select 1 from event_log
+        where event_type = 'rain' and deleted_at is null and event_date::date = $1 limit 1`, [day]);
+    if (already.length) return say({ day, logged: 0, skipped: 'already_logged', amount_in: d.amountIn });
+
+    if (dryRun) return say({ day, logged: 0, skipped: 'dry_run', amount_in: d.amountIn, would_log: true });
+
+    // Ownership context for the transfer trigger, same as every other writer.
+    await pg.query(`select set_config('app.actor_clerk_sub', $1, true)`, [SYSTEM_ACTOR_FALLBACK]);
+
+    // Column list, join shape and NULL semantics mirror lambda/events/index.js's batch INSERT, and
+    // the roof rule mirrors migrations/v4-rainbackfill-001. LEFT JOIN container, never INNER
+    // (BUG-LOGMANYPROJECTLESS-001): a project-less planting must still get its row.
+    const { rowCount: inserted } = await pg.query(
+      `insert into event_log
+         (project_id, location_id, plant_id, event_type, event_date, is_public,
+          logged_by, created_by, quantity_numeric, metadata, source, notes)
+       -- ALIASES ARE gn/ct, NOT p/pp, DELIBERATELY. archived-exclusion.test.js is a source-text guard
+       -- that locates the plantings query by grepping this file for the phrase
+       --   where p.deleted_at is null and p.archived_at is null
+       -- and then asserts what follows it. Written with a p alias, THIS query appears earlier in the
+       -- file and the guard latched onto it instead — passing its own vacuity floor while checking
+       -- the wrong statement. The guard is correct; this query was shadowing its anchor. Do not
+       -- rename these back. (Note also: no backticks anywhere in this block. It lives inside a
+       -- template literal, so one would end the string mid-SQL.)
+       select ct.id, ct.location_id, gn.id, 'rain', ($1::date + time '12:00')::timestamptz, true,
+              gn.created_by, gn.created_by, $2::numeric, $3::jsonb, 'import',
+              'Rain recorded by the on-site weather station.'
+         from garden_node gn
+         left join container ct on ct.id = gn.container_id
+        where gn.deleted_at is null and gn.archived_at is null
+          and not coalesce((
+                with recursive up as (
+                  select l.id, l.parent_id, l.covered from locations l
+                   where l.id = gn.location_id and l.deleted_at is null
+                  union all
+                  select l.id, l.parent_id, l.covered from up
+                    join locations l on l.id = up.parent_id and l.deleted_at is null
+                ) select bool_or(up.covered) from up), false)`,
+      [day, d.amountIn, JSON.stringify(rainMetadata(d.amountIn))]);
+
+    // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount
+    // above — so it stays correct even if the insert matched fewer rows than expected, and can never
+    // walk the cache backwards into V4-CARECACHEUNDO-001's territory.
+    const { rowCount: cached } = await pg.query(
+      `update entity_memory em
+          set last_watered_at = greatest(coalesce(em.last_watered_at, t.mx), t.mx),
+              last_event_at   = greatest(coalesce(em.last_event_at,   t.mx), t.mx),
+              next_water_at   = greatest(coalesce(em.next_water_at, t.mx + interval '4 days'),
+                                         t.mx + interval '4 days'),
+              updated_at      = now()
+         from (select e.plant_id, max(e.event_date) as mx from event_log e
+                where e.event_type in ('watering','rain') and e.deleted_at is null
+                  and e.plant_id is not null group by e.plant_id) t
+        where em.plant_id = t.plant_id
+          and (em.last_watered_at is null or em.last_watered_at < t.mx)`);
+
+    return say({ day, logged: inserted, cache_rows: cached, amount_in: d.amountIn, slot: decisionRun.slot });
+  } catch (e) {
+    // Fail-open: log and return. The plan is already written and must not be lost to this.
+    console.error(JSON.stringify({ msg: 'rain-log ERROR', today, error: e?.message ?? String(e) }));
+    return null;
+  }
+}
+
 async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour, event, flagOverrides = null }) {
   const _ovr = (dryRun === true && flagOverrides && typeof flagOverrides === 'object') ? flagOverrides : null;
   const _flag = (name, envOn) => (_ovr && typeof _ovr[name] === 'boolean' ? _ovr[name] : envOn);
@@ -1199,6 +1310,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       }
     }
   }
+  // V4-RAINAUTOLOG-001 part 2. Placed HERE on purpose: after every plan row is durably written, and
+  // before the frost throw below, so a rain-log problem can never cost the plan and can never mask
+  // a frost publish failure. Fail-open internally; never throws.
+  await logRainEvents(pg, { today, dryRun, event, etHour });
+
   // §3-7 fail LOUD, after every plan row is durably written. The daily plan itself must not be lost to an
   // SNS outage, but the invocation MUST be marked failed so garden-daily-plan-errors pages. Throwing here
   // (rather than at the publish site) is what gets both.

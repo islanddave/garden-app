@@ -90,7 +90,13 @@ async function drive(opts = {}) {
     fetchPrecip: async () => hydrology(opts.hydrology),
     fetchStation: async () => null,
     publishAlert: vi.fn(async () => ({ messageId: 'm1' })),
-    etHour: 2, event: {},
+    // rainLog SUPPRESSED BY DEFAULT (V4-RAINAUTOLOG-001, 2026-08-28). etHour 2 is the nightly slot,
+    // which is ALSO the rain-logger's window, so without this every assertion in this file about
+    // "how many weather_daily statements were issued" would be silently counting a second, unrelated
+    // reader. Suppressing it here keeps each existing claim measuring exactly the water-ledger path
+    // it was written to measure. The rain reader has its own coverage — see the block at the bottom
+    // of this file, which drives run() with it ARMED and proves it is genuinely wired in.
+    etHour: 2, event: { rainLog: false, ...(opts.event || {}) },
   });
   return { res, pg };
 }
@@ -258,7 +264,13 @@ describe('readWeatherDaily — flag-gated, and fail-open when it does run', () =
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // THE HEADLINE PROOF. Every assertion here counts statements that run() genuinely issued.
-describe('CARE_WATER_LEDGER_ENABLED — flag OFF issues ZERO weather_daily reads', () => {
+// SCOPE NOTE (2026-08-28): every claim below is about the WATER-LEDGER reader specifically, not
+// about weather_daily reads in general — drive() suppresses the rain logger, which is a second and
+// independently-gated reader of the same table. The distinction matters: CARE_WATER_LEDGER_ENABLED
+// arms only on the exact string 'true' because its read could blank the nightly plan, whereas
+// RAIN_AUTOLOG_ENABLED defaults ON because its read is fail-open and runs after the plan is durable.
+// Two readers, two risk profiles, two flags.
+describe('CARE_WATER_LEDGER_ENABLED — flag OFF issues ZERO water-ledger weather_daily reads', () => {
   it('flag OFF, dry run: not one statement mentions weather_daily', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const { pg } = await drive({ dryRun: true });
@@ -359,5 +371,86 @@ describe('the substrate can never take down the nightly plan', () => {
       expect(Number.isInteger(w.days_since)).toBe(true);
       expect(Number.isInteger(w.interval)).toBe(true);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// V4-RAINAUTOLOG-001 part 2 — the rain logger, driven through run() rather than in isolation.
+//
+// rainLog.test.js proves every DECISION without a database. What it cannot prove is that
+// logRainEvents is actually REACHED by run(), which is the failure mode that ships a feature that
+// looks wired and never fires — precisely the bug this whole ticket exists to fix. So these tests
+// count the statements run() genuinely sends, the same technique the water-ledger block above uses.
+describe('rain auto-log — reached by run(), and correctly gated (V4-RAINAUTOLOG-001)', () => {
+  beforeEach(() => { vi.spyOn(console, 'log').mockImplementation(() => {}); });
+
+  // A gauge-sourced day above threshold. weatherRows is what recordingPg returns to every
+  // weather_daily SELECT, which is enough for the rain reader's single-row lookup.
+  const RAINY = [{ precip_in: 0.34, precip_source: 'gauge_merged' }];
+  const rainInserts = (pg) => pg.calls.filter((c) => /insert into event_log/i.test(c.sql));
+  const rainReads = (pg) => pg.calls.filter((c) => /select precip_in, precip_source from weather_daily/i.test(c.sql));
+
+  it('IS wired into run(): armed, it reads weather_daily and writes rain events', async () => {
+    const { pg } = await drive({ event: { rainLog: true }, pgOpts: { weatherRows: RAINY } });
+    expect(rainReads(pg), 'the rain reader never ran — logRainEvents is not reachable').toHaveLength(1);
+    expect(rainInserts(pg)).toHaveLength(1);
+    // The measured amount reaches the row, and it is the gauge value, not a rounded or default one.
+    expect(rainInserts(pg)[0].params).toContain(0.34);
+  });
+
+  it('logs YESTERDAY, not today — the day being closed out', async () => {
+    const { pg } = await drive({ event: { rainLog: true }, pgOpts: { weatherRows: RAINY } });
+    expect(rainReads(pg)[0].params[0]).toBe(YESTERDAY);
+    expect(rainInserts(pg)[0].params[0]).toBe(YESTERDAY);
+  });
+
+  it('writes NO reward side effect — no XP, no critter, no streak, no app_events', async () => {
+    // reward-ux-guideline-V102: auto-logged rain is not a user logging action. This is the assertion
+    // that keeps a future refactor from routing it through POST /api/events/batch, whose
+    // batchSideEffects.js would credit the weather with a watering streak.
+    const { pg } = await drive({ event: { rainLog: true }, pgOpts: { weatherRows: RAINY } });
+    const forbidden = pg.calls.filter((c) => /app_events|user_stats|critter|streak|achievement|xp_/i.test(c.sql));
+    expect(forbidden.map((c) => c.sql)).toEqual([]);
+  });
+
+  it('maintains the care cache, because that part IS factual state', async () => {
+    const { pg } = await drive({ event: { rainLog: true }, pgOpts: { weatherRows: RAINY } });
+    const cache = pg.calls.filter((c) => /update entity_memory/i.test(c.sql));
+    expect(cache).toHaveLength(1);
+    expect(cache[0].sql).toMatch(/greatest/i);   // forward-only; never walks the cache backwards
+  });
+
+  it('a model-sourced day writes NOTHING, however wet', async () => {
+    const { pg } = await drive({
+      event: { rainLog: true },
+      pgOpts: { weatherRows: [{ precip_in: 2.0, precip_source: 'openmeteo_archive' }] },
+    });
+    expect(rainReads(pg)).toHaveLength(1);      // it looked...
+    expect(rainInserts(pg)).toHaveLength(0);    // ...and declined
+  });
+
+  it('suppressed, it does not even READ weather_daily — the gate is before the query', async () => {
+    const { pg } = await drive({ event: { rainLog: false }, pgOpts: { weatherRows: RAINY } });
+    expect(rainReads(pg)).toHaveLength(0);
+    expect(rainInserts(pg)).toHaveLength(0);
+  });
+
+  it('a dry run looks but never writes', async () => {
+    const { pg } = await drive({ dryRun: true, event: { rainLog: true }, pgOpts: { weatherRows: RAINY } });
+    expect(rainReads(pg)).toHaveLength(1);
+    expect(rainInserts(pg)).toHaveLength(0);
+  });
+
+  it('is NON-FATAL: a rain-log failure must not cost the daily plan', async () => {
+    // The whole reason logRainEvents sits after the durable plan write and catches everything.
+    const pg = recordingPg({ weatherRows: RAINY });
+    const realQuery = pg.query;
+    pg.query = vi.fn(async (sql, params) => {
+      if (/select precip_in, precip_source from weather_daily/i.test(sql)) throw new Error('boom');
+      return realQuery(sql, params);
+    });
+    pg.calls = pg.calls;
+    const { res } = await drive({ pg, event: { rainLog: true } });
+    expect(res.rows).toBeGreaterThan(0);       // the plan still got written
   });
 });

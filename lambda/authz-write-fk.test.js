@@ -294,6 +294,15 @@ const NOT_IN_SITES = [
   // read back off the database — the same two-arm shape plants/anchorCreate.js records, and the same
   // class as harvests::user_id.
   'daily-plan::plant_id',
+  // daily-plan::location_id and ::project_id — the rain event_log INSERT added by
+  // V4-RAINAUTOLOG-001 part 2 (handler.js logRainEvents). Same argument as plant_id above, and the
+  // SQL makes it checkable at a glance: both values come from `left join container ct on ct.id =
+  // gn.container_id` and are written as ct.location_id / ct.id — i.e. read off the planting's OWN
+  // container, inside a statement whose only binds are a date, a numeric and a metadata blob. There
+  // is no request body anywhere in this Lambda for a caller to put an FK into. Ownership on the
+  // written row is gn.created_by, read back off the database, matching the batch writer in
+  // lambda/events/index.js which derives the same two columns the same way.
+  'daily-plan::location_id', 'daily-plan::project_id',
   'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::user_id',
   'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
   'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',

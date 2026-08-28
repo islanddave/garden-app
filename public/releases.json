@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.63.0",
+    "date": "2026-08-28",
+    "highlights": [
+      "Rain from the weather station now logs itself every night"
+    ]
+  },
+  {
     "version": "4.62.0",
     "date": "2026-08-27",
     "highlights": [
