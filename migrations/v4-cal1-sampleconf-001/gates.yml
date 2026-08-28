@@ -80,6 +80,23 @@ post:
 
   # The other half, and the reason this is not a blanket demotion: a CORROBORATED sample must still
   # win. Today that is San Marzano Roma (n=2, cv 1.5%) and Celebrity (n=3, medium).
+  # AMENDED 2026-08-28 (BUG-SAMPLEPRODUCTBLEND-001). One conjunct added, excluding the rows the
+  # resolver's v6 category-error guard demotes. This narrows a gate someone wrote deliberately, so
+  # the reason is recorded rather than assumed:
+  #
+  # This gate encoded "a corroborated sample outranks the curated reference", which was correct and
+  # remains correct as the general rule. The NEW EVIDENCE it did not have is that the tiering has a
+  # failure mode where one unit spans TWO PRODUCTS. On prod, every broccoli 'head' sample is a SIDE
+  # SHOOT while the curated reference is a CROWN, so resolve_harvest_weight priced a Green Magic crown
+  # at 42.55 g against a curated 500 g — verified by calling the function on prod, not inferred. This
+  # gate was GREEN throughout, because the thing it asserts was exactly what was going wrong.
+  #
+  # So the amendment is not a workaround for an inconvenient gate; the gate's premise had an unstated
+  # precondition — that the sample and the reference describe the same object — and v6 makes that
+  # precondition explicit. Where they demonstrably do not (>6.5x apart), the reference wins.
+  #
+  # WHEN THE PRODUCT AXIS LANDS (V4-DUALHARVEST-001), crown and side shoot stop sharing a reference,
+  # the guard stops firing, and this conjunct becomes inert rather than wrong. Remove it then.
   - name: post_corroborated_still_outranks_reference
     sql: |
       SELECT 1
@@ -89,6 +106,13 @@ post:
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
          AND (d.confidence IN ('high','medium') OR d.sample_n >= 5)
+         -- the v6 category-error exception: a sample that contradicts its reference by >6.5x is not
+         -- calibration of it, and is deliberately demoted below it.
+         AND NOT (
+               (v.unit_weights ->> d.unit) IS NOT NULL
+           AND (d.grams_per_unit / NULLIF((v.unit_weights ->> d.unit)::numeric, 0))
+               NOT BETWEEN 0.154 AND 6.5
+         )
          AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
               OR r.weight_basis NOT IN ('cultivar','cultivar_sample'))
     expect: rowcount_eq

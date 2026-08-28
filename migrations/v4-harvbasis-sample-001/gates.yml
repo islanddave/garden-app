@@ -138,6 +138,14 @@ post:
   # ── THE HEADLINE PROPERTY: this migration relabels, it does not re-value. ──────────────────────
   # Every corroborated group must still resolve to its pooled grams_per_unit, exactly as under v3 —
   # only the label moved. If a gram value changed, demote-don't-discard has been disturbed.
+  # AMENDED 2026-08-28 (BUG-SAMPLEPRODUCTBLEND-001) — same one-conjunct exception, same reasoning, as
+  # v4-cal1-sampleconf-001/post_corroborated_still_outranks_reference, which carries the full note.
+  # In short: this gate's premise had an unstated precondition — that the sample and the curated
+  # reference describe the SAME OBJECT. For broccoli they do not (side shoots vs crowns share the
+  # 'head' unit), which is how a Green Magic crown came to price at 42.55 g against a curated 500 g
+  # while this gate stayed green, because the thing it asserts was exactly what was going wrong.
+  # v6 makes the precondition explicit; where the two demonstrably disagree (>6.5x), the reference
+  # wins. Remove this conjunct when V4-DUALHARVEST-001 lands and the guard stops firing.
   - name: post_corroborated_grams_unchanged_and_now_labelled_sample
     sql: |
       SELECT 1
@@ -147,6 +155,11 @@ post:
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
          AND (d.confidence IN ('high','medium') OR d.sample_n >= 5)
+         AND NOT (
+               (v.unit_weights ->> d.unit) IS NOT NULL
+           AND (d.grams_per_unit / NULLIF((v.unit_weights ->> d.unit)::numeric, 0))
+               NOT BETWEEN 0.154 AND 6.5
+         )
          AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
               OR r.weight_basis <> 'cultivar_sample')
     expect: rowcount_eq
