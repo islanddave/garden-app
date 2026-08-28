@@ -66,6 +66,12 @@ export const FUNCTION_URLS = {
   '/api/preservation':      import.meta.env.VITE_API_PRESERVATION   ?? '',
   '/api/harvests':          import.meta.env.VITE_API_HARVESTS       ?? '',
   '/api/share/facebook':    import.meta.env.VITE_API_FACEBOOK_SHARE ?? '',
+  // Instagram is served by the SAME Lambda and the SAME Function URL as Facebook — the handler
+  // routes on rawPath — so it deliberately reuses VITE_API_FACEBOOK_SHARE rather than introducing a
+  // second repo variable that would have to hold an identical value and could drift from it.
+  // It also means Instagram inherits Facebook's reachability exactly: while VITE_API_FACEBOOK_SHARE
+  // does not exist, NEITHER target has an address to post to.
+  '/api/share/instagram':   import.meta.env.VITE_API_FACEBOOK_SHARE ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {
