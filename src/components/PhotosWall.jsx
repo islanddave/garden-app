@@ -112,7 +112,9 @@ export default function PhotosWall({
 
   // Lightbox images derive from the SAME sorted order, so lbIndex (a flat index) is valid.
   const lbImages = useMemo(
-    () => sorted.map(p => ({ src: p?.view_url, photoId: p?.id, alt: p?.caption || 'Garden photo', caption: p?.caption || '' })),
+    // `thumbSrc` feeds the FILMSTRIP only (BUG-TIERLESSPHOTOS-001); the main slide stays `src`, the
+    // original. Additive and optional — Lightbox degrades to `src` when it is absent or 404s.
+    () => sorted.map(p => ({ src: p?.view_url, thumbSrc: p?.thumb_url, photoId: p?.id, alt: p?.caption || 'Garden photo', caption: p?.caption || '' })),
     [sorted]
   )
 
