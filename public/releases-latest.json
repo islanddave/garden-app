@@ -1,11 +1,9 @@
 {
-  "version": "4.66.0",
+  "version": "4.67.0",
   "date": "2026-08-28",
   "highlights": [
-    "Undo on an inventory quantity now restores the original number. It was landing on a stale value and saving the result, so a packet at 2 became 1 after a tap-and-undo.",
-    "Seed packets you have used up no longer appear as sowable. They move to a new 'Sowed previously' list on Sow Now that keeps the full packet record, and they no longer show on the Today card either.",
-    "Feed cards no longer appear a day late for a feeding logged in the evening. Plan generation was reading the last feed date in UTC while the read path used Eastern time.",
-    "Schema-contract coverage: the audit's blind spot for JOINed relations narrowed from 186 undeclared references to 114.",
-    "New standing gate pins the sow-window fall-through as unreached, so a legitimate data fix can no longer move a close date months later in silence."
+    "Photos: the app was downloading full-size originals into thumbnail-sized boxes on four more screens. Measured on the Today page at your phone's geometry: 82,957,060 bytes before, 3,542,820 after.",
+    "The offline photo cache now stores thumbnails only, and evicts full-size originals it had already saved. It was storing ~4 MB originals with a 500-item cap and no byte limit.",
+    "A new CI budget fails the build if a screen's photo payload goes back over 4 MB, so this cannot silently regress."
   ]
 }
