@@ -73,6 +73,9 @@ const INVENTORY_ITEMS_COLUMNS = [
   'featured_photo_id',
   'sow_archived_season',
   'sow_archived_at',
+  // BUG-INVMETADROP-001 added metadata to the POST INSERT, so it is now genuinely referenced in
+  // this handler's SQL and belongs under the prod column audit like every other entry here.
+  'metadata',
 ];
 
 describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {

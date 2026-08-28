@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.63.3",
+    "date": "2026-08-28",
+    "highlights": [
+      "Seed packet provenance — vendor, SKU and origin — now saves when you add seeds in the app instead of being silently dropped"
+    ]
+  },
+  {
     "version": "4.63.2",
     "date": "2026-08-28",
     "highlights": [

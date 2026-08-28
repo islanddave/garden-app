@@ -51,6 +51,34 @@ const VALID_UNITS = ['each','packet','oz','fl oz','lb','gal','qt','bag','roll','
 const VALID_CONDITIONS = ['excellent','good','fair','poor'];
 const VALID_STATUSES = ['active','depleted','retired','missing'];
 
+// BUG-INVMETADROP-001. Mirrors chk_inventory_metadata_size on inventory_items
+// (metadata IS NULL OR octet_length(metadata::text) < 8192) and packetToInventoryPayload's
+// METADATA_MAX_BYTES, so an oversized payload 400s with a field name instead of surfacing as
+// the generic 23514 "Constraint violation" string the catch block emits.
+export const METADATA_MAX_BYTES = 8192;
+
+// A plain JSON object, not an array and not a scalar. jsonb would happily store `"abc"` or `[1]`,
+// and every reader here (AddSeeds' provenance, packetToInventoryPayload) does key lookups — a
+// scalar would be stored without error and then read as undefined at every call site.
+export function validateMetadata(metadata) {
+  if (metadata == null) return null;
+  if (typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return 'metadata must be a JSON object or null';
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(metadata);
+  } catch {
+    return 'metadata must be JSON-serializable';
+  }
+  // Byte length, not string length: the CHECK counts octets, so a notes field full of accented
+  // characters or emoji passes a .length test and still violates the constraint.
+  if (Buffer.byteLength(serialized, 'utf8') >= METADATA_MAX_BYTES) {
+    return `metadata must serialize to fewer than ${METADATA_MAX_BYTES} bytes`;
+  }
+  return null;
+}
+
 export function validateCreate(body) {
   if (!body || typeof body !== 'object') return 'body required';
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) return 'name is required';
@@ -68,6 +96,8 @@ export function validateCreate(body) {
   if (body.unit != null && !VALID_UNITS.includes(body.unit)) return `unit must be one of: ${VALID_UNITS.join(', ')}`;
   if (body.variety_id != null && body.category !== 'seeds') return 'variety_id is only allowed when category is seeds';
   if (body.category === 'seeds' && body.variety_id == null) return 'variety_id is required for seeds';
+  const merr = validateMetadata(body.metadata);
+  if (merr) return merr;
   return null;
 }
 
@@ -378,6 +408,17 @@ export const handler = async (event) => {
 
         // PUT replaces all editable fields. Frontend sends complete payload.
         // type-discrimination enforced by nullifying off-type fields server-side.
+        //
+        // `metadata` IS DELIBERATELY ABSENT FROM THIS SET LIST — do not "finish the job" by adding
+        // it the way BUG-INVMETADROP-001 added it to the INSERT. The two verbs are not symmetric.
+        // Every assignment below is unconditional (`= ${body.x ?? null}`, no COALESCE), so a field
+        // the client omits is NULLED, not preserved. Adding `metadata = ${body.metadata ?? null}`
+        // would therefore erase provenance on every edit made through a form that does not round-
+        // trip it — and the richest metadata in the table belongs to the bulk-loaded seed rows,
+        // which no UI renders and so no UI would send back. Omission is what protects them.
+        // If metadata ever needs to be editable here, it needs the explicit-presence guard used by
+        // featured_photo_id above (hasOwnProperty -> CASE WHEN ... ELSE metadata END), never a bare
+        // assignment.
         // HOUSEHOLD-MODE TODO: concurrent quantity edits have a lost-update window — PUT writes an
         // absolute quantity (client read-modify-write; no optimistic updated_at/expected guard).
         // Backend-safe today; revisit as a fast-follow if both members adjust counts concurrently.
@@ -491,6 +532,16 @@ export const handler = async (event) => {
       // Both are NOT NULL TEXT in the deployed schema (twin-column reality —
       // legacy from the original DB migration, not yet collapsed). prevent_ownership_transfer
       // trigger enforces created_by immutability post-INSERT.
+      //
+      // BUG-INVMETADROP-001: `metadata` was absent from this column list while every caller was
+      // already sending it — AddSeeds' buildRowPayload composes {sku, vendor, origin} for every
+      // seed row and packetToInventoryPayload builds the same shape for the loader. Postgres does
+      // not complain about a key the INSERT never mentions, so the write returned 201 and the
+      // provenance vanished. It looked like it worked, which is why it survived: the existing seed
+      // rows that DO carry metadata were bulk-loaded outside this route.
+      // Stringify + explicit ::jsonb cast is the house pattern (lambda/events/index.js:485) — an
+      // uncast bound object cannot be typed by the driver, and a bare null needs the cast too.
+      const metadataJson = body.metadata != null ? JSON.stringify(body.metadata) : null;
       const rows = await sql`
         INSERT INTO inventory_items (
           user_id, created_by, type, name, category,
@@ -498,7 +549,7 @@ export const handler = async (event) => {
           unit_cost, unit, quantity_purchased, notes, tags, status,
           quantity_on_hand, reorder_threshold, reorder_quantity,
           quantity, condition, brand, model,
-          image_url, featured_image_id, variety_id
+          image_url, featured_image_id, variety_id, metadata
         ) VALUES (
           ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
@@ -511,7 +562,8 @@ export const handler = async (event) => {
           ${isDurable ? body.quantity : null},
           ${isDurable ? (body.condition ?? null) : null},
           ${body.brand ?? null}, ${body.model ?? null},
-          ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null}
+          ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
+          ${metadataJson}::jsonb
         ) RETURNING *
       `;
       return resp(201, rows[0]);
