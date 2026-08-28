@@ -100,6 +100,24 @@ AS $function$
         AND (v.unit_weights ->> p_unit) IS NOT NULL
         AND NULLIF((v.unit_weights ->> p_unit)::numeric, 0) IS NOT NULL
         AND (d.grams_per_unit / NULLIF((v.unit_weights ->> p_unit)::numeric, 0)) NOT BETWEEN 0.154 AND 6.5
+        -- ...AND THE SAMPLES ARE SCATTERED. Added after the CAL-1 independence integration test
+        -- (tests/integration/cal1-indep.int.test.js) failed on the ratio-only version, and was RIGHT
+        -- to. Its `exactAgreement` fixture pools two weighings that agree EXACTLY at 1.5 g/count
+        -- against a curated 100 g — a 66x ratio the first draft demoted. But agreeing measurements
+        -- are not a category error; they are evidence the CATALOGUE is wrong, and deferring to a wrong
+        -- catalogue over consistent weighings is the opposite of what this system is for.
+        --
+        -- A ratio alone cannot tell "two products" from "bad reference". Scatter narrows it: prod's
+        -- broccoli rows carry cv 0.409 and 0.448 while the fixture's exact agreement is cv 0.
+        -- Threshold 0.35 — both broccoli rows clear it, exact agreement cannot approach it.
+        -- COALESCE(...,0) so a NULL cv (too few samples to compute one) NEVER demotes: where scatter
+        -- is unmeasurable the guard stays out of the way, which is the conservative direction.
+        --
+        -- HONEST LIMIT: broccoli's scatter is side-shoot-to-side-shoot variation, not crown-vs-shoot
+        -- mixing, so cv is a CORRELATE here rather than the mechanism. This is a heuristic stopgap and
+        -- the ratio+scatter pair is not a proof of anything. The real fix is the product axis
+        -- (V4-DUALHARVEST-001); delete this guard when it lands rather than tuning these numbers.
+        AND COALESCE(d.cv, 0) >= 0.35
       ), false) AS corroborated
   ) c
   -- THE TIER, RESOLVED ONCE. Factor and basis are two projections of one decision, so basis cannot

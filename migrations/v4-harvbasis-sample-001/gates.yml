@@ -159,6 +159,7 @@ post:
                (v.unit_weights ->> d.unit) IS NOT NULL
            AND (d.grams_per_unit / NULLIF((v.unit_weights ->> d.unit)::numeric, 0))
                NOT BETWEEN 0.154 AND 6.5
+           AND COALESCE(d.cv, 0) >= 0.35
          )
          AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
               OR r.weight_basis <> 'cultivar_sample')

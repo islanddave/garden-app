@@ -32,6 +32,21 @@ both broccoli rows are ≥ 7.72×. The claim the guard encodes:
 > measuring **different things**, not that the reference is stale. Calibration corrects a number; it
 > does not multiply it tenfold.
 
+**...AND the samples must be scattered (cv ≥ 0.35).** This second condition was added after the CAL-1
+independence integration test failed on the ratio-only version — and it was **right to fail**. Its
+`exactAgreement` fixture pools two weighings that agree *exactly* at 1.5 g/count against a curated
+100 g, a 66× ratio the first draft demoted. But measurements that agree with each other are not a
+category error; they are evidence the **catalogue** is wrong, and preferring a wrong catalogue over
+consistent weighings is the opposite of what this system is for.
+
+A ratio alone cannot separate "two products" from "bad reference". Scatter narrows it: broccoli
+carries cv 0.409 and 0.448, exact agreement is cv 0. `COALESCE(cv, 0)` so an unmeasurable cv never
+demotes.
+
+**Honest limit:** broccoli's scatter is side-shoot-to-side-shoot variation, not crown-vs-shoot mixing,
+so cv is a *correlate* here rather than the mechanism. The ratio+scatter pair is a heuristic, not a
+proof. Delete this guard when the product axis lands rather than tuning these numbers.
+
 It only ever **demotes tier 3 → tier 5**, and tier 5 (provisional) already ranks *below* the curated
 reference. It cannot promote anything, cannot invent a value, and is inert where no curated reference
 exists.
