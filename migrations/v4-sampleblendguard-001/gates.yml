@@ -1,0 +1,146 @@
+# gates.yml
+# BUG-SAMPLEPRODUCTBLEND-001 — resolve_harvest_weight v6, the category-error guard.
+#
+# FUNCTION-ONLY. No table, column, constraint, index or row is touched. The signature is byte-identical
+# to v5, so this is a plain CREATE OR REPLACE and cannot leave a second overload behind — which is the
+# distinct hazard the dual-harvest design flags for a FUTURE change that adds a p_product parameter.
+#
+# DEPLOY BOUNDARY — the falsifiable test.
+#
+#   QUESTION: can the CURRENTLY DEPLOYED prod code produce a row that violates what this establishes,
+#             or break because of it?
+#   ANSWER:   No. Both harvest write paths call this function through LATERAL and consume whatever
+#             (weight_grams, weight_estimated, weight_basis) it returns — all three columns, types and
+#             order are unchanged. The guard only ever DEMOTES tier 3 to tier 5, and 'cultivar' is a
+#             basis the deployed code already handles (108 stored rows carry it).
+#   CONSEQUENCE: takes effect IMMEDIATELY on apply, with no promote, because it is a database function
+#             rather than shipped code. Order-independent. That is also why 0r is a verbatim capture of
+#             v5 rather than a reconstruction.
+#
+# DESTRUCTIVE STEPS: none.
+#
+# ORDER APPLIED: rehearsed on ephemeral Neon fork br-divine-sunset-amjmkvdn (a fork of prod) —
+# apply, whole-garden diff vs prod, then 0r, confirming the fork returned to 42.55/58.32.
+#
+# WHAT THE THRESHOLD IS AND WHY IT IS NOT ROUND. 6.5x, chosen from a measured empty band. Every
+# legitimate learned/curated divergence on prod is <= 5.70x; both broccoli rows are >= 7.72x. A first
+# draft used 5x and a whole-garden diff moved FOUR rows instead of two — Pineapple Tomatillo (5.23x)
+# and Ristra Cayenne II (5.70x) also tripped. Both look like bad data, neither has a demonstrated
+# two-product cause, and the decision was scoped to broccoli. See README §Near misses.
+
+pre:
+  - name: pre_function_exists_with_the_v5_signature
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'resolve_harvest_weight'
+         AND pg_get_function_arguments(p.oid) =
+             'p_plant_id uuid, p_unit text, p_qty numeric, p_user_grams numeric DEFAULT NULL::numeric'
+    expect: rowcount_eq
+    value: 1
+
+  # EXACTLY ONE overload. If a second ever exists, every 4-argument call is ambiguous and every harvest
+  # save 500s — the failure mode the dual-harvest design flagged for the future p_product change.
+  - name: pre_exactly_one_overload
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'resolve_harvest_weight'
+    expect: rowcount_eq
+    value: 1
+
+  # The guard reads v.unit_weights and cultivar_weight_derived. Assert the substrate rather than
+  # assuming it; a renamed column would make the guard silently inert (NULL -> never trips).
+  - name: pre_derived_view_carries_the_guard_inputs
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'cultivar_weight_derived'
+         AND column_name IN ('grams_per_unit', 'confidence', 'independent_n')
+    expect: rowcount_eq
+    value: 3
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.63.1-sampleblendguard-001'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # The L-058 all-row check in its resolver form: MEASURE the population the guard will move, before it
+  # moves. rowcount_gte 0 always passes, still runs, still reports — the point is to put the
+  # before/after on the record rather than in prose.
+  - name: sweep_capture_rows_the_guard_will_demote
+    note: >
+      Derived rows that currently reach tier 3 AND disagree with their curated reference by more than
+      6.5x in either direction — i.e. exactly what 0a demotes to provisional. Prod at authoring time:
+      2 rows, both broccoli 'head' (Green Magic 42.55 vs curated 500 = 11.75x; Broccoli 58.32 vs 450 =
+      7.72x), both caused by side-shoot samples sharing the 'head' unit with crowns. Verified by a
+      whole-garden diff across all 101 varieties with a derived row: no other resolver output changed.
+    sql: |
+      SELECT pv.name, d.unit
+        FROM public.cultivar_weight_derived d
+        JOIN public.plant_varieties pv ON pv.id = d.cultivar_id
+       WHERE (d.confidence IN ('high','medium') OR d.independent_n >= 5)
+         AND d.grams_per_unit IS NOT NULL
+         AND (pv.unit_weights ->> d.unit) IS NOT NULL
+         AND (d.grams_per_unit / NULLIF((pv.unit_weights ->> d.unit)::numeric, 0))
+             NOT BETWEEN 0.154 AND 6.5
+    expect: rowcount_gte
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.63.1-sampleblendguard-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_still_exactly_one_overload
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'resolve_harvest_weight'
+    expect: rowcount_eq
+    value: 1
+
+  # The invariant this migration exists to establish, stated STRUCTURALLY so it stays true as the
+  # garden grows: no learned value may be priced as corroborated while disagreeing with its curated
+  # reference by more than the guard's band. Continuous — if this goes red, either the guard was
+  # reverted or a NEW two-product crop has appeared, and both deserve a look.
+  - name: post_no_corroborated_value_contradicts_its_reference
+    sql: |
+      SELECT pv.name
+        FROM public.cultivar_weight_derived d
+        JOIN public.plant_varieties pv ON pv.id = d.cultivar_id
+        JOIN LATERAL (SELECT g.id AS pid FROM public.garden_node g
+                       WHERE g.cultivar_id = pv.id AND g.deleted_at IS NULL LIMIT 1) gg ON true
+       CROSS JOIN LATERAL (SELECT public.resolve_harvest_weight(gg.pid, d.unit, 1, NULL) AS r) x
+       WHERE (x.r).weight_basis = 'cultivar_sample'
+         AND (pv.unit_weights ->> d.unit) IS NOT NULL
+         AND ((x.r).weight_grams / NULLIF((pv.unit_weights ->> d.unit)::numeric, 0))
+             NOT BETWEEN 0.154 AND 6.5
+    expect: rowcount_eq
+    value: 0
+
+  # The rows this was written for, asserted by OUTCOME rather than by the guard's own predicate — so
+  # the gate cannot be satisfied by the same expression it is checking.
+  #
+  # CORRECTED at apply time. The first version asserted "no broccoli head prices under 200 g" and
+  # FAILED on prod — on Rapini, whose curated head weight is genuinely 80 g and which the resolver was
+  # returning correctly from the curated reference. Kailaan (60 g) would have failed too. Broccoli
+  # raab and kailaan are small-headed brassicas; 200 was a magic number that encoded "a crown" and
+  # quietly assumed every variety in the crop is one.
+  #
+  # The honest claim is per-variety and needs no magic number: a broccoli head must not price at less
+  # than HALF its own curated reference. That is a wider band than the 6.5x guard, so it is a distinct
+  # assertion rather than a restatement — and it would have caught the defect (42.55 of 500 = 8.5%,
+  # 58.32 of 450 = 13.0%) while passing for Rapini (80 of 80) and Kailaan (60 of 60).
+  - name: post_no_broccoli_head_prices_below_half_its_reference
+    sql: |
+      SELECT pv.name
+        FROM public.plant_varieties pv
+        JOIN LATERAL (SELECT g.id AS pid FROM public.garden_node g
+                       WHERE g.cultivar_id = pv.id AND g.deleted_at IS NULL LIMIT 1) gg ON true
+       CROSS JOIN LATERAL (SELECT public.resolve_harvest_weight(gg.pid, 'head', 1, NULL) AS r) x
+       WHERE pv.crop_type_slug = 'broccoli'
+         AND pv.unit_weights ? 'head'
+         AND (x.r).weight_grams < 0.5 * (pv.unit_weights ->> 'head')::numeric
+    expect: rowcount_eq
+    value: 0
