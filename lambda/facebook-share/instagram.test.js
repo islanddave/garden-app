@@ -7,6 +7,7 @@ import {
   countHashtags, countMentions, validateInstagramRequest, checkImageBytes,
   classifyContainerStatus, parsePublishingLimit,
   carouselChildFields, carouselParentFields, singleImageFields,
+  igAltField, IG_MAX_ALT_TEXT,
 } from './instagram.js';
 
 const fields = (pairs) => Object.fromEntries(pairs);
@@ -191,5 +192,53 @@ describe('container field builders', () => {
   });
   it('carousel parent preserves child order (display order is children order)', () => {
     expect(fields(carouselParentFields(['b', 'a'], null, 'T')).children).toBe('b,a');
+  });
+});
+
+// ── alt_text (V4-IGSHARE-001) ────────────────────────────────────────────────────────────────────
+// Meta's parameter reference for POST /{ig-user-id}/media: "For image posts only. Alternative text,
+// up to 1000 character, for an image. Only supported on a single image or image media in a
+// carousel." So it belongs on the single container and on each carousel CHILD — never the parent.
+describe('igAltField', () => {
+  const kv = (pairs) => Object.fromEntries(pairs);
+
+  it('emits alt_text when there is a real description', () => {
+    expect(kv(igAltField('Tie-Dye tomatoes, freshly harvested')).alt_text)
+      .toBe('Tie-Dye tomatoes, freshly harvested');
+  });
+
+  it('OMITS the field entirely rather than sending an empty one', () => {
+    // An empty alt_text is a stored, deliberate-looking "this image has no description" that
+    // suppresses the platform's own handling. Absent is the correct state, not ''.
+    for (const v of [null, undefined, '', '   ', 42, {}]) {
+      expect(igAltField(v), `igAltField(${JSON.stringify(v)}) must omit`).toEqual([]);
+    }
+  });
+
+  it('trims, so whitespace padding does not become the description', () => {
+    expect(kv(igAltField('  ripe squash  ')).alt_text).toBe('ripe squash');
+  });
+
+  it('OMITS rather than truncating past the 1000-character cap', () => {
+    // This text is a short DERIVED phrase, so anything near the cap means something upstream is
+    // wrong. Truncating would hide that and could end mid-word; sending it would fail container
+    // creation and burn a slot of the 400/24h quota.
+    expect(igAltField('x'.repeat(IG_MAX_ALT_TEXT))).toHaveLength(1);
+    expect(igAltField('x'.repeat(IG_MAX_ALT_TEXT + 1))).toEqual([]);
+  });
+
+  it('rides on a single image container and on a carousel CHILD, never the parent', () => {
+    const single = kv(singleImageFields('https://s3/x.jpg', 'cap', 'TOK', 'a tomato'));
+    expect(single.alt_text).toBe('a tomato');
+    const child = kv(carouselChildFields('https://s3/x.jpg', 'TOK', 'a tomato'));
+    expect(child.alt_text).toBe('a tomato');
+    expect(child.is_carousel_item).toBe('true');
+    // The parent takes no alt argument at all — it references children and holds no image.
+    expect(kv(carouselParentFields(['c1'], 'cap', 'TOK'))).not.toHaveProperty('alt_text');
+  });
+
+  it('leaves the pre-alt call shapes unchanged when no alt is passed', () => {
+    expect(kv(singleImageFields('u', 'c', 'T'))).not.toHaveProperty('alt_text');
+    expect(kv(carouselChildFields('u', 'T'))).not.toHaveProperty('alt_text');
   });
 });
