@@ -861,12 +861,56 @@ export function isArchivedForSeason(candidate, year) {
 }
 
 /**
+ * V4-SEEDZEROVIEW-001. Is this packet used up — nothing left to sow?
+ *
+ * Dave: "I want to keep zero counts in our records, viewable as 'sowed previously' so i can review,
+ * but I don't want a real 'reorder if...' logic in here. Won't use it, just need to know what I've
+ * had, how much I have now, and all the details even if zero — zero counts can be filtered out of
+ * sow now and other used surfaces, but a view/filter of them would be useful." So this DIVERTS a
+ * depleted packet exactly as isArchivedForSeason does. There is deliberately no threshold, no
+ * reorder quantity and no restock cue, and nothing here deletes, retires or re-decides a packet:
+ * the row keeps arriving from v_sow_candidates with every column intact, which is what makes the
+ * review section possible at all.
+ *
+ * Filtering lives HERE and not in the view or the route, for two independent reasons. The rows are
+ * needed client-side for the review section. And five gates across three migrations pin
+ * v_sow_candidates's rowcount to its unfiltered base join (v4-sowfirstyear-001 gates.yml:28,:73;
+ * v4-sowarchive-001 :37,:114; v4-maturitybasis-001 :116) — none carries `continuous:`, which
+ * defaults TRUE, so a server-side predicate would go red on prod AND staging on the next
+ * migrations/** push.
+ *
+ * NULL IS SOWABLE, AND THAT IS THE WHOLE DECISION HERE. quantity_on_hand is nullable with no column
+ * default, so NULL means "not tracked" — which is NOT "used up". This deliberately differs from
+ * InventoryDetail.jsx:253's `Number(item.quantity_on_hand ?? 0) > 0`, which collapses NULL into
+ * "hide". That collapse is right there — a plant-from-THIS-packet CTA needs stock actually in hand —
+ * and wrong here, on a PLANNING surface, where hiding an uncounted packet is the wrong-late
+ * direction: it forfeits a sowing silently, and sowEngine's own asymmetry note applies (wrong-early
+ * forfeits one sowing; wrong-late loses the planting). Zero seed rows are NULL today (measured on
+ * prod 2026-08-28: 259 candidates — 257 positive, 1 fractional at 0.5, 1 zero, 0 NULL), so the
+ * difference is currently unobservable, which is exactly why it is pinned by test rather than left
+ * for the first NULL packet to settle it silently.
+ *
+ * Number()-coerced for the neon driver's string numerics, same as isArchivedForSeason. Absent,
+ * empty or unparseable reads as NOT depleted — the safe direction, since the failure being guarded
+ * against is a packet vanishing off the working list. Note the `== null || === ''` guard is
+ * load-bearing rather than defensive tidiness: Number(null) and Number('') are both 0, so without it
+ * every untracked packet would read as depleted.
+ */
+export function isDepleted(candidate) {
+  const raw = candidate?.quantity_on_hand;
+  if (raw == null || raw === '') return false;
+  const n = Number(raw);
+  return Number.isFinite(n) && n <= 0;
+}
+
+/**
  * Bucket v_sow_candidates rows for a given day.
  * @param {Array<object>} candidates v_sow_candidates-shaped rows
  * @param {string} todayISO 'YYYY-MM-DD'; anchors resolve against its year
  * @param {object} [anchors] partial FROST_ANCHORS override
  * @returns {{start_indoors_now:[], direct_sow_now:[], sow_inside_anytime:[],
- *   sow_next_year:[], window_closing:[], hold:[], too_late:[], needs_profile:[], archived:[]}}
+ *   sow_next_year:[], window_closing:[], hold:[], too_late:[], needs_profile:[],
+ *   sowed_previously:[], archived:[]}}
  */
 export function bucketize(candidates, todayISO, anchors = {}) {
   const cfg = {
@@ -902,6 +946,10 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     hold: [],
     too_late: [],
     needs_profile: [],
+    // V4-SEEDZEROVIEW-001 (10th) and archived (9th) are DIVERT targets, not verdicts — bucketOne
+    // never returns either. They are seeded here for the same reason as the rest: a missing key
+    // makes the push below throw.
+    sowed_previously: [],
     archived: [],
   };
   for (const candidate of candidates || []) {
@@ -910,10 +958,17 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     // blank, and un-archiving is a pure re-read — the entry it returns to is already computed, so
     // the two paths cannot drift into disagreeing about where a packet belongs.
     const { bucket, entry } = bucketOne(candidate, ctx);
+    // V4-SEEDZEROVIEW-001 — same divert-don't-re-decide shape, and it composes with archive rather
+    // than racing it: depletion decides the packet's HOME bucket, archive then diverts it out of
+    // that home. So a packet that is both reads "From: Sowed previously" and, un-archived, returns
+    // to the review section instead of to a working list it has no seed for. Doing it the other way
+    // round would make an un-archive re-offer an empty packet.
+    const home = isDepleted(candidate) ? 'sowed_previously' : bucket;
+    const homeEntry = home === bucket ? entry : { ...entry, depletedFrom: bucket };
     if (isArchivedForSeason(candidate, year)) {
-      buckets.archived.push({ ...entry, archivedFrom: bucket });
+      buckets.archived.push({ ...homeEntry, archivedFrom: home });
     } else {
-      buckets[bucket].push(entry);
+      buckets[home].push(homeEntry);
     }
   }
   return buckets;

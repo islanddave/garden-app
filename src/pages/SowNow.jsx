@@ -4,7 +4,9 @@
 // in fixed order. Actionable cards open a Sheet mini-form that POSTs /api/plants with
 // the exact seed-provenance wire shape (source_type 'seed_packet' — dropdownRegistry
 // PLANT_SOURCE_OPTIONS seed value). NO quantity decrement (decision: quantity_on_hand
-// = packets owned; sowing doesn't consume a packet).
+// = packets owned; sowing doesn't consume a packet) — so a packet only reaches zero when
+// Dave edits it down, which is what makes zero a trustworthy "used up" signal for the
+// V4-SEEDZEROVIEW-001 `sowed_previously` section rather than an artefact of sowing.
 import React, { useState, useEffect, useMemo, useCallback, useRef, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -41,6 +43,12 @@ const BUCKET_META = [
   ['hold',               'Hold for later'],
   ['needs_profile',      'Needs a sow profile'],
   ['too_late',           'Too late this year'],
+  // V4-SEEDZEROVIEW-001. The packets there is none of left. Dave: "I want to keep zero counts in our
+  // records, viewable as 'sowed previously' so i can review … zero counts can be filtered out of sow
+  // now and other used surfaces, but a view/filter of them would be useful." Collapsed and near the
+  // bottom because it is a review surface, not a working list — but present, complete, and never a
+  // delete or a retire. There is deliberately NO reorder cue here: he said he will not use one.
+  ['sowed_previously',   'Sowed previously', 'None of these left. Kept in full so you can see what you have grown and everything about the packet — they just stay off the working list.'],
   // V4-SOWARCHIVE-001. Dead last and collapsed, like too_late: the whole point is to get these off
   // the working list. They are still ON the page and one tap from returning — archiving is a view
   // preference, not a delete, so it must never look like the packet is gone.
@@ -54,7 +62,7 @@ const BUCKET_LABEL = Object.fromEntries(BUCKET_META.map(([k, label]) => [k, labe
 const DEMOTED = new Set(['sow_next_year'])
 
 // Sections rendered as a collapsed disclosure at the bottom rather than an open list.
-const COLLAPSED = new Set(['too_late', 'archived'])
+const COLLAPSED = new Set(['too_late', 'sowed_previously', 'archived'])
 
 // Buckets whose cards carry a Sow action.
 const ACTIONABLE = new Set(['window_closing', 'start_indoors_now', 'direct_sow_now', 'sow_inside_anytime', 'sow_next_year'])
@@ -98,8 +106,10 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [sownIds, setSownIds] = useState(() => new Set())
-  const [tooLateOpen, setTooLateOpen] = useState(false)
-  const [archivedOpen, setArchivedOpen] = useState(false)
+  // Which COLLAPSED sections are expanded, keyed by bucket. One Set rather than a boolean per
+  // section: V4-SEEDZEROVIEW-001 made this a third disclosure, and a per-key ternary in
+  // renderSection is exactly the drift vector the shared COLLAPSED set exists to close.
+  const [openSections, setOpenSections] = useState(() => new Set())
   // In-flight archive PATCHes, by inventory_item_id — disables the button so a double-tap on a
   // slow phone connection cannot fire two writes.
   const [archiveBusy, setArchiveBusy] = useState(() => new Set())
@@ -319,6 +329,12 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     const line = depthSpacingLine(c)
     const sown = sownIds.has(c.inventory_item_id)
     const busy = archiveBusy.has(c.inventory_item_id)
+    // Where the engine had actually put this packet before it was diverted. Both divert targets
+    // carry it, under their own key — an archived packet that is ALSO empty reads "From: Sowed
+    // previously", which is the honest answer to "why was this on my list?" for that card.
+    const divertedFrom = bucketKey === 'archived' ? entry.archivedFrom
+      : bucketKey === 'sowed_previously' ? entry.depletedFrom
+        : null
     return (
       <div key={c.inventory_item_id} style={cardStyle}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -345,10 +361,10 @@ export default function SowNow({ todayISO = localTodayISO() }) {
           {entry.gateReason && (
             <div style={gateReasonLine}>{entry.gateReason}</div>
           )}
-          {/* Where it sat before it was archived. Answers "why was this on my list?" without making
-              Dave un-archive it to find out. */}
-          {bucketKey === 'archived' && entry.archivedFrom && BUCKET_LABEL[entry.archivedFrom] && (
-            <div style={gateReasonLine}>From: {BUCKET_LABEL[entry.archivedFrom]}</div>
+          {/* Where it sat before it was diverted. Answers "why was this on my list?" without making
+              Dave put it back to find out. */}
+          {divertedFrom && BUCKET_LABEL[divertedFrom] && (
+            <div style={gateReasonLine}>From: {BUCKET_LABEL[divertedFrom]}</div>
           )}
         </div>
         <div style={cardActions}>
@@ -392,6 +408,20 @@ export default function SowNow({ todayISO = localTodayISO() }) {
             Add sow details
           </button>
         )}
+        {/* V4-SEEDZEROVIEW-001. The point of this section is review — "so i can review … all the
+            details even if zero" — and the card alone carries only what the sow engine needed. Same
+            navigation the needs_profile card already uses, so the packet's full record is one tap
+            from here rather than a search through Inventory. */}
+        {bucketKey === 'sowed_previously' && (
+          <button
+            type="button"
+            onClick={() => navigate(`/inventory/${c.inventory_item_id}`)}
+            aria-label={`View details for ${title}`}
+            style={profileBtn}
+          >
+            Details
+          </button>
+        )}
         {/* V4-SOWARCHIVE-001. Offered on EVERY bucket rather than a curated subset: the reason a
             packet is not wanted on the list ("already sown all I'm going to") is Dave's, not the
             engine's, so any card can be the one he wants gone. The archived section offers the
@@ -414,16 +444,21 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     const entries = buckets[key]
     if (!entries || entries.length === 0) return null // collapsed when empty
 
-    // too_late and archived share one disclosure: both are "off the working list but still on the
-    // page". Generalised rather than copied so the two cannot drift apart visually.
+    // too_late, sowed_previously and archived share one disclosure: all three are "off the working
+    // list but still on the page". Generalised rather than copied so they cannot drift apart
+    // visually.
     if (COLLAPSED.has(key)) {
-      const open = key === 'archived' ? archivedOpen : tooLateOpen
-      const toggle = key === 'archived' ? setArchivedOpen : setTooLateOpen
+      const open = openSections.has(key)
+      const toggle = () => setOpenSections((prev) => {
+        const next = new Set(prev)
+        if (!next.delete(key)) next.add(key)
+        return next
+      })
       return (
         <section key={key} style={{ marginBottom: 20 }}>
           <button
             type="button"
-            onClick={() => toggle((o) => !o)}
+            onClick={toggle}
             aria-expanded={open}
             style={disclosureBtn}
           >
@@ -431,6 +466,9 @@ export default function SowNow({ todayISO = localTodayISO() }) {
             {label}
             <span style={countBadge}>{entries.length}</span>
           </button>
+          {/* Subtitle rides inside the disclosure, not above it: a collapsed section is one line by
+              design, and an explanation nobody has opened the section to read is just noise on it. */}
+          {open && subtitle && <p style={sectionSubtitle}>{subtitle}</p>}
           {open && (
             <div style={sectionList}>{entries.map((e) => renderCard(e, key))}</div>
           )}

@@ -58,10 +58,23 @@ async function plantingsSql(flagOverrides) {
   return sql;
 }
 
-// sha256 of the plantings statement as emitted by handler.js at e5a8ab9, before this change.
-// Captured by the same harness above, run against the unmodified file.
-const PRE_CHANGE_SHA256 = '5cab788b199ae46914a6037045f45c8940a4c01df0641443247f6088ca55c586';
-const PRE_CHANGE_LENGTH = 12059;
+// sha256 of the plantings statement as emitted by handler.js with the flag OFF. Captured by the same
+// harness above, run against the file itself — the original value was taken at e5a8ab9, before the
+// cover-inherit change.
+//
+// RE-BASELINED ONCE, 2026-08-28 (lane-feedtz-20260828), from
+// 5cab788b199ae46914a6037045f45c8940a4c01df0641443247f6088ca55c586 / 12059. The last_fert projection
+// moved from `at time zone 'UTC'` to `AT TIME ZONE 'America/New_York'` so plan GENERATION and the
+// read-time done check stop computing one quantity in two zones (handler.js carries the worked
+// example; lastfert-tz.test.js pins the agreement). That edit is UNCONDITIONAL — it is not behind
+// the cover-inherit flag — so the flag-OFF statement is legitimately no longer byte-identical to
+// e5a8ab9 and this pin had to move with it. It was NOT re-derived blind, which is the failure the
+// header warns about: the emitted statement was captured before and after with the harness above and
+// diffed, and the entire diff was that one column plus its SQL comment — no other column, join, CTE
+// or predicate moved. What the constant proves is unchanged: the flag OFF must emit exactly the
+// approved statement, so any cover-inherit leak is still a RED.
+const PRE_CHANGE_SHA256 = 'ad64ae74123c15cb81f16baadae3b818e6ee55f5d5877d6a72297ac8a9a61b6b';
+const PRE_CHANGE_LENGTH = 13367;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 

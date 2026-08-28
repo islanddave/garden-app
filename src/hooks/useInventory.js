@@ -33,6 +33,13 @@ export function useInventory() {
   const toastTimerRef = useRef(null)
   const loadCounterRef = useRef(0)
 
+  // Live mirror of `items` for callbacks that outlive the render that created them —
+  // the undo toast is the one that matters (BUG-INVUNDOQTY-001). A ref, not a functional
+  // setItems updater: the app mounts under StrictMode (main.jsx), which double-invokes
+  // updaters, so an updater body is not a safe place to read state from.
+  const itemsRef = useRef(items)
+  useEffect(() => { itemsRef.current = items }, [items])
+
   const reload = useCallback(async () => {
     const my = ++loadCounterRef.current
     setLoading(true)
@@ -103,7 +110,7 @@ export function useInventory() {
   }, [fetch, items])
 
   const adjustQuantity = useCallback(async (id, delta) => {
-    const current = items.find(i => i.id === id)
+    const current = itemsRef.current.find(i => i.id === id)
     if (!current) return
     // Type-aware column selection (P4, 2026-05-18): consumables track quantity_on_hand,
     // durables track quantity. Both are numeric(N,3) on the server.
@@ -124,8 +131,12 @@ export function useInventory() {
       showToast({
         msg: `Quantity changed to ${newValue}`,
         onUndo: () => {
-          // Trigger reverse delta — undo path also goes through adjustQuantity.
-          // Use the latest current value from state, not the closure value.
+          // Reverse delta, re-entering adjustQuantity. `adjustQuantity` here resolves to THIS
+          // render's instance, so the reverse delta is only correct because the `current`
+          // lookup at the top of this callback reads itemsRef.current (the post-change row)
+          // rather than this closure's `items` (the pre-change row). Reading the closure
+          // applied the delta twice — BUG-INVUNDOQTY-001, measured 2 -> +1 -> 3 -> undo -> 1,
+          // and persisted by the PUT above.
           adjustQuantity(id, prevValue - newValue)
         },
       })
@@ -134,7 +145,7 @@ export function useInventory() {
       setItems(prev => prev.map(i => i.id === id ? { ...i, [col]: prevValue } : i))
       showToast({ msg: "Couldn't save — please try again" })
     }
-  }, [fetch, items, showToast])
+  }, [fetch, showToast])
 
   const deleteItem = useCallback(async (id) => {
     try {

@@ -432,12 +432,20 @@ export function queryWaterDue(sql, userId) {
 // "needs water" independently and disagreed on ~100% of containers (e.g. Dracaena: engine 10d not-due vs the bar's
 // 4d location-default; established 5-gal-bag peppers nagging daily). Single source of truth: the engine decides WHICH
 // plantings are due; this query (a) reads today's per-user daily_plan water_due, (b) drops plantings already satisfied
-// today via a watering/rain event_log row in ET (the SAME done-logic daily-plan-read.annotateDone uses, so bar and
-// Today stay consistent on same-day logging), (c) groups by container into the band's existing row shape, and (d)
-// LEFT JOINs entity_memory + container for the display fields the UI reads (last_watered_at, location_type). When no
-// plan row exists for today (rare engine-skip), it FALLS BACK to the legacy entity_memory query so the bar never
-// blanks — flagged via water_due_source so the silent-divergence case is observable. ONE sql call (drop-in for
-// queryWaterDue in the handleDashboard Promise.all; preserves the FIFO contract its tests assert).
+// today via a watering/rain/moisture_check event_log row in ET, (c) groups by container into the band's existing row
+// shape, and (d) LEFT JOINs entity_memory + container for the display fields the UI reads (last_watered_at,
+// location_type). When no plan row exists for today (rare engine-skip), it FALLS BACK to the legacy entity_memory
+// query so the bar never blanks — flagged via water_due_source so the silent-divergence case is observable. ONE sql
+// call (drop-in for queryWaterDue in the handleDashboard Promise.all; preserves the FIFO contract its tests assert).
+//
+// (b) is NOT the same code as daily-plan-read.annotateDone — this comment used to say it was, and that was
+// imprecise. The satisfied-set is an independent SQL re-implementation of the ET-day rule, in the `fresh` CTE
+// below, and it carries NONE of annotateDone's feed-cadence widening (doneEvents.fedWithinInterval, the
+// BUG-BACKDATEDFEED-001 arm that lets a feeding logged today but DATED earlier retire a feed card). Harmless
+// while this bar reads water_due and nothing else: for watering the ET calendar day IS the whole rule, so the
+// two agree by coincidence of scope, not by shared code. It is a trap for the next person — extend this query
+// to feed tiles without porting the cadence arm and BUG-BACKDATEDFEED-001 reappears on the dashboard alone,
+// with Today checked off and the bar still nagging.
 export function queryWaterDueFromPlan(sql, userId) {
   return sql`
       WITH params AS (SELECT (now() AT TIME ZONE 'America/New_York')::date AS et_today),

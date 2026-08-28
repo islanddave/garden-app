@@ -472,3 +472,96 @@ describe('SowNow — archive for the season', () => {
     expect(screen.queryByText('Archived for this season')).toBeNull()
   })
 })
+
+// ── V4-SEEDZEROVIEW-001 ───────────────────────────────────────────────────────
+// "I want to keep zero counts in our records, viewable as 'sowed previously' so i can review, but I
+// don't want a real 'reorder if...' logic in here. Won't use it, just need to know what I've had,
+// how much I have now, and all the details even if zero — zero counts can be filtered out of sow now
+// and other used surfaces, but a view/filter of them would be useful."
+//
+// The filed defect was Belstar Broccoli at quantity_on_hand = 0 being offered as sowable. These
+// tests assert BOTH halves: it is off the working list, AND it is still on the page in full.
+describe('SowNow — sowed previously (zero-count packets)', () => {
+  const EMPTY_CUKE = { ...CUCUMBER, quantity_on_hand: '0' }
+
+  it('THE FILED DEFECT: a zero-count packet is not offered as sowable', async () => {
+    // Cucumber is the page's only window_closing packet, so the whole section goes with it — and
+    // there is no Sow button anywhere for it.
+    routeFetch({ candidates: [EMPTY_CUKE, LETTUCE] })
+    await renderSowNow()
+    await screen.findByText('Direct sow now')
+
+    expect(screen.queryByText('Window closing')).toBeNull()
+    expect(screen.queryByLabelText('Sow Spacemaster 80')).toBeNull()
+    expect(screen.getByText('Sowed previously')).toBeDefined()
+    // The neighbour with stock is untouched.
+    expect(screen.getByLabelText('Sow Black Seeded Simpson')).toBeDefined()
+  })
+
+  it('the section is collapsed by default and expands to the full packet, with its provenance', async () => {
+    routeFetch({ candidates: [EMPTY_CUKE, LETTUCE] })
+    await renderSowNow()
+    await screen.findByText('Sowed previously')
+
+    // Off the working list: nothing about the packet is rendered while the disclosure is shut.
+    expect(screen.queryByText('Spacemaster 80')).toBeNull()
+
+    await act(async () => { fireEvent.click(screen.getByText('Sowed previously')) })
+
+    // Kept in full — name, the window it would have had, and the depth/spacing line.
+    expect(screen.getByText('Spacemaster 80')).toBeDefined()
+    expect(screen.getByText('Direct sow through Jul 14')).toBeDefined()
+    expect(screen.getByText('Sow ½ in deep · 12 in apart')).toBeDefined()
+    // Where it would have sat, so "why was this on my list?" needs no restock to answer.
+    expect(screen.getByText('From: Window closing')).toBeDefined()
+    // Still no Sow action, even with the section open.
+    expect(screen.queryByLabelText('Sow Spacemaster 80')).toBeNull()
+  })
+
+  it('the review card routes to the packet record — "all the details even if zero"', async () => {
+    routeFetch({ candidates: [EMPTY_CUKE] })
+    await renderSowNow()
+    await act(async () => { fireEvent.click(await screen.findByText('Sowed previously')) })
+
+    fireEvent.click(screen.getByLabelText('View details for Spacemaster 80'))
+    expect(navigateSpy).toHaveBeenCalledWith('/inventory/inv-cuke')
+  })
+
+  it('NO reorder cue anywhere on the page — Dave asked for the record, not a restock prompt', async () => {
+    routeFetch({ candidates: [EMPTY_CUKE, LETTUCE] })
+    await renderSowNow()
+    await act(async () => { fireEvent.click(await screen.findByText('Sowed previously')) })
+
+    expect(document.body.textContent).not.toMatch(/reorder|re-order|restock|buy more|order more|running low/i)
+  })
+
+  it('THE NULL DECISION: an untracked packet stays on the working list', async () => {
+    // quantity_on_hand NULL means "not tracked", not "used up" — see isDepleted's note. Hiding an
+    // uncounted packet is the wrong-late direction and forfeits a sowing silently.
+    routeFetch({ candidates: [{ ...CUCUMBER, quantity_on_hand: null }] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Window closing')).toBeDefined()
+    expect(screen.getByLabelText('Sow Spacemaster 80')).toBeDefined()
+    expect(screen.queryByText('Sowed previously')).toBeNull()
+  })
+
+  it('a half-empty packet is still seed — it stays sowable', async () => {
+    // Clemson Spineless 80 Okra sits at 0.5 on prod; a fraction is stock, not depletion.
+    routeFetch({ candidates: [{ ...CUCUMBER, quantity_on_hand: '0.5' }] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Window closing')).toBeDefined()
+    expect(screen.queryByText('Sowed previously')).toBeNull()
+  })
+
+  it('a zero-count packet is still archivable, and reports the review section as its home', async () => {
+    routeFetch({ candidates: [{ ...EMPTY_CUKE, sow_archived_season: 2026 }] })
+    await renderSowNow()
+    await act(async () => { fireEvent.click(await screen.findByText('Archived for this season')) })
+
+    expect(screen.queryByText('Sowed previously')).toBeNull()
+    expect(screen.getByText('From: Sowed previously')).toBeDefined()
+    expect(screen.getByLabelText('Un-archive Spacemaster 80')).toBeDefined()
+  })
+})

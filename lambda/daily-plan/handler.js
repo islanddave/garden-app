@@ -960,8 +960,21 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- Dates returned as 'YYYY-MM-DD' TEXT (UTC): the neon driver hands timestamptz back as JS Date objects, and
            -- engine.daysBetween does iso.slice(0,10) -> a Date object crashes it (TypeError). to_char + AT TIME ZONE 'UTC'
            -- matches the engine's own UTC date math (new Date(iso.slice(0,10)+'T00:00:00Z')). Soft-deleted events excluded.
+           -- last_fert is the ONE exception to the UTC zone in this block -- see its own note below.
            to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type in ('watering','rain') and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_water,
-           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='fertilizing' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_fert,
+           -- ET, deliberately, NOT the UTC of the columns around it. This is the SAME quantity
+           -- daily-plan-read.lastFertByPlant computes (daily-plan-read/index.js:221, AT TIME ZONE
+           -- 'America/New_York'), and BOTH are compared against an ET "today" (todayET in index.js
+           -- here, now() AT TIME ZONE 'America/New_York' there). Computing one half in UTC split the
+           -- two halves of one mechanism: a feed logged LIVE between 20:00 and 23:59 ET has no
+           -- explicit date (events/index.js:278 falls through to new Date().toISOString()), so its
+           -- UTC calendar date is a day later than its ET one and generation over-suppressed --
+           -- fed 2026-08-11 21:00 ET with iv=14, generation read last_fert '2026-08-12' and on 08-25
+           -- got dF=13 < 14 -> no card, while the ET truth dF=14 was genuinely due. Safe direction
+           -- (UTC-date >= ET-date, so the card was up to a day LATE, never falsely checked off), but
+           -- the two must agree. Date-only back-dated entries were never affected: validators.js:685
+           -- noon-anchors them, so their UTC and ET dates match. Pinned by lastfert-tz.test.js.
+           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='fertilizing' and e.deleted_at is null) AT TIME ZONE 'America/New_York','YYYY-MM-DD') as last_fert,
            -- V4-OVERWINTER-001: the overwintering soil check is satisfied by a moisture_check, not only by
            -- a watering — "I felt it, it is still damp" is the CORRECT answer to a winter check, and
            -- last_water above counts only watering/rain. Without this column the reduced-cadence check

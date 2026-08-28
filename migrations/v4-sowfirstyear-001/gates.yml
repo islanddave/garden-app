@@ -129,6 +129,34 @@ post:
     expect: rowcount_eq
     value: 0
 
+  # BUG-SOWFYHNULL-001, the CLASS. sowGoal (src/lib/sowEngine.js:374) reads
+  # `coalesce(grown_as, lifecycle) === 'annual'` first and returns 'harvest'; only if that misses does
+  # first_year_harvest get consulted, and a NULL there falls through two heuristics to a silent
+  # 'establishment', which moves the sow-close date from a real DTM-derived day to a flat FF-35 =
+  # Aug 24. sowEngine.js:426 states the asymmetry that makes this the dangerous direction: "wrong-early
+  # forfeits one sowing; wrong-late loses the planting."
+  #
+  # Today NOTHING reaches that fall-through — measured 0 of 259 candidates on prod and 0 of 66 on
+  # staging, 2026-08-28. But 7 of them are held off it ONLY by grown_as='annual', which is a BULK
+  # DEFAULT ('annual' on 362/413 cultivars) and never evidence of a decision. Correcting grown_as on
+  # any of those 7 — a four o'clock genuinely IS a tender perennial, so that is a legitimate
+  # data-quality fix — silently moves its close date 2-4 months LATER with nothing to notice.
+  #
+  # This gate is that notice. It asserts the fall-through stays unreached rather than asserting any
+  # particular first_year_harvest value, so it does not fight post_unknowns_left_unknown (which
+  # requires at least one NULL to survive) or the deliberate-NULL pins above.
+  #
+  # Non-vacuity, measured on prod rather than argued: as written it returns 0; drop the
+  # `first_year_harvest IS NULL` clause and it returns 43; drop the grown_as coalesce and it returns
+  # exactly the 7 at-risk rows. Both arms are load-bearing.
+  - name: post_sowgoal_fallthrough_unreached
+    sql: |
+      SELECT 1 FROM public.v_sow_candidates
+       WHERE coalesce(grown_as, lifecycle) IS DISTINCT FROM 'annual'
+         AND first_year_harvest IS NULL
+    expect: rowcount_eq
+    value: 0
+
   # Brussels sprouts is the worked example from BUG-SOWNONANNUAL-001: biennial, eaten in year 1.
   - name: post_brussels_is_first_year
     sql: |
