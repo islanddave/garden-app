@@ -118,7 +118,12 @@ check("LEGACY_COLUMNS_REMOVED_IN_2_0_5 excluded from audit",
 # 9. Real repo files: all 3 select-columns.test.js must parse with the declared tables.
 real = {
     "lambda/varieties/select-columns.test.js": ("cultivar", 14),
-    "lambda/plants/select-columns.test.js": ("garden_node", 24),
+    # 24 -> 29 on 2026-08-28: the contract legitimately gained 5 columns and this pin was not
+    # updated with it, so the Phase 1 suite was RED on dev. Verified before changing: all 29 are
+    # real garden_node columns and the live audit PASSES on them -- the contract was right and the
+    # pin was stale, not the reverse. A bare count rots on every legitimate column addition; it
+    # catches wholesale parser collapse and little else.
+    "lambda/plants/select-columns.test.js": ("garden_node", 29),
     "lambda/projects/select-columns.test.js": ("plant_projects", 3),
 }
 for rel, (want_table, want_cols) in real.items():

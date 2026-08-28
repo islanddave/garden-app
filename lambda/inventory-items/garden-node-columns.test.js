@@ -37,16 +37,31 @@ const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 // cannot be satisfied by an identifier belonging to some other statement in the file.
 const GARDEN_NODE_SQL = (SRC.match(/sql`[^`]*garden_node[^`]*`/) ?? [''])[0];
 
-// Verified present on public.garden_node in prod 2026-08-28 via information_schema.
-const GARDEN_NODE_COLUMNS = [
-  'id',
-  'display_name',
-  'sown_at',
-  'seeds_sown',
-  'seeds_germinated',
-  'source_inventory_item_id',
-  'deleted_at',
-];
+// L-081 KEYED contract (Phase 1, keyed form added 2026-08-28). Verified present on
+// public.garden_node in prod 2026-08-28 via information_schema.
+//
+// The keyed form is what makes this file visible to scripts/dev-main-schema-audit.py at all.
+// The older `AUDIT_TABLES` form cross-products every collected *COLUMNS array against every
+// declared table, which forced one-table-per-file and left every JOINed relation audited by
+// nothing — the exact hole this file was written to plug, and which it could not plug while
+// the auditor could not see it. Keyed pairs bind columns to ONE relation, so a sibling
+// contract for inventory_items can live in select-columns.test.js without either file
+// asserting its columns onto the other's table.
+const AUDIT_COLUMNS = {
+  garden_node: [
+    'id',
+    'display_name',
+    'sown_at',
+    'seeds_sown',
+    'seeds_germinated',
+    'source_inventory_item_id',
+    'deleted_at',
+  ],
+};
+
+// Single source of truth: the assertions below read the same literal the auditor parses, so a
+// column can never be audited against prod while the local tests check a different list.
+const GARDEN_NODE_COLUMNS = AUDIT_COLUMNS.garden_node;
 
 // Columns that exist on OTHER tables in this handler and would be a plausible mistake here.
 // `name` is the one that actually happened; the rest share the same rename history.
