@@ -1017,7 +1017,14 @@ export function searchPlantings(sql, userId, pat, prefixPat) {
              OR p.container_type ILIKE ${pat} ESCAPE '\\'
              OR cv.display_name ILIKE ${pat} ESCAPE '\\'
              OR cv.crop_type_slug ILIKE ${pat} ESCAPE '\\'
-             OR ct.display_name ILIKE ${pat} ESCAPE '\\')
+             OR ct.display_name ILIKE ${pat} ESCAPE '\\'
+             -- V4-CROPTYPEALIAS-001: the searchable second name. A crop must be findable by a name
+             -- it is not STORED under — Charentais is filed under crop type 'melon' / display
+             -- 'Melon', so q=cantaloupe returned nothing until this column existed. Deliberately a
+             -- separate column and NOT more display_name parentheticals: display_name is SELECTed
+             -- as crop_name by lambda/facebook-share/index.js:319 and reaches the text of a public
+             -- Facebook/Instagram post, so widening it would publish the alias list.
+             OR ct.search_aliases ILIKE ${pat} ESCAPE '\\')
       ORDER BY CASE WHEN p.display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
                p.display_name ASC
       LIMIT 20
@@ -1088,7 +1095,18 @@ export function searchVarieties(sql, pat, prefixPat) {
              OR c.care_notes ILIKE ${pat} ESCAPE '\\'
              OR c.soil_notes ILIKE ${pat} ESCAPE '\\'
              OR c.crop_type_slug ILIKE ${pat} ESCAPE '\\'
-             OR ct.display_name ILIKE ${pat} ESCAPE '\\')
+             OR ct.display_name ILIKE ${pat} ESCAPE '\\'
+             -- V4-CROPTYPEALIAS-001 — THIS is the column that finally answers the sentence quoted
+             -- above. Matching the display name got q=cucumber to Suyo Long, but 'cantaloupe' is a
+             -- name the crop is not stored under at all: Charentais sits under crop type 'melon',
+             -- display 'Melon', and no crop type anywhere is named cantaloupe.
+             -- Measured per-column on prod 2026-08-28: q=cantaloupe matched 2 of the 4 melons —
+             -- 'Cantaloupe' by its own name, 'Green Flesh' only through care_notes/soil_notes prose
+             -- — and MISSED Charentais and Minnesota Mini. Not zero results, but partial ones that
+             -- excluded the case Dave named, and the one hit that was not a name was prose-dependent.
+             -- search_aliases carries alternates for 54 crop types, is matched HERE, and is rendered
+             -- nowhere.
+             OR ct.search_aliases ILIKE ${pat} ESCAPE '\\')
       ORDER BY CASE WHEN c.display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
                c.display_name ASC
       LIMIT 20

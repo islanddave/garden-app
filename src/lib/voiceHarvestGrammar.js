@@ -76,6 +76,33 @@ export const COMMAND_PHRASES = {
   'save and next': 'save_and_advance',
 }
 
+// V5-HARVESTVOICEFLOW-001 — recogniser mishears of a COMMAND word, routed to `unparsed` rather than
+// falling through to the search branch.
+//
+// MEASURED, not anticipated. Dave ran the continuous probe on his Android 2026-08-28 (round-trip
+// simulation OFF, so the timings are clean): he spoke "next" nine times, eight were heard correctly
+// and committed as save_and_advance via tick, and ONE came back as "text" — which is not a command,
+// so classify() returned `search "text"` and it committed via sessionEnd. That is an ~11% rate on
+// the only device that matters, and the failure is worse than a dropped word: a dropped command does
+// nothing and you repeat it, whereas this performs a DIFFERENT action and looks like it worked.
+//
+// WHY unparsed AND NOT save_and_advance. Mapping a mishear onto a write is the dangerous direction,
+// and this file already says so at the search branch: "a wrong search shows the wrong list, which
+// Dave sees and corrects, whereas a wrong command or a wrong number is committed silently." A
+// near-miss is exactly the case where confidence is lowest, so it must not commit a row. `unparsed`
+// is the honest "didn't catch that" and costs one repeated word.
+//
+// WHY NOT AN EDIT-DISTANCE RULE, which is the obvious general fix and is UNSAFE HERE:
+//   save ←1→ SAGE  — a crop type Dave grows (2 cultivars, 2 live plantings on prod).
+//   stop ←1→ top,  done ←1→ bone/dose/dune,  next ←1→ nest/neat.
+// A distance-1 rule would swallow a legitimate search for sage. So this is a curated list of
+// OBSERVED mishears, exactly the pattern NUMBER_WORDS below already follows and for the same stated
+// reason — "these are NOT general-purpose homophone handling". Add an entry only when a device log
+// shows it, and never add a word that could be a crop, a variety or a unit.
+export const COMMAND_NEAR_MISSES = new Set([
+  'text', // "next", observed 1/9 on Android Chrome, 2026-08-28 probe run
+])
+
 // Spoken-unit → canonical unit. Both directions of the harvest vocabulary live here: HARVEST_UNITS
 // (the quantity axis) and WEIGHT_UNITS (the measured-weight axis) overlap on the mass units, and
 // which axis an utterance lands on is decided by the unit, not by field order — see classify().
@@ -255,6 +282,14 @@ export function classify(raw) {
   }
   if (Object.prototype.hasOwnProperty.call(COMMANDS, text)) {
     return { kind: 'command', command: COMMANDS[text], transcript }
+  }
+
+  // NEAR-MISS OF A COMMAND — refuse rather than search. Placed immediately after the exact command
+  // checks so a real command can never be intercepted, and before everything else so the mishear
+  // cannot be re-read as a search term. See COMMAND_NEAR_MISSES for the device measurement and for
+  // why this is a curated list rather than an edit-distance rule (save ←1→ sage, a crop Dave grows).
+  if (COMMAND_NEAR_MISSES.has(text)) {
+    return { kind: 'unparsed', reason: 'near-command', transcript }
   }
 
   const tokens = collapseAdjacentDupes(text.split(' ').filter(Boolean))

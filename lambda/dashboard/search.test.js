@@ -200,6 +200,38 @@ describe('V4-SEARCHCROPTYPE-001 — crop type is a match axis (BD-072)', () => {
     expect(sql).toMatch(/ct\.display_name ILIKE/);
   });
 
+  // V4-CROPTYPEALIAS-001 — the alias axis, which is what finally answers the sentence this whole
+  // feature was built from: "I know it is a cantaloupe." Charentais sits under crop type 'melon',
+  // display 'Melon', and no crop type anywhere is named cantaloupe, so display-name matching could
+  // never reach it. Measured per-column on prod 2026-08-28: q=cantaloupe matched 2 of the 4 melon
+  // varieties — 'Cantaloupe' by its own name and 'Green Flesh' only through care/soil PROSE — and
+  // missed Charentais and Minnesota Mini. Partial and prose-dependent, not empty.
+  it('matches the crop-type alias column on BOTH search surfaces', async () => {
+    for (const build of [() => searchVarieties(makeSql(), PAT, PREFIX),
+                         () => searchPlantings(makeSql(), USER, PAT, PREFIX)]) {
+      await build();
+      const sql = sqlCalls[sqlCalls.length - 1].resolved;
+      expect(sql).toMatch(/ct\.search_aliases ILIKE/);
+      // ADDS, never replaces: the 13 crops carrying their alternate inside the display name
+      // ('Onion (bunching / scallion)') have no alias row and resolve through display_name alone.
+      expect(sql).toMatch(/ct\.display_name ILIKE/);
+    }
+  });
+
+  // Alias text must never leave the database. display_name is SELECTed as crop_name by
+  // lambda/facebook-share/index.js:319 and reaches the text of a public Facebook/Instagram post;
+  // that is the entire reason this is a separate column rather than more parentheticals, and it
+  // only holds while search_aliases stays out of every response shape.
+  it('never selects the alias column into a response', async () => {
+    for (const build of [() => searchVarieties(makeSql(), PAT, PREFIX),
+                         () => searchPlantings(makeSql(), USER, PAT, PREFIX)]) {
+      await build();
+      const sql = sqlCalls[sqlCalls.length - 1].resolved;
+      expect(sql).not.toMatch(/search_aliases\s+AS\s/i);
+      expect(sql.slice(0, sql.search(/\bFROM\b/i))).not.toMatch(/search_aliases/i);
+    }
+  });
+
   // LEFT, not INNER. An inner join would silently DROP every planting with no cultivar_id and every
   // cultivar with a null or dangling crop_type_slug — turning a search improvement into a search
   // regression for rows that already matched on their own name.

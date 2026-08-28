@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   classify, parseNumber, normalise, collapseAdjacentDupes, COMMANDS, COMMAND_PHRASES, UNIT_ALIASES,
+  COMMAND_NEAR_MISSES,
 } from '../lib/voiceHarvestGrammar.js'
 import { HARVEST_UNITS, WEIGHT_UNITS } from '../lib/harvest-constants.js'
 
@@ -216,5 +217,50 @@ describe('number parsing', () => {
     expect(classify('one point two kilos')).toMatchObject({ kind: 'weight', value: 1.2, grams: 1200 })
     // "one point twenty" is not a number anyone means — refuse rather than interpret.
     expect(parseNumber(['one', 'point', 'twenty'])).toBeNull()
+  })
+})
+
+// V5-HARVESTVOICEFLOW-001 — measured on Dave's Android, 2026-08-28 probe run, round-trip OFF.
+// He spoke "next" nine times: eight were heard and committed as save_and_advance via tick, and one
+// came back as "text". Before this guard that classified as `search "text"` and committed via
+// sessionEnd — no save, no advance, and a search he did not ask for. ~11% on the only device that
+// matters, and a wrong ACTION rather than a no-op.
+describe('near-miss of a command word — refuse rather than search', () => {
+  it('routes the measured mishear to unparsed, not to a search', () => {
+    expect(classify('text')).toMatchObject({ kind: 'unparsed', reason: 'near-command' })
+  })
+
+  it('does NOT map the mishear onto the command', () => {
+    // Deliberate: mapping a low-confidence hearing onto a WRITE is the dangerous direction, and
+    // this file's own search branch says so — "a wrong command or a wrong number is committed
+    // silently". Refusing costs one repeated word; guessing costs a wrong row.
+    expect(classify('text').kind).not.toBe('command')
+  })
+
+  // THE LOAD-BEARING TEST IN THIS BLOCK. The obvious general fix is "reject anything within edit
+  // distance 1 of a command word". That is UNSAFE and this is why: sage ←1→ save, and sage is a
+  // crop Dave grows (2 cultivars, 2 live plantings on prod 2026-08-28). A distance rule would
+  // swallow a legitimate search. If someone later replaces the curated set with a metric, this
+  // reddens.
+  it('still searches for words that are one letter from a command', () => {
+    expect(classify('sage')).toMatchObject({ kind: 'search', text: 'sage' })
+    expect(classify('top')).toMatchObject({ kind: 'search', text: 'top' })
+    expect(classify('nest')).toMatchObject({ kind: 'search', text: 'nest' })
+    expect(classify('bone')).toMatchObject({ kind: 'search', text: 'bone' })
+  })
+
+  it('never lets a near-miss entry shadow a real command or a unit', () => {
+    // A curated list is only safe while its entries are not real vocabulary. Enforce that rather
+    // than trusting whoever adds the next entry.
+    for (const w of COMMAND_NEAR_MISSES) {
+      expect(Object.prototype.hasOwnProperty.call(COMMANDS, w)).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, w)).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(UNIT_ALIASES, w)).toBe(false)
+    }
+  })
+
+  it('leaves the eight correctly-heard commands from the same run untouched', () => {
+    // Non-vacuity: the guard must not have cost anything. This is the utterance it sits next to.
+    expect(classify('next')).toMatchObject({ kind: 'command', command: 'save_and_advance' })
   })
 })

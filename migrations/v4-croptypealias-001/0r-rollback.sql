@@ -1,0 +1,25 @@
+-- V4-CROPTYPEALIAS-001 — ROLLBACK.
+--
+-- ⚠️ ORDER MATTERS AND IS NOT OPTIONAL. This drops a column that lambda/dashboard/handlers.js
+-- SELECTs in its search predicate. Dropping it while that code is deployed makes every search
+-- request 500 — the exact L-081 shape this migration's forward direction was ordered to avoid.
+-- REVERT THE CODE FIRST, confirm the deployed bundle no longer references search_aliases, and only
+-- then run this. Rolling back the data alone (step 1) is always safe and is usually all you want.
+--
+-- STEP 1 — data only. Safe with the code deployed: the column still exists, every alias just
+-- becomes NULL, and search degrades to display_name + slug matching, i.e. exactly the v4.64.0
+-- behaviour. Prefer this.
+--
+--   UPDATE public.crop_types SET search_aliases = NULL, updated_at = now()
+--    WHERE search_aliases IS NOT NULL;
+--
+--   DELETE FROM public.schema_version WHERE version = '4.64.1-croptypealias-001';
+--
+-- STEP 2 — DESTRUCTIVE: run only after the reading code is out of production.
+-- Drops the column and every alias in it. There is no backup of the vocabulary anywhere in the DB;
+-- it is recoverable only from this migration's 0a-data.sql in git.
+--
+--   ALTER TABLE public.crop_types DROP COLUMN IF EXISTS search_aliases;
+--
+-- Both steps are left COMMENTED deliberately. A rollback file that executes on sight is a footgun;
+-- uncomment the step you actually intend and run it knowingly.
