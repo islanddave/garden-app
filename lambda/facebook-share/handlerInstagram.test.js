@@ -31,7 +31,14 @@ const APP1_EXIF = seg(0xE1, [0x45, 0x78, 0x69, 0x66, 0, 0, 9, 9, 9, 9]);
 const SOS = [0xFF, 0xDA, 0x00, 0x08, 1, 0, 0, 0, 0, 0];
 const GOOD_JPEG = bytes(SOI, APP0, APP1_EXIF, SOS, [1, 2, 3, 4], EOI);
 
-const photoRow = (id) => ({ id, storage_path: `photos/original-${id}.jpg` });
+// Carries the descriptive columns the widened query fetches, because alt text is DERIVED from them.
+// A bare {id, storage_path} row yields null alt and would let every alt_text assertion below pass
+// vacuously — the fixture has to look like the row the handler actually selects.
+const photoRow = (id) => ({
+  id, storage_path: `photos/original-${id}.jpg`,
+  planting_name: 'Tie-Dye Tomato', variety_name: 'Tie-Dye', crop_name: 'Tomato', event_type: 'harvest',
+});
+const bareRow = (id) => ({ id, storage_path: `photos/original-${id}.jpg` });
 
 function sqlRouter({ photos = [], prior = [] } = {}) {
   const seen = [];
@@ -307,6 +314,61 @@ describe('instagram publish path', () => {
     expect(status).toBe(422);
     expect(containers()).toHaveLength(0);
     expect(stubState.s3Puts).toHaveLength(0);   // not even staged
+  });
+
+  // ── alt_text: per-image descriptions, which Instagram DOES accept ──
+  //
+  // Meta's parameter reference for POST /{ig-user-id}/media: "For image posts only. Alternative
+  // text, up to 1000 character, for an image. Only supported on a single image or image media in a
+  // carousel." An earlier revision of this handler shipped Instagram with no alt text at all, on the
+  // belief that support could not be confirmed. It can.
+  it('sends alt_text on a single image container', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    mockSingleOk();
+    await handler(igPost({ photo_ids: ['p1'] }));
+    const alt = fieldOf(containers()[0], 'alt_text');
+    expect(alt).toBeTruthy();
+    expect(alt).toMatch(/tomato/i);
+  });
+
+  it('sends alt_text on each carousel CHILD and never on the parent', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1'), photoRow('p2')] });
+    fetchMock
+      .mockResolvedValueOnce(okJson({ id: 'C1' })).mockResolvedValueOnce(okJson({ id: 'C2' }))
+      .mockResolvedValueOnce(FINISHED).mockResolvedValueOnce(FINISHED)
+      .mockResolvedValueOnce(okJson({ id: 'PARENT' })).mockResolvedValueOnce(FINISHED)
+      .mockResolvedValueOnce(okJson({ id: 'IGM' })).mockResolvedValueOnce(okJson({}));
+    await handler(igPost({ photo_ids: ['p1', 'p2'] }));
+
+    const [c1, c2, parent] = containers();
+    expect(fieldOf(c1, 'alt_text')).toMatch(/tomato/i);
+    expect(fieldOf(c2, 'alt_text')).toMatch(/tomato/i);
+    // The parent holds no image of its own — the reference allows alt_text only on image media.
+    expect(fieldOf(parent, 'media_type')).toBe('CAROUSEL');
+    expect(fieldOf(parent, 'alt_text')).toBeFalsy();
+  });
+
+  it('OMITS alt_text when no honest description is derivable, never sending an empty one', async () => {
+    // An empty alt_text is a stored, deliberate-looking "this image has no description" that
+    // suppresses the platform's own handling. Absent is the correct state.
+    stubState.sqlHandler = sqlRouter({ photos: [bareRow('p1')] });
+    mockSingleOk();
+    await handler(igPost({ photo_ids: ['p1'] }));
+    expect(fieldOf(containers()[0], 'alt_text')).toBeFalsy();
+    expect(containers()[0].body.has('alt_text')).toBe(false);
+  });
+
+  it('the content check inspects the ALT TEXT too, not just the caption', async () => {
+    // The moment alt_text started being published, an assertion fed only the caption would let
+    // user-authored planting/variety/crop names reach a public surface unchecked.
+    stubState.sqlHandler = sqlRouter({
+      photos: [{ ...photoRow('p1'), planting_name: 'bed at 42.4712, -72.6009' }],
+    });
+    const { status, body } = parse(await handler(igPost({ photo_ids: ['p1'], caption: 'all fine here' })));
+    expect(status).toBe(422);
+    expect(body.error).toBe('content_blocked');
+    expect(body.fields.join(',')).toMatch(/alt/);
+    expect(containers()).toHaveLength(0);
   });
 
   // ── Time budget: the carousel arithmetic that did not fit the function ──

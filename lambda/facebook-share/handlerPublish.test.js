@@ -195,6 +195,27 @@ describe('facebook-share publish path', () => {
     expect(updates.some((c) => /status = 'failed'/.test(c.text))).toBe(true);
   });
 
+  // THE ALT TEXT IS PUBLISHED TOO, AND WAS UNGUARDED. Every test in this suite passed with the
+  // handler's `altTexts:` argument replaced by `[]` (measured 2026-08-28 by mutation), so boss
+  // condition 6's control could have been silently narrowed to the caption alone on the LIVE
+  // Facebook path without a single failure. That is the more dangerous half: a caption is typed
+  // deliberately, whereas alt text is DERIVED from planting/variety/crop display names that were
+  // authored for private use and can say anything — including where something is.
+  it('a coordinate pair in the ALT TEXT blocks the post, not just one in the caption', async () => {
+    stubState.sqlHandler = sqlRouter({
+      photos: [{ ...photoRow('p1'), planting_name: 'bed at 42.4712, -72.6009' }],
+    });
+    const { status, body } = parse(
+      await handler(post({ photo_ids: ['p1'], caption: 'lovely afternoon' })));
+
+    expect(status).toBe(422);
+    expect(body.error).toBe('content_blocked');
+    // The offending FIELD is named as an alt, which is what proves the caption did not trip it.
+    expect(body.fields.join(',')).toMatch(/alt/);
+    expect(body.fields).not.toContain('caption');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('a configured forbidden term blocks the post, and the response never echoes the term', async () => {
     const secret = 'Mathews Road';
     process.env.SHARE_FORBIDDEN_TERMS = JSON.stringify([secret]);
@@ -244,6 +265,21 @@ describe('facebook-share publish path', () => {
     expect(body.replay).toBe(true);
     expect(body.post_id).toBe('POST-OLD');
     expect(fetchMock).not.toHaveBeenCalled();   // the whole point: no second post
+  });
+
+  // The replay lookup is scoped to target='facebook'. Today that predicate matches nothing extra —
+  // the shipping client gives each target its own id — so it is a safety property of the QUERY
+  // rather than a behaviour anyone can observe. It is pinned because the failure it prevents is
+  // silent and severe: under a shared-id scheme (which the rescued Instagram lane used) an Instagram
+  // row would answer this lookup, and the endpoint would return replay:true with an Instagram media
+  // id as post_id — the sheet reporting a Facebook post that was never made.
+  it('scopes the replay lookup to target=facebook in the SQL it actually issues', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    fetchMock.mockResolvedValueOnce(okJson({ id: 'M1', post_id: 'P1' })).mockResolvedValueOnce(okJson({}));
+    await handler(post({ photo_ids: ['p1'], client_request_id: 'req-fb-1' }));
+    const replayQuery = stubState.sqlCalls.map((c) => c.text).find((t) => /FROM share_log/i.test(t));
+    expect(replayQuery).toBeTruthy();
+    expect(replayQuery).toContain("target = 'facebook'");
   });
 
   it('without a client_request_id there is no replay lookup, so a repost really posts', async () => {

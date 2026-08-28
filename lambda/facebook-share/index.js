@@ -747,22 +747,33 @@ async function instagramShare(event, secrets, userId, context) {
 
   // Household-scoped existence check; a photo outside the household is simply "not found".
   //
-  // NARROWER THAN THE FACEBOOK QUERY ON PURPOSE. That one joins four tables to derive alt text,
-  // because Facebook publishes alt_text_custom. This flow publishes NO per-image description — the
-  // Instagram container fields carry image_url and caption only — so joining for text that is never
-  // sent would be cost with no consumer. preparePhoto() is shared and calls buildPhotoAltText(row)
-  // on these sparse rows; it returns null for them (verified, not assumed) rather than throwing, and
-  // null alt is already the "omit the field" case on the Facebook side.
+  // IDENTICAL JOINS TO THE FACEBOOK QUERY, and for the same reason: alt text is DERIVED from the
+  // record, so the descriptive columns have to be fetched HERE — the container call sites below hold
+  // only prepared bytes. Instagram DOES accept per-image descriptions; Meta's parameter reference
+  // for POST /{ig-user-id}/media reads "For image posts only. Alternative text, up to 1000
+  // character, for an image. Only supported on a single image or image media in a carousel." So the
+  // single container and each carousel CHILD carry it. (An earlier revision of this handler skipped
+  // the joins and shipped Instagram without alt text at all, on the belief that support could not be
+  // confirmed; the reference settles it.)
   //
-  // The consequence is a real accessibility gap: Instagram posts go out without alt text while
-  // Facebook posts carry it. Closing it means sending the container's alt_text field, which is NOT
-  // done here because this session could not verify against the live API that Meta accepts it on a
-  // carousel child — and a rejected container consumes the 400/24h creation quota. Left explicit
-  // rather than silently absent.
+  // Every added join is LEFT and every ON is on a unique key, so the row count is unchanged and the
+  // `rows.length !== photoIds.length` existence check still means what it meant. Soft-delete
+  // predicates sit in the ON clauses, not the WHERE: a photo whose event or planting was deleted
+  // must still POST, it just posts with less description.
   const rows = await sql`
-    SELECT id, storage_path
-    FROM photos
-    WHERE id = ANY(${photoIds}) AND created_by = ANY(${householdIds}) AND deleted_at IS NULL`;
+    SELECT
+      p.id, p.storage_path,
+      gn.display_name AS planting_name,
+      cv.display_name AS variety_name,
+      ct.display_name AS crop_name,
+      ev.event_type
+    FROM photos p
+    LEFT JOIN public.event_log ev ON ev.id = p.event_id AND ev.deleted_at IS NULL
+    LEFT JOIN public.garden_node gn
+           ON gn.id = COALESCE(p.plant_id, ev.plant_id) AND gn.deleted_at IS NULL
+    LEFT JOIN public.cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
+    LEFT JOIN public.crop_types ct ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
+    WHERE p.id = ANY(${photoIds}) AND p.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL`;
   if (rows.length !== photoIds.length) return resp(404, { error: 'photos_not_found', message: 'One or more photos are not in your library.' });
   const byId = new Map(rows.map((r) => [r.id, r]));
   const ordered = photoIds.map((id) => byId.get(id)); // requested order == carousel display order
@@ -821,9 +832,13 @@ async function instagramShare(event, secrets, userId, context) {
 
     // PRE-PUBLISH CONTENT ASSERTION, fail-closed — boss condition 6, mirroring the Facebook path.
     // Runs BEFORE the first container, which is the only position where it can stop a disclosure
-    // rather than report one. `altTexts` is deliberately EMPTY rather than derived: this flow
-    // publishes no per-image text, and feeding the check strings that are never sent would report a
-    // control over content that does not exist. The caption is the whole public text surface here.
+    // rather than report one.
+    //
+    // `altTexts` MUST be fed here now that this flow publishes alt_text. It once passed [] because
+    // Instagram sent no per-image text; the moment the field started going out, an empty array would
+    // have meant the location-disclosure guard inspected the caption and let user-authored planting,
+    // variety and crop names reach a public surface UNCHECKED — the guard reporting on a narrower
+    // surface than the one being published to, which is precisely the failure it exists to prevent.
     const terms = parseForbiddenTerms(process.env.SHARE_FORBIDDEN_TERMS);
     if (terms === null) {
       console.error('SHARE_FORBIDDEN_TERMS is set but not a JSON array of strings — refusing to publish');
@@ -831,7 +846,7 @@ async function instagramShare(event, secrets, userId, context) {
       await failAll('publish blocked: content-safety configuration is invalid');
       return resp(500, { error: 'content_check_misconfigured', message: 'The content safety check is misconfigured, so nothing was posted.' });
     }
-    const assertion = assertPublishSafe({ caption, altTexts: [], forbiddenTerms: terms });
+    const assertion = assertPublishSafe({ caption, altTexts: prepared.map((p) => p.alt).filter(Boolean), forbiddenTerms: terms });
     if (!assertion.safe) {
       // `detail` names the term INDEX, never the term, so this log line cannot itself leak.
       console.error('pre-publish content assertion FAILED (instagram):', JSON.stringify(assertion.violations));
@@ -848,7 +863,7 @@ async function instagramShare(event, secrets, userId, context) {
     for (const p of prepared) {
       const s = await stageAndSign(p, groupId);
       stagedKeys.push({ key: s.key, versionId: s.versionId });
-      staged.push({ photo_id: p.photo_id, url: s.url });
+      staged.push({ photo_id: p.photo_id, url: s.url, alt: p.alt });
     }
 
     const isCarousel = staged.length >= IG_MIN_CAROUSEL;
@@ -878,7 +893,7 @@ async function instagramShare(event, secrets, userId, context) {
     let creationId;
 
     if (!isCarousel) {
-      const c = await igPost(igMediaUrl(igUserId), singleImageFields(staged[0].url, caption, token));
+      const c = await igPost(igMediaUrl(igUserId), singleImageFields(staged[0].url, caption, token, staged[0].alt));
       creationId = c.id;
       await setStatus(staged[0].photo_id, { status: 'queued', fb_media_id: creationId });
       await pollContainer(creationId, token, budget);
@@ -888,7 +903,7 @@ async function instagramShare(event, secrets, userId, context) {
       // mistake — it yields a single-image post and silently drops the rest.
       const childIds = [];
       for (const s of staged) {
-        const c = await igPost(igMediaUrl(igUserId), carouselChildFields(s.url, token));
+        const c = await igPost(igMediaUrl(igUserId), carouselChildFields(s.url, token, s.alt));
         childIds.push(c.id);
         await setStatus(s.photo_id, { status: 'queued', fb_media_id: c.id });
       }

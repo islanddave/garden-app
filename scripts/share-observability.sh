@@ -46,7 +46,64 @@ provision() {
   # Not a SHARE_METRIC line — this one is the orphan-cleanup failure from orphans.js, which means a
   # real unpublished object was left on the public Page and needs removing by hand.
   emit_filter share-orphan-stranded '"orphan cleanup FAILED"' ShareOrphanStranded
-  echo "filters provisioned. Run '$0 verify' AFTER exercising a publish — do not arm the alarm first."
+
+  # ── V4-IGSHARE-001 outcomes. Both existed in the handler with NO filter watching them. ──
+  #
+  # blocked — the pre-publish content assertion refused to publish. This is the guard WORKING, so it
+  # is deliberately counted and deliberately NOT alarmed (see alarm()). It still needs a metric:
+  # without one, "the location guard has never fired" and "the location guard is not running" are
+  # the same picture, which is the exact ambiguity the attempt counter exists to remove elsewhere.
+  emit_filter share-blocked '"SHARE_METRIC blocked"' ShareBlocked
+  # staging_version_retained — an EXIF-stripped copy of a private photo could NOT be removed from
+  # S3 and remains as a non-current version. Alarmed: this one accumulates silently and is the
+  # privacy-relevant failure, not a cosmetic one. See scripts/ig-staging-retention.sh.
+  emit_filter share-staging-retained '"SHARE_METRIC staging_version_retained"' ShareStagingRetained
+  echo "filters provisioned. Run '$0 test-patterns' now (needs no real traffic), then '$0 verify'"
+  echo "AFTER exercising a publish — do not arm the alarm first."
+}
+
+# Prove each pattern matches the string the DEPLOYED code actually emits, and — just as important —
+# that it does not match a neighbouring one. `aws logs test-metric-filter` evaluates a pattern against
+# supplied lines server-side and needs no real log events, so this is runnable before anything has
+# ever posted. A filter keyed on a string no code emits reads zero forever and looks like health.
+test_patterns() {
+  local fails=0
+  # POSITIVE: pattern, and a line copied from the shape shareMetric() produces.
+  check() {  # label, pattern, line, expect(1|0)
+    local got
+    got=$(aws logs test-metric-filter --region "$REGION" \
+            --filter-pattern "$2" --log-event-messages "$3" \
+            --query 'length(matches)' --output text 2>/dev/null || echo 0)
+    if [ "$got" = "$4" ]; then
+      echo "  ok    $1"
+    else
+      echo "  FAIL  $1 (expected $4 match(es), got $got)"; fails=$((fails+1))
+    fi
+  }
+  echo "testing filter patterns against the exact strings index.js emits"
+  check "attempt matches"        '"SHARE_METRIC attempt"'  'SHARE_METRIC attempt {"target":"instagram"}' 1
+  check "posted matches"         '"SHARE_METRIC posted"'   'SHARE_METRIC posted {"target":"facebook","status":201}' 1
+  check "failed matches"         '"SHARE_METRIC failed"'   'SHARE_METRIC failed {"target":"instagram","kind":"GraphError","graph":190}' 1
+  check "rejected matches"       '"SHARE_METRIC rejected"' 'SHARE_METRIC rejected {"target":"facebook","status":404}' 1
+  check "blocked matches"        '"SHARE_METRIC blocked"'  'SHARE_METRIC blocked {"target":"instagram","kinds":["coordinates"]}' 1
+  check "staging retained match" '"SHARE_METRIC staging_version_retained"' 'SHARE_METRIC staging_version_retained {"target":"instagram","reason":"delete_version_denied"}' 1
+  check "orphan stranded match"  '"orphan cleanup FAILED"' 'orphan cleanup FAILED for 2 of 2 media on group abc: M1,M2' 1
+
+  # NEGATIVE CONTROLS. A pattern that matches everything is worse than no pattern: every metric would
+  # move together and none would mean anything. These assert the outcomes stay distinguishable.
+  echo "negative controls (each must match NOTHING)"
+  check "failed !~ posted line"   '"SHARE_METRIC failed"'  'SHARE_METRIC posted {"target":"facebook","status":201}' 0
+  check "posted !~ replay line"   '"SHARE_METRIC posted"'  'SHARE_METRIC replay {"target":"facebook","status":200}' 0
+  check "blocked !~ failed line"  '"SHARE_METRIC blocked"' 'SHARE_METRIC failed {"target":"instagram"}' 0
+  check "retained !~ failed line" '"SHARE_METRIC staging_version_retained"' 'SHARE_METRIC failed {"target":"instagram"}' 0
+  # 'attempt' must not be tripped by prose that merely contains the word.
+  check "attempt !~ prose"        '"SHARE_METRIC attempt"' 'share attempt logged by something else' 0
+
+  if [ "$fails" -ne 0 ]; then
+    echo "FAIL: $fails pattern check(s) wrong — do NOT trust these metrics until fixed." >&2
+    return 1
+  fi
+  echo "all patterns verified against literal strings, with negative controls."
 }
 
 sum_metric() {   # metric name -> total datapoints sum over the window
@@ -101,12 +158,29 @@ alarm() {
     --comparison-operator GreaterThanThreshold \
     --treat-missing-data notBreaching \
     "${actions[@]+"${actions[@]}"}"
-  echo "alarms armed."
+  # PRIVACY, not availability. Every firing means an EXIF-stripped copy of a private photo could not
+  # be deleted and is sitting in the bucket as a non-current version. It accumulates silently and
+  # nothing else in the system would ever surface it — there is no lifecycle rule to sweep it.
+  aws cloudwatch put-metric-alarm \
+    --region "$REGION" \
+    --alarm-name "garden-share-staging-retained" \
+    --alarm-description "An Instagram staging object could not be deleted; stripped bytes of a private photo remain as a non-current S3 version. Check s3:DeleteObjectVersion on garden-app-lambda-exec (scripts/ig-staging-retention.sh)." \
+    --namespace "$NS" --metric-name ShareStagingRetained \
+    --statistic Sum --period 300 --evaluation-periods 1 --threshold 0 \
+    --comparison-operator GreaterThanThreshold \
+    --treat-missing-data notBreaching \
+    "${actions[@]+"${actions[@]}"}"
+  # DELIBERATELY NO ALARM ON ShareBlocked. That metric fires when the content assertion STOPS a
+  # publish — the guard doing its job. Paging on a working control trains the reader to dismiss it,
+  # and the failure it would mask (the guard silently not running) is invisible to an alarm on the
+  # guard's own output anyway. It is a metric to look at, not to be woken by.
+  echo "alarms armed (failures, orphan-stranded, staging-retained). ShareBlocked intentionally unalarmed."
 }
 
 case "${1:-}" in
-  provision) provision ;;
-  verify)    verify ;;
-  alarm)     alarm ;;
-  *) echo "usage: $0 {provision|verify|alarm}   # run in that order, after deploying the handler" >&2; exit 2 ;;
+  provision)     provision ;;
+  test-patterns) test_patterns ;;
+  verify)        verify ;;
+  alarm)         alarm ;;
+  *) echo "usage: $0 {provision|test-patterns|verify|alarm}   # in that order, after deploying the handler" >&2; exit 2 ;;
 esac
