@@ -1,0 +1,137 @@
+# gates.yml
+# V4-PEAFIRSTYEAR-001 — crop_types slug='pea': first_year_harvest NULL -> true.
+#
+# DATA ONLY, no DDL, no deploy.
+#
+# ── THE ENVIRONMENT ASYMMETRY, FIRST, BECAUSE IT DETERMINES HOW TO READ EVERY GATE BELOW ─────────
+# THE 'pea' CROP TYPE DOES NOT EXIST ON STAGING. Measured 2026-08-28: staging carries 98 crop_types
+# and its only pea-like slugs are peach, pear and pepper; prod carries the row. So on staging this
+# migration matches zero rows, and EVERY violation-count gate here is vacuously 0 — green because
+# there is nothing to violate, not because anything was proven. This is the v4-rapinidtm-001
+# situation, not the v4-garlicannual-001 one (that migration could state "both envs carry an
+# identical row"; this one cannot). Hence post_pea_row_actually_applied carries `env: prod` and
+# `continuous: false`, mirroring post_prod_dtm_actually_applied there.
+#
+# SELF-ARMING. gate-invariants.yml fires on the `migrations/**` push to dev, which happens BEFORE
+# the apply, and runs `--phase post --continuous-only`. Every gate below that asserts POST state is
+# therefore wrapped in an EXISTS on this migration's own schema_version row: vacuously true until
+# applied, asserted forever after. Without that wrapper the sweep would fail from the moment the
+# file lands until the moment it is applied.
+#
+# CONTRADICTION CHECK (the bee_balm trap, L-372 family): grepped the entire gate corpus for 'pea' on
+# a word boundary, excluding peach/pepper/repeat/appear. ZERO matches — no gate anywhere references
+# this slug. The two gates pinning deliberate NULLs name garlic + shallot
+# (v4-sowfirstyear-001::post_garlic_and_shallot_left_null) and garlic + shallot + lemon_verbena
+# (v4-croptype-002::pre_deliberate_nulls_are_null); pea is in neither, so nothing is overturned and
+# post_pea_first_year_is_true is filling a genuine gap rather than duplicating a sibling.
+#
+# THE VACUITY HAZARD AND WHERE IT IS CLOSED. Every post gate except the receipt is a violation count
+# that must be 0, and a violation count over an ABSENT row is also 0. Two things close that on prod:
+# pre_pea_croptype_exists_exactly_once keeps asserting the row is there, and
+# post_pea_row_actually_applied asserts the target tuple POSITIVELY. On staging neither can close it,
+# which is the point of saying so in the header rather than shipping a quiet green.
+
+pre:
+  # Existence AND uniqueness. Both stay true after the apply — a `pre` gate defaults to continuous,
+  # so anything asserting the OLD value here would fail forever the moment the migration lands.
+  # env:prod because staging has no such row and this would fail there permanently.
+  - name: pre_pea_croptype_exists_exactly_once
+    env: prod
+    sql: |
+      SELECT 1 - count(*) FROM public.crop_types
+       WHERE slug = 'pea' AND deleted_at IS NULL
+    expect: scalar_eq
+    value: 0
+
+  # The premise the migration comment rests on. If pea is already non-NULL going in, someone else
+  # has made this decision and 0a-data.sql's reasoning is stale — stop and re-read rather than
+  # overwrite. continuous:false: it is true only before the apply, by design.
+  - name: pre_pea_first_year_is_null
+    env: prod
+    continuous: false
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'pea' AND deleted_at IS NULL
+         AND first_year_harvest IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_pea_first_year_is_true
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.63.3-peafirstyear-001')
+         AND slug = 'pea' AND deleted_at IS NULL
+         AND first_year_harvest IS DISTINCT FROM true
+    expect: scalar_eq
+    value: 0
+
+  # The ONLY positive gate — the only one that can tell "applied correctly" from "matched nothing".
+  # Its sibling shares the slug predicate with the UPDATE itself and so cannot.
+  # env:prod + continuous:false because staging has no pea row (see header).
+  - name: post_pea_row_actually_applied
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 - count(*) FROM public.crop_types
+       WHERE slug = 'pea' AND deleted_at IS NULL
+         AND first_year_harvest = true
+    expect: scalar_eq
+    value: 0
+
+  # BLAST-RADIUS BOUND, upward. The UPDATE is scoped to one slug; this proves it stayed there by
+  # pinning the seeded TRUE population at its known size. v4-sowfirstyear-001 set 28 slugs TRUE, of
+  # which prod carries some subset, plus later migrations added their own — so this asserts the
+  # count MOVED BY EXACTLY ONE rather than pinning an absolute, which would break on the next
+  # unrelated crop type that legitimately gets the flag.
+  # MEASURED on prod 2026-08-28 immediately before apply: 55 rows TRUE. Expected after: 56.
+  # (55 rather than the 28 slugs v4-sowfirstyear-001 seeded — later migrations added their own.)
+  - name: post_true_population_grew_by_exactly_one
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 56 - count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL AND first_year_harvest = true
+    expect: scalar_eq
+    value: 0
+
+  # BLAST-RADIUS BOUND, downward. The deliberate NULLs other migrations pin must survive this one.
+  # Duplicates two sibling gates on purpose: they are the invariant this migration is most likely to
+  # break by a careless widening of the WHERE clause, and a gate that only fires in another
+  # migration's directory will not be consulted by whoever edits this one.
+  - name: post_deliberate_nulls_untouched
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND slug IN ('garlic', 'shallot', 'lemon_verbena')
+         AND first_year_harvest IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  # The behavioural point, asserted where it is actually observable. first_year_harvest only matters
+  # for a cultivar that does NOT short-circuit at rung 1 of sowGoal's ladder, i.e. one whose own
+  # lifecycle and grown_as are both NULL.
+  #
+  # THIS GATE IS VACUOUS TODAY AND THAT IS NOT A DEFECT — but it must be stated, or a future reader
+  # will cite its green as evidence the fix did something. MEASURED on prod 2026-08-28: there are
+  # ZERO pea cultivars with a NULL lifecycle, because the one that qualified (Oregon Sugar Pod,
+  # 7943ecf7-5777-46d7-bcf7-b9e12d54d374, from the Sandia intake) had lifecycle set to 'annual' by
+  # hand earlier the same day. So this migration changes NO current behaviour; its whole value is
+  # forward-looking, for the next pea cultivar an intake creates with a NULL lifecycle — which is
+  # the default outcome, since V4-INTAKE-001 deliberately does not write cultivar.lifecycle.
+  # The gate is written as a violation count rather than a population count precisely so it stays
+  # correct as that population goes 0 -> n.
+  - name: post_null_lifecycle_peas_have_a_crop_level_answer
+    env: prod
+    continuous: false
+    sql: |
+      SELECT count(*)
+        FROM public.cultivar c
+        JOIN public.crop_types ct ON ct.slug = c.crop_type_slug
+       WHERE c.deleted_at IS NULL AND ct.deleted_at IS NULL
+         AND c.crop_type_slug = 'pea'
+         AND c.lifecycle IS NULL AND c.grown_as IS NULL
+         AND ct.first_year_harvest IS DISTINCT FROM true
+    expect: scalar_eq
+    value: 0
