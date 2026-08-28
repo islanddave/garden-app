@@ -10,7 +10,32 @@ import ANCHORS from './iconAnchors.js'
 import { STATUS_GLYPHS } from './iconStatus.js'
 
 const NEW = {
-  germination: { svg24: '<path d="M4.5 20.5h15"/><path d="M12 20.5v-5.5"/><path d="M12 15.5C9.8 15.5 8 13.7 8 11.5c2.2 0 4 1.8 4 4z"/><path d="M12 14.2c0-2 1.6-3.6 3.6-3.6 0 2-1.6 3.6-3.6 3.6z"/>', svg18: '<path d="M12 20.5v-5.5"/><path d="M12 15.5C9.8 15.5 8 13.7 8 11.5c2.2 0 4 1.8 4 4z"/><path d="M12 14.2c0-2 1.6-3.6 3.6-3.6 0 2-1.6 3.6-3.6 3.6z"/>' },
+  // V4-GERMVSTRANSPLANT-001 (Dave 2026-08-28) — REDRAWN. The previous germination glyph and
+  // event.transplant (= STATUS_GLYPHS.seedling) were the SAME DRAWING AT TWO SCALES: byte-identical
+  // ground lines, stems of 5.5 vs 8.2 units and leaves of 4 vs 5. At the 22px they ship at, a
+  // 2.7-unit stem delta is ~2.5 device px, so both reduced to "a sprout on a ground line" — and they
+  // sit as ADJACENT ROWS on a plant's life story, which is the one place the difference is read.
+  // The emoji this pair replaced were more distinct, so the migration was a small regression.
+  //
+  // THE FIX IS SILHOUETTE, NOT SCALE, on the axis care.plantedOut already proved survives reduction:
+  // the glyph's RELATIONSHIP TO THE SOIL LINE. germination now carries mass BELOW the line (the seed
+  // it came out of), transplant sits ON it, care.plantedOut sits IN a hollow in it. Three different
+  // baseline reads, none of which depends on relative size. The single cotyledon is a second,
+  // independent discriminator against transplant's two.
+  //
+  // ONLY germination is redrawn. transplant aliases STATUS_GLYPHS.seedling, which also backs the
+  // seedling/sprouting/seeding STATUS badges — redrawing it would silently repaint those three.
+  // Semantics improve too: germination is the seed opening, so a seed belongs in the picture, and it
+  // reads as a progression from sowing's bare bean rather than a smaller copy of the seedling.
+  // 18 keeps ALL FOUR elements (the usual complexity-floor cut would be the seed, which is the whole
+  // discriminator) and keeps the ground line that transplant's own 18 master drops — so the two
+  // masters diverge further at 18, not less, which is where they were closest before.
+  // The seed is a TILTED BEAN, not a circle, and the shoot CURVES. A symmetric ring plus a straight
+  // vertical stem read as hardware — a bolt or a key — at 56px, which is not a thing to ship on a
+  // plant's life story however well it separated from transplant. Tilt and curve cost nothing at
+  // 22px and are what make it read as growth. The bean also echoes sowing's bare tilted seed, so the
+  // two sit as a progression rather than as unrelated drawings.
+  germination: { svg24: '<path d="M3.6 15.4h16.8"/><path d="M8.92 20.04a3.4 2.2 -25 1 0 6.16 -2.88a3.4 2.2 -25 1 0 -6.16 2.88z"/><path d="M12.6 16.6C13 13.6 12.5 11.2 12 9.6"/><path d="M12 11.6c0-2.2 1.8-4 4-4 0 2.2-1.8 4-4 4z"/>', svg18: '<path d="M3.6 14.8h16.8"/><path d="M9.16 19.66a3.2 2.1 -25 1 0 5.8 -2.7a3.2 2.1 -25 1 0 -5.8 2.7z"/><path d="M12.5 16.1C12.9 13.4 12.5 11.2 12 9.6"/><path d="M12 11.4c0-2 1.7-3.7 3.7-3.7 0 2-1.7 3.7-3.7 3.7z"/>' },
   seed_soak: { svg24: '<path d="M3.5 14.5h17"/><path d="M12 8c2.5 0 4.2 1.8 4.2 4S14.5 16 12 16 7.8 14.2 7.8 12 9.5 8 12 8z" fill="currentColor" stroke="none"/><path d="M6 17.8c0 1.1.9 2 2 2"/><path d="M16.5 17.8c0 1.1.9 2 2 2"/>', svg18: '<path d="M3 13h18"/><path d="M12 7c2.8 0 4.6 2 4.6 4.6S14.8 16.2 12 16.2 7.4 14.2 7.4 11.6 9.2 7 12 7z" fill="currentColor" stroke="none"/><path d="M16 17.5c0 1.2 1 2.2 2.2 2.2"/>' },
   thinning: { svg24: '<path d="M4 20.5h16"/><path d="M8 20.5v-5"/><path d="M8 15.5C6.3 15.5 5 14.2 5 12.5c1.7 0 3 1.3 3 3z"/><path d="M8 14.2c0-1.7 1.3-3 3-3 0 1.7-1.3 3-3 3z"/><path d="M16.5 20.5v-8"/><path d="M16.5 12.5C14.8 12.5 13.5 11.2 13.5 9.5c1.7 0 3 1.3 3 3z"/><path d="M19.5 6l-3-3-3 3"/>', svg18: '<path d="M8 20.5v-5"/><path d="M8 15.5C6.3 15.5 5 14.2 5 12.5c1.7 0 3 1.3 3 3z"/><path d="M8 14.2c0-1.7 1.3-3 3-3 0 1.7-1.3 3-3 3z"/><path d="M16.5 20.5v-9"/><path d="M19 7l-2.5-2.5L14 7"/>' },
   pinched: { svg24: '<path d="M12 20.5v-7.5"/><path d="M12 13C9.8 13 8 11.2 8 9c2.2 0 4 1.8 4 4z"/><path d="M12 13c0-2.2 1.8-4 4-4 0 2.2-1.8 4-4 4z"/><path d="M6 4.5l3.5 3.5"/><path d="M18 4.5l-3.5 3.5"/>', svg18: '<path d="M12 20.5v-7"/><path d="M12 13C9.8 13 8 11.2 8 9c2.2 0 4 1.8 4 4z"/><path d="M12 13c0-2.2 1.8-4 4-4 0 2.2-1.8 4-4 4z"/><path d="M6.5 5l3 3"/><path d="M17.5 5l-3 3"/>' },

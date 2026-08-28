@@ -22,6 +22,7 @@
     "icon:golden": "node scripts/icon-ci/optical-weight.mjs",
     "icon:golden:update": "node scripts/icon-ci/optical-weight.mjs --update",
     "icon:seam": "node scripts/icon-ci/region-seam.mjs",
+    "icon:distinct": "node scripts/icon-ci/glyph-distinctness.mjs",
     "parity:golden": "node scripts/parity/capture-daily-plan-golden.mjs --check",
     "parity:golden:update": "node scripts/parity/capture-daily-plan-golden.mjs",
     "parity:garden-render": "node scripts/parity/garden-render-golden.mjs",

@@ -193,6 +193,14 @@ jobs:
         # seam holes (backs the zero-geometry-redraw color-pass promise).
         run: npm run icon:seam
 
+      - name: Icon pair distinctness (V4-GERMVSTRANSPLANT-001)
+        # Glyphs read SIDE BY SIDE must not collapse into each other. Both gates above measure a
+        # glyph alone, so neither could see that event.germination and event.transplant were one
+        # drawing at two scales. Masks are scale-normalised before comparison — raw pixel overlap
+        # scored the shipped defect (0.402) as MORE distinct than a known-good pair (0.367), because
+        # a size change moves pixels while reading as the same shape.
+        run: npm run icon:distinct
+
       - name: Build (CI — placeholder env vars)
         # VITE_ vars are inlined at build time as string literals.
         # Placeholder values allow build to succeed without real infrastructure.
