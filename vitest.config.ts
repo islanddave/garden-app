@@ -36,6 +36,7 @@ export default defineConfig({
       '@neondatabase/serverless': new URL('./lambda/_test-stubs/neon-serverless.js', import.meta.url).pathname,
       '@aws-sdk/client-secrets-manager': new URL('./lambda/_test-stubs/aws-secrets.js', import.meta.url).pathname,
       '@aws-sdk/client-s3': new URL('./lambda/_test-stubs/aws-s3.js', import.meta.url).pathname,
+      '@aws-sdk/s3-request-presigner': new URL('./lambda/_test-stubs/s3-presigner.js', import.meta.url).pathname,
     },
   },
   test: {

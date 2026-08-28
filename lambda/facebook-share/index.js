@@ -14,8 +14,17 @@
 //   On /feed failure: delete the orphaned published=false media. Best-effort read-back asserts the
 //   attached media count. Rows -> posted | failed | orphan_cleaned | orphan_cleanup_failed.
 //
+// FLOW (POST /api/share/instagram — V4-IGSHARE-001, ships DARK behind IG_SHARE_ENABLED):
+//   same auth/admin gates -> validate against INSTAGRAM's limits (2200 caption, 30 tags, 10 carousel,
+//   8MB) -> replay guard scoped to target='instagram' -> household-scoped fetch -> bounded prepare ->
+//   size check -> content assertion -> stage STRIPPED bytes to S3 -> presign -> container(s) -> poll
+//   to FINISHED -> media_publish -> persist permalink -> sweep staging. Rows -> queued | posted |
+//   failed. See the Instagram section below for why the shape differs from Facebook's.
+//
 // CONSENT/PRIVACY: reads photo BYTES server-side (never url=), so no S3 object is made public and
 // photos.is_public is neither read nor written. EXIF stripped before any byte leaves for Facebook.
+// The Instagram path has no byte-upload available and must hand Meta a URL — it presigns a
+// short-lived copy of the ALREADY-STRIPPED bytes, never the original object.
 //
 // TOKEN: a non-expiring Page token in Secrets Manager (garden-app/facebook-page-token: { page_id,
 // page_token, app_id?, app_secret? }). The exec role's secretsmanager scope is garden-app/* so no IAM
@@ -25,13 +34,20 @@ import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
 import { isJpeg, stripJpegExif } from './exif.js';
 import {
   GRAPH_VERSION, MAX_PHOTOS, photoUploadUrl, feedUrl, nodeUrl,
   attachedMediaFields, validateShareRequest, classifyGraphError,
 } from './graph.js';
+import {
+  IG_GRAPH_VERSION, IG_MIN_CAROUSEL, POLL_INTERVAL_MS, POLL_CEILING_MS, STAGING_URL_TTL_SECONDS,
+  igMediaUrl, igPublishUrl, igNodeUrl, stagingKey,
+  validateInstagramRequest, checkImageBytes, classifyContainerStatus,
+  carouselChildFields, carouselParentFields, singleImageFields,
+} from './instagram.js';
 import { mapInBatches } from './batch.js';
 import { buildPhotoAltText } from './altText.js';
 import { cleanupOrphanMedia, strandedError, STATUS_ORPHAN_CLEANED, STATUS_ORPHAN_STRANDED } from './orphans.js';
@@ -89,6 +105,34 @@ function outcomeForStatus(statusCode) {
   if (statusCode === 200) return 'replay';
   if (statusCode >= 500) return 'failed';
   return 'rejected';
+}
+
+// One seam for every publish outcome, on EVERY target. `attempt` is emitted BEFORE the work so a
+// Lambda that dies mid-post (timeout, OOM) still leaves evidence it was tried — the crash itself
+// writes nothing, and an attempt with no matching outcome is the signature of exactly that.
+//
+// THE OUTCOME WORD MUST STAY THE SECOND TOKEN. The provisioned CloudWatch metric filters are literal
+// substrings — "SHARE_METRIC attempt", "SHARE_METRIC posted", "SHARE_METRIC failed",
+// "SHARE_METRIC rejected" (scripts/share-observability.sh). Adding FIELDS to the trailing JSON is
+// safe and is why `target` can be introduced here without reprovisioning; reordering or renaming the
+// prefix would silently detach every metric from its filter while the logs still look correct.
+//
+// `target` is recorded per line rather than split into separate metrics on purpose: the existing
+// filters keep counting BOTH surfaces as one publish pipeline, which is the honest aggregate while
+// neither has posted, and the field is what lets a per-target filter be added later without a code
+// change. A metric that silently changed meaning when Instagram landed would be worse than one that
+// counts both and says so.
+async function withShareMetrics(target, run) {
+  shareMetric('attempt', { target });
+  try {
+    const r = await run();
+    shareMetric(outcomeForStatus(r.statusCode), { target, status: r.statusCode });
+    return r;
+  } catch (err) {
+    // Rethrown so the handler's error mapping below still produces the response; this only observes.
+    shareMetric('failed', { target, kind: err?.name ?? 'Error', graph: err?.graph?.code ?? null });
+    throw err;
+  }
 }
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate.
@@ -208,29 +252,38 @@ export const handler = async (event) => {
 
   if (!isAdmin(userId)) return resp(403, { error: 'Admin only' });
 
-  // Kill switch: default OFF. Flip via env FB_SHARE_ENABLED=1 once the Page + token are live.
-  if (process.env.FB_SHARE_ENABLED !== '1') {
+  const rawPath = event.rawPath ?? '/api/share/facebook';
+
+  // Kill switches are PER-TARGET, not global. Both default OFF and both demand exactly '1'.
+  //
+  // Facebook has been live since 2026-08-21; Instagram ships DARK behind its own IG_SHARE_ENABLED,
+  // which scripts/lambda-config-expected.json pins as MUST-BE-ABSENT. One flag must not be able to
+  // turn on a surface that has never posted — and the reverse matters just as much: an operator
+  // turning Facebook OFF to stop a problem would, under a single global flag, be unable to leave
+  // Instagram running (or worse, would believe they had stopped both when they had stopped neither).
+  //
+  // Health stays reachable while EITHER target is on. Diagnosing a dead token is exactly what you
+  // need to do BEFORE enabling anything, so gating it behind the flag you are trying to decide about
+  // is backwards. It is still admin-only and still read-only — it never posts.
+  const fbOn = process.env.FB_SHARE_ENABLED === '1';
+  const igOn = process.env.IG_SHARE_ENABLED === '1';
+  if (rawPath === '/api/share/facebook' && !fbOn) {
     return resp(503, { error: 'facebook_sharing_disabled', message: 'Facebook sharing is currently turned off.' });
   }
-
-  const rawPath = event.rawPath ?? '/api/share/facebook';
+  if (rawPath === '/api/share/instagram' && !igOn) {
+    return resp(503, { error: 'instagram_sharing_disabled', message: 'Instagram sharing is currently turned off.' });
+  }
+  if (rawPath === '/api/share/facebook/health' && !fbOn && !igOn) {
+    return resp(503, { error: 'sharing_disabled', message: 'Sharing is currently turned off.' });
+  }
 
   try {
     if (method === 'GET' && rawPath === '/api/share/facebook/health') return await health();
     if (method === 'POST' && rawPath === '/api/share/facebook') {
-      // One seam for every publish outcome. `attempt` is emitted BEFORE the work so a Lambda that
-      // dies mid-post (timeout, OOM) still leaves evidence it was tried — the crash itself writes
-      // nothing, and an attempt with no matching outcome is the signature of exactly that.
-      shareMetric('attempt');
-      try {
-        const r = await share(event, secrets, userId);
-        shareMetric(outcomeForStatus(r.statusCode), { status: r.statusCode });
-        return r;
-      } catch (err) {
-        // Rethrown so the mapping below still produces the response; this only observes.
-        shareMetric('failed', { kind: err?.name ?? 'Error', graph: err?.graph?.code ?? null });
-        throw err;
-      }
+      return await withShareMetrics('facebook', () => share(event, secrets, userId));
+    }
+    if (method === 'POST' && rawPath === '/api/share/instagram') {
+      return await withShareMetrics('instagram', () => instagramShare(event, secrets, userId));
     }
     return resp(405, { error: 'Method not allowed' });
   } catch (err) {
@@ -285,10 +338,21 @@ async function share(event, secrets, userId) {
   // Idempotency replay: a completed post for this client_request_id returns the prior result rather
   // than re-posting (Graph has no idempotency key; a lost response on retry would double-post).
   if (clientRequestId) {
+    // `target = 'facebook'` is a SAFETY PROPERTY OF THE QUERY, not symmetry with the Instagram guard.
+    //
+    // The shipping client gives each target its own id (src/lib/shareIdempotency.js — shareSlotKey
+    // includes `target`), so today an Instagram row can never carry a Facebook row's id and this
+    // predicate matches nothing extra. It is here for the case where that stops being true: the
+    // rescued lane deliberately sent ONE id to BOTH targets, and under that scheme this query
+    // returns a cross-target false positive — Facebook fails, Instagram succeeds and writes a
+    // status='posted' row under the shared id, the user retries, and this SELECT matches the
+    // INSTAGRAM row. The endpoint then answers replay:true with an Instagram media id as post_id
+    // and the sheet reports a Facebook post that was never made. Scoping the lookup makes the
+    // client's id scheme a choice rather than a load-bearing assumption of the server.
     const prior = await sql`
       SELECT post_group_id, fb_post_id
       FROM share_log
-      WHERE client_request_id = ${clientRequestId} AND status = 'posted'
+      WHERE client_request_id = ${clientRequestId} AND target = 'facebook' AND status = 'posted'
       ORDER BY created_at DESC LIMIT 1`;
     if (prior.length) return resp(200, { replay: true, post_group_id: prior[0].post_group_id, post_id: prior[0].fb_post_id });
   }
@@ -521,6 +585,277 @@ async function cleanupOrphans(media, pageToken, groupId, sql) {
     // Loud: the only signal that a real object was left on a public Page.
     log: (msg, detail) => console.error(`${msg} on group ${groupId}:`, detail),
   });
+}
+
+// ── Instagram (V4-IGSHARE-001, Track D) ────────────────────────────────────────────────────────────
+//
+// SHAPE DIFFERS FROM FACEBOOK ON PURPOSE. Facebook byte-uploads; Instagram has no byte-upload and
+// fetches an image_url server-side. So the flow is: strip EXIF -> stage the STRIPPED bytes to S3 ->
+// presign that staging key -> container -> poll -> publish -> delete staging.
+//
+// THE STAGING HOP IS A PRIVACY REQUIREMENT, NOT A CONVENIENCE. Measured 2026-08-21, 4 of 5 sampled
+// prod photos carry GPS EXIF. Presigning the ORIGINAL object would hand Meta the untouched file and
+// leak home coordinates — silently undoing the guarantee the Facebook path makes in its header
+// ("EXIF stripped before any byte leaves"). The presigned URL must always point at stripped bytes.
+//
+// VERIFIED 2026-08-21: Meta's fetcher accepts a signed, private, time-limited URL (presigned object
+// -> container -> FINISHED on first poll), and the signature is load-bearing (same URL unsigned ->
+// HTTP 403). So this needs no world-readable surface.
+//
+// COLUMN REUSE: share_log's fb_* columns are target-agnostic by design. For target='instagram':
+// fb_page_id = ig_user_id, fb_media_id = container id, fb_post_id = published IG media id.
+// V4-SHARETARGETS-001 admits target='instagram' and is applied to staging AND prod, which is the
+// ordering this handler depends on — the constraint must widen BEFORE a writer emits the new value.
+
+async function stageAndSign(prepared, groupId) {
+  const key = stagingKey(groupId, prepared.photo_id);
+  await s3.send(new PutObjectCommand({
+    Bucket: BUCKET, Key: key, Body: prepared.bytes, ContentType: 'image/jpeg',
+  }));
+  const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+    { expiresIn: STAGING_URL_TTL_SECONDS });
+  return { key, url };
+}
+
+// Best-effort staging sweep. Never throws: a cleanup failure must not mask the real outcome, and the
+// ig-staging/ prefix is segregated so a lifecycle rule can catch whatever a mid-run timeout leaves
+// behind. NOTE: that lifecycle rule is NOT yet provisioned (Track A, boss condition 1), so today a
+// timeout between PutObject and this sweep leaks a stripped-bytes object under ig-staging/ until it
+// is swept by hand. Stripped, private, and presign-expired — but not zero.
+async function cleanupStaging(keys) {
+  await Promise.all(keys.map(async (Key) => {
+    try { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key })); }
+    catch (err) { console.warn('ig staging cleanup failed for', Key, err?.message ?? String(err)); }
+  }));
+}
+
+async function igPost(url, fields) {
+  const fd = new FormData();
+  for (const [k, v] of fields) fd.append(k, v);
+  const r = await fetch(url, { method: 'POST', body: fd });
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok || json?.error) throw new GraphError({ ok: r.ok, status: r.status, json });
+  return json;
+}
+
+// D4 polling contract. A container is not publishable the moment it is created — Meta fetches the
+// URL asynchronously. Only FINISHED may be published; IN_PROGRESS past the ceiling ABORTS rather
+// than looping; ERROR and EXPIRED are terminal and are kept distinct by classifyContainerStatus.
+async function pollContainer(containerId, token) {
+  const deadline = Date.now() + POLL_CEILING_MS;
+  for (;;) {
+    const r = await graphGet(`${igNodeUrl(containerId)}?fields=status_code,status&access_token=${encodeURIComponent(token)}`);
+    const last = classifyContainerStatus(r.json);
+    if (last.finished) return last;
+    if (last.terminal) {
+      const err = new Error(`Instagram rejected the image: ${last.detail || last.code}`);
+      err.userFacing = true;
+      err.igStatus = last;
+      throw err;
+    }
+    if (Date.now() + POLL_INTERVAL_MS > deadline) {
+      const err = new Error(`Instagram did not finish processing within ${POLL_CEILING_MS / 1000}s (last status ${last.code ?? 'unknown'}).`);
+      err.userFacing = true;
+      throw err;
+    }
+    await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS));
+  }
+}
+
+// POST /api/share/instagram — { photo_ids: [...], caption?, client_request_id? }
+async function instagramShare(event, secrets, userId) {
+  let body;
+  try { body = JSON.parse(event.body ?? '{}'); } catch { return resp(400, { error: 'invalid_json' }); }
+
+  const v = validateInstagramRequest(body);
+  if (!v.ok) return resp(400, { error: 'validation_failed', details: v.errors });
+  const { photoIds, caption, clientRequestId } = v;
+
+  const sql = neon(secrets.NEON_DATABASE_URL);
+  const householdIds = householdScope(userId);
+
+  // D5: media_publish is NOT idempotent and accepts no client key, so this replay guard is the only
+  // thing between a retried request and a duplicate Instagram post — and unlike Facebook, a mistaken
+  // Instagram post CANNOT be deleted through the API (verified 2026-08-21: DELETE -> code 10). It is
+  // removable only by hand in the app, which makes the guard matter more here, not less.
+  if (clientRequestId) {
+    const prior = await sql`
+      SELECT post_group_id, fb_post_id
+      FROM share_log
+      WHERE client_request_id = ${clientRequestId} AND target = 'instagram' AND status = 'posted'
+      ORDER BY created_at DESC LIMIT 1`;
+    if (prior.length) return resp(200, { replay: true, post_group_id: prior[0].post_group_id, media_id: prior[0].fb_post_id });
+  }
+
+  // Household-scoped existence check; a photo outside the household is simply "not found".
+  //
+  // NARROWER THAN THE FACEBOOK QUERY ON PURPOSE. That one joins four tables to derive alt text,
+  // because Facebook publishes alt_text_custom. This flow publishes NO per-image description — the
+  // Instagram container fields carry image_url and caption only — so joining for text that is never
+  // sent would be cost with no consumer. preparePhoto() is shared and calls buildPhotoAltText(row)
+  // on these sparse rows; it returns null for them (verified, not assumed) rather than throwing, and
+  // null alt is already the "omit the field" case on the Facebook side.
+  //
+  // The consequence is a real accessibility gap: Instagram posts go out without alt text while
+  // Facebook posts carry it. Closing it means sending the container's alt_text field, which is NOT
+  // done here because this session could not verify against the live API that Meta accepts it on a
+  // carousel child — and a rejected container consumes the 400/24h creation quota. Left explicit
+  // rather than silently absent.
+  const rows = await sql`
+    SELECT id, storage_path
+    FROM photos
+    WHERE id = ANY(${photoIds}) AND created_by = ANY(${householdIds}) AND deleted_at IS NULL`;
+  if (rows.length !== photoIds.length) return resp(404, { error: 'photos_not_found', message: 'One or more photos are not in your library.' });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ordered = photoIds.map((id) => byId.get(id)); // requested order == carousel display order
+
+  const fb = await getFbSecret();
+  const igUserId = fb?.ig_user_id;
+  if (!igUserId) {
+    return resp(500, {
+      error: 'ig_not_configured',
+      message: 'No Instagram business account is linked. Add ig_user_id to the facebook-page-token secret.',
+    });
+  }
+  const token = fb.page_token;
+  if (!token) return resp(500, { error: 'fb_secret_incomplete' });
+
+  const groupId = randomUUID();
+  for (const id of photoIds) {
+    await sql`
+      INSERT INTO share_log (post_group_id, photo_id, target, client_request_id, fb_page_id, status, caption, requested_by)
+      VALUES (${groupId}, ${id}, 'instagram', ${clientRequestId}, ${igUserId}, 'pending', ${caption}, ${userId})`;
+  }
+  const setStatus = (photoId, patch) => sql`
+    UPDATE share_log SET
+      status      = COALESCE(${patch.status ?? null}, status),
+      fb_media_id = COALESCE(${patch.fb_media_id ?? null}, fb_media_id),
+      fb_post_id  = COALESCE(${patch.fb_post_id ?? null}, fb_post_id),
+      permalink   = COALESCE(${patch.permalink ?? null}, permalink),
+      error       = ${patch.error ?? null},
+      updated_at  = now()
+    WHERE post_group_id = ${groupId} AND photo_id = ${photoId}`;
+  // 'queued' — NOT 'uploading'. V4-SHARETARGETS-001 added it for exactly this state: an Instagram
+  // container exists and has been accepted, but nothing is published yet. The Facebook path's
+  // 'uploading' means a real media object is already sitting on the Page; conflating the two would
+  // make the one query that matters ("is anything stranded on a public surface?") unanswerable.
+  // failAll below therefore sweeps ('pending','queued') — the IG counterpart of the FB row set.
+  const failAll = (msg) => sql`
+    UPDATE share_log SET status = 'failed', error = ${msg}, updated_at = now()
+    WHERE post_group_id = ${groupId} AND status IN ('pending', 'queued')`;
+
+  const stagedKeys = [];
+  try {
+    // BOUNDED prepare, exactly as the Facebook path (BUG-FBSHAREBYTES-001). The lane this was
+    // rescued from used a bare Promise.all over every row, which predates that fix. The bound
+    // matters MORE here than on the Facebook path, not less: this flow holds the original bytes,
+    // the stripped copy, AND hands the stripped copy to PutObject — a third live set — on the same
+    // 1024 MB function whose measured baseline is 106 MB.
+    const prepared = await mapInBatches(ordered, PREPARE_CONCURRENCY, (row) => preparePhoto(row));
+
+    // D6: size is checked AFTER the strip (which only shrinks) and BEFORE any container is created.
+    // Instagram rejects above 8MB where Facebook tolerates 10MB, and a REJECTED container still
+    // consumes the 400/24h creation quota — so this must not be discovered by spending one.
+    for (const p of prepared) {
+      const chk = checkImageBytes(p.bytes.byteLength);
+      if (!chk.ok) { const e = new Error(chk.error); e.userFacing = true; throw e; }
+    }
+
+    // PRE-PUBLISH CONTENT ASSERTION, fail-closed — boss condition 6, mirroring the Facebook path.
+    // Runs BEFORE the first container, which is the only position where it can stop a disclosure
+    // rather than report one. `altTexts` is deliberately EMPTY rather than derived: this flow
+    // publishes no per-image text, and feeding the check strings that are never sent would report a
+    // control over content that does not exist. The caption is the whole public text surface here.
+    const terms = parseForbiddenTerms(process.env.SHARE_FORBIDDEN_TERMS);
+    if (terms === null) {
+      console.error('SHARE_FORBIDDEN_TERMS is set but not a JSON array of strings — refusing to publish');
+      shareMetric('blocked', { target: 'instagram', reason: 'forbidden_terms_malformed' });
+      await failAll('publish blocked: content-safety configuration is invalid');
+      return resp(500, { error: 'content_check_misconfigured', message: 'The content safety check is misconfigured, so nothing was posted.' });
+    }
+    const assertion = assertPublishSafe({ caption, altTexts: [], forbiddenTerms: terms });
+    if (!assertion.safe) {
+      // `detail` names the term INDEX, never the term, so this log line cannot itself leak.
+      console.error('pre-publish content assertion FAILED (instagram):', JSON.stringify(assertion.violations));
+      shareMetric('blocked', { target: 'instagram', kinds: [...new Set(assertion.violations.map((x) => x.kind))] });
+      await failAll('publish blocked by the pre-publish content check');
+      return resp(422, {
+        error: 'content_blocked',
+        message: 'This post looks like it contains location details, so it was not sent. Edit the caption and try again.',
+        fields: [...new Set(assertion.violations.map((x) => x.field))],
+      });
+    }
+
+    const staged = [];
+    for (const p of prepared) {
+      const s = await stageAndSign(p, groupId);
+      stagedKeys.push(s.key);
+      staged.push({ photo_id: p.photo_id, url: s.url });
+    }
+
+    const isCarousel = staged.length >= IG_MIN_CAROUSEL;
+    let creationId;
+
+    if (!isCarousel) {
+      const c = await igPost(igMediaUrl(igUserId), singleImageFields(staged[0].url, caption, token));
+      creationId = c.id;
+      await setStatus(staged[0].photo_id, { status: 'queued', fb_media_id: creationId });
+      await pollContainer(creationId, token);
+    } else {
+      // D3: children first (each is_carousel_item, NO caption), then a parent CAROUSEL container
+      // referencing them in display order. Publishing the CHILD instead of the parent is the classic
+      // mistake — it yields a single-image post and silently drops the rest.
+      const childIds = [];
+      for (const s of staged) {
+        const c = await igPost(igMediaUrl(igUserId), carouselChildFields(s.url, token));
+        childIds.push(c.id);
+        await setStatus(s.photo_id, { status: 'queued', fb_media_id: c.id });
+      }
+      // All-or-nothing: every child must reach FINISHED before the parent is created, so a partial
+      // carousel is never published.
+      for (const cid of childIds) await pollContainer(cid, token);
+
+      const parent = await igPost(igMediaUrl(igUserId), carouselParentFields(childIds, caption, token));
+      creationId = parent.id;
+      await pollContainer(creationId, token);
+    }
+
+    // D5: the container id is already persisted (fb_media_id) BEFORE this call, so a lost response on
+    // media_publish can be reconciled by reading the container's status_code rather than re-posting.
+    const published = await igPost(igPublishUrl(igUserId), [
+      ['creation_id', creationId],
+      ['access_token', token],
+    ]);
+    const mediaId = published.id;
+
+    // Fetch the permalink BEFORE writing the posted rows so it can be persisted in the same UPDATE.
+    // V4-SHARETARGETS-001 added share_log.permalink for precisely this: without it the audit trail
+    // can say a post exists and cannot say WHERE it is — and since an Instagram post cannot be
+    // deleted through the API, "where is it" is the only actionable fact a human has.
+    let permalink = null;
+    try {
+      const pr = await graphGet(`${igNodeUrl(mediaId)}?fields=permalink&access_token=${encodeURIComponent(token)}`);
+      permalink = pr.json?.permalink ?? null;
+    } catch { /* cosmetic only — the post already succeeded */ }
+
+    for (const s of staged) await setStatus(s.photo_id, { status: 'posted', fb_post_id: mediaId, permalink });
+
+    return resp(201, {
+      post_group_id: groupId,
+      media_id: mediaId,
+      permalink,
+      carousel: isCarousel,
+      count: staged.length,
+      graph_version: IG_GRAPH_VERSION,
+    });
+  } catch (err) {
+    await failAll(err instanceof GraphError ? err.graph.message : (err?.message ?? 'instagram publish failed'));
+    throw err;
+  } finally {
+    // Always sweep staging, on every path. A presigned URL that outlives its object grants nothing,
+    // and leaving stripped copies of private photos in the photos bucket is not free.
+    await cleanupStaging(stagedKeys);
+  }
 }
 
 // DoD read-back: confirm the created post carries the expected media count. Non-fatal — logs a

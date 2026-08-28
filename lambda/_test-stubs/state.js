@@ -23,13 +23,25 @@ export const stubState = {
   // S3 GetObject body bytes.
   s3Bytes: null,
   s3Calls: [],
+  // S3 staging lifecycle for the Instagram path: PutObject inputs, DeleteObject inputs, and the
+  // presign requests. Kept separate from s3Calls so a test can assert "every staged key was swept"
+  // directly rather than by filtering one interleaved log.
+  s3Puts: [],
+  s3Deletes: [],
+  s3DeleteThrows: false,
+  presigns: [],
 };
 
 export function resetStubs() {
   stubState.secrets = {
     'garden-app/secrets': { CLERK_SECRET_KEY: 'sk_stub', NEON_DATABASE_URL: 'postgres://stub/db' },
+    // ig_user_id is present by DEFAULT so the Instagram path is exercisable. index.js caches this
+    // secret in module scope for 5 minutes, so a test that needs it ABSENT (the ig_not_configured
+    // branch) cannot simply delete it here — the first getFbSecret() of the file wins for the whole
+    // file. That case therefore lives in its own test file, which gets its own module registry.
     'garden-app/facebook-page-token': {
       page_id: 'PAGE_STUB', page_token: 'TOKEN_STUB', app_id: 'APP_STUB', app_secret: 'SECRET_STUB',
+      ig_user_id: 'IGUSER_STUB',
     },
   };
   stubState.verifyTokenResult = null;
@@ -38,6 +50,10 @@ export function resetStubs() {
   stubState.sqlCalls = [];
   stubState.s3Bytes = null;
   stubState.s3Calls = [];
+  stubState.s3Puts = [];
+  stubState.s3Deletes = [];
+  stubState.s3DeleteThrows = false;
+  stubState.presigns = [];
 }
 
 resetStubs();

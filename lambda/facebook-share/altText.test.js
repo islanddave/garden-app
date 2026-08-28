@@ -339,8 +339,20 @@ describe('index.js Graph call sites carry the alt text (SOURCE-TEXT guard — sh
   });
 
   it('does not put per-image text on the /feed call, which is post-level', () => {
+    // Bound is ']);' — the close of the feed call's OWN field-list argument — not '];'.
+    //
+    // The feed call ends `]);`, so a '];' bound never matched inside it and ran on to the next '];'
+    // ANYWHERE later in the file: measured at 11,777 characters, over half of index.js, sweeping in
+    // cleanupOrphans, readBackAssert and every comment after them. It passed only because no word
+    // containing "alt" happened to appear in that whole region, and it went red the moment an
+    // unrelated function's COMMENT used the word — a false positive on prose, while never once
+    // examining the 161 characters the test is named for. Tightening the bound is what makes this
+    // assert its own title; the region it now reads is the feed call and nothing else.
     const feed = src.slice(src.indexOf('graphMultipart(feedUrl(pageId)'));
-    expect(feed.slice(0, feed.indexOf('];'))).not.toContain('alt');
+    const call = feed.slice(0, feed.indexOf(']);') + 3);
+    expect(call).toContain('attachedMediaFields');   // we are looking at the right call
+    expect(call.length).toBeLessThan(400);           // ...and only at that call
+    expect(call).not.toContain('alt');
   });
 });
 
