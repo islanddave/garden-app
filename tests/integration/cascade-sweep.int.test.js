@@ -60,15 +60,19 @@ beforeAll(async () => {
     INSERT INTO photos (inventory_item_id, storage_path, created_by)
     VALUES (${itemId}, ${'cascadesweep/' + RUN + '/b.jpg'}, ${USER}) RETURNING id`
   sharePhotoId = ph2[0].id
+  // 'facebook', not 'facebook_page'. The fixture carried a target value the app has NEVER written
+  // — lambda/facebook-share/index.js inserts 'facebook' — and share_log_target_valid allows only
+  // facebook / instagram / threads / pinterest. It passed from 2026-08-13 until the constraint
+  // reached staging, at which point every integration run started failing here: this suite forks
+  // its ephemeral branch FROM STAGING and applies no migrations, so a schema change made
+  // out-of-band lands on the next run whatever the commit contains. The constraint is right and
+  // the fixture was wrong, so the fixture moved.
+  //
+  // This comment lives ABOVE the call, not inside the template literal: a `//` line between
+  // INSERT and VALUES is not a SQL comment, it is part of the statement, and Postgres rejects it
+  // with 42601 "syntax error at or near //". That is what red-ed this suite on dev.
   const sl = await directSql`
     INSERT INTO share_log (post_group_id, photo_id, target, status, requested_by)
-    // 'facebook', not 'facebook_page'. The fixture carried a target value the app has NEVER written
-    // — lambda/facebook-share/index.js:301 inserts 'facebook' — and share_log_target_valid allows
-    // only facebook / instagram / threads / pinterest. It passed from 2026-08-13 until the
-    // constraint reached staging, at which point every integration run started failing here: this
-    // suite forks its ephemeral branch FROM STAGING and applies no migrations, so a schema change
-    // made out-of-band lands on the next run whatever the commit contains. The constraint is right
-    // and the fixture was wrong, so the fixture moved.
     VALUES (gen_random_uuid(), ${sharePhotoId}, 'facebook', 'posted', ${USER}) RETURNING id`
   shareRowId = sl[0].id
 
