@@ -34,6 +34,7 @@ import {
 } from './graph.js';
 import { mapInBatches } from './batch.js';
 import { buildPhotoAltText } from './altText.js';
+import { cleanupOrphanMedia, strandedError } from './orphans.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // WHEN_REQUIRED: same rationale as lambda/photos — avoid the SDK injecting a checksum header S3
@@ -63,6 +64,30 @@ async function getFbSecret() {
   _fb = JSON.parse(res.SecretString);
   _fbAt = Date.now();
   return _fb;
+}
+
+// ── Observability ──────────────────────────────────────────────────────────────────────────────────
+// Structured, greppable lines that CloudWatch metric filters key on (provisioned by
+// ops/share-observability.sh). This handler had NO instrument that could see a failed publish: the
+// Lambda `Errors` metric is structurally blind here because every failure path RETURNS a response
+// rather than throwing, so Errors stays flat at zero through a total outage.
+//
+// The `attempt` counter is not decoration. Without it "zero failures" and "zero attempts" are the
+// same picture — and zero attempts is the picture today (share_log holds 0 rows), so a dashboard
+// showing no failures would be reporting a feature that has never once run as perfectly healthy.
+// Any alarm built on the failure metric alone inherits that ambiguity.
+const SHARE_METRIC_PREFIX = 'SHARE_METRIC';
+function shareMetric(outcome, fields = {}) {
+  try { console.log(`${SHARE_METRIC_PREFIX} ${outcome} ${JSON.stringify(fields)}`); } catch { /* never let telemetry break a post */ }
+}
+// Map a handler response to an outcome name. 201 = a post was created; 200 = the idempotency replay
+// returned a prior post (NOT a new publish, and must not be counted as one); 4xx = the request was
+// refused before anything was published; 5xx = we failed while trying.
+function outcomeForStatus(statusCode) {
+  if (statusCode === 201) return 'posted';
+  if (statusCode === 200) return 'replay';
+  if (statusCode >= 500) return 'failed';
+  return 'rejected';
 }
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate.
@@ -191,7 +216,21 @@ export const handler = async (event) => {
 
   try {
     if (method === 'GET' && rawPath === '/api/share/facebook/health') return await health();
-    if (method === 'POST' && rawPath === '/api/share/facebook') return await share(event, secrets, userId);
+    if (method === 'POST' && rawPath === '/api/share/facebook') {
+      // One seam for every publish outcome. `attempt` is emitted BEFORE the work so a Lambda that
+      // dies mid-post (timeout, OOM) still leaves evidence it was tried — the crash itself writes
+      // nothing, and an attempt with no matching outcome is the signature of exactly that.
+      shareMetric('attempt');
+      try {
+        const r = await share(event, secrets, userId);
+        shareMetric(outcomeForStatus(r.statusCode), { status: r.statusCode });
+        return r;
+      } catch (err) {
+        // Rethrown so the mapping below still produces the response; this only observes.
+        shareMetric('failed', { kind: err?.name ?? 'Error', graph: err?.graph?.code ?? null });
+        throw err;
+      }
+    }
     return resp(405, { error: 'Method not allowed' });
   } catch (err) {
     if (err instanceof GraphError) {
@@ -384,7 +423,7 @@ async function share(event, secrets, userId) {
       media.push({ photo_id: p.photo_id, media_fbid: r.json.id });
     }));
   } catch (err) {
-    await cleanupOrphans(media.map((m) => m.media_fbid), pageToken, groupId, sql);
+    await cleanupOrphans(media, pageToken, groupId, sql);
     await failAll(err instanceof GraphError ? err.graph.message : (err?.message ?? 'media upload failed'));
     throw err;
   }
@@ -399,7 +438,7 @@ async function share(event, secrets, userId) {
     ...attachedMediaFields(media.map((m) => m.media_fbid)),
   ]);
   if (!feed.ok || feed.json?.error) {
-    await cleanupOrphans(media.map((m) => m.media_fbid), pageToken, groupId, sql);
+    await cleanupOrphans(media, pageToken, groupId, sql);
     await failAll(classifyGraphError(feed.json, feed.status).message);
     throw new GraphError(feed);
   }
@@ -411,14 +450,34 @@ async function share(event, secrets, userId) {
 }
 
 // Delete orphaned published=false media so a failed /feed doesn't leave invisible objects on the Page.
-async function cleanupOrphans(mediaIds, pageToken, groupId, sql) {
-  await Promise.all(mediaIds.map((id) => graphDelete(`${nodeUrl(id)}?access_token=${encodeURIComponent(pageToken)}`)));
-  // Mark the group's uploaded-but-unposted rows as cleaned (best-effort audit; failAll still sets
-  // error on the never-uploaded rows). Runs before failAll, so these leave 'uploading' first.
-  try {
-    await sql`UPDATE share_log SET status = 'orphan_cleaned', updated_at = now()
-              WHERE post_group_id = ${groupId} AND status = 'uploading'`;
-  } catch { /* audit-only; never mask the original failure */ }
+//
+// Control flow + the cleaned/stranded split live in ./orphans.js so they are unit-testable without
+// this file's AWS/Clerk/Neon deps (see that module's header). This function is now only the I/O
+// seam: it binds the Graph delete and the two status writes.
+//
+// A FAILED delete is written as 'failed' with its own error rather than being left for failAll:
+// failAll only touches rows still in ('pending','uploading') and would overwrite `error` with the
+// generic Graph message, losing the one fact that has to survive — that a real object is stranded
+// on the Page and needs removing by hand.
+//
+// Deliberately NOT introducing an 'orphan_cleanup_failed' status: the deployed CHECK constraint
+// (share_log_status_valid) enumerates exactly pending|uploading|posted|failed|orphan_cleaned, so a
+// writer emitting a sixth value would 23514 against the live database. Widening that CHECK is a
+// migration that must land BEFORE any handler writes the new value; until it does, 'failed' plus a
+// specific error message carries the same information without the ordering hazard.
+async function cleanupOrphans(media, pageToken, groupId, sql) {
+  return cleanupOrphanMedia({
+    media,
+    deleteMedia: (mediaFbid) => graphDelete(`${nodeUrl(mediaFbid)}?access_token=${encodeURIComponent(pageToken)}`),
+    markCleaned: (photoId) => sql`
+      UPDATE share_log SET status = 'orphan_cleaned', updated_at = now()
+      WHERE post_group_id = ${groupId} AND photo_id = ${photoId} AND status = 'uploading'`,
+    markStranded: (photoId, mediaFbid) => sql`
+      UPDATE share_log SET status = 'failed', updated_at = now(), error = ${strandedError(mediaFbid)}
+      WHERE post_group_id = ${groupId} AND photo_id = ${photoId} AND status = 'uploading'`,
+    // Loud: the only signal that a real object was left on a public Page.
+    log: (msg, detail) => console.error(`${msg} on group ${groupId}:`, detail),
+  });
 }
 
 // DoD read-back: confirm the created post carries the expected media count. Non-fatal — logs a

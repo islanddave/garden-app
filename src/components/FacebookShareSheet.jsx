@@ -169,7 +169,11 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
                 style={{ width: '100%', minHeight: 90, padding: '10px 12px', border: `1px solid ${P.border}`, borderRadius: 8, fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }} />
             </div>
 
-            {state === 'error' && (
+            {/* `timeout` is a DIFFERENT outcome from `error` and must not be styled or worded as a
+                failure: we stopped waiting before the server did, so the post may well be live.
+                Gating this banner on 'error' alone left the timeout state rendering nothing at all —
+                a dismissed spinner and no explanation. */}
+            {(state === 'error' || state === 'timeout') && (
               <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: P.bannerInk }}>
                 {error}
               </div>
@@ -182,7 +186,10 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
               </button>
               <button type="button" onClick={handlePost} disabled={posting || count === 0}
                 style={{ flex: 1, background: posting ? P.light : P.green, color: P.white, border: 'none', borderRadius: 8, padding: '12px 20px', fontSize: '0.92rem', fontWeight: 700, cursor: posting ? 'default' : 'pointer' }}>
-                {posting ? 'Posting…' : state === 'error' ? 'Retry' : `Post to Facebook${count > 1 ? ` (${count})` : ''}`}
+                {posting ? 'Posting…'
+                  : state === 'error' ? 'Retry'
+                  : state === 'timeout' ? 'Try again'
+                  : `Post to Facebook${count > 1 ? ` (${count})` : ''}`}
               </button>
             </div>
           </div>
