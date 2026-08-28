@@ -319,6 +319,58 @@ describe('ContinuousVoiceProbe — S0 debounce host', () => {
     })
   })
 
+  // C4 — Q4 is answered, and the fetch that answered it went on contaminating the measurement it sat
+  // inside for one run too long. These pin that it is silent unless asked for, that the log says
+  // which mode ran, and that a run cannot change its own mode halfway through.
+  describe('search round-trip (C4)', () => {
+    const toggle = () => screen.getByTestId('voice-roundtrip-toggle')
+    const mode   = () => screen.getByTestId('voice-roundtrip-mode').textContent
+
+    it('defaults OFF and fires no fetch at all', async () => {
+      await startProbe()
+      expect(toggle().checked).toBe(false)
+      advance(10_000)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(probeLog()).not.toContain('simulating the search round-trip')
+      expect(mode()).toContain('OFF')
+    })
+
+    it('fires exactly one round-trip at +6s when opted in', async () => {
+      await act(async () => { render(<ContinuousVoiceProbe />) })
+      act(() => { fireEvent.click(screen.getByTestId('voice-roundtrip-toggle')) })
+      await act(async () => { fireEvent.click(screen.getByText('Start probe')) })
+
+      advance(5_999)
+      expect(fetch).not.toHaveBeenCalled()
+      advance(1)
+      expect(fetch).toHaveBeenCalledTimes(1)
+
+      // One shot, not an interval — a repeating fetch would confound every later gap too.
+      advance(10_000)
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(probeLog()).toContain('simulating the search round-trip')
+      expect(mode()).toContain('ON')
+    })
+
+    // A copied log is the deliverable of a device run, and the absence of a round-trip line must not
+    // be readable as either "off" or "old build".
+    it('records which mode the run was in, either way', async () => {
+      await startProbe()
+      expect(probeLog()).toContain('search round-trip simulation: OFF')
+
+      act(() => { cleanup() })
+      await act(async () => { render(<ContinuousVoiceProbe />) })
+      act(() => { fireEvent.click(screen.getByTestId('voice-roundtrip-toggle')) })
+      await act(async () => { fireEvent.click(screen.getByText('Start probe')) })
+      expect(probeLog()).toContain('search round-trip simulation: ON')
+    })
+
+    it('cannot be changed mid-run, so the captured mode and the logged one never disagree', async () => {
+      await startProbe()
+      expect(screen.getByTestId('voice-roundtrip-toggle').disabled).toBe(true)
+    })
+  })
+
   it('releases the mic and cancels the pending tick on unmount', async () => {
     const rec = await startProbe()
     act(() => { rec.deliverFinal('next', 0) })

@@ -25,7 +25,10 @@
 //      and after rather than by watching for a dialog, so the answer does not depend on Dave
 //      noticing one.
 //   4. Whether an async round-trip mid-session kills recognition — the "pause while the input is
-//      searched" step in Dave's flow. Probed with a real deferred call, not asserted.
+//      searched" step in Dave's flow. Probed with a real deferred call, not asserted. ANSWERED on
+//      2026-08-27: it fired at 6008ms, resolved at 6121ms, and recognition carried straight on. The
+//      simulation is therefore opt-in and OFF by default now — see C4. It stayed on one run too long
+//      and confounded the only supersede gap that ever appeared to break the 500ms settle window.
 //
 // It ALSO runs every final transcript through the grammar (lib/voiceHarvestGrammar.js) so the
 // classification is visible on the same screen as the raw text: that is how a "three count" that the
@@ -148,6 +151,13 @@ export default function ContinuousVoiceProbe() {
   const [hostMetrics, setHostMetrics] = useState(emptyHostMetrics)
   const [heldOutstanding, setHeldOutstanding] = useState(false)
   const [longRun, setLongRun] = useState(false)
+  // C4. Q4 is answered, and an answered question does not earn an uncontrolled network event at a
+  // fixed offset into every future run. What the fetch kept doing after it had served its purpose was
+  // contaminating the measurement it sat inside: the single supersede gap that appeared to break the
+  // 500ms settle window was 630ms with this round-trip inside it (fired 6008 / resolved 6121, between
+  // finals at 5928 and 6558), against ≤353ms for every clean gap across both device runs. Off unless
+  // someone is deliberately re-asking Q4.
+  const [roundTrip, setRoundTrip] = useState(false)
 
   const recRef = useRef(null)
   const t0Ref = useRef(0)
@@ -160,6 +170,9 @@ export default function ContinuousVoiceProbe() {
   // run's own stop condition unknowable after the fact; the toggle is also disabled while running,
   // so the two can never disagree.
   const budgetRef = useRef(SHORT_BUDGET)
+  // Captured at start for the same reason as the budget: a log has to describe the run that actually
+  // happened, and a mode read live could disagree with what the log says fired.
+  const roundTripRef = useRef(false)
 
   const debRef = useRef(null)
   const tickTimerRef = useRef(null)
@@ -358,7 +371,12 @@ export default function ContinuousVoiceProbe() {
     heldWriteRef.current = null
     commitPathRef.current = null
     budgetRef.current = longRun ? LONG_BUDGET : SHORT_BUDGET
+    roundTripRef.current = roundTrip
     log(`run budget: ${budgetRef.current.label}${longRun ? '  (LONG RUN — mic can stay live for 20 minutes)' : ''}`)
+    // STATED EITHER WAY, deliberately. A log with no round-trip line would otherwise be ambiguous
+    // between "the simulation was off" and "this log predates the toggle" — and a settle-window gap
+    // measured under those two conditions does not mean the same thing.
+    log(`search round-trip simulation: ${roundTrip ? 'ON — any gap spanning +6000ms is CONFOUNDED' : 'OFF — gaps are clean'}`)
 
     // A FRESH DEBOUNCER PER RUN, deliberately: `resetSession()` would clear the duplicate-suppression
     // memory of a layer that might still be holding a pending utterance from the previous run, which
@@ -394,13 +412,16 @@ export default function ContinuousVoiceProbe() {
 
     // Question 4 — an async round-trip mid-session, at roughly the moment the real flow would be
     // searching for the spoken crop. A real deferred call, so if it DOES disturb recognition the log
-    // shows an onend/onerror right after this line rather than us assuming it cannot.
-    runTimerRef.current = setTimeout(() => {
-      log('— simulating the search round-trip (keep talking) —')
-      fetch('/manifest.webmanifest', { cache: 'no-store' })
-        .then(() => log('round-trip resolved; recognition still armed?  see next event'))
-        .catch(() => log('round-trip failed (offline?) — inconclusive for question 4'))
-    }, 6000)
+    // shows an onend/onerror right after this line rather than us assuming it cannot. Answered once
+    // already (see the header); this now fires only when someone opts in to asking it again.
+    if (roundTripRef.current) {
+      runTimerRef.current = setTimeout(() => {
+        log('— simulating the search round-trip (keep talking) —')
+        fetch('/manifest.webmanifest', { cache: 'no-store' })
+          .then(() => log('round-trip resolved; recognition still armed?  see next event'))
+          .catch(() => log('round-trip failed (offline?) — inconclusive for question 4'))
+      }, 6000)
+    }
 
     // Wall-clock stop.
     wallClockTimerRef.current = setTimeout(() => {
@@ -409,7 +430,7 @@ export default function ContinuousVoiceProbe() {
       log('— wall-clock budget reached —')
       try { recRef.current?.stop() } catch { /* ignore */ }
     }, budgetRef.current.runMs)
-  }, [arm, log, longRun])
+  }, [arm, log, longRun, roundTrip])
 
   // NOTE: the tick timer is deliberately NOT cleared here. A write pending at the moment Dave taps
   // stop is exactly the case the run is measuring — letting the timer land records whether it ever
@@ -479,6 +500,11 @@ export default function ContinuousVoiceProbe() {
             <strong>Run budget:</strong> {(longRun ? LONG_BUDGET : SHORT_BUDGET).label}
             {longRun ? ' — LONG RUN' : ''}
           </div>
+          <div data-testid="voice-roundtrip-mode">
+            <strong>Search round-trip:</strong> {roundTrip
+              ? 'ON — any gap spanning +6000ms is confounded'
+              : 'OFF — gaps are clean'}
+          </div>
         </div>
       </div>
 
@@ -503,6 +529,29 @@ export default function ContinuousVoiceProbe() {
         <span>
           <strong>Long run</strong> — for the ≥20-utterance outdoor fixture (gate B6).
           Raises the caps to {LONG_BUDGET.label}; the mic can stay live for the whole of it.
+        </span>
+      </label>
+
+      {/* C4. Q4 is answered, so this fires only when someone is deliberately re-asking it. Default OFF
+          is the whole point: the last run's one anomalous supersede gap had this fetch inside it, and
+          a settle window cannot be measured through an event the instrument itself injected. */}
+      <label
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, minHeight: 44, marginBottom: 12,
+          fontSize: '0.85rem', color: running ? P.light : P.dark, cursor: running ? 'not-allowed' : 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          data-testid="voice-roundtrip-toggle"
+          checked={roundTrip}
+          disabled={running}
+          onChange={(e) => setRoundTrip(e.target.checked)}
+          style={{ width: 22, height: 22, flex: '0 0 auto' }}
+        />
+        <span>
+          <strong>Simulate a search round-trip</strong> — one fetch at +6s. Leave OFF; it confounds
+          the gap measurements.
         </span>
       </label>
 

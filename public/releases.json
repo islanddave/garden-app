@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.63.2",
+    "date": "2026-08-28",
+    "highlights": [
+      "Voice probe: the simulated search round-trip is now off unless you ask for it"
+    ]
+  },
+  {
     "version": "4.63.1",
     "date": "2026-08-28",
     "highlights": [
