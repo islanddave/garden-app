@@ -66,13 +66,26 @@ const esc = () => act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
 // entry carries __floor forward too (that merge is required — react-router owns {usr,key,idx}).
 // Checking the sentinel alone cannot tell "armed" from "back at the floor".
 const SENTINEL = { __floor: 1 }
+const BASE = { __base: 1 }
 const armed = () => !!readMarker(window.history.state)
 const atFloor = () => !armed() && window.history.state?.__floor === 1
 
+// BUG-BACKNAVVACUOUSTEST-001. This used to be a bare `replaceState(SENTINEL, '')`, and that is NOT
+// a floor: replaceState REWRITES the current entry and creates nothing beneath it, so on a fresh
+// jsdom the "floor" WAS history index 0. A back() from index 0 is a SILENT no-op — no event, no
+// error, the measured fact this file's own header records — so any test whose assertion is
+// "nothing happened" passed without a Back ever occurring. One did (the non-opt-in Sheet case), and
+// it was the sole reason one test paid the full 2000ms NET_MS waiting for an event that was never
+// coming.
+//
+// replaceState FIRST so we own whatever entry we inherit, THEN pushState so there is a genuine
+// entry below the floor and every traversal in this file actually traverses. SELF-TEST-3 proves it
+// rather than trusting it.
 beforeEach(() => {
   flags.DISMISS_REGISTRY_ENABLED = true
   flags.BACKNAV_ENABLED = true
-  window.history.replaceState(SENTINEL, '')
+  window.history.replaceState(BASE, '')
+  window.history.pushState(SENTINEL, '')
 })
 afterEach(() => { document.body.style.overflow = ''; document.body.style.overscrollBehavior = '' })
 
@@ -95,6 +108,23 @@ describe('SELF-TEST — the harness itself, before any behaviour is asserted', (
 
   it('SELF-TEST-2/not-at-index-0: the floor sentinel is current before each traversal', () => {
     expect(atFloor()).toBe(true)
+  })
+
+  it('SELF-TEST-3/the-floor-is-a-real-floor: a back() from the floor actually traverses', async () => {
+    // SELF-TEST-2 proves the sentinel is CURRENT. It cannot prove there is anything BENEATH it, and
+    // that is the whole difference between a floor and index 0 — which is where
+    // BUG-BACKNAVVACUOUSTEST-001 lived: a replaceState floor satisfied SELF-TEST-2 perfectly while
+    // every back() from it silently did nothing.
+    //
+    // This is the instrument check for every "nothing was dismissed" assertion in the file. If it
+    // fails, those assertions are not wrong — they are VACUOUS, which is worse, because they stay
+    // green against a broken implementation.
+    expect(atFloor()).toBe(true)
+    const before = pops
+    await back()
+    expect(pops, 'back() from the floor fired no popstate — the floor is history index 0 again')
+      .toBe(before + 1)
+    expect(window.history.state?.__base, 'back() from the floor did not land on the base entry').toBe(1)
   })
 })
 
@@ -124,7 +154,14 @@ describe('Back is arbitrated by the registry', () => {
     )
     expect(readMarker(window.history.state)).toBeNull()
     expect(atFloor()).toBe(true)
+    // BUG-BACKNAVVACUOUSTEST-001: assert the Back HAPPENED before asserting what it did not do.
+    // This test's whole claim is "a real Back fell through untouched", and until the floor became a
+    // real floor no Back occurred at all — onClose was un-called because nothing had been
+    // traversed, which is exactly the outcome a broken implementation would also produce.
+    const before = pops
     await back()
+    expect(pops, 'no popstate — this assertion would be vacuous').toBe(before + 1)
+    expect(window.history.state?.__base, 'the Back did not traverse off the floor').toBe(1)
     expect(onClose).not.toHaveBeenCalled()
   })
 
