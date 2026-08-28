@@ -35,19 +35,36 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 
 vi.mock('../components/PhotoImg.jsx', () => ({ default: ({ alt }) => <img alt={alt || ''} src="stub" /> }))
 
-// useShareToFacebook drives the sheet's `state`; drive it from the test instead so `posting` and
+// useShareToSocial drives the sheet's `state`; drive it from the test instead so `posting` and
 // `success` are reachable without a real post on the wire.
 // `reset` MUST be identity-stable across renders. The sheet's fresh-composer effect is keyed
 // [open, reset], so a `vi.fn()` minted inside the hook body would re-run it on every render and
 // silently blank the caption — every dirty assertion in this file would then pass for the wrong
 // reason, on a clean sheet.
+//
+// `perTarget` is DERIVED from the same `fb` object rather than being a third knob the tests have to
+// remember to set. These cases are about dismissal and the dirty guard, not about routing, so
+// "success means Facebook landed" is the honest reduction — and it keeps a missed `perTarget` from
+// quietly rendering an empty Success panel that still satisfies a "Done just leaves" assertion.
+//
+// The module's pure helpers are stubbed rather than pulled in with importOriginal: the real module
+// imports useApiFetch at module scope, which would drag api.js and Clerk into a test about Escape.
 const fb = { state: 'idle', result: null, error: null }
 const { shareSpy, resetSpy } = vi.hoisted(() => ({ shareSpy: vi.fn(), resetSpy: vi.fn() }))
-vi.mock('../hooks/useShareToFacebook.js', () => ({
-  useShareToFacebook: () => ({
+vi.mock('../hooks/useShareToSocial.js', () => ({
+  TARGETS: [
+    { key: 'facebook', path: '/api/share/facebook', label: 'Facebook', disabledCode: 'facebook_sharing_disabled' },
+    { key: 'instagram', path: '/api/share/instagram', label: 'Instagram', disabledCode: 'instagram_sharing_disabled' },
+  ],
+  captionLimitFor: () => 5000,
+  validateForTargets: () => [],
+  useShareToSocial: () => ({
     get state() { return fb.state },
-    get result() { return fb.result },
-    get error() { return fb.error },
+    get perTarget() {
+      return fb.state === 'success'
+        ? { facebook: { state: 'success', result: fb.result }, instagram: null }
+        : { facebook: null, instagram: null }
+    },
     share: shareSpy, reset: resetSpy,
   }),
 }))
@@ -82,7 +99,7 @@ const backGesture = async () => { act(() => { window.history.back() }); await se
 const esc = () => act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
 const armed = () => !!readMarker(window.history.state)
 
-const sheet = () => screen.queryByRole('dialog', { name: 'Share to Facebook' })
+const sheet = () => screen.queryByRole('dialog', { name: 'Share photos' })
 const confirmUi = () => screen.queryByTestId('confirm-sheet')
 const discard = () => screen.getByTestId('confirm-sheet-confirm')
 const keepEditing = () => screen.getByTestId('confirm-sheet-cancel')

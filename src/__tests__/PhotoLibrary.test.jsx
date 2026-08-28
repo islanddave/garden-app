@@ -673,7 +673,10 @@ describe('PhotoLibrary — reload gate (V4-DIRTYGUARDSWEEP-001)', () => {
     it('does NOT hold the reload for a merely-opened share sheet', async () => {
       await mount({ photos: [TAGGED_PHOTO] })
       const caption = await openShareSheet(TAGGED_PHOTO)
-      expect(screen.getByRole('dialog', { name: /share to facebook/i })).toBeDefined()
+      // Named /share photos/i, not /share to facebook/i: since V4-IGSHARE-001 this one sheet
+      // targets Facebook and/or Instagram, so a Facebook-only label would be a lie on the
+      // accessible name — the thing a screen-reader user hears when it opens.
+      expect(screen.getByRole('dialog', { name: /share photos/i })).toBeDefined()
       expect(caption.value).toBe('')
       expect(isReloadBlocked()).toBe(false)
     })

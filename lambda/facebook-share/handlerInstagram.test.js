@@ -246,7 +246,18 @@ describe('instagram publish path', () => {
   it('rejects an oversize image BEFORE spending a container (quota is consumed by rejects)', async () => {
     stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
     // 9MB of JPEG-shaped bytes: over Instagram's 8MB ceiling, under Facebook's 10MB.
-    stubState.s3Bytes = bytes(SOI, APP0, SOS, new Array(9 * 1024 * 1024).fill(1), EOI);
+    //
+    // Allocated as ONE Uint8Array rather than through the bytes() helper. bytes() spreads and
+    // .flat()s a plain JS array, so a 9-million-element padding array becomes several boxed copies
+    // and reliably OOM-killed the vitest worker — which surfaces as "Worker exited unexpectedly"
+    // and one un-run FILE, not as a failing test. A fixture that crashes the runner is worse than
+    // no fixture: it takes its whole file's coverage down with it and reads like flake.
+    const header = bytes(SOI, APP0, SOS);
+    const big = new Uint8Array(9 * 1024 * 1024);
+    big.set(header, 0);
+    big[big.length - 2] = 0xFF;  // EOI, so the segment walk still terminates cleanly
+    big[big.length - 1] = 0xD9;
+    stubState.s3Bytes = big;
     const { status } = parse(await handler(igPost({ photo_ids: ['p1'] })));
     expect(status).toBe(422);
     expect(containers()).toHaveLength(0);

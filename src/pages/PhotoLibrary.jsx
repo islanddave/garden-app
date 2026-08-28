@@ -1185,7 +1185,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           {onShare && (
             <button type="button" onClick={onShare}
               style={{ width: '100%', marginBottom: 14, background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: T.radiusButton, padding: '11px', fontSize: T.type.base, fontWeight: 700, cursor: 'pointer' }}>
-              Share to Facebook
+              Share photo
             </button>
           )}
 

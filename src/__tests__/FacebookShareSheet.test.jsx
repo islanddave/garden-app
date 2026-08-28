@@ -1,6 +1,11 @@
 // Component tests for src/components/FacebookShareSheet.jsx
-// Strategy: mock useApiFetch (the real useShareToFacebook hook runs). Verify compose UI, hashtag
+// Strategy: mock useApiFetch (the real useShareToSocial hook runs). Verify compose UI, hashtag
 // helper, success (View on Facebook + onPosted), and the admin-only (403) blocked state.
+//
+// These cases exercise the DEFAULT destination selection, which is Facebook only — Instagram ships
+// off on every open (an IG post cannot be withdrawn through the API). That is why the copy they
+// assert on, "Post to Facebook" and "Posted to Facebook", still reads exactly as it did before
+// V4-IGSHARE-001: the multi-target wording only appears once Instagram is ticked.
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -38,7 +43,17 @@ describe('FacebookShareSheet', () => {
     render(<FacebookShareSheet open photos={photos} onClose={() => {}} onPosted={onPosted} />);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /post to facebook/i })); });
     await waitFor(() => expect(screen.getByText(/Posted to Facebook/i)).toBeTruthy());
-    expect(onPosted).toHaveBeenCalledWith(expect.objectContaining({ post_id: 'p1' }));
+    // onPosted's payload changed shape with V4-IGSHARE-001 and had to: the sheet can now post to
+    // two independent surfaces, so a single post_id can no longer describe the outcome. It reports
+    // { overall, perTarget } instead, and only fires on a CLEAN SWEEP — a partial leaves the
+    // composer up rather than telling the page everything went out. PhotoLibrary ignores the
+    // argument (onPosted={() => exitSelectMode()}), so the change is confined to this contract.
+    expect(onPosted).toHaveBeenCalledWith(expect.objectContaining({
+      overall: 'success',
+      perTarget: expect.objectContaining({
+        facebook: expect.objectContaining({ state: 'success', result: expect.objectContaining({ post_id: 'p1' }) }),
+      }),
+    }));
     expect(screen.getByRole('link', { name: /view on facebook/i }).getAttribute('href')).toBe('https://facebook.com/p1');
     // the request carried the selected photo ids
     expect(JSON.parse(fetchSpy.mock.calls[0][1].body).photo_ids).toEqual(['a', 'b']);
@@ -190,7 +205,17 @@ describe('FacebookShareSheet — onDirtyChange (V4-FBCAPTIONDIRTY-001)', () => {
     expect(screen.getByLabelText(/caption/i).value).toBe('no callback wired');
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /post to facebook/i })); });
     await waitFor(() => expect(screen.getByText(/Posted to Facebook/i)).toBeTruthy());
-    expect(onPosted).toHaveBeenCalledWith(expect.objectContaining({ post_id: 'p1' }));
+    // onPosted's payload changed shape with V4-IGSHARE-001 and had to: the sheet can now post to
+    // two independent surfaces, so a single post_id can no longer describe the outcome. It reports
+    // { overall, perTarget } instead, and only fires on a CLEAN SWEEP — a partial leaves the
+    // composer up rather than telling the page everything went out. PhotoLibrary ignores the
+    // argument (onPosted={() => exitSelectMode()}), so the change is confined to this contract.
+    expect(onPosted).toHaveBeenCalledWith(expect.objectContaining({
+      overall: 'success',
+      perTarget: expect.objectContaining({
+        facebook: expect.objectContaining({ state: 'success', result: expect.objectContaining({ post_id: 'p1' }) }),
+      }),
+    }));
     expect(JSON.parse(fetchSpy.mock.calls[0][1].body).caption).toBe('no callback wired');
   });
 });

@@ -19,12 +19,21 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
 }))
 vi.mock('../components/PhotoImg.jsx', () => ({ default: ({ alt }) => <img alt={alt || ''} src="stub" /> }))
-// useShareToFacebook drives FacebookShareSheet's `state`; drive it from the test instead.
+// useShareToSocial drives FacebookShareSheet's `state`; drive it from the test instead. The pure
+// helpers are stubbed rather than imported for real — the module imports useApiFetch at module
+// scope, which would drag api.js and Clerk into a test about Escape arbitration.
 const fbState = { state: 'idle' }
-vi.mock('../hooks/useShareToFacebook.js', () => ({
-  useShareToFacebook: () => ({
+vi.mock('../hooks/useShareToSocial.js', () => ({
+  TARGETS: [
+    { key: 'facebook', path: '/api/share/facebook', label: 'Facebook', disabledCode: 'facebook_sharing_disabled' },
+    { key: 'instagram', path: '/api/share/instagram', label: 'Instagram', disabledCode: 'instagram_sharing_disabled' },
+  ],
+  captionLimitFor: () => 5000,
+  validateForTargets: () => [],
+  useShareToSocial: () => ({
     get state() { return fbState.state },
-    result: null, error: null, share: vi.fn(), reset: vi.fn(),
+    perTarget: { facebook: null, instagram: null },
+    share: vi.fn(), reset: vi.fn(),
   }),
 }))
 

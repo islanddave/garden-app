@@ -1,34 +1,56 @@
 import React, { useState, useEffect } from 'react'
 import { P } from '../lib/constants.js'
 import PhotoImg from './PhotoImg.jsx'
-import { useShareToFacebook } from '../hooks/useShareToFacebook.js'
+import { useShareToSocial, TARGETS, captionLimitFor, validateForTargets } from '../hooks/useShareToSocial.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 
-// V4-FBSHARE-001 — compose + post sheet for sharing photos to the "Gardens at Mathews" FB Page.
-// Reused for single-photo (from the tag modal) and multi-select (from the selection bar). The bytes
-// are uploaded server-side; nothing here touches is_public. Bottom-sheet layout keeps the Post button
-// in the thumb zone.
+// V4-FBSHARE-001 / V4-IGSHARE-001 — compose + post sheet for sharing photos to "Gardens at Mathews"
+// on Facebook and/or Instagram. Reused for single-photo (from the tag modal) and multi-select (from
+// the selection bar). The bytes are uploaded server-side; nothing here touches is_public. Bottom-sheet
+// layout keeps the Post button in the thumb zone.
+//
+// INSTAGRAM IS OFF BY DEFAULT, and that is a safety default rather than a UI preference. A Facebook
+// post can be deleted; an Instagram post CANNOT be removed through the API (verified 2026-08-21,
+// DELETE -> code 10) and has to be deleted by hand in the app. A destination that cannot be undone
+// should be chosen deliberately every time, not inherited from the last session.
 const HASHTAG = '#GardensAtMathews'
-const MAX_CAPTION = 5000
 // The three states that REPLACE the composer with <Blocked>. Named once because the reload-gate
 // predicate below and the render branch have to agree on "is the caption still on screen".
-const BLOCKED_STATES = ['forbidden', 'token_invalid', 'disabled']
+const BLOCKED_STATES = ['forbidden', 'token_invalid', 'disabled', 'not_configured']
+
+// Human sentence for a set of target keys: "Facebook", "Instagram", "Facebook and Instagram".
+function namesOf(keys) {
+  const labels = TARGETS.filter((t) => keys.includes(t.key)).map((t) => t.label)
+  return labels.length === 2 ? `${labels[0]} and ${labels[1]}` : (labels[0] ?? '')
+}
 
 // Props:
 //   - open, photos, onClose, onPosted
 //   - onDirtyChange(bool)  optional; fires on every clean↔dirty flip of the caption
 export default function FacebookShareSheet({ open, photos = [], onClose, onPosted, onDirtyChange }) {
-  const { state, result, error, share, reset } = useShareToFacebook()
+  const { state, perTarget, share, reset } = useShareToSocial()
   const [caption, setCaption] = useState('')
+  const [targets, setTargets] = useState({ facebook: true, instagram: false })
 
-  // Fresh composer every time the sheet opens.
+  // Fresh composer every time the sheet opens — including the destinations. See the header: an
+  // Instagram post cannot be withdrawn through the API, so the selection must not be sticky.
   useEffect(() => {
-    if (open) { reset(); setCaption('') }
+    if (open) { reset(); setCaption(''); setTargets({ facebook: true, instagram: false }) }
   }, [open, reset])
 
+  const selectedKeys = TARGETS.filter((t) => targets[t.key]).map((t) => t.key)
+  const attempted = selectedKeys.map((k) => perTarget[k]).filter(Boolean)
+  const landed = TARGETS.filter((t) => perTarget[t.key]?.state === 'success').map((t) => t.key)
+
   const done = state === 'success'
-  const blocked = BLOCKED_STATES.includes(state)
+  // <Blocked> REPLACES the composer, so it may only fire when there is nothing left to compose FOR:
+  // every attempted target refused, and none landed. One blocked target alongside a success is a
+  // PARTIAL — the composer has to stay up, because the un-landed target can still be retried and
+  // because replacing it would silently discard a caption that is now half-published.
+  const blocked = attempted.length > 0
+    && landed.length === 0
+    && attempted.every((r) => BLOCKED_STATES.includes(r?.state))
   // Whether the caption is still live, authored, and unsent — i.e. whether a service-worker reload
   // would DESTROY something. Up to 5000 chars of free text that exists nowhere but this state.
   //
@@ -96,11 +118,33 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   const posting = state === 'posting'
   const closable = !posting
 
+  const preflight = validateForTargets(caption, targets)
+  const captionMax = captionLimitFor(targets)
+  // Targets still to attempt. After a partial this is the un-landed set, which is what the Post
+  // button must name — offering "Retry" over both would read as though it re-sends the live one.
+  const remaining = selectedKeys.filter((k) => perTarget[k]?.state !== 'success')
+  // Targets that were attempted and did not land, each with its own message.
+  const failures = TARGETS
+    .filter((t) => selectedKeys.includes(t.key))
+    .map((t) => ({ key: t.key, label: t.label, entry: perTarget[t.key] }))
+    .filter(({ entry }) => entry && entry.state !== 'success' && entry.state !== 'posting')
+  const allTimedOut = failures.length > 0 && failures.every(({ entry }) => entry.state === 'timeout')
+
   async function handlePost() {
+    if (preflight.length) return
     try {
-      const res = await share(photos.map((p) => p.id), caption)
-      if (res) onPosted?.(res)
+      const res = await share(photos.map((p) => p.id), caption, targets)
+      // Only a clean sweep closes the sheet. On a partial the composer stays so the failed target
+      // can be retried — reporting "posted" to the page while Instagram never went out is the
+      // silent half-success this whole path is built to avoid.
+      if (res?.overall === 'success') onPosted?.(res)
     } catch { /* state renders the error */ }
+  }
+  function toggleTarget(key) {
+    // A target that already landed cannot be switched off and re-sent. Its slot is released on
+    // success, so a re-send would mint a fresh id and genuinely post again — a duplicate, not a replay.
+    if (perTarget[key]?.state === 'success') return
+    setTargets((t) => ({ ...t, [key]: !t[key] }))
   }
   function addHashtag() {
     setCaption((c) => (c.includes(HASHTAG) ? c : (c.trim() ? `${c.trim()} ${HASHTAG}` : HASHTAG)))
@@ -123,7 +167,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   // falls back to onClose when the entry is not dirty, not opted in, or unregistered — which is the
   // whole of the Success and Blocked arms, where `dirty` is false by construction.
   return (
-    <div role="dialog" aria-label="Share to Facebook" aria-modal={isTopmost ? 'true' : undefined} style={overlay}
+    <div role="dialog" aria-label="Share photos" aria-modal={isTopmost ? 'true' : undefined} style={overlay}
       onClick={(e) => { if (e.target === e.currentTarget && closable) requestDismiss() }}>
       <div style={panel}>
         {/* Header */}
@@ -136,14 +180,39 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
         </div>
 
         {done ? (
-          <Success result={result} onClose={requestDismiss} />
+          <Success landed={landed} perTarget={perTarget} onClose={requestDismiss} />
         ) : blocked ? (
-          <Blocked state={state} message={error} onClose={requestDismiss} />
+          <Blocked entry={attempted[0]} onClose={requestDismiss} />
         ) : (
           <div style={{ padding: '4px 18px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             <p style={{ margin: 0, fontSize: '0.82rem', color: P.light }}>
-              {count === 1 ? 'This photo' : `${count} photos`} will be posted publicly to your Facebook Page.
+              {count === 1 ? 'This photo' : `${count} photos`} will be posted publicly
+              {selectedKeys.length ? ` to ${namesOf(selectedKeys)}.` : '.'}
             </p>
+
+            {/* Destinations. Instagram starts OFF every time — see the header. */}
+            <fieldset style={{ border: 'none', margin: 0, padding: 0, display: 'flex', gap: 16 }}>
+              <legend style={{ fontSize: '0.77rem', fontWeight: 700, color: P.mid, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, marginBottom: 6 }}>
+                Post to
+              </legend>
+              {TARGETS.map((t) => {
+                const entry = perTarget[t.key]
+                const isDone = entry?.state === 'success'
+                return (
+                  <label key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.88rem', color: isDone ? P.light : P.dark, cursor: isDone || posting ? 'default' : 'pointer' }}>
+                    <input type="checkbox" checked={!!targets[t.key]} disabled={posting || isDone}
+                      onChange={() => toggleTarget(t.key)} />
+                    {/* "posted" goes in the TEXT, not on an aria-label pinned to the tick. A bare
+                        <span> has no role that can hold an accessible name, so aria-label there is
+                        dropped by the a11y gate and by assistive tech alike — the state would have
+                        been announced to nobody. A checked+disabled checkbox reads as "checked,
+                        dimmed", which does not say "this one already went out". */}
+                    {isDone ? `${t.label} — posted` : t.label}
+                    {isDone && <span aria-hidden="true" style={{ color: P.green }}>✓</span>}
+                  </label>
+                )
+              })}
+            </fieldset>
 
             {/* Thumbnails */}
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
@@ -163,7 +232,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
                   + {HASHTAG}
                 </button>
               </div>
-              <textarea id="fb-caption" value={caption} maxLength={MAX_CAPTION} disabled={posting}
+              <textarea id="fb-caption" value={caption} maxLength={captionMax} disabled={posting}
                 onChange={(e) => setCaption(e.target.value)}
                 placeholder="Say something about these photos…"
                 style={{ width: '100%', minHeight: 90, padding: '10px 12px', border: `1px solid ${P.border}`, borderRadius: 8, fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }} />
@@ -173,9 +242,31 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
                 failure: we stopped waiting before the server did, so the post may well be live.
                 Gating this banner on 'error' alone left the timeout state rendering nothing at all —
                 a dismissed spinner and no explanation. */}
-            {(state === 'error' || state === 'timeout') && (
+            {/* A PARTIAL is the outcome this banner exists for. One line per target that did not
+                land, each naming its own target — a single merged message cannot say which surface
+                is live and which is not, and that is the only fact the user needs in order to act.
+                A landed target is shown too, so "Facebook is already up" is never implied by silence.
+
+                `timeout` is a DIFFERENT outcome from `error` and must not be worded as a failure:
+                we stopped waiting before the server did, so the post may well be live. Gating this
+                on 'error' alone left the timeout state rendering nothing at all — a dismissed
+                spinner and no explanation. */}
+            {failures.length > 0 && (
+              <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: P.bannerInk, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {landed.length > 0 && (
+                  <p style={{ margin: 0, fontWeight: 700 }}>Posted to {namesOf(landed)}. The rest did not go out:</p>
+                )}
+                {failures.map(({ key, label, entry }) => (
+                  <p key={key} style={{ margin: 0 }}>
+                    {selectedKeys.length > 1 || landed.length > 0 ? <strong>{label}: </strong> : null}{entry.error}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {preflight.length > 0 && (
               <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: P.bannerInk }}>
-                {error}
+                {preflight.map((m) => <p key={m} style={{ margin: 0 }}>{m}</p>)}
               </div>
             )}
 
@@ -184,12 +275,12 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
                 style={{ flex: '0 0 auto', background: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 8, padding: '12px 20px', fontSize: '0.9rem', fontWeight: 600, cursor: closable ? 'pointer' : 'default' }}>
                 Cancel
               </button>
-              <button type="button" onClick={handlePost} disabled={posting || count === 0}
-                style={{ flex: 1, background: posting ? P.light : P.green, color: P.white, border: 'none', borderRadius: 8, padding: '12px 20px', fontSize: '0.92rem', fontWeight: 700, cursor: posting ? 'default' : 'pointer' }}>
+              <button type="button" onClick={handlePost} disabled={posting || count === 0 || preflight.length > 0}
+                style={{ flex: 1, background: (posting || preflight.length) ? P.light : P.green, color: P.white, border: 'none', borderRadius: 8, padding: '12px 20px', fontSize: '0.92rem', fontWeight: 700, cursor: posting ? 'default' : 'pointer' }}>
                 {posting ? 'Posting…'
-                  : state === 'error' ? 'Retry'
-                  : state === 'timeout' ? 'Try again'
-                  : `Post to Facebook${count > 1 ? ` (${count})` : ''}`}
+                  : allTimedOut ? 'Try again'
+                  : failures.length > 0 ? `Retry ${namesOf(remaining)}`
+                  : `Post to ${namesOf(selectedKeys)}${count > 1 ? ` (${count})` : ''}`}
               </button>
             </div>
           </div>
@@ -199,20 +290,33 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   )
 }
 
-function Success({ result, onClose }) {
-  const link = result?.permalink || (result?.post_id ? `https://www.facebook.com/${result.post_id}` : null)
+// One "View on …" link per landed target. Facebook can synthesise a URL from the post id; Instagram
+// cannot — its media id is not addressable as a web URL — so an IG link appears only when the server
+// returned a real permalink. A fabricated IG link would 404 on the one surface the user cannot fix
+// by hand, so it is omitted rather than guessed.
+function linkFor(key, result) {
+  if (!result) return null
+  if (result.permalink) return result.permalink
+  if (key === 'facebook' && result.post_id) return `https://www.facebook.com/${result.post_id}`
+  return null
+}
+
+function Success({ landed, perTarget, onClose }) {
+  const links = landed
+    .map((key) => ({ key, label: TARGETS.find((t) => t.key === key)?.label ?? key, href: linkFor(key, perTarget[key]?.result) }))
+    .filter((l) => l.href)
   return (
     <div style={{ padding: '8px 18px 22px', textAlign: 'center' }}>
       <div style={{ fontSize: '2.2rem', marginBottom: 8 }}>✅</div>
-      <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.dark, fontSize: '0.98rem' }}>Posted to Facebook</p>
-      <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.mid }}>Your photos are live on the Gardens at Mathews page.</p>
-      <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-        {link && (
-          <a href={link} target="_blank" rel="noopener noreferrer"
+      <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.dark, fontSize: '0.98rem' }}>Posted to {namesOf(landed)}</p>
+      <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.mid }}>Your photos are live on the Gardens at Mathews {landed.length > 1 ? 'accounts' : 'page'}.</p>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+        {links.map(({ key, label, href }) => (
+          <a key={key} href={href} target="_blank" rel="noopener noreferrer"
             style={{ background: P.green, color: P.white, borderRadius: 8, padding: '11px 20px', fontSize: '0.9rem', fontWeight: 700, textDecoration: 'none' }}>
-            View on Facebook
+            View on {label}
           </a>
-        )}
+        ))}
         <button type="button" onClick={onClose}
           style={{ background: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 8, padding: '11px 20px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer' }}>
           Done
@@ -222,12 +326,14 @@ function Success({ result, onClose }) {
   )
 }
 
-function Blocked({ state, message, onClose }) {
+function Blocked({ entry, onClose }) {
+  const message = entry?.error
   const copy = {
     forbidden: 'Only the page admin can post to Facebook.',
     token_invalid: 'Facebook needs to be reconnected before posting. The Page access token has expired.',
-    disabled: 'Facebook sharing is turned off right now.',
-  }[state]
+    disabled: 'Sharing is turned off right now.',
+    not_configured: 'Instagram is not connected yet, so there is nowhere to post.',
+  }[entry?.state]
   return (
     <div style={{ padding: '8px 18px 22px', textAlign: 'center' }}>
       <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔒</div>
