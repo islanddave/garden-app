@@ -22,7 +22,15 @@ vi.mock('../components/PhotoImg.jsx', () => ({ default: ({ alt }) => <img alt={a
 // useShareToSocial drives FacebookShareSheet's `state`; drive it from the test instead. The pure
 // helpers are stubbed rather than imported for real — the module imports useApiFetch at module
 // scope, which would drag api.js and Clerk into a test about Escape arbitration.
+// `reset` and `perTarget` MUST be identity-stable across renders, as in the sibling
+// FacebookShareSheet.backNavDirty.test.jsx. The sheet's fresh-composer effect is keyed
+// [open, reset]: a vi.fn() minted inside the hook body is a NEW function every render, so the effect
+// re-runs every render, and its setState calls then have to be no-ops or it feeds itself. Written
+// with an unstable reset this OOM-killed the worker — which surfaces as "Worker exited unexpectedly"
+// and an un-run FILE, never as a failing assertion, so it reads like flake rather than like a loop.
 const fbState = { state: 'idle' }
+const { shareSpy2, resetSpy2 } = vi.hoisted(() => ({ shareSpy2: vi.fn(), resetSpy2: vi.fn() }))
+const NO_TARGETS = { facebook: null, instagram: null }
 vi.mock('../hooks/useShareToSocial.js', () => ({
   TARGETS: [
     { key: 'facebook', path: '/api/share/facebook', label: 'Facebook', disabledCode: 'facebook_sharing_disabled' },
@@ -32,8 +40,8 @@ vi.mock('../hooks/useShareToSocial.js', () => ({
   validateForTargets: () => [],
   useShareToSocial: () => ({
     get state() { return fbState.state },
-    perTarget: { facebook: null, instagram: null },
-    share: vi.fn(), reset: vi.fn(),
+    perTarget: NO_TARGETS,
+    share: shareSpy2, reset: resetSpy2,
   }),
 }))
 
@@ -48,7 +56,17 @@ const esc = () => act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
 const CRITTER = { id: 'c1', common_name: 'Ladybug', slug: 'ladybug' }
 
 describe('Slice 2 — non-Sheet dialogs arbitrate through the one registry', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true; fbState.state = 'idle' })
+  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true; fbState.state = 'idle'; resetSpy2.mockClear() })
+
+  // CANARY for the effect loop described at the mock above. The sheet's fresh-composer effect must
+  // run ONCE per open; if it re-runs on every render, this counts up. It is asserted here because
+  // the natural symptom is not a failing test — it is an OOM-killed worker reported as
+  // "Worker exited unexpectedly" with an un-run FILE, which reads like infrastructure flake and cost
+  // a full CI cycle to trace back to a component change. A number is a much better signal.
+  it('the fresh-composer effect runs once per open, not once per render', () => {
+    render(<DismissRegistryProvider><FacebookShareSheet open photos={[]} onClose={() => {}} /></DismissRegistryProvider>)
+    expect(resetSpy2).toHaveBeenCalledTimes(1)
+  })
 
   // CritterFactsPopover bound an UNGATED document keydown. Over an open Sheet, one Escape fired
   // both onCloses. This is the same shipped-defect class Slice 1 fixed for Lightbox.

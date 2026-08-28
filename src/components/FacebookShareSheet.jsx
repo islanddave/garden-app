@@ -19,6 +19,10 @@ const HASHTAG = '#GardensAtMathews'
 // predicate below and the render branch have to agree on "is the caption still on screen".
 const BLOCKED_STATES = ['forbidden', 'token_invalid', 'disabled', 'not_configured']
 
+// The destination selection every open starts from. A frozen module constant so that re-applying it
+// is an Object.is no-op and React can bail out of the re-render — see the effect that uses it.
+const DEFAULT_TARGETS = Object.freeze({ facebook: true, instagram: false })
+
 // Human sentence for a set of target keys: "Facebook", "Instagram", "Facebook and Instagram".
 function namesOf(keys) {
   const labels = TARGETS.filter((t) => keys.includes(t.key)).map((t) => t.label)
@@ -31,12 +35,23 @@ function namesOf(keys) {
 export default function FacebookShareSheet({ open, photos = [], onClose, onPosted, onDirtyChange }) {
   const { state, perTarget, share, reset } = useShareToSocial()
   const [caption, setCaption] = useState('')
-  const [targets, setTargets] = useState({ facebook: true, instagram: false })
+  const [targets, setTargets] = useState(DEFAULT_TARGETS)
 
   // Fresh composer every time the sheet opens — including the destinations. See the header: an
   // Instagram post cannot be withdrawn through the API, so the selection must not be sticky.
+  //
+  // DEFAULT_TARGETS is a module CONSTANT, not an inline literal, and that is load-bearing rather
+  // than tidiness. This effect is keyed [open, reset], so it re-runs whenever `reset` changes
+  // identity. Every setState here must therefore be a NO-OP on a second run, or the effect feeds
+  // itself: React bails out of a re-render when the next state is Object.is-equal to the current
+  // one, which `setCaption('')` satisfies for free — and an inline `{ facebook: true, ... }` never
+  // does, because it is a fresh object every time. Written inline it spun render -> new object ->
+  // render until the heap died (an OOM, not a hang: the worker is killed and the run reports
+  // "Worker exited unexpectedly" with no failing test). The real hook's `reset` is useCallback-
+  // stable so production never reached it, but a component that loops infinitely whenever a
+  // dependency is unstable is one refactor away from doing it for real.
   useEffect(() => {
-    if (open) { reset(); setCaption(''); setTargets({ facebook: true, instagram: false }) }
+    if (open) { reset(); setCaption(''); setTargets(DEFAULT_TARGETS) }
   }, [open, reset])
 
   const selectedKeys = TARGETS.filter((t) => targets[t.key]).map((t) => t.key)
