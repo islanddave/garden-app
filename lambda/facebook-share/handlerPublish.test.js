@@ -175,6 +175,62 @@ describe('facebook-share publish path', () => {
     expect(updates.some((c) => c.values.includes('orphan_cleaned'))).toBe(false);
   });
 
+  // ── Pre-publish content assertion (boss condition 6's named control) ──────────────────────────
+  // The point is not that a verdict is produced — contentAssertion.test.js covers that — but that
+  // an unsafe verdict actually STOPS the publish. A control that returns "unsafe" and posts anyway
+  // is worse than none, because it reports coverage it does not provide.
+  it('a coordinate pair in the caption blocks the post before any Graph call', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    const { status, body } = parse(
+      await handler(post({ photo_ids: ['p1'], caption: 'by the shed at 42.4712, -72.6009' })));
+
+    expect(status).toBe(422);
+    expect(body.error).toBe('content_blocked');
+    expect(body.fields).toContain('caption');
+    expect(fetchMock).not.toHaveBeenCalled();
+    // failAll inlines the status as a LITERAL ('failed') rather than passing it as a parameter, so
+    // this asserts on the statement text. setStatus is the opposite — it binds status as a value —
+    // which is why the "marked posted" test above checks values instead. Same table, two shapes.
+    const updates = stubState.sqlCalls.filter((c) => /UPDATE share_log/i.test(c.text));
+    expect(updates.some((c) => /status = 'failed'/.test(c.text))).toBe(true);
+  });
+
+  it('a configured forbidden term blocks the post, and the response never echoes the term', async () => {
+    const secret = 'Mathews Road';
+    process.env.SHARE_FORBIDDEN_TERMS = JSON.stringify([secret]);
+    try {
+      stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+      const res = await handler(post({ photo_ids: ['p1'], caption: `harvest from ${secret}` }));
+      const { status, body } = parse(res);
+      expect(status).toBe(422);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(res.body).not.toContain(secret);       // the refusal must not republish the secret
+    } finally { delete process.env.SHARE_FORBIDDEN_TERMS; }
+  });
+
+  // Malformed config must fail CLOSED. Degrading to "no terms configured" would leave the weaker
+  // control running under the name of the stronger one — green, and quietly less safe.
+  it('malformed SHARE_FORBIDDEN_TERMS refuses to publish rather than degrading', async () => {
+    process.env.SHARE_FORBIDDEN_TERMS = 'not-json';
+    try {
+      stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+      const { status, body } = parse(await handler(post({ photo_ids: ['p1'], caption: 'totally fine' })));
+      expect(status).toBe(500);
+      expect(body.error).toBe('content_check_misconfigured');
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally { delete process.env.SHARE_FORBIDDEN_TERMS; }
+  });
+
+  it('an ordinary caption still publishes — the control is not a blanket refusal', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    fetchMock.mockResolvedValueOnce(okJson({ id: 'M1', post_id: 'P1' }))
+             .mockResolvedValueOnce(okJson({}));
+    const { status } = parse(
+      await handler(post({ photo_ids: ['p1'], caption: 'First ripe Tie-Dye of the year, 3.5 lbs' })));
+    expect(status).toBe(201);
+    expect(uploads()).toHaveLength(1);
+  });
+
   // ── Idempotency, the reason the whole client-side key work exists ──────────────────────────────
   it('replays a prior posted row instead of posting again', async () => {
     stubState.sqlHandler = sqlRouter({

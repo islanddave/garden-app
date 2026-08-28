@@ -9,7 +9,7 @@
 //   auth (Clerk) -> admin gate (ADMIN_CLERK_SUBS) -> kill switch (FB_SHARE_ENABLED) -> validate ->
 //   idempotency replay (client_request_id) -> household-scoped photo fetch (bytes stay private) ->
 //   insert pending share_log rows -> per photo: S3 GetObject -> JPEG guard -> EXIF strip ->
-//   Graph upload. Single photo: POST /{page}/photos published (caption inline). Multi: POST
+//   pre-publish content assertion (fail-closed: coordinates + configured terms) -> Graph upload. Single photo: POST /{page}/photos published (caption inline). Multi: POST
 //   /{page}/photos published=false (parallel) -> POST /{page}/feed with message + attached_media[].
 //   On /feed failure: delete the orphaned published=false media. Best-effort read-back asserts the
 //   attached media count. Rows -> posted | failed | orphan_cleaned | orphan_cleanup_failed.
@@ -35,6 +35,7 @@ import {
 import { mapInBatches } from './batch.js';
 import { buildPhotoAltText } from './altText.js';
 import { cleanupOrphanMedia, strandedError, STATUS_ORPHAN_CLEANED, STATUS_ORPHAN_STRANDED } from './orphans.js';
+import { assertPublishSafe, parseForbiddenTerms } from './contentAssertion.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // WHEN_REQUIRED: same rationale as lambda/photos — avoid the SDK injecting a checksum header S3
@@ -381,6 +382,38 @@ async function share(event, secrets, userId) {
   } catch (err) {
     await failAll(err?.message ?? 'photo preparation failed');
     throw err;
+  }
+
+  // PRE-PUBLISH CONTENT ASSERTION, fail-closed. Runs AFTER prepare (so the alt text that will
+  // actually be sent is available) and BEFORE the first Graph call, which is the only position where
+  // it can stop a disclosure rather than report one. Two prior public-output defects on this project
+  // were location disclosures, and the image bytes were the only thing being checked — the text this
+  // handler puts on a public Page was inspected by nothing. See ./contentAssertion.js.
+  const termsRaw = process.env.SHARE_FORBIDDEN_TERMS;
+  const terms = parseForbiddenTerms(termsRaw);
+  if (terms === null) {
+    // Malformed config must not silently degrade into "no terms to check". That would leave the
+    // weaker control running under the name of the stronger one.
+    console.error('SHARE_FORBIDDEN_TERMS is set but not a JSON array of strings — refusing to publish');
+    shareMetric('blocked', { reason: 'forbidden_terms_malformed' });
+    await failAll('publish blocked: content-safety configuration is invalid');
+    return resp(500, { error: 'content_check_misconfigured', message: 'The content safety check is misconfigured, so nothing was posted.' });
+  }
+  const assertion = assertPublishSafe({
+    caption,
+    altTexts: prepared.map((p) => p.alt).filter(Boolean),
+    forbiddenTerms: terms,
+  });
+  if (!assertion.safe) {
+    // `detail` names the term INDEX, never the term, so this log line cannot itself leak.
+    console.error('pre-publish content assertion FAILED:', JSON.stringify(assertion.violations));
+    shareMetric('blocked', { kinds: [...new Set(assertion.violations.map((v) => v.kind))] });
+    await failAll('publish blocked by the pre-publish content check');
+    return resp(422, {
+      error: 'content_blocked',
+      message: 'This post looks like it contains location details, so it was not sent. Edit the caption and try again.',
+      fields: [...new Set(assertion.violations.map((v) => v.field))],
+    });
   }
 
   // ── SINGLE photo: one published /photos call, caption inline. ──
