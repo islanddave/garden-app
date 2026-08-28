@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.63.1",
+    "date": "2026-08-28",
+    "highlights": [
+      "The 'use this crop instead' button is now a full-size tap target"
+    ]
+  },
+  {
     "version": "4.63.0",
     "date": "2026-08-28",
     "highlights": [

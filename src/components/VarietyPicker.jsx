@@ -1110,7 +1110,14 @@ const secondaryButtonStyle = {
 const adoptButtonStyle = {
   marginTop: 8,
   padding: '8px 12px',
-  minHeight: 40,
+  // BUG-ADOPTTAPFLOOR-001: was a literal 40, under the 44px floor the app enforces everywhere else.
+  // It is a real interactive button, not a chip, so it takes tapMinHeight rather than
+  // chipMinHeight. Left as a literal during the Pass A migration ON PURPOSE — aliasing it to the
+  // chip token would have buried an accessibility finding inside a mechanical rename.
+  // Note T here is src/lib/tokens.js, which RE-EXPORTS the T defined in
+  // components/forms/formStyles.js — one object, not two, so this is the same 44 the Inventory
+  // tap-floor test asserts against.
+  minHeight: T.tapMinHeight,
   borderRadius: T.radiusField,
   border: `1px solid ${P.green}`,
   backgroundColor: P.greenPale,
