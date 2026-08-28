@@ -12,6 +12,13 @@
 // cue is computable from existing data without fabrication (phenology capture has lapsed —
 // panel-verified), so no other cue ships.
 //
+// V4-SEEDZEROVIEW-001 — THIS FILE HAS NO QUANTITY PREDICATE OF ITS OWN, ON PURPOSE. A depleted
+// packet (quantity_on_hand <= 0) is diverted to `sowed_previously` inside bucketize itself, so it
+// can never reach `window_closing` and can never become a line here. This surface was the second,
+// unfiled half of that defect — the ledger row named only /sow, and both surfaces read the same
+// payload through the same bucketizer — and it is fixed by the engine rather than by a filter
+// duplicated here, because two copies of one predicate is how the two surfaces disagree later.
+//
 // V4-SOWMOREMENU-001 (BD-067) — TWO PANEL Q1 DECISIONS ARE DELIBERATELY REVERSED HERE, both on
 // Dave's own report that he could not find Sow Now AT ALL ("I don't remember even where it used to
 // be"). Say what changed and why, because both were reasoned calls, not defaults:

@@ -84,6 +84,38 @@ describe('cultivationLines (pure, real engine)', () => {
     expect(cultivationLines(null, TODAY)).toEqual([])
     expect(cultivationLines(undefined, TODAY)).toEqual([])
   })
+
+  // V4-SEEDZEROVIEW-001. Today was the SECOND surface offering an empty packet — the ledger row
+  // named only /sow, but both read the same payload through the same bucketizer. There is no
+  // predicate in this component; the assertions below are what proves the engine's divert reaches
+  // here, which is the whole reason the fix went in bucketize rather than in each surface.
+  it('never names a packet there is none of left', () => {
+    expect(cultivationLines([lettuce({ quantity_on_hand: 0 })], TODAY)).toEqual([])
+    expect(cultivationLines([lettuce({ quantity_on_hand: '0' })], TODAY)).toEqual([])
+  })
+
+  it('still names an UNTRACKED packet — NULL is "not counted", not "used up"', () => {
+    // The deliberate split from InventoryDetail's `?? 0` collapse. On a planning line, hiding an
+    // uncounted packet forfeits the sowing silently; see isDepleted's note.
+    expect(cultivationLines([lettuce({ quantity_on_hand: null })], TODAY))
+      .toEqual(['Sow Winter Density by Aug 18.'])
+  })
+
+  it('still names a half-empty packet — a fraction is stock', () => {
+    expect(cultivationLines([lettuce({ quantity_on_hand: '0.5' })], TODAY))
+      .toEqual(['Sow Winter Density by Aug 18.'])
+  })
+
+  it('drops only the empty packet from a mixed list, keeping order and cap', () => {
+    const lines = cultivationLines([
+      lettuce({ variety_name: 'A', days_to_maturity_max: 72 }),                       // Aug 18
+      lettuce({ variety_name: 'B', days_to_maturity_max: 77, quantity_on_hand: 0 }),  // Aug 13, empty
+      lettuce({ variety_name: 'C', days_to_maturity_max: 75 }),                       // Aug 15
+    ], TODAY)
+    // Without the filter B would take the first slot and evict A under the cap of 2 — so this
+    // pins that an empty packet cannot crowd out a real one, not just that it goes unnamed.
+    expect(lines).toEqual(['Sow C by Aug 15.', 'Sow A by Aug 18.'])
+  })
 })
 
 describe('CultivationLead component', () => {
@@ -146,5 +178,17 @@ describe('CultivationLead component', () => {
     fetchMock.mockResolvedValue({ items: [lettuce()] })
     renderLead({ todayISO: TODAY })
     expect(screen.getByTestId('cultivation-lead').textContent).toBe('Sow now')
+  })
+
+  // V4-SEEDZEROVIEW-001 — the rendered half of the pure assertions above. Today must degrade to the
+  // bare door, not to an imperative to sow a packet Dave has none of.
+  it('degrades to the bare door when the only closing packet is empty', async () => {
+    fetchMock.mockResolvedValue({ items: [lettuce({ quantity_on_hand: 0 })] })
+    renderLead({ todayISO: TODAY })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
+    const region = screen.getByTestId('cultivation-lead')
+    expect(region.textContent).toBe('Sow now')
+    expect(region.textContent).not.toMatch(/Winter Density/)
+    expect(region.getAttribute('href')).toBe('/sow')
   })
 })

@@ -20,6 +20,7 @@ import {
   isSpringEstablishmentAllium,
   sowGoal,
   isArchivedForSeason,
+  isDepleted,
   FALL_HARDY_CROPS,
 } from '../lib/sowEngine.js';
 // BUG-FROSTANCHORWRONG-001. Both imported ONLY to cross-check the measured anchor against surfaces
@@ -136,11 +137,11 @@ describe('exports', () => {
   // buckets[bucket].push() throw, which propagates out of SowNow's useMemo and white-screens /sow.
   // Every key bucketOne can return MUST be pre-seeded here — `buckets[bucket].push(entry)` throws
   // on a missing one, which propagates out of SowNow's useMemo and white-screens /sow. `archived`
-  // added by V4-SOWARCHIVE-001 (9th).
-  it('bucketize returns all nine buckets even for empty input', () => {
+  // added by V4-SOWARCHIVE-001 (9th), `sowed_previously` by V4-SEEDZEROVIEW-001 (10th).
+  it('bucketize returns all ten buckets even for empty input', () => {
     expect(Object.keys(bucketize([], TODAY)).sort()).toEqual([
       'archived', 'direct_sow_now', 'hold', 'needs_profile', 'sow_inside_anytime',
-      'sow_next_year', 'start_indoors_now', 'too_late', 'window_closing',
+      'sow_next_year', 'sowed_previously', 'start_indoors_now', 'too_late', 'window_closing',
     ]);
   });
 });
@@ -592,6 +593,9 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
       // is 0 while every other count is UNCHANGED is the evidence the archive path is purely
       // additive — it diverts packets, it does not re-bucket them.
       archived: 0,
+      // V4-SEEDZEROVIEW-001: same evidence, same reason — every golden packet carries
+      // quantity_on_hand 1, so nothing is depleted and every other count above is UNCHANGED.
+      sowed_previously: 0,
     });
   });
 });
@@ -1333,6 +1337,135 @@ describe('V4-SOWARCHIVE-001 archive-for-the-season', () => {
     // is that archiving spinach leaves the OTHER two where bucketOne put them, which is unaffected.
     expect(buckets.hold).toHaveLength(1);
     expect(buckets.start_indoors_now).toHaveLength(0);
+  });
+});
+
+// ── V4-SEEDZEROVIEW-001 ───────────────────────────────────────────────────────
+// Dave: "I want to keep zero counts in our records, viewable as 'sowed previously' so i can review,
+// but I don't want a real 'reorder if...' logic in here … zero counts can be filtered out of sow now
+// and other used surfaces, but a view/filter of them would be useful."
+//
+// The filed defect: v_sow_candidates carries no quantity predicate, so Belstar Broccoli at
+// quantity_on_hand = 0 was offered as sowable (prod 2026-08-28; 259 candidates, 257 positive, 1
+// fractional at 0.5, 1 zero, 0 NULL). The through-line here matches the archive block above —
+// depletion DIVERTS a packet without re-deciding it, so bucketOne's verdict survives on
+// `depletedFrom` and no data is lost.
+describe('V4-SEEDZEROVIEW-001 depleted packets', () => {
+  const SEASON = 2026; // == the year TODAY ('2026-07-10') resolves to
+
+  it('isDepleted: a counted zero or negative is depleted', () => {
+    expect(isDepleted({ quantity_on_hand: 0 })).toBe(true);
+    expect(isDepleted({ quantity_on_hand: -1 })).toBe(true);
+    // View columns can arrive as strings; a strict === 0 would never fire on a real row.
+    expect(isDepleted({ quantity_on_hand: '0' })).toBe(true);
+    expect(isDepleted({ quantity_on_hand: '-2' })).toBe(true);
+  });
+
+  it('isDepleted: any real stock is not depleted, fractions included', () => {
+    // Clemson Spineless 80 Okra sits at 0.5 on prod — half a packet is still seed to sow.
+    expect(isDepleted({ quantity_on_hand: 0.5 })).toBe(false);
+    expect(isDepleted({ quantity_on_hand: '0.5' })).toBe(false);
+    expect(isDepleted({ quantity_on_hand: 1 })).toBe(false);
+    expect(isDepleted({ quantity_on_hand: '12' })).toBe(false);
+  });
+
+  it('THE NULL DECISION: untracked is not depleted, and stays sowable', () => {
+    // quantity_on_hand is nullable with no default: NULL means "nobody counted this", which is NOT
+    // "used up". This is DELIBERATELY unlike InventoryDetail.jsx:253's `Number(x ?? 0) > 0`, which
+    // collapses NULL into "hide" — correct for a plant-from-this-packet CTA that needs stock in
+    // hand, wrong for a planning surface where hiding an uncounted packet forfeits a sowing.
+    // Zero prod rows are NULL today, so this pin is the ONLY thing deciding the first one.
+    expect(isDepleted({ quantity_on_hand: null })).toBe(false);
+    expect(isDepleted({ quantity_on_hand: undefined })).toBe(false);
+    expect(isDepleted({})).toBe(false);
+    expect(isDepleted(undefined)).toBe(false);
+    // Number(null) and Number('') are both 0, so the empty string needs the same guard as null.
+    expect(isDepleted({ quantity_on_hand: '' })).toBe(false);
+    // Unparseable reads as visible, same safe direction isArchivedForSeason takes.
+    expect(isDepleted({ quantity_on_hand: 'nope' })).toBe(false);
+  });
+
+  it('THE FILED DEFECT: a zero-count packet is not offered as sowable', () => {
+    // Asserted on the window_closing packet specifically: that is the bucket CultivationLead reads,
+    // so an empty packet there does not just sit on /sow, it puts an imperative line on Today.
+    const empty = toCandidate(PACKETS.cucumberSpacemaster, { quantity_on_hand: 0 });
+    const buckets = bucketize([empty], TODAY);
+    expect(buckets.window_closing).toHaveLength(0);
+    expect(buckets.sowed_previously).toHaveLength(1);
+    expect(buckets.sowed_previously[0].depletedFrom).toBe('window_closing');
+  });
+
+  it('NO action bucket can hold a depleted packet — swept over all twelve goldens', () => {
+    // One packet proves one path. The sweep proves the divert happens before the bucket is honoured
+    // at all, so no future bucket can quietly acquire an empty packet.
+    const rows = Object.values(PACKETS).map((p) => toCandidate(p, { quantity_on_hand: 0 }));
+    const buckets = bucketize(rows, TODAY);
+    expect(buckets.sowed_previously).toHaveLength(rows.length);
+    for (const key of ['start_indoors_now', 'direct_sow_now', 'sow_inside_anytime',
+      'sow_next_year', 'window_closing']) {
+      expect(buckets[key], `${key} must never hold a depleted packet`).toHaveLength(0);
+    }
+  });
+
+  it('a half-empty packet stays on the working list', () => {
+    const half = toCandidate(PACKETS.cucumberSpacemaster, { quantity_on_hand: '0.5' });
+    expect(run(half, TODAY).bucket).toBe('window_closing');
+  });
+
+  it('an UNTRACKED packet stays on the working list — the wrong-late direction is the costly one', () => {
+    const untracked = toCandidate(PACKETS.cucumberSpacemaster, { quantity_on_hand: null });
+    const buckets = bucketize([untracked], TODAY);
+    expect(buckets.sowed_previously).toHaveLength(0);
+    expect(locate(buckets, 'Spacemaster 80').bucket).toBe('window_closing');
+  });
+
+  it('the depleted card keeps its real window label and every column, not a blank', () => {
+    // "just need to know what I've had, how much I have now, and all the details even if zero."
+    const plain = run(toCandidate(PACKETS.cucumberSpacemaster), TODAY);
+    const depleted = bucketize(
+      [toCandidate(PACKETS.cucumberSpacemaster, { quantity_on_hand: 0 })], TODAY,
+    ).sowed_previously[0];
+    expect(depleted.windowLabel).toBe(plain.entry.windowLabel);
+    expect(depleted.windowLabel).toBeTruthy();
+    expect(depleted.candidate.sow_depth_in).toBe(plain.entry.candidate.sow_depth_in);
+    expect(depleted.candidate.days_to_maturity_max).toBe(plain.entry.candidate.days_to_maturity_max);
+  });
+
+  it('ROUND TRIP: restocking a packet returns it to the exact bucket it left', () => {
+    // Nothing is retired, deleted or status-flipped, so the only thing standing between a refilled
+    // packet and its old place on the list is the number itself.
+    const before = run(toCandidate(PACKETS.cucumberSpacemaster), TODAY);
+    const after = run(toCandidate(PACKETS.cucumberSpacemaster, { quantity_on_hand: '3' }), TODAY);
+    expect(after.bucket).toBe(before.bucket);
+    expect(after.entry.daysLeft).toBe(before.entry.daysLeft);
+    expect(after.entry.action).toBe(before.entry.action);
+  });
+
+  it('COMPOSES WITH ARCHIVE: an archived empty packet reports the review section as its home', () => {
+    // Order matters and is asserted, not assumed. Depletion picks the home bucket, archive diverts
+    // out of THAT — so un-archiving lands it back in sowed_previously rather than re-offering an
+    // empty packet on the working list.
+    const both = toCandidate(PACKETS.cucumberSpacemaster, {
+      quantity_on_hand: 0, sow_archived_season: SEASON,
+    });
+    const buckets = bucketize([both], TODAY);
+    expect(buckets.sowed_previously).toHaveLength(0);
+    expect(buckets.archived).toHaveLength(1);
+    expect(buckets.archived[0].archivedFrom).toBe('sowed_previously');
+    expect(buckets.archived[0].depletedFrom).toBe('window_closing');
+  });
+
+  it('depleting one packet does not disturb the others', () => {
+    const rows = [
+      toCandidate(PACKETS.spinachOceanside, { quantity_on_hand: 0 }),
+      toCandidate(PACKETS.cucumberSpacemaster),
+      toCandidate(PACKETS.broccoliBelstar),
+    ];
+    const buckets = bucketize(rows, TODAY);
+    expect(buckets.sowed_previously).toHaveLength(1);
+    expect(buckets.direct_sow_now).toHaveLength(0); // spinach was the only one
+    expect(buckets.window_closing).toHaveLength(1);
+    expect(buckets.hold).toHaveLength(1);
   });
 });
 
