@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.63.5",
+    "date": "2026-08-28",
+    "highlights": [
+      "Seed packet pages open again — every seed item was showing 'Internal server error' instead of its details"
+    ]
+  },
+  {
     "version": "4.63.1",
     "date": "2026-08-28",
     "highlights": [
