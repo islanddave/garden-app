@@ -1,7 +1,7 @@
 {
-  "version": "4.63.4",
+  "version": "4.64.0",
   "date": "2026-08-28",
   "highlights": [
-    "Seed packet pages open again — every seed item was showing 'Internal server error' instead of its details"
+    "Groundwork for sharing garden photos to Facebook and Instagram — not switched on yet"
   ]
 }
