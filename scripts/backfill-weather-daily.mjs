@@ -25,10 +25,26 @@
 // WHAT IT CANNOT RECOVER, AND WHY THAT IS NOT A DEFECT
 //
 // Every row this script writes is labelled 'openmeteo_archive' on BOTH provenance columns, and it will
-// never overwrite a 'gauge_merged' precip value. The on-site WS-2902's history is not reachable from
-// here — the AmbientWeather API serves a rolling ~3-day window of 5-minute records and nothing older —
-// so for any day older than that, the model figure is genuinely the best available number and saying
-// so on the row is the honest outcome. What would NOT be honest is letting a re-run of this script
+// never overwrite a 'gauge_merged' precip value.
+//
+// ⚠ CORRECTED 2026-08-28 (V4-RAINAUTOLOG-001). This block used to continue: "The on-site WS-2902's
+// history is not reachable from here — the AmbientWeather API serves a rolling ~3-day window of
+// 5-minute records and nothing older — so for any day older than that, the model figure is genuinely
+// the best available number." That is FALSE, and it is why 38 days of real measurements were replaced
+// by model estimates on 2026-08-13.
+//
+// The ~3-day limit is real for RANGE requests — which is what the 2026-08-12 verification below
+// tested, a 90-day bulk pull. It does NOT apply to endDate-anchored single fetches:
+//     GET /v1/devices/<mac>?endDate=<epoch_ms>&limit=1
+// serves the record nearest that instant however far back it is. Querying one day at a time, anchored
+// at ET midnight and reading `dailyrainin`, recovered this station's complete daily series back to its
+// 2026-07-05 install date — confirmed two ways: it reproduces all 15 existing gauge_merged values
+// exactly, and its July daily values sum to exactly the 7.06" the station itself reports for July.
+//
+// The model figure is therefore NOT the best available number for the pre-gauge-integration period,
+// and it under-reads this site materially (2026-08-03: model 1.00" vs gauge 2.22"). Before running
+// this script over any window the station was alive for, pull the gauge instead. See
+// migrations/v4-rainbackfill-001. What would NOT be honest is letting a re-run of this script
 // quietly replace a measured value with an estimate on days the gauge did cover; hence the guard.
 //
 // Verified against the live endpoint on 2026-08-12 for this Space's coordinates: a 90-day request

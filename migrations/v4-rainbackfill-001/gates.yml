@@ -1,0 +1,267 @@
+# gates.yml
+# V4-RAINAUTOLOG-001 — re-source weather_daily precip from the on-site gauge, and create the rain
+# events that were never logged.
+#
+# DATA-ONLY. No DDL on any app table; the two snap_* tables are rollback scaffolding. No constraint
+# is added, widened or validated — 'import' was already legal in event_log_source_check and
+# 'gauge_merged' was already legal in weather_daily_precip_source_chk. That is not incidental: an
+# earlier draft introduced a new precip_source value and a rehearsal on a prod fork rejected it, then
+# a grep found the better reason not to (see 0b step 2 — the label is a protection key, not a label).
+#
+# DEPLOY BOUNDARY — the falsifiable test.
+#
+#   QUESTION: can the CURRENTLY DEPLOYED prod code produce a row that violates what this file
+#             establishes, or break because of what this file writes?
+#   ANSWER:   No, both directions.
+#             (a) The only deployed writer of weather_daily is the daily-plan upsert, which touches
+#                 today and the recent window and will not revisit 2026-07-05..2026-08-11. Where it
+#                 does overlap, its own guard PRESERVES 'gauge_merged' rows against model overwrite —
+#                 which is precisely why step 2 writes that label.
+#             (b) event_log rows with source='import' are already legal and are read by every 'rain'
+#                 consumer exactly like any other rain row. That IS the intent.
+#             (c) entity_memory is written FORWARD ONLY (GREATEST), the same direction as every
+#                 deployed forward writer, so it cannot collide with V4-CARECACHEUNDO-001's
+#                 backwards-only repair.
+#   CONSEQUENCE: order-independent. Safe before or after any promote. Fully idempotent — proven by
+#             running 0b twice on a prod fork: the second run reported UPDATE 0 / INSERT 0 / UPDATE 0
+#             and left the event count unchanged.
+#
+# DESTRUCTIVE STEPS: none. No DROP, no DELETE, no hard delete, no constraint change. 0r soft-deletes.
+#
+# ORDER APPLIED: rehearsed end-to-end on ephemeral Neon branch br-super-tree-amoj2kuw (a fork of
+# prod) on 2026-08-28 — apply, re-apply for idempotency, then 0r — and the fork returned to its exact
+# pre-apply state (698 live rain events, 8.37" over 2026-07-05..08-11).
+
+pre:
+  # The substrate this migration writes. Asserted, not assumed.
+  - name: pre_weather_daily_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'weather_daily'
+         AND column_name IN ('date','precip_in','precip_source')
+    expect: rowcount_eq
+    value: 3
+
+  # 'import' must already be an accepted source. If this ever fails, event_log_source_check has been
+  # narrowed and step 3 would 23514 on every row.
+  - name: pre_import_is_a_legal_event_source
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.event_log'::regclass
+         AND conname = 'event_log_source_check'
+         AND pg_get_constraintdef(oid) LIKE '%''import''%'
+    expect: rowcount_eq
+    value: 1
+
+  # Likewise 'gauge_merged'. Step 2 depends on it being legal AND on it being the value the
+  # daily-plan clobber-guard keys on.
+  - name: pre_gauge_merged_is_a_legal_precip_source
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.weather_daily'::regclass
+         AND conname = 'weather_daily_precip_source_chk'
+         AND pg_get_constraintdef(oid) LIKE '%''gauge_merged''%'
+    expect: rowcount_eq
+    value: 1
+
+  # locations.covered is the roof rule's whole substrate. Without it the recursive predicate returns
+  # NULL -> COALESCE false -> EVERY planting is treated as outdoors, including the indoor shelves.
+  - name: pre_covered_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'locations' AND column_name = 'covered'
+    expect: rowcount_eq
+    value: 1
+
+  # ...and it must be POPULATED, not merely present. An all-NULL/all-false column would satisfy the
+  # gate above while silently raining on the indoor rack. This is the instrument check: at authoring
+  # time prod has 8 covered locations (House, Stable, Indoor Rack, Shelf 1-5).
+  - name: pre_covered_column_is_populated
+    sql: |
+      SELECT 1 FROM public.locations WHERE deleted_at IS NULL AND covered IS TRUE
+    expect: rowcount_gte
+    value: 1
+
+  # A pre-existing snapshot means an earlier run already captured state. 0b's CREATE TABLE IF NOT
+  # EXISTS would adopt that older capture as the rollback target — correct for a resumed run, wrong
+  # and invisible for a fresh one. Fail loudly and let a human decide which it is.
+  - name: pre_snapshot_tables_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name LIKE 'snap_rainbackfill001_%'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.62.0-rainbackfill-001'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # The L-058 all-row check in its data-repair form: MEASURE the population before the write so the
+  # post gate can prove what moved. rowcount_gte 0 always passes, still runs, still reports — the
+  # point is to put the before/after of a data-quality finding on the record instead of in prose.
+  - name: sweep_capture_model_sourced_days_in_the_gauge_era
+    note: >
+      weather_daily rows in 2026-07-05..2026-08-11 NOT sourced from the gauge. This is the blast
+      radius of step 2 and exactly the set it rewrites. The station was recording throughout this
+      window — its counter starts 2026-07-05 — so every one of these is a model estimate standing in
+      for a measurement that existed. Prod at authoring time: 37 rows, all 'openmeteo_archive' or
+      'openmeteo_live', every one created 2026-08-13 by a single bulk backfill. Must be 0 after 0b.
+    sql: |
+      SELECT date FROM public.weather_daily
+       WHERE date BETWEEN DATE '2026-07-05' AND DATE '2026-08-11'
+         AND (precip_source IS NULL OR precip_source <> 'gauge_merged')
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_capture_rain_days_with_no_event
+    note: >
+      Gauge days above the 0.10" threshold since Dave's last manual rain log (2026-07-18) that have
+      no rain event on any planting. Prod at authoring time: 8 — 07-21, 07-28, 07-29, 07-30, 07-31,
+      08-03, 08-17, 08-23. Expressed against weather_daily so it stays meaningful after 0b re-sources
+      it, and so it keeps working as a standing check on the nightly job once that ships.
+    sql: |
+      SELECT wd.date FROM public.weather_daily wd
+       WHERE wd.date > DATE '2026-07-18'
+         AND wd.date < CURRENT_DATE
+         AND wd.precip_in > 0.10
+         AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                          WHERE e.event_type = 'rain' AND e.deleted_at IS NULL
+                            AND e.event_date::date = wd.date)
+    expect: rowcount_gte
+    value: 0
+
+post:
+  # Step 2's invariant, CORRECTED after this gate failed on prod at apply time with 1 row.
+  #
+  # It originally read "every day in 2026-07-05..08-11 is gauge_merged", which over-claimed what the
+  # migration does. 2026-08-01 is a real hole in the station's series — the AWN API returns NO record
+  # for that day — so _gauge deliberately omits it and step 2 leaves it at its model value of 0.12".
+  # Writing 0, or claiming a gauge source for it, would assert a measurement that does not exist.
+  #
+  # The honest invariant is about the OTHER direction: no day the gauge DID cover may still be
+  # carrying a model estimate. Expressed as the count of model-sourced days in the window, pinned at
+  # exactly the known hole. If a second hole ever appears this goes red and someone looks — which is
+  # what should happen, because a growing hole count means the station is dropping days.
+  - name: post_only_the_known_gauge_hole_remains_model_sourced
+    sql: |
+      SELECT date FROM public.weather_daily
+       WHERE date BETWEEN DATE '2026-07-05' AND DATE '2026-08-11'
+         AND (precip_source IS NULL OR precip_source <> 'gauge_merged')
+         AND date <> DATE '2026-08-01'
+    expect: rowcount_eq
+    value: 0
+
+  # Step 3's invariant, and the one that answers Dave's original complaint: no gauge-measured rain
+  # day above threshold since his last manual log may lack an event. This gate is deliberately
+  # CONTINUOUS — once the nightly job ships, this is exactly the standing assertion that proves it is
+  # still running, and a red here means rain stopped being logged. Self-arming by construction: its
+  # window is open-ended, so it covers days that do not exist yet.
+  # SCOPED TO GAUGE-SOURCED DAYS, corrected alongside the gate above and for the same reason. Dave's
+  # threshold is "above 0.10 inches MEASURED"; a model-sourced day carries no measurement, so it
+  # cannot owe an event. Without this scope the gate demanded a rain event for 2026-08-01's 0.12"
+  # model estimate — a day the station has no reading for and which Dave's approval did not include.
+  # Scoping on precip_source rather than on a date list also makes the gate self-maintaining.
+  - name: post_every_measured_threshold_rain_day_has_events
+    sql: |
+      SELECT wd.date FROM public.weather_daily wd
+       WHERE wd.date > DATE '2026-07-18'
+         AND wd.date < CURRENT_DATE
+         AND wd.precip_source = 'gauge_merged'
+         AND wd.precip_in > 0.10
+         AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                          WHERE e.event_type = 'rain' AND e.deleted_at IS NULL
+                            AND e.event_date::date = wd.date)
+    expect: rowcount_eq
+    value: 0
+
+  # The roof rule, asserted as an outcome rather than trusted from the predicate. No planting under a
+  # roof may carry a backfilled rain row. NOT continuous — it is scoped to this migration's tag, so
+  # it stays true forever and costs nothing to keep checking.
+  - name: post_no_rain_backfilled_onto_a_covered_planting
+    sql: |
+      SELECT e.id
+        FROM public.event_log e
+        JOIN public.garden_node p ON p.id = e.plant_id
+       WHERE e.metadata->>'rain_backfill' = 'v4-rainbackfill-001'
+         AND e.deleted_at IS NULL
+         AND COALESCE((
+               WITH RECURSIVE up AS (
+                 SELECT l.id, l.parent_id, l.covered FROM public.locations l
+                  WHERE l.id = p.location_id AND l.deleted_at IS NULL
+                 UNION ALL
+                 SELECT l.id, l.parent_id, l.covered FROM up
+                   JOIN public.locations l ON l.id = up.parent_id AND l.deleted_at IS NULL
+               ) SELECT bool_or(up.covered) FROM up
+             ), false)
+    expect: rowcount_eq
+    value: 0
+
+  # Every backfilled rain event must carry its measurement. All 698 pre-existing rain events have
+  # quantity_numeric NULL, which is why Dave's own recollection of a heavy week could not be checked
+  # against the app at all. These rows are the first to honour RAIN-EVENT-001's inches column, and a
+  # future edit that drops it would silently restore the old blindness.
+  - name: post_every_backfilled_event_carries_its_inches
+    sql: |
+      SELECT id FROM public.event_log
+       WHERE metadata->>'rain_backfill' = 'v4-rainbackfill-001'
+         AND deleted_at IS NULL
+         AND (quantity_numeric IS NULL OR quantity_numeric <= 0.10)
+    expect: rowcount_eq
+    value: 0
+
+  # NO REWARD SIDE EFFECTS. The reason this is a migration and not a call to POST /api/events/batch
+  # (see 0b's header): backfilled rain is not a logging action Dave performed, and routing it through
+  # the batch path would have minted 8 critter rolls, 8 XP awards and 8 days of streak credit for
+  # weather a machine noticed. Asserted rather than merely intended.
+  #
+  # continuous: false — app_events is ordinary live telemetry and grows constantly; this is an
+  # APPLY-TIME claim about what 0b did, and leaving it continuous would turn normal garden use red.
+  - name: post_no_telemetry_row_references_the_backfill
+    continuous: false
+    sql: |
+      SELECT id FROM public.app_events
+       WHERE metadata::text LIKE '%rain_backfill%'
+          OR metadata::text LIKE '%v4-rainbackfill-001%'
+    expect: rowcount_eq
+    value: 0
+
+  # The rollback path must be usable: every weather row 0b rewrote has to be in the snapshot. If the
+  # snapshot predicate and the UPDATE predicate ever drift apart, catch it while data is recoverable
+  # rather than after someone needs 0r.
+  - name: post_every_rewritten_weather_row_is_snapshotted
+    sql: |
+      SELECT wd.date FROM public.weather_daily wd
+       LEFT JOIN public.snap_rainbackfill001_weather_daily s
+              ON s.date = wd.date AND s.space_id IS NOT DISTINCT FROM wd.space_id
+       WHERE wd.date BETWEEN DATE '2026-07-05' AND DATE '2026-08-11'
+         AND wd.precip_source = 'gauge_merged'
+         AND s.date IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  # The care cache may never claim a watering the log cannot support. Same invariant
+  # V4-CARECACHEUNDO-001 established; re-asserted here narrowly over the plants this file touched,
+  # because step 4 is the only new writer of last_watered_at in it.
+  - name: post_cache_not_ahead_of_log_for_touched_plants
+    sql: |
+      SELECT em.id
+        FROM public.entity_memory em
+       WHERE em.plant_id IN (SELECT DISTINCT plant_id FROM public.event_log
+                              WHERE metadata->>'rain_backfill' = 'v4-rainbackfill-001'
+                                AND deleted_at IS NULL)
+         AND em.last_watered_at IS NOT NULL
+         AND em.last_watered_at > (SELECT MAX(e.event_date) FROM public.event_log e
+                                    WHERE e.plant_id = em.plant_id
+                                      AND e.event_type IN ('watering','rain')
+                                      AND e.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.62.0-rainbackfill-001'
+    expect: rowcount_eq
+    value: 1
