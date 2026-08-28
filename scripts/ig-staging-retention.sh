@@ -33,6 +33,21 @@ POLICY_NAME="IgStagingVersionCleanup"
 PREFIX="ig-staging/"
 MODE="${1:-dryrun}"
 
+# THE REPLICA IS NOT OPTIONAL. Measured 2026-08-28: garden-photos-prod carries replication rule
+# `crr-photos-all` with an EMPTY filter — it replicates EVERY object, ig-staging/ included — to
+# garden-photos-replica-usw2, which is versioned and has NO lifecycle configuration of its own.
+#
+# Neither branch of the handler's sweep reaches that copy:
+#   - DeleteMarkerReplication is Disabled on the rule (measured), so a plain delete does not
+#     propagate; and
+#   - S3 does not replicate version-specific deletes at all, so the version-aware delete cannot
+#     propagate either, even once s3:DeleteObjectVersion is granted.
+#
+# So without a rule on the REPLICA, an EXIF-stripped copy of every shared private photo accumulates
+# in us-west-2 permanently. Cleaning only the source bucket would look complete and would not be.
+REPLICA="${REPLICA:-garden-photos-replica-usw2}"
+REPLICA_REGION="${REPLICA_REGION:-us-west-2}"
+
 say() { printf '%s\n' "$*"; }
 hr()  { printf '%s\n' "------------------------------------------------------------"; }
 
@@ -111,6 +126,22 @@ print(json.dumps({"Rules": out}, indent=2))
 say "     merged configuration that would be written:"
 printf '%s\n' "$MERGED" | sed 's/^/     /'
 
+# ── 3. The SAME rule on the replica, in its own region ───────────────────────────────────────────
+say ""
+say "[3/3] Lifecycle rule 'expire-ig-staging' on the REPLICA '${REPLICA}' (${REPLICA_REGION})"
+R_EXISTING=$(aws s3api get-bucket-lifecycle-configuration --bucket "$REPLICA" --region "$REPLICA_REGION" --output json 2>/dev/null || echo '{"Rules":[]}')
+R_IDS=$(printf '%s' "$R_EXISTING" | python3 -c 'import json,sys; print(",".join(r.get("ID","<no-id>") for r in json.load(sys.stdin).get("Rules",[])) or "(none)")')
+say "     existing rules: ${R_IDS}"
+R_MERGED=$(printf '%s' "$R_EXISTING" | RULE="$LIFECYCLE_RULE" python3 -c '
+import json, os, sys
+cur = json.load(sys.stdin).get("Rules", [])
+new = json.loads(os.environ["RULE"])
+out = [r for r in cur if r.get("ID") != new["ID"]] + [new]
+print(json.dumps({"Rules": out}, indent=2))
+')
+say "     merged configuration that would be written:"
+printf '%s\n' "$R_MERGED" | sed 's/^/     /'
+
 if [[ "$MODE" != "apply" ]]; then
   say ""
   hr; say "DRY RUN — nothing was changed. Re-run with: $0 apply"; hr
@@ -128,6 +159,11 @@ printf '%s' "$MERGED" > /tmp/ig-staging-lifecycle.json
 aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" \
   --lifecycle-configuration file:///tmp/ig-staging-lifecycle.json
 say "  ✓ lifecycle rule expire-ig-staging written to ${BUCKET}"
+
+printf '%s' "$R_MERGED" > /tmp/ig-staging-lifecycle-replica.json
+aws s3api put-bucket-lifecycle-configuration --bucket "$REPLICA" --region "$REPLICA_REGION" \
+  --lifecycle-configuration file:///tmp/ig-staging-lifecycle-replica.json
+say "  ✓ lifecycle rule expire-ig-staging written to ${REPLICA} (${REPLICA_REGION})"
 
 say ""
 say "VERIFY (read-back, not inference):"

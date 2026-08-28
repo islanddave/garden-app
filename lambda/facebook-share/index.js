@@ -637,8 +637,17 @@ async function stageAndSign(prepared, groupId) {
 // granted, the versioned branch below fails AccessDenied and we fall through to the tombstone —
 // which is why the failure is logged loudly and counted, rather than swallowed as "best effort".
 // There is also NO lifecycle configuration on the bucket at all (NoSuchLifecycleConfiguration), so
-// nothing expires non-current versions in the background either. Both are prepared in
-// scripts/ig-staging-retention.sh; neither is applied.
+// nothing expires non-current versions in the background either.
+//
+// AND THE SWEEP CANNOT REACH THE REPLICA AT ALL. garden-photos-prod replicates via `crr-photos-all`
+// with an EMPTY filter — every object, ig-staging/ included — to garden-photos-replica-usw2
+// (versioned, no lifecycle). `DeleteMarkerReplication` is Disabled on that rule, and S3 does not
+// replicate version-specific deletes under any setting, so NEITHER branch below propagates. This
+// function can therefore never be the whole answer: the replica needs its own lifecycle rule, which
+// is why scripts/ig-staging-retention.sh writes to both buckets. The architecturally cleaner fix is
+// to stage somewhere that is not replicated at all — recorded for Dave rather than done here,
+// because it changes where this handler writes.
+// All of it is prepared in scripts/ig-staging-retention.sh; NONE of it is applied.
 async function cleanupStaging(staged) {
   await Promise.all(staged.map(async ({ key: Key, versionId }) => {
     try {
