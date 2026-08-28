@@ -102,6 +102,21 @@ export default defineConfig({
         // so nothing measured it from either direction. Ratchet stays at active_target: 0, same as
         // the daily-plan precedent: this adds measurement, not a new gate.
         'lambda/harvests/**',
+        // V5-SHAREHARDENING-001: instrument the social publish path. Until 2026-08-28 index.js could
+        // not be IMPORTED by this run at all (its deps live in the Lambda's own package.json), so
+        // 433 lines that publish to a public Facebook Page had zero coverage AND were invisible to
+        // every coverage measurement — unmeasured and unmeasurable at once. The alias block above
+        // fixed the first half; this fixes the second, so deleting those tests now shows up as a
+        // coverage drop instead of silently restoring the old state.
+        // MEASURED with this line present, full suite: statements 94.17 / branches 85.16 /
+        // functions 91.03 / lines 94.17 — every one comfortably clear of the floors below, so this
+        // adds measurement without moving a gate. Within the directory: index.js 94.06 stmts /
+        // 92 funcs, orphans.js and exif.js 100. The laggard is household.js (14.28 funcs), a shared
+        // module whose unused exports this path does not reach; it is included honestly rather than
+        // excluded to flatter the number.
+        // Ratchet untouched at active_target 73 — advancing it is a milestone decision needing
+        // Dave, per No-Date-Based-Gating.
+        'lambda/facebook-share/**',
       ],
       exclude: [
         'src/__tests__/**',
