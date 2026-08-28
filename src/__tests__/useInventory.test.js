@@ -307,6 +307,27 @@ describe('useInventory — adjustQuantity', () => {
     await act(async () => { await result.current.adjustQuantity('item-1', 0) })
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
+
+  // BUG-INVUNDOQTY-001: undo re-enters adjustQuantity, which must read the POST-change
+  // quantity. Reading the render closure's `items` gives the pre-change 10, so the -1
+  // reverse delta lands on 10 and writes 9 — off by twice the delta. Fails `received: 9`
+  // against the pre-fix hook.
+  it('undo restores the ORIGINAL quantity, not original-minus-delta (BUG-INVUNDOQTY-001)', async () => {
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    fetchSpy.mockResolvedValueOnce({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11 })
+    await act(async () => { await result.current.adjustQuantity('item-1', 1) })
+    expect(result.current.items[0].quantity_on_hand).toBe(11)
+
+    fetchSpy.mockResolvedValueOnce({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 10 })
+    await act(async () => { await result.current.toast.onUndo() })
+
+    const puts = fetchSpy.mock.calls.filter(c => c[1]?.method === 'PUT')
+    expect(JSON.parse(puts[1][1].body).quantity_on_hand).toBe(10)
+    expect(result.current.items[0].quantity_on_hand).toBe(10)
+  })
 })
 
 describe('useInventory — deleteItem', () => {

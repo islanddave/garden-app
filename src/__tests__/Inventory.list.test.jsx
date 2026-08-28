@@ -339,35 +339,13 @@ describe('Inventory list — preserved behaviours', () => {
     await act(async () => { fireEvent.click(undo); await new Promise(r => setTimeout(r, 50)) })
     const puts = fetchSpy.mock.calls.filter(c => c[1]?.method === 'PUT')
     expect(puts).toHaveLength(2)
-    // Direction is the part that is correct: the first write raised the count, the second lowers it.
+    // The first write raised the count, the second lowers it...
     expect(JSON.parse(puts[1][1].body).quantity_on_hand)
       .toBeLessThan(JSON.parse(puts[0][1].body).quantity_on_hand)
-  })
-
-  /**
-   * ⚠️ THIS PINS A DEFECT, NOT A REQUIREMENT. Undo does not restore the original value:
-   * 2 → (+1) → 3 → (undo) → 1. It should land back on 2.
-   *
-   * Cause is in useInventory.js (last touched 830f179, 2026-05-18 — it predates the HG-4.2
-   * re-skin and this lane changed nothing in it). adjustQuantity's toast does
-   * `onUndo: () => adjustQuantity(id, prevValue - newValue)`, and the `adjustQuantity` it
-   * names is the one from its OWN render, whose `items` still holds the pre-change quantity.
-   * So the reverse delta (-1) is applied to the stale 2 instead of the live 3. The comment
-   * directly above that line — "Use the latest current value from state, not the closure
-   * value" — states the intent the code does not implement.
-   *
-   * Pinned rather than fixed because the fix belongs to the shared hook (3 consumer pages),
-   * not to the list re-skin. When someone repairs it this test SHOULD fail — read this block,
-   * then change the expected value to 2 and fold it into the test above.
-   */
-  it('documents the known undo off-by-one (expected to fail once the hook is fixed)', async () => {
-    await renderList()
-    fireEvent.click(screen.getByLabelText(/Sungold Tomato — expand details/))
-    await act(async () => { fireEvent.click(screen.getByLabelText('Increase quantity')) })
-    const undo = await screen.findByRole('button', { name: 'Undo' })
-    await act(async () => { fireEvent.click(undo); await new Promise(r => setTimeout(r, 50)) })
-    const puts = fetchSpy.mock.calls.filter(c => c[1]?.method === 'PUT')
-    expect(JSON.parse(puts[1][1].body).quantity_on_hand).toBe(1)   // ← should be 2
+    // ...and lands back on the ORIGINAL 2, not on 2 - delta. Folded in from the
+    // characterization test that used to pin `1` here (BUG-INVUNDOQTY-001), per that
+    // block's own instruction to flip the value and merge once the hook was repaired.
+    expect(JSON.parse(puts[1][1].body).quantity_on_hand).toBe(2)
   })
 
   it('dismisses the toast', async () => {
