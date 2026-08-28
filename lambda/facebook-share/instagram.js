@@ -33,6 +33,11 @@ export const IG_MAX_MENTIONS = 20;
 export const IG_MAX_BYTES = 8 * 1024 * 1024;   // IG caps at 8MB; Facebook's ceiling is 10MB
 export const IG_MAX_CAROUSEL = 10;
 export const IG_MIN_CAROUSEL = 2;              // 1 item is a plain single post, not a carousel
+// alt_text on POST /{ig-user-id}/media. Meta's parameter reference: "For image posts only.
+// Alternative text, up to 1000 character, for an image. Only supported on a single image or image
+// media in a carousel." So it rides on the SINGLE container and on each carousel CHILD — never on
+// the carousel parent, which holds no image of its own, and never on video/reels.
+export const IG_MAX_ALT_TEXT = 1000;
 
 // D4 polling contract. A container is not publishable the instant it is created; Meta fetches the
 // URL asynchronously. Publishing a non-FINISHED container fails, so polling is mandatory, not
@@ -153,18 +158,38 @@ export function parsePublishingLimit(json) {
   return { known: used != null, used, cap };
 }
 
+// alt_text, spread into a field list. Mirrors altField() on the Facebook side and makes the same
+// choice for the same reason: an absent description must be an ABSENT FIELD, never alt_text=''. An
+// empty string is a stored, deliberate-looking "this image has no description" that suppresses the
+// platform's own handling, whereas omitting leaves the media in the state Instagram already knows
+// how to treat. Filler would be worse than either — a screen reader announces it as a description.
+//
+// Over the 1000-character cap the field is OMITTED rather than truncated. This text is DERIVED from
+// planting/variety/crop names, so it should be a short phrase; anything approaching 1000 characters
+// means something upstream is wrong, and a silently truncated description would hide that while
+// possibly ending mid-word. Sending it anyway would fail container creation and burn quota.
+export function igAltField(alt) {
+  const a = typeof alt === 'string' ? alt.trim() : '';
+  if (!a || a.length > IG_MAX_ALT_TEXT) return [];
+  return [['alt_text', a]];
+}
+
 // Build the child-container fields for a carousel item. Children carry NO caption — the caption
-// belongs on the parent, and setting it on a child is silently ignored.
-export function carouselChildFields(imageUrl, accessToken) {
+// belongs on the parent, and setting it on a child is silently ignored. They DO carry alt_text:
+// Meta's reference allows it on "image media in a carousel", and the child is the only container in
+// this flow that corresponds to an actual image.
+export function carouselChildFields(imageUrl, accessToken, alt) {
   return [
     ['image_url', imageUrl],
     ['is_carousel_item', 'true'],
+    ...igAltField(alt),
     ['access_token', accessToken],
   ];
 }
 
 // Build the parent carousel container fields. `children` is a comma-separated list of child
-// container ids, in display order.
+// container ids, in display order. NO alt_text here — the parent holds no image of its own; the
+// per-image descriptions live on the children built above.
 export function carouselParentFields(childIds, caption, accessToken) {
   return [
     ['media_type', 'CAROUSEL'],
@@ -175,10 +200,11 @@ export function carouselParentFields(childIds, caption, accessToken) {
 }
 
 // Build the fields for a single (non-carousel) image container.
-export function singleImageFields(imageUrl, caption, accessToken) {
+export function singleImageFields(imageUrl, caption, accessToken, alt) {
   return [
     ['image_url', imageUrl],
     ['caption', caption ?? ''],
+    ...igAltField(alt),
     ['access_token', accessToken],
   ];
 }

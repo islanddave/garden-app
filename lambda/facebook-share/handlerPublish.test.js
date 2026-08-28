@@ -195,6 +195,27 @@ describe('facebook-share publish path', () => {
     expect(updates.some((c) => /status = 'failed'/.test(c.text))).toBe(true);
   });
 
+  // THE ALT TEXT IS PUBLISHED TOO, AND WAS UNGUARDED. Every test in this suite passed with the
+  // handler's `altTexts:` argument replaced by `[]` (measured 2026-08-28 by mutation), so boss
+  // condition 6's control could have been silently narrowed to the caption alone on the LIVE
+  // Facebook path without a single failure. That is the more dangerous half: a caption is typed
+  // deliberately, whereas alt text is DERIVED from planting/variety/crop display names that were
+  // authored for private use and can say anything — including where something is.
+  it('a coordinate pair in the ALT TEXT blocks the post, not just one in the caption', async () => {
+    stubState.sqlHandler = sqlRouter({
+      photos: [{ ...photoRow('p1'), planting_name: 'bed at 42.4712, -72.6009' }],
+    });
+    const { status, body } = parse(
+      await handler(post({ photo_ids: ['p1'], caption: 'lovely afternoon' })));
+
+    expect(status).toBe(422);
+    expect(body.error).toBe('content_blocked');
+    // The offending FIELD is named as an alt, which is what proves the caption did not trip it.
+    expect(body.fields.join(',')).toMatch(/alt/);
+    expect(body.fields).not.toContain('caption');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('a configured forbidden term blocks the post, and the response never echoes the term', async () => {
     const secret = 'Mathews Road';
     process.env.SHARE_FORBIDDEN_TERMS = JSON.stringify([secret]);
