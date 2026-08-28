@@ -267,6 +267,21 @@ describe('facebook-share publish path', () => {
     expect(fetchMock).not.toHaveBeenCalled();   // the whole point: no second post
   });
 
+  // The replay lookup is scoped to target='facebook'. Today that predicate matches nothing extra —
+  // the shipping client gives each target its own id — so it is a safety property of the QUERY
+  // rather than a behaviour anyone can observe. It is pinned because the failure it prevents is
+  // silent and severe: under a shared-id scheme (which the rescued Instagram lane used) an Instagram
+  // row would answer this lookup, and the endpoint would return replay:true with an Instagram media
+  // id as post_id — the sheet reporting a Facebook post that was never made.
+  it('scopes the replay lookup to target=facebook in the SQL it actually issues', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    fetchMock.mockResolvedValueOnce(okJson({ id: 'M1', post_id: 'P1' })).mockResolvedValueOnce(okJson({}));
+    await handler(post({ photo_ids: ['p1'], client_request_id: 'req-fb-1' }));
+    const replayQuery = stubState.sqlCalls.map((c) => c.text).find((t) => /FROM share_log/i.test(t));
+    expect(replayQuery).toBeTruthy();
+    expect(replayQuery).toContain("target = 'facebook'");
+  });
+
   it('without a client_request_id there is no replay lookup, so a repost really posts', async () => {
     stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
     fetchMock.mockResolvedValueOnce(okJson({ id: 'M9', post_id: 'P9' }))
