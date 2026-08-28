@@ -1,0 +1,106 @@
+# gates.yml
+# V4-SHARETARGETS-001 — share_log target/status honesty + permalink + on_behalf_of.
+#
+# SEQUENCING: staging -> prod, and BEFORE any handler that writes target='instagram' or one of the
+# new status values. Adding accepted values is the safe direction: the currently deployed writer
+# emits only 'facebook' and only the five original statuses, so this DDL strictly widens what it is
+# allowed to do and needs no promote coordination of its own. Doing it the other way round — code
+# first — publishes to a public Page and then fails the audit INSERT with 23514.
+#
+# NO BACKFILL. share_log holds 0 rows (verified against prod Neon), which is the whole reason this
+# is cheap: there is no history to migrate, only a shape to fix before the first row exists.
+
+pre:
+  - name: pre_share_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='share_log'
+    expect: rowcount_eq
+    value: 1
+
+  # The default this migration exists to remove. If it is already absent, either the migration has
+  # run or something else changed the column — either way, stop and look rather than proceed.
+  - name: pre_target_default_is_facebook
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='share_log'
+         AND column_name='target' AND column_default LIKE '%facebook%'
+    expect: rowcount_eq
+    value: 1
+
+  # Adding a CHECK validates every existing row. This asserts the table really is empty, so the
+  # constraint additions below cannot fail partway on legacy data.
+  - name: pre_no_rows_to_validate
+    sql: SELECT count(*) FROM share_log
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_target_default_removed
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='share_log'
+         AND column_name='target' AND column_default IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_target_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.share_log'::regclass AND conname='share_log_target_valid'
+    expect: rowcount_eq
+    value: 1
+
+  # Behavioural, not structural: assert the constraint ACCEPTS the destination the Instagram lane
+  # writes. A gate that only checks the constraint EXISTS would pass against a facebook-only CHECK,
+  # which is precisely the version that breaks after a real Instagram post has already gone out.
+  - name: post_target_check_admits_instagram
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.share_log'::regclass AND conname='share_log_target_valid'
+         AND pg_get_constraintdef(oid) LIKE '%instagram%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_status_check_admits_the_new_states
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.share_log'::regclass AND conname='share_log_status_valid'
+         AND pg_get_constraintdef(oid) LIKE '%orphan_cleanup_failed%'
+         AND pg_get_constraintdef(oid) LIKE '%queued%'
+         AND pg_get_constraintdef(oid) LIKE '%partial%'
+         AND pg_get_constraintdef(oid) LIKE '%retracted%'
+    expect: rowcount_eq
+    value: 1
+
+  # The five original statuses must SURVIVE the widening. A rewritten CHECK that dropped one would
+  # break the deployed handler on its very next write, and nothing else here would catch it.
+  - name: post_status_check_still_admits_the_deployed_writers_values
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.share_log'::regclass AND conname='share_log_status_valid'
+         AND pg_get_constraintdef(oid) LIKE '%pending%'
+         AND pg_get_constraintdef(oid) LIKE '%uploading%'
+         AND pg_get_constraintdef(oid) LIKE '%posted%'
+         AND pg_get_constraintdef(oid) LIKE '%failed%'
+         AND pg_get_constraintdef(oid) LIKE '%orphan_cleaned%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_new_columns_present
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='share_log'
+         AND column_name IN ('permalink', 'on_behalf_of')
+    expect: scalar_eq
+    value: 2
+
+  # ON DELETE RESTRICT on share_log.photo_id is NOT drift — it was set deliberately by
+  # v4-cascadesweep-001, and the migration FILE that still declares CASCADE is the stale artifact.
+  # Asserted here so a future session does not "fix" it back.
+  - name: post_photo_fk_still_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.share_log'::regclass AND contype='f' AND confdeltype='r'
+    expect: rowcount_eq
+    value: 1
