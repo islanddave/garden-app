@@ -232,6 +232,13 @@ function collectClientPaths() {
 function collectLambdaRoutes() {
   const table = {}
   for (const dir of readdirSync(LAMBDA)) {
+    // `_`-prefixed directories under lambda/ are shared TEST SUPPORT, not deployable functions —
+    // lambda/_test-stubs/ holds the AWS/Clerk/Neon stand-ins that vitest.config.ts aliases so a
+    // handler can be imported and executed at all. Enumerating one here made it show up as a
+    // path-agnostic "Lambda" and broke the exact-set assertion below. The deploy matrix in
+    // deploy-lambda.yml is a hardcoded 26-name list rather than a glob, so such a directory was
+    // never at risk of being DEPLOYED — but this walker globs, so it needs the same distinction.
+    if (dir.startsWith('_')) continue
     const abs = join(LAMBDA, dir)
     if (!statSync(abs).isDirectory()) continue
     const literals = new Set()

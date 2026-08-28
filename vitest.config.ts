@@ -17,6 +17,27 @@ export default defineConfig({
   // plugin-react runs under a vite it supports and is unaffected by this block.
   // Guarded by src/__tests__/jsxAutomaticRuntime.test.jsx: revert this and that file goes red.
   esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
+  // Lambda runtime deps, aliased to stubs so handlers can be IMPORTED and executed by the unit run.
+  //
+  // Each Lambda declares its own AWS/Clerk/Neon deps in its own package.json; none are installed at
+  // the repo root. A handler therefore could not be imported here at all, and the consequence was
+  // that lambda/facebook-share/index.js — 433 lines whose job is publishing to a public Facebook
+  // Page — had ZERO execution coverage. Its auth gate, admin gate and kill switch, the three
+  // controls standing in front of that endpoint, were never once executed by a test.
+  //
+  // This is safe precisely BECAUSE these specifiers resolve to nothing today: no src/ file imports
+  // any of them (the three that mention them do so only in comments), so aliasing cannot change the
+  // behaviour of any existing test. The integration suite is unaffected — it runs under
+  // vitest.integration.config.ts with its own include, and uses the REAL driver against real Neon.
+  // Adding a Lambda dep to the ROOT package.json in future would shadow this; don't.
+  resolve: {
+    alias: {
+      '@clerk/backend': new URL('./lambda/_test-stubs/clerk-backend.js', import.meta.url).pathname,
+      '@neondatabase/serverless': new URL('./lambda/_test-stubs/neon-serverless.js', import.meta.url).pathname,
+      '@aws-sdk/client-secrets-manager': new URL('./lambda/_test-stubs/aws-secrets.js', import.meta.url).pathname,
+      '@aws-sdk/client-s3': new URL('./lambda/_test-stubs/aws-s3.js', import.meta.url).pathname,
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,
