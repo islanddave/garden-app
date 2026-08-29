@@ -42,6 +42,9 @@ vi.mock('../components/CaretakerBadge.jsx', () => ({ default: ({ caretaker }) =>
 
 import PlantingTile from '../components/PlantingTile.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -98,7 +101,7 @@ describe('the expiry self-heal stays pointed at the PHOTO id, not the plant id',
   it('re-mints /api/photos/view-url/<featured_photo_id> when the presigned URL expires', async () => {
     fetchSpy.mockResolvedValue({ view_url: MINTED })
     const { container } = render(<PlantingTile planting={withPhoto()} />)
-    fireEvent.error(container.querySelector('img'))
+    failPhotoLoad(() => container.querySelector('img'))
     await waitFor(() => expect(container.querySelector('img').getAttribute('src')).toBe(MINTED))
     expect(viewUrlCalls()).toHaveLength(1)
     // pl9 is the PLANT. ph9 is the PHOTO. Minting the plant id 404s -> permanent blank on expiry.

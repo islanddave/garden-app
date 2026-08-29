@@ -12,6 +12,9 @@ vi.mock('react-router-dom', async (orig) => ({ ...(await orig()), useNavigate: (
 
 import PhotoHero, { HERO_FLOAT_BTN } from '../components/PhotoHero.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { apiFetchSpy.mockReset(); navigateSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -27,7 +30,7 @@ describe('PhotoHero — image layer', () => {
     expect(img.getAttribute('src')).toBe('https://s3/stale.jpg')
     expect(img.getAttribute('alt')).toBe('A photo')
     expect(img.style.objectFit).toBe('cover')
-    fireEvent.error(img)
+    failPhotoLoad(() => container.querySelector('img'))
     await waitFor(() => expect(container.querySelector('img').getAttribute('src')).toBe('https://s3/fresh.jpg'))
     expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos/view-url/p1', { cache: 'no-store' })
   })
@@ -53,7 +56,7 @@ describe('PhotoHero — image layer', () => {
   it('a terminal image error keeps the hero box (PhotoImg placeholder inherits the image styling)', async () => {
     apiFetchSpy.mockRejectedValue(Object.assign(new Error('gone'), { status: 404 }))
     const { container } = render(<PhotoHero src="https://s3/dead.jpg" photoId="p4" alt="A photo" onOpenImage={() => {}} />)
-    fireEvent.error(container.querySelector('img'))
+    failPhotoLoad(() => container.querySelector('img'))
     await waitFor(() => expect(container.querySelector('img')).toBeNull())
     const ph = screen.getByRole('img', { name: 'A photo' })
     expect(ph.style.objectFit).toBe('cover')

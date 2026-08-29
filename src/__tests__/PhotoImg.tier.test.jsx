@@ -38,6 +38,9 @@ import { TIER } from '../lib/photoModel.js'
 // preservationColumnParity.test.js. Re-typing these two strings here would leave exactly the drift
 // this import exists to make impossible.
 import { PHOTO_VIEW_TIERS, normalizeViewTier } from '../../lambda/photos/viewTier.js'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -76,7 +79,7 @@ describe('A. the tier vocabulary cannot drift from the Lambda', () => {
       __resetPhotoImgCache(); fetchSpy.mockReset()
       fetchSpy.mockResolvedValue({ view_url: 'https://s3/j.jpg' })
       const { container } = render(<PhotoImg photoId={`jx${i}`} initialUrl="https://s3/stale.jpg" alt="x" mintTier={junk[i]} />)
-      fireEvent.error(img(container))
+      failPhotoLoad(() => img(container))
       await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
       const t = wireTier(requested()[0])
       expect(normalizeViewTier(t), `mintTier=${JSON.stringify(junk[i])} put tier=${JSON.stringify(t)} on the wire, which the server 400s`).not.toBeNull()
@@ -147,7 +150,7 @@ describe('B. mintTier is an identity, not a variant mode (the frozen contract su
     const props = { initialUrl: 'https://s3/a.jpg', alt: 'Tomato' }
     const t = render(<PhotoImg {...props} photoId="b5t" mintTier={TIER.THUMB} />)
     const f = render(<PhotoImg {...props} photoId="b5f" mintTier={TIER.FULL} />)
-    fireEvent.error(img(t.container)); fireEvent.error(img(f.container))
+    failPhotoLoad(() => img(t.container)); failPhotoLoad(() => img(f.container))
     await waitFor(() => expect(img(t.container)).toBeNull())
     await waitFor(() => expect(img(f.container)).toBeNull())
     expect(t.container.innerHTML).toBe(f.container.innerHTML)
@@ -266,7 +269,7 @@ describe('D. the mint URL carries the tier', () => {
   it('D1 a THUMB heal requests ?tier=thumb', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh-thumb.jpg' })
     const { container } = render(<PhotoImg photoId="d1" initialUrl="https://s3/stale.jpg" alt="x" mintTier={TIER.THUMB} />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(src(container)).toBe('https://s3/fresh-thumb.jpg'))
     expect(requested()).toEqual(['/api/photos/view-url/d1?tier=thumb'])
   })
@@ -274,7 +277,7 @@ describe('D. the mint URL carries the tier', () => {
   it('D2 a FULL heal requests the bare path — byte-identical to the shipped client', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh.jpg' })
     const { container } = render(<PhotoImg photoId="d2" initialUrl="https://s3/stale.jpg" alt="x" mintTier={TIER.FULL} />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(src(container)).toBe('https://s3/fresh.jpg'))
     expect(requested()).toEqual(['/api/photos/view-url/d2'])
   })
@@ -282,7 +285,7 @@ describe('D. the mint URL carries the tier', () => {
   it('D3 no mintTier at all is the same wire request as mintTier=FULL', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh.jpg' })
     const { container } = render(<PhotoImg photoId="d3" initialUrl="https://s3/stale.jpg" alt="x" />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
     expect(requested()).toEqual(['/api/photos/view-url/d3'])
   })
@@ -300,9 +303,9 @@ describe('D. the mint URL carries the tier', () => {
     // The thumb object does not exist → <img> 404 → the chain advances to the in-hand original, and
     // the SAME prop now renews the original instead.
     await waitFor(() => expect(src(container)).toBe('https://s3/minted.jpg'))
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(src(container)).toBe('https://s3/f.jpg'))
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2))
     expect(wireTier(requested()[1])).toBeNull()
   })
@@ -319,7 +322,7 @@ describe('E. a missing thumb degrades on the in-hand original, with no probe', (
   it('E1 the 404 swaps in the full source with ZERO network calls', async () => {
     const { container } = render(<PhotoView photo={row} tier={TIER.THUMB} alt="tile" />)
     expect(src(container)).toBe('https://s3/missing-thumb.jpg')
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(src(container)).toBe('https://s3/original.jpg'))
     expect(fetchSpy).not.toHaveBeenCalled()   // no probe, no mint: the degrade target came down in the same response
   })
@@ -327,9 +330,9 @@ describe('E. a missing thumb degrades on the in-hand original, with no probe', (
   it('E2 the retry budget is NOT spent on the degrade — the original still gets its one heal', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/healed.jpg' })
     const { container } = render(<PhotoView photo={row} tier={TIER.THUMB} alt="tile" />)
-    fireEvent.error(img(container))                                   // thumb 404 → degrade, budget untouched
+    failPhotoLoad(() => img(container))                                   // thumb 404 → degrade, budget untouched
     await waitFor(() => expect(src(container)).toBe('https://s3/original.jpg'))
-    fireEvent.error(img(container))                                   // original expired → its own heal
+    failPhotoLoad(() => img(container))                                   // original expired → its own heal
     await waitFor(() => expect(src(container)).toBe('https://s3/healed.jpg'))
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(wireTier(requested()[0])).toBeNull()                       // heals the ORIGINAL, not the absent thumb
@@ -339,7 +342,7 @@ describe('E. a missing thumb degrades on the in-hand original, with no probe', (
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/healed.jpg' })
     const { container } = render(<PhotoView photo={{ id: 'e3', view_url: 'https://s3/original.jpg' }} tier={TIER.THUMB} alt="tile" />)
     expect(src(container)).toBe('https://s3/original.jpg')
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
     expect(wireTier(requested()[0])).toBeNull()
   })
@@ -348,9 +351,9 @@ describe('E. a missing thumb degrades on the in-hand original, with no probe', (
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/healed.jpg' })
     const { container } = render(<PhotoView photo={row} tier={TIER.THUMB} alt="tile" />)
     onScreen(img(container))
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(src(container)).toBe('https://s3/original.jpg'))
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
     for (const [, init] of fetchSpy.mock.calls) expect((init?.method ?? 'GET').toUpperCase()).toBe('GET')
   })
