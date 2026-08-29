@@ -1,8 +1,8 @@
 {
-  "version": "4.70.0",
+  "version": "4.71.0",
   "date": "2026-08-29",
   "highlights": [
-    "The Untagged filter now shows how many photos are waiting, so a batch you meant to tag later is visible instead of forgotten",
-    "A big batch no longer pushes the target picker off screen — the staged strip scrolls inside a fixed height"
+    "Photos are now kept on your phone between visits instead of being re-downloaded every time you open the app cold. Measured with it on: a second visit went from 24 requests / 3,341 KB to zero.",
+    "The cache stores thumbnails only and clears out any full-size originals it had saved before, so it stays bounded — the 500-item ceiling is about 115 MB rather than the ~2 GB it could have been."
   ]
 }
