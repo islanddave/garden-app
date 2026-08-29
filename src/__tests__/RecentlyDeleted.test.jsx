@@ -26,6 +26,9 @@ vi.mock('react-router-dom', () => ({
 import RecentlyDeleted from '../pages/RecentlyDeleted.jsx'
 import { DELETED_PHOTOS_PATH, restorePhotoPath } from '../lib/deletedPhotos.js'
 import { DELETED_ENTITY_KINDS } from '../lib/deletedEntities.js'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 const photo = (over = {}) => ({
   id: '11111111-1111-4111-8111-111111111111',
@@ -96,8 +99,9 @@ describe('RecentlyDeleted — the list', () => {
     render(<RecentlyDeleted />)
     const img = await screen.findByAltText('Celebrity Rescue harvest')
     expect(img.getAttribute('src')).toBe('https://s3.example/thumb.jpg')
-    fireEvent.error(img)
-    await waitFor(() => expect(img.getAttribute('src')).toBe('https://s3.example/full.jpg'))
+    failPhotoLoad(() => screen.getByAltText('Celebrity Rescue harvest'))
+    // Re-query: the absorbed CORS attempt remounts the <img>, so the captured node is detached.
+    await waitFor(() => expect(screen.getByAltText('Celebrity Rescue harvest').getAttribute('src')).toBe('https://s3.example/full.jpg'))
   })
 
   it('offers NO permanent-delete affordance — the only verb on the page is Restore', async () => {

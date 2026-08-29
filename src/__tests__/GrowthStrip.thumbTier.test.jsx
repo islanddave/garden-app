@@ -26,6 +26,9 @@ vi.mock('../lib/api.js', () => ({
 
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 const full = (n) => `https://s3.example.invalid/plants/ph${n}/a.jpg?sig=full`
 const thumb = (n) => `https://s3.example.invalid/thumbs/plants/ph${n}/a.jpg?sig=thumb`
@@ -73,7 +76,7 @@ describe('a 404-ing milestone thumb degrades instead of blanking (16.5% of live 
     const { container } = render(<GrowthStrip photos={photos(2)} />)
     const target = stripImgs(container)[0]
     expect(target.getAttribute('src')).toBe(thumb(1))
-    fireEvent.error(target)
+    failPhotoLoad(() => stripImgs(container)[0])
     await waitFor(() => expect(stripImgs(container)[0].getAttribute('src')).toBe(full(1)))
     expect(stripImgs(container)[0].tagName).toBe('IMG')   // an image, not a terminal placeholder
     expect(viewUrlCalls()).toHaveLength(0)
@@ -81,10 +84,10 @@ describe('a 404-ing milestone thumb degrades instead of blanking (16.5% of live 
 
   it('once degraded, the strip thumb still self-heals its presign on the photo id', async () => {
     const { container } = render(<GrowthStrip photos={photos(2)} />)
-    fireEvent.error(stripImgs(container)[0])
+    failPhotoLoad(() => stripImgs(container)[0])
     await waitFor(() => expect(stripImgs(container)[0].getAttribute('src')).toBe(full(1)))
     fetchMock.mockResolvedValue({ view_url: MINTED })
-    fireEvent.error(stripImgs(container)[0])
+    failPhotoLoad(() => stripImgs(container)[0])
     await waitFor(() => expect(stripImgs(container)[0].getAttribute('src')).toBe(MINTED))
     expect(String(viewUrlCalls()[0][0])).toBe('/api/photos/view-url/ph1')
   })

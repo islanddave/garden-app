@@ -53,6 +53,9 @@ vi.mock('../components/PhotosWall.jsx', async (orig) => {
 
 import SpaceDetail from '../pages/SpaceDetail.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 // The shipped hero contract: featured_photo_id is the EFFECTIVE hero, and featured_is_explicit
 // (always present, both forms) says whether it came from spaces.featured_photo_id or from the
@@ -123,7 +126,7 @@ describe('SpaceDetail — hero', () => {
     const img = container.querySelector('img')
     expect(img.getAttribute('src')).toBe('https://s3.test/hero.jpg')
     // PhotoImg's re-mint is the proof it is not a bare <img>: an error re-presigns via view-url.
-    await act(async () => { fireEvent.error(img) })
+    failPhotoLoad(() => container.querySelector('img'))
     await waitFor(() => expect(container.querySelector('img').getAttribute('src')).toBe('https://s3.test/fresh.jpg'))
     expect(fetchSpy).toHaveBeenCalledWith('/api/photos/view-url/ph1', { cache: 'no-store' })
   })

@@ -13,6 +13,9 @@ vi.mock('../lib/api.js', () => ({
 }))
 
 import PhotoImg, { __resetPhotoImgCache, __seedPhotoImgUrl, PRESIGN_TTL_MS } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -42,7 +45,7 @@ describe('PhotoImg — reactive self-heal', () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh.jpg', expires_in: 900 })
     const { container } = render(<PhotoImg photoId="p1" initialUrl="https://s3/stale.jpg" alt="x" />)
     expect(img(container).getAttribute('src')).toBe('https://s3/stale.jpg')
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container).getAttribute('src')).toBe('https://s3/fresh.jpg'))
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(fetchSpy).toHaveBeenCalledWith('/api/photos/view-url/p1', { cache: 'no-store' })
@@ -51,9 +54,9 @@ describe('PhotoImg — reactive self-heal', () => {
   it('a fresh URL that ALSO errors goes terminal (retry budget spent, no loop)', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh.jpg' })
     const { container } = render(<PhotoImg photoId="p1b" initialUrl="https://s3/stale.jpg" alt="x" />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container).getAttribute('src')).toBe('https://s3/fresh.jpg'))
-    fireEvent.error(img(container))                               // fresh URL still 403
+    failPhotoLoad(() => img(container))                               // fresh URL still 403
     await waitFor(() => expect(img(container)).toBeNull())        // terminal placeholder
     expect(fetchSpy).toHaveBeenCalledTimes(1)                     // budget: exactly one re-mint
   })
@@ -62,7 +65,7 @@ describe('PhotoImg — reactive self-heal', () => {
     const err = new Error('gone'); err.status = 404; fetchSpy.mockRejectedValue(err)
     const onError = vi.fn()
     const { container } = render(<PhotoImg photoId="p2" initialUrl="https://s3/stale.jpg" alt="x" onError={onError} />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container)).toBeNull())
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ type: 'deleted', photoId: 'p2' }))
   })
@@ -70,7 +73,7 @@ describe('PhotoImg — reactive self-heal', () => {
   it('view-url returning no url => terminal placeholder, never src=null', async () => {
     fetchSpy.mockResolvedValue({ view_url: null })
     const { container } = render(<PhotoImg photoId="p3" initialUrl="https://s3/stale.jpg" alt="x" />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container)).toBeNull())
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
@@ -79,10 +82,10 @@ describe('PhotoImg — reactive self-heal', () => {
     const neterr = new Error('network')
     fetchSpy.mockRejectedValueOnce(neterr).mockResolvedValueOnce({ view_url: 'https://s3/fresh.jpg' })
     const { container } = render(<PhotoImg photoId="p4" initialUrl="https://s3/stale.jpg" alt="x" />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
     expect(img(container)).toBeTruthy()                           // non-terminal (still an img, not a placeholder)
-    fireEvent.error(img(container))                              // budget was preserved → re-mints again
+    failPhotoLoad(() => img(container))                              // budget was preserved → re-mints again
     await waitFor(() => expect(img(container).getAttribute('src')).toBe('https://s3/fresh.jpg'))
     expect(fetchSpy).toHaveBeenCalledTimes(2)
   })
@@ -90,7 +93,7 @@ describe('PhotoImg — reactive self-heal', () => {
   it('a re-mint returning the SAME url heals via forced re-decode (not a silent no-op → not terminal)', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/stale.jpg' })   // identical to initial
     const { container } = render(<PhotoImg photoId="p7" initialUrl="https://s3/stale.jpg" alt="x" />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(img(container)?.getAttribute('src')).toBe('https://s3/stale.jpg'))
   })
@@ -102,7 +105,7 @@ describe('PhotoImg — storm control + StrictMode', () => {
     const { container } = render(
       <React.StrictMode><PhotoImg photoId="p5" initialUrl="https://s3/stale.jpg" alt="x" /></React.StrictMode>,
     )
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container).getAttribute('src')).toBe('https://s3/fresh.jpg'))
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
@@ -117,8 +120,8 @@ describe('PhotoImg — storm control + StrictMode', () => {
       </div>,
     )
     const imgs = container.querySelectorAll('img')
-    fireEvent.error(imgs[0])
-    fireEvent.error(imgs[1])
+    failPhotoLoad(() => container.querySelectorAll('img')[0])
+    failPhotoLoad(() => container.querySelectorAll('img')[1])
     expect(fetchSpy).toHaveBeenCalledTimes(1)                    // one call for both (module storm map)
     await act(async () => { resolve({ view_url: 'https://s3/fresh.jpg' }) })
     await waitFor(() => container.querySelectorAll('img').forEach((i) => expect(i.getAttribute('src')).toBe('https://s3/fresh.jpg')))
@@ -240,7 +243,7 @@ describe('PhotoImg — terminal a11y semantics (A2b P3)', () => {
   it('a DECORATIVE (alt="") image that goes terminal stays aria-hidden with no role/label; ...rest survives', async () => {
     const err = new Error('gone'); err.status = 404; fetchSpy.mockRejectedValue(err)
     const { container } = render(<PhotoImg photoId="a1" initialUrl="https://s3/x.jpg" alt="" data-testid="tt" aria-hidden="true" />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container)).toBeNull())
     const box = container.querySelector('div')
     expect(box.getAttribute('aria-hidden')).toBe('true')         // decorative stays silent
@@ -252,7 +255,7 @@ describe('PhotoImg — terminal a11y semantics (A2b P3)', () => {
   it('a MEANINGFUL (alt set) image that goes terminal exposes role=img + aria-label=alt', async () => {
     const err = new Error('gone'); err.status = 404; fetchSpy.mockRejectedValue(err)
     const { container } = render(<PhotoImg photoId="a2" initialUrl="https://s3/x.jpg" alt="Tomato" />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container)).toBeNull())
     const box = container.querySelector('div')
     expect(box.getAttribute('role')).toBe('img')
@@ -266,7 +269,7 @@ describe('PhotoImg — stale-heal identity guard (A2b P4)', () => {
     let resolveA
     fetchSpy.mockReturnValueOnce(new Promise((r) => { resolveA = r }))
     const { container, rerender } = render(<PhotoImg photoId="A" initialUrl="https://s3/staleA.jpg" alt="x" />)
-    fireEvent.error(img(container))                              // starts mintUrl(A), in-flight
+    failPhotoLoad(() => img(container))                              // starts mintUrl(A), in-flight
     rerender(<PhotoImg photoId="B" initialUrl="https://s3/urlB.jpg" alt="x" />)   // consumer paged to B
     expect(img(container).getAttribute('src')).toBe('https://s3/urlB.jpg')
     await act(async () => { resolveA({ view_url: 'https://s3/freshA.jpg' }) })     // A's heal resolves late
