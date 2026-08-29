@@ -336,7 +336,7 @@ export function PhotoUpload({
           <ul
             data-testid="photo-upload-staged"
             style={{ display: 'flex', flexWrap: 'wrap', gap: T.photo.gapSm,
-                     listStyle: 'none', padding: 0, margin: `${T.photo.gapMd} 0 0` }}
+                     listStyle: 'none', padding: 0, margin: 0, marginTop: T.photo.gapMd }}
           >
             {staged.map(item => (
               <li key={item.id} data-testid="photo-upload-staged-item" data-status={item.status}
@@ -355,7 +355,7 @@ export function PhotoUpload({
                              opacity: item.status === 'uploading' ? 0.55 : 1 }}
                   />
                 ) : (
-                  <span style={{ fontSize: '0.7rem', color: P.mid, wordBreak: 'break-all' }}>
+                  <span style={{ fontSize: T.type.xs, color: P.mid, wordBreak: 'break-all' }}>
                     {item.file?.name ?? 'photo'}
                   </span>
                 )}
@@ -365,20 +365,23 @@ export function PhotoUpload({
                     onClick={() => removeStaged(item.id)}
                     aria-label={`Remove ${item.file?.name ?? 'photo'}`}
                     data-testid="photo-upload-staged-remove"
+                    // T.radiusPill (20) on a 22px box is a circle for all practical purposes; the
+                    // design system carries no 50% token and inventing one for this is a bigger
+                    // change than the control deserves.
                     style={showPreview
                       ? { position: 'absolute', top: 4, right: 4,
                           background: 'rgba(0,0,0,0.55)', color: P.white,
-                          border: 'none', borderRadius: '50%', width: 22, height: 22,
-                          cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1 }
-                      : { marginLeft: 6, background: 'transparent', color: P.mid,
-                          border: 'none', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1 }}
+                          border: 'none', borderRadius: T.radiusPill, width: 22, height: 22,
+                          cursor: 'pointer', fontSize: T.type.xs, lineHeight: 1 }
+                      : { marginLeft: T.space.xs, background: 'transparent', color: P.mid,
+                          border: 'none', cursor: 'pointer', fontSize: T.type.sm, lineHeight: 1 }}
                   >×</button>
                 )}
                 {/* The status line is TEXT, not a colour or an icon: "which one failed" has to
                     survive a screen reader and a monochrome glance, and the error text itself is
                     what tells the user whether a retry is worth it. */}
                 <div data-testid="photo-upload-staged-status"
-                     style={{ fontSize: '0.68rem', marginTop: 2, textAlign: 'center',
+                     style={{ fontSize: T.type.xs, marginTop: T.space.xs, textAlign: 'center',
                               color: item.status === 'error' ? P.photoErrorInk : P.mid }}>
                   {item.status === 'uploading' ? (typeof progress === 'number' ? `${progress}%` : 'Uploading…')
                     : item.status === 'done' ? 'Added'
@@ -387,7 +390,7 @@ export function PhotoUpload({
                 </div>
                 {item.status === 'error' && item.error && (
                   <div role="alert" data-testid="photo-upload-staged-error"
-                       style={{ fontSize: '0.66rem', color: P.photoErrorInk, textAlign: 'center' }}>
+                       style={{ fontSize: T.type.xs, color: P.photoErrorInk, textAlign: 'center' }}>
                     {item.error}
                   </div>
                 )}
