@@ -333,10 +333,21 @@ export function PhotoUpload({
 
       {multiEnabled && staged.length > 0 && (
         <>
+          {/* HEIGHT-CAPPED. MEASURED AT 390x844 (tests/harness/photostrips.jsx): ten staged files
+              on a PlantingTile grew the CARD to 802px against an 844px viewport and pushed the next
+              planting card to y=905 — completely off screen. One card staging photos ate the whole
+              Garden list. Uncapped, this strip's cost is unbounded in the number of files, on a
+              surface that is a scrolling column of siblings.
+
+              Two caps because the two modes have different rows: 216px is two rows of 88px tiles;
+              120px is about four compact filename rows, deliberately tighter because that mode
+              renders inside a card footer where every pixel is taken from the card's own content.
+              Scrolling inside keeps every file reachable and makes the cost constant. */}
           <ul
             data-testid="photo-upload-staged"
             style={{ display: 'flex', flexWrap: 'wrap', gap: T.photo.gapSm,
-                     listStyle: 'none', padding: 0, margin: 0, marginTop: T.photo.gapMd }}
+                     listStyle: 'none', padding: 0, margin: 0, marginTop: T.photo.gapMd,
+                     maxHeight: showPreview ? 216 : 120, overflowY: 'auto' }}
           >
             {staged.map(item => (
               <li key={item.id} data-testid="photo-upload-staged-item" data-status={item.status}

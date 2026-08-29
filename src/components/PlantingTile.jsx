@@ -246,15 +246,26 @@ export default function PlantingTile({
               UNCHANGED. ariaLabel names the icon-only
               control. V4-TAPCARD-001: raised above the stretched card overlay (z1) so it stays tappable.
 
-              V4-PHOTOBULK-001 S1 — `multiple` is set HERE, the payoff call site: "several photos of
-              one planting" is the case the slice exists for, and this is the one surface whose
-              batch already has its target chosen before the picker opens. `onPhotoUploaded` is
-              Garden's `refetchPlants` (Garden.jsx:958), which ignores its argument entirely, so
-              multi mode's ARRAY form of onUploadComplete needs no consumer change. The
-              plant-list-photo-<id> input-id contract is untouched — `multiple` only widens what the
-              same input accepts, and a one-file drive through it behaves identically. `showPreview`
-              stays false, so the staged strip renders in its compact filename form rather than
-              putting 88px tiles in this card footer. */}
+              V4-PHOTOBULK-001 — `multiple` WAS enabled here and has been REVERTED. Recording why,
+              because "several photos of one planting" is the most obviously right use of the whole
+              feature and someone will reach for this line again.
+
+              This card footer cannot host the staging UI the feature requires. Measured at 390x844
+              (tests/harness/photostrips.jsx): ten staged files grew the card from ~250px to 802px
+              and pushed the NEXT planting card to y=905 — off an 844px screen entirely, so one card
+              staging photos ate the whole Garden list. Height-capping the strip fixed the geometry
+              (485px, neighbour back at 588) and then the screenshot showed the real problem: the
+              compact filename rows collide with the card's own status badge and trigger, because
+              this footer is a flex row sized for a 34px circle, not a scrolling list.
+
+              The capability itself is fine and stays on <PhotoUpload>; it is enabled where there is
+              room for it (the Photo Library form). What "batch to THIS planting" actually needs is
+              its own surface — a sheet, not an inline strip in a card — and that is a design
+              question for Dave rather than something to wedge in here. See
+              photobulk-drain-design-V100-20260829.md.
+
+              Unit tests could not have caught either half: jsdom returns zero for every
+              getBoundingClientRect, and it renders no pixels to collide. */}
           <span style={{ position: 'relative', zIndex: 2 }}>
           <PhotoUpload
             keyPrefix="plants"
@@ -265,7 +276,6 @@ export default function PlantingTile({
             ariaLabel="Add photo"
             showPreview={false}
             inputId={`plant-list-photo-${pl.id}`}
-            multiple
             onUploadComplete={onPhotoUploaded}
             buttonStyle={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

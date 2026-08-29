@@ -30,3 +30,8 @@ export function SignIn() { return null }
 export function SignUp() { return null }
 export function UserButton() { return null }
 export function AuthenticateWithRedirectCallback() { return null }
+// AuthCallback.jsx imports this. Missing here, ANY entry whose import graph reaches that page dies
+// at module-evaluation time with "does not provide an export named 'HandleSSOCallback'" — an error
+// that names Clerk and points at the stub, so it reads like a harness misconfiguration rather than
+// one absent line. Found 2026-08-29 while adding the photostrips entry.
+export function HandleSSOCallback() { return null }
