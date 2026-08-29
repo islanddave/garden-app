@@ -5,7 +5,7 @@
 // document.body); clicking a tile must surface role=dialog.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({
@@ -14,6 +14,9 @@ vi.mock('../lib/api.js', () => ({
 }))
 
 import PhotosWall from '../components/PhotosWall.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 const PHOTOS = [
   { id: 'ph1', view_url: 'https://s3.test/1.jpg', caption: 'Sungold ripening', created_at: '2026-06-20T12:00:00Z' },
@@ -63,8 +66,8 @@ describe('PhotosWall — Garden Photos sub-tab', () => {
       { id: 'ph1', view_url: 'https://s3.test/full1.jpg', thumb_url: 'https://s3.test/thumb1.jpg', caption: 'a', created_at: '2026-06-20T12:00:00Z' },
     ])
     const el = document.querySelector('img[src^="https://s3.test/"]')
-    await act(async () => { fireEvent.error(el) })
-    expect(document.querySelector('img[src^="https://s3.test/"]').getAttribute('src')).toBe('https://s3.test/full1.jpg')
+    failPhotoLoad(() => document.querySelector('img[src^="https://s3.test/"]'))
+    await waitFor(() => expect(document.querySelector('img[src^="https://s3.test/"]').getAttribute('src')).toBe('https://s3.test/full1.jpg'))
   })
 
   it('groups photos under sticky month headers (newest month first)', async () => {

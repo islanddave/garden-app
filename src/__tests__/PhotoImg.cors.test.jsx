@@ -39,11 +39,14 @@ const img = (c) => c.querySelector('img')
 const xo = (c) => img(c)?.getAttribute('crossorigin')
 
 describe('PHOTO_CORS_CACHE_ENABLED — the shipped value', () => {
-  it('is FALSE on disk, taken via importActual so no mock can launder it', async () => {
+  it('is TRUE on disk, taken via importActual so no mock can launder it', async () => {
     // The single pin on the flag's shipped value. A future flip fails HERE, as one explicit decision
     // to re-approve, rather than scattering red across suites that merely happen to render a photo.
+    // Flipped false -> true 2026-08-29 (V4-PHOTOCORS-001, Dave-approved); the pin flipped WITH it and
+    // stays an equality check, not a truthiness one, so the next change to this flag in EITHER
+    // direction still stops here exactly once.
     const actual = await vi.importActual('../lib/featureFlags.js')
-    expect(actual.PHOTO_CORS_CACHE_ENABLED).toBe(false)
+    expect(actual.PHOTO_CORS_CACHE_ENABLED).toBe(true)
   })
 })
 

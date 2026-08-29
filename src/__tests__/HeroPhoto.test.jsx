@@ -19,6 +19,9 @@ vi.mock('../context/FavoritesContext.jsx', () => ({ useFavorites: () => ({ isFav
 
 import HeroPhoto from '../components/planting/HeroPhoto.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { apiFetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -155,7 +158,7 @@ describe('HeroPhoto — degraded states', () => {
   it('a terminal photo error keeps the hero box and every affordance', async () => {
     apiFetchSpy.mockRejectedValue(Object.assign(new Error('gone'), { status: 404 }))
     const { container } = mount()
-    fireEvent.error(container.querySelector('img'))
+    failPhotoLoad(() => container.querySelector('img'))
     await waitFor(() => expect(container.querySelector('img')).toBeNull())
     const ph = screen.getByRole('img', { name: 'Cherokee Purple photo' })
     expect(ph.style.objectFit).toBe('cover')                      // placeholder reserves the same box

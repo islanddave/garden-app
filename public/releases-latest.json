@@ -1,5 +1,5 @@
 {
-  "version": "4.71.0",
+  "version": "4.72.0",
   "date": "2026-08-29",
   "highlights": [
     "The Untagged filter now shows how many photos are waiting, so a batch you meant to tag later is visible instead of forgotten",

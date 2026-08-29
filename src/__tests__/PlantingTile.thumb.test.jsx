@@ -33,6 +33,9 @@ vi.mock('../components/CaretakerBadge.jsx', () => ({ default: ({ caretaker }) =>
 
 import PlantingTile from '../components/PlantingTile.jsx'
 import PhotoImg, { __resetPhotoImgCache, __seedPhotoImgUrl, PRESIGN_TTL_MS } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -86,7 +89,7 @@ describe('a missing thumb degrades to the in-hand original (6 of 230 live heroes
   it('the first error swaps in featured_photo_view_url with NO network round-trip', async () => {
     const { container } = render(<PlantingTile planting={withThumb()} />)
     expect(src(container)).toBe(`${THUMB}&i=9`)
-    fireEvent.error(container.querySelector('img'))
+    failPhotoLoad(() => container.querySelector('img'))
     await waitFor(() => expect(src(container)).toBe(`${FULL}&i=9`))
     expect(fetchSpy).not.toHaveBeenCalled()   // the degrade target came down in the same list response
   })
@@ -97,10 +100,10 @@ describe('a missing thumb degrades to the in-hand original (6 of 230 live heroes
   it('a mid-chain failure degrades with no mint; the final one heals the PHOTO id, not the plant id', async () => {
     fetchSpy.mockResolvedValue({ view_url: MINTED })
     const { container } = render(<PlantingTile planting={withThumb()} />)
-    fireEvent.error(container.querySelector('img'))                 // thumb 404 → degrade, no mint
+    failPhotoLoad(() => container.querySelector('img'))                 // thumb 404 → degrade, no mint
     await waitFor(() => expect(src(container)).toBe(`${FULL}&i=9`))
     expect(viewUrlCalls()).toHaveLength(0)
-    fireEvent.error(container.querySelector('img'))                 // original expired → self-heal
+    failPhotoLoad(() => container.querySelector('img'))                 // original expired → self-heal
     await waitFor(() => expect(src(container)).toBe(MINTED))
     expect(viewUrlCalls()).toHaveLength(1)
     // pl9 is the PLANT, ph9 is the PHOTO. Minting the plant id 404s → permanent blank on expiry.
@@ -114,7 +117,7 @@ describe('a missing thumb degrades to the in-hand original (6 of 230 live heroes
     expect(fetchSpy).not.toHaveBeenCalled()
     // One-entry chain → the id is handed over immediately, exactly as it was before this lane.
     fetchSpy.mockResolvedValue({ view_url: MINTED })
-    fireEvent.error(container.querySelector('img'))
+    failPhotoLoad(() => container.querySelector('img'))
     await waitFor(() => expect(src(container)).toBe(MINTED))
     expect(viewUrlCalls()).toHaveLength(1)
   })

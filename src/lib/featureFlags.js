@@ -371,7 +371,18 @@ export const WEIGH_IN_FRAME_ENABLED = true
 // Photos never blank.
 //
 // Default FALSE. Do NOT flip without a real-browser measurement on the deployed origin.
-export const PHOTO_CORS_CACHE_ENABLED = false
+// FLIPPED TRUE 2026-08-29 on Dave's approval. What cleared the two preconditions:
+//   - The byte bound sw.js:38-41 required BEFORE a flip. Shipped v4.67.0 as a key-shape admission
+//     rule rather than a byte-aware trim — photos-v1 accepts `thumbs/` keys only and evicts
+//     already-cached originals on activate. Bounding entry SIZE converts the count cap into a byte
+//     cap: measured 2026-08-29, the 500 LARGEST objects under garden-photos-prod/thumbs/ total
+//     114.6 MB (max single object 370,167 B), against ~2.07 GB for the un-gated original path.
+//   - "A real-browser measurement on the deployed origin", above. Re-derived live 2026-08-29 against
+//     garden-photos-prod: a real presigned GET with `Origin: https://garden.futureishere.net` returns
+//     that origin in Access-Control-Allow-Origin, plus two negative controls (a foreign Origin and no
+//     Origin) that return NO Access-Control-* header at all — the exact failure shape the fallback
+//     below is built for.
+export const PHOTO_CORS_CACHE_ENABLED = true
 
 // BUG-HEICEXIFPASSTHRU-001 asked here whether an UPLOAD should be REFUSED when its metadata cannot
 // be stripped, behind PHOTO_STRIP_STRICT_UPLOAD (parked OFF, pending Dave). REMOVED 2026-08-21,

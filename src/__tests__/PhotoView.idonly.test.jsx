@@ -25,6 +25,9 @@ vi.mock('../lib/api.js', () => ({
 import PhotoView from '../components/photo/PhotoView.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
 import { TIER } from '../lib/photoModel.js'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -54,7 +57,7 @@ describe('no-regression — the flag is opt-in and is a fallback, never an overr
   it('tier selection and the in-hand degrade are untouched by the flag', async () => {
     const { container } = render(<PhotoView photo={FULL_ROW} tier={TIER.THUMB} resolveById />)
     expect(img(container).getAttribute('src')).toBe(THUMB)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container).getAttribute('src')).toBe(FULL))
     expect(fetchSpy).not.toHaveBeenCalled()   // the degrade target was already in hand
   })
@@ -152,7 +155,7 @@ describe('the id-only tier chain: ask for the thumb, land on the original when t
       String(url).includes('tier=thumb') ? { view_url: THUMB } : { view_url: FULL }))
     const { container } = render(<PhotoView photo={EVENT_ROW} tier={TIER.THUMB} resolveById />)
     await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(THUMB))
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(FULL))
     expect(fetchSpy).toHaveBeenCalledTimes(2)
     expect(fetchSpy).toHaveBeenLastCalledWith('/api/photos/view-url/ph-1', { cache: 'no-store' })
@@ -163,10 +166,10 @@ describe('the id-only tier chain: ask for the thumb, land on the original when t
       String(url).includes('tier=thumb') ? { view_url: THUMB } : { view_url: FULL }))
     const { container } = render(<PhotoView photo={EVENT_ROW} tier={TIER.THUMB} resolveById fallback="none" />)
     await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(THUMB))
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container)?.getAttribute('src')).toBe(FULL))
     // The last rung owns the retry budget: one reactive re-mint, then terminal. Not a third tier.
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3))
     expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('tier=thumb'))).toHaveLength(1)
   })

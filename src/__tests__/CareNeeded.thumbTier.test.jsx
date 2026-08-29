@@ -39,6 +39,9 @@ vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
 
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 const FULL = 'https://s3.example.invalid/plants/p1/a.jpg?sig=full'
 const THUMB = 'https://s3.example.invalid/thumbs/plants/p1/a.jpg?sig=thumb'
@@ -110,7 +113,7 @@ describe('a 404-ing thumb still shows a photo (16.5% of live rows)', () => {
   it('the first load error swaps in featured_photo_view_url with NO network round-trip', async () => {
     const { container } = await renderWithPhoto([withThumb()])
     expect(src(container)).toBe(THUMB)
-    fireEvent.error(rowImg(container))
+    failPhotoLoad(() => rowImg(container))
     await waitFor(() => expect(src(container)).toBe(FULL))
     expect(rowImg(container)).toBeTruthy()          // an <img>, not PhotoImg's terminal placeholder
     expect(viewUrlCalls()).toHaveLength(0)          // the degrade target was already in hand
@@ -118,12 +121,12 @@ describe('a 404-ing thumb still shows a photo (16.5% of live rows)', () => {
 
   it('after degrading, the row still self-heals — on the PHOTO id, never the planting id', async () => {
     const { container } = await renderWithPhoto([withThumb()])
-    fireEvent.error(rowImg(container))              // thumb 404 → degrade, no mint
+    failPhotoLoad(() => rowImg(container))              // thumb 404 → degrade, no mint
     await waitFor(() => expect(src(container)).toBe(FULL))
     expect(viewUrlCalls()).toHaveLength(0)
     fetchMock.mockImplementation((path) =>
       String(path).includes('/api/photos/view-url/') ? Promise.resolve({ view_url: MINTED }) : Promise.resolve([]))
-    fireEvent.error(rowImg(container))              // original presign expired → reactive heal
+    failPhotoLoad(() => rowImg(container))              // original presign expired → reactive heal
     await waitFor(() => expect(src(container)).toBe(MINTED))
     // p1 is the PLANTING, ph1 is the PHOTO. Minting the planting id 404s → permanent blank on expiry.
     expect(String(viewUrlCalls()[0][0])).toBe('/api/photos/view-url/ph1')

@@ -17,6 +17,9 @@ vi.mock('../lib/api.js', () => ({
 import PhotoView from '../components/photo/PhotoView.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
 import { TIER } from '../lib/photoModel.js'
+// A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
+// failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
+import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
@@ -60,7 +63,7 @@ describe('degrade chain — the missing-thumb case', () => {
   it('a failed thumb degrades to the in-hand original with ZERO network calls', async () => {
     const { container } = render(<PhotoView photo={row} tier={TIER.THUMB} />)
     expect(img(container).getAttribute('src')).toBe(THUMB)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container).getAttribute('src')).toBe(FULL))
     // This is the whole point: the degrade target already came down in the list response, so
     // recovering from a missing thumb must not cost a view-url mint.
@@ -70,9 +73,9 @@ describe('degrade chain — the missing-thumb case', () => {
   it('once on the FINAL source, a failure hands over to PhotoImg’s presign self-heal', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3.example.invalid/fresh.jpg' })
     const { container } = render(<PhotoView photo={row} tier={TIER.THUMB} />)
-    fireEvent.error(img(container))                       // thumb -> full, no network
+    failPhotoLoad(() => img(container))                       // thumb -> full, no network
     await waitFor(() => expect(img(container).getAttribute('src')).toBe(FULL))
-    fireEvent.error(img(container))                       // full expired -> mint
+    failPhotoLoad(() => img(container))                       // full expired -> mint
     await waitFor(() => expect(img(container).getAttribute('src')).toBe('https://s3.example.invalid/fresh.jpg'))
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(fetchSpy).toHaveBeenCalledWith('/api/photos/view-url/p1', { cache: 'no-store' })
@@ -81,7 +84,7 @@ describe('degrade chain — the missing-thumb case', () => {
   it('a FULL-tier failure mints immediately — there is no cheaper source to try first', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3.example.invalid/fresh.jpg' })
     const { container } = render(<PhotoView photo={row} tier={TIER.FULL} />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container).getAttribute('src')).toBe('https://s3.example.invalid/fresh.jpg'))
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
@@ -92,13 +95,13 @@ describe('degrade chain — the missing-thumb case', () => {
       <PhotoView photo={{ id: 'f1', storage_path: 'plants/P/a.jpg', plant_id: 'x', featured_photo_view_url: FULL }} tier={TIER.THUMB} />
     )
     expect(img(container).getAttribute('src')).toBe(FULL)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
   })
 
   it('swapping to a different photo resets the degrade cursor (windowed grids reuse instances)', async () => {
     const { container, rerender } = render(<PhotoView photo={row} tier={TIER.THUMB} />)
-    fireEvent.error(img(container))
+    failPhotoLoad(() => img(container))
     await waitFor(() => expect(img(container).getAttribute('src')).toBe(FULL))
     const row2 = { ...row, id: 'p2', view_url: FULL + '2', thumb_url: THUMB + '2' }
     rerender(<PhotoView photo={row2} tier={TIER.THUMB} />)
