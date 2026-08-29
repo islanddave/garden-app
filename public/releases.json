@@ -3,8 +3,9 @@
     "version": "4.68.0",
     "date": "2026-08-29",
     "highlights": [
-      "Log Event now takes several photos at once — pick a handful in one go and they all attach to the same event",
-      "Each photo shows its own upload status, so a single failure names itself instead of sinking the batch"
+      "Add several photos to a planting at once — the camera button on a planting card now takes a whole handful",
+      "Log Event takes several photos at once too: pick a few in one go and they all attach to the same event",
+      "Each photo reports its own upload status, so one failure names itself instead of sinking the batch"
     ]
   },
   {

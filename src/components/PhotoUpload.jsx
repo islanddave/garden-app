@@ -340,25 +340,38 @@ export function PhotoUpload({
           >
             {staged.map(item => (
               <li key={item.id} data-testid="photo-upload-staged-item" data-status={item.status}
-                  style={{ position: 'relative', width: 88 }}>
-                <img
-                  src={item.url}
-                  alt={item.file?.name ? `Staged photo ${item.file.name}` : 'Staged photo'}
-                  style={{ width: 88, height: 88, objectFit: 'cover',
-                           borderRadius: T.photo.thumbRadius, display: 'block',
-                           border: `1px solid ${P.border}`,
-                           opacity: item.status === 'uploading' ? 0.55 : 1 }}
-                />
+                  style={{ position: 'relative', width: showPreview ? 88 : '100%' }}>
+                {/* `showPreview={false}` callers (PlantingTile's 34px footer circle) get a COMPACT
+                    row instead of an 88px tile — a thumbnail grid would wreck that card. The
+                    per-file status and per-file error still render either way, because that is the
+                    part §3 B3 requires; only the picture is optional. */}
+                {showPreview ? (
+                  <img
+                    src={item.url}
+                    alt={item.file?.name ? `Staged photo ${item.file.name}` : 'Staged photo'}
+                    style={{ width: 88, height: 88, objectFit: 'cover',
+                             borderRadius: T.photo.thumbRadius, display: 'block',
+                             border: `1px solid ${P.border}`,
+                             opacity: item.status === 'uploading' ? 0.55 : 1 }}
+                  />
+                ) : (
+                  <span style={{ fontSize: '0.7rem', color: P.mid, wordBreak: 'break-all' }}>
+                    {item.file?.name ?? 'photo'}
+                  </span>
+                )}
                 {item.status !== 'uploading' && (
                   <button
                     type="button"
                     onClick={() => removeStaged(item.id)}
                     aria-label={`Remove ${item.file?.name ?? 'photo'}`}
                     data-testid="photo-upload-staged-remove"
-                    style={{ position: 'absolute', top: 4, right: 4,
-                             background: 'rgba(0,0,0,0.55)', color: P.white,
-                             border: 'none', borderRadius: '50%', width: 22, height: 22,
-                             cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1 }}
+                    style={showPreview
+                      ? { position: 'absolute', top: 4, right: 4,
+                          background: 'rgba(0,0,0,0.55)', color: P.white,
+                          border: 'none', borderRadius: '50%', width: 22, height: 22,
+                          cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1 }
+                      : { marginLeft: 6, background: 'transparent', color: P.mid,
+                          border: 'none', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1 }}
                   >×</button>
                 )}
                 {/* The status line is TEXT, not a colour or an icon: "which one failed" has to
