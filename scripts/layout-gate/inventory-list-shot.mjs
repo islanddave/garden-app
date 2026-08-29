@@ -25,17 +25,23 @@
 // NON-VACUITY. A gate that measures zero controls passes for the wrong reason, which is the exact
 // failure mode this directory exists to refuse. The run fails if the fixture does not yield its
 // full set of rows, sections and controls before anything is asserted about them.
+//
+// TRANSPORT. resolveWebSocket(), not a bare global: CI pins node 20.19.0, which has no global
+// WebSocket — see cdp-socket.mjs for the measurement that established this.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { resolveWebSocket } from './cdp-socket.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5313)
 const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9424)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// Same seam the sibling gates use — CI needs --no-sandbox and resolves CHROME_PATH in its own step.
+const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
 
 // Dave is Android-only; 390x844 is the common Android logical viewport and the geometry the
 // sibling gates in this directory already measure at.
@@ -43,9 +49,14 @@ const VIEWPORT = { w: 390, h: 844 }
 const TAP_FLOOR = 44                 // SC 2.5.8 design target, = T.tapMinHeight
 const EXPECT = { rows: 8, sections: 6, controls: 12 }   // what the harness fixture must yield
 
+// REPO-RELATIVE default, not the authoring machine's scratch dir. The old default was an absolute
+// /Users/davenichols/... path; on a Linux runner /Users does not exist and cannot be created at /,
+// so the mkdirSync below threw INSIDE the try and became fail('gate could not complete') -> exit 1
+// AFTER the Vite boot, the Chrome launch and every tap-target assertion had already passed. A gate
+// that reds on where it writes its by-product, having found nothing wrong, is worse than no gate.
 const outArg = process.argv.indexOf('--out')
 const OUT = outArg > -1 ? process.argv[outArg + 1]
-  : '/Users/davenichols/AI/Claude/Projects/Gardening/_perfdesign_20260826/inventory-list-390x844.png'
+  : resolve(ROOT, 'artifacts/layout-gate/inventory-list-390x844.png')
 
 async function startHarness() {
   const bin = resolve(ROOT, 'node_modules/vite/bin/vite.js')
@@ -78,7 +89,7 @@ async function startChrome(userDataDir) {
     // so the window only has to be big enough not to clip it. See trap 1 in the header.
     '--window-size=900,1000', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
+    '--disable-renderer-backgrounding', ...EXTRA_CHROME_FLAGS,
   ], { stdio: ['ignore', 'ignore', 'ignore'] })
   for (let i = 0; i < 60; i++) {
     try {
@@ -92,7 +103,8 @@ async function startChrome(userDataDir) {
 }
 
 async function attach(wsUrl) {
-  const ws = new WebSocket(wsUrl)
+  const WS = await resolveWebSocket()
+  const ws = new WS(wsUrl)
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP socket failed')) })
   let id = 0
   const pending = new Map()
