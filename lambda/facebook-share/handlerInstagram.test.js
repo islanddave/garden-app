@@ -369,6 +369,9 @@ describe('instagram publish path', () => {
     expect(body.error).toBe('content_blocked');
     expect(body.fields.join(',')).toMatch(/alt/);
     expect(containers()).toHaveLength(0);
+    // Same as the Facebook path: name the surface that tripped, not the caption.
+    expect(body.message).toMatch(/description/i);
+    expect(body.message).not.toMatch(/Edit the caption/i);
   });
 
   // ── Time budget: the carousel arithmetic that did not fit the function ──

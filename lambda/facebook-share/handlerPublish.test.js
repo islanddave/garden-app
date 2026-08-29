@@ -214,6 +214,12 @@ describe('facebook-share publish path', () => {
     expect(body.fields.join(',')).toMatch(/alt/);
     expect(body.fields).not.toContain('caption');
     expect(fetchMock).not.toHaveBeenCalled();
+
+    // And the SENTENCE must not send the user to the wrong place. "Edit the caption and try again"
+    // is wrong advice here — the offending text is derived from the planting/variety/crop name, so
+    // editing the caption changes nothing and they retry into the same refusal.
+    expect(body.message).toMatch(/description/i);
+    expect(body.message).not.toMatch(/Edit the caption/i);
   });
 
   it('a configured forbidden term blocks the post, and the response never echoes the term', async () => {

@@ -477,7 +477,7 @@ async function share(event, secrets, userId) {
     await failAll('publish blocked by the pre-publish content check');
     return resp(422, {
       error: 'content_blocked',
-      message: 'This post looks like it contains location details, so it was not sent. Edit the caption and try again.',
+      message: contentBlockedMessage(assertion.violations),
       fields: [...new Set(assertion.violations.map((v) => v.field))],
     });
   }
@@ -587,6 +587,23 @@ async function cleanupOrphans(media, pageToken, groupId, sql) {
     // Loud: the only signal that a real object was left on a public Page.
     log: (msg, detail) => console.error(`${msg} on group ${groupId}:`, detail),
   });
+}
+
+// The human half of a content_blocked response. "Edit the caption and try again" is wrong advice
+// whenever the violation is in the ALT TEXT — that text is DERIVED from planting / variety / crop
+// display names, so editing the caption changes nothing and the user retries into the same refusal.
+// Name the surface that actually tripped. `fields` still carries the precise list; this is the
+// sentence a person reads.
+function contentBlockedMessage(violations) {
+  const inCaption = violations.some((v) => v.field === 'caption');
+  const inAlt = violations.some((v) => v.field !== 'caption');
+  if (inCaption && inAlt) {
+    return 'This post looks like it contains location details — in both the caption and a photo\u2019s description. Neither was sent.';
+  }
+  if (inAlt) {
+    return 'This post was not sent: a photo\u2019s description looks like it contains location details. That text comes from the planting, variety or crop name rather than the caption, so it has to be renamed rather than edited here.';
+  }
+  return 'This post looks like it contains location details, so it was not sent. Edit the caption and try again.';
 }
 
 // ── Instagram (V4-IGSHARE-001, Track D) ────────────────────────────────────────────────────────────
@@ -874,7 +891,7 @@ async function instagramShare(event, secrets, userId, context) {
       await failAll('publish blocked by the pre-publish content check');
       return resp(422, {
         error: 'content_blocked',
-        message: 'This post looks like it contains location details, so it was not sent. Edit the caption and try again.',
+        message: contentBlockedMessage(assertion.violations),
         fields: [...new Set(assertion.violations.map((x) => x.field))],
       });
     }
