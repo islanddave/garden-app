@@ -142,9 +142,10 @@ jobs:
       # it replaces, because gate:save-band's absence from CI is precisely why a weigh-in keypad
       # row that silently committed a harvest shipped and survived two releases.
       #
-      # STILL NOT WIRED: gate:save-band-stability. Its WebSocket blocker is the same and the same
-      # one-line import fixes it, but it drives four full harvest entries and was out of scope for
-      # the lane that wired these two. It is one import and one step away.
+      # gate:save-band-stability is now WIRED too (below). The note that stood here recorded scope,
+      # not a decision — "it is one import and one step away" — so it was a gap, not an answer, and
+      # it has been closed with exactly that one import. It is the slowest step in this job at ~3
+      # minutes because it drives four full harvest entries; that cost is the reason it is last.
       - name: Resolve Chrome for the layout gates
         # The gates drive REAL Chrome over CDP and honour CHROME_PATH, defaulting to a macOS path
         # that does not exist here. This RESOLVES the runner's browser rather than assuming it: if
@@ -212,6 +213,76 @@ jobs:
           python3 -m pip install --quiet pillow \
             || python3 -m pip install --quiet --break-system-packages pillow
           npm run gate:phototier-bytes
+
+      - name: Inventory list tap floor and row integrity (HG-4.2)
+        # Real Chrome at 390x844. The repo's ONLY gate on SC 2.5.8: every control the redesign owns
+        # must render >=44x44 AS RENDERED, not merely be authored that way — and 44 is not a number
+        # anyone here chose, it is T.tapMinHeight and the success criterion. Also asserts each control
+        # hit-tests to itself (a control probed as occluded fails, and one never probed fails too:
+        # "not measured" is not "not occluded"), that no row wraps or overflows right at the fixture's
+        # worst-case 44-char name, and that the document does not scroll sideways. A non-vacuity floor
+        # of 8 rows / 6 sections / >=12 controls is asserted before any of it.
+        #
+        # It sits at ZERO margin: the smallest measured side is exactly 44px against a 44px floor, so
+        # any shrink at all reds it. Verified non-vacuous: T.tapMinHeight 44 -> 40 fails with exit 1
+        # naming six controls ("Add seeds" 99.8x42, "Sow now" 93.5x42, "+ Add" 65.8x40, and the three
+        # 102.7x40 filter selects). Three shallower mutations SURVIVED and are worth knowing about —
+        # an inline height:40 on the selects is backstopped by selectChrome's own minHeight, and the
+        # quantity steppers are in the probe's selector list but are not rendered by this fixture, so
+        # a regression confined to them would not be caught here.
+        #
+        # Both CI blockers fixed with this step: the bare global WebSocket (node 20.19.0 has none —
+        # cdp-socket.mjs, same one-line fix as its siblings; measured here by running it with the
+        # global deleted, which reds the still-unfixed iconwire3 with "WebSocket is not defined" and
+        # passes this one with identical numbers), and the absolute /Users/davenichols/... --out
+        # default that would have thrown in mkdirSync after every assertion had already passed.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:inventory-list
+
+      - name: Icon wiring slice 4 — five rewired surfaces (V4-ICON-001)
+        # Real Chrome at 390x844 across overwinter / inventory-type / water-depth / life-story /
+        # notify. Asserts ZERO pictographic characters survive inside the rewired subtree, and that
+        # every mark renders non-zero, checkVisibility()s true, fits the 390px viewport, is CONTAINED
+        # by the card/chip/row it labels, and has text in an ancestor so nothing reads by mark alone.
+        # `emoji.length === 0` needs no calibration: zero is the only correct value for this lane, so
+        # unlike a chosen ceiling it cannot drift into vacuity. A per-surface minIcons floor (4/2/12/
+        # 5/3) is asserted BEFORE any of it, because "every mark passes" is true of a page with none.
+        #
+        # It could not simply be added as it stood. Its WebSocket blocker was already fixed, but it
+        # defaulted its --outdir to /Users/davenichols/... and then mkdirSync'd it; /Users does not
+        # exist on this runner and cannot be created at /, so it threw INSIDE the try and surfaced as
+        # fail('gate could not complete') -> exit 1, AFTER the Vite boot, the Chrome launch and all
+        # five surfaces had already passed. A false red on the by-product path. The npm script now
+        # passes a repo-relative --outdir (gitignored).
+        #
+        # Verified non-vacuous: putting one 🌱 back into WaterDepthChips' depth labels reds it with
+        # exit 1 on water-depth, naming the character. NO continue-on-error, per the policy note above.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:iconwire4
+
+      - name: Weigh-in Save-band stability (V4-HARVESTFRAME-001)
+        # The "it doesn't jump around" invariant, and the only gate here that drives a FULL four-entry
+        # harvest session rather than a single render. Real Chrome at 390x500 with the keyboard up.
+        # On the shipped frame arm the travel budget is ZERO — entries 2-4 must move the weight pad
+        # not one pixel (entry 1 gets a documented 12px descent allowance; it measures 8px) — and
+        # track 3's height must read [49,49,49,49,49] across the session, which is the ledger's whole
+        # claim. It also refuses to pass vacuously in several named ways: a surface it cannot identify
+        # FAILS, a zero-height or non-visible or pointer-events:none band FAILS, a step that never came
+        # to rest FAILS rather than being averaged away, and on the frame arm a travel of 0 is only
+        # accepted while the document genuinely cannot scroll.
+        #
+        # Last of the layout gates deliberately: it is the slowest at ~3 min locally (measured 184 s).
+        #
+        # Its ONLY blocker was the bare global WebSocket that kept its siblings out — node 20.19.0 has
+        # none. Fixed with the same one-line cdp-socket.mjs import, then MEASURED under that condition
+        # rather than assumed: run with globalThis.WebSocket deleted it still PASSes, same arm, same
+        # 8px, exit 0. Verified non-vacuous: FRAME_LEDGER_PX 48 -> 64 reds it with exit 1 on
+        # "Track 3 height progression is [65,65,65,65,65], expected [49,49,49,49,49]".
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:save-band-stability
 
       - name: Icon optical-weight golden (V4-ICON-001)
         # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must

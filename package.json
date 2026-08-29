@@ -18,6 +18,8 @@
     "gate:log-chooser": "node scripts/layout-gate/log-chooser-clearance.mjs",
     "gate:phototier-bytes": "node scripts/layout-gate/phototier-bytes.mjs --surface today --count 20 --max-bytes 4000000",
     "phototier-bytes:before": "node scripts/layout-gate/phototier-bytes.mjs --surface today --count 20 --tier none --max-bytes 4000000",
+    "gate:iconwire4": "node scripts/layout-gate/iconwire4-shot.mjs --outdir artifacts/layout-gate",
+    "gate:inventory-list": "node scripts/layout-gate/inventory-list-shot.mjs --out artifacts/layout-gate/inventory-list-390x844.png",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
     "lint": "eslint .",

@@ -30,3 +30,9 @@ coverage/
 # workflow). The durable record of an apply is the harvest_log_weight_snapshot_* table plus the
 # ack file's review entries, not this artifact.
 harvest-ratchet-report.json
+
+# PNGs the layout gates capture as a by-product. The gate is the assertions, not the frame — these
+# are regenerated on every run and are for a human eye after a red, never an input to anything.
+# They used to be written to an absolute /Users/davenichols/... path, which is what kept the gates
+# out of CI; the npm scripts now point --out/--outdir here.
+artifacts/
