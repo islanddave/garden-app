@@ -70,6 +70,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { resolveWebSocket } from './cdp-socket.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // Distinct from save-band-clearance.mjs's 5312/9422 on purpose, so both gates can run at once and
@@ -77,6 +78,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5313)
 const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9423)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// Same seam the sibling gates use — CI needs --no-sandbox and resolves CHROME_PATH in its own step.
+const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
 
 const REPORT_ONLY = process.argv.includes('--report')
 // Height is overridable ONLY in --report mode: the asserted numbers below are 390x500 facts, and a
@@ -203,14 +206,17 @@ async function startHarness() {
   throw new Error(`harness vite never served :${PORT} within 30s:\n${log}`)
 }
 
-// ── Chrome over CDP. Node 22+ ships a global WebSocket, so this needs no dependency. ───────────
+// ── Chrome over CDP. The transport comes from cdp-socket.mjs, NOT a bare global: the header note
+// this replaced said "Node 22+ ships a global WebSocket, so this needs no dependency", which is
+// true locally and false in CI, where node-version is pinned to 20.19.0. That single line is why
+// this gate sat wired to nothing while its two siblings shipped. ───────────────────────────────
 async function startChrome(userDataDir) {
   if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME} — set CHROME_PATH`)
   const proc = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`,
     '--window-size=900,900', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
+    '--disable-renderer-backgrounding', ...EXTRA_CHROME_FLAGS,
   ], { stdio: ['ignore', 'ignore', 'ignore'] })
   for (let i = 0; i < 60; i++) {
     try {
@@ -224,7 +230,8 @@ async function startChrome(userDataDir) {
 }
 
 async function attach(wsUrl) {
-  const ws = new WebSocket(wsUrl)
+  const WS = await resolveWebSocket()
+  const ws = new WS(wsUrl)
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP socket failed')) })
   let id = 0
   const pending = new Map()

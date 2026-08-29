@@ -142,9 +142,10 @@ jobs:
       # it replaces, because gate:save-band's absence from CI is precisely why a weigh-in keypad
       # row that silently committed a harvest shipped and survived two releases.
       #
-      # STILL NOT WIRED: gate:save-band-stability. Its WebSocket blocker is the same and the same
-      # one-line import fixes it, but it drives four full harvest entries and was out of scope for
-      # the lane that wired these two. It is one import and one step away.
+      # gate:save-band-stability is now WIRED too (below). The note that stood here recorded scope,
+      # not a decision — "it is one import and one step away" — so it was a gap, not an answer, and
+      # it has been closed with exactly that one import. It is the slowest step in this job at ~3
+      # minutes because it drives four full harvest entries; that cost is the reason it is last.
       - name: Resolve Chrome for the layout gates
         # The gates drive REAL Chrome over CDP and honour CHROME_PATH, defaulting to a macOS path
         # that does not exist here. This RESOLVES the runner's browser rather than assuming it: if
@@ -260,6 +261,28 @@ jobs:
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:iconwire4
+
+      - name: Weigh-in Save-band stability (V4-HARVESTFRAME-001)
+        # The "it doesn't jump around" invariant, and the only gate here that drives a FULL four-entry
+        # harvest session rather than a single render. Real Chrome at 390x500 with the keyboard up.
+        # On the shipped frame arm the travel budget is ZERO — entries 2-4 must move the weight pad
+        # not one pixel (entry 1 gets a documented 12px descent allowance; it measures 8px) — and
+        # track 3's height must read [49,49,49,49,49] across the session, which is the ledger's whole
+        # claim. It also refuses to pass vacuously in several named ways: a surface it cannot identify
+        # FAILS, a zero-height or non-visible or pointer-events:none band FAILS, a step that never came
+        # to rest FAILS rather than being averaged away, and on the frame arm a travel of 0 is only
+        # accepted while the document genuinely cannot scroll.
+        #
+        # Last of the layout gates deliberately: it is the slowest at ~3 min locally (measured 184 s).
+        #
+        # Its ONLY blocker was the bare global WebSocket that kept its siblings out — node 20.19.0 has
+        # none. Fixed with the same one-line cdp-socket.mjs import, then MEASURED under that condition
+        # rather than assumed: run with globalThis.WebSocket deleted it still PASSes, same arm, same
+        # 8px, exit 0. Verified non-vacuous: FRAME_LEDGER_PX 48 -> 64 reds it with exit 1 on
+        # "Track 3 height progression is [65,65,65,65,65], expected [49,49,49,49,49]".
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:save-band-stability
 
       - name: Icon optical-weight golden (V4-ICON-001)
         # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
