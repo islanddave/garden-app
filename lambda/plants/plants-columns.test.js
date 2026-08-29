@@ -1,8 +1,9 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.plants columns lambda/plants reads.
 //
 // Thirty columns — by far the widest contract in this set, and the only one that is not
-// mostly an ownership walk: this is plants' home directory, and merge.js reads a planting
-// almost whole to build the merge preview and to carry the survivor's lifecycle anchors.
+// mostly an ownership walk: this is plants' home directory, and merge.js:281 reads a planting
+// almost whole when it loads the merge group, under the V4-SOFTDEL-001 gate (merge.js:276-279)
+// that a planting stranded beneath a soft-deleted container cannot be merged.
 // Five statements: two from authz-parents.js (the resolver byte-identical in seven dirs),
 // and three from merge.js — the group projection through `p`, the anchor-supersede EXISTS
 // through `wp`, and an unaliased fingerprint read pinned below. Note index.js does NOT

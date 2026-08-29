@@ -1,9 +1,9 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.cultivar columns lambda/harvests reads.
 //
-// Four statements in index.js. Three are label lookups; the fourth is the only reader in
-// this directory of days_to_maturity_min/max and dtm_basis — the three columns the harvest
-// watch uses to decide when a first pick is due, so a null here is a planting that never
-// appears rather than an error.
+// Four statements. Three are label lookups in index.js; the fourth is watch-route.js:183, the
+// only reader in this directory of days_to_maturity_min/max and dtm_basis — the three columns
+// the harvest watch uses to decide when a first pick is due, so a null here is a planting that
+// never appears rather than an error.
 //
 // cultivar is a VIEW over plant_varieties, so a column dropped from the view is a 500 at
 // runtime with nothing failing at deploy time — that is BUG-SEEDDETAIL500-001's exact shape,

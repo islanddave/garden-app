@@ -1,10 +1,11 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.crop_types columns lambda/events reads.
 //
-// One statement: the ready-to-pick projection in index.js, and the only reader in the repo of
-// all three harvest-cadence columns at once (harvest_habit, repeat_interval_days and the two
-// harvest_season_*_doy bounds). It reaches the table two hops out — plants.variety_id ->
-// plant_varieties.crop_type_slug -> crop_types.slug — so a column dropped here surfaces as a
-// silently empty pick list rather than an error.
+// One statement: the ready-to-pick projection in index.js, which reads all four harvest-cadence
+// columns at once (harvest_habit, repeat_interval_days and the two harvest_season_*_doy bounds).
+// It is the only non-test file under lambda/ that names harvest_season_start_doy at all —
+// measured by grep, so scoped to lambda/ and to this SHA. It reaches the table two hops out —
+// plants.variety_id -> plant_varieties.crop_type_slug -> crop_types.slug — so a column dropped
+// here surfaces as a silently empty pick list rather than an error.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector

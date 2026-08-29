@@ -2,8 +2,9 @@
 //
 // One statement, in merge.js: the harvest arm of readFingerprint, the optimistic-concurrency
 // probe a merge takes before and after it mutates. max(h.updated_at) is the whole point of
-// it, and this is the only read of harvest_log.updated_at in the repo. It reaches the rows
-// through event_log rather than directly, because harvest_log has no plant_id.
+// it, and merge.js:693 is the only `h.updated_at` read in any non-test file under lambda/
+// (measured by grep, so scoped to lambda/ and to this SHA). It reaches the rows through
+// event_log rather than directly, because harvest_log has no plant_id.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector

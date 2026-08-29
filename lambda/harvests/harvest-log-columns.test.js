@@ -3,8 +3,8 @@
 // Nine columns across four statements — the harvest list and the ready-to-pick watch. Three
 // in index.js read the measurement itself (quantity/unit plus the weight triple
 // weight_grams/weight_estimated/weight_basis, which must travel together: a gram figure with
-// no basis is not a measurement); watch-route.js reads only h.id, as an EXISTS probe for
-// whether a pick has already been logged.
+// no basis is not a measurement); watch-route.js reads three — id, event_id, deleted_at — as a
+// probe for whether a LIVE pick has already been logged against the event.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector

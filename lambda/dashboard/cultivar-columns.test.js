@@ -1,8 +1,10 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.cultivar columns lambda/dashboard reads.
 //
-// Two statements in handlers.js under two different aliases — `cv` for the seed-packet
-// summary and `c` for the care-profile read, which is the only reader in this directory of
-// care_notes, soil_notes, genus, species and lifecycle. Nine columns.
+// Two statements in handlers.js under two different aliases. `cv` (:1017) is the PLANTING search,
+// which reaches the cultivar only to match its display_name and crop_type_slug. `c` (:1093,
+// searchVarieties) is the CULTIVAR search itself, and the only reader in this directory of
+// care_notes, soil_notes, genus, species and lifecycle — it returns care_notes as the result
+// snippet. Nine columns between them.
 //
 // cultivar is a VIEW over plant_varieties, so a column dropped from the view is a 500 at
 // runtime with nothing failing at deploy time — that is BUG-SEEDDETAIL500-001's exact shape,

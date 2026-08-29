@@ -2,9 +2,11 @@
 //
 // Ten of the table's fifteen columns across six statements in index.js — the widest
 // harvest_log contract, because this is where a harvest event and its measurement are read
-// back together. Two aliases: `h` for the row belonging to the event being read, and `h2`
-// for the sibling-rollup arm that re-reads weight to total a container's picks. The only
-// directory here that reads `disposition`.
+// back together. Two aliases: `h` for the row belonging to the event being read, and `h2` for the
+// carry-forward sub-select at index.js:1948, which re-reads a USER-SUPPLIED weight off the same
+// event so that editing the quality star does not silently discard the measurement — the
+// unit-NOT-IN-weight-units guard there is what tells a typed weight apart from one derived from a
+// weight-unit quantity. The only directory here that reads `disposition`.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector

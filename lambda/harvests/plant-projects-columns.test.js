@@ -1,11 +1,11 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.plant_projects columns lambda/harvests reads.
 //
 // Five statements, every one through the `pj` alias, and the only directory here that reads
-// archived_at. index.js resolves a harvest row's parent container for its name and for the
-// ownership fallback COALESCE(pj.created_by, p.created_by) — a project-less planting is owned
-// by its own created_by — and watch-route.js additionally excludes archived and soft-deleted
-// containers from the ready-to-pick watch. No unaliased read: this directory never reaches the
-// table without binding it.
+// archived_at. Three are index.js label reads (`pj.name AS project_name`, :240 and :322); one is
+// ready-impression.js:175, whose ownership test is COALESCE(pj.created_by, p.created_by) — a
+// project-less planting is owned by its own created_by; and watch-route.js excludes archived and
+// soft-deleted containers from the ready-to-pick watch, which is where archived_at comes from. No
+// unaliased read: this directory never reaches the table without binding it.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
