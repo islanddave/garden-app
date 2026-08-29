@@ -213,6 +213,28 @@ jobs:
             || python3 -m pip install --quiet --break-system-packages pillow
           npm run gate:phototier-bytes
 
+      - name: Icon wiring slice 4 — five rewired surfaces (V4-ICON-001)
+        # Real Chrome at 390x844 across overwinter / inventory-type / water-depth / life-story /
+        # notify. Asserts ZERO pictographic characters survive inside the rewired subtree, and that
+        # every mark renders non-zero, checkVisibility()s true, fits the 390px viewport, is CONTAINED
+        # by the card/chip/row it labels, and has text in an ancestor so nothing reads by mark alone.
+        # `emoji.length === 0` needs no calibration: zero is the only correct value for this lane, so
+        # unlike a chosen ceiling it cannot drift into vacuity. A per-surface minIcons floor (4/2/12/
+        # 5/3) is asserted BEFORE any of it, because "every mark passes" is true of a page with none.
+        #
+        # It could not simply be added as it stood. Its WebSocket blocker was already fixed, but it
+        # defaulted its --outdir to /Users/davenichols/... and then mkdirSync'd it; /Users does not
+        # exist on this runner and cannot be created at /, so it threw INSIDE the try and surfaced as
+        # fail('gate could not complete') -> exit 1, AFTER the Vite boot, the Chrome launch and all
+        # five surfaces had already passed. A false red on the by-product path. The npm script now
+        # passes a repo-relative --outdir (gitignored).
+        #
+        # Verified non-vacuous: putting one 🌱 back into WaterDepthChips' depth labels reds it with
+        # exit 1 on water-depth, naming the character. NO continue-on-error, per the policy note above.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:iconwire4
+
       - name: Icon optical-weight golden (V4-ICON-001)
         # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
         # stay within +/-tolerance of its approved baseline (scripts/icon-ci/icon-golden-baseline.json).

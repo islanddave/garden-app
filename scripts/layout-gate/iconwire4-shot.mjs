@@ -41,14 +41,20 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5317)
 const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9428)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// Same seam the sibling gates use — CI needs --no-sandbox and resolves CHROME_PATH in its own step.
+const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
 
 // Dave is Android-only; 390x844 is the common Android logical viewport and the geometry the sibling
 // gates in this directory already measure at.
 const VIEWPORT = { w: 390, h: 844 }
 
+// REPO-RELATIVE default, not the authoring machine's scratch dir. The old default was an absolute
+// /Users/davenichols/... path; on a Linux runner /Users does not exist and cannot be created at /,
+// so the mkdirSync below threw INSIDE the try and became fail('gate could not complete') -> exit 1
+// AFTER the Vite boot, the Chrome launch and every real assertion had already passed. A gate that
+// reds on where it writes its by-product, having found nothing wrong, is worse than no gate.
 const outArg = process.argv.indexOf('--outdir')
-const OUTDIR = outArg > -1 ? process.argv[outArg + 1]
-  : '/Users/davenichols/AI/Claude/Projects/Gardening/_perfdesign_20260826'
+const OUTDIR = outArg > -1 ? process.argv[outArg + 1] : resolve(ROOT, 'artifacts/layout-gate')
 
 // minIcons is the non-vacuity floor, one per surface:
 //   overwinter    4 regime marks (+ the selected row's check once one is picked)
@@ -95,7 +101,7 @@ async function startChrome(userDataDir) {
     // the window only has to be big enough not to clip it. See trap 1 in the header.
     '--window-size=900,1000', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
+    '--disable-renderer-backgrounding', ...EXTRA_CHROME_FLAGS,
   ], { stdio: ['ignore', 'ignore', 'ignore'] })
   for (let i = 0; i < 60; i++) {
     try {
