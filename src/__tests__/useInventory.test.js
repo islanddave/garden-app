@@ -355,6 +355,35 @@ describe('useInventory — adjustQuantity', () => {
     expect(JSON.parse(puts[1][1].body).quantity_on_hand).toBe(10)
     expect(result.current.items[0].quantity_on_hand).toBe(10)
   })
+
+  // The window the BUG-INVUNDOQTY-001 fix neither opened nor closed: itemsRef was mirrored only by
+  // an effect, so two adjustments issued inside ONE commit both read the pre-tap row. The absence
+  // of an await between the two calls IS the test — put one there and the effect runs, the ref
+  // catches up, and the defect stops reproducing. No fake timers, deliberately: the window is a
+  // React commit boundary, not an interval, and a punctual timer would land the same side of it
+  // every run whether or not the bug were present.
+  // Pre-fix failure: `expected 11 to be 12` — the second PUT re-sent the first one's value, a
+  // silently lost increment with no error, no revert, and no second toast to show it.
+  it('a second adjustment in the same commit reads the first one\'s value', async () => {
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    fetchSpy.mockResolvedValueOnce({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11 })
+    fetchSpy.mockResolvedValueOnce({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 12 })
+
+    await act(async () => {
+      const first  = result.current.adjustQuantity('item-1', 1)
+      const second = result.current.adjustQuantity('item-1', 1)
+      await Promise.all([first, second])
+    })
+
+    const puts = fetchSpy.mock.calls.filter(c => c[1]?.method === 'PUT')
+    expect(puts).toHaveLength(2)
+    expect(JSON.parse(puts[0][1].body).quantity_on_hand).toBe(11)
+    expect(JSON.parse(puts[1][1].body).quantity_on_hand).toBe(12)
+    expect(result.current.items[0].quantity_on_hand).toBe(12)
+  })
 })
 
 describe('useInventory — deleteItem', () => {

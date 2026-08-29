@@ -37,8 +37,26 @@ export function useInventory() {
   // the undo toast is the one that matters (BUG-INVUNDOQTY-001). A ref, not a functional
   // setItems updater: the app mounts under StrictMode (main.jsx), which double-invokes
   // updaters, so an updater body is not a safe place to read state from.
+  // The effect is now a backstop, not the mechanism: commitItems below assigns the ref
+  // synchronously. It stays so a raw setItems added here later cannot leave the ref stranded.
   const itemsRef = useRef(items)
   useEffect(() => { itemsRef.current = items }, [items])
+
+  // Every write to `items` goes through here rather than through setItems directly. The effect
+  // above only catches up after a commit, so two adjustments issued inside ONE commit both read
+  // the pre-change row: two + taps become a single increment, and the second PUT silently re-sends
+  // the first one's value — no error, no revert, no second toast. Computing `next` here and
+  // assigning the ref before handing it off makes the ref true the moment a write is issued.
+  //
+  // setItems receives a plain VALUE, and that is the load-bearing half under StrictMode: React
+  // double-invokes updater functions passed to setState, so a ref assigned inside an updater body
+  // would be written twice per call. Nothing here runs during render, and `updater` — when the
+  // caller passes one — is invoked exactly once, by us, against the ref.
+  const commitItems = useCallback((updater) => {
+    const next = typeof updater === 'function' ? updater(itemsRef.current) : updater
+    itemsRef.current = next
+    setItems(next)
+  }, [])
 
   const reload = useCallback(async () => {
     const my = ++loadCounterRef.current
@@ -47,14 +65,14 @@ export function useInventory() {
     try {
       const data = await fetch('/api/inventory-items')
       if (loadCounterRef.current !== my) return // stale
-      setItems(Array.isArray(data) ? data : [])
+      commitItems(Array.isArray(data) ? data : [])
     } catch (err) {
       if (loadCounterRef.current !== my) return
       setError(err?.message ?? 'Failed to load inventory')
     } finally {
       if (loadCounterRef.current === my) setLoading(false)
     }
-  }, [fetch])
+  }, [fetch, commitItems])
 
   useEffect(() => {
     reload()
@@ -84,12 +102,12 @@ export function useInventory() {
         method: 'POST',
         body: JSON.stringify(payload),
       })
-      setItems(prev => [created, ...prev])
+      commitItems(prev => [created, ...prev])
       return { item: created }
     } catch (err) {
       return { error: err?.message ?? 'Failed to create item' }
     }
-  }, [fetch])
+  }, [fetch, commitItems])
 
   const updateItem = useCallback(async (id, payload) => {
     // Caller may pass partial changes OR full payload.
@@ -107,12 +125,12 @@ export function useInventory() {
         method: 'PUT',
         body: JSON.stringify(fullPayload),
       })
-      setItems(prev => prev.map(i => i.id === id ? updated : i))
+      commitItems(prev => prev.map(i => i.id === id ? updated : i))
       return { item: updated }
     } catch (err) {
       return { error: err?.message ?? 'Failed to update item' }
     }
-  }, [fetch])
+  }, [fetch, commitItems])
 
   const adjustQuantity = useCallback(async (id, delta) => {
     const current = itemsRef.current.find(i => i.id === id)
@@ -124,15 +142,16 @@ export function useInventory() {
     const newValue = Math.max(0, prevValue + Number(delta))
     if (newValue === prevValue) return
 
-    // Optimistic update
-    setItems(prev => prev.map(i => i.id === id ? { ...i, [col]: newValue } : i))
+    // Optimistic update. Through commitItems, so a second tap landing in this same commit reads
+    // newValue rather than the pre-tap row and increments from it.
+    commitItems(prev => prev.map(i => i.id === id ? { ...i, [col]: newValue } : i))
 
     try {
       const updated = await fetch('/api/inventory-items/' + id, {
         method: 'PUT',
         body: JSON.stringify({ ...current, [col]: newValue }),
       })
-      setItems(prev => prev.map(i => i.id === id ? updated : i))
+      commitItems(prev => prev.map(i => i.id === id ? updated : i))
       showToast({
         msg: `Quantity changed to ${newValue}`,
         onUndo: () => {
@@ -147,20 +166,20 @@ export function useInventory() {
       })
     } catch (err) {
       // Revert optimistic change
-      setItems(prev => prev.map(i => i.id === id ? { ...i, [col]: prevValue } : i))
+      commitItems(prev => prev.map(i => i.id === id ? { ...i, [col]: prevValue } : i))
       showToast({ msg: "Couldn't save — please try again" })
     }
-  }, [fetch, showToast])
+  }, [fetch, showToast, commitItems])
 
   const deleteItem = useCallback(async (id) => {
     try {
       await fetch('/api/inventory-items/' + id, { method: 'DELETE' })
-      setItems(prev => prev.filter(i => i.id !== id))
+      commitItems(prev => prev.filter(i => i.id !== id))
       return { ok: true }
     } catch (err) {
       return { error: err?.message ?? 'Failed to delete item' }
     }
-  }, [fetch])
+  }, [fetch, commitItems])
 
   return { items, loading, error, lowStockCount, toast, dismissToast, createItem, updateItem, adjustQuantity, deleteItem, reload }
 }
