@@ -141,6 +141,13 @@ export default function PhotoLibrary() {
   // Per-file errors live on the items themselves; this exists so the count is visible without
   // scanning the strip, NOT as a replacement for them.
   const [batchSummary,  setBatchSummary]  = useState(null)
+  // Photos with no parent, as of the last UNSCOPED list fetch. `null` means "not measured yet" and
+  // is DOCUMENTATION, not mechanism — the badge is suppressed by the `> 0` test at the render site,
+  // which is false for null and 0 alike, so seeding this with 0 would change nothing observable. A
+  // mutation run proved exactly that, so the distinction is recorded here rather than asserted in a
+  // test that cannot fail. The two states differ in meaning ("unknown" vs "measured, empty") and
+  // that matters the moment anything else reads this value.
+  const [untaggedCount, setUntaggedCount] = useState(null)
   const stagedInputRef = useRef(null)
   const stagedUploader = useUploadPhoto({ errorMode: 'surface' })
   // A staged blob URL outlives the component unless revoked. Closing the form or leaving the page
@@ -316,6 +323,23 @@ export default function PhotoLibrary() {
              : ''
     try {
       let data = await apiFetch('/api/photos' + qs) ?? []
+
+      // V4-PHOTOBULK-001 — the untagged COUNT, taken from the response before any mode filter.
+      //
+      // WHY IT EXISTS. Bulk upload can now put a pile of photos into the inbox in one action, and
+      // the only route back to them is a filter chip that looks identical whether it holds zero
+      // photos or forty. A drain nobody can see is a drain nobody runs; the count is what turns
+      // "Untagged" from a filter into a to-do.
+      //
+      // ONLY FROM AN UNSCOPED FETCH. With ?project_id= or ?location_id= the response is a SUBSET, so
+      // counting it would answer a different question ("untagged within this project") while
+      // rendering in a chip that reads as global. Rather than show a number that is quietly about
+      // something else, the badge holds its last unscoped value and the count is simply not
+      // recomputed here — a stale-but-true global count beats a fresh-but-mislabelled local one.
+      // `isAttached` is photoModel's, so this and the filter below can never drift apart.
+      if (!filterProject && !filterLocation) {
+        setUntaggedCount(data.filter(p => !toPhoto(p).isAttached).length)
+      }
       // V4-PHOTOTODAYFILTER-001. Keyed on created_at, NOT taken_at: photoModel.js records that
       // taken_at is NULL on every live row, so a taken_at filter would return an empty library
       // every time and look like "no photos today" rather than like a broken predicate.
@@ -854,8 +878,22 @@ export default function PhotoLibrary() {
                     <img src={stagedItems[0].url} alt="Upload preview" data-testid="pl-staged-preview"
                       style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: T.radiusCard, display: 'block' }} />
                   ) : (
+                    // HEIGHT-CAPPED, and the cap is the whole reason this reads oddly.
+                    //
+                    // MEASURED IN A REAL BROWSER AT 390x844 (tests/harness/photobulk.jsx, case 4):
+                    // twenty 84px tiles wrap to a 788px strip, which pushed the zone picker and the
+                    // Upload button 238px BELOW THE FOLD. That is not cosmetic — this form's entire
+                    // ordering is "see the photo first, THEN say where it goes" (BUG-PHOTOFIRST-001),
+                    // and a strip that buries the "where it goes" half defeats the ordering it was
+                    // built to serve. Every vitest assertion passed throughout; jsdom returns zero
+                    // for getBoundingClientRect, so nothing in src/__tests__ could have seen it.
+                    //
+                    // 216px is two rows plus the status line. Scrolling INSIDE the strip keeps every
+                    // thumbnail reachable while making the strip's cost to the page constant,
+                    // whether two photos are staged or twenty.
                     <ul data-testid="pl-staged-strip"
-                        style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm, listStyle: 'none', padding: 0, margin: 0 }}>
+                        style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm, listStyle: 'none',
+                                 padding: 0, margin: 0, maxHeight: 216, overflowY: 'auto' }}>
                       {stagedItems.map((item, i) => (
                         <li key={item.id} data-testid="pl-staged-item" data-status={item.status}
                             style={{ position: 'relative', width: 84 }}>
@@ -1023,9 +1061,14 @@ export default function PhotoLibrary() {
             { mode: 'untagged',   label: 'Untagged' },
           ].map(({ mode, label }) => {
             const active = filterMode === mode && !filterProject && !filterLocation
+            // The count rides ONLY the Untagged chip, and only once measured and non-zero. A "0"
+            // badge is noise on a chip whose empty state is already its own answer, and rendering
+            // one before the first list lands would assert an empty inbox we have not checked.
+            const badge = mode === 'untagged' && untaggedCount > 0 ? untaggedCount : null
             return (
               <button
                 key={mode}
+                data-testid={`pl-filter-${mode}`}
                 onClick={() => { setFilterMode(mode); setFilterProject(''); selectLocationFilter('') }}
                 style={{
                   padding: '6px 14px', borderRadius: T.radiusPill, fontSize: T.type.sm, fontWeight: 600,
@@ -1035,7 +1078,10 @@ export default function PhotoLibrary() {
                   color: active ? P.green : P.mid,
                 }}
               >
-                {label}
+                {/* The number is INSIDE the accessible name, not a decorative sibling: "Untagged 12"
+                    is the whole point of the chip and a screen reader that reads only "Untagged"
+                    gets the version of this control that the change was made to replace. */}
+                {badge == null ? label : `${label} ${badge}`}
               </button>
             )
           })}
@@ -1218,6 +1264,9 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
     <button
       onClick={onClick}
       aria-pressed={selectMode ? selected : undefined}
+      // Test seam. The card's image goes through <PhotoView>, which resolves a presigned URL and so
+      // renders no addressable <img> under jsdom — leaving the grid with nothing a test could count.
+      data-testid="pl-photo-card"
       style={{
         background: 'none',
         border: selected ? `2px solid ${P.green}` : `1px solid ${P.border}`,

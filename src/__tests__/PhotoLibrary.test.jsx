@@ -203,7 +203,12 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
     fetchSpy.mockResolvedValueOnce([spaceOnly, bare])  // refetch on mode change
     await act(async () => {
-      fireEvent.click(screen.getByText('Untagged'))
+      // V4-PHOTOBULK-001: addressed by testid, not by label text. The chip's label now carries
+      // the pending count ("Untagged 6") because that count IS the point of the chip — a reader
+      // who hears only "Untagged" gets the version this change replaced. These three fixtures each
+      // include one genuinely-untagged photo, so the exact-text match stopped resolving. The
+      // SUBJECT of all three tests — the isAttached predicate — is untouched.
+      fireEvent.click(screen.getByTestId('pl-filter-untagged'))
     })
     await waitFor(() => expect(screen.getByAltText('bare photo')).toBeDefined())
     expect(screen.queryByAltText('space photo')).toBeNull()
@@ -220,7 +225,12 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
     fetchSpy.mockResolvedValueOnce([spaceOnly, bare])
     await act(async () => {
-      fireEvent.click(screen.getByText('Untagged'))
+      // V4-PHOTOBULK-001: addressed by testid, not by label text. The chip's label now carries
+      // the pending count ("Untagged 6") because that count IS the point of the chip — a reader
+      // who hears only "Untagged" gets the version this change replaced. These three fixtures each
+      // include one genuinely-untagged photo, so the exact-text match stopped resolving. The
+      // SUBJECT of all three tests — the isAttached predicate — is untouched.
+      fireEvent.click(screen.getByTestId('pl-filter-untagged'))
     })
     await waitFor(() => expect(screen.getByAltText('bare photo')).toBeDefined())
     expect(screen.queryByAltText('the whole place')).toBeNull()
@@ -239,7 +249,12 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
     fetchSpy.mockResolvedValueOnce([invOnly, bare])
     await act(async () => {
-      fireEvent.click(screen.getByText('Untagged'))
+      // V4-PHOTOBULK-001: addressed by testid, not by label text. The chip's label now carries
+      // the pending count ("Untagged 6") because that count IS the point of the chip — a reader
+      // who hears only "Untagged" gets the version this change replaced. These three fixtures each
+      // include one genuinely-untagged photo, so the exact-text match stopped resolving. The
+      // SUBJECT of all three tests — the isAttached predicate — is untouched.
+      fireEvent.click(screen.getByTestId('pl-filter-untagged'))
     })
     await waitFor(() => expect(screen.getByAltText('bare photo')).toBeDefined())
     expect(screen.queryByAltText('seed packet')).toBeNull()

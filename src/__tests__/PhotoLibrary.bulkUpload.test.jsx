@@ -107,6 +107,21 @@ describe('PhotoLibrary bulk upload — attach a batch to one target', () => {
     expect(screen.getByTestId('pl-staged-upload').textContent).toMatch(/Upload 3 photos/i)
   })
 
+  it('the strip is height-capped and scrolls, so the target pickers stay above the fold', async () => {
+    await openForm()
+    await stage(Array.from({ length: 12 }, (_, i) => `g${i}.jpg`))
+    const strip = screen.getByTestId('pl-staged-strip')
+    // A WEAK GUARD ON PURPOSE, and worth having anyway. jsdom has no layout engine, so this cannot
+    // check that the strip is actually 216px or that anything is on screen — it can only check that
+    // the bound still exists. The NUMBER came from a real browser at 390x844
+    // (tests/harness/photobulk.jsx): twenty tiles wrapped to a 788px strip and pushed the zone
+    // picker and the Upload button 238px below the fold, while every assertion in this file passed.
+    // So this line's job is narrow: make deleting the cap fail something, since the measurement that
+    // found it cannot run in CI.
+    expect(strip.style.maxHeight).toBeTruthy()
+    expect(strip.style.overflowY).toBe('auto')
+  })
+
   it('one photo still renders the full-width preview, not a strip', async () => {
     await openForm()
     await stage(['solo.jpg'])

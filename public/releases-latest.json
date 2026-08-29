@@ -1,9 +1,8 @@
 {
-  "version": "4.69.0",
+  "version": "4.70.0",
   "date": "2026-08-29",
   "highlights": [
-    "Photo Library takes a batch — pick up to 20 photos, choose one home for all of them, upload once",
-    "Or upload a batch with no target at all: they land under Untagged and you tag them one at a time afterwards",
-    "A photo that fails stays put with its reason, so a retry is one tap instead of re-picking everything"
+    "The Untagged filter now shows how many photos are waiting, so a batch you meant to tag later is visible instead of forgotten",
+    "A big batch no longer pushes the target picker off screen — the staged strip scrolls inside a fixed height"
   ]
 }

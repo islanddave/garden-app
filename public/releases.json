@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.70.0",
+    "date": "2026-08-29",
+    "highlights": [
+      "The Untagged filter now shows how many photos are waiting, so a batch you meant to tag later is visible instead of forgotten",
+      "A big batch no longer pushes the target picker off screen — the staged strip scrolls inside a fixed height"
+    ]
+  },
+  {
     "version": "4.69.0",
     "date": "2026-08-29",
     "highlights": [
