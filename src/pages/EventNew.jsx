@@ -34,7 +34,13 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 const POST_SAVE_STRIP_SPACER_PX = 86
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS, sendUxEvent } from '../lib/uxEvents.js'
-import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
+import { EVENTNEW_ADD_DETAILS_EXPANDED, PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js'
+
+// V4-PHOTOBULK-001 S2. Matches PhotoUpload's DEFAULT_MAX_FILES — one number for "a handful you just
+// took", not the server's MAX_BATCH of 20, which governs Track A's camera-roll drain.
+const MAX_EVENT_PHOTOS = 10
+let eventPhotoSeq = 0
+const nextPhotoId = () => `evphoto-${++eventPhotoSeq}`
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 // BUG-DISCLOSURETAPSIZE-001: the tap floor is a token, not a literal repeated at four call sites.
 import { T } from '../components/forms/formStyles.js'
@@ -772,8 +778,17 @@ export default function EventNew() {
   // V1.2a-2 Wave 3: non-fatal notice (e.g. deep-link project not found).
   const [notice, setNotice] = useState(null)
 
-  const [photoFile,    setPhotoFile]    = useState(null)
-  const [photoPreview, setPhotoPreview] = useState(null)
+  // V4-PHOTOBULK-001 S2 (design V100 §3 B1) — the harvest/observation form stages N photos, not one.
+  // `photoItems` is [{ id, file, url }] in pick order; `photoItems[0]` is the old `photoFile` and the
+  // whole array is what handleSubmit uploads. The two scalars this replaces were the ONLY reason
+  // "I took four pictures of this one plant" meant four saves.
+  //
+  // ARRAY EVEN WHEN THE FLAG IS OFF. The flag gates what the PICKER accepts (one file vs many) and
+  // what the strip renders — not the shape of the state. A dual-shape state would fork every one of
+  // the ten read sites below and give the flag-off branch its own untested code path, which is the
+  // opposite of what X1's byte-identical requirement is for: flag-off must be the SAME code carrying
+  // exactly one item.
+  const [photoItems, setPhotoItems] = useState([])
   const [projects,     setProjects]     = useState([])
   const [locations,    setLocations]    = useState([])
   const [saving,       setSaving]       = useState(false)
@@ -950,8 +965,11 @@ export default function EventNew() {
     // motivated the bundle-side fix means the retired url keeps arriving from Dave's home screen for
     // days after deploy, and the harvest cases in PhotoEventRequiresPhoto.test.jsx pin it for them.
     if (!fromQuick || preselectedEventType !== 'photo') return
+    // §3 B7 — the parked File still lands, and still lands as ONE staged item. The trusted-tap path
+    // parks a single File by construction (QuickActions.jsx:124), so multi changes nothing here
+    // except the container it goes into.
     const f = takePendingCapture()
-    if (f) { setPhotoFile(f); setPhotoPreview(URL.createObjectURL(f)) }
+    if (f) setPhotoItems([{ id: nextPhotoId(), file: f, url: URL.createObjectURL(f) }])
     // BUG-SNAPATTACH-001: the claim can MISS — the park is module state cleared on read, so a
     // remount between park and claim (overlay host, StrictMode, any route churn) consumes it and
     // the second mount finds nothing. Silence here is what produced photo-typed events carrying no
@@ -1100,7 +1118,7 @@ export default function EventNew() {
   // them drift is how one surface ends up defended and the other not.
   const hasUnsavedInput = !!(
     form.notes || form.private_notes || form.quantity ||
-    photoFile || harvest.quantity || harvest.weight ||
+    photoItems.length || harvest.quantity || harvest.weight ||
     Object.keys(metadataState).length ||
     treatment.pest_target || treatment.product_id || treatment.product_text || treatment.category || treatment.amount ||
     container.type || container.size.trim() ||
@@ -1335,11 +1353,31 @@ export default function EventNew() {
     })
   }
 
+  // §3 B1 — every file from ONE picker invocation, appended to whatever is already staged (a second
+  // trip to the picker adds rather than replaces). Flag-off takes the first file only, which is the
+  // shipped behaviour: the input carries no `multiple` attribute in that branch, so the FileList is
+  // one entry anyway and the slice is a belt-and-braces guard, not the mechanism.
   function handlePhotoChange(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setPhotoFile(file)
-    setPhotoPreview(URL.createObjectURL(file))
+    const picked = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (!picked.length) return
+    setPhotoItems(prev => {
+      const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - prev.length) : 1
+      const accepted = picked.slice(0, room)
+      if (!accepted.length) return prev
+      // Replace, not append, in single mode — re-picking has always swapped the staged file.
+      const next = PHOTO_MULTI_ATTACH_ENABLED ? prev : []
+      if (!PHOTO_MULTI_ATTACH_ENABLED) for (const it of prev) URL.revokeObjectURL(it.url)
+      return next.concat(accepted.map(file => ({ id: nextPhotoId(), file, url: URL.createObjectURL(file) })))
+    })
+  }
+
+  function removePhotoItem(id) {
+    setPhotoItems(prev => {
+      const hit = prev.find(p => p.id === id)
+      if (hit) URL.revokeObjectURL(hit.url)
+      return prev.filter(p => p.id !== id)
+    })
   }
 
   // V4-HIDECAPTURE-001: straight to the picker. The 2026-06-02 camera-unification toggle is gone
@@ -1352,10 +1390,14 @@ export default function EventNew() {
     el.click()
   }
 
+  // §3 B8 — revokes N, not one. Reads from the updater's `prev` rather than the render closure so a
+  // call made from resetForNext (which runs in the same tick as other setState) can never revoke a
+  // stale list and leak the current one.
   function clearPhoto() {
-    setPhotoFile(null)
-    if (photoPreview) URL.revokeObjectURL(photoPreview)
-    setPhotoPreview(null)
+    setPhotoItems(prev => {
+      for (const it of prev) URL.revokeObjectURL(it.url)
+      return prev.length ? [] : prev
+    })
   }
 
   // V4-LOGCONF-001 undo — REUSES the sanctioned soft-delete (DELETE /api/events/:id sets deleted_at
@@ -1523,7 +1565,10 @@ export default function EventNew() {
     // answers "Logged" and there is nothing to recover, because no upload was ever attempted and
     // so nothing ever failed. Gate it like the harvest quantity gate above: refuse the save, inline,
     // while the photo can still be added. NOT a warn-and-proceed — proceeding is the bug.
-    if (form.event_type === 'photo' && !photoFile) {
+    // §3 B5 — a COUNT check, not a truthiness check. Zero staged files is still refused (the whole
+    // BUG-SNAPATTACH-001 protection); one or more proceeds. Widening this to "some photos" would
+    // reopen the empty-photo-event class it was written to close.
+    if (form.event_type === 'photo' && photoItems.length === 0) {
       setError('Add a photo for a photo event — or pick a different event type.'); return { ok: false, reason: 'no_photo' }
     }
 
@@ -1643,7 +1688,7 @@ export default function EventNew() {
           quantity:      isHarvest ? null : (form.quantity.trim() || null),
           plant_id:      form.plant_id               || null,
           is_public:     form.is_public,
-          has_photo:     !!photoFile,
+          has_photo:     photoItems.length > 0,
           metadata,
           ...harvestPayload,
           ...flagPayload,
@@ -1738,9 +1783,20 @@ export default function EventNew() {
     // is already saved), but fully-silent is how a stalled upload masqueraded as a successful save
     // — the user watched "Saving…" for minutes and the photo just never existed. Capture the
     // result so the confirmation surfaces the failure; the event success flow is untouched.
+    // §3 B4 — every row written here carries a real parent (`event_id`) and NO `intake_status`. This
+    // is in-context attach: the opposite of deferring a tag. Nothing on this path may reach the
+    // `inbox/` key prefix or POST /api/photos/batch; keyPrefix stays 'events' for all N.
+    //
+    // §3 B6 — swallow semantics survive multi. A photo failure never fails the event save (the event
+    // is already POSTed by this line), and failures are COUNTED so the confirmation can say how many
+    // rather than reporting the last one as if it were the only one.
+    //
+    // §3 X6 — serial, one decode at a time. Same reasoning as PhotoUpload's queue: a Promise.all
+    // here would hold N multi-megabyte decodes at once on an Android phone.
     let photoError = null
-    if (photoFile) {
-      const photoRes = await photoUploader.upload(photoFile, {
+    let photoFailCount = 0
+    for (const item of photoItems) {
+      const photoRes = await photoUploader.upload(item.file, {
         keyPrefix: 'events',
         parentId:  eventId,
         linkage: {
@@ -1749,8 +1805,14 @@ export default function EventNew() {
         },
         is_public: form.is_public,
       })
-      if (photoRes?.error) photoError = photoRes.error
+      if (photoRes?.error) {
+        photoFailCount += 1
+        // Keep the FIRST failure's text: it is the one the user can still act on, and a later
+        // failure is usually the same cause restated.
+        if (!photoError) photoError = photoRes.error
+      }
     }
+    const photoTotal = photoItems.length
 
     setSaving(false)
     if (form.event_type === 'watering') ux.complete({ outcome: 'logged' })  // M1 watering complete
@@ -1881,6 +1943,9 @@ export default function EventNew() {
           undone: false,
           error: null,
           photoError,
+          // §3 B6 — the card pluralizes off these; at <= 1 it renders the shipped singular sentence.
+          photoFailCount,
+          photoTotal,
         })
         // V4-HARVESTVIEW-001 S4a: post-save season-total line (design §2 loop-closer). Cleared first
         // so a prior harvest's total can never flash on this strip; then a harvest-only aggregates
@@ -1912,9 +1977,13 @@ export default function EventNew() {
           ? `Logged event — ${plantName ?? 'planting'}`
           : `Logged event for ${projName} — no planting attached`
         showUndo({
-          message: photoError
-            ? `${toastTarget} — but the photo didn't upload`
-            : toastTarget,
+          // The one-photo string is byte-identical to what shipped — pinned by
+          // EventNewPostSaveFeedback.characterization.test.jsx's /but the photo didn't upload/.
+          message: photoFailCount > 1
+            ? `${toastTarget} — but ${photoFailCount} of ${photoTotal} photos didn't upload`
+            : photoError
+              ? `${toastTarget} — but the photo didn't upload`
+              : toastTarget,
           // V4-WATERMATH-001 F0: the recorded amount class, as a SECOND line rather than appended
           // to `message`. Two reasons, both load-bearing: the message string is a pinned oracle
           // (EventNew.test.jsx's exact-match "Logged event — Cayenne #1"), and the class is
@@ -1979,40 +2048,86 @@ export default function EventNew() {
                PhotoLibrary uses for its own one-of-target rule. ── */
   const photoBlock = (
           <Section label={form.event_type === 'photo' ? 'Photo *' : 'Photo  ·  optional'}>
-            {photoPreview ? (
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <img
-                  src={photoPreview}
-                  alt="Preview"
-                  style={{
-                    maxWidth: '100%', maxHeight: 220, borderRadius: 8,
-                    display: 'block', border: `1px solid ${P.border}`,
-                  }}
+            {/* V4-PHOTOBULK-001 S2. ONE staged photo renders exactly as it always has — the same
+                220px-max preview, the same absolutely-positioned remove and save-to-device controls.
+                The strip below only differs at N > 1, where each item shrinks to a 96px tile so a
+                handful fits without pushing the rest of the form off screen. The single case is the
+                overwhelmingly common one and was not worth re-laying-out to serve the new one. */}
+            {photoItems.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {photoItems.map((item, idx) => {
+                  const solo = photoItems.length === 1
+                  return (
+                    <div key={item.id} data-testid="eventnew-photo-item"
+                         style={{ position: 'relative', display: 'inline-block' }}>
+                      <img
+                        src={item.url}
+                        alt={solo ? 'Preview' : `Preview ${idx + 1} of ${photoItems.length}`}
+                        style={solo
+                          ? { maxWidth: '100%', maxHeight: 220, borderRadius: 8,
+                              display: 'block', border: `1px solid ${P.border}` }
+                          : { width: 96, height: 96, objectFit: 'cover', borderRadius: 8,
+                              display: 'block', border: `1px solid ${P.border}` }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => (solo ? clearPhoto() : removePhotoItem(item.id))}
+                        aria-label={solo ? 'Remove photo' : `Remove photo ${idx + 1}`}
+                        style={{
+                          position: 'absolute', top: solo ? 8 : 4, right: solo ? 8 : 4,
+                          background: 'rgba(0,0,0,0.55)', color: P.white,
+                          border: 'none', borderRadius: '50%',
+                          width: solo ? 28 : 22, height: solo ? 28 : 22, cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      ><Icon name="action.remove" size={solo ? 14 : 11} decorative /></button>
+                      {/* Save-to-device stays SOLO-ONLY: it is a per-file action, and six of them
+                          tiled at 96px is six ways to mis-tap next to six removes. Flag-hidden
+                          today anyway (SAVE_TO_DEVICE_HIDDEN). */}
+                      {solo && !SAVE_TO_DEVICE_HIDDEN && <button
+                        type="button"
+                        onClick={() => saveFileToDevice(item.file)}
+                        aria-label="Save photo to device"
+                        style={{
+                          position: 'absolute', bottom: 8, right: 8,
+                          background: 'rgba(0,0,0,0.55)', color: P.white,
+                          border: 'none', borderRadius: 8, padding: '5px 10px',
+                          cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+                        }}
+                      >Save to device</button>}
+                    </div>
+                  )
+                })}
+                {/* "Add another" only exists in multi mode, and only while there is room. Its absence
+                    is what makes flag-off byte-identical: one photo, one remove, no second door. */}
+                {PHOTO_MULTI_ATTACH_ENABLED && photoItems.length < MAX_EVENT_PHOTOS && (
+                  <button
+                    type="button"
+                    onClick={openPhotoPicker}
+                    data-testid="eventnew-photo-add-more"
+                    style={{
+                      width: 96, height: 96, borderRadius: 8,
+                      border: `2px dashed ${P.border}`, backgroundColor: P.white,
+                      color: P.mid, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600,
+                      display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      justifyContent: 'center', gap: 4,
+                    }}
+                  >
+                    <Icon name="media.camera" size={18} decorative />
+                    <span>Add more</span>
+                  </button>
+                )}
+                {/* The picker input lives here too — in the shipped layout it was rendered only in
+                    the empty branch, so "Add another" would have had nothing to click. */}
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
+                  onChange={handlePhotoChange}
+                  style={{ display: 'none' }}
                 />
-                <button
-                  type="button"
-                  onClick={clearPhoto}
-                  aria-label="Remove photo"
-                  style={{
-                    position: 'absolute', top: 8, right: 8,
-                    background: 'rgba(0,0,0,0.55)', color: P.white,
-                    border: 'none', borderRadius: '50%',
-                    width: 28, height: 28, cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                ><Icon name="action.remove" size={14} decorative /></button>
-                {!SAVE_TO_DEVICE_HIDDEN && <button
-                  type="button"
-                  onClick={() => saveFileToDevice(photoFile)}
-                  aria-label="Save photo to device"
-                  style={{
-                    position: 'absolute', bottom: 8, right: 8,
-                    background: 'rgba(0,0,0,0.55)', color: P.white,
-                    border: 'none', borderRadius: 8, padding: '5px 10px',
-                    cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
-                  }}
-                >Save to device</button>}
               </div>
             ) : (
               <div>
@@ -2036,6 +2151,10 @@ export default function EventNew() {
                         the same glyph ProjectDetail's uploaders adopted when they dropped the
                         camera/frame emoji pair (ProjectDetail.iconLanguage.test.js). */}
                     <Icon name="media.camera" size={20} decorative />
+                    {/* Label deliberately UNCHANGED at "Choose photo" even though the picker now
+                        accepts several. EventNew.harvestFormOrder.test.jsx:142 pins it with an exact
+                        getByText, and copy that tells the user about multi-select is a design call
+                        for the gate:design-review pass, not something to slip in under a build. */}
                     <span>Choose photo</span>
                   </button>
                 </div>
@@ -2043,6 +2162,7 @@ export default function EventNew() {
                   ref={photoInputRef}
                   type="file"
                   accept="image/*"
+                  multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
                   onChange={handlePhotoChange}
                   style={{ display: 'none' }}
                 />

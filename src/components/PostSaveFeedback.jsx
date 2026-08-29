@@ -42,7 +42,11 @@ import { P } from '../lib/constants.js'
 // user is about to tap. The effect, the ref, and the useRef import are deleted on purpose.
 //
 // props:
-//   confirmation {eventId,projectId,plantId,plantName,projName,eventLabel,eventEmoji,undone,error,photoError}
+//   confirmation {eventId,projectId,plantId,plantName,projName,eventLabel,eventEmoji,undone,error,photoError,
+//                 photoFailCount,photoTotal}
+//     photoFailCount/photoTotal — V4-PHOTOBULK-001 S2 (§3 B6). Absent or <= 1 renders the singular
+//     sentence UNCHANGED; a save can now carry N photos, and "The photo didn't upload" after three
+//     of five failed is a false report, not just an awkward one.
 //   seasonLine        string | null — already carries its household-scope qualifier (spec §4.3)
 //   savesThisSession  number — successful overlay saves this mount (spec §7); count renders at >= 2
 //   actions           {onUndo}
@@ -65,6 +69,8 @@ export default function PostSaveFeedback({ confirmation, seasonLine, savesThisSe
   const undoName = `Undo — ${confirmation.plantName ?? confirmation.eventLabel}`
 
   const photoErr = confirmation.photoError && !undone ? confirmation.photoError : null
+  const photoFailCount = confirmation.photoFailCount ?? 0
+  const photoTotal = confirmation.photoTotal ?? 0
   const hasAlert = !!(confirmation.error || photoErr)
   // Spec §7: threshold derived, not tuned. At n=1 a count merely restates the confirmation the user
   // just read; n=2 is the first value carrying information the confirmation does not. Reads a
@@ -157,7 +163,12 @@ export default function PostSaveFeedback({ confirmation, seasonLine, savesThisSe
       {hasAlert && (
         <div role="alert" style={{ marginTop: 4, color: P.terra, fontSize: '0.8rem', fontWeight: 600 }}>
           {confirmation.error && <p style={{ margin: 0 }}>{confirmation.error}</p>}
-          {photoErr && <p style={{ margin: 0 }}>⚠️ The photo didn&apos;t upload: {photoErr}</p>}
+          {/* The singular arm is string-identical to what shipped — EventNew.test.jsx and
+              EventNewPostSaveFeedback.characterization.test.jsx both match /photo didn't upload/,
+              which "photos didn't upload" would NOT satisfy. The plural arm is additive. */}
+          {photoErr && (photoFailCount > 1
+            ? <p style={{ margin: 0 }}>⚠️ {photoFailCount} of {photoTotal} photos didn&apos;t upload: {photoErr}</p>
+            : <p style={{ margin: 0 }}>⚠️ The photo didn&apos;t upload: {photoErr}</p>)}
         </div>
       )}
     </div>

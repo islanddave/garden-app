@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.68.0",
+    "date": "2026-08-29",
+    "highlights": [
+      "Add several photos to a planting at once — the camera button on a planting card now takes a whole handful",
+      "Log Event takes several photos at once too: pick a few in one go and they all attach to the same event",
+      "Each photo reports its own upload status, so one failure names itself instead of sinking the batch"
+    ]
+  },
+  {
     "version": "4.67.0",
     "date": "2026-08-28",
     "highlights": [

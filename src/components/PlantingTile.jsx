@@ -244,7 +244,17 @@ export default function PlantingTile({
               never the camera — so the explicit opt-out is gone because the opt-in no longer exists. The
               stable plant-list-photo-<id> input-id contract that automated bulk-attach sessions drive is
               UNCHANGED. ariaLabel names the icon-only
-              control. V4-TAPCARD-001: raised above the stretched card overlay (z1) so it stays tappable. */}
+              control. V4-TAPCARD-001: raised above the stretched card overlay (z1) so it stays tappable.
+
+              V4-PHOTOBULK-001 S1 — `multiple` is set HERE, the payoff call site: "several photos of
+              one planting" is the case the slice exists for, and this is the one surface whose
+              batch already has its target chosen before the picker opens. `onPhotoUploaded` is
+              Garden's `refetchPlants` (Garden.jsx:958), which ignores its argument entirely, so
+              multi mode's ARRAY form of onUploadComplete needs no consumer change. The
+              plant-list-photo-<id> input-id contract is untouched — `multiple` only widens what the
+              same input accepts, and a one-file drive through it behaves identically. `showPreview`
+              stays false, so the staged strip renders in its compact filename form rather than
+              putting 88px tiles in this card footer. */}
           <span style={{ position: 'relative', zIndex: 2 }}>
           <PhotoUpload
             keyPrefix="plants"
@@ -255,6 +265,7 @@ export default function PlantingTile({
             ariaLabel="Add photo"
             showPreview={false}
             inputId={`plant-list-photo-${pl.id}`}
+            multiple
             onUploadComplete={onPhotoUploaded}
             buttonStyle={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
