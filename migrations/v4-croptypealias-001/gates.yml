@@ -63,8 +63,13 @@ post:
     expect: scalar_eq
     value: 1
 
-  # POPULATION — the number this migration claims to have written. env:prod; staging's subset is
-  # smaller and a hardcoded 54 would fail there permanently.
+  # POPULATION — the number of alias-bearing rows. env:prod; staging's subset is smaller and a
+  # hardcoded count would fail there permanently.
+  #
+  # AMENDED 2026-08-29 by v4-croptypealias-002: 54 -> 56. Dave answered three of the eight decisions
+  # this migration held open. Only TWO of the three add a row — thunbergia and cilantro were NULL;
+  # winter_squash already carried 'butternut, acorn squash' and was already inside the 54, so
+  # appending 'pumpkin' to it moves no count. Measured on prod before and after. 57 would be wrong.
   - name: post_alias_row_count
     env: prod
     sql: |
@@ -74,7 +79,7 @@ post:
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '4.64.1-croptypealias-001')
     expect: scalar_eq
-    value: 54
+    value: 56
 
   # THE POSITIVE RECEIPT — the tuple that motivated the whole item. Asserts presence of a value
   # rather than absence of a violation, which is what makes the violation-count gates non-vacuous
@@ -91,38 +96,39 @@ post:
     expect: scalar_eq
     value: 1
 
-  # THE BLAST-RADIUS BOUND. Eight crop types were deliberately EXCLUDED because the obvious synonym
-  # would be wrong, and they are Dave's open decision — not an oversight to be tidied up later by a
-  # session that notices they have no alias. Every one must STILL be NULL.
+  # THE BLAST-RADIUS BOUND. Crop types deliberately EXCLUDED because the obvious synonym would be
+  # wrong, and they are Dave's open decision — not an oversight to be tidied up later by a session
+  # that notices they have no alias. Every one must STILL be NULL.
   #   marigold(calendula is a different genus) jade('money plant' collides with money_plant/Lunaria)
-  #   cilantro(substring-hits culantro + vietnamese_coriander) thunbergia(black-eyed susan=Rudbeckia)
   #   delphinium(larkspur=Consolida) endive+radicchio(Cichorium overlap) carnation(dianthus broader)
-  # winter_squash is NOT here: it legitimately carries 'butternut, acorn squash'; only its PUMPKIN
-  # question was held, and pumpkin appears in no alias string — pinned separately below.
-  - name: post_excluded_eight_have_no_alias
+  #
+  # AMENDED 2026-08-29 by v4-croptypealias-002, and RENAMED because the number moved. Dave was walked
+  # through all eight on 2026-08-29 and released three: cilantro -> 'coriander' and thunbergia ->
+  # 'black-eyed susan vine' are no longer excluded and are dropped from this list; winter_squash was
+  # never in it (see below). Five decisions remain, spanning six slugs because endive and radicchio
+  # are two rows of one decision. Their receipts live in v4-croptypealias-002/gates.yml.
+  - name: post_excluded_six_have_no_alias
     sql: |
       SELECT count(*) FROM public.crop_types
        WHERE deleted_at IS NULL
-         AND slug IN ('marigold','jade','cilantro','thunbergia','delphinium','endive','radicchio',
-                      'carnation')
+         AND slug IN ('marigold','jade','delphinium','endive','radicchio','carnation')
          AND search_aliases IS NOT NULL
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '4.64.1-croptypealias-001')
     expect: scalar_eq
     value: 0
 
-  # The pumpkin half of the winter_squash decision, pinned on its own because the row DOES carry an
-  # alias and so is invisible to the gate above. 'pumpkin' is a categorisation question Dave has not
-  # answered; a session that answers it by quietly appending the word should trip this.
-  - name: post_pumpkin_not_smuggled_into_any_alias
-    sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL
-         AND search_aliases ILIKE '%pumpkin%'
-         AND EXISTS (SELECT 1 FROM public.schema_version
-                      WHERE version = '4.64.1-croptypealias-001')
-    expect: scalar_eq
-    value: 0
+  # RETIRED 2026-08-29 — post_pumpkin_not_smuggled_into_any_alias.
+  #
+  # It asserted that 'pumpkin' appears in ZERO alias strings, because the winter_squash pumpkin
+  # question was a categorisation call Dave had not made. He made it (2026-08-29): pumpkins are
+  # winter squash and a search for pumpkin should surface the family.
+  #
+  # The gate is NOT simply deleted. Its guard is still wanted — a session appending 'pumpkin' to
+  # squash, gourd or anything else is still a regression — so it is INVERTED and moved to
+  # v4-croptypealias-002/gates.yml as `post_pumpkin_is_winter_squash_only`, which pins pumpkin to
+  # exactly one row instead of zero. Deleting it outright would have thrown away the guard along with
+  # the obsolete expectation, which is the failure this comment exists to prevent someone repeating.
 
   # DISPLAY_NAME UNTOUCHED. The whole reason this feature is a column is that display_name reaches
   # the text of a public Facebook/Instagram post (lambda/facebook-share/index.js:319). The realistic

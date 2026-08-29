@@ -1,0 +1,126 @@
+# gates.yml
+# V4-CROPTYPEALIAS-002 — Dave answers three of the eight alias decisions v4-croptypealias-001 held.
+#
+# ── ENVIRONMENT ASYMMETRY, FIRST, BECAUSE IT DECIDES HOW EVERY GATE BELOW IS SCOPED ──────────────
+# MEASURED 2026-08-29, both environments, before any gate here was written:
+#   prod     150 crop_types, 54 alias-bearing. thunbergia NULL / cilantro NULL /
+#            winter_squash 'butternut, acorn squash'.
+#   staging   98 crop_types, 31 alias-bearing. cilantro NULL / winter_squash 'butternut, acorn squash'
+#            and **thunbergia does not exist at all**.
+# So the thunbergia receipt is env:prod. Its UPDATE matches zero rows on staging — harmless — but a
+# gate asserting its value there would fail forever, which is exactly the failure mode 001's own
+# header warned about for its 54-row count.
+#
+# SELF-ARMING, same pattern as 001. gate-invariants.yml fires on the `migrations/**` push to dev,
+# which happens BEFORE the apply, and runs `--phase post --continuous-only`. Every post gate is
+# therefore wrapped in an EXISTS on this migration's own schema_version row: vacuously true until
+# applied, asserted forever after. Without the wrapper the sweep reds from the moment the file lands.
+#
+# CONTRADICTION CHECK — and this migration FAILS it unless three sibling gates move. Grepped the gate
+# corpus for `search_aliases`: v4-croptypealias-001 carries three gates that encode "Dave has not
+# decided" — post_alias_row_count (54), post_excluded_eight_have_no_alias (includes cilantro and
+# thunbergia), and post_pumpkin_not_smuggled_into_any_alias (pumpkin in zero aliases). All three are
+# amended in the same commit. The pumpkin gate is INVERTED rather than deleted, so it still catches a
+# stray append; it just no longer asserts zero. Deleting it would have thrown away the guard along
+# with the obsolete expectation.
+
+pre: []
+
+post:
+  # RECEIPT 1 — thunbergia. env:prod because the slug is absent from staging (measured above).
+  # continuous:false would be wrong here: this value must hold forever on prod, and unlike 001's
+  # melon receipt there is no risk of the row vanishing.
+  - name: post_thunbergia_alias
+    env: prod
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'thunbergia'
+         AND deleted_at IS NULL
+         AND search_aliases = 'black-eyed susan vine'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.67.0-croptypealias-002')
+    expect: scalar_eq
+    value: 1
+
+  # RECEIPT 2 — cilantro. Unscoped: the slug exists on BOTH environments, so this is correct on both.
+  - name: post_cilantro_alias
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'cilantro'
+         AND deleted_at IS NULL
+         AND search_aliases = 'coriander'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.67.0-croptypealias-002')
+    expect: scalar_eq
+    value: 1
+
+  # RECEIPT 3 — winter_squash keeps its ORIGINAL two aliases and gains pumpkin. Asserting the whole
+  # string rather than `ILIKE '%pumpkin%'` is deliberate: the realistic regression is a session
+  # REPLACING the value with 'pumpkin' instead of appending, which a substring check would pass.
+  - name: post_winter_squash_alias_appended
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug = 'winter_squash'
+         AND deleted_at IS NULL
+         AND search_aliases = 'butternut, acorn squash, pumpkin'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.67.0-croptypealias-002')
+    expect: scalar_eq
+    value: 1
+
+  # THE REPLACEMENT FOR 001's post_pumpkin_not_smuggled_into_any_alias. That gate asserted ZERO
+  # aliases contain 'pumpkin', which is now false by Dave's decision. This keeps the guard and moves
+  # the number: pumpkin may appear in EXACTLY ONE row, and that row must be winter_squash. A session
+  # appending pumpkin to squash, gourd or anything else still trips it.
+  - name: post_pumpkin_is_winter_squash_only
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND search_aliases ILIKE '%pumpkin%'
+         AND slug <> 'winter_squash'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.67.0-croptypealias-002')
+    expect: scalar_eq
+    value: 0
+
+  # THE REMAINING FIVE STAY DAVE'S. Same purpose as 001's excluded-eight gate, narrowed to the five
+  # he did NOT release. endive and radicchio are two rows of one decision, so the list is six slugs
+  # across five decisions. A later session that "completes" the alias list trips this.
+  #   marigold   calendula is a different genus (Calendula vs Tagetes)
+  #   jade       'money plant' collides with the existing money_plant crop type (Lunaria)
+  #   delphinium larkspur is Consolida, a neighbouring genus
+  #   endive +   chicory/escarole/frisee overlap two Cichorium species across BOTH rows
+  #   radicchio
+  #   carnation  dianthus is the genus, broader than the plant
+  - name: post_remaining_five_have_no_alias
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND slug IN ('marigold','jade','delphinium','endive','radicchio','carnation')
+         AND search_aliases IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.67.0-croptypealias-002')
+    expect: scalar_eq
+    value: 0
+
+  # DISPLAY_NAME STILL UNTOUCHED. Restated rather than inherited, because this migration is exactly
+  # the kind of change where someone reaches for display_name instead: it reaches the text of a
+  # PUBLIC Facebook/Instagram post via lambda/facebook-share/index.js:319. None of the three target
+  # rows may have gained a parenthetical.
+  - name: post_display_names_untouched_by_002
+    env: prod
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND slug IN ('thunbergia','cilantro','winter_squash')
+         AND display_name ILIKE '%(%'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.67.0-croptypealias-002')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.67.0-croptypealias-002'
+    expect: rowcount_eq
+    value: 1
