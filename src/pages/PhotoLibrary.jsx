@@ -17,7 +17,14 @@ import { photoLoadErrorMessage } from '../components/PhotosWall.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 import PhotoDeleteConfirm from '../components/photo/PhotoDeleteConfirm.jsx'
 import { useOptionalToast } from '../context/ToastContext.jsx'
-import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js'
+
+// V4-PHOTOBULK-001. Higher than PhotoUpload/EventNew's 10 because this is the drain surface rather
+// than an in-context handful, and it matches the photos Lambda's own MAX_BATCH (index.js:47) so the
+// client cap and the server cap state the same number even though this path does not use that route.
+const MAX_STAGED = 20
+let stagedSeq = 0
+const nextStagedId = () => `pl-staged-${++stagedSeq}`
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
@@ -121,14 +128,27 @@ export default function PhotoLibrary() {
   // what EventNew does. Staging lives here rather than in <PhotoUpload> on purpose: that component
   // has nine call sites whose contract is "uploads on pick", and widening it to a staging mode would
   // put every one of them on a new code path to fix one page's ordering.
-  const [stagedFile,    setStagedFile]    = useState(null)
-  const [stagedPreview, setStagedPreview] = useState(null)
+  // V4-PHOTOBULK-001 — the scalar pair became a LIST: [{ id, file, url, status, error }] in pick
+  // order. `stagedItems[0]` is the old stagedFile/stagedPreview pair. Everything the staging model
+  // above says still holds; there are simply N of them now, which is the whole point — Dave photographs
+  // a plant several times in one pass and had to run this form once per photo.
+  //
+  // One list even with the flag off, for the reason EventNew's photoItems carries: a dual-shape state
+  // would fork all eleven read sites and hand the flag-off branch its own untested path.
+  const [stagedItems,   setStagedItems]   = useState([])
   const [uploading,     setUploading]     = useState(false)
+  // Set only when a batch finished with at least one failure — the summary line above the button.
+  // Per-file errors live on the items themselves; this exists so the count is visible without
+  // scanning the strip, NOT as a replacement for them.
+  const [batchSummary,  setBatchSummary]  = useState(null)
   const stagedInputRef = useRef(null)
   const stagedUploader = useUploadPhoto({ errorMode: 'surface' })
   // A staged blob URL outlives the component unless revoked. Closing the form or leaving the page
   // with a photo staged and unsent is the ordinary case now that picking comes first.
-  useEffect(() => () => { setStagedPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null }) }, [])
+  // Revokes N now, not one. Reads from the updater's `prev` so it can never revoke a stale list.
+  useEffect(() => () => {
+    setStagedItems(prev => { for (const it of prev) URL.revokeObjectURL(it.url); return [] })
+  }, [])
 
   const [modal,          setModal]          = useState(null)
   const [tagForm,        setTagForm]        = useState({ project_id: '', location_id: '', plant_id: '', caption: '' })
@@ -349,8 +369,18 @@ export default function PhotoLibrary() {
   // We retain only the surface-level state: error gating before the picker fires
   // (project_id required) and post-success cleanup (form reset + list reload).
   function clearStaged() {
-    setStagedPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null })
-    setStagedFile(null)
+    setStagedItems(prev => { for (const it of prev) URL.revokeObjectURL(it.url); return prev.length ? [] : prev })
+    setBatchSummary(null)
+  }
+
+  function removeStagedItem(id) {
+    setStagedItems(prev => {
+      const hit = prev.find(s => s.id === id)
+      // An in-flight upload is uncancellable; keep its row and its URL until the queue settles.
+      if (!hit || hit.status === 'uploading') return prev
+      URL.revokeObjectURL(hit.url)
+      return prev.filter(s => s.id !== id)
+    })
   }
 
   function handleUploadComplete() {
@@ -371,27 +401,96 @@ export default function PhotoLibrary() {
   }
 
   function onStagedPick(e) {
-    const f = e.target.files?.[0]
+    const picked = Array.from(e.target.files ?? [])
     e.target.value = ''   // re-picking the same file must refire onChange
-    if (!f) return
-    setStagedPreview(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
-    setStagedFile(f)
+    if (!picked.length) return
     setUploadErr(null)
+    setBatchSummary(null)
+    setStagedItems(prev => {
+      const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_STAGED - prev.length) : 1
+      const accepted = picked.slice(0, room)
+      if (!accepted.length) return prev
+      // Single mode REPLACES, which is what "Change photo" has always meant here.
+      const keep = PHOTO_MULTI_ATTACH_ENABLED ? prev : []
+      if (!PHOTO_MULTI_ATTACH_ENABLED) for (const it of prev) URL.revokeObjectURL(it.url)
+      return keep.concat(accepted.map(file => ({
+        id: nextStagedId(), file, url: URL.createObjectURL(file), status: 'staged', error: null,
+      })))
+    })
   }
 
+  // V4-PHOTOBULK-001 — one serial queue for both destinations.
+  //
+  // TWO DESTINATIONS, ONE PATH. With a target chosen, every photo is attached to it (the shipped
+  // behaviour, N times). With NO target and more than one photo staged, the batch goes to the INBOX:
+  // `intake_status='pending_tag'`, no parent — which `photos_must_have_parent` admits for exactly
+  // this status, and which POST /api/photos already validates and stores (lambda/photos/index.js
+  // :1161-1174, live in prod). Those rows then surface under this page's existing "Untagged" filter,
+  // whose predicate is "has no parent", and drain through the tag modal that is already here.
+  //
+  // WHY NOT POST /api/photos/batch, which exists in prod and was built for this. That route is
+  // presign-ONLY: taking it would bypass stripImageFile (V4-PHOTOEXIFSTRIP-001 — Dave's GPS is his
+  // home address), the 800px thumb the grid's payload budget depends on, and the relay-upload
+  // fallback for a dead S3 route. Driving useUploadPhoto once per file keeps all three. The batch
+  // route's real value is its `inbox/` key prefix and its 20-file presign round-trip, and neither is
+  // load-bearing for the INBOX as the schema defines it — the inbox is
+  // `photos WHERE intake_status='pending_tag'`, one table, one source of truth (design V100 §3 X5).
+  // Storage prefix is not the state; the column is.
+  //
+  // SERIAL. Same memory ceiling as everywhere else on this track: one decode at a time.
   async function uploadStaged() {
-    if (!stagedFile || targetMissing || uploading) return
+    if (!stagedItems.length || uploading || (targetMissing && !canUploadUntagged)) return
     setUploading(true)
     setUploadErr(null)
-    const res = await stagedUploader.upload(stagedFile, {
-      keyPrefix: 'standalone',
-      linkage: photoLinkage,
-      caption: photoCaption,
-      is_public: uploadForm.is_public,
-    })
+    setBatchSummary(null)
+
+    const toInbox = targetMissing
+    const linkage = toInbox ? { intake_status: 'pending_tag' } : photoLinkage
+    let failed = 0
+    // The FIRST failure's own text. The shipped single-photo contract surfaces the real message
+    // ("Upload stalled — the connection stopped sending…"), which is the only part the user can act
+    // on; a generic "Upload failed." would be a regression even though it reads as tidier.
+    let firstError = null
+    const total = stagedItems.length
+
+    for (const item of stagedItems) {
+      setStagedItems(prev => prev.map(s => (s.id === item.id ? { ...s, status: 'uploading', error: null } : s)))
+      const res = await stagedUploader.upload(item.file, {
+        keyPrefix: 'standalone',
+        linkage,
+        caption: photoCaption,
+        is_public: uploadForm.is_public,
+      })
+      if (res?.error) {
+        failed += 1
+        if (!firstError) firstError = res.error
+        setStagedItems(prev => prev.map(s => (s.id === item.id ? { ...s, status: 'error', error: res.error } : s)))
+      } else {
+        setStagedItems(prev => prev.map(s => (s.id === item.id ? { ...s, status: 'done', error: null } : s)))
+      }
+    }
+
     setUploading(false)
-    if (res?.error) handleUploadError(res.error)
-    else handleUploadComplete()
+
+    // ALL failed — the shipped single-photo contract: surface, keep the form open, keep the file.
+    if (failed === total) {
+      handleUploadError(total === 1 ? firstError : `None of the ${total} photos uploaded — ${firstError}`)
+      return
+    }
+    // A partial failure must NOT close the form and discard the survivors' rows. Drop the ones that
+    // landed, keep the failures staged so the retry is one tap rather than a re-pick of everything.
+    if (failed > 0) {
+      setStagedItems(prev => {
+        for (const s of prev) if (s.status === 'done') URL.revokeObjectURL(s.url)
+        return prev.filter(s => s.status !== 'done')
+      })
+      // Carries the REASON, not just the count. When one photo is left the strip collapses to the
+      // bare preview (see the render note), so this line is the only place the failure can speak.
+      setBatchSummary(`${total - failed} of ${total} uploaded — the rest are still here to retry. ${firstError}`)
+      loadPhotos()
+      return
+    }
+    handleUploadComplete()
   }
 
   function handleUploadError(msg) {
@@ -412,6 +511,28 @@ export default function PhotoLibrary() {
   // home (the meta-photo case). plant_id is in the predicate for completeness though this form only
   // offers plants after a project is picked.
   const targetMissing = !uploadForm.project_id && !uploadForm.location_id && !uploadForm.plant_id
+
+  // V4-PHOTOBULK-001 — the ONE place the no-target rule is relaxed, and it is deliberately narrow.
+  //
+  // A parentless photo is legal only as `intake_status='pending_tag'`, so "upload without choosing a
+  // target" is not a loophole in photos_must_have_parent — it is the other arm the CHECK already
+  // has. But it still means a photo whose home nobody has stated, so it is gated three ways: the
+  // flag, MORE THAN ONE staged photo, and an explicit second tap on a differently-labelled button.
+  //
+  // The >1 condition is the load-bearing one. A single untagged photo is almost always a slip — the
+  // user meant to pick a target and didn't — and the shipped rule catches that and should keep
+  // catching it. A DELIBERATE camera-roll drain is many photos at once, and for that the rule was
+  // the obstacle: it demanded one home for a batch whose whole point is that the homes differ.
+  //
+  // THE FLAG TERM HERE IS REDUNDANT TODAY AND IS KEPT ON PURPOSE — stated because a mutation run
+  // proved it, rather than left as an assumption. With the flag off, onStagedPick caps the list at
+  // one item, so `stagedItems.length > 1` can never be true and deleting `PHOTO_MULTI_ATTACH_ENABLED`
+  // from this line changes no observable behaviour; no test through the UI can kill that mutant,
+  // because the state it would expose is unreachable. It stays as defence in depth: the two guards
+  // fail in different directions, and a future edit to the picker cap (a `maxFiles` prop, a paste
+  // handler, a share-target entry) would otherwise open the untagged route with the flag OFF and
+  // nothing would go red. Do not "simplify" it away on the strength of a coverage report.
+  const canUploadUntagged = PHOTO_MULTI_ATTACH_ENABLED && stagedItems.length > 1
 
   // ---- Modal / tag handlers ----
   function openModal(photo) {
@@ -476,7 +597,7 @@ export default function PhotoLibrary() {
     tagForm.caption     !== (modal.caption     ?? '')
   ))
 
-  const hasUnsavedInput = !!(stagedFile || uploadForm.caption.trim() || modalDirty || shareDirty)
+  const hasUnsavedInput = !!(stagedItems.length || uploadForm.caption.trim() || modalDirty || shareDirty)
 
   useReportOverlayDirty(hasUnsavedInput)
 
@@ -701,12 +822,13 @@ export default function PhotoLibrary() {
                 ref={stagedInputRef}
                 type="file"
                 accept="image/*"
+                multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
                 onChange={onStagedPick}
                 style={{ display: 'none' }}
                 data-testid="pl-staged-input"
               />
               {/* V4-HIDECAPTURE-001: the pl-stage-take arm is removed; Choose is the only entry. */}
-              {!stagedPreview ? (
+              {stagedItems.length === 0 ? (
                 <div style={{ display: 'flex', gap: T.space.sm }}>
                   <button type="button" data-testid="pl-stage-choose" onClick={openStagedPicker}
                     style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: T.radiusButton, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: T.type.sm2, fontWeight: 600 }}>
@@ -715,21 +837,70 @@ export default function PhotoLibrary() {
                 </div>
               ) : (
                 <div>
-                  <img src={stagedPreview} alt="Upload preview" data-testid="pl-staged-preview"
-                    style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: T.radiusCard, display: 'block' }} />
+                  {/* ONE staged photo renders exactly as it shipped — the same full-width 260px
+                      preview. Several render as a tiled strip, because a column of 260px previews
+                      would push the target pickers below the fold, and picking the target is the
+                      step this form's whole ordering exists to protect. */}
+                  {/* ONE staged photo keeps the shipped full-width preview in EVERY state, failure
+                      included. An earlier pass fell to the strip whenever an item carried a status,
+                      to keep the error attached to its photo — but that shrank the single-photo
+                      preview from 260px to an 84px tile the moment an upload failed, and printed the
+                      reason twice (banner + row), which is what PhotoLibrary.test.jsx caught. With
+                      one photo there is nothing to disambiguate, so the reason belongs in the ONE
+                      aggregate line and the per-row copy is redundant; `batchSummary` carries it for
+                      the partial case and the banner for the all-failed case. Per-row errors earn
+                      their place only from two photos up, where "which one" is a real question. */}
+                  {stagedItems.length === 1 ? (
+                    <img src={stagedItems[0].url} alt="Upload preview" data-testid="pl-staged-preview"
+                      style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: T.radiusCard, display: 'block' }} />
+                  ) : (
+                    <ul data-testid="pl-staged-strip"
+                        style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm, listStyle: 'none', padding: 0, margin: 0 }}>
+                      {stagedItems.map((item, i) => (
+                        <li key={item.id} data-testid="pl-staged-item" data-status={item.status}
+                            style={{ position: 'relative', width: 84 }}>
+                          <img src={item.url} alt={`Staged photo ${i + 1} of ${stagedItems.length}`}
+                            style={{ width: 84, height: 84, objectFit: 'cover', borderRadius: T.radiusButton,
+                                     display: 'block', border: `1px solid ${P.border}`,
+                                     opacity: item.status === 'uploading' ? 0.55 : 1 }} />
+                          {item.status !== 'uploading' && (
+                            <button type="button" data-testid="pl-staged-remove"
+                              onClick={() => removeStagedItem(item.id)}
+                              aria-label={`Remove ${item.file?.name ?? `photo ${i + 1}`}`}
+                              style={{ position: 'absolute', top: 3, right: 3, background: 'rgba(0,0,0,0.55)',
+                                       color: P.white, border: 'none', borderRadius: T.radiusPill,
+                                       width: 20, height: 20, cursor: 'pointer', fontSize: T.type.xs, lineHeight: 1 }}>×</button>
+                          )}
+                          <div data-testid="pl-staged-status"
+                               style={{ fontSize: T.type.xs, textAlign: 'center', marginTop: T.space.xs,
+                                        color: item.status === 'error' ? P.photoErrorInk : P.mid }}>
+                            {item.status === 'uploading' ? 'Uploading…'
+                              : item.status === 'done' ? 'Added'
+                              : item.status === 'error' ? 'Failed' : 'Ready'}
+                          </div>
+                          {item.status === 'error' && item.error && (
+                            <div role="alert" data-testid="pl-staged-error"
+                                 style={{ fontSize: T.type.xs, color: P.photoErrorInk, textAlign: 'center' }}>
+                              {item.error}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
                     <button type="button" data-testid="pl-stage-replace" onClick={openStagedPicker}
                       style={{ border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
-                      Change photo
+                      {PHOTO_MULTI_ATTACH_ENABLED && stagedItems.length > 0 ? 'Add more' : 'Change photo'}
                     </button>
                     <button type="button" data-testid="pl-stage-clear" onClick={clearStaged}
                       style={{ border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
-                      Remove
+                      {stagedItems.length > 1 ? 'Remove all' : 'Remove'}
                     </button>
                   </div>
                   {/* Now — and only now — ask where it goes. This ordering IS the fix. */}
                   <p style={{ margin: '10px 0 0', fontSize: T.type.sm, color: P.mid }}>
-                    Where does this one go?
+                    {stagedItems.length > 1 ? `Where do these ${stagedItems.length} go?` : 'Where does this one go?'}
                   </p>
                 </div>
               )}
@@ -796,9 +967,23 @@ export default function PhotoLibrary() {
               {/* BUG-PHOTOFIRST-001: the one-of-target rule is unchanged (photos_must_have_parent),
                   but it is no longer a PRECONDITION to picking — it is a condition on SENDING. Only
                   say it once a photo is actually staged; before that it is a rule about nothing. */}
-              {stagedFile && targetMissing && (
+              {/* The rule is unchanged for ONE photo and restated for a batch: the batch has a
+                  second legal destination, so telling the user only "you must pick a target" would
+                  now be false. Both branches say what will happen, not just what is forbidden. */}
+              {stagedItems.length > 0 && targetMissing && !canUploadUntagged && (
                 <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
                   A standalone photo needs at least a project or zone.
+                </p>
+              )}
+              {canUploadUntagged && targetMissing && (
+                <p data-testid="pl-untagged-notice" style={{ margin: 0, fontSize: '0.8rem', color: P.mid }}>
+                  No target chosen — these {stagedItems.length} will go to Untagged, where you can
+                  tag them one at a time.
+                </p>
+              )}
+              {batchSummary && (
+                <p role="status" data-testid="pl-batch-summary" style={{ margin: 0, fontSize: '0.8rem', color: P.mid }}>
+                  {batchSummary}
                 </p>
               )}
 
@@ -806,16 +991,20 @@ export default function PhotoLibrary() {
                 type="button"
                 data-testid="pl-staged-upload"
                 onClick={uploadStaged}
-                disabled={!stagedFile || targetMissing || uploading}
+                disabled={!stagedItems.length || (targetMissing && !canUploadUntagged) || uploading}
                 style={{
-                  backgroundColor: (!stagedFile || targetMissing) ? P.light : P.green,
+                  backgroundColor: (!stagedItems.length || (targetMissing && !canUploadUntagged)) ? P.light : P.green,
                   color: P.white, border: 'none', borderRadius: T.radiusButton, padding: '12px 16px',
                   fontSize: T.type.base, fontWeight: 700, minHeight: T.tapMinHeight,
-                  cursor: (!stagedFile || targetMissing || uploading) ? 'not-allowed' : 'pointer',
+                  cursor: (!stagedItems.length || (targetMissing && !canUploadUntagged) || uploading) ? 'not-allowed' : 'pointer',
                   opacity: uploading ? 0.7 : 1,
                 }}
               >
-                {uploading ? 'Uploading…' : stagedFile ? 'Upload photo' : 'Pick a photo first'}
+                {uploading ? 'Uploading…'
+                  : !stagedItems.length ? 'Pick a photo first'
+                  : targetMissing && canUploadUntagged ? `Upload ${stagedItems.length} to Untagged`
+                  : stagedItems.length > 1 ? `Upload ${stagedItems.length} photos`
+                  : 'Upload photo'}
               </button>
             </div>
           </div>
@@ -1309,7 +1498,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
 
 function ErrBanner({ msg }) {
   return (
-    <div style={{
+    <div data-testid="pl-err-banner" style={{
       backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
       borderRadius: T.radiusButton, padding: '10px 14px', marginBottom: 8,
       fontSize: T.type.sm, color: P.bannerInk,
