@@ -3,9 +3,7 @@
     "version": "4.72.0",
     "date": "2026-08-29",
     "highlights": [
-      "The Untagged filter now shows how many photos are waiting, so a batch you meant to tag later is visible instead of forgotten",
-      "A big batch no longer pushes the target picker off screen — the staged photo strip scrolls inside a fixed height",
-      "The planting card's photo button is back to one photo at a time; batching there needs a proper sheet, which is designed but not built"
+      "The planting card's photo button is back to one photo at a time — adding several there needs a proper sheet, which is designed but not built yet"
     ]
   },
   {
