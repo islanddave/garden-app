@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.68.0",
+    "date": "2026-08-29",
+    "highlights": [
+      "Log Event now takes several photos at once — pick a handful in one go and they all attach to the same event",
+      "Each photo shows its own upload status, so a single failure names itself instead of sinking the batch"
+    ]
+  },
+  {
     "version": "4.67.0",
     "date": "2026-08-28",
     "highlights": [

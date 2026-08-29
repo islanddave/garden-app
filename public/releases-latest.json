@@ -1,9 +1,8 @@
 {
-  "version": "4.67.0",
-  "date": "2026-08-28",
+  "version": "4.68.0",
+  "date": "2026-08-29",
   "highlights": [
-    "Photos: the app was downloading full-size originals into thumbnail-sized boxes on four more screens. Measured on the Today page at your phone's geometry: 82,957,060 bytes before, 3,542,820 after.",
-    "The offline photo cache now stores thumbnails only, and evicts full-size originals it had already saved. It was storing ~4 MB originals with a 500-item cap and no byte limit.",
-    "A new CI budget fails the build if a screen's photo payload goes back over 4 MB, so this cannot silently regress."
+    "Log Event now takes several photos at once — pick a handful in one go and they all attach to the same event",
+    "Each photo shows its own upload status, so a single failure names itself instead of sinking the batch"
   ]
 }

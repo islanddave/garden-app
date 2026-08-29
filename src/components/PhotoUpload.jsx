@@ -37,11 +37,49 @@
 //   onUploadStart / onUploadComplete / onUploadError
 //   disabled      : boolean
 //   buttonStyle   : style override applied to the trigger.
+//   multiple      : default false — V4-PHOTOBULK-001 Track B. See MULTI-ATTACH below.
+//   maxFiles      : default DEFAULT_MAX_FILES; multi mode only.
+//
+// MULTI-ATTACH (V4-PHOTOBULK-001 S1, design V100 §3 B2/B3). `multiple` lets one picker invocation
+// stage N files, which then upload SERIALLY with per-file status and per-file failure.
+//
+// THE DEFAULT IS THE WHOLE CONTRACT. With `multiple` absent/false — or with
+// PHOTO_MULTI_ATTACH_ENABLED off, which makes the prop inert — this component is byte-identical to
+// what it was: one hidden input WITHOUT a `multiple` attribute, `files?.[0]` semantics, the hook's
+// single preview, the hook's single error banner, and `onUploadComplete(photo)` with ONE photo
+// object. Every existing call site passes no `multiple` and is therefore untouched, which is what
+// `PhotoUpload.test.jsx` passing UNMODIFIED proves (§3 B2). Guard both branches when editing here.
+//
+// IN MULTI MODE `onUploadComplete` RECEIVES AN ARRAY — the successfully-uploaded photos, fired once
+// after the queue drains, and not fired at all when every file failed. Callers discriminate with
+// `Array.isArray`. `onUploadError` still receives ONE error string, fired once PER failed file, so
+// its argument shape never varies; the per-file surface below is the primary report and the callback
+// is the secondary. `onUploadStart` fires ONCE per batch, so a caller that flips a busy bit on start
+// and clears it on complete/error stays balanced.
+//
+// SERIAL, NEVER PARALLEL (§3 X6). Each file's decode/resize/strip peaks at ~50MB of native RGBA for
+// a 4096x3072 original, and Dave is Android-only. `for..of` + `await` is load-bearing, not stylistic
+// — a `Promise.all` here would multiply peak memory by the batch size on exactly the devices where
+// single uploads already stall. useUploadPhoto is a single-file engine with singleton state and one
+// preview ref, which is safe to drive sequentially and is NOT safe to drive concurrently.
+//
+// STAGED OBJECT URLs ARE OURS, NOT THE HOOK'S. The hook holds exactly one preview URL and revokes
+// the previous on every upload, so it cannot back a grid of N thumbnails. Multi mode creates its own
+// URL per staged file and revokes on remove and on unmount (§3 B8's rule, applied here).
 
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
+import { PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js';
 import { P } from '../lib/constants.js';
 import { T } from './forms/formStyles.js';
+
+// In-context multi-attach is "the handful I just took of this plant", not a camera-roll drain —
+// that is Track A's bulk-select, which has its own cap (MAX_BATCH = 20, server-side). Ten keeps the
+// serial queue's worst case around a minute on a phone uplink and the thumbnail strip on one screen.
+const DEFAULT_MAX_FILES = 10;
+
+let stagedSeq = 0;
+const nextStagedId = () => `staged-${++stagedSeq}`;
 
 const DEFAULT_BTN_STYLE = {
   display: 'inline-block',
@@ -94,9 +132,31 @@ export function PhotoUpload({
   disabled      = false,
   inputId,
   buttonStyle,
+  multiple      = false,
+  maxFiles      = DEFAULT_MAX_FILES,
 }) {
   const { upload, isUploading, error, photo, preview, reset, stage, progress } = useUploadPhoto({ errorMode });
   const inputRef = useRef(null);
+
+  // The prop alone is not enough: X1 requires one compiled flag that returns every photo surface to
+  // today's behaviour in one edit. `multiple` is inert while the flag is off — deliberately AND-ed
+  // here rather than at each call site, so a future call site cannot opt itself past the flag.
+  const multiEnabled = PHOTO_MULTI_ATTACH_ENABLED && multiple === true;
+
+  // [{ id, file, url, status: 'staged'|'uploading'|'done'|'error', error, photo }] — multi mode only.
+  // Stays empty in single mode, where nothing below it renders.
+  const [staged, setStaged] = useState([]);
+  const [stageNotice, setStageNotice] = useState(null);
+
+  // Unmount revocation needs the CURRENT urls, and the cleanup below must not re-run on every
+  // staged change (that would revoke a live thumbnail mid-render). A ref mirror is the standard
+  // shape for "latest value, empty dep list".
+  const stagedUrlsRef = useRef([]);
+  useEffect(() => { stagedUrlsRef.current = staged.map(s => s.url).filter(Boolean); }, [staged]);
+  useEffect(() => () => {
+    for (const url of stagedUrlsRef.current) URL.revokeObjectURL(url);
+    stagedUrlsRef.current = [];
+  }, []);
 
   // BUG-PHOTOUPLOADHANG-001: name the step, not just "Uploading…" — a stall report can then say
   // WHERE it stuck ("Uploading… 43%" = the S3 PUT at 43%). stage/progress may be undefined when
@@ -106,7 +166,86 @@ export function PhotoUpload({
     stage === 'saving' ? 'Saving…' :
     (typeof progress === 'number' ? `Uploading… ${progress}%` : 'Uploading…');
 
+  const removeStaged = useCallback((id) => {
+    setStaged(prev => {
+      const hit = prev.find(s => s.id === id);
+      // Never revoke an in-flight file's URL — the upload is uncancellable, and the strip must keep
+      // showing what is still on the wire. The control is disabled for that row anyway; this is the
+      // second half of the same rule, because a caller could reach removeStaged some other way.
+      if (!hit || hit.status === 'uploading') return prev;
+      if (hit.url) URL.revokeObjectURL(hit.url);
+      return prev.filter(s => s.id !== id);
+    });
+  }, []);
+
+  const clearStaged = useCallback(() => {
+    setStaged(prev => {
+      const keep = prev.filter(s => s.status === 'uploading');
+      for (const s of prev) if (s.status !== 'uploading' && s.url) URL.revokeObjectURL(s.url);
+      return keep;
+    });
+    setStageNotice(null);
+  }, []);
+
+  // §3 B3 — per-file error isolation. `upload()` resolves `{ error }` and never throws, so a failed
+  // file cannot break the loop; the try/catch guards only the callbacks, which are caller code.
+  const runQueue = useCallback(async (items) => {
+    const uploaded = [];
+    for (const item of items) {
+      setStaged(prev => prev.map(s => (s.id === item.id ? { ...s, status: 'uploading', error: null } : s)));
+      const result = await upload(item.file, { keyPrefix, parentId, linkage, caption, is_public });
+      if (result?.error) {
+        setStaged(prev => prev.map(s => (s.id === item.id ? { ...s, status: 'error', error: result.error } : s)));
+        if (typeof onUploadError === 'function') {
+          try { onUploadError(result.error); } catch (cbErr) { console.error('onUploadError threw', cbErr); }
+        }
+      } else if (result?.photo) {
+        uploaded.push(result.photo);
+        setStaged(prev => prev.map(s => (s.id === item.id ? { ...s, status: 'done', photo: result.photo } : s)));
+      }
+    }
+    // Array form, once, and only when something actually landed — a caller that refetches on
+    // complete should not be told to refetch after a batch in which nothing was created.
+    if (uploaded.length && typeof onUploadComplete === 'function') {
+      try { onUploadComplete(uploaded); } catch (cbErr) { console.error('onUploadComplete threw', cbErr); }
+    }
+  }, [upload, keyPrefix, parentId, linkage, caption, is_public, onUploadComplete, onUploadError]);
+
   const handleChange = useCallback(async (e) => {
+    if (multiEnabled) {
+      // Snapshot the FileList before anything can reset the input — a FileList is live against the
+      // element, so reading it after `value = ''` yields nothing.
+      const picked = Array.from(e.target?.files ?? []);
+      if (inputRef.current) inputRef.current.value = '';
+      if (!picked.length) return;
+
+      // Ids are minted HERE, before the state update, so the queue below owns the exact identities
+      // it is about to drive. Deriving them afterwards from the committed array would depend on
+      // React running the updater synchronously, which it does not promise.
+      const room = Math.max(0, maxFiles - staged.length);
+      const accepted = picked.slice(0, room);
+      setStageNotice(
+        accepted.length < picked.length
+          ? `Only ${maxFiles} photos at a time — ${picked.length - accepted.length} not added.`
+          : null
+      );
+      if (!accepted.length) return;
+      const queued = accepted.map(file => ({
+        id: nextStagedId(),
+        file,
+        url: URL.createObjectURL(file),
+        status: 'staged',
+        error: null,
+        photo: null,
+      }));
+      setStaged(prev => prev.concat(queued));
+      if (typeof onUploadStart === 'function') {
+        try { onUploadStart(); } catch (cbErr) { console.error('onUploadStart threw', cbErr); }
+      }
+      await runQueue(queued);
+      return;
+    }
+
     const file = e.target?.files?.[0];
     if (!file) return;
     if (typeof onUploadStart === 'function') {
@@ -124,7 +263,7 @@ export function PhotoUpload({
     }
     // Reset native input so re-selecting the same file refires `onChange`.
     if (inputRef.current) inputRef.current.value = '';
-  }, [upload, keyPrefix, parentId, linkage, caption, is_public, onUploadStart, onUploadComplete, onUploadError]);
+  }, [multiEnabled, maxFiles, staged, runQueue, upload, keyPrefix, parentId, linkage, caption, is_public, onUploadStart, onUploadComplete, onUploadError]);
 
   const resolvedId = inputId ?? 'photo-upload-input';
   const busy = disabled || isUploading;
@@ -164,11 +303,15 @@ export function PhotoUpload({
       {/* V4-HIDECAPTURE-001: NO `capture` attribute, ever. Its absence is the whole feature, which
           makes it invisible in a diff and easy to reinstate "for mobile" — the guard against that is
           PhotoUpload.test.jsx asserting the attribute is absent, not this comment. */}
+      {/* `multiple` is rendered ONLY in multi mode — `multiple={false}` would still emit the
+          attribute in some renderers, and the single-mode DOM must be attribute-for-attribute what
+          it was (§3 B2). `undefined` is the only spelling React omits outright. */}
       <input
         ref={inputRef}
         id={resolvedId}
         type="file"
         accept={accept}
+        multiple={multiEnabled ? true : undefined}
         onChange={handleChange}
         disabled={busy}
         aria-hidden="true"
@@ -177,7 +320,79 @@ export function PhotoUpload({
         data-testid="photo-upload-input"
       />
 
-      {showPreview && preview && (
+      {/* MULTI-ONLY from here to the end of the block: the staged strip, which REPLACES the hook's
+          single preview and single error banner. §3 B3 requires a per-file surface — one collapsed
+          banner for "2 of 5 failed" is the shape this criterion exists to forbid, because it cannot
+          say WHICH two, and the user's only recovery is to re-pick all five. */}
+      {multiEnabled && stageNotice && (
+        <div role="status" data-testid="photo-upload-stage-notice"
+             style={{ marginTop: T.photo.gapSm, color: P.mid, fontSize: T.type.base }}>
+          {stageNotice}
+        </div>
+      )}
+
+      {multiEnabled && staged.length > 0 && (
+        <>
+          <ul
+            data-testid="photo-upload-staged"
+            style={{ display: 'flex', flexWrap: 'wrap', gap: T.photo.gapSm,
+                     listStyle: 'none', padding: 0, margin: `${T.photo.gapMd} 0 0` }}
+          >
+            {staged.map(item => (
+              <li key={item.id} data-testid="photo-upload-staged-item" data-status={item.status}
+                  style={{ position: 'relative', width: 88 }}>
+                <img
+                  src={item.url}
+                  alt={item.file?.name ? `Staged photo ${item.file.name}` : 'Staged photo'}
+                  style={{ width: 88, height: 88, objectFit: 'cover',
+                           borderRadius: T.photo.thumbRadius, display: 'block',
+                           border: `1px solid ${P.border}`,
+                           opacity: item.status === 'uploading' ? 0.55 : 1 }}
+                />
+                {item.status !== 'uploading' && (
+                  <button
+                    type="button"
+                    onClick={() => removeStaged(item.id)}
+                    aria-label={`Remove ${item.file?.name ?? 'photo'}`}
+                    data-testid="photo-upload-staged-remove"
+                    style={{ position: 'absolute', top: 4, right: 4,
+                             background: 'rgba(0,0,0,0.55)', color: P.white,
+                             border: 'none', borderRadius: '50%', width: 22, height: 22,
+                             cursor: 'pointer', fontSize: '0.7rem', lineHeight: 1 }}
+                  >×</button>
+                )}
+                {/* The status line is TEXT, not a colour or an icon: "which one failed" has to
+                    survive a screen reader and a monochrome glance, and the error text itself is
+                    what tells the user whether a retry is worth it. */}
+                <div data-testid="photo-upload-staged-status"
+                     style={{ fontSize: '0.68rem', marginTop: 2, textAlign: 'center',
+                              color: item.status === 'error' ? P.photoErrorInk : P.mid }}>
+                  {item.status === 'uploading' ? (typeof progress === 'number' ? `${progress}%` : 'Uploading…')
+                    : item.status === 'done' ? 'Added'
+                    : item.status === 'error' ? 'Failed'
+                    : 'Ready'}
+                </div>
+                {item.status === 'error' && item.error && (
+                  <div role="alert" data-testid="photo-upload-staged-error"
+                       style={{ fontSize: '0.66rem', color: P.photoErrorInk, textAlign: 'center' }}>
+                    {item.error}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          {!isUploading && (
+            <button type="button" onClick={clearStaged} data-testid="photo-upload-staged-clear"
+                    style={{ marginTop: T.photo.gapSm, fontSize: T.photo.linkFont,
+                             background: 'transparent', border: 'none',
+                             color: P.sage, cursor: 'pointer', textDecoration: 'underline' }}>
+              Clear
+            </button>
+          )}
+        </>
+      )}
+
+      {!multiEnabled && showPreview && preview && (
         <div style={{ marginTop: T.photo.gapMd }}>
           <img
             src={preview}
@@ -188,14 +403,17 @@ export function PhotoUpload({
         </div>
       )}
 
-      {error && errorMode === 'surface' && (
+      {/* The hook-level banner is single-mode only. In multi mode `error` holds whichever file
+          failed LAST, so rendering it here would restate one per-file failure as if it described
+          the batch — the collapsed report §3 B3 forbids. */}
+      {!multiEnabled && error && errorMode === 'surface' && (
         <div role="alert" data-testid="photo-upload-error"
              style={{ marginTop: T.photo.gapSm, color: P.photoErrorInk, fontSize: T.type.base }}>
           {error}
         </div>
       )}
 
-      {photo && (
+      {!multiEnabled && photo && (
         <button type="button" onClick={reset} data-testid="photo-upload-reset"
                 style={{ marginTop: T.photo.gapSm, fontSize: T.photo.linkFont,
                          background: 'transparent', border: 'none',
