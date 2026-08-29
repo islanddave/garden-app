@@ -95,7 +95,12 @@ export function useInventory() {
     // Caller may pass partial changes OR full payload.
     // If we have current item in list, merge {current, ...payload} for safety.
     // If not (e.g. detail page deep-link), pass payload through; Lambda will validate.
-    const current = items.find(i => i.id === id)
+    // Reads itemsRef, not the closure's `items`, for the reason adjustQuantity does
+    // (BUG-INVUNDOQTY-001): an instance held across a list change would otherwise merge the row as
+    // it stood when that render ran. Latent rather than live — handleSave, the only caller, always
+    // invokes the current render's instance — but "current item in list" above is only true of the
+    // live list, and the two readers of state in this hook should not disagree about which one.
+    const current = itemsRef.current.find(i => i.id === id)
     const fullPayload = current ? { ...current, ...payload } : payload
     try {
       const updated = await fetch('/api/inventory-items/' + id, {
@@ -107,7 +112,7 @@ export function useInventory() {
     } catch (err) {
       return { error: err?.message ?? 'Failed to update item' }
     }
-  }, [fetch, items])
+  }, [fetch])
 
   const adjustQuantity = useCallback(async (id, delta) => {
     const current = itemsRef.current.find(i => i.id === id)

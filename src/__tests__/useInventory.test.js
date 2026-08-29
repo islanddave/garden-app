@@ -202,6 +202,33 @@ describe('useInventory — updateItem', () => {
     expect(res).toEqual({ error: '409 Conflict' })
   })
 
+  // Same stale-closure class the undo path had (BUG-INVUNDOQTY-001): `items` came from the render
+  // that produced this callback, so an instance held across a list change merges the row as it was
+  // THEN. LATENT, not live — every shipped call site (InventoryDetail.handleSave) invokes the
+  // current render's instance — but the hook's contract at the top of the file promises a merge
+  // against "current item in list", and only the ref makes "current" mean live. Captured here
+  // explicitly because that is the only shape in which the defect exists.
+  // Pre-fix failure: `expected 10 to be 11` on the quantity_on_hand assertion.
+  it('merges against the live row, not the render that produced the callback', async () => {
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    const held = result.current.updateItem
+
+    fetchSpy.mockResolvedValueOnce({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11 })
+    await act(async () => { await result.current.adjustQuantity('item-1', 1) })
+    expect(result.current.items[0].quantity_on_hand).toBe(11)
+
+    fetchSpy.mockResolvedValueOnce({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11, name: 'Renamed' })
+    await act(async () => { await held('item-1', { name: 'Renamed' }) })
+
+    const puts = fetchSpy.mock.calls.filter(c => c[1]?.method === 'PUT')
+    const body = JSON.parse(puts[puts.length - 1][1].body)
+    expect(body.name).toBe('Renamed')
+    expect(body.quantity_on_hand).toBe(11)
+  })
+
   it('passes payload through when item not in current list', async () => {
     fetchSpy.mockResolvedValueOnce([])
     const { result } = renderHook(() => useInventory())
