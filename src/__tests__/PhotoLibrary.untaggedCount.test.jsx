@@ -40,8 +40,8 @@ vi.mock('../components/PhotoUpload.jsx', () => ({ default: () => <div data-testi
 // that is QuickTagCarousel.test.jsx's job. Stubbing also keeps this file free of the dismiss
 // registry and PhotoView the real component needs.
 vi.mock('../components/photo/QuickTagCarousel.jsx', () => ({
-  default: ({ photos }) => {
-    deckSpy(photos.map(p => p.id))
+  default: ({ photos, seedTargets }) => {
+    deckSpy(photos.map(p => p.id), seedTargets)
     return <div data-testid="quicktag-carousel-stub">{photos.length}</div>
   },
 }))
@@ -202,7 +202,23 @@ describe('PhotoLibrary — opening the drain from a scoped view', () => {
     expect(fetchSpy).toHaveBeenCalledWith('/api/photos')
     // Oldest-first ordering is the drain's contract; ids here share a timestamp so this also pins
     // that the deck is the three global pending rows and not the scoped row.
-    expect(deckSpy).toHaveBeenCalledWith(['a', 'b', 'c'])
+    expect(deckSpy).toHaveBeenCalledWith(['a', 'b', 'c'], expect.anything())
+  })
+
+  it('seeds the shortcut row from the same list it built the deck from', async () => {
+    // The second consumer of the scoped/global split. The scoped view's only photo is attached to
+    // planting `pl-scoped`; the global list's attached photo is on `pl-global`. A seed still read off
+    // the page's scoped `photos` would offer pl-scoped — shortcuts for the project the user happens
+    // to be filtered to, beside a deck drawn from the whole garden.
+    const scopedAttached = { ...attachedToProject('d'), plant_id: 'pl-scoped' }
+    const globalAttached = { ...attachedToProject('e'), plant_id: 'pl-global' }
+    await mountScopedToProject({
+      global: [pending('a'), globalAttached],
+      scoped: [scopedAttached],
+    })
+    fireEvent.click(countSeg())
+    await waitFor(() => expect(screen.getByTestId('quicktag-carousel-stub')).toBeTruthy())
+    expect(deckSpy).toHaveBeenCalledWith(['a'], ['pl-global'])
   })
 
   it('does NOT re-fetch when no scope filter is active — the common path stays one request', async () => {
@@ -213,7 +229,7 @@ describe('PhotoLibrary — opening the drain from a scoped view', () => {
     fireEvent.click(countSeg())
     await waitFor(() => expect(screen.getByTestId('quicktag-carousel-stub')).toBeTruthy())
     expect(fetchSpy).not.toHaveBeenCalledWith('/api/photos')
-    expect(deckSpy).toHaveBeenCalledWith(['a', 'b'])
+    expect(deckSpy).toHaveBeenCalledWith(['a', 'b'], expect.anything())
   })
 
   it('says so when the list cannot be loaded, instead of failing silently', async () => {

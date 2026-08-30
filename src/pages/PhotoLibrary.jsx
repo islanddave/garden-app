@@ -87,6 +87,31 @@ export function coverForPhoto(photoId, plants) {
     .map(p => ({ id: p.id, name: p.name }))
 }
 
+// Seed for the quick-tag carousel's shortcut row: the plantings a list of photos is already attached
+// to, most-recent first, capped. It means the first photo of a drain offers plausible targets instead
+// of an empty row; once the user has tagged two or three, their own MRU has displaced it entirely.
+//
+// BUG-QUICKTAGSCOPE-001, second half. This is the OTHER consumer of the badge's scoped/global split.
+// It used to read the page's `photos`, and leaving it that way after globalising the deck would have
+// MOVED the asymmetry rather than removed it: a global deck would offer shortcuts drawn only from the
+// filtered project, suggesting peppers while showing kale. Milder than the silent no-op the deck had
+// — the MRU displaces it in two or three taps — but the same mistake. So it is a plain function over
+// whichever list built the deck, at module scope because that list is one the component never holds
+// in state (see openQuickTag), and deck+seed are stored as ONE object so they cannot drift.
+const SEED_CAP = 8
+function seedFromPhotos(source) {
+  const seen = new Set()
+  const out = []
+  const recent = (source ?? []).slice().sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
+  for (const p of recent) {
+    if (!p.plant_id || seen.has(p.plant_id)) continue
+    seen.add(p.plant_id)
+    out.push(p.plant_id)
+    if (out.length >= SEED_CAP) break
+  }
+  return out
+}
+
 export default function PhotoLibrary() {
   const { fetch: apiFetch } = useApiFetch()
 
@@ -575,25 +600,11 @@ export default function PhotoLibrary() {
     // appearing to fail. It also heals a count left stale by another device draining the inbox.
     setUntaggedCount(pending.length)
     if (!pending.length) return
-    setQuickTagDeck(pending)
+    // Deck and seed are ONE piece of state so they cannot drift apart — the seed is derived from
+    // whichever list built the deck, which under a scope filter is a list this component never held.
+    setQuickTagDeck({ photos: pending, seed: seedFromPhotos(source) })
   }, [photos, filterProject, filterLocation, apiFetch, quickTagOpening, toast])
 
-  // Seed for the carousel's shortcut row: the plantings this page's OWN photos are already attached
-  // to, most-recent first. Available client-side with no extra request, and it means the first photo
-  // of a drain already offers plausible targets instead of an empty row. Once the user has tagged
-  // two or three, their own choices have displaced the seed entirely.
-  const quickTagSeed = useMemo(() => {
-    const seen = new Set()
-    const out = []
-    const recent = photos.slice().sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
-    for (const p of recent) {
-      if (!p.plant_id || seen.has(p.plant_id)) continue
-      seen.add(p.plant_id)
-      out.push(p.plant_id)
-      if (out.length >= 8) break
-    }
-    return out
-  }, [photos])
 
   // One photo left the inbox. Update in place rather than refetching: a refetch mid-drain would
   // re-sort the grid under a modal the user is still working in, and the carousel holds its own
@@ -1383,9 +1394,9 @@ export default function PhotoLibrary() {
           full-bleed: anything drawn over it would be a control for a photo it is not showing. */}
       {quickTagDeck && (
         <QuickTagCarousel
-          photos={quickTagDeck}
+          photos={quickTagDeck.photos}
           plants={plantsForModal}
-          seedTargets={quickTagSeed}
+          seedTargets={quickTagDeck.seed}
           apiFetch={apiFetch}
           onAssigned={handleQuickTagAssigned}
           onClose={() => setQuickTagDeck(null)}
