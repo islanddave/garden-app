@@ -128,3 +128,115 @@ def test_manifest_declares_every_env_var_daily_plan_reads():
                     found |= set(re.findall(r"process\.env\.([A-Z][A-Z0-9_]*)", fh.read()))
     declared = set(clc.load_manifest()["garden-daily-plan"]["env"])
     assert found - declared == set(), "daily-plan reads undeclared env: %s" % sorted(found - declared)
+
+
+# --- Function URL / CORS (OPS-DEPLOYCOESILENT-001) ----------------------------
+
+def url_cfg(*origins):
+    return {"FunctionUrl": "https://x.lambda-url.us-east-1.on.aws/",
+            "Cors": {"AllowOrigins": list(origins)}}
+
+PROD = "https://garden.futureishere.net"
+
+def test_url_not_declared_asserts_nothing():
+    """Same non-exhaustive rule as env: a spec with no "url" key must not start failing."""
+    assert clc.check_function_url("garden-plants", {"memory": 1024}, url_cfg(PROD)) == []
+    assert clc.check_function_url("garden-plants", {"memory": 1024}, None) == []
+
+def test_url_matching_cors_is_clean():
+    assert clc.check_function_url("garden-plants", {"url": {"cors_origins": [PROD]}}, url_cfg(PROD)) == []
+
+def test_url_cors_drift_is_reported():
+    v = clc.check_function_url("garden-plants", {"url": {"cors_origins": [PROD]}},
+                               url_cfg("https://evil.example"))
+    assert len(v) == 1 and "evil.example" in v[0] and "L-097" in v[0]
+
+def test_url_cors_order_does_not_matter():
+    """Origin order is not semantic; a reorder must not red a deploy."""
+    a, b = PROD, "https://staging.example"
+    assert clc.check_function_url("f", {"url": {"cors_origins": [a, b]}}, url_cfg(b, a)) == []
+
+def test_url_required_but_absent_is_reported():
+    v = clc.check_function_url("garden-plants", {"url": {"cors_origins": [PROD]}}, None)
+    assert len(v) == 1 and "has NO Function URL" in v[0]
+
+def test_url_forbidden_but_present_is_reported():
+    """The event-driven functions must not silently gain a public HTTP entry point."""
+    v = clc.check_function_url("garden-daily-plan", {"url": None}, url_cfg(PROD))
+    assert len(v) == 1 and "must have NONE" in v[0]
+
+def test_url_forbidden_and_absent_is_clean():
+    assert clc.check_function_url("garden-daily-plan", {"url": None}, None) == []
+
+def test_url_declared_without_cors_origins_asserts_existence_only():
+    assert clc.check_function_url("f", {"url": {}}, url_cfg("https://anything")) == []
+    assert len(clc.check_function_url("f", {"url": {}}, None)) == 1
+
+def test_url_missing_cors_block_reads_as_empty_not_a_crash():
+    v = clc.check_function_url("f", {"url": {"cors_origins": [PROD]}}, {"FunctionUrl": "x"})
+    assert len(v) == 1 and "[]" in v[0]
+
+
+# --- EventBridge rules (OPS-DEPLOYCOESILENT-001) ------------------------------
+
+def test_rules_all_present_is_clean():
+    exp = [{"name": "r1", "state": "ENABLED", "targets": 1}]
+    assert clc.check_event_rules(exp, {"r1": {"State": "ENABLED", "Targets": 1}}) == []
+
+def test_missing_rule_is_reported():
+    v = clc.check_event_rules([{"name": "r1"}], {})
+    assert len(v) == 1 and "DOES NOT EXIST" in v[0]
+
+def test_disabled_rule_is_reported():
+    v = clc.check_event_rules([{"name": "r1", "state": "ENABLED"}],
+                              {"r1": {"State": "DISABLED", "Targets": 1}})
+    assert len(v) == 1 and "dark schedule" in v[0]
+
+def test_zero_targets_is_reported():
+    """A rule that exists and fires into nothing is the state describe-rule alone cannot show."""
+    v = clc.check_event_rules([{"name": "r1", "targets": 1}], {"r1": {"State": "ENABLED", "Targets": 0}})
+    assert len(v) == 1 and "fires into nothing" in v[0]
+
+def test_double_target_is_reported():
+    v = clc.check_event_rules([{"name": "r1", "targets": 1}], {"r1": {"State": "ENABLED", "Targets": 2}})
+    assert len(v) == 1 and "double-fires" in v[0]
+
+def test_rule_violations_accumulate():
+    v = clc.check_event_rules([{"name": "r1", "state": "ENABLED", "targets": 1}],
+                              {"r1": {"State": "DISABLED", "Targets": 3}})
+    assert len(v) == 2
+
+def test_unstated_rule_dimensions_are_not_asserted():
+    assert clc.check_event_rules([{"name": "r1"}], {"r1": {"State": "DISABLED", "Targets": 9}}) == []
+
+
+# --- manifest shape -----------------------------------------------------------
+
+def test_manifest_url_values_are_only_the_two_legal_shapes():
+    for fn, spec in clc.load_manifest().items():
+        if "url" not in spec:
+            continue
+        want = spec["url"]
+        assert want is None or isinstance(want, dict), "%s.url: %r is not null / object" % (fn, want)
+
+def test_every_declared_function_declares_a_url_expectation():
+    """Silence is the defect this closed; an undeclared URL asserts nothing at all."""
+    missing = [fn for fn, spec in clc.load_manifest().items() if "url" not in spec]
+    assert missing == [], "no url expectation declared for: %s" % missing
+
+def test_eventbridge_block_is_loaded_and_well_formed():
+    rules = clc.load_eventbridge()
+    assert len(rules) >= 4, "expected the four live schedules to be declared"
+    for r in rules:
+        assert isinstance(r.get("name"), str) and r["name"]
+        assert r.get("state") in (None, "ENABLED", "DISABLED")
+        assert r.get("targets") is None or isinstance(r["targets"], int)
+
+def test_eventbridge_is_not_returned_as_a_function():
+    """load_manifest() must stay FUNCTIONS ONLY — --function and three other tests rely on it."""
+    assert "eventbridge" not in clc.load_manifest()
+
+def test_intraday_rules_are_declared():
+    """A0.3 verifies only garden-daily-plan-nightly; these two were verified by nothing."""
+    names = {r["name"] for r in clc.load_eventbridge()}
+    assert {"garden-daily-plan-intraday-am", "garden-daily-plan-intraday-pm"} <= names
