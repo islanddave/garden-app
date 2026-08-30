@@ -1,11 +1,15 @@
-// OPS-SCHEMAAUDITJOIN-001 — the public.plant_projects columns lambda/events reads.
+// V4-AUTOPROJECT-001 (dev 1f567ae) gave this directory its FIRST plant_varieties read, via the
+// authz-parents.js copy: resolveContainerForCultivar looks up the posted cultivar's crop type so a
+// container can be matched on crop rather than on "whichever one sorts first". The relation was
+// therefore joined here with no contract in this directory, which is precisely the hole Phase 4
+// counts — it took the joined-relation debt from 48 to 52. This file is one of the four that pay it
+// back down.
 //
-// All four columns come from authz-parents.js, the write-FK parent resolver that is
-// byte-identical in seven directories (one sha256) for the same reason household.js is: each
-// Lambda is zipped from its OWN directory, so a `../authz-parents.js` import is not packaged
-// and the handler 502s at module load. Phase 4 groups by Path(handler).parent, so the copy in
-// this directory needs its own contract — a contract beside any of the other six buys this one
-// nothing.
+// OPS-SCHEMAAUDITJOIN-001 — the public.plant_varieties columns lambda/plants reads.
+//
+// One statement in index.js, and the only read in this set that takes `name` off the BASE
+// table rather than `display_name` off the cultivar VIEW — the rest of this directory reads
+// the view (see cultivar-columns.test.js beside this file). Three columns.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
@@ -36,22 +40,22 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 // Every handler in THIS directory — the same set Phase 4 groups together. Read from disk rather
-// than hardcoded, so a handler added here that JOINs plant_projects is covered the day it lands
+// than hardcoded, so a handler added here that JOINs plant_varieties is covered the day it lands
 // instead of the day someone remembers to extend a list.
 const HANDLERS = readdirSync(__dirname)
   .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
   .sort();
 
-// L-081 KEYED contract. Every column below verified present on public.plant_projects in live prod Neon on
-// 2026-08-29 (33 columns), read through the read-only role.
+// L-081 KEYED contract. Every column below verified present on public.plant_varieties in live prod Neon on
+// 2026-08-29 (45 columns), read through the read-only role.
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  plant_projects: ['archived_at', 'created_by', 'deleted_at', 'id', 'name'],
+  plant_varieties: ['crop_type_slug', 'id'],
 };
 
-const PLANT_PROJECTS_COLUMNS = AUDIT_COLUMNS.plant_projects;
+const PLANT_VARIETIES_COLUMNS = AUDIT_COLUMNS.plant_varieties;
 
 // Extraction mirrors scripts/dev-main-schema-audit.py:238-286 so this guard sees the same
 // statements Phase 4 credits. Only SQL inside a tagged sql`` template counts.
@@ -62,10 +66,10 @@ const SQL_TEMPLATE = /sql`([\s\S]*?)`/g;
 const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
 
 // Regex literals are re-created on every evaluation, so each call gets a fresh lastIndex. The alias
-// group is OPTIONAL: an unaliased `FROM public.plant_projects WHERE ...` captures the next keyword,
+// group is OPTIONAL: an unaliased `FROM public.plant_varieties WHERE ...` captures the next keyword,
 // which NOT_AN_ALIAS rejects and UNALIASED_ARMS then has to account for by hand.
 const bindings = (s) => [...s.matchAll(
-  /\b(?:FROM|JOIN)\s+(?:public\.)?plant_projects\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?/gi,
+  /\b(?:FROM|JOIN)\s+(?:public\.)?plant_varieties\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?/gi,
 )].map((m) => (m[1] ?? '').toLowerCase());
 
 const NOT_AN_ALIAS = new Set([
@@ -77,7 +81,7 @@ const NOT_AN_ALIAS = new Set([
 const aliasesOf = (s) => [...new Set(bindings(s).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
 const unaliasedIn = (s) => bindings(s).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
 
-// Scoped to statements that BIND plant_projects, so an `x.col` belonging to some other query in the
+// Scoped to statements that BIND plant_varieties, so an `x.col` belonging to some other query in the
 // same file can never be read as this table's.
 const columnsOf = (s) => [...new Set(aliasesOf(s).flatMap((a) => [...s.matchAll(
   new RegExp(String.raw`\b${a}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
@@ -91,34 +95,34 @@ const STATEMENTS = HANDLERS.flatMap((f) => {
     .map((sql) => ({ file: f, sql }));
 });
 
-// Reads that name plant_projects with NO alias. Nothing can attribute their bare identifiers
+// Reads that name plant_varieties with NO alias. Nothing can attribute their bare identifiers
 // automatically — the surrounding query may scan other tables through their own aliases — so each
 // arm is PINNED to its literal SQL and its columns are listed by hand. Edit the query and the pin
 // stops matching and this file reds, which is the only way the hand-listed columns stay honest.
 const UNALIASED_ARMS = [
   {
     file: 'authz-parents.js',
-    // loadOwnedProject — the ownership gate for every write that names a container
-    // (plants.project_id, photos.project_id, event_log.project_id). `AND deleted_at IS NULL`
-    // is what stops a new row being attached to a soft-deleted container and
-    // `created_by = ANY(...)` is the household check itself, so the pin covers the whole
-    // predicate rather than just the FROM clause.
-    pin: /SELECT id, name FROM public\.plant_projects\s+WHERE id = \$\{projectId\}\s+AND deleted_at IS NULL\s+AND created_by = ANY\(\$\{householdIds\}\)/,
-    columns: ['id', 'name', 'deleted_at', 'created_by'],
+    // resolveContainerForCultivar's `target` CTE (V4-AUTOPROJECT-001, dev 1f567ae). It reads the
+    // spoken/posted cultivar's crop type so the candidate containers can be filtered to the ones
+    // holding THAT crop and nothing else — the `other = 0` purity guard the resolver's safety rests
+    // on. Unaliased because the CTE selects from the table directly, so columnsOf() cannot attribute
+    // its bare identifiers and they are listed by hand here.
+    pin: /SELECT crop_type_slug AS slug FROM public\.plant_varieties WHERE id = \$\{cultivarId\}/,
+    columns: ['crop_type_slug', 'id'],
   },
 ];
 
-describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events plant_projects column contract', () => {
-  it('finds the plant_projects statements, so the assertions below are not vacuous', () => {
+describe('OPS-SCHEMAAUDITJOIN-001 — lambda plant_varieties column contract', () => {
+  it('finds the plant_varieties statements, so the assertions below are not vacuous', () => {
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(4);
+    expect(STATEMENTS).toHaveLength(1);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual(['pp', 'pp2']);
+      .toEqual(['pv']);
   });
 
-  it('accounts for every unaliased plant_projects read', () => {
+  it('accounts for every unaliased plant_varieties read', () => {
     // An unaliased read added without a pin here would slip past columnsOf() entirely and the
     // tightness assertion below would still pass — this count is what closes that hole.
     const bare = STATEMENTS.reduce((n, s) => n + unaliasedIn(s.sql), 0);
@@ -137,27 +141,29 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events plant_projects column contra
     expect(referenced.length).toBeGreaterThan(0);
     // Both directions. Extra columns are not harmless padding: the contract is what Phase 1 audits
     // against prod, so a column nothing reads makes the audit assert something the code never does.
-    expect(referenced).toEqual([...PLANT_PROJECTS_COLUMNS].sort());
+    expect(referenced).toEqual([...PLANT_VARIETIES_COLUMNS].sort());
   });
 
   it('never reaches for a column that belongs to another table', () => {
-    // None of these exist on plant_projects, and each is a live confusion. The primary key is `id`;
-    // `project_id` is the FK POINTING AT this table from plants, photos and event_log. The label
-    // column is `name` — `display_name` belongs to container, the VIEW over this table that much of
-    // the repo reads instead. There is no plant_id: a container does not point at a planting, the
-    // planting points at the container. And the cultivar column here is free-text `variety`, not the
-    // `variety_id` uuid that plants carries.
-    const NOT_ON_TABLE = ['project_id', 'display_name', 'plant_id', 'variety_id'];
+    // None of these exist on plant_varieties, and the first is the sharpest trap in this repo's
+    // schema. plant_varieties is the BASE TABLE and `cultivar` is a VIEW over it whose definition
+    // reads `SELECT id, name AS display_name, ... FROM plant_varieties` — so the SAME row answers to
+    // `display_name` through the view and to `name` here, and a handler that reads pv.display_name
+    // off the base table gets nothing at runtime with nothing failing at deploy time. `variety_id`
+    // and `plant_id` are FKs POINTING AT this table (from plants) and at plants respectively; the
+    // key here is plain `id`. And the crop link is `crop_type_slug` — bare `slug` is crop_types' own
+    // primary key, one hop away.
+    const NOT_ON_TABLE = ['display_name', 'variety_id', 'plant_id', 'slug'];
     for (const col of NOT_ON_TABLE) {
-      expect(PLANT_PROJECTS_COLUMNS).not.toContain(col);
+      expect(PLANT_VARIETIES_COLUMNS).not.toContain(col);
       for (const { file, sql } of STATEMENTS) {
         for (const a of aliasesOf(sql)) {
-          expect(sql, `${file}: ${a}.${col} is not a plant_projects column`)
+          expect(sql, `${file}: ${a}.${col} is not a plant_varieties column`)
             .not.toMatch(new RegExp(String.raw`\b${a}\.${col}\b`, 'i'));
         }
       }
       for (const arm of UNALIASED_ARMS) {
-        expect(arm.columns, `${arm.file}: ${col} is not a plant_projects column`).not.toContain(col);
+        expect(arm.columns, `${arm.file}: ${col} is not a plant_varieties column`).not.toContain(col);
       }
     }
   });
@@ -174,8 +180,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events plant_projects column contra
     // The match must stop at the block's OWN `};`, not run on to the next one in the file.
     expect(decl[1]).not.toMatch(/\bconst\b/);
     const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['plant_projects']);
+    expect(pairs.map((m) => m[1])).toEqual(['plant_varieties']);
     const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
-    expect(cols).toEqual(PLANT_PROJECTS_COLUMNS);
+    expect(cols).toEqual(PLANT_VARIETIES_COLUMNS);
   });
 });

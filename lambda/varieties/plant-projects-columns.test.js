@@ -48,7 +48,7 @@ const HANDLERS = readdirSync(__dirname)
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  plant_projects: ['created_by', 'deleted_at', 'id', 'name'],
+  plant_projects: ['archived_at', 'created_by', 'deleted_at', 'id', 'name'],
 };
 
 const PLANT_PROJECTS_COLUMNS = AUDIT_COLUMNS.plant_projects;
@@ -113,7 +113,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties plant_projects column con
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(3);
+    expect(STATEMENTS).toHaveLength(4);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pp', 'pp2']);
   });

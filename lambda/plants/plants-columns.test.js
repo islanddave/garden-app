@@ -114,9 +114,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants plants column contract', () 
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(5);
+    expect(STATEMENTS).toHaveLength(6);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual(['gn', 'gn2', 'p', 'wp']);
+      .toEqual(['gn', 'gn2', 'p', 'pl', 'wp']);
   });
 
   it('accounts for every unaliased plants read', () => {

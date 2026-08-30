@@ -97,6 +97,16 @@ const STATEMENTS = HANDLERS.flatMap((f) => {
 // stops matching and this file reds, which is the only way the hand-listed columns stay honest.
 const UNALIASED_ARMS = [
   {
+    file: 'authz-parents.js',
+    // resolveContainerForCultivar's `target` CTE (V4-AUTOPROJECT-001, dev 1f567ae). It reads the
+    // posted cultivar's crop type so the candidate containers can be filtered to the ones holding
+    // THAT crop and nothing else — the `other = 0` purity guard the resolver's safety rests on.
+    // Unaliased because the CTE selects from the table directly, so columnsOf() cannot attribute its
+    // bare identifiers and they are listed by hand here.
+    pin: /SELECT crop_type_slug AS slug FROM public\.plant_varieties WHERE id = \$\{cultivarId\}/,
+    columns: ['crop_type_slug', 'id'],
+  },
+  {
     file: 'crop-derive.js',
     // The single-cultivar read: every signal the deriver weighs for one variety. Pinned with its
     // whole SELECT list, because a column silently dropped from it does not error — the deriver
@@ -119,9 +129,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties plant_varieties column co
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(2);
+    expect(STATEMENTS).toHaveLength(3);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual([]);
+      .toEqual(['pv']);
   });
 
   it('accounts for every unaliased plant_varieties read', () => {

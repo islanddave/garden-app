@@ -133,7 +133,21 @@ const SITES = [
   // plants PUT columns above and left every POST column, the whole photos parent set, and
   // succession_group_id (settable on BOTH verbs) out of the table entirely, so nothing failed when
   // they stayed open. Adding a row here is now part of adding a body-settable FK.
-  ['plants/index.js', 'project_id', 'loadOwnedProject', 1],
+  // plants/index.js::project_id is 0 HERE and pinned by its own `it()` below instead — see
+  // "plants create still gates a CLIENT-SUPPLIED project_id". V4-AUTOPROJECT-001 (dev 1f567ae)
+  // introduced a server-side fallback, so the create path now reads
+  //   let resolvedProjectId = body.project_id ?? null;
+  //   if (resolvedProjectId != null) { if (!await loadOwnedProject(sql, resolvedProjectId, ...
+  // The gate is still there and still runs on every client-supplied value; the generic matcher
+  // above cannot see it because it anchors on an expression ENDING IN the field name, and
+  // `resolvedProjectId` does not.
+  //
+  // THIS IS NOT THE "verb stopped accepting the field" CASE the message below describes, and it
+  // must not be filed as one: body.project_id is still accepted and still gated. Dropping the row
+  // to 0 with nothing in its place would have left a live cross-household write column with no
+  // guard at all, which is the exact failure this table exists to prevent. The replacement pin is
+  // stricter than what it replaces — it asserts the gate AND the `?? null` read AND the else-arm.
+  ['plants/index.js', 'project_id', 'loadOwnedProject', 0],
   ['plants/index.js', 'succession_group_id', 'loadOwnedPlantingRef', 2],
   ['photos/index.js', 'project_id', 'loadOwnedProject', 2],
   ['photos/index.js', 'plant_id', 'loadOwnedPlantingRef', 2],
@@ -469,6 +483,24 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
         'accepting this field, lower the count in SITES deliberately.').toBe(gates);
     });
   }
+
+  it('plants create still gates a CLIENT-SUPPLIED project_id (V4-AUTOPROJECT-001)', () => {
+    // The replacement for the SITES row above, which reads 0 because the generic matcher anchors on
+    // an expression ending in the field name and this gate now runs on `resolvedProjectId`.
+    //
+    // THREE THINGS ARE PINNED, because any one alone can go green while the column is open:
+    //   1. body.project_id is still what seeds the value — a rewrite that stopped reading it would
+    //      make 2 and 3 true of a variable no client can influence, i.e. vacuous;
+    //   2. the ownership gate still runs on that value, negated, and still returns 400;
+    //   3. the server-side fallback is the ELSE arm, so it can never REPLACE a supplied value.
+    // (3) is the one worth stating: if the fallback ever ran unconditionally it would silently
+    // discard a caller's chosen container, and the gate above it would still be present and green.
+    const src = decomment(readFileSync(join(here, 'plants/index.js'), 'utf8')).replace(/\s+/g, ' ');
+    expect(src).toMatch(/let resolvedProjectId = body\.project_id \?\? null;/);
+    expect(src).toMatch(
+      /if \(resolvedProjectId != null\) \{ if \(!await loadOwnedProject\(sql, resolvedProjectId, householdIds\)\)[^}]*?return resp\(400,/);
+    expect(src).toMatch(/\} else \{ resolvedProjectId = await resolveContainerForCultivar\(/);
+  });
 
   it('projects create gates parent_project_id against container.created_by', () => {
     // Not a shared loader (container is the projects handler's own row type), so assert the inline

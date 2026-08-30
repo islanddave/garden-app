@@ -93,14 +93,25 @@ const STATEMENTS = HANDLERS.flatMap((f) => {
 // automatically — the surrounding query may scan other tables through their own aliases — so each
 // arm is PINNED to its literal SQL and its columns are listed by hand. Edit the query and the pin
 // stops matching and this file reds, which is the only way the hand-listed columns stay honest.
-const UNALIASED_ARMS = [];
+const UNALIASED_ARMS = [
+  {
+    file: 'authz-parents.js',
+    // resolveContainerForCultivar's `target` CTE (V4-AUTOPROJECT-001, dev 1f567ae). It reads the
+    // spoken/posted cultivar's crop type so the candidate containers can be filtered to the ones
+    // holding THAT crop and nothing else — the `other = 0` purity guard the resolver's safety rests
+    // on. Unaliased because the CTE selects from the table directly, so columnsOf() cannot attribute
+    // its bare identifiers and they are listed by hand here.
+    pin: /SELECT crop_type_slug AS slug FROM public\.plant_varieties WHERE id = \$\{cultivarId\}/,
+    columns: ['crop_type_slug', 'id'],
+  },
+];
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events plant_varieties column contract', () => {
   it('finds the plant_varieties statements, so the assertions below are not vacuous', () => {
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(1);
+    expect(STATEMENTS).toHaveLength(2);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pv']);
   });
