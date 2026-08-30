@@ -1,0 +1,190 @@
+# gates.yml
+# V5-VOICEALIAS-001 — public.voice_alias (the learned speech-mishearing store).
+#
+# STATUS (2026-08-30): APPLIED TO STAGING. NOT APPLIED TO PROD.
+#   staging  — 0a applied, 0r REHEARSED (dropped clean, pre-gates returned to greenfield), 0a
+#              re-applied. post 8/8 green.
+#   prod     — untouched. No DDL has run against prod from this lane.
+# The prod apply is deliberately deferred: staging is all the dev push requires, and prod is only
+# needed before the PROMOTE. Do not promote a build carrying the writer until prod has 0a.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING
+#
+#   staging apply -> rehearse 0r-rollback -> re-apply to staging -> PROD apply -> dev push -> promote
+#
+# The DDL must reach STAGING BEFORE THE DEV PUSH: CI's integration job branches off staging and does
+# NOT apply migrations, so a missing relation there presents as an infra flake, gets retried green,
+# and stays hidden.
+#
+# It must ALSO reach PROD before the promote, but the failure mode here is gentler than
+# watch_exclusion's and worth stating exactly, because it changes how urgent a late apply is. The
+# reader fails soft — a failed alias fetch logs and returns [], so the chooser falls straight through
+# to voiceFuzzyMatch.js and behaves exactly as it does in v4.78.0. The WRITER is the part that must
+# not run early: a teach against a missing table must surface as a visible failure, never as a
+# success the user believes. A teach that silently did nothing is the one outcome this feature cannot
+# have, because the user's whole reason for teaching is that the app got it wrong once already.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * `continuous` DEFAULTS TO TRUE. The scheduled sweep runs post gates against LIVE prod, so a bare
+#     shape assert would report a standing red until the prod apply.
+#   * The SCHEMA-SHAPE gates are SELF-ARMING and `continuous: true`: each is violation-shaped
+#     (`SELECT … WHERE <armed> AND NOT <the fact>`, rowcount_eq 0) with the arming conjunct being the
+#     EXISTENCE OF public.voice_alias. On prod today the arm is false, so they pass vacuously; the
+#     instant 0a lands they begin asserting the real shape with NO human flip.
+#   * post_table_present stays `continuous: false` — arming a table-exists assert on table-existence
+#     is tautological, so it cannot self-arm. Flip it after the prod apply.
+#   * post_starts_empty is PERMANENTLY window-scoped — NEVER flip it. The first correction Dave makes
+#     populates this table, so a sweep asserting emptiness would go red the moment the feature works.
+#   * post_no_unnormalised_keys is `continuous: true` AND IS NOT A SHAPE GATE — it is the one
+#     behavioural invariant here, and it is the gate that actually earns its place. The CHECK
+#     constraint enforces normalisation at write time, but a CHECK can be dropped, and a
+#     NOT VALID / VALIDATE sequence can leave pre-existing rows unchecked. This asserts the DATA, so
+#     it catches a normalisation drift between comboboxInput.looseKey and what is stored — which
+#     would present not as an error but as the learning feature quietly never matching anything.
+pre:
+  - name: pre_plant_varieties_present
+    note: FK target. voice_alias.variety_id references public.plant_varieties(id).
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+  - name: pre_plant_varieties_has_primary_key
+    note: >
+      A REFERENCES clause needs a unique constraint on the target. Reads pg_catalog, NOT
+      information_schema.table_constraints — that view is privilege-filtered to the table owner and
+      returns zero rows for garden_ro while the PK sits there perfectly healthy (measured on live
+      prod 2026-08-12, v4-weatherdaily-001 note).
+    sql: |
+      SELECT 1 FROM pg_class t
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_index i ON i.indrelid = t.oid AND i.indisprimary
+       WHERE n.nspname='public' AND t.relname='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+  - name: pre_table_absent
+    note: Greenfield. If this returns a row, someone already applied 0a — stop and diff before re-running.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='voice_alias'
+    expect: rowcount_eq
+    value: 0
+post:
+  - name: post_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='voice_alias'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+  - name: post_all_columns_present
+    note: >
+      All 8 declared columns. A silently-missing column would present as a failed teach, which the
+      user experiences as "the app refuses to learn" with no other signal. Self-armed on table
+      existence; each returned row NAMES a missing column rather than reporting a count short.
+    sql: |
+      SELECT c.column_name
+        FROM (VALUES ('id'),('user_id'),('heard_key'),('heard_text'),('variety_id'),
+                     ('hit_count'),('created_at'),('last_used_at')) AS c(column_name)
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='voice_alias')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='voice_alias'
+                            AND column_name = c.column_name)
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+  - name: post_dedupe_constraint_present
+    note: >
+      uq_voice_alias_user_phrase is the writer's ON CONFLICT target. Without it, re-teaching a phrase
+      mints a SECOND row instead of retargeting the first, and resolution becomes order-dependent —
+      so a correction would appear to work and then intermittently not. Read from pg_catalog, not
+      information_schema, for the garden_ro privilege-filter reason above. Self-armed.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='voice_alias')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='voice_alias'
+                            AND c.conname='uq_voice_alias_user_phrase' AND c.contype='u')
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+  - name: post_normalisation_check_present
+    note: >
+      voice_alias_heard_key_normalised_chk is what stops an un-normalised key being stored. Its
+      absence is invisible at write time and shows up only as aliases that never match. Self-armed.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='voice_alias')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='voice_alias'
+                            AND c.conname='voice_alias_heard_key_normalised_chk' AND c.contype='c')
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+  - name: post_variety_fk_present
+    note: >
+      ON DELETE CASCADE to plant_varieties. Without the FK, deleting a variety strands aliases that
+      resolve to nothing and the chooser silently stops offering a name it once knew. Self-armed.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='voice_alias')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='voice_alias'
+                            AND c.contype='f' AND c.confdeltype='c')
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+  - name: post_variety_index_present
+    note: >
+      The review read shape — "which learned aliases point at this variety" — needed when duplicate
+      varieties are merged. One secondary index, by design. Self-armed.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.tables
+                      WHERE table_schema='public' AND table_name='voice_alias')
+         AND NOT EXISTS (SELECT 1 FROM pg_indexes
+                          WHERE schemaname='public' AND tablename='voice_alias'
+                            AND indexname='idx_voice_alias_variety')
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+  - name: post_no_unnormalised_keys
+    note: >
+      THE BEHAVIOURAL INVARIANT, and the only gate here that asserts DATA rather than shape. Every
+      stored heard_key must be a looseKey() output: lowercase, no whitespace, no punctuation. A row
+      violating this inserts fine under a dropped or NOT VALID constraint and then never matches a
+      live utterance — the learning feature failing silently rather than loudly, which is the exact
+      outcome the whole design refuses. Self-armed on table existence, so it passes vacuously until
+      0a lands and then asserts continuously. Each returned row NAMES the offending key.
+    sql: |
+      SELECT heard_key
+        FROM public.voice_alias
+       WHERE heard_key <> lower(heard_key)
+          OR heard_key ~ '[[:space:][:punct:]]'
+          OR char_length(heard_key) < 4
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+  - name: post_starts_empty
+    note: >
+      WINDOW-SCOPED, NEVER CONTINUOUS. True only between the DDL apply and the first correction Dave
+      teaches. A sweep asserting this would go red the moment the feature starts working —
+      L-369 category 1.
+    sql: |
+      SELECT 1 FROM public.voice_alias
+    expect: rowcount_eq
+    value: 0
+    continuous: false
