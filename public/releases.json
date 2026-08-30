@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.82.0",
+    "date": "2026-08-30",
+    "highlights": [
+      "Voice harvest now learns: when it mishears a name, pick the right one once and it remembers permanently",
+      "Voice harvest: a name it can't match at all now offers a search box instead of a dead end"
+    ]
+  },
+  {
     "version": "4.81.0",
     "date": "2026-08-30",
     "highlights": [

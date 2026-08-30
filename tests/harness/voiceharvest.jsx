@@ -21,11 +21,30 @@ const PLANTS = [
   { id: 'p3', name: 'Chinese Red Noodle', archived_at: null, variety_ref: { id: 'v3', name: 'Red Noodle', crop_type_slug: 'bean', default_unit: 'count' } },
   { id: 'p4', name: 'Pineapple Tomatillo', archived_at: null, variety_ref: { id: 'v4', name: 'Pineapple', crop_type_slug: 'tomatillo', default_unit: 'count' } },
   { id: 'p5', name: 'Bitter Melon', archived_at: null, variety_ref: { id: 'v5', name: 'Bitter Melon', crop_type_slug: 'bitter_melon', default_unit: 'count' } },
+  // A REAL planting of Dave's, named with digits. Spoken as words it is unreachable by any scorer
+  // ("eighteen eighty four" ranks helichrysum 0.353 against it on the live data), so it is the case
+  // the teach picker exists for — and the one that proves the learned layer does something fuzzy
+  // cannot.
+  { id: 'p6', name: '1884', archived_at: null, variety_ref: { id: 'v6', name: '1884', crop_type_slug: 'tomato', default_unit: 'count' } },
 ]
 
 let failNextSave = false
+// V5-VOICEALIAS-001 — the learned-mishearing store, in memory so a teach is observable by hand:
+// teach a phrase, say it again, and it should resolve. Starts EMPTY so the first run exercises the
+// unlearned path, which is the state every real session starts in.
+const ALIASES = []
 window.fetch = async (url, opts = {}) => {
   const u = String(url)
+  if (u.includes('/api/varieties/voice-aliases')) {
+    if (opts.method === 'POST') {
+      const b = JSON.parse(opts.body)
+      const i = ALIASES.findIndex((a) => a.heard_key === b.heard_key)
+      // Mirrors the server's ON CONFLICT DO UPDATE: re-teaching RETARGETS rather than accumulating.
+      if (i >= 0) ALIASES[i] = { ...b, hit_count: 0 }; else ALIASES.push({ ...b, hit_count: 0 })
+      return { ok: true, status: 200, json: async () => b }
+    }
+    return { ok: true, status: 200, json: async () => ({ aliases: ALIASES }) }
+  }
   if (u.includes('/api/plants')) return { ok: true, status: 200, json: async () => ({ plants: PLANTS }) }
   if (u.includes('/api/events') && opts.method === 'POST') {
     if (failNextSave) { failNextSave = false; return { ok: false, status: 500, json: async () => ({ error: 'offline' }) } }
@@ -59,8 +78,11 @@ window.webkitSpeechRecognition = HarnessSR
 // "studio long" is the REAL transcript Chrome returns for "Suyo Long" on Dave's Android (2026-08-30)
 // — it is here so the V5-VOICEFUZZYMATCH-001 rescue is reachable by hand rather than only in a test.
 // "chinees red nodle" exercises the same rescue on a name whose damage is spread across two words.
-const PHRASES = ['cucumber', 'Suyo Long', 'studio long', 'chinees red nodle', 'three count',
-  '231 grams', 'next', 'rhubarb', 'text', 'done']
+// "eighteen eighty four" is the TEACH case: a planting named 1884 that edit distance cannot reach
+// (it ranks helichrysum 0.353 on the real data), so it falls to the teach picker. Say it, type
+// "1884", pick it — then say it again and it should resolve straight to the planting.
+const PHRASES = ['cucumber', 'Suyo Long', 'studio long', 'chinees red nodle',
+  'eighteen eighty four', 'three count', '231 grams', 'next', 'rhubarb', 'text', 'done']
 
 function Driver() {
   const [, force] = useState(0)

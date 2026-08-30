@@ -46,6 +46,7 @@ import { useApiFetch } from '../lib/api.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { looseKey, looseIncludes } from '../lib/comboboxInput.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
+import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
 import { classify } from '../lib/voiceHarvestGrammar.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
 import {
@@ -96,9 +97,21 @@ export function matchPlantings(plantings, spoken) {
 //
 // Returns the SAME shape the caller already handles plus a `rescued` marker, so a fuzzy hit is
 // announced as a correction instead of passing itself off as a clean match.
-export function matchPlantingsWithRescue(plantings, spoken) {
+// THREE LAYERS, IN THIS ORDER, and the order is the whole safety argument:
+//   1. strict   — exact/substring. Unchanged and still first, so every utterance that resolves today
+//                 resolves identically.
+//   2. learned  — a mishearing Dave has already corrected by hand (V5-VOICEALIAS-001).
+//   3. fuzzy    — closed-set scoring, for a mishearing nobody has taught yet.
+// LEARNED BEATS FUZZY DELIBERATELY. Fuzzy is a guess that is right 77% of the time on adversarial
+// input; an alias is a fact a human asserted. No score outranks that. Placing learned SECOND rather
+// than first is equally deliberate: a strict match needs no rescue, and letting an alias shadow an
+// exact name match would let one bad teach make a real planting unreachable.
+export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
   const strict = matchPlantings(plantings, spoken)
   if (strict.length) return { hits: strict, rescued: null }
+
+  const learned = resolveAlias(aliasIndex, spoken, plantings)
+  if (learned.length) return { hits: learned, rescued: 'learned' }
 
   const res = fuzzyMatch(plantings, spoken, plantingAliases, looseKey)
   if (res.kind === 'one') return { hits: [res.planting], rescued: res.alias }
@@ -138,6 +151,10 @@ export default function VoiceHarvest() {
 
   const [selected, setSelected]     = useState(null)
   const [candidates, setCandidates] = useState([])
+  // The phrase that matched NOTHING, kept on screen so it stays teachable. Distinct from `candidates`
+  // because the two render different affordances: a short list to confirm, versus a search box to
+  // resolve from scratch.
+  const [unmatched, setUnmatched]   = useState(null)
   const [qty, setQty]               = useState(null)     // { value, unit }
   const [weight, setWeight]         = useState(null)     // { value, unit }
   const [rows, setRows]             = useState([])       // committed harvests, newest last
@@ -161,6 +178,12 @@ export default function VoiceHarvest() {
   const qtyRef      = useRef(null)
   const weightRef   = useRef(null)
   const plantingsRef = useRef([])
+  // V5-VOICEALIAS-001. `aliasRef` is the learned-mishearing index, consulted between strict and fuzzy.
+  // `unmatchedRef` is the phrase that produced whatever the user is currently looking at — the thing
+  // a tap would TEACH. It has to be a ref for the same reason the record slots are: the tap handler
+  // must read what was actually heard, not what the last render closed over.
+  const aliasRef    = useRef(null)
+  const unmatchedRef = useRef(null)
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
@@ -176,13 +199,59 @@ export default function VoiceHarvest() {
     apiFetch('/api/plants?view=picker')
       .then((r) => { if (live) setPlantings((r?.plants ?? r ?? []).filter((p) => !p.archived_at)) })
       .catch((e) => { if (live) setLoadError(e?.message || 'Could not load your plantings') })
+
+    // V5-VOICEALIAS-001 — learned mishearings, fetched ALONGSIDE the plantings rather than gating
+    // them. fetchAliases never rejects (it fails soft to []), and this deliberately sets no
+    // loadError: a chooser that refuses to start because a cache of corrections could not load is
+    // worse than one that has forgotten a few. Losing this degrades the page to its v4.78.0
+    // behaviour — strict, then fuzzy — which is a working page.
+    fetchAliases(apiFetch).then((rows) => { if (live) aliasRef.current = indexAliases(rows) })
+
     return () => { live = false }
   }, [apiFetch])
 
   const clearRecord = useCallback(() => {
-    setSelected(null); setCandidates([]); setQty(null); setWeight(null)
+    setSelected(null); setCandidates([]); setUnmatched(null); setQty(null); setWeight(null)
     selectedRef.current = null; qtyRef.current = null; weightRef.current = null
+    unmatchedRef.current = null
   }, [])
+
+  // V5-VOICEALIAS-001 — THE TEACH. One handler for every manual pick, so a correction is learned
+  // from the candidate list and from the search box identically; two paths would mean one of them
+  // silently never taught.
+  //
+  // SELECTION HAPPENS FIRST AND UNCONDITIONALLY. The user's actual job is logging a harvest, and the
+  // teach is a side benefit — so a failed teach must never cost them the pick they just made. The
+  // record is set before the network call and is not rolled back if it fails.
+  //
+  // A FAILED TEACH IS SAID OUT LOUD, unlike the failed alias READ, which is swallowed. The asymmetry
+  // is the point: someone correcting the app has already been let down once, and a teach that
+  // silently did nothing would let them believe it was fixed and meet the same failure tomorrow.
+  const pickPlanting = useCallback(async (p) => {
+    const phrase = unmatchedRef.current
+    setSelected(p); selectedRef.current = p
+    setCandidates([]); setUnmatched(null)
+    const label = p.name || p.variety_ref?.name
+    say('ok', `${label} — now say the count or the weight.`)
+
+    const varietyId = p?.variety_ref?.id
+    // Nothing to learn when the phrase already resolved strictly, and nothing to learn it AGAINST
+    // when the picker payload carried no variety (a planting with no cultivar reference).
+    if (!phrase || !varietyId) { unmatchedRef.current = null; return }
+    unmatchedRef.current = null
+    try {
+      await teachAlias(apiFetch, { heardText: phrase, varietyId })
+      // Update the live index immediately rather than waiting for a refetch, so saying it again in
+      // THIS session already resolves — the correction has to be visibly true at once or the user
+      // has no way to tell it worked.
+      const next = new Map(aliasRef.current ?? [])
+      next.set(looseKey(phrase), varietyId)
+      aliasRef.current = next
+      say('ok', `${label} — learned “${phrase}”. Now say the count or the weight.`)
+    } catch (err) {
+      say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.`)
+    }
+  }, [apiFetch, say])
 
   // ── the save ────────────────────────────────────────────────────────────────────────────────────
   // Returns nothing and throws nothing: every outcome is a banner, a haptic and (on success) a row.
@@ -266,13 +335,25 @@ export default function VoiceHarvest() {
       // It exists to be said out loud: a rescue that stays silent is a guess wearing the costume of a
       // clean match, and this flow's rule is that every outcome is announced. Dave hears which words
       // were swapped, so a wrong rescue is caught before "next" rather than after the save.
-      const { hits, rescued } = matchPlantingsWithRescue(plantingsRef.current, result.text)
+      const { hits, rescued } = matchPlantingsWithRescue(
+        plantingsRef.current, result.text, aliasRef.current,
+      )
+      // What a tap would teach. Recorded for EVERY non-strict outcome — a total miss, an ambiguous
+      // list, and a fuzzy rescue alike — because all three are cases where the user is about to tell
+      // us what they actually meant. Cleared on a strict match: there is nothing to learn from a
+      // phrase that already resolved exactly.
+      unmatchedRef.current = rescued === null && hits.length === 1 ? null : result.text
       if (hits.length === 0) {
         hapticDigitRejected()
+        // The phrase survives into the candidate-less state so the manual picker below can still
+        // teach it. Without this, a total miss — the case most worth learning from — is the one case
+        // that cannot be taught.
         setCandidates([])
-        say('fail', `Nothing matched “${result.text}”. Say it again, or say the crop.`)
+        setUnmatched(result.text)
+        say('fail', `Nothing matched “${result.text}”. Say it again, or pick it below to teach me.`)
         return
       }
+      setUnmatched(null)
       if (hits.length === 1) {
         hapticDigitAccepted()
         setSelected(hits[0]); selectedRef.current = hits[0]
@@ -537,10 +618,7 @@ export default function VoiceHarvest() {
             <button
               key={c.id}
               type="button"
-              onClick={() => {
-                setSelected(c); selectedRef.current = c; setCandidates([])
-                say('ok', `${c.name || c.variety_ref?.name} — now say the count or the weight.`)
-              }}
+              onClick={() => pickPlanting(c)}
               style={{
                 display: 'block', width: '100%', textAlign: 'left', minHeight: 44, padding: '10px 12px',
                 marginBottom: 6, borderRadius: 8, border: `1px solid ${P.border}`, background: P.cream,
@@ -552,6 +630,19 @@ export default function VoiceHarvest() {
             </button>
           ))}
         </div>
+      )}
+
+      {/* THE TEACH SURFACE, and the reason the whole learning layer can work at all. Before this,
+          a phrase that matched NOTHING left no way to say what it meant — which made the case most
+          worth learning from the one case that could not be taught. Typing here is the escape hatch
+          from a name the recogniser will never get right, AND the moment the correction is captured. */}
+      {unmatched && (
+        <TeachPicker
+          phrase={unmatched}
+          plantings={plantings}
+          onPick={pickPlanting}
+          onDismiss={() => { setUnmatched(null); unmatchedRef.current = null }}
+        />
       )}
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
@@ -611,6 +702,83 @@ export default function VoiceHarvest() {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// V5-VOICEALIAS-001 — resolve a phrase the recogniser mangled beyond matching, and teach it.
+//
+// A PLAIN TEXT INPUT, NOT the PlantingSelect combobox, and that is a deliberate refusal to reuse.
+// PlantingSelect owns its own microphone (comboboxInput's SPEAK mode), and mounting it here would
+// put a second recogniser on a page that already has one running continuously — the exact collision
+// the unbuilt S1 mic arbiter exists to prevent. This is a filter over the plantings already in
+// memory: no fetch, no mic, no combobox machinery.
+//
+// TYPING IS THE POINT. The user reaches this because speech failed, so the input opens with the
+// keyboard available rather than suppressed — the opposite default from the voice-first pickers.
+function TeachPicker({ phrase, plantings, onPick, onDismiss }) {
+  const [q, setQ] = useState('')
+  const matches = useMemo(() => {
+    const query = q.trim()
+    if (!query) return []
+    return plantings
+      .filter((p) => plantingAliases(p).some((a) => looseIncludes(a, query)))
+      .slice(0, 8)
+  }, [q, plantings])
+
+  return (
+    <div
+      data-testid="voice-harvest-teach"
+      style={{
+        background: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+        padding: 12, marginBottom: 12,
+      }}
+    >
+      <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 2, color: P.dark }}>
+        What did you mean by “{phrase}”?
+      </div>
+      <div style={{ fontSize: '0.78rem', color: P.light, marginBottom: 8, lineHeight: 1.4 }}>
+        Type it and pick one — I’ll remember that “{phrase}” means that from now on.
+      </div>
+      <input
+        type="text"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Start typing a crop or variety"
+        aria-label={`What did you mean by ${phrase}`}
+        style={{
+          width: '100%', minHeight: 44, padding: '8px 10px', boxSizing: 'border-box',
+          borderRadius: 8, border: `1px solid ${P.border}`, fontSize: '1rem',
+          fontFamily: 'inherit', color: P.dark, background: P.cream, marginBottom: 8,
+        }}
+      />
+      {matches.map((m) => (
+        <button
+          key={m.id}
+          type="button"
+          onClick={() => onPick(m)}
+          style={{
+            display: 'block', width: '100%', textAlign: 'left', minHeight: 44, padding: '10px 12px',
+            marginBottom: 6, borderRadius: 8, border: `1px solid ${P.border}`, background: P.cream,
+            fontSize: '0.95rem', fontFamily: 'inherit', color: P.dark, cursor: 'pointer',
+          }}
+        >
+          {m.name || m.variety_ref?.name}
+          {m.variety_ref?.crop_type_slug
+            ? <span style={{ color: P.light }}> · {m.variety_ref.crop_type_slug}</span> : null}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={onDismiss}
+        style={{
+          minHeight: 44, padding: '0 14px', borderRadius: 8, border: `1px solid ${P.border}`,
+          background: P.white, fontSize: '0.85rem', fontFamily: 'inherit', color: P.light,
+          cursor: 'pointer',
+        }}
+      >
+        Skip — just say it again
+      </button>
     </div>
   )
 }

@@ -1,9 +1,8 @@
 {
-  "version": "4.81.0",
+  "version": "4.82.0",
   "date": "2026-08-30",
   "highlights": [
-    "Adding several photos to a planting now shows the whole batch. The picker's photo strip was sized for a card footer, so in the planting fly-up it hid 7 of 10 photos behind an inner scrollbar and sliced the labels on the second row.",
-    "Tapping the number on the Untagged chip now works while a project or zone filter is on. The number counts your whole library, but the tagging deck was being built from the filtered view, so the tap did nothing at all.",
-    "\"Clear\", which discards a whole staged batch, is now a full-size tap target instead of a sliver."
+    "Voice harvest now learns: when it mishears a name, pick the right one once and it remembers permanently",
+    "Voice harvest: a name it can't match at all now offers a search box instead of a dead end"
   ]
 }
