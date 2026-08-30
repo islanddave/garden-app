@@ -46,6 +46,13 @@ const SURFACES = [
   // discard confirm existed. It has to outrank LAYER.DIALOG (1000) — a confirm raised over
   // VarietyPicker must be the surface Back and Escape resolve to, not the picker under it.
   { file: 'components/ConfirmSheet.jsx', layer: 'SYSTEM', paints: Z.systemConfirm },
+  // V4-PHOTOBULK-001 S6. A full-bleed deck for draining the photo inbox one photo at a time.
+  // SHEET rather than DIALOG deliberately: it is opened FROM the Photo Library and is peer to that
+  // page's other surfaces, not a system-level interruption over them. At equal layer the arbiter
+  // tiebreaks on insertion order and same-z fixed elements paint in DOM order, so rendering it last
+  // in PhotoLibrary is what puts Back and Escape on the deck — the two halves agree by construction
+  // rather than by coincidence, which is the whole premise this file defends.
+  { file: 'components/photo/QuickTagCarousel.jsx', layer: 'SHEET', paints: Z.sheet },
 ]
 
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8')

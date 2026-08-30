@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useId } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -16,6 +16,7 @@ import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import { photoLoadErrorMessage } from '../components/PhotosWall.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 import PhotoDeleteConfirm from '../components/photo/PhotoDeleteConfirm.jsx'
+import QuickTagCarousel from '../components/photo/QuickTagCarousel.jsx'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import { PROJECTS_HIDDEN, PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js'
 
@@ -148,6 +149,12 @@ export default function PhotoLibrary() {
   // test that cannot fail. The two states differ in meaning ("unknown" vs "measured, empty") and
   // that matters the moment anything else reads this value.
   const [untaggedCount, setUntaggedCount] = useState(null)
+
+  // V4-PHOTOBULK-001 S6 — the drain deck, or null when the carousel is closed. Holds the PHOTOS,
+  // not a boolean: the carousel freezes its list at mount so the deck cannot shrink under the
+  // user's finger, and building it here keeps that snapshot honest about what was pending when they
+  // tapped rather than what is pending now.
+  const [quickTagDeck, setQuickTagDeck] = useState(null)
   const stagedInputRef = useRef(null)
   const stagedUploader = useUploadPhoto({ errorMode: 'surface' })
   // A staged blob URL outlives the component unless revoked. Closing the form or leaving the page
@@ -520,6 +527,50 @@ export default function PhotoLibrary() {
   function handleUploadError(msg) {
     setUploadErr(msg || 'Upload failed.')
   }
+
+  // ---- V4-PHOTOBULK-001 S6 — the one-at-a-time drain ----
+
+  // Oldest first. `taken_at` is NULL on effectively every live row (photoModel records this), so
+  // created_at IS the capture order in practice, and ascending replays a garden walk in the order it
+  // happened — which is what makes the shortcut MRU converge instead of thrashing.
+  const openQuickTag = useCallback(() => {
+    const pending = photos
+      .filter(p => !toPhoto(p).isAttached)
+      .slice()
+      .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))
+    if (!pending.length) return
+    setQuickTagDeck(pending)
+  }, [photos])
+
+  // Seed for the carousel's shortcut row: the plantings this page's OWN photos are already attached
+  // to, most-recent first. Available client-side with no extra request, and it means the first photo
+  // of a drain already offers plausible targets instead of an empty row. Once the user has tagged
+  // two or three, their own choices have displaced the seed entirely.
+  const quickTagSeed = useMemo(() => {
+    const seen = new Set()
+    const out = []
+    const recent = photos.slice().sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
+    for (const p of recent) {
+      if (!p.plant_id || seen.has(p.plant_id)) continue
+      seen.add(p.plant_id)
+      out.push(p.plant_id)
+      if (out.length >= 8) break
+    }
+    return out
+  }, [photos])
+
+  // One photo left the inbox. Update in place rather than refetching: a refetch mid-drain would
+  // re-sort the grid under a modal the user is still working in, and the carousel holds its own
+  // frozen deck anyway.
+  const handleQuickTagAssigned = useCallback((photoId, plantId, planting) => {
+    setPhotos(ps => ps.map(p => (
+      p.id === photoId
+        ? { ...p, plant_id: plantId, project_id: planting?.project_id ?? p.project_id, intake_status: null }
+        : p
+    )))
+    setUntaggedCount(c => (typeof c === 'number' && c > 0 ? c - 1 : c))
+    invalidatePhotoLists('/api/photos')
+  }, [])
 
   // Build the linkage object the photo component forwards into POST /api/photos.
   // Empty strings become null so the Lambda treats them as "unset" rather than ""
@@ -1065,24 +1116,54 @@ export default function PhotoLibrary() {
             // badge is noise on a chip whose empty state is already its own answer, and rendering
             // one before the first list lands would assert an empty inbox we have not checked.
             const badge = mode === 'untagged' && untaggedCount > 0 ? untaggedCount : null
-            return (
+            const chipStyle = {
+              padding: '6px 14px', borderRadius: T.radiusPill, fontSize: T.type.sm, fontWeight: 600,
+              cursor: 'pointer',
+              border: `1px solid ${active ? P.green : P.border}`,
+              backgroundColor: active ? P.greenPale : P.white,
+              color: active ? P.green : P.mid,
+            }
+            const filterChip = (
               <button
                 key={mode}
                 data-testid={`pl-filter-${mode}`}
                 onClick={() => { setFilterMode(mode); setFilterProject(''); selectLocationFilter('') }}
-                style={{
-                  padding: '6px 14px', borderRadius: T.radiusPill, fontSize: T.type.sm, fontWeight: 600,
-                  cursor: 'pointer',
-                  border: `1px solid ${active ? P.green : P.border}`,
-                  backgroundColor: active ? P.greenPale : P.white,
-                  color: active ? P.green : P.mid,
+                style={badge == null ? chipStyle : {
+                  ...chipStyle,
+                  // Left half of a split pill: square off the seam so the two segments read as one
+                  // control with two jobs, rather than as two unrelated chips that happen to touch.
+                  borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: 'none',
                 }}
               >
-                {/* The number is INSIDE the accessible name, not a decorative sibling: "Untagged 12"
-                    is the whole point of the chip and a screen reader that reads only "Untagged"
-                    gets the version of this control that the change was made to replace. */}
-                {badge == null ? label : `${label} ${badge}`}
+                {/* The number is INSIDE the accessible name of the segment that owns it, never a
+                    decorative sibling — a screen reader that reads only "Untagged" gets the version
+                    of this control that the count was added to replace. */}
+                {badge == null ? label : `${label}`}
               </button>
+            )
+            if (badge == null) return filterChip
+            // V4-PHOTOBULK-001 S6 (Dave, D4): "tapping the count opens the tagging view; tapping the
+            // word still filters". TWO BUTTONS, not one with two hit zones — a <button> inside a
+            // <button> is invalid HTML and a click-target split by coordinate inside one control is
+            // undiscoverable and untestable. Two segments in one pill says "two jobs" visually while
+            // staying two real controls, each with its own accessible name.
+            return (
+              <span key={mode} style={{ display: 'inline-flex' }}>
+                {filterChip}
+                <button
+                  type="button"
+                  data-testid="pl-filter-untagged-count"
+                  aria-label={`Tag ${badge} untagged ${badge === 1 ? 'photo' : 'photos'} one at a time`}
+                  onClick={openQuickTag}
+                  style={{
+                    ...chipStyle,
+                    borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
+                    backgroundColor: P.greenPale, color: P.green,
+                    borderColor: active ? P.green : P.border,
+                    fontWeight: 700,
+                  }}
+                >{badge}</button>
+              </span>
             )
           })}
           {/* V4-PROJHIDE-001: project filter hidden when projects aren't user-facing (mode chips +
@@ -1249,6 +1330,23 @@ export default function PhotoLibrary() {
         onPosted={() => exitSelectMode()}
         onDirtyChange={setShareDirty}
       />
+
+      {/* V4-PHOTOBULK-001 S6. Rendered LAST on purpose. It registers LAYER.SHEET and paints
+          Z.sheet (200) — the pair layerMatchesPaint.test.js exists to keep honest — and at EQUAL
+          layer the arbiter's tiebreak is insertion order, while paint order for same-z fixed
+          elements is DOM order. Both therefore favour whatever comes last, so this being last is
+          what makes Back/Escape resolve to the deck rather than to a surface underneath it. It is
+          full-bleed: anything drawn over it would be a control for a photo it is not showing. */}
+      {quickTagDeck && (
+        <QuickTagCarousel
+          photos={quickTagDeck}
+          plants={plantsForModal}
+          seedTargets={quickTagSeed}
+          apiFetch={apiFetch}
+          onAssigned={handleQuickTagAssigned}
+          onClose={() => setQuickTagDeck(null)}
+        />
+      )}
     </div>
   )
 }

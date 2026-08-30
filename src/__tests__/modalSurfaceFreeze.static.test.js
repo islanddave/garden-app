@@ -78,6 +78,19 @@ const DIALOG_SURFACES = {
   // for all 18 of its render sites). It registers LAYER.SYSTEM/1200, pinned in
   // layerMatchesPaint.test.js. Not a SHEET_SITE for the same reason: it renders no <Sheet>.
   'components/ConfirmSheet.jsx':       { registered: true },
+  // V4-PHOTOBULK-001 S6 — the quick-tag deck, a DELIBERATE addition. Full-bleed
+  // role="dialog"/aria-modal surface for draining the photo inbox one photo at a time. It registers
+  // useDismissable at LAYER.SHEET (pinned in layerMatchesPaint.test.js) and passes `busy` while an
+  // assignment PUT is in flight, so a dismiss cannot land between the write and the advance.
+  //
+  // NOT built on <Sheet>: this is not a fly-up over a page, it is a full-screen deck that replaces
+  // the page for the duration — a Sheet's backdrop-plus-panel shape would put the photo in a box
+  // inside the thing it is meant to fill. Hence its own role="dialog" rather than a SHEET_SITE.
+  //
+  // dirty is deliberately FALSE: nothing here is unsaved typing. Each assignment commits as it is
+  // made, so leaving mid-drain loses nothing — the untagged remainder is simply still untagged,
+  // which is the state the user came from.
+  'components/photo/QuickTagCarousel.jsx': { registered: true, busy: 'assigning' },
 }
 
 // <Sheet render sites. App.jsx is OverlayHost (the route-overlay host), not a page-level sheet.

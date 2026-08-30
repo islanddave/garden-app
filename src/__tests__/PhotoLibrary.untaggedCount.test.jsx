@@ -63,11 +63,19 @@ function mountWith(photos) {
 }
 
 const chip = () => screen.getByTestId('pl-filter-untagged')
+// V4-PHOTOBULK-001 S6 (Dave, D4): the count became its OWN button beside the label — tapping the
+// number opens the tagging carousel, tapping the word still filters. A <button> inside a <button>
+// is invalid HTML, so "two behaviours on one chip" had to become two segments in one pill. These
+// assertions moved from the label's text to the count segment; the subject of every test below
+// (whether a count is measured, from which fetch, and on which chip) is unchanged.
+const countSeg = () => screen.queryByTestId('pl-filter-untagged-count')
+const countText = () => countSeg()?.textContent ?? null
 
 describe('PhotoLibrary — the Untagged count', () => {
   it('shows how many photos are waiting to be tagged, and ONLY on that chip', async () => {
     mountWith([pending('a'), pending('b'), pending('c'), attachedToProject('d'), attachedToEvent('e')])
-    await waitFor(() => expect(chip().textContent).toBe('Untagged 3'))
+    await waitFor(() => expect(countText()).toBe('3'))
+    expect(chip().textContent).toBe('Untagged')
     // The sibling chips are the half a mutation run showed was unguarded: dropping the
     // `mode === 'untagged'` term stamps the same number onto All / Today / No event, where it means
     // nothing, and the assertion above passes anyway because it only ever read one chip.
@@ -81,6 +89,7 @@ describe('PhotoLibrary — the Untagged count', () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
     await act(async () => { await Promise.resolve() })
     expect(chip().textContent).toBe('Untagged')
+    expect(countSeg()).toBeNull()
   })
 
   it('renders no badge before the first list lands, rather than a 0 nobody has verified', async () => {
@@ -93,9 +102,9 @@ describe('PhotoLibrary — the Untagged count', () => {
     })
     render(<PhotoLibrary />)
     await waitFor(() => expect(screen.queryByTestId('pl-filter-untagged')).toBeTruthy())
-    expect(chip().textContent).toBe('Untagged')      // in-flight: no number
+    expect(countSeg()).toBeNull()                    // in-flight: no count segment at all
     await act(async () => { release(); await Promise.resolve() })
-    await waitFor(() => expect(chip().textContent).toBe('Untagged 1'))
+    await waitFor(() => expect(countText()).toBe('1'))
   })
 
   it('does NOT recount from a project-scoped response — it holds the global number', async () => {
@@ -111,12 +120,13 @@ describe('PhotoLibrary — the Untagged count', () => {
       return Promise.resolve([])
     })
     render(<PhotoLibrary />)
-    await waitFor(() => expect(chip().textContent).toBe('Untagged 3'))
+    await waitFor(() => expect(countText()).toBe('3'))
+    expect(chip().textContent).toBe('Untagged')
 
     fireEvent.change(screen.getByDisplayValue('Filter by project…'), { target: { value: 'proj-1' } })
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos?project_id=proj-1'))
     await act(async () => { await Promise.resolve() })
-    expect(chip().textContent).toBe('Untagged 3')    // held, not recomputed from a subset
+    expect(countText()).toBe('3')    // held, not recomputed from a subset
   })
 
   it('the count and the filter use the SAME predicate, so they cannot drift', async () => {
@@ -125,7 +135,7 @@ describe('PhotoLibrary — the Untagged count', () => {
     // own predicate, this row is where the two will disagree first.
     const inventoryAttached = { id: 'inv', storage_path: 's/inv.jpg', created_at: '2026-08-29T12:00:00Z', inventory_item_id: 'ii-1' }
     mountWith([pending('a'), inventoryAttached])
-    await waitFor(() => expect(chip().textContent).toBe('Untagged 1'))
+    await waitFor(() => expect(countText()).toBe('1'))
     // The badge says 1; the filter must show exactly that 1. If either grew its own predicate, the
     // inventory-attached row would appear on one side and not the other.
     fireEvent.click(chip())

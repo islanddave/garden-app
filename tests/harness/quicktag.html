@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Quick-tag carousel at Dave's geometry</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      #verdict {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+        font: 11px/1.4 ui-monospace, monospace; color: #fff; padding: 4px 8px; white-space: pre-wrap;
+      }
+      #root { padding: 44px 12px 24px; }
+      .case-label {
+        font: 600 11px/1.6 ui-monospace, monospace; color: #6b6b6b;
+        text-transform: uppercase; letter-spacing: 0.05em; margin: 18px 0 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="verdict">booting…</div>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/quicktag.jsx"></script>
+  </body>
+</html>
