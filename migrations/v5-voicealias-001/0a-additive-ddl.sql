@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS public.voice_alias (
 
   -- The variety the phrase means. CASCADE because an alias for a deleted variety is not merely stale,
   -- it is unresolvable — there is nothing for the matcher to return.
+  --
+  -- REFERENCES plant_varieties, NOT cultivar, and the distinction is a live trap rather than a
+  -- preference: public.cultivar is a VIEW (relkind 'v', 42 columns) over public.plant_varieties, the
+  -- base TABLE (relkind 'r', 45 columns) — verified on prod 2026-08-30. lambda/varieties/index.js
+  -- reads through the view throughout, so copying its FROM clause here would have produced a FK
+  -- against a view, which Postgres rejects. A foreign key needs the base relation.
   variety_id    uuid        NOT NULL REFERENCES public.plant_varieties(id) ON DELETE CASCADE,
 
   -- How often this alias has resolved a live utterance. Not a popularity contest: it is the signal

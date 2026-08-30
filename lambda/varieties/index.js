@@ -278,6 +278,104 @@ export const handler = async (event) => {
       return resp(200, rows[0]);
     }
 
+    // V5-VOICEALIAS-001 — learned speech-recognition mishearings for the /log/voice chooser.
+    //
+    // THESE ROUTES LIVE IN THE VARIETIES LAMBDA ON PURPOSE, and the reason is a failure watched live
+    // rather than a preference. A new Lambda needs a new Function URL, a new VITE_API_* variable, a
+    // repo variable, AND a mapping into the build — and on 2026-08-30 the share feature shipped its
+    // code twice while its endpoint never reached the bundle, because the last of those four steps
+    // was missing. VITE_API_VARIETIES is already wired, already deployed and already proven, so
+    // hanging these off it removes that entire class of failure. The data is variety-scoped anyway.
+    //
+    // CHECKED BEFORE idMatch, for the same reason /crop-types and /deleted are: a single trailing
+    // segment is otherwise parsed as a variety id and this would 404 as "variety voice-aliases".
+    //
+    // USER-SCOPED, NOT HOUSEHOLD-SCOPED, and this is the one place this file deliberately departs
+    // from its neighbours. Every other route here widens to `household` so Dave and Jen can edit each
+    // other's cultivars. An alias must NOT widen: it records how ONE person's speech is misheard, and
+    // the recogniser mishears different voices differently. Jen inheriting Dave's corrections would
+    // silently steer her chooser using evidence about his audio. So these read and write ${userId}.
+    if (rawPath === '/api/varieties/voice-aliases') {
+      if (method === 'GET') {
+        // The whole set, unpaginated by design: it is bounded by the phrases one person has actually
+        // corrected (tens per season), the client needs all of them in memory to resolve an utterance
+        // offline-fast, and a partial page would silently stop resolving the aliases it omitted.
+        const rows = await sql`
+          SELECT heard_key, heard_text, variety_id, hit_count, last_used_at
+            FROM public.voice_alias
+           WHERE user_id = ${userId}
+           ORDER BY heard_key
+        `;
+        return resp(200, { aliases: rows });
+      }
+
+      if (method === 'POST') {
+        const body = JSON.parse(event.body ?? '{}');
+        const heardKey = String(body?.heard_key ?? '');
+        const heardText = String(body?.heard_text ?? '');
+        const varietyId = String(body?.variety_id ?? '');
+
+        // VALIDATED HERE AND NOT ONLY BY THE CHECK CONSTRAINT. A constraint violation surfaces as a
+        // 500, which the client cannot distinguish from a transport failure — and the one outcome
+        // this feature must never have is a correction the user believes was learned and was not.
+        // These return 400 with a reason instead.
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(varietyId)) {
+          return resp(400, { error: 'variety_id must be a uuid' });
+        }
+        // Mirrors voice_alias_heard_key_normalised_chk AND comboboxInput.looseKey's contract. An
+        // un-normalised key inserts cleanly and then never matches a live utterance, so the failure
+        // would present as "the app refuses to learn" with nothing in any log.
+        if (heardKey !== heardKey.toLowerCase() || /[\s\p{P}]/u.test(heardKey)) {
+          return resp(400, { error: 'heard_key must be lowercase with no whitespace or punctuation' });
+        }
+        if (heardKey.length < 4 || heardKey.length > 120) {
+          return resp(400, { error: 'heard_key must be 4-120 characters' });
+        }
+        if (!heardText.trim()) return resp(400, { error: 'heard_text is required' });
+
+        // The variety must exist and not be deleted. DELIBERATELY THE READ POLICY, NOT THE WRITE ONE
+        // — this does not carry the household/managed-principal arm that PUT, DELETE and the recovery
+        // reads use, and that is a correctness decision rather than an omission.
+        //
+        // This file's contract is "GET (list/by-id): globally readable (any authenticated user, any
+        // non-deleted row)" while PUT/DELETE are household-scoped. An alias is a PERSONAL ANNOTATION
+        // ON A READABLE THING, not an edit of the cultivar: it changes nothing about the variety, is
+        // stored against ${userId}, and is invisible to everyone else. Gating it on the write
+        // predicate would refuse to learn a name for a variety the chooser itself will happily list
+        // and select — the user would watch the picker offer a cultivar and then watch the app refuse
+        // to remember what they call it, with no explanation that made sense.
+        //
+        // The rule this follows: if a surface can SELECT it, the user may teach a name for it.
+        // (Keeping the write arm out also leaves authz-household.test.js's count of exactly six
+        // scoped predicates intact, which is the correct outcome and not the reason for it.)
+        const [variety] = await sql`
+          SELECT id FROM public.cultivar
+           WHERE id = ${varietyId}
+             AND deleted_at IS NULL
+        `;
+        if (!variety) return resp(404, { error: 'Variety not found' });
+
+        // RETARGET, DO NOT ACCUMULATE. Re-teaching a phrase must move it, because the moment a user
+        // teaches a phrase they already believe is wrong is exactly when a second row would make
+        // resolution order-dependent — the correction would appear to work and then intermittently
+        // not. hit_count resets: it counts uses of THIS meaning, and the old meaning's tally is not
+        // evidence for the new one.
+        const [row] = await sql`
+          INSERT INTO public.voice_alias (user_id, heard_key, heard_text, variety_id)
+               VALUES (${userId}, ${heardKey}, ${heardText}, ${varietyId})
+          ON CONFLICT ON CONSTRAINT uq_voice_alias_user_phrase
+            DO UPDATE SET variety_id = EXCLUDED.variety_id,
+                          heard_text = EXCLUDED.heard_text,
+                          hit_count  = 0,
+                          last_used_at = NULL
+            RETURNING heard_key, heard_text, variety_id, hit_count, last_used_at
+        `;
+        return resp(200, row);
+      }
+
+      return resp(405, { error: 'Method not allowed' });
+    }
+
     const idMatch = rawPath.match(/^\/api\/varieties\/([^/]+)$/);
 
     // The /deleted exclusion rides on the USE, not the declaration: crop-type.test.js anchors the
