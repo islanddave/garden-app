@@ -298,6 +298,99 @@ function unhonoredParents(body, row, spaceEnabled) {
     .map((c) => ({ column: c, requested: body[c], kept: row[c] ?? null }));
 }
 
+// ── V4-PHOTOUNTAG-001 — return a tagged photo to the untagged inbox ───────────────────────────────
+//
+// THE DEFECT THIS PAIR EXISTS FOR: the re-tag PUT derived intake_status ENTIRELY from setsParent and
+// never read body.intake_status, so the route could drain the inbox but could not refill it. Tagging
+// a pending_tag row cleared intake_status to NULL correctly; CLEARING the parents again made
+// setsParent false, so the CASE fell to `ELSE p.intake_status` and the row kept NULL — parentless AND
+// non-pending, which photos_must_have_parent forbids. Postgres answers 23514, isUpstream() does not
+// classify it, and the client gets an opaque 500. There was no request body that meant "put this back
+// in the inbox".
+//
+// THE LIVE CHECKS, read 2026-08-30 via pg_get_constraintdef on prod AND staging (both convalidated;
+// migrations/ lags manual ALTERs and was deliberately not consulted):
+//   photos_intake_status_valid — intake_status IS NULL OR intake_status IN ('pending_tag','upload_failed')
+//   photos_must_have_parent    — event_id OR project_id OR location_id OR plant_id OR
+//                                inventory_item_id OR space_id IS NOT NULL,
+//                                OR COALESCE(intake_status = 'pending_tag', false)
+// 'pending_tag' is therefore the ONLY status a parentless row may carry, which is why it is the only
+// value this route accepts.
+//
+// 'upload_failed' IS REJECTED HERE THOUGH POST ACCEPTS IT, and that narrowing is deliberate — do not
+// "fix" this to reuse INTAKE_STATUSES. It is an upload-pipeline state that the second CHECK requires a
+// parent for; asserting it from a RE-TAG has no meaning, and on the un-tag it would most plausibly
+// accompany it is a guaranteed 23514. Same reasoning as the POST guard: reject the value we can name
+// rather than let Postgres answer with a 500 the client cannot act on.
+//
+// null AND undefined both mean "not requested" — the POST guard's `!= null` idiom, not a new dialect.
+// An explicitly-null intake_status leaves the CASE on its pre-existing arms, which can only preserve
+// or clear, never violate a CHECK.
+//
+// PURE (body only, no I/O) so the mock-sql suite can EXECUTE it: index.js is not importable from the
+// repo root, so a module-level function is the only shape these tests can drive for real.
+function resolveIntakeRequest(body) {
+  if (body.intake_status == null) return { restoresInbox: false };
+  if (body.intake_status === 'pending_tag') return { restoresInbox: true };
+  return { error: "intake_status must be 'pending_tag' or omitted" };
+}
+
+// The re-tag UPDATE, lifted out of the route for the same reason buildPhotoInsert is a function: it
+// is the only way the mock-sql suite can assert on the statement and the parameters this route
+// actually emits rather than on a string that resembles them.
+//
+// ARM ORDER IS THE CONTRACT, not formatting. setsParent is tested FIRST, so a body that sets a parent
+// drains the inbox exactly as it did before — even if it also asks for 'pending_tag'. That keeps the
+// primary tag flow byte-identical for a client that echoes the row's current intake_status back in a
+// full-replace save, which this route's semantics invite. A tagged row is not in the inbox; the
+// parent assignment is the stronger signal, and the response carries the resulting status back.
+//
+// The third arm is unchanged: with restoresInbox false the CASE reduces to the shipped
+// `WHEN setsParent THEN NULL ELSE p.intake_status`, so a body that omits intake_status behaves
+// identically to before — including the "an un-tagged pending_tag row STAYS pending_tag" case.
+//
+// space_id is deliberately absent (the route's flag-off byte-identity invariant — see the setsParent
+// pre-read at the call site), and so are event_id / inventory_item_id: this route never set them, so
+// a row parented by one keeps satisfying photos_must_have_parent on its own.
+//
+// POSITIONAL ARGUMENTS, NOT AN OPTIONS OBJECT, and that is load-bearing: the extractFunction helper
+// every test in this dir copies brace-balances from the first `{` after the function header, so a
+// destructured parameter list makes it return the SIGNATURE ALONE and the whole file fails to
+// instantiate. Same shape as buildPhotoInsert for the same reason.
+function buildRetagUpdate(sql, photoId, body, householdIds, setsParent, restoresInbox) {
+  return sql`
+    WITH prev AS (
+      -- W-DEL ships the first route that can produce a soft-deleted photo, which turns "PATCH
+      -- mutates an invisible row and returns 200" from unreachable into routine. The filter is
+      -- the whole reason this CTE exists as a gate rather than a snapshot: a 0-row prev makes
+      -- the UPDATE match nothing, so the route 404s a deleted photo instead of silently
+      -- re-parenting it (and re-running autoPromoteFeatured against it).
+      --
+      -- IT IS ALSO THE UN-TAG PATH'S ONLY OWNERSHIP GATE. The UPDATE carries no created_by
+      -- predicate of its own; the p.id = prev.id join inherits this one. A caller outside the
+      -- owning household gets an empty prev, zero updated rows, and the 404 a missing photo gets —
+      -- so V4-PHOTOUNTAG-001 cannot detach a photo the caller does not own, and adds no new
+      -- surface here (it changes the SET list only). Do not "simplify" the join away.
+      SELECT id, intake_status
+        FROM photos
+       WHERE id = ${photoId}
+         AND created_by = ANY(${householdIds})
+         AND deleted_at IS NULL
+    )
+    UPDATE photos p
+       SET project_id    = ${body.project_id ?? null},
+           location_id   = ${body.location_id ?? null},
+           plant_id      = ${body.plant_id ?? null},
+           caption       = ${body.caption ?? null},
+           intake_status = CASE WHEN ${setsParent}::boolean THEN NULL
+                                WHEN ${restoresInbox}::boolean THEN 'pending_tag'
+                                ELSE p.intake_status END
+      FROM prev
+     WHERE p.id = prev.id
+    RETURNING p.*, prev.intake_status AS prev_intake_status
+  `;
+}
+
 // ── V4-SPACEPHOTO-001 space-hero reads ────────────────────────────────────────────────────────────
 // Both helpers below take `spaceEnabled` and return EARLY when it is false. That is the same
 // prod-safety property buildPhotoInsert's two-template split buys, obtained the cheaper way: a neon
@@ -1366,10 +1459,19 @@ export const handler = async (event) => {
     //   2. AUTO-PROMOTE, but only if the row WAS 'pending_tag' — see autoPromoteFeatured. A re-tag
     //      of an already-tagged photo remains a correction and still does not promote, preserving
     //      the original V1.2a-3 Increment A semantics exactly for every legacy row.
+    //
+    // V4-PHOTOUNTAG-001 adds the INVERSE of (1): `intake_status: 'pending_tag'` in the body puts an
+    // ALREADY-TAGGED photo back in the inbox. Drain-only was a one-way door — a row tagged by mistake
+    // could have its parents cleared but never its status restored, so it left the carousel forever.
+    // See resolveIntakeRequest / buildRetagUpdate for the validated contract and the live CHECKs.
     const idMatch = rawPath.match(/^\/api\/photos\/([^/]+)$/);
     if (idMatch && (method === 'PUT' || method === 'PATCH')) {
       const photoId = idMatch[1];
       const body = JSON.parse(event.body ?? '{}');
+      // V4-PHOTOUNTAG-001. First, and I/O-free: an invalid status is rejected before any loader runs,
+      // so a rejected request costs nothing and mutates nothing.
+      const intake = resolveIntakeRequest(body);
+      if (intake.error) return resp(400, { error: intake.error });
       // Only the parents this route can actually set. event_id / inventory_item_id are untouched
       // here, so a legacy row parented by one of those keeps satisfying the CHECK on its own.
       // `||` not `??`: an empty-string id must read as "no parent", not as a present value.
@@ -1425,29 +1527,9 @@ export const handler = async (event) => {
         spaceParented = Boolean(spaceRow[0]?.space_id);
       }
       const setsParent = Boolean(body.project_id || body.location_id || body.plant_id) || spaceParented;
-      const updatedRows = await sql`
-        WITH prev AS (
-          -- W-DEL ships the first route that can produce a soft-deleted photo, which turns "PATCH
-          -- mutates an invisible row and returns 200" from unreachable into routine. The filter is
-          -- the whole reason this CTE exists as a gate rather than a snapshot: a 0-row prev makes
-          -- the UPDATE match nothing, so the route 404s a deleted photo instead of silently
-          -- re-parenting it (and re-running autoPromoteFeatured against it).
-          SELECT id, intake_status
-            FROM photos
-           WHERE id = ${photoId}
-             AND created_by = ANY(${householdIds})
-             AND deleted_at IS NULL
-        )
-        UPDATE photos p
-           SET project_id    = ${body.project_id ?? null},
-               location_id   = ${body.location_id ?? null},
-               plant_id      = ${body.plant_id ?? null},
-               caption       = ${body.caption ?? null},
-               intake_status = CASE WHEN ${setsParent}::boolean THEN NULL ELSE p.intake_status END
-          FROM prev
-         WHERE p.id = prev.id
-        RETURNING p.*, prev.intake_status AS prev_intake_status
-      `;
+      const updatedRows = await buildRetagUpdate(
+        sql, photoId, body, householdIds, setsParent, intake.restoresInbox,
+      );
       if (!updatedRows.length) return resp(404, { error: 'Photo not found' });
       const { prev_intake_status: prevIntakeStatus, ...updated } = updatedRows[0];
       // V4-PHOTOCAPTION-001 — evidence caption sync: the upload-time auto-capture snapshots the
