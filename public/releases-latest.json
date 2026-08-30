@@ -1,7 +1,7 @@
 {
-  "version": "4.79.0",
+  "version": "4.80.0",
   "date": "2026-08-30",
   "highlights": [
-    "Sharing is actually reachable now: the previous release announced it, but the build was missing the setting that connects the app to the posting service, so no button appeared. It does now."
+    "Photo sharing: the build now passes through the setting that connects the app to the posting service. The two previous releases announced sharing before this was in place."
   ]
 }
