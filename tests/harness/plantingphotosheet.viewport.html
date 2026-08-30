@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>PlantingPhotoSheet viewport host</title>
+<!--
+  IFRAME HOST — same job as ./viewport.html, pointed at plantingphotosheet.html.
+
+  ./viewport.html hardcodes /tests/harness/ as the frame src, so it can only host index.html. Rather
+  than change a file three other entries depend on, this is its own host; `?page=` keeps it reusable.
+
+  Why an iframe at all: `--window-size=390,x` does NOT reflow macOS Chrome to 390px. It floors the
+  window at roughly 500px and CROPS the screenshot, so a 500px layout gets measured and reported as a
+  390px one. An iframe has no minimum width — it is a real layout viewport at whatever size it is
+  given, and `env(safe-area-inset-*)` is 0 in BOTH cases, which is a limit of the browser, not of
+  this host (see the report's "cannot check" list).
+
+  Drive it through frames[0]: same origin, so __h and the document are both directly readable.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #333; }
+  #frame { border: 0; display: block; background: #fff; }
+  /* Off-screen: the numbers are for --dump-dom, and a visible JSON block would change nothing about
+     the frame's layout but would clutter every screenshot. */
+  #out { position: absolute; left: -99999px; top: 0; white-space: pre; }
+</style>
+</head>
+<body>
+<iframe id="frame" title="device viewport"></iframe>
+<pre id="out" data-done="0"></pre>
+<script>
+  const q = new URLSearchParams(location.search)
+  const vw = Number(q.get('vw') || 390)
+  const vh = Number(q.get('vh') || 844)
+  const page = q.get('page') || 'plantingphotosheet.html'
+  q.delete('vw'); q.delete('vh'); q.delete('page')
+  const el = document.getElementById('frame')
+  el.width = vw
+  el.height = vh
+  el.src = '/tests/harness/' + page + (q.toString() ? '?' + q.toString() : '')
+  window.__frameReady = () => {
+    const w = el.contentWindow
+    return !!(w && w.__h && w.document.readyState === 'complete')
+  }
+  // MEASUREMENTS INTO THE DOM, on purpose. This session has no Browser-pane tools, so the numbers are
+  // collected by `chrome --headless --dump-dom` reading this node rather than by a driver evaluating
+  // __h. Same functions, same frame; only the transport differs. __h stays callable directly for any
+  // session that does have a driver.
+  const out = document.getElementById('out')
+  ;(function poll(tries) {
+    const w = el.contentWindow
+    if (w && w.__h && w.__h.ready()) {
+      out.textContent = JSON.stringify(w.__h.all(), null, 1)
+      out.dataset.done = '1'
+      return
+    }
+    if (tries > 200) { out.textContent = JSON.stringify({ error: 'frame never became ready' }); out.dataset.done = 'timeout'; return }
+    setTimeout(() => poll(tries + 1), 100)
+  })(0)
+</script>
+</body>
+</html>

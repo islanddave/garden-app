@@ -10,6 +10,14 @@
       "url": "http://localhost:5311"
     },
     {
+      "name": "plantingphotosheet-harness",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "tests/harness/vite.harness.config.mjs", "--port", "5325"],
+      "port": 5325,
+      "autoPort": false,
+      "url": "http://localhost:5325/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=844&n=5"
+    },
+    {
       "name": "garden-app",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

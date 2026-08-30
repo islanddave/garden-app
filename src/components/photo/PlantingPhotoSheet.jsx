@@ -59,6 +59,13 @@ export default function PlantingPhotoSheet({ open, onClose, planting, onUploaded
           // TRUE here, unlike the card. A sheet has room for thumbnails, and thumbnails are how you
           // tell which of ten near-identical shots of the same plant you meant to drop.
           showPreview
+          // ...and having claimed the room, ACTUALLY GIVE IT TO THE STRIP. The strip's built-in cap
+          // is a card-footer constant (216px) and it does not know it has been moved: measured at
+          // 390x844 in a real browser, the shipped sheet hid 7 of 10 staged tiles behind an inner
+          // scrollbar while 391px of screen sat empty above it — a nested scroll inside a panel that
+          // was not scrolling at all, which is the exact trap size="full" was chosen to avoid. With
+          // no cap the strip grows and the PANEL's own maxHeight/overflow is the single scroller.
+          stripMaxHeight="none"
           inputId={`planting-sheet-photo-${planting.id}`}
           onUploadComplete={onUploaded}
           buttonStyle={{

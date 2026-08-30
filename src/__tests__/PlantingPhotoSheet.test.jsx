@@ -119,6 +119,22 @@ describe('PlantingTile — the camera button opens the batch sheet', () => {
     expect(screen.getAllByTestId('photo-upload-staged-item')).toHaveLength(2)
   })
 
+  // HALF TWO of the guard whose other half is PhotoUpload.multi.test.jsx ("keeps the built-in
+  // card-footer cap"). Measured at 390x844 in a real browser: the strip's 216px cap — a constant
+  // sized for a card footer — hid 7 of the 10 staged tiles behind an inner scrollbar while 391px of
+  // screen sat empty above the sheet, and in the failure state it hid WHICH files failed. No jsdom
+  // assertion can see that; this one pins the resulting decision, which is all a unit test can own.
+  it('gives the staged strip the room the sheet was created for — no card-footer height cap', async () => {
+    uploadSpy.mockImplementation(() => new Promise(() => {}))
+    render(<PlantingTile planting={pl} />)
+    fireEvent.click(cardTrigger())
+    const sheetInput = document.getElementById('planting-sheet-photo-pl9')
+    Object.defineProperty(sheetInput, 'files', { value: [jpg('a.jpg')], configurable: true })
+    await act(async () => { fireEvent.change(sheetInput) })
+
+    expect(screen.getByTestId('photo-upload-staged').style.maxHeight).toBe('none')
+  })
+
   it('closes after a successful batch and reports upward', async () => {
     const onPhotoUploaded = vi.fn()
     render(<PlantingTile planting={pl} onPhotoUploaded={onPhotoUploaded} />)

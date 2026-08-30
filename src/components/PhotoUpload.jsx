@@ -146,6 +146,12 @@ export function PhotoUpload({
   // redirected. NOT a mode switch on the upload behaviour — everything downstream of a file landing
   // on that input is unchanged.
   onTriggerClick = null,
+  // Override the staged strip's height cap. Default null = the two built-in caps below, so every
+  // existing call site is byte-identical. Exists because those caps are constants sized for a CARD
+  // FOOTER, and PlantingPhotoSheet renders the same strip in a fly-up with hundreds of spare pixels
+  // — measured at 390x844 (tests/harness/plantingphotosheet.jsx), the 216px cap left 391px of empty
+  // screen above the sheet while hiding 7 of the 10 staged tiles behind an inner scrollbar.
+  stripMaxHeight = null,
 }) {
   const { upload, isUploading, error, photo, preview, reset, stage, progress } = useUploadPhoto({ errorMode });
   const inputRef = useRef(null);
@@ -358,12 +364,24 @@ export function PhotoUpload({
               Two caps because the two modes have different rows: 216px is two rows of 88px tiles;
               120px is about four compact filename rows, deliberately tighter because that mode
               renders inside a card footer where every pixel is taken from the card's own content.
-              Scrolling inside keeps every file reachable and makes the cost constant. */}
+              Scrolling inside keeps every file reachable and makes the cost constant.
+
+              BOTH CAPS ARE CARD-FOOTER CONSTANTS, and `stripMaxHeight` exists because the strip no
+              longer only renders in a card footer. Two things measured at 390x844 in a real browser
+              (tests/harness/plantingphotosheet.jsx), neither visible to jsdom:
+                • 216 is NOT two rows. A row is 108px — an 88px tile plus its 4px margin and its 16px
+                  status line — so two rows need 224px and the cap slices row 2's "Added" labels
+                  through the middle of the glyphs. Visible with FIVE photos, the ordinary case.
+                • Inside PlantingPhotoSheet the cap is actively harmful: at the 10-file cap it hid 7
+                  tiles behind an inner scrollbar while 391px of the screen sat empty above the
+                  sheet, and in the failure state it hid WHICH files failed — the per-file report
+                  §3 B3 exists to guarantee. That sheet passes 'none' and lets its own panel be the
+                  single scroller, which is what its size="full" was chosen for in the first place. */}
           <ul
             data-testid="photo-upload-staged"
             style={{ display: 'flex', flexWrap: 'wrap', gap: T.photo.gapSm,
                      listStyle: 'none', padding: 0, margin: 0, marginTop: T.photo.gapMd,
-                     maxHeight: showPreview ? 216 : 120, overflowY: 'auto' }}
+                     maxHeight: stripMaxHeight ?? (showPreview ? 216 : 120), overflowY: 'auto' }}
           >
             {staged.map(item => (
               <li key={item.id} data-testid="photo-upload-staged-item" data-status={item.status}
@@ -425,8 +443,15 @@ export function PhotoUpload({
             ))}
           </ul>
           {!isUploading && (
+            /* Measured at 45x18 in a real browser before minHeight — under half the app's own 44px
+               floor (T.tapMinHeight), on the one control that discards a whole batch. The link LOOK
+               is unchanged; only the hit box grows, inline-flex so the text stays centred in it. */
             <button type="button" onClick={clearStaged} data-testid="photo-upload-staged-clear"
                     style={{ marginTop: T.photo.gapSm, fontSize: T.photo.linkFont,
+                             display: 'inline-flex', alignItems: 'center',
+                             // Padding on the RIGHT only: it buys the width back (33px of text ->
+                             // 48px box) without shifting "Clear" off the strip's left edge.
+                             minHeight: T.tapMinHeight, padding: 0, paddingRight: T.space.md,
                              background: 'transparent', border: 'none',
                              color: P.sage, cursor: 'pointer', textDecoration: 'underline' }}>
               Clear

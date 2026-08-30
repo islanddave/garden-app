@@ -204,6 +204,24 @@ describe('PhotoUpload multi — flag ON', () => {
     expect(new Set(revokedUrls)).toEqual(new Set(createdUrls));
   });
 
+  // HALF ONE of a two-file guard; the other half is in PlantingPhotoSheet.test.jsx. jsdom cannot see
+  // that the 216px cap hid 7 of 10 tiles inside the sheet — that took a browser
+  // (tests/harness/plantingphotosheet.jsx) — but it CAN see which cap each caller gets, which is the
+  // decision that measurement produced. Reverting either side fails one of the two.
+  it('keeps the built-in card-footer cap when no stripMaxHeight is passed', async () => {
+    uploadSpy.mockImplementation(async (f) => ok(f.name));
+    render(<PhotoUpload multiple />);
+    await pick([file('a.jpg')]);
+    expect(screen.getByTestId('photo-upload-staged').style.maxHeight).toBe('216px');
+  });
+
+  it('honours stripMaxHeight when a caller has room for the whole batch', async () => {
+    uploadSpy.mockImplementation(async (f) => ok(f.name));
+    render(<PhotoUpload multiple stripMaxHeight="none" />);
+    await pick([file('a.jpg')]);
+    expect(screen.getByTestId('photo-upload-staged').style.maxHeight).toBe('none');
+  });
+
   it('a second trip to the picker APPENDS rather than replacing', async () => {
     uploadSpy.mockImplementation(async (f) => ok(f.name));
     render(<PhotoUpload multiple />);

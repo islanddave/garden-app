@@ -133,6 +133,30 @@ State these whenever a number from here is quoted.
 8. **It measures layout, not usability.** "Above the fold" is a geometric predicate. Reachability by
    thumb, contrast, and hit-target comfort are outside it.
 
+## `plantingphotosheet.*` — the batch sheet, added 2026-08-30
+
+`PlantingPhotoSheet` shipped in v4.75.0 having never been rendered in a browser. This entry mounts it
+directly (no `AuthContext` anywhere in its import graph — see the note under Retired entries) and
+stages a real batch by firing a `change` on the real hidden input, so the maxFiles cap, the
+"only 10 at a time" notice and the serial upload queue all run. `window.fetch` and
+`XMLHttpRequest` are replaced; nothing else is.
+
+```
+http://localhost:5325/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=844&n=20
+    n=0|1|5|20   how many files the picker hands over (20 exercises the 10-file cap + its notice)
+    fail=1       presign 503s, so every row lands in the per-file error state — the tallest tile
+    verdict=0    hide the measurement bar, for a screenshot of the surface alone
+```
+
+`plantingphotosheet.viewport.html` is a second iframe host: `viewport.html` hardcodes `index.html` as
+its frame src, and three entries depend on it, so this one takes a `?page=`. It also mirrors
+`frames[0].__h.all()` into an off-screen `<pre id="out">` — a session with no Browser-pane tools can
+then read every number out of `chrome --headless --dump-dom` instead of a driver. `__h` is unchanged
+and still callable directly: `overflow()`, `sheet()`, `strip()`, `tapTargets()`, `actionRow()`.
+
+Launch entry `plantingphotosheet-harness` (port 5325). What it found, and the fixes, are in
+`Projects/Gardening/_lane_reports/psheetverify-20260830.md`.
+
 ## Retired entries
 
 **`photostrips.*` — removed 2026-08-30, V4-PHOTOBULK-001 D4b.** It measured the staged-photo strip
