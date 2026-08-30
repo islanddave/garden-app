@@ -17,6 +17,10 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
+// BUG-VOICEDUPE-005 — the echo window is imported, never re-stated as a literal here. A test that
+// hardcoded 600 would keep passing if the constant moved, which is the one change most likely to
+// invalidate what these two tests assert.
+import { DUPLICATE_ECHO_WINDOW_MS } from '../lib/transcribe.js'
 
 installStoragePolyfill()
 
@@ -226,13 +230,42 @@ describe('EventNew voice dictation — BUG-VOICEDUPE-002', () => {
     expect(first.onresult).toBe(null)
   })
 
-  it('real repetition the user actually said is preserved (distinct indices)', async () => {
+  // BUG-VOICEDUPE-005 — THE DISCRIMINATOR IS NOW TIME, so this test's two halves split.
+  //
+  // It used to assert 'ripe ripe' from two finals delivered back to back at distinct indices, on the
+  // reasoning that a repeat at a new index is speech the user really said. That reasoning was right
+  // when index and text were the only evidence available, and the 2026-08-27 device run replaced it
+  // with a measurement: the engine echoes a settled final onto the NEXT index 272 ms later, so
+  // "distinct indices, no elapsed time" is the ECHO, not the repeat. transcribe.js took this same
+  // correction in BUG-VOICEDUPE-004; this reader is the path that did not, which is why it still
+  // doubled a dictated word into Notes.
+  //
+  // The PROPERTY the original test protects — a deliberate repeat must never be deleted — is not
+  // dropped. It is asserted below with the elapsed time a deliberate repeat actually takes, which is
+  // the only thing that ever distinguished the two cases.
+  it('an immediate re-delivery at the next index is the engine echo, and is dropped', async () => {
     await renderForm()
     const sr = await startNotesDictation()
     await act(async () => {
       sr.emit(0, [{ text: 'ripe', final: true }])
       sr.emit(1, [{ text: 'ripe', final: true }, { text: 'ripe', final: true }])
     })
+    expect(notesValue()).toBe('ripe')
+  })
+
+  it('real repetition the user actually said IS preserved — it lands outside the echo window', async () => {
+    await renderForm()
+    const sr = await startNotesDictation()
+    const base = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(base)
+    await act(async () => { sr.emit(0, [{ text: 'ripe', final: true }]) })
+    // A second "ripe" the user actually said: the first final has to END before the word can be
+    // spoken again, and closing a segment takes far longer than the echo interval.
+    nowSpy.mockReturnValue(base + DUPLICATE_ECHO_WINDOW_MS + 1)
+    await act(async () => {
+      sr.emit(1, [{ text: 'ripe', final: true }, { text: 'ripe', final: true }])
+    })
+    nowSpy.mockRestore()
     expect(notesValue()).toBe('ripe ripe')
   })
 

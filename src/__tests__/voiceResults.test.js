@@ -6,6 +6,8 @@
 // patterns that actually cause duplication. These can.
 import { describe, it, expect } from 'vitest'
 import { createFinalResultReader } from '../lib/voiceResults.js'
+// Imported, never restated as a literal — a hardcoded 600 here would survive the constant moving.
+import { DUPLICATE_ECHO_WINDOW_MS } from '../lib/transcribe.js'
 
 // Models SpeechRecognitionResultList: an indexed, array-like collection of SpeechRecognitionResult,
 // each of which is itself indexed (alternatives) and carries .isFinal.
@@ -112,15 +114,51 @@ describe('createFinalResultReader — raw Web Speech event contract', () => {
     expect(a(ev(0, [{ text: 'one', final: true }]))).toEqual([])
   })
 
-  it('real repetition the user actually said is PRESERVED (it lands on distinct indices)', () => {
-    // The dedupe must not "fix" duplication by deleting words. Saying a word twice for real
-    // produces two results at two indices, and both must survive.
-    const read = createFinalResultReader()
+  // BUG-VOICEDUPE-005 — "distinct indices" stopped being the discriminator on 2026-08-27, when a
+  // device capture timed the engine echoing a settled final onto the NEXT index 272 ms later. The
+  // high-water mark cannot see that: a fresh index is above the mark and passes straight through, and
+  // three of this reader's four call sites append what they receive. TIME is the discriminator, and
+  // the two tests below are the two sides of it.
+  it('an immediate re-delivery at the next index is the engine echo, and is dropped', () => {
+    const read = createFinalResultReader({ now: () => 1000 })
     expect(read(ev(0, [{ text: 'ripe', final: true }]))).toEqual(['ripe'])
     expect(read(ev(1, [
       { text: 'ripe', final: true },
       { text: 'ripe', final: true },
+    ]))).toEqual([])
+  })
+
+  it('real repetition the user actually said is PRESERVED (it lands outside the echo window)', () => {
+    // The dedupe must not "fix" duplication by deleting words. A repeat the user really spoke needs
+    // the first final to END first, which takes a segment-closing pause — far longer than the echo.
+    let t = 1000
+    const read = createFinalResultReader({ now: () => t })
+    expect(read(ev(0, [{ text: 'ripe', final: true }]))).toEqual(['ripe'])
+    t += DUPLICATE_ECHO_WINDOW_MS + 1
+    expect(read(ev(1, [
+      { text: 'ripe', final: true },
+      { text: 'ripe', final: true },
     ]))).toEqual(['ripe'])
+  })
+
+  it('a DIFFERENT word at the next index is never dropped (the non-vacuity floor)', () => {
+    // A guard that dropped every next-index final would pass both tests above by deleting half of
+    // what Dave says, and nothing else in this file would notice.
+    const read = createFinalResultReader({ now: () => 1000 })
+    expect(read(ev(0, [{ text: 'ripe', final: true }]))).toEqual(['ripe'])
+    expect(read(ev(1, [
+      { text: 'ripe', final: true },
+      { text: 'tomatoes', final: true },
+    ]))).toEqual(['tomatoes'])
+  })
+
+  it('drops an echo that differs only by leading space or case (the shapes Chrome re-emits)', () => {
+    const read = createFinalResultReader({ now: () => 1000 })
+    expect(read(ev(0, [{ text: 'Chinese', final: true }]))).toEqual(['Chinese'])
+    expect(read(ev(1, [
+      { text: 'Chinese', final: true },
+      { text: ' chinese', final: true },
+    ]))).toEqual([])
   })
 
   it('tolerates a malformed event (no results, empty alternatives) without throwing', () => {

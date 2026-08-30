@@ -308,7 +308,13 @@ export default function ContinuousVoiceProbe() {
         const text = r[0]?.transcript ?? ''
         if (r.isFinal) {
           setStats(s => ({ ...s, finals: s.finals + 1 }))
-          log(`  [${i}] FINAL   "${text.trim()}"  ->  ${describe(classify(text))}`)
+          // RAW, via JSON.stringify — BUG-VOICEDUPE-005. This line used to print `text.trim()`, and
+          // that trim is why -004's fix was wrong: the fixture for the cross-slot echo guard was
+          // transcribed from this log, so it encoded byte-identical strings because the instrument
+          // could not display anything else. The device may well have been emitting " 310 G" against
+          // "310 G" all along. An instrument that normalises before it reports decides what the
+          // fixture can say, and therefore what the guard can be written against.
+          log(`  [${i}] FINAL   ${JSON.stringify(text)}  ->  ${describe(classify(text))}`)
           const deb = debRef.current
           if (deb) {
             commitPathRef.current = 'final'

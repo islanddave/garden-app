@@ -23,8 +23,29 @@
 // non-final result may still finalize, so consuming it would both duplicate (interim then final)
 // and commit text the recognizer had not settled on.
 
-export function createFinalResultReader() {
+// BUG-VOICEDUPE-005 — THE HIGH-WATER MARK DOES NOT COVER THE ENGINE ECHO, and this reader is the one
+// path in the app that had no guard for it at all.
+//
+// The mark makes it impossible to read the SAME index twice. The echo the 2026-08-27 device run timed
+// does not land on the same index — it lands on the NEXT one, 272 ms later, where a fresh slot is
+// above the mark and passes straight through. Three of this reader's four call sites APPEND what they
+// receive (`f.notes ? f.notes + ' ' + text : text`, EventNew.jsx), so the echo becomes a doubled word
+// in the field. `transcribe.js` grew a bounded cross-slot guard for exactly this in BUG-VOICEDUPE-004;
+// this reader never got one, because -004 was scoped to the surfaces that go through that wrapper and
+// this is the one that does not.
+//
+// Dave reports the doubling on the PICKER, which is a transcribe.js surface — so this is not the
+// defect he is looking at. It is the same defect on a path nobody has reported yet, found while
+// tracing his, and left in only if we decide a known duplicate is fine because no one has complained.
+//
+// SAME RULE, SAME BOUND, deliberately: identical comparison key and identical 600 ms window as
+// transcribe.js, imported rather than re-derived so the two cannot drift apart. Outside the window a
+// repeat is real speech and is kept.
+import { DUPLICATE_ECHO_WINDOW_MS, echoKey } from './transcribe.js'
+
+export function createFinalResultReader({ now = () => Date.now() } = {}) {
   let nextIndex = 0
+  let lastFinal = null   // { key, at } — echoKey of the most recent NON-EMPTY final emitted, and when
 
   return function readNewFinals(event) {
     const results = (event && event.results) || []
@@ -37,8 +58,15 @@ export function createFinalResultReader() {
       if (!r || !r[0]) break
       if (!r.isFinal) break
       const text = String(r[0].transcript || '').trim()
-      if (text) out.push(text)
+      // The mark advances either way. A dropped echo is CONSUMED, not deferred — leaving the index
+      // below the mark would let the next event re-offer it and re-open the hole from the other side.
       nextIndex = i + 1
+      if (!text) continue
+      const key = echoKey(text)
+      const at = now()
+      if (lastFinal && lastFinal.key === key && (at - lastFinal.at) <= DUPLICATE_ECHO_WINDOW_MS) continue
+      lastFinal = { key, at }
+      out.push(text)
     }
     return out
   }

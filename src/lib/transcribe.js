@@ -58,6 +58,36 @@ export const NO_SPEECH_TIMEOUT_MS = 8000
 // onresult for what to revisit if a longer echo ever appears in a log.
 export const DUPLICATE_ECHO_WINDOW_MS = 600
 
+// BUG-VOICEDUPE-005 — the comparison key for the echo guard, and ONLY for the echo guard.
+//
+// The -004 guard compared raw transcripts with `===`, which assumed Chrome re-emits an echo
+// byte-identically. It does not. A continuation segment carries a LEADING SPACE, the first final of a
+// segment is capitalised where a continuation is not, and sentence punctuation gets appended to a
+// settled final. Meanwhile the string the user receives is joined from TRIMMED slots (see
+// finalTranscript below) — so every one of those variants made the guard say "different" and the join
+// say "same", which is a doubled word on screen. Dave reported the picker still doubling on
+// 2026-08-30, three days after -004 shipped.
+//
+// The -004 fixture could not have caught this: it was transcribed from the probe's log, and the probe
+// trimmed before printing, so a leading space was invisible in the only capture that existed. That
+// log line now prints the raw string (ContinuousVoiceProbe.jsx) so the next device run can say which
+// of these variants the hardware actually produces.
+//
+// WHAT IS DELIBERATELY NOT NORMALISED: the value stored in the slot and the value handed to
+// onResult/onEnd stay exactly what the engine said. This key is never written anywhere a caller can
+// see it — a guard that rewrote the transcript would be fixing a duplicate by corrupting the data.
+//
+// Only a TRAILING punctuation run is stripped. Interior punctuation is load-bearing on this surface:
+// the grammar reads "1.2 kilograms" as a decimal (voiceHarvestGrammar.normalise), so collapsing
+// interior dots here would let two genuinely different weights compare equal.
+export function echoKey(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.,!?;:]+$/, '')
+}
+
 function getSpeechRecognitionCtor() {
   if (typeof window === 'undefined') return null
   return window.SpeechRecognition || window.webkitSpeechRecognition || null
@@ -149,7 +179,7 @@ export function startLiveTranscription(opts = {}) {
   // every 15-22 ms gets a FRESH one per session, so an echo that crosses a session boundary is not
   // covered here. lib/voiceCommitDebounce.js's wall-clock cooldown is what covers that case for the
   // consumer that needs it; this guard is for the single-capture flows.
-  let lastFinal = null   // { text, at } — the most recent NON-EMPTY final
+  let lastFinal = null   // { key, at } — echoKey of the most recent NON-EMPTY final, and when
   let startWatchdog    = null
   let noSpeechWatchdog = null
   let started   = false
@@ -227,8 +257,14 @@ export function startLiveTranscription(opts = {}) {
         // CALIBRATION IS n=2 (272 ms, 274 ms) and the threshold is deliberately loose against it.
         // If a longer engine interval ever shows up in a device log, this number is the thing to
         // revisit — not the rule.
-        if (transcript && lastFinal &&
-            lastFinal.text === transcript &&
+        //
+        // COMPARED ON echoKey, NOT ON RAW BYTES (BUG-VOICEDUPE-005). See echoKey's own note: the
+        // engine re-emits with a leading space / different capitalisation / trailing punctuation, so
+        // `===` here declined to drop values that the trimmed join below then duplicated. The 600 ms
+        // bound is untouched and is still the entire discriminator between an echo and a repeat.
+        const key = transcript ? echoKey(transcript) : ''
+        if (key && lastFinal &&
+            lastFinal.key === key &&
             (Date.now() - lastFinal.at) <= DUPLICATE_ECHO_WINDOW_MS) continue
 
         finalsByIndex[i] = transcript
@@ -236,7 +272,7 @@ export function startLiveTranscription(opts = {}) {
         // carried 9 empty finals interleaved with the real ones, so i-1 is very often ''. Real
         // speech in between replaces this and breaks the comparison, which is what keeps two
         // genuine identical readings either side of a different value from collapsing.
-        if (transcript) lastFinal = { text: transcript, at: Date.now() }
+        if (transcript) lastFinal = { key, at: Date.now() }
         // Re-join from the slots rather than appending, so a revision REPLACES its slot instead of
         // extending the transcript. Never carries a stale prefix, because it is recomputed whole.
         finalTranscript = finalsByIndex.filter(Boolean).map((s) => s.trim()).filter(Boolean).join(' ')
