@@ -378,10 +378,38 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
   // 6th, or 20th row all passed. (The recon for this slice claimed the opposite; the crucible's qa
   // and regression seats independently inverted it, and the pre-change suite confirmed it by
   // staying green after Log harvest landed.) Counting EVERY row by testid is the form that fails.
-  it('renders exactly four create actions — 4 is a hard cap, not a starting point', () => {
+  // V5-HARVESTVOICEFLOW-001 raised this 4 -> 5 for 'Harvest by voice', which is EXPANSION where the
+  // note on CREATE_ACTIONS asks for displacement. The number moved with the row rather than the guard
+  // being deleted or loosened to `toBeLessThanOrEqual`, so 5 is still a hard cap: the next addition
+  // reddens this exactly as the fifth one did, and has to argue for itself the same way. See the
+  // comment on the row itself for why nothing was displaced and what the standing alternative is.
+  it('renders exactly five create actions — 5 is a hard cap, not a starting point', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    expect(screen.getAllByTestId('create-action')).toHaveLength(4)
+    expect(screen.getAllByTestId('create-action')).toHaveLength(5)
+  })
+
+  it('the fifth row is Harvest by voice, and it points at the parallel route', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    const rows = screen.getAllByTestId('create-action')
+    expect(rows[4].textContent).toContain('Harvest by voice')
+    expect(rows[4].getAttribute('href')).toBe('/log/voice')
+    // NOT an overlay. An overlay would mount a live microphone on top of whatever is beneath it and
+    // close back to that surface; the whole risk design of this slice is that it is a place you go to
+    // and leave, unmounting the recogniser on the way out.
+    expect(rows[4].getAttribute('data-overlay-bg')).toBeNull()
+  })
+
+  it('LEAVES Log an event exactly where it was — the voice row is additive, never a replacement', () => {
+    // The property Dave asked for in so many words: "so that I don't lose the harvest ability should
+    // this fail somehow". If this ever reds because the voice row took slot 1, the containment that
+    // justified shipping the flow at all is gone.
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    const rows = screen.getAllByTestId('create-action')
+    expect(rows[0].textContent).toContain('Log an event')
+    expect(rows[0].getAttribute('href')).toBe('/log')
   })
 
   // V4-HARVFABREMOVE-001: the row is gone, so the guard inverts — absence is now the contract, and

@@ -369,15 +369,27 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     expect(LIST.indexOf("view === 'grid'")).toBeLessThan(LIST.indexOf("view === 'picker'"));
   });
 
-  it('both call sites that pass it are the two censused consumers, and no others', () => {
-    // The census above is only true while the consumer set is those two files. If a third surface
+  it('every call site that passes it is a censused consumer, and no others', () => {
+    // The census above is only true while the consumer set is these files. If a further surface
     // starts requesting ?view=picker, its field reads have not been counted and this must red.
+    //
+    // THIRD CONSUMER ADDED 2026-08-30 — pages/VoiceHarvest.jsx (V5-HARVESTVOICEFLOW-001), and its
+    // field reads ARE counted, which is the only thing that entitles it to be on this list:
+    //   id                            -> the harvest POST's plant_id
+    //   name                          -> the spoken-match alias, the record slot, the ledger row
+    //   archived_at                   -> the client-side !p.archived_at filter, same as EventNew
+    //   variety_ref.name              -> a second spoken-match alias
+    //   variety_ref.crop_type_slug    -> the third alias ("cucumber" for Suyo Long) + the disambig row
+    //   variety_ref.default_unit      -> seeds the quantity unit per crop (V4-HARVUNITDEFAULT-001)
+    // It reads NO field outside PICKER_KEYS, and needs no widening of the projection.
     const CLIENT = resolve(__dirname, '..', '..', 'src');
     // --exclude-dir=__tests__: the census is of PRODUCTION call sites. Test files legitimately name
     // the URL in their assertions, and counting those would make this assertion self-satisfying —
     // it would go green forever the moment anyone wrote a test mentioning the param.
     const hits = execSync(`grep -rl --exclude-dir=__tests__ "view=picker" ${CLIENT} || true`, { encoding: 'utf8' })
       .split('\n').filter(Boolean).map((p) => p.replace(`${CLIENT}/`, '')).sort();
-    expect(hits).toEqual(['components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx']);
+    expect(hits).toEqual([
+      'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/VoiceHarvest.jsx',
+    ]);
   });
 });

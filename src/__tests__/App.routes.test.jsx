@@ -64,8 +64,23 @@ describe('App route table (single source of truth)', () => {
     // 54 -> 55: V4-ARCHIVEBROWSE-001 adds /plantings/archived, the browse surface for archived
     // plantings. It is declared ABOVE /plantings/:plantingId so the static segment is visibly
     // ordered ahead of the dynamic one rather than relying on router ranking alone.
-    expect(paths).toHaveLength(55)
-    expect(new Set(paths).size).toBe(55)
+    // 55 -> 56: V5-HARVESTVOICEFLOW-001 adds /log/voice, the hands-free harvest surface. It sits
+    // BESIDE /log rather than inside it, which is the containment Dave asked for — the existing
+    // harvest form is not modified, not wrapped and not reachable from it, so a failure here is
+    // recovered by leaving the route.
+    expect(paths).toHaveLength(56)
+    expect(new Set(paths).size).toBe(56)
+  })
+
+  it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {
+    // An `overlayable` route renders over the surface beneath it and closes back to it. That would
+    // put a running recogniser on top of /log and make "the normal form is untouched" false in the
+    // one way that matters. Asserted as presence-in-one-set-and-absence-from-the-other, which is the
+    // observable consequence of the declaration — /log and /log/many are both in BOTH sets, so the
+    // absence below is a real distinction and not an artefact of how the table is built.
+    expect(pagePaths()).toContain('/log/voice')
+    expect(overlayPaths()).not.toContain('/log/voice')
+    expect(overlayPaths()).toContain('/log')
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

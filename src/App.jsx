@@ -31,6 +31,7 @@ import ProjectTypes from './pages/ProjectTypes.jsx'
 import Garden from './pages/Garden.jsx'
 import FeedPage from './pages/FeedPage.jsx'
 import LogMany from './pages/LogMany.jsx'
+import VoiceHarvest from './pages/VoiceHarvest.jsx'
 import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
@@ -302,6 +303,11 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/sow',           element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SowNow /></ErrorBoundary></Protected> },
     { path: '/log',           overlayable: true, ariaLabel: 'Log an event',      size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><EventNew /></ErrorBoundary></Protected> },
     { path: '/log/many',      overlayable: true, ariaLabel: 'Log many',          size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected> },
+    // V5-HARVESTVOICEFLOW-001 — deliberately NOT `overlayable`. An overlay renders OVER the surface
+    // beneath it and closes back to it, which would put a live microphone on top of /log and make
+    // "the normal harvest form is still there, untouched" false in the one way that matters. This is
+    // a plain route: you are either on it or you are not, and leaving it unmounts the recogniser.
+    { path: '/log/voice',     element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><VoiceHarvest /></ErrorBoundary></Protected> },
     { path: '/put-up',        overlayable: true, ariaLabel: 'Log a put-up',       size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PutUp /></ErrorBoundary></Protected> },
     { path: '/photos',        element: <Protected><PhotoLibrary /></Protected> },
     // W-RESTORE. Declared AFTER /photos and matched with `end: true` by react-router v6, so the two
