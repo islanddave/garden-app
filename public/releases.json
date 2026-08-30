@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.74.0",
+    "date": "2026-08-30",
+    "highlights": [
+      "Adding photos to a planting opens a sheet with room for several at once — the card's camera button is now the door to it",
+      "Each staged photo shows a thumbnail so you can drop the one you didn't mean to pick"
+    ]
+  },
+  {
     "version": "4.73.0",
     "date": "2026-08-30",
     "highlights": [

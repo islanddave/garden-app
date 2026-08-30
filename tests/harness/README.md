@@ -132,3 +132,19 @@ State these whenever a number from here is quoted.
    blur-close race, an animation) is not faithfully reproduced.
 8. **It measures layout, not usability.** "Above the fold" is a geometric predicate. Reachability by
    thumb, contrast, and hit-target comfort are outside it.
+
+## Retired entries
+
+**`photostrips.*` — removed 2026-08-30, V4-PHOTOBULK-001 D4b.** It measured the staged-photo strip
+*inside a planting card* and found the defect that killed that design: ten staged files grew the card
+from ~250px to 802px and pushed the next planting card off an 844px screen, and once the height was
+capped the compact filename rows collided with the card's own status badge. The strip now lives in
+`PlantingPhotoSheet`, so the surface this entry measured no longer exists. The finding is preserved
+where it can still act on someone — in `PlantingTile.jsx`'s comment at the call site, in
+`PlantingPhotoSheet.jsx`'s header, and in `photobulk-drain-design-V100-20260829.md` D4b.
+
+Note for whoever adds the next entry: `photostrips` wrapped the card in the real `AuthProvider`
+(FavoriteToggle needs it) and, in a fresh worktree, that path hit a dual-React "Invalid hook call"
+that survived clearing `node_modules/.vite`. `quicktag.jsx` in the same worktree, which imports no
+auth context, is unaffected. If you need an auth-wrapped entry, budget for that rather than
+discovering it mid-measurement.

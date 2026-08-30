@@ -5,7 +5,7 @@
 // Placed OUTSIDE src/components/forms/ so it is exempt from the frozen-barrel ships-dark test
 // and the designsys no-hex/no-emoji lint scope; written P/T-token-based regardless. Tile photo
 // opens the planting detail page (Variant A: picture = go in).
-import React from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import { T } from './forms/formStyles.js'
@@ -15,6 +15,7 @@ import FavoriteToggle from './FavoriteToggle.jsx'
 import PlantStatusBadge from './PlantStatusBadge.jsx'
 import CritterSprite from './CritterSprite.jsx'
 import PhotoUpload from './PhotoUpload.jsx'
+import PlantingPhotoSheet from './photo/PlantingPhotoSheet.jsx'
 import PhotoView from './photo/PhotoView.jsx'
 import { TIER } from '../lib/photoModel.js'
 import CaretakerBadge from './CaretakerBadge.jsx'
@@ -45,6 +46,9 @@ export default function PlantingTile({
   caretaker = null,
   onOpen = null,
 }) {
+  // V4-PHOTOBULK-001 D4b — the batch sheet's open state. Local to the card: each card owns its
+  // own sheet, and a shared one would need the caller to track which planting it belongs to.
+  const [sheetOpen, setSheetOpen] = useState(false)
   const variety = pl.variety_ref?.name
   const hasPhoto = Boolean(pl.featured_photo_view_url)
 
@@ -246,26 +250,22 @@ export default function PlantingTile({
               UNCHANGED. ariaLabel names the icon-only
               control. V4-TAPCARD-001: raised above the stretched card overlay (z1) so it stays tappable.
 
-              V4-PHOTOBULK-001 — `multiple` WAS enabled here and has been REVERTED. Recording why,
-              because "several photos of one planting" is the most obviously right use of the whole
-              feature and someone will reach for this line again.
+              V4-PHOTOBULK-001 D4b — the batch path is a SHEET, and this button opens it. Do NOT put
+              `multiple` back on the PhotoUpload below; the capability is fine, this container is not.
 
-              This card footer cannot host the staging UI the feature requires. Measured at 390x844
-              (tests/harness/photostrips.jsx): ten staged files grew the card from ~250px to 802px
-              and pushed the NEXT planting card to y=905 — off an 844px screen entirely, so one card
-              staging photos ate the whole Garden list. Height-capping the strip fixed the geometry
-              (485px, neighbour back at 588) and then the screenshot showed the real problem: the
-              compact filename rows collide with the card's own status badge and trigger, because
-              this footer is a flex row sized for a 34px circle, not a scrolling list.
+              Measured at 390x844 (tests/harness/photostrips.jsx) when `multiple` was briefly enabled
+              inline here: ten staged files grew the card from ~250px to 802px and pushed the NEXT
+              planting card to y=905, off an 844px screen — one card staging photos ate the whole
+              Garden list. Capping the strip fixed the geometry (485px, neighbour back at 588) and
+              then the screenshot showed the real defect: the compact filename rows collided with
+              this card's own status badge, because this footer is a flex row sized for a 34px
+              circle. Neither half is reachable from a unit test — jsdom returns zero for every
+              getBoundingClientRect and renders no pixels to collide.
 
-              The capability itself is fine and stays on <PhotoUpload>; it is enabled where there is
-              room for it (the Photo Library form). What "batch to THIS planting" actually needs is
-              its own surface — a sheet, not an inline strip in a card — and that is a design
-              question for Dave rather than something to wedge in here. See
-              photobulk-drain-design-V100-20260829.md.
-
-              Unit tests could not have caught either half: jsdom returns zero for every
-              getBoundingClientRect, and it renders no pixels to collide. */}
+              So the single-photo tap stays exactly as it was (one pick, straight to upload, the
+              fastest path for the common case), and "several" gets its own box via
+              PlantingPhotoSheet. Dave chose this shape on 2026-08-30; see
+              photobulk-drain-design-V100-20260829.md D4b. */}
           <span style={{ position: 'relative', zIndex: 2 }}>
           <PhotoUpload
             keyPrefix="plants"
@@ -273,9 +273,17 @@ export default function PlantingTile({
             linkage={{ plant_id: pl.id, project_id: pl.project_id }}
             errorMode="surface"
             buttonLabel={<Icon name="media.camera" size={17} decorative style={{ color: P.mid }} />}
+            // Label UNCHANGED at "Add photo" — Garden.photoUpload.test.jsx pins it, and the button
+            // now opening a sheet does not make the name wrong. Pluralising is a copy decision for
+            // Dave, not something to slip in under a build.
             ariaLabel="Add photo"
             showPreview={false}
             inputId={`plant-list-photo-${pl.id}`}
+            // Dave's D4b ruling: the camera button opens the batch sheet. The component stays
+            // mounted so `input#plant-list-photo-<id>` remains on every row and still uploads when
+            // driven directly — the automated bulk-attach contract this card owes
+            // (Garden.photoUpload.test.jsx §1) is about the INPUT, not the button.
+            onTriggerClick={() => setSheetOpen(true)}
             onUploadComplete={onPhotoUploaded}
             buttonStyle={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -288,6 +296,18 @@ export default function PlantingTile({
           </span>
         </div>
       </div>
+
+      <PlantingPhotoSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        planting={pl}
+        onUploaded={(photos) => {
+          setSheetOpen(false)
+          // Multi mode hands back an ARRAY; the card's consumer (Garden's refetchPlants) ignores
+          // its argument entirely, so it is forwarded unchanged rather than unwrapped.
+          if (typeof onPhotoUploaded === 'function') onPhotoUploaded(photos)
+        }}
+      />
     </div>
   )
 }

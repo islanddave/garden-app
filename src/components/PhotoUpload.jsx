@@ -134,6 +134,18 @@ export function PhotoUpload({
   buttonStyle,
   multiple      = false,
   maxFiles      = DEFAULT_MAX_FILES,
+  // V4-PHOTOBULK-001 D4b. Override what the visible TRIGGER does, while leaving the hidden input
+  // mounted and directly drivable. PlantingTile needs exactly this: Dave's ruling is that the card's
+  // camera button opens a batch SHEET rather than the picker, but that card also owes a standing
+  // contract — every rendered row exposes `input#plant-list-photo-<id>` and automated bulk-attach
+  // sessions drive uploads through it (Garden.photoUpload.test.jsx §1). Moving the whole component
+  // into the sheet would satisfy the ruling and silently break the automation, because the input
+  // would only exist while a human had the sheet open.
+  //
+  // So the input stays where it was and keeps working when driven directly; only the human tap is
+  // redirected. NOT a mode switch on the upload behaviour — everything downstream of a file landing
+  // on that input is unchanged.
+  onTriggerClick = null,
 }) {
   const { upload, isUploading, error, photo, preview, reset, stage, progress } = useUploadPhoto({ errorMode });
   const inputRef = useRef(null);
@@ -274,10 +286,14 @@ export function PhotoUpload({
   // solely to switch the one hidden input between camera and library; with the camera gone there
   // is one behaviour, and the input below never carries `capture` in the first place.
   const openPicker = useCallback(() => {
+    if (busy) return;
+    // The override runs INSTEAD of the picker, never before it — a caller that opened a sheet and
+    // also fired the file chooser would put two surfaces on screen from one tap.
+    if (typeof onTriggerClick === 'function') { onTriggerClick(); return; }
     const el = inputRef.current;
-    if (!el || busy) return;
+    if (!el) return;
     el.click();
-  }, [busy]);
+  }, [busy, onTriggerClick]);
 
   const triggerStyle = busy
     ? { ...TRIGGER_RESET, ...(buttonStyle ?? DEFAULT_BTN_STYLE), opacity: 0.6, cursor: 'not-allowed' }

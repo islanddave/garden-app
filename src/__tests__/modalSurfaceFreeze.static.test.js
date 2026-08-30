@@ -149,6 +149,12 @@ const SHEET_SITES = [
   'components/HarvestExportSheet.jsx',
   'components/photo/EventDeleteConfirm.jsx',
   'components/photo/PhotoDeleteConfirm.jsx',
+  // V4-PHOTOBULK-001 D4b — a DELIBERATE addition. The planting card's camera button opens this
+  // instead of the file picker, because the card footer measurably could not host the staged strip
+  // (it grew the card 250 -> 802px and pushed the next card off screen). It renders the shared
+  // <Sheet>, which is the registered role="dialog" surface, so it owes no registry entry of its
+  // own — the dismiss behaviour is Sheet's, exactly like HarvestTimeframeChips.
+  'components/photo/PlantingPhotoSheet.jsx',
   'components/HarvestTimeframeChips.jsx',
   'components/planting/OverwinterPrompt.jsx',
   'components/planting/TransplantDatePrompt.jsx',

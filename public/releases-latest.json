@@ -1,9 +1,8 @@
 {
-  "version": "4.73.0",
+  "version": "4.74.0",
   "date": "2026-08-30",
   "highlights": [
-    "Tap the number on the Untagged filter to review your unassigned photos one at a time and put each one on a plant",
-    "It remembers the plants you just used, so a garden walk collapses to one tap per photo",
-    "Skip leaves a photo for later, and Back reopens the previous one if you put it on the wrong plant"
+    "Adding photos to a planting opens a sheet with room for several at once — the card's camera button is now the door to it",
+    "Each staged photo shows a thumbnail so you can drop the one you didn't mean to pick"
   ]
 }
