@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.76.0",
+    "date": "2026-08-30",
+    "highlights": [
+      "Harvest by voice — a new hands-free screen under the + menu. Say the crop, then the count, then the weight, then \"next\" to save it and start the following one. Your usual harvest form is unchanged and still one row above it.",
+      "Every voice save says out loud what it saved, buzzes, and leaves an undoable row — and a save that cannot go through says so instead of quietly moving on.",
+      "Dictating a word no longer doubles it. The microphone echoes a word back a fraction of a second later, and the check that was meant to catch that was comparing the two spellings too strictly to notice."
+    ]
+  },
+  {
     "version": "4.75.0",
     "date": "2026-08-30",
     "highlights": [

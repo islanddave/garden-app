@@ -68,8 +68,10 @@ describe('flag ON — the /space routes appear', () => {
     // V4-AMBIENTZONE-001) + 2
     // 54 -> 55: V4-ARCHIVEBROWSE-001 adds /plantings/archived, flag-independent (see the flag-OFF
     // counterpart, which moves 52 -> 53 for the same route).
-    expect(paths).toHaveLength(55)
-    expect(new Set(paths).size).toBe(55)
+    // 55 -> 56: V5-HARVESTVOICEFLOW-001 adds /log/voice, flag-independent (see the flag-OFF
+    // counterpart, which moves 53 -> 54 for the same route).
+    expect(paths).toHaveLength(56)
+    expect(new Set(paths).size).toBe(56)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {
