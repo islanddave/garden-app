@@ -210,6 +210,25 @@ describe('VoiceHarvest — the four ways a spoken record must fail LOUDLY', () =
     vi.useRealTimers()
   })
 
+  it('NEVER saves a quantity that was not spoken — no default is seeded on selection', async () => {
+    // THE REGRESSION THIS PINS ACTUALLY HAPPENED, in the browser harness, in this slice. Selecting a
+    // planting briefly pre-filled `{ value: 1, unit: variety_ref.default_unit }` so a weighed crop
+    // would be complete from the weight alone. The result: "Suyo Long" then "next", with no count
+    // ever spoken, saved a harvest of 1 count and ANNOUNCED IT AS A SUCCESS.
+    //
+    // p4 carries default_unit 'count' precisely so this test would go green under that bug.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Pineapple Tomatillo')
+    expect(record()).toContain('Pineapple Tomatillo')
+
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(harvestPosts()).toHaveLength(0)
+    expect(statusText()).toContain('still need a quantity')
+    vi.useRealTimers()
+  })
+
   it('says NOT SAVED on a POST failure, keeps the record, and lets "next" retry', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()

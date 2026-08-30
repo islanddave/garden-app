@@ -248,10 +248,16 @@ export default function VoiceHarvest() {
         hapticDigitAccepted()
         setSelected(hits[0]); selectedRef.current = hits[0]
         setCandidates([])
-        // V4-HARVUNITDEFAULT-001's per-crop unit, pre-filled so "231 grams" alone is a complete
-        // record for a crop that is weighed. Speaking a quantity overwrites it.
-        const du = hits[0].variety_ref?.default_unit
-        if (du && !qtyRef.current) { const seed = { value: 1, unit: du, seeded: true }; setQty(seed); qtyRef.current = seed }
+        // NO DEFAULT QUANTITY IS SEEDED HERE, and that is a correction rather than an omission.
+        // This branch briefly pre-filled `{ value: 1, unit: variety_ref.default_unit }` so a weighed
+        // crop would be "complete" from the weight alone. Caught in the browser harness, not in a
+        // test: it made the record LOOK complete, so saying "Suyo Long" then "next" — with no count
+        // ever spoken — saved a harvest of 1 count that Dave never said, and announced it as a
+        // success. That is exactly the silent wrong save this whole flow exists to make impossible.
+        //
+        // It also bought nothing. The grammar only parses a quantity from a number carrying a
+        // trailing unit ("three count"), so a bare "three" returns `unparsed` either way — the
+        // default unit had no utterance it could rescue. A quantity now exists only if it was said.
         say('ok', `${hits[0].name || hits[0].variety_ref?.name} — now say the count or the weight.`)
         return
       }
@@ -478,7 +484,10 @@ export default function VoiceHarvest() {
           missing one is visible as a gap instead of having to be inferred from prose. */}
       <div style={card} data-testid="voice-harvest-record">
         <Slot label="Crop"     value={selected ? (selected.name || selected.variety_ref?.name) : null} />
-        <Slot label="Quantity" value={qty ? `${qty.value} ${qty.unit}${qty.seeded ? '  (default — say a number)' : ''}` : null} />
+        {/* Every value in these three slots was SPOKEN. Nothing is pre-filled and nothing carries a
+            default, so a slot reading "—" means the words have not been said yet — which is the only
+            reading that lets a glance at this card be trusted. */}
+        <Slot label="Quantity" value={qty ? `${qty.value} ${qty.unit}` : null} />
         <Slot label="Weight"   value={weight ? `${weight.value} ${weight.unit}` : null} />
         <div style={{ marginTop: 6, fontSize: '0.78rem', color: P.light, fontStyle: 'italic' }} data-testid="voice-harvest-heard">
           hearing: {heard ? (heard.transcript || '—') : '—'}
