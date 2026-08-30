@@ -59,6 +59,61 @@ export async function loadOwnedProject(sql, projectId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
+// Pick the container a NEW planting belongs in when the caller supplied none. Derives server-side,
+// on the same principle deriveEventProjectId already applies to events: a client cannot be relied on
+// to get this right, and one of them demonstrably does not — CaptureFlow ("Snap") posts
+// `project_id: null` on every create (src/pages/CaptureFlow.jsx:386), which is how 7 project-less
+// plantings reached prod between 2026-08-13 and 2026-08-30. plants/index.js:1610 records 269/269
+// plantings carrying a project on 2026-08-04, so this is a regression with a date, not the design.
+//
+// MATCHED ON CROP TYPE, NOT "the household's first container", and that distinction is the whole
+// design. On this system the container's NAME IS THE PUBLISHED CROP — gam-site's crop_label_sql
+// reads plant_projects.name onto a public page — so an arbitrary container does not file a row
+// untidily, it publishes a tomato to the world as a pepper. A wrong container is worse than none.
+//
+// DELIBERATELY FIND-ONLY; it never creates a container. Three live plantings (yarrow, dogwood,
+// hydrangeas) have no crop-type container to match and stay NULL, which is a supported state with
+// its own authorization arm — see the `project_id IS NULL` conjunct below. Minting a container from
+// a write path would put a row into the world nobody asked for, named by a guess, on a site where
+// that name is public.
+//
+// THE `other = 0` GUARD IS WHAT MAKES THE MATCH SAFE. A candidate must hold plantings of the target
+// crop and NOTHING ELSE. A mixed container (a bed, a grouping) can hold tomatoes without being "the
+// tomato container", so matching on presence alone would file into it. Requiring purity means only
+// the per-crop containers this garden actually uses can win. Verified against live prod 2026-08-30:
+// tomato→Tomatoes, pepper→Peppers, pothos→Pothos, tradescantia→Tradescantia, and yarrow/dogwood→NULL.
+//
+// Returns null on ANY uncertainty — unknown cultivar, cultivar with no crop type, no pure container.
+// Null is the status quo, so this helper's failure mode is "behaves exactly as it did before".
+//
+// No ownership gate is needed on its output: the predicate is household-scoped
+// (`pp.created_by = ANY(householdIds)`), so it can only return a container the caller already owns.
+export async function resolveContainerForCultivar(sql, cultivarId, householdIds) {
+  if (!UUID_RE.test(String(cultivarId))) return null;
+  const rows = await sql`
+    WITH target AS (
+      SELECT crop_type_slug AS slug FROM public.plant_varieties WHERE id = ${cultivarId}
+    ),
+    candidate AS (
+      SELECT pp.id,
+             count(*) FILTER (WHERE pv.crop_type_slug = (SELECT slug FROM target)) AS same,
+             count(*) FILTER (WHERE pv.crop_type_slug IS DISTINCT FROM (SELECT slug FROM target)) AS other
+      FROM public.plant_projects pp
+      JOIN public.plants pl ON pl.project_id = pp.id AND pl.deleted_at IS NULL
+      JOIN public.plant_varieties pv ON pv.id = pl.variety_id
+      WHERE pp.deleted_at IS NULL
+        AND pp.archived_at IS NULL
+        AND pp.created_by = ANY(${householdIds})
+      GROUP BY pp.id
+    )
+    SELECT id FROM candidate
+    WHERE same > 0 AND other = 0
+    ORDER BY same DESC, id
+    LIMIT 1
+  `;
+  return rows.length ? rows[0].id : null;
+}
+
 // Verify a planting id (photos.plant_id, plants.parent_plant_id, plants.succession_group_id).
 // Byte-for-byte the predicate shipped as lambda/tags/index.js entityExists('plant') and as the
 // canonical by-id ownership predicate in lambda/plants/index.js (BUG-PLANTLESSWRITE-001).

@@ -15,7 +15,7 @@ import { mergeCore } from './merge.js';
 // loadOwnedPlanting on this path — same query plus the load-bearing `project_id IS NULL` conjunct on
 // the own-created_by arm, matching this file's canonical by-id predicate and tags/index.js
 // entityExists. See lambda/authz-parents.js for why they live in a separate file.
-import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
+import { loadOwnedProject, loadOwnedPlantingRef, resolveContainerForCultivar } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { jsonResponder } from './http-response.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
@@ -1615,11 +1615,27 @@ export const handler = async (event) => {
       // NOT gated: variety_id (plant_varieties is a GLOBAL catalogue, unscoped in tags/index.js
       // entityExists('cultivar') too) and featured_photo_id / featured_image_id (not in the INSERT
       // column list below — unsettable on this verb).
-      if (body.project_id != null) {
-        if (!await loadOwnedProject(sql, body.project_id, householdIds)) {
-          warnRejectedFk(userId, 'plants', 'project_id', body.project_id);
+      // RESOLVED, not taken from the body. Projects were sunset from the UI, so no client should be
+      // expected to supply one — and CaptureFlow ("Snap") supplies null on every create, which is
+      // exactly how 7 project-less plantings reached prod between 2026-08-13 and 2026-08-30. The
+      // comment at :1610 records 269/269 plantings carrying a project on 2026-08-04, so this is a
+      // regression with a date, not the original design.
+      //
+      // A supplied id still wins and is still gated unchanged — this only fills a gap.
+      // resolveContainerForCultivar returns null whenever it is not certain, so the no-match case
+      // is byte-identical to today's behaviour rather than a guess written to the database.
+      let resolvedProjectId = body.project_id ?? null;
+      if (resolvedProjectId != null) {
+        if (!await loadOwnedProject(sql, resolvedProjectId, householdIds)) {
+          warnRejectedFk(userId, 'plants', 'project_id', resolvedProjectId);
           return resp(400, { error: 'project_id does not match a project you can use' });
         }
+      } else {
+        // No ownership gate needed on the resolved value: the resolver's own predicate is
+        // household-scoped (`pp.created_by = ANY(householdIds)`), so it can only ever return a
+        // container this caller already owns. Running loadOwnedProject over it would re-ask a
+        // question the query has already answered.
+        resolvedProjectId = await resolveContainerForCultivar(sql, body.variety_id, householdIds);
       }
       if (body.location_id != null) {
         if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
@@ -1666,7 +1682,7 @@ export const handler = async (event) => {
            container_type, container_size, location_id,
            acquired_mature, acquired_mature_source, acquired_mature_set_at)
         VALUES (
-          ${body.project_id},
+          ${resolvedProjectId},
           ${body.name},
           ${qtyVal},
           ${body.status ?? null},

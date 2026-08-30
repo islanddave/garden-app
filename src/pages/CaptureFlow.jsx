@@ -132,6 +132,17 @@ const todayStr = () => todayLocalISO()
 // not carry: PlantingEditor seeds `project_id: projects[0]?.id`, Snap has always POSTed
 // `project_id: null` and V3-CAPTURE-001's test pins that. Adopting the shared form must not quietly
 // start assigning every field capture to whichever project happens to sort first.
+//
+// THAT REFUSAL WAS RIGHT AND STILL STANDS — but "null" turned out to mean "no container at all",
+// not "let the server decide", and nothing downstream filled the gap. Seven plantings reached prod
+// with no container between 2026-08-13 and 2026-08-30; a harvest on one of them then took the
+// public site's hourly publisher down, because the container's name IS the published crop.
+//
+// Fixed 2026-08-30 at the single INSERT site rather than here: lambda/plants/index.js now resolves
+// an unsupplied project through resolveContainerForCultivar, which matches on the planting's CROP
+// TYPE and requires the candidate container to hold that crop and nothing else. So `null` now means
+// "server, work it out" and this comment's worry — assignment by arbitrary sort order — is exactly
+// what that predicate is built to refuse. Sending null stays correct; do not start sending an id.
 // `status: 'seedling'` reproduces the value Snap hardcoded into its POST before this change, so the
 // default capture is byte-identical on the wire; it is now visible and changeable instead of implied.
 const SNAP_PLANT_FORM = {
@@ -380,6 +391,8 @@ export default function CaptureFlow() {
         // /api/plants wire contract) so Snap stops being a second, thinner contract for the same
         // route. Two deliberate divergences: project_id stays null (see SNAP_PLANT_FORM), and there
         // is no source_inventory_item_id — Snap has no packet deep-link.
+        // `project_id: null` now means "server, resolve it from the crop type", not "no container" —
+        // lambda/plants/index.js does that since 2026-08-30. Keep sending null.
         // The '' -> null coercions are not cosmetic: source_type '' 400s, and status/notes '' would
         // otherwise be written as empty strings rather than absent.
         const plant = await fetch('/api/plants', { method: 'POST', body: JSON.stringify({
