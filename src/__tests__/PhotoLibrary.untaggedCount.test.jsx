@@ -16,7 +16,9 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
-const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
+const { fetchSpy, toastSpy, deckSpy } = vi.hoisted(() => ({
+  fetchSpy: vi.fn(), toastSpy: vi.fn(), deckSpy: vi.fn(),
+}))
 
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
@@ -33,6 +35,20 @@ vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
 vi.mock('../components/PhotoUpload.jsx', () => ({ default: () => <div data-testid="photo-upload-stub" /> }))
+// The carousel is stubbed to report the DECK IT WAS HANDED. The subject of the BUG-QUICKTAGSCOPE-001
+// tests below is which photos PhotoLibrary puts in that deck, not how the carousel renders them —
+// that is QuickTagCarousel.test.jsx's job. Stubbing also keeps this file free of the dismiss
+// registry and PhotoView the real component needs.
+vi.mock('../components/photo/QuickTagCarousel.jsx', () => ({
+  default: ({ photos }) => {
+    deckSpy(photos.map(p => p.id))
+    return <div data-testid="quicktag-carousel-stub">{photos.length}</div>
+  },
+}))
+vi.mock('../context/ToastContext.jsx', async (importActual) => ({
+  ...(await importActual()),
+  useOptionalToast: () => ({ show: toastSpy, dismiss: vi.fn() }),
+}))
 
 import PhotoLibrary from '../pages/PhotoLibrary.jsx'
 
@@ -48,9 +64,28 @@ const attachedToEvent = (id) => ({ id, storage_path: `s/${id}.jpg`, created_at: 
 
 beforeEach(() => {
   fetchSpy.mockReset()
+  toastSpy.mockReset()
+  deckSpy.mockReset()
   if (typeof URL.createObjectURL !== 'function') URL.createObjectURL = vi.fn(() => 'blob:stub')
   if (typeof URL.revokeObjectURL !== 'function') URL.revokeObjectURL = vi.fn()
 })
+
+// Mount under a project filter with a global list that differs from the scoped one — the exact shape
+// BUG-QUICKTAGSCOPE-001 lived in. Returns once the scoped response has landed.
+async function mountScopedToProject({ global: globalList, scoped }) {
+  fetchSpy.mockImplementation((path) => {
+    if (path === '/api/projects') return Promise.resolve([PROJECT])
+    if (path === '/api/locations/with-path') return Promise.resolve([LOCATION])
+    if (path === '/api/photos') return Promise.resolve(globalList)
+    if (String(path).startsWith('/api/photos?project_id=')) return Promise.resolve(scoped)
+    return Promise.resolve([])
+  })
+  render(<PhotoLibrary />)
+  await waitFor(() => expect(countSeg()).toBeTruthy())
+  fireEvent.change(screen.getByDisplayValue('Filter by project…'), { target: { value: 'proj-1' } })
+  await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos?project_id=proj-1'))
+  await act(async () => { await Promise.resolve() })
+}
 
 function mountWith(photos) {
   fetchSpy.mockImplementation((path) => {
@@ -140,5 +175,88 @@ describe('PhotoLibrary — the Untagged count', () => {
     // inventory-attached row would appear on one side and not the other.
     fireEvent.click(chip())
     await waitFor(() => expect(screen.getAllByTestId('pl-photo-card')).toHaveLength(1))
+  })
+})
+
+// BUG-QUICKTAGSCOPE-001 — the badge is global, so the DECK behind it must be global.
+//
+// The sibling test above pins that the count HOLDS its global value under a scope filter. That guard
+// was necessary and not sufficient: `openQuickTag` went on building its deck from the SCOPED photos
+// list. Under ?project_id= every returned row carries a project_id, so `isAttached` is true for all
+// of them, the pending list was always empty, and the early return made tapping the number a silent
+// no-op — in prod, on every scoped view. These tests hold the two halves to the same globality.
+describe('PhotoLibrary — opening the drain from a scoped view', () => {
+  it('opens the GLOBAL untagged deck, not the scoped one', async () => {
+    // 3 pending globally; the project's own photos contain none. Pre-fix this deck was empty and the
+    // tap did nothing at all.
+    await mountScopedToProject({
+      global: [pending('a'), pending('b'), pending('c'), attachedToProject('d')],
+      scoped: [attachedToProject('d')],
+    })
+    expect(countText()).toBe('3')
+
+    fetchSpy.mockClear()
+    fireEvent.click(countSeg())
+    await waitFor(() => expect(screen.getByTestId('quicktag-carousel-stub')).toBeTruthy())
+    // The unscoped list is re-fetched precisely because the in-memory one cannot answer this.
+    expect(fetchSpy).toHaveBeenCalledWith('/api/photos')
+    // Oldest-first ordering is the drain's contract; ids here share a timestamp so this also pins
+    // that the deck is the three global pending rows and not the scoped row.
+    expect(deckSpy).toHaveBeenCalledWith(['a', 'b', 'c'])
+  })
+
+  it('does NOT re-fetch when no scope filter is active — the common path stays one request', async () => {
+    mountWith([pending('a'), pending('b'), attachedToProject('d')])
+    await waitFor(() => expect(countText()).toBe('2'))
+
+    fetchSpy.mockClear()
+    fireEvent.click(countSeg())
+    await waitFor(() => expect(screen.getByTestId('quicktag-carousel-stub')).toBeTruthy())
+    expect(fetchSpy).not.toHaveBeenCalledWith('/api/photos')
+    expect(deckSpy).toHaveBeenCalledWith(['a', 'b'])
+  })
+
+  it('says so when the list cannot be loaded, instead of failing silently', async () => {
+    // The regression this whole item is about is a tap that does nothing and reports nothing. A
+    // failed fetch must not rebuild it by a different route.
+    await mountScopedToProject({
+      global: [pending('a')],
+      scoped: [attachedToProject('d')],
+    })
+    fetchSpy.mockImplementation((path) => {
+      if (path === '/api/photos') return Promise.reject(new Error('offline'))
+      return Promise.resolve([])
+    })
+    fireEvent.click(countSeg())
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0]).toMatchObject({ tone: 'error' })
+    expect(screen.queryByTestId('quicktag-carousel-stub')).toBeNull()
+  })
+
+  it('heals a stale count rather than opening an empty deck', async () => {
+    // The badge holds its last global value by design, so it can outlive the photos it counted —
+    // another device drains the inbox and this tab still reads 2. On open we have just measured the
+    // truth, so the number is reconciled to it: the badge disappears, which is the honest report.
+    // Pre-fix this case was indistinguishable from the bug — a tap that did nothing.
+    await mountScopedToProject({
+      global: [pending('a'), pending('b')],
+      scoped: [attachedToProject('d')],
+    })
+    expect(countText()).toBe('2')
+
+    fetchSpy.mockImplementation((path) => {
+      if (path === '/api/photos') return Promise.resolve([attachedToProject('d')])
+      return Promise.resolve([])
+    })
+    fetchSpy.mockClear()
+    fireEvent.click(countSeg())
+    await waitFor(() => expect(countSeg()).toBeNull())
+    // The RE-MEASUREMENT is asserted, not just the outcome. Both the scoped in-memory list and the
+    // true global list are empty of pending rows here — realistically so, because every row under a
+    // project filter carries a project_id — so the badge would also vanish if the deck were still
+    // built from the scoped list. Without this line the test passes against the unfixed code.
+    expect(fetchSpy).toHaveBeenCalledWith('/api/photos')
+    expect(screen.queryByTestId('quicktag-carousel-stub')).toBeNull()
+    expect(toastSpy).not.toHaveBeenCalled()
   })
 })

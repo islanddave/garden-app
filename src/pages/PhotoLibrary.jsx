@@ -533,14 +533,50 @@ export default function PhotoLibrary() {
   // Oldest first. `taken_at` is NULL on effectively every live row (photoModel records this), so
   // created_at IS the capture order in practice, and ascending replays a garden walk in the order it
   // happened — which is what makes the shortcut MRU converge instead of thrashing.
-  const openQuickTag = useCallback(() => {
-    const pending = photos
+  //
+  // BUG-QUICKTAGSCOPE-001 — THE DECK IS GLOBAL BECAUSE THE BADGE IS GLOBAL.
+  // `untaggedCount` is deliberately a global number: it is recomputed only from an UNSCOPED fetch and
+  // otherwise holds its last value (see loadPhotos). This function used to build its deck from
+  // `photos`, which under ?project_id= or ?location_id= is a SUBSET — so the badge asked a global
+  // question and the deck answered a scoped one. Worse than a mismatch: under a project filter every
+  // returned row HAS a project_id, so `isAttached` is true for all of them, `pending` was always
+  // empty, and the early return made tapping the count a SILENT NO-OP every time. Probe-proven in
+  // prod: chip reads 3, tap opens nothing.
+  //
+  // The general rule this cost us: when a value is deliberately global, every consumer of it must be
+  // global too. Guarding the recompute was necessary and not sufficient.
+  //
+  // So: fetch the unscoped list when — and only when — a scope filter is active. No filter means
+  // `photos` IS the unscoped list and the extra request would be pure latency on the common path.
+  const [quickTagOpening, setQuickTagOpening] = useState(false)
+  const openQuickTag = useCallback(async () => {
+    if (quickTagOpening) return          // the fetch below is a round trip; a second tap must not race it
+    const scoped = Boolean(filterProject || filterLocation)
+    let source = photos
+    if (scoped) {
+      setQuickTagOpening(true)
+      try {
+        source = await apiFetch('/api/photos') ?? []
+      } catch (err) {
+        // An unreachable list is NOT "nothing to tag". Returning quietly here would rebuild the exact
+        // defect this fix exists to remove — a tap that does nothing and says nothing.
+        toast.show({ message: "Couldn't load the untagged photos — try again.", tone: 'error' })
+        return
+      } finally {
+        setQuickTagOpening(false)
+      }
+    }
+    const pending = source
       .filter(p => !toPhoto(p).isAttached)
       .slice()
       .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))
+    // We have just measured the global truth, so reconcile the held badge to it. This is what makes
+    // the empty case self-explanatory: the count the user tapped disappears instead of the tap
+    // appearing to fail. It also heals a count left stale by another device draining the inbox.
+    setUntaggedCount(pending.length)
     if (!pending.length) return
     setQuickTagDeck(pending)
-  }, [photos])
+  }, [photos, filterProject, filterLocation, apiFetch, quickTagOpening, toast])
 
   // Seed for the carousel's shortcut row: the plantings this page's OWN photos are already attached
   // to, most-recent first. Available client-side with no extra request, and it means the first photo
@@ -1155,12 +1191,20 @@ export default function PhotoLibrary() {
                   data-testid="pl-filter-untagged-count"
                   aria-label={`Tag ${badge} untagged ${badge === 1 ? 'photo' : 'photos'} one at a time`}
                   onClick={openQuickTag}
+                  // BUG-QUICKTAGSCOPE-001: under a scope filter the handler makes a round trip before
+                  // the deck can open, so the tap has a duration. Disabling marks it as in progress —
+                  // an undisabled button that does nothing for half a second is the same "did that
+                  // work?" the silent no-op created.
+                  disabled={quickTagOpening}
+                  aria-busy={quickTagOpening || undefined}
                   style={{
                     ...chipStyle,
                     borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
                     backgroundColor: P.greenPale, color: P.green,
                     borderColor: active ? P.green : P.border,
                     fontWeight: 700,
+                    cursor: quickTagOpening ? 'progress' : 'pointer',
+                    opacity: quickTagOpening ? 0.6 : 1,
                   }}
                 >{badge}</button>
               </span>
