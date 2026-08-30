@@ -136,6 +136,14 @@ jobs:
           VITE_API_PRESERVATION:      ${{ vars.VITE_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ vars.VITE_API_STORAGE_LOCATIONS }}
           VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
+          # V4-IGSHARE-001 — MUST be in THIS block, same reason, and the reason it is here at all:
+          # setting vars.VITE_API_FACEBOOK_SHARE alone did NOTHING. Prod v4.78.0 shipped with the
+          # repo var correctly set and both share paths still bound to EMPTY STRINGS, because the
+          # var was never mapped into a build env block. So "Facebook is one repo-var edit from
+          # public", as the ledger and two handoffs claimed, was FALSE — it needed this line too.
+          # ONE VAR, BOTH TARGETS: api.js routes /api/share/facebook AND /api/share/instagram
+          # through this single value, so wiring it arms Facebook (live since 2026-08-21) as well.
+          VITE_API_FACEBOOK_SHARE:    ${{ vars.VITE_API_FACEBOOK_SHARE }}
 
       - name: Build
         run: npm run build
@@ -166,6 +174,14 @@ jobs:
           # V4-HARVESTVIEW-001 — MUST be in THIS block: vite bakes import.meta.env at build time, so a
           # repo var absent here is silently empty in the bundle no matter what vars.* holds.
           VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
+          # V4-IGSHARE-001 — MUST be in THIS block, same reason, and the reason it is here at all:
+          # setting vars.VITE_API_FACEBOOK_SHARE alone did NOTHING. Prod v4.78.0 shipped with the
+          # repo var correctly set and both share paths still bound to EMPTY STRINGS, because the
+          # var was never mapped into a build env block. So "Facebook is one repo-var edit from
+          # public", as the ledger and two handoffs claimed, was FALSE — it needed this line too.
+          # ONE VAR, BOTH TARGETS: api.js routes /api/share/facebook AND /api/share/instagram
+          # through this single value, so wiring it arms Facebook (live since 2026-08-21) as well.
+          VITE_API_FACEBOOK_SHARE:    ${{ vars.VITE_API_FACEBOOK_SHARE }}
 
       - name: Verify build output
         run: |
@@ -317,6 +333,14 @@ jobs:
           VITE_API_MEMBERS:          ${{ vars.VITE_API_MEMBERS }}
           VITE_API_TAGS:              ${{ vars.VITE_API_TAGS }}
           VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
+          # V4-IGSHARE-001 — MUST be in THIS block, same reason, and the reason it is here at all:
+          # setting vars.VITE_API_FACEBOOK_SHARE alone did NOTHING. Prod v4.78.0 shipped with the
+          # repo var correctly set and both share paths still bound to EMPTY STRINGS, because the
+          # var was never mapped into a build env block. So "Facebook is one repo-var edit from
+          # public", as the ledger and two handoffs claimed, was FALSE — it needed this line too.
+          # ONE VAR, BOTH TARGETS: api.js routes /api/share/facebook AND /api/share/instagram
+          # through this single value, so wiring it arms Facebook (live since 2026-08-21) as well.
+          VITE_API_FACEBOOK_SHARE:    ${{ vars.VITE_API_FACEBOOK_SHARE }}
         run: |
           set -uo pipefail
           SMOKE_FAIL=0
