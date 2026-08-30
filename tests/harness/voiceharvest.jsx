@@ -56,7 +56,11 @@ class HarnessSR {
 window.SpeechRecognition = HarnessSR
 window.webkitSpeechRecognition = HarnessSR
 
-const PHRASES = ['cucumber', 'Suyo Long', 'three count', '231 grams', 'next', 'rhubarb', 'text', 'done']
+// "studio long" is the REAL transcript Chrome returns for "Suyo Long" on Dave's Android (2026-08-30)
+// — it is here so the V5-VOICEFUZZYMATCH-001 rescue is reachable by hand rather than only in a test.
+// "chinees red nodle" exercises the same rescue on a name whose damage is spread across two words.
+const PHRASES = ['cucumber', 'Suyo Long', 'studio long', 'chinees red nodle', 'three count',
+  '231 grams', 'next', 'rhubarb', 'text', 'done']
 
 function Driver() {
   const [, force] = useState(0)

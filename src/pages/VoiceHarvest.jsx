@@ -45,6 +45,7 @@ import { P } from '../lib/constants.js'
 import { useApiFetch } from '../lib/api.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { looseKey, looseIncludes } from '../lib/comboboxInput.js'
+import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
 import { classify } from '../lib/voiceHarvestGrammar.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
 import {
@@ -79,6 +80,30 @@ export function matchPlantings(plantings, spoken) {
   const hits = plantings.filter((p) => plantingAliases(p).some((a) => looseIncludes(a, spoken)))
   const exact = hits.filter((p) => plantingAliases(p).some((a) => looseKey(a) === needle))
   return exact.length ? exact : hits
+}
+
+// V5-VOICEFUZZYMATCH-001 — the rescue, and WHERE it sits is the whole safety argument.
+//
+// It runs ONLY when matchPlantings returns empty. Every utterance that resolves today resolves
+// identically after this change — the strict matcher is untouched and still answers first, so this
+// can only turn a "nothing matched" into something. That is the same shape as the voice rescue
+// VarietyPicker already ships (V4-PICKERVOICE-001 QA-G3: voice-only, empty-result-only, one shot),
+// and it is deliberate reuse of a pattern Dave has already used in production rather than a new one.
+//
+// It cannot reach a command or a number: classify() decides those before the search branch is ever
+// entered, and this is called from inside that branch. The grammar's own note says the search branch
+// is the permissive one because "a wrong search shows the wrong list, which Dave sees and corrects".
+//
+// Returns the SAME shape the caller already handles plus a `rescued` marker, so a fuzzy hit is
+// announced as a correction instead of passing itself off as a clean match.
+export function matchPlantingsWithRescue(plantings, spoken) {
+  const strict = matchPlantings(plantings, spoken)
+  if (strict.length) return { hits: strict, rescued: null }
+
+  const res = fuzzyMatch(plantings, spoken, plantingAliases, looseKey)
+  if (res.kind === 'one') return { hits: [res.planting], rescued: res.alias }
+  if (res.kind === 'many') return { hits: res.hits.map((h) => h.planting), rescued: null }
+  return { hits: [], rescued: null }
 }
 
 // THE GUARD THE GRAMMAR ASKS FOR AT THE CALL SITE, in its own words: "do not treat a whole-utterance
@@ -237,7 +262,11 @@ export default function VoiceHarvest() {
     const result = resolveCommandCollision(raw, plantingsRef.current)
 
     if (result.kind === 'search') {
-      const hits = matchPlantings(plantingsRef.current, result.text)
+      // `rescued` is the alias a FUZZY match landed on, or null when the strict matcher answered.
+      // It exists to be said out loud: a rescue that stays silent is a guess wearing the costume of a
+      // clean match, and this flow's rule is that every outcome is announced. Dave hears which words
+      // were swapped, so a wrong rescue is caught before "next" rather than after the save.
+      const { hits, rescued } = matchPlantingsWithRescue(plantingsRef.current, result.text)
       if (hits.length === 0) {
         hapticDigitRejected()
         setCandidates([])
@@ -258,7 +287,12 @@ export default function VoiceHarvest() {
         // It also bought nothing. The grammar only parses a quantity from a number carrying a
         // trailing unit ("three count"), so a bare "three" returns `unparsed` either way — the
         // default unit had no utterance it could rescue. A quantity now exists only if it was said.
-        say('ok', `${hits[0].name || hits[0].variety_ref?.name} — now say the count or the weight.`)
+        const chosen = hits[0].name || hits[0].variety_ref?.name
+        say('ok', rescued
+          // The heard text is quoted back verbatim so the swap is legible at a glance. Without the
+          // "heard X" half, a rescue of the WRONG planting reads exactly like a correct match.
+          ? `Heard “${result.text}” — matched ${chosen}. Say the count, or say it again to change it.`
+          : `${chosen} — now say the count or the weight.`)
         return
       }
       hapticDigitRejected()

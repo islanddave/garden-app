@@ -1,7 +1,8 @@
 {
-  "version": "4.77.0",
+  "version": "4.78.0",
   "date": "2026-08-30",
   "highlights": [
-    "Photos can be posted to the Gardens at Mathews Facebook Page and Instagram. Pick your photos, write a caption, and choose where it goes. Instagram starts unticked every time on purpose — a Facebook post can be deleted afterwards and an Instagram one cannot."
+    "Voice harvest: uncommon cultivar names now match even when the recogniser mishears them — saying \"Suyo Long\" no longer dead-ends as \"studio long\"",
+    "Voice harvest: a rescued match is announced out loud (\"Heard X — matched Y\") so a wrong match is visible before you save"
   ]
 }

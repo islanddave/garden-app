@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.78.0",
+    "date": "2026-08-30",
+    "highlights": [
+      "Voice harvest: uncommon cultivar names now match even when the recogniser mishears them — saying \"Suyo Long\" no longer dead-ends as \"studio long\"",
+      "Voice harvest: a rescued match is announced out loud (\"Heard X — matched Y\") so a wrong match is visible before you save"
+    ]
+  },
+  {
     "version": "4.77.0",
     "date": "2026-08-30",
     "highlights": [
