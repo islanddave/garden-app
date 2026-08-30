@@ -255,7 +255,8 @@ jobs:
             --arg b "garden-photos-prod" \
             --arg a "user_3D2gM0hIl03gjW3JM2DjtPzm0jI" \
             --arg s "garden-app/facebook-page-token" \
-            '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)')
+            --arg igs "garden-photos-derivatives-769788341849" \
+            '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s, IG_STAGING_BUCKET:$igs} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)')
           echo "{\"Variables\": $UPDATED}" > /tmp/env-fbshare.json
           # Timeout/memory come from scripts/lambda-config-expected.json — the SAME file the post-deploy
           # drift guard asserts against — instead of a second hardcoded copy here. Two sources of truth

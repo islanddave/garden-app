@@ -64,6 +64,24 @@ const s3 = new S3Client({
 const BUCKET = process.env.S3_PHOTOS_BUCKET;
 if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set — check Lambda configuration');
 
+// Where the Instagram flow parks its EXIF-stripped scratch copy. SEPARATE FROM $BUCKET ON PURPOSE.
+//
+// garden-photos-prod is versioned AND replicates every object (rule `crr-photos-all`, empty filter)
+// to garden-photos-replica-usw2. S3 never replicates version-specific deletes, and that rule has
+// DeleteMarkerReplication disabled, so NO deletion of any kind reaches the replica: a sweep that is
+// correct on the source bucket still leaves a stripped copy of a private photo in us-west-2 forever.
+// A lifecycle rule on both buckets bounds that to ~1 day (applied 2026-08-30) but does not remove
+// the mechanism — it is a backstop for a hole that should not exist.
+//
+// Staging in an UNVERSIONED, UNREPLICATED bucket removes the hole instead of bounding it: a plain
+// DeleteObject genuinely deletes, there is no non-current version to strand, and nothing is copied
+// to a second region. It also drops the s3:DeleteObjectVersion dependency entirely.
+//
+// FALLS BACK TO $BUCKET when unset, so an environment that has not been configured yet behaves
+// exactly as before rather than failing to publish. The fallback is why this is safe to deploy ahead
+// of the env var; the deploy workflow sets the key and scripts/lambda-config-expected.json asserts it.
+const IG_STAGING_BUCKET = process.env.IG_STAGING_BUCKET || BUCKET;
+
 const SECRETS_TTL_MS = 5 * 60 * 1000;
 let _secrets = null, _secretsAt = 0;
 async function getSecrets() {
@@ -632,9 +650,9 @@ async function stageAndSign(prepared, groupId) {
   // moment we can learn it without a second ListObjectVersions call, and without it the sweep below
   // cannot remove the bytes at all. See cleanupStaging.
   const put = await s3.send(new PutObjectCommand({
-    Bucket: BUCKET, Key: key, Body: prepared.bytes, ContentType: 'image/jpeg',
+    Bucket: IG_STAGING_BUCKET, Key: key, Body: prepared.bytes, ContentType: 'image/jpeg',
   }));
-  const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+  const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: IG_STAGING_BUCKET, Key: key }),
     { expiresIn: STAGING_URL_TTL_SECONDS });
   return { key, url, versionId: put?.VersionId ?? null };
 }
@@ -649,26 +667,32 @@ async function stageAndSign(prepared, groupId) {
 // invisible rather than gone, which is the failure mode that reads as success. Passing VersionId
 // removes that specific version permanently and writes no marker.
 //
-// PREREQUISITE, NOT YET GRANTED: the exec role (garden-app-lambda-exec) allows s3:DeleteObject but
-// NOT s3:DeleteObjectVersion (verified 2026-08-28 against the three inline policies). Until that is
-// granted, the versioned branch below fails AccessDenied and we fall through to the tombstone —
-// which is why the failure is logged loudly and counted, rather than swallowed as "best effort".
-// There is also NO lifecycle configuration on the bucket at all (NoSuchLifecycleConfiguration), so
-// nothing expires non-current versions in the background either.
+// RESOLVED 2026-08-30 — READ THIS BEFORE "SIMPLIFYING" THE VERSION HANDLING BELOW.
+// Staging now targets $IG_STAGING_BUCKET (see its declaration near the top), which in prod is
+// garden-photos-derivatives-769788341849: UNVERSIONED and UNREPLICATED (both verified live). On that
+// bucket a plain DeleteObject genuinely removes the bytes, PutObject returns no VersionId, and the
+// version-aware branch below is simply never taken.
 //
-// AND THE SWEEP CANNOT REACH THE REPLICA AT ALL. garden-photos-prod replicates via `crr-photos-all`
-// with an EMPTY filter — every object, ig-staging/ included — to garden-photos-replica-usw2
-// (versioned, no lifecycle). `DeleteMarkerReplication` is Disabled on that rule, and S3 does not
-// replicate version-specific deletes under any setting, so NEITHER branch below propagates. This
-// function can therefore never be the whole answer: the replica needs its own lifecycle rule, which
-// is why scripts/ig-staging-retention.sh writes to both buckets. The architecturally cleaner fix is
-// to stage somewhere that is not replicated at all — recorded for Dave rather than done here,
-// because it changes where this handler writes.
-// All of it is prepared in scripts/ig-staging-retention.sh; NONE of it is applied.
+// The version handling is KEPT DELIBERATELY, for two reasons:
+//   1. IG_STAGING_BUCKET falls back to $BUCKET when unset, so any environment not yet carrying the
+//      env var still stages on the versioned garden-photos-prod and still needs this branch.
+//   2. It is keyed on the PutObject response carrying a VersionId, not on a bucket name, so it stays
+//      correct if the staging target is ever pointed at a versioned bucket again.
+// Deleting it would silently re-open the original defect for exactly those cases.
+//
+// THE HISTORY, because the mechanism is not obvious and was expensive to find:
+// garden-photos-prod is versioned, so a plain DeleteObject writes a DELETE MARKER — the key stops
+// listing and the object survives as a non-current version, forever. Worse, it replicates via
+// `crr-photos-all` with an EMPTY filter to garden-photos-replica-usw2, with DeleteMarkerReplication
+// disabled; and S3 never replicates version-specific deletes under any setting. So NEITHER branch
+// below ever reached the replica, and a sweep that looked complete left a stripped copy of a private
+// photo in us-west-2 permanently. Lifecycle rules on both buckets (applied 2026-08-30 via
+// scripts/ig-staging-retention.sh) bound that to ~1 day, but staging off the replicated bucket is
+// what actually removes the mechanism.
 async function cleanupStaging(staged) {
   await Promise.all(staged.map(async ({ key: Key, versionId }) => {
     try {
-      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key, ...(versionId ? { VersionId: versionId } : {}) }));
+      await s3.send(new DeleteObjectCommand({ Bucket: IG_STAGING_BUCKET, Key, ...(versionId ? { VersionId: versionId } : {}) }));
     } catch (err) {
       const denied = /accessdenied|not authorized/i.test(`${err?.name ?? ''} ${err?.message ?? ''}`);
       if (versionId && denied) {
@@ -676,7 +700,7 @@ async function cleanupStaging(staged) {
         // back so the key at least stops being listable, and say plainly that bytes remain.
         console.error(`ig staging: DeleteObjectVersion DENIED for ${Key} (version ${versionId}) — grant s3:DeleteObjectVersion; STRIPPED BYTES REMAIN as a non-current version`);
         shareMetric('staging_version_retained', { target: 'instagram', reason: 'delete_version_denied' });
-        try { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key })); }
+        try { await s3.send(new DeleteObjectCommand({ Bucket: IG_STAGING_BUCKET, Key })); }
         catch (e2) { console.error('ig staging: tombstone fallback also failed for', Key, e2?.message ?? String(e2)); }
         return;
       }

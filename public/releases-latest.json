@@ -1,9 +1,7 @@
 {
-  "version": "4.73.0",
+  "version": "4.74.0",
   "date": "2026-08-30",
   "highlights": [
-    "Tap the number on the Untagged filter to review your unassigned photos one at a time and put each one on a plant",
-    "It remembers the plants you just used, so a garden walk collapses to one tap per photo",
-    "Skip leaves a photo for later, and Back reopens the previous one if you put it on the wrong plant"
+    "Instagram sharing stages its temporary stripped copy of a photo in an unreplicated bucket, so that copy is genuinely deleted after posting instead of persisting in a second region."
   ]
 }
