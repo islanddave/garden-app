@@ -53,6 +53,13 @@ const SURFACES = [
   // in PhotoLibrary is what puts Back and Escape on the deck — the two halves agree by construction
   // rather than by coincidence, which is the whole premise this file defends.
   { file: 'components/photo/QuickTagCarousel.jsx', layer: 'SHEET', paints: Z.sheet },
+  // V4-LOGMANYUXREFRESH-001 S3. The Log Many pick frame — a `position: fixed; inset: 0` layer that
+  // takes the whole viewport from BOTH of its hosts (full-page /log/many and the Sheet overlay).
+  // DIALOG rather than SHEET, and the two halves agree by construction: it paints at Z.dialog for
+  // the same reason Lightbox does — it must clear the Sheet panel (200) it is rendered inside, or
+  // Escape aimed at the picker would resolve to the route overlay under it and dismiss the whole
+  // page mid-selection. It stays UNDER SYSTEM so a discard confirm still outranks it.
+  { file: 'components/forms/ScopeChecklist.jsx', layer: 'DIALOG', paints: Z.dialog },
 ]
 
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8')

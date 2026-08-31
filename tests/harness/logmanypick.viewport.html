@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Log Many S2/S3 viewport host</title>
+<!--
+  IFRAME HOST for logmanypick.html — its own file rather than an edit to the shared viewport.html,
+  following the plantingphotosheet / logmany precedent (concurrent lanes own files in this tree).
+
+  Why an iframe at all: `--window-size=390,x` does NOT reflow macOS Chrome to 390px. It floors the
+  window at roughly 500px and CROPS the screenshot, so a 500px layout gets measured and reported as
+  a 390px one. An iframe has no minimum width.
+
+  `?step=` scripts the frame before it is measured, so one run reports a real interaction state:
+     s2        — open the review list (the S2 targets, bulk mode)
+     s2zone    — switch the scope to By zone (the zone chip rows at 48px)
+     pick      — enter PICK mode; the frame opens empty
+     pick3     — enter PICK, search `?q=`, tap the first 3 rows (the three-planting scenario)
+     picktray  — pick 3, then clear the search so the tray is measured against a full list
+     pickdone  — pick 3, then leave the frame (the page-side summary card)
+  `?read=targets|frame` chooses which measurement block is reported.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #333; }
+  #frame { border: 0; display: block; background: #fff; }
+  #out { position: absolute; left: -99999px; top: 0; white-space: pre; }
+</style>
+</head>
+<body>
+<iframe id="frame" title="device viewport"></iframe>
+<pre id="out" data-done="0"></pre>
+<script>
+  const q = new URLSearchParams(location.search)
+  const vw = Number(q.get('vw') || 390)
+  const vh = Number(q.get('vh') || 844)
+  const step = q.get('step') || 's2'
+  const read = q.get('read') || (step.startsWith('s2') ? 'targets' : 'frame')
+  const term = q.get('q') || 'sun gold'
+  const el = document.getElementById('frame')
+  el.width = vw
+  el.height = vh
+  el.src = '/tests/harness/logmanypick.html'
+  const out = document.getElementById('out')
+  // Each hop waits for React to COMMIT before the next reads the DOM. Chaining synchronously
+  // silently no-ops: the controls a later step taps do not exist until the earlier one has
+  // rendered, and `?.click()` on a null makes that failure look like success.
+  const after = (ms, fn) => new Promise(r => setTimeout(() => {
+    try { fn() } catch (e) { out.dataset.err = String(e) }
+    r()
+  }, ms))
+  ;(function poll(tries) {
+    const w = el.contentWindow
+    if (w && w.__h && w.__h.ready && w.__h.ready()) {
+      Promise.resolve()
+        .then(() => after(50, () => {
+          if (step === 's2') w.__h.openReview()
+          else if (step === 's2zone') w.__h.setZone()
+          else if (step === 's2date') w.__h.backDate()
+          else w.__h.pickMode()
+        }))
+        .then(() => after(200, () => { if (step === 's2zone' || step === 's2date') w.__h.openReview() }))
+        .then(() => after(150, () => { if (step === 'pick3' || step === 'picktray' || step === 'pickdone') w.__h.type(term) }))
+        .then(() => after(150, () => { if (step === 'pick3' || step === 'picktray' || step === 'pickdone') w.__h.tapRows(3) }))
+        .then(() => after(150, () => {
+          if (step === 'picktray') w.__h.type('')
+          if (step === 'pickdone') w.__h.doneFrame()
+        }))
+        .then(() => after(200, () => {
+          out.textContent = JSON.stringify({ step, read, ...(read === 'frame' ? w.__h.frame() : w.__h.targets()) }, null, 1)
+          out.dataset.done = '1'
+        }))
+      return
+    }
+    if (tries > 200) { out.textContent = JSON.stringify({ error: 'frame never became ready' }); out.dataset.done = 'timeout'; return }
+    setTimeout(() => poll(tries + 1), 100)
+  })(0)
+</script>
+</body>
+</html>
