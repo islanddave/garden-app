@@ -15,10 +15,20 @@
 //   - ZERO live rows have no parent. BUG-PHOTOPARENT-001's "6 photos with no parent link at all"
 //     are the 6 inventory_item_id photos: they are fully attached, and were invisible only because
 //     the four-way model does not know inventory exists. That bug was in the MODEL, not the data.
-//   - taken_at, mime_type, file_size_bytes and content_hash are 100% NULL on every live row. They
-//     exist in the schema and carry no data — created_at is the only usable timestamp, which is why
-//     `takenAt` is surfaced but never used as a sort/group key.
-//   - caption is NULL on 1092/1094 rows, so the alt fallback is the common path, not the edge case.
+//   - taken_at, mime_type, file_size_bytes: this note used to say all four were "100% NULL on every
+//     live row". THAT DECAYED AND IS NOW FALSE for three of them. Re-measured 2026-08-31 against
+//     live prod: 127 of 1396 rows carry taken_at, mime_type AND file_size_bytes — the same 127,
+//     dated 2026-08-15 onward, so one upload path populates the three together. content_hash IS
+//     still 0/1396, and that half of the claim holds.
+//     The claim was TRUE when written against a 1094-row corpus. It went stale by the corpus
+//     growing, not by anyone being wrong — which is the failure mode to expect from every count in
+//     this header. TREAT THEM ALL AS POINT-IN-TIME AND RE-MEASURE BEFORE RELYING ON ONE. An agent
+//     read this line as current, wrote it into its own comment on this file's authority, and only
+//     caught it by probing prod (BUG-PHOTOPROJECTIONGAP-001).
+//     `takenAt` is still surfaced and never used as a sort/group key — but the reason is now that
+//     nothing READS it, not that there is no data in it.
+//   - caption is NULL on all but 2 rows (2/1396 set as of 2026-08-31; was 2/1094), so the alt
+//     fallback is the common path, not the edge case.
 // Duplicated from PhotoImg deliberately: this module is pure data and must not pull React in via a
 // component import. photoModel.test.js asserts the two constants stay equal, so drift fails a test
 // rather than silently splitting the expiry model in half.
