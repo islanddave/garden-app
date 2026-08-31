@@ -25,7 +25,9 @@ import { formatEntry } from '../lib/harvestSummary.js'
 // DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with ProjectDetail's
 // event rows — the two delete surfaces must stay behaviorally identical).
 import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
-import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, Sheet } from '../components/forms'
+// The same label chrome <Field> renders, for the one control on this form that cannot BE a Field.
+import { labelChrome } from '../components/forms/formStyles.js'
 import { PROJECTS_HIDDEN, EVENT_REANCHOR_ENABLED, WATER_DEPTH_EDIT_ENABLED } from '../lib/featureFlags.js'
 // V4-WATERMATH-001 F0 — the amount class is correctable from history (flag-gated; see featureFlags).
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
@@ -143,6 +145,14 @@ export default function EventDetail() {
   const [saveErr, setSaveErr] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // V4-REANCHORFLAG-001 — the destination planting as the picker handed it back, kept for the two
+  // things the wire cannot answer afterwards: the confirm sheet has to NAME where the event is
+  // going, and the PUT's RETURNING is a column allow-list that does not carry planting_name (the
+  // GET join-projects it, lambda/events/index.js:2419), so the read view would otherwise blank its
+  // Planting row on the one save whose result the user most needs to see. Cleared on every
+  // startEdit so a cancelled edit cannot leave a stale name behind.
+  const [moveTarget, setMoveTarget] = useState(null)
+  const [confirmingMove, setConfirmingMove] = useState(false)
 
   useEffect(() => {
     // V4-UNSCOPEDROUTES-001: the event record is the source of truth for its project — the
@@ -226,6 +236,7 @@ export default function EventDetail() {
     // return codes, not objects), so sharing the reference cannot alias a later edit into the seed.
     setFormSeed(seeded)
     setSaveErr(null)
+    setMoveTarget(null)
     setEditing(true)
   }
 
@@ -303,10 +314,38 @@ export default function EventDetail() {
     return null
   }
 
+  // V4-REANCHORFLAG-001 — "the user has aimed this event at a different planting". THE SAME
+  // expression the payload spread below is conditioned on, read once and reused, so the control,
+  // the confirm and the wire can never disagree about whether a move is happening. `form` is null
+  // outside the editor, hence the optional read.
+  const reanchorPending = EVENT_REANCHOR_ENABLED && !!form &&
+    form.plant_id !== (event?.plant_id ?? null)
+
+  // The un-anchor trap. `newPlantId = body.plant_id ?? oldPlantId` (lambda/events/index.js:1595)
+  // means a null plant_id is a server-side NO-OP: clearing the picker on an event that has a
+  // planting would report success and move nothing. Refused here rather than letting the user
+  // watch a save "work" and change nothing. An event that never had a planting is untouched —
+  // blank stays a legitimate state there, which is also why `required` below is conditional.
+  const blockedByBlankAnchor = reanchorPending && !form?.plant_id && event?.plant_id != null
+
   async function handleSave(e) {
     e.preventDefault()
     const hErr = harvestError()
     if (hErr) { setSaveErr(hErr); return }
+    if (blockedByBlankAnchor) {
+      setSaveErr('Choose a planting — this event can be moved to a different one, but not left without one.')
+      return
+    }
+    // §4.3 layer 2: a move must never be a silent side effect of pressing Save on an unrelated
+    // edit, so it gets its own question naming both plantings. Layer 1 (the durable record) is
+    // already free — trg_audit_event_log_upd watches plant_id/project_id and the PUT's statement 0
+    // is set_config('app.actor_clerk_sub', …), so the move lands in audit_events attributed, with
+    // before/after, with no code here. Deliberately NOT re-implemented in the client.
+    if (reanchorPending) { setConfirmingMove(true); return }
+    await commitSave()
+  }
+
+  async function commitSave() {
     setSaving(true)
     setSaveErr(null)
     try {
@@ -348,7 +387,7 @@ export default function EventDetail() {
           } : {}),
           // slice 4, flag-gated. Absent when the flag is off, so the server's re-anchor path is
           // never entered and EventDetail's save is byte-identical to before.
-          ...(EVENT_REANCHOR_ENABLED && form.plant_id !== (event.plant_id ?? null)
+          ...(reanchorPending
             ? { plant_id: form.plant_id, project_id: form.project_id }
             : {}),
           // V4-WATERMATH-001 F0: sent as a MERGE over the row's existing metadata, never as a
@@ -384,12 +423,24 @@ export default function EventDetail() {
           } } : {}),
         }),
       })
-      setEvent(updated)
+      // V4-REANCHORFLAG-001: the moved-to name, carried forward onto the response. The PUT's
+      // RETURNING has no planting_name column, so a bare setEvent(updated) would leave the read
+      // view with no Planting row at all — a move that reports success by DELETING the only thing
+      // that shows where the event now lives. Only the re-anchor arm is touched: with the flag off,
+      // or on an ordinary edit, this is the same setEvent(updated) as before.
+      setEvent(reanchorPending
+        ? { ...updated, planting_name: moveTarget?.name ?? null }
+        : updated)
       setEditing(false)
     } catch (e) {
       setSaveErr(e.message)
     }
     setSaving(false)
+    // Closed AFTER the write resolves, never optimistically over a request that may fail —
+    // EventDeleteConfirm's contract, and the reason `busy` is threaded above. On a failure the
+    // sheet gets out of the way and the form's own ErrorBanner carries the message, with the
+    // pending move still selected so the user can retry or back it out.
+    setConfirmingMove(false)
   }
 
   // DD9 / W-EVTDEL adoption: the header Delete tap ARMS the EventDeleteConfirm sheet (rendered at
@@ -549,6 +600,58 @@ export default function EventDetail() {
               placeholder="e.g. First true leaves visible"
             />
           </Field>
+
+          {/* V4-REANCHORFLAG-001 — move this event to a different planting. THE control the flag
+              was waiting on: nothing else in this file ever wrote form.plant_id, so the emit below
+              was unreachable and flipping EVENT_REANCHOR_ENABLED was a provable no-op.
+
+              THE SHARED picker, self-fetching — EventDetail holds no plants list, and the
+              destination is routinely in a different project from the event's own, so a scoped
+              list would hide exactly the row being reached for. Unscoped is ~255 rows / 10-15 kB
+              gzipped (measured, featureFlags.js:10-12).
+
+              Placed HIGH, next to type/date, deliberately: this form runs to a dozen fields and a
+              picker near the bottom would open its listbox into the Save row. Outside <Field> for
+              the same reason WaterDepthChips below is — the combobox owns its own accessible name,
+              and htmlFor would dangle the moment it collapses to chip mode (which is its state on
+              arrival, since the event already has an anchor).
+
+              `required` tracks whether blank is reachable rather than being blanket-true: the
+              server cannot un-anchor an event (see blockedByBlankAnchor), so on a row that has a
+              planting the field genuinely is required — but a project-only event is ALREADY blank,
+              and marking that state an error would flag the row for being what it is. */}
+          {EVENT_REANCHOR_ENABLED && (
+            <div style={{ marginBottom: 14 }}>
+              {/* labelChrome, not the uppercase style WaterDepthChips uses below: that one reads as
+                  a SECTION heading, and this control sits in the run of ordinary <Field> inputs
+                  (Type / Date / Title / Quantity), so it has to look like one of them. Rendered as a
+                  bare label rather than through <Field> because Field's htmlFor would point at an
+                  input that does not exist whenever the picker is collapsed to its chip — which is
+                  its state on arrival, since the event already has an anchor. */}
+              <label style={labelChrome}>Logged against</label>
+              <PlantingSelect
+                value={form.plant_id ?? ''}
+                onChange={(id, planting) => {
+                  // '' on clear (PlantingSelect's contract) normalised to null, so the change
+                  // predicate compares like with like against event.plant_id ?? null.
+                  setMoveTarget(id ? { id, name: planting?.name ?? null } : null)
+                  setForm(f => ({
+                    ...f,
+                    plant_id: id || null,
+                    // The planting decides the project. Sent for completeness; the server derives
+                    // it from the planting row regardless (deriveEventProjectId, :1605-1615), so
+                    // a stale value here cannot write a self-contradicting row.
+                    project_id: planting?.project_id ?? f.project_id,
+                  }))
+                }}
+                required={event.plant_id != null}
+                emptyMeaning="unset"
+                placeholder="— Choose a planting —"
+                aria-label="Logged against"
+                data-testid="evtdetail-planting"
+              />
+            </div>
+          )}
 
           {/* V4-WATERMATH-001 F0 — correct the amount class of an already-logged watering.
               Keyed off the form's CURRENT type (unlike the harvest panel, which keys off the
@@ -799,6 +902,48 @@ export default function EventDetail() {
         onCancel={() => setConfirmingDelete(false)}
         onConfirm={handleDelete}
       />
+
+      {/* V4-REANCHORFLAG-001 §4.3 layer 2 — the move gets its own question, naming BOTH plantings.
+          Composed from the frozen Sheet primitive, the same way EventDeleteConfirm above is; not
+          ConfirmSheet, which its own header reserves for the DismissRegistry arbiter.
+
+          It confirms the MOVE only. Everything else on the form saves through the ordinary Save
+          with no interruption, so this fires exactly when the user has aimed the event somewhere
+          new — which is the whole point of the flag's "SILENT DATA MOVEMENT" worry.
+
+          Cancel closes the sheet and leaves the picker on the new choice: the user came here to
+          move it, and discarding their selection on a "not yet" is a worse answer than letting
+          them look again. Save re-asks. */}
+      <Sheet
+        open={confirmingMove}
+        onClose={() => setConfirmingMove(false)}
+        title={event?.plant_id ? 'Move this event?' : 'Log this event against a planting?'}
+        busy={saving}
+        closeLabel="Cancel"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 8 }}>
+          <p data-testid="reanchor-disclosure" style={{ margin: 0, color: P.mid, fontSize: '0.95rem', lineHeight: 1.45 }}>
+            {event?.planting_name
+              ? `This moves it off ${event.planting_name} and onto ${moveTarget?.name ?? 'the planting you chose'}. It stays in your log either way — nothing is deleted.`
+              : `This logs it against ${moveTarget?.name ?? 'the planting you chose'}.`}
+          </p>
+          <p style={{ margin: 0, color: P.light, fontSize: '0.8rem', lineHeight: 1.45 }}>
+            You can move it back the same way.
+          </p>
+          {/* Same order and reasoning as EventDeleteConfirm: stacked full-width, the consequential
+              action ABOVE, the safe one under the thumb at 390px. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Button data-testid="reanchor-confirm" variant="primary" onClick={commitSave} loading={saving} loadingLabel="Moving…" style={{ width: '100%' }}>
+              {event?.plant_id ? 'Move it' : 'Log it there'}
+            </Button>
+            {/* testid, not a name query: three controls on screen answer to "Cancel" — this one,
+                the edit form's own, and Sheet's mandatory Close (closeLabel). */}
+            <Button data-testid="reanchor-cancel" variant="secondary" onClick={() => setConfirmingMove(false)} disabled={saving} style={{ width: '100%' }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Sheet>
     </Shell>
   )
 }

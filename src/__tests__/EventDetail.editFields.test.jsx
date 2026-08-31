@@ -28,7 +28,14 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => {
 })
 
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) }))
-vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => ({ user: { id: 'u1' } }) }))
+// V4-REANCHORFLAG-001: with the flag ON this page now mounts PlantingSelect, which self-fetches
+// through useCachedFetch — and that hook calls useAuthOptional. A null user is deliberate: it puts
+// the hook on its plain fetch-on-mount branch rather than the module-level dataCache, so one test's
+// plantings cannot leak into the next.
+vi.mock('../context/AuthContext.jsx', () => ({
+  useAuth: () => ({ user: { id: 'u1' } }),
+  useAuthOptional: () => ({ user: null }),
+}))
 vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({
     upload: vi.fn(), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn(),
@@ -162,13 +169,16 @@ describe('slice 2: the edit form seeds and saves what it can now write', () => {
 // a body of `{}`, so a save that silently stopped sending anything would have read as a pass. Both
 // tests below therefore carry a positive control on the same body they assert absence in.
 //
-// WHAT IS STILL NOT COVERED, deliberately and with a reason. The flag conjunct on its own cannot be
-// falsified from here: nothing in EventDetail writes `form.plant_id` — the seed is its only writer,
-// Delete (the one path that refetches the event) is gated on `!editing`, and no re-anchor control is
-// rendered — so the emit branch has no reachable trigger in the client today. Deleting
-// `EVENT_REANCHOR_ENABLED &&` from line 349 would keep these tests green. That is not a gap this
-// file can close by trying harder; it is the shape of the code. When the control is built, the test
-// to add is "change the anchor, flag off -> keys still absent".
+// WHAT THIS FILE STILL DOES NOT COVER, and where it moved to. Until V4-REANCHORFLAG-001 the flag
+// conjunct could not be falsified from anywhere: nothing in EventDetail wrote `form.plant_id` — the
+// seed was its only writer, Delete (the one path that refetches the event) is gated on `!editing`,
+// and no re-anchor control was rendered — so the emit branch had no reachable trigger in the client
+// and deleting `EVENT_REANCHOR_ENABLED &&` kept every test here green. The control now exists and
+// is itself flag-gated, so the falsifying tests live with it in
+// EventDetail.reanchor.test.jsx: flag OFF renders no control at all, flag ON + an actual anchor
+// change emits the keys, and the move is a PUT to the same event id rather than a re-log.
+// What remains HERE is the other half, and it is still the one worth pinning on this file: an
+// UNTOUCHED anchor never reaches the wire, in either flag state.
 describe('slice 4: the re-anchor keys never reach the wire from an untouched form', () => {
   beforeEach(() => { flags.EVENT_REANCHOR_ENABLED = false })
 
