@@ -1,8 +1,9 @@
 {
-  "version": "4.83.0",
+  "version": "4.84.0",
   "date": "2026-08-31",
   "highlights": [
-    "Hands-free harvest: saying a plant whose name is a number no longer adds that number to the count. Before this, \"1884 two count\" recorded 1886 and reported success.",
-    "Hands-free harvest: plants named with digits can now be found by saying the number aloud — \"eighteen eighty four\" now reaches the plant named 1884, which previously matched nothing at all."
+    "Adding several photos at once now keeps all of them. On Android the phone was releasing its hold on the files while they waited to upload, so a batch of ten could arrive as one — the photos are now copied the moment you pick them, and any that can't be read are named right away instead of failing later.",
+    "A photo you moved to a different plant no longer keeps showing as the cover photo on the crop screen you moved it away from.",
+    "Tall pop-up panels no longer push their top edge off the screen when they're full of content."
   ]
 }
