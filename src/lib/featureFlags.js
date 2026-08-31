@@ -121,7 +121,18 @@ export const PROJECTS_HIDDEN = true
 // mode is SILENT DATA MOVEMENT, and it introduces genuine PROJECTS_HIDDEN control flow onto
 // EventDetail, which previously used that flag only for a breadcrumb and a post-delete nav target.
 // Flag OFF leaves EventDetail byte-identical, so the existing suites stay meaningful untouched.
-export const EVENT_REANCHOR_ENABLED = false
+//
+// FLIPPED TRUE 2026-08-31 (V4-REANCHORFLAG-001) — with the control built, and NOT before. Flipping
+// this on its own was a provable no-op: nothing wrote form.plant_id, so the emit guard was always
+// false. Both original worries are smaller than when they were written. "SILENT DATA MOVEMENT":
+// trg_audit_event_log_upd is armed on prod and watches plant_id/project_id, the PUT sets the actor
+// GUC, and the control now confirms the move by name before issuing it — so a move is neither
+// silent to the database nor to the user. "PROJECTS_HIDDEN control flow": that flag went TRUE
+// 2026-08-10, so the picker only ever needs its planting branch and the two-mode form never had to
+// be built. What it buys: Dave was correcting a misfiled harvest by DELETING it and re-logging —
+// ~1/day over the audited window, 4 of 11 with the clear correction signature — which is exactly
+// what the Soft-Delete-Only Rule exists to prevent.
+export const EVENT_REANCHOR_ENABLED = true
 
 // V4-IMGCACHE-001 D-1 (design V102 §B / §5.4): the subscribable image-LIST SWR cache ("slow-tab win").
 // When TRUE (default), the photo-list read sites (PhotosWall / PlantingDetail attached-photos /

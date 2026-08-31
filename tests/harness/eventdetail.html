@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>EventDetail edit form — real browser at phone width</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      #root { padding: 0; }
+      /* Burned INTO the capture on purpose: macOS Chrome floors a window at ~500px and then crops
+         the screenshot to whatever --window-size asked for, so a "390px" PNG routinely shows a
+         500px layout with no signal that it did. Load this through
+         plantingphotosheet.viewport.html?page=eventdetail.html&vw=390 and read the badge. */
+      #vpbadge {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 99999;
+        font: 600 11px/1.6 ui-monospace, Menlo, monospace;
+        background: #2f3b2f; color: #eaf3ea; padding: 3px 8px; letter-spacing: 0.3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="vpbadge">measuring…</div>
+    <script type="module" src="/tests/harness/eventdetail.jsx"></script>
+  </body>
+</html>

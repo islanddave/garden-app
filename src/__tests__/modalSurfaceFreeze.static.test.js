@@ -141,6 +141,15 @@ const DIALOG_SURFACES = {
 // <Sheet armsBack>, so the registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry
 // is owed; `busy={editorBusy}` blocks dismissal while the POST/PUT is in flight, which is the
 // V4-SHEETBUSY-001 lesson applied at mint time instead of after the fact.
+// V4-REANCHORFLAG-001: pages/EventDetail.jsx is a DELIBERATE addition, the same shape as
+// EventDeleteConfirm which this page ALREADY renders. Moving a logged event to a different planting
+// is the one edit on that form whose failure mode is silent data movement, so it gets its own
+// question naming both plantings before the PUT — a question that has to hold two names and a
+// consequence sentence, which window.confirm cannot. It renders the shared <Sheet>, so the
+// registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed; `busy={saving}`
+// blocks dismissal while the write is in flight (V4-SHEETBUSY-001 applied at mint time). Rendered
+// inline rather than extracted to a component because it holds no state of its own — unlike
+// EventDeleteConfirm, whose checkbox is the whole reason that one is a file.
 const SHEET_SITES = [
   'App.jsx',
   'components/BatchUndoConfirm.jsx',
@@ -160,6 +169,7 @@ const SHEET_SITES = [
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',
   'pages/AddSeeds.jsx',
+  'pages/EventDetail.jsx',
   'pages/Garden.jsx',
   'pages/Harvests.jsx',
   'pages/PlantingDetail.jsx',
