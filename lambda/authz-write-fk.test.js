@@ -417,6 +417,53 @@ const NOT_IN_SITES = [
   'harvests::variety_id',     // ditto
   'harvests::crop_type_slug', // shared catalogue vocabulary, same class as preservation::crop_type_slug
   'harvests::user_id',        // server-derived: the JWT subject, same class as events::user_id
+
+  // ── V5-VOICEALIAS-001: the voice_alias teach INSERT (lambda/varieties/index.js). ──────────────
+  //
+  // Ownership decision, recorded per column. Read this before assuming the entry is a silencing:
+  // one of these columns is not body-settable at all, and the other IS gated — by an existence
+  // check the static matcher cannot see, because the matcher pattern-matches an INSERT column list
+  // and has no view of where a bound value came from or what ran before it.
+  //
+  // user_id — NOT BODY-SETTABLE. The INSERT binds ${userId}, which is payload.sub from
+  // verifyToken; the handler additionally refuses a falsy subject before any query
+  // (V4-AUTHZRESIDUE-001, index.js). There is no request shape that puts a caller-chosen value in
+  // this column. Identical class to harvests::user_id and events::user_id above.
+  //
+  // variety_id — BODY-SUPPLIED AND GATED. The POST validates a uuid, then runs
+  //   SELECT id FROM public.cultivar WHERE id = ${varietyId} AND deleted_at IS NULL
+  // and returns 404 when absent — verified reached BEFORE the INSERT (the SELECT and its 404 sit
+  // ~12 lines above the INSERT in the same block, not on a branch that can skip it).
+  //
+  // WHY THAT GATE IS THE RIGHT STRENGTH, and specifically why it does NOT carry the household /
+  // managed-principal arm that PUT, DELETE and the recovery reads in that file use. Checked against
+  // the code rather than the file header: GET /api/varieties/:id is `WHERE id = $1 AND deleted_at
+  // IS NULL` with NO ownership predicate, so a cultivar is readable by ANY authenticated user. The
+  // existence check above therefore admits exactly the set the caller can already GET — it is as
+  // strict as the route's own read policy and no stricter.
+  //
+  // And the row it writes is a PERSONAL ANNOTATION, not a claim on the cultivar: voice_alias is
+  // (user_id, heard_key) -> variety_id, stored against the caller's own subject, and every read of
+  // it is scoped `WHERE user_id = ${userId}`. So referencing a cultivar here grants no access,
+  // reveals nothing the caller could not already read, and is invisible to every other user. There
+  // is no escalation for the household arm to prevent.
+  //
+  // Gating it on the WRITE predicate instead would be an active defect, not extra safety: the
+  // chooser lists and selects globally-readable cultivars, so the picker would offer a variety and
+  // the app would then refuse to remember what the user calls it, with no explanation that made
+  // sense. authz-household.test.js independently pins that this route does not use that arm (its
+  // count of exactly six scoped predicates is unchanged by V5-VOICEALIAS-001).
+  //
+  // NOTE ON WHY THE LIST GETTING SHORTER IS NOT THE ARGUMENT — the trap the project-state landmines
+  // record for the earlier SITES row that went to 0: that was safe because a STRICTER pin replaced
+  // it, not because the count fell. Same shape here (a real gate the matcher cannot observe), so
+  // what makes THIS entry safe is the recorded rationale plus the existence check actually being
+  // there and actually preceding the write — both verified above, neither inferred.
+  //
+  // Pinned by varieties/voice-alias-columns.test.js: 'reads are scoped to the calling user' asserts
+  // every voice_alias SELECT carries `user_id =`, so the privacy half cannot regress silently.
+  'varieties::user_id',       // server-derived: the JWT subject, never read from the body
+  'varieties::variety_id',    // body-supplied, gated by an existence check as strict as the read policy
 ];
 
 describe('BUG-AUTHZFKENUM-001: every FK-shaped column a handler writes is gated or explicitly known', () => {
