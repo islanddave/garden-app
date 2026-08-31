@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Log Many review list viewport host</title>
+<!--
+  IFRAME HOST — same job as ./viewport.html, pointed at logmany.html, following the
+  plantingphotosheet.viewport.html precedent rather than editing the shared host that other entries
+  depend on (a concurrent lane owns files in this tree).
+
+  Why an iframe at all: `--window-size=390,x` does NOT reflow macOS Chrome to 390px. It floors the
+  window at roughly 500px and CROPS the screenshot, so a 500px layout gets measured and reported as
+  a 390px one. An iframe has no minimum width.
+
+  `?step=` scripts the frame before measuring, so a single --dump-dom run reports a REAL interaction
+  state rather than the mount state:
+     open     — tap "Review 239 plantings"
+     find     — open, Select none, then search "sun gold" (the 3-planting flow's first leg)
+     chip     — open, then tap the Tomato crop chip
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #333; }
+  #frame { border: 0; display: block; background: #fff; }
+  #out { position: absolute; left: -99999px; top: 0; white-space: pre; }
+</style>
+</head>
+<body>
+<iframe id="frame" title="device viewport"></iframe>
+<pre id="out" data-done="0"></pre>
+<script>
+  const q = new URLSearchParams(location.search)
+  const vw = Number(q.get('vw') || 390)
+  const vh = Number(q.get('vh') || 844)
+  const step = q.get('step') || 'open'
+  const term = q.get('q') || 'sun gold'
+  q.delete('vw'); q.delete('vh'); q.delete('step'); q.delete('q')
+  const el = document.getElementById('frame')
+  el.width = vw
+  el.height = vh
+  el.src = '/tests/harness/logmany.html' + (q.toString() ? '?' + q.toString() : '')
+  window.__frameReady = () => {
+    const w = el.contentWindow
+    return !!(w && w.__h && w.document.readyState === 'complete')
+  }
+  const out = document.getElementById('out')
+  ;(function poll(tries) {
+    const w = el.contentWindow
+    if (w && w.__h && w.__h.open) {
+      if (!w.__h.open()) { if (tries < 200) return setTimeout(() => poll(tries + 1), 100) }
+      // Each hop waits for React to COMMIT before the next one reads the DOM. Chaining them
+      // synchronously silently no-ops: the controls the later steps tap do not exist until the
+      // list has rendered, and `?.click()` on a null makes that failure look like success.
+      const after = (ms, fn) => new Promise(r => setTimeout(() => { try { fn() } catch (e) { out.dataset.err = String(e) } r() }, ms))
+      after(150, () => { if (step === 'find') w.__h.tapSelectNone() })
+        .then(() => after(150, () => { if (step === 'find') w.__h.type(term); if (step === 'chip') w.__h.tapChip('Tomato') }))
+        .then(() => after(150, () => {
+          out.textContent = JSON.stringify({ step, ...w.__h.measure(), rows: w.__h.rows().slice(0, 6) }, null, 1)
+          out.dataset.done = '1'
+        }))
+      return
+    }
+    if (tries > 200) { out.textContent = JSON.stringify({ error: 'frame never became ready' }); out.dataset.done = 'timeout'; return }
+    setTimeout(() => poll(tries + 1), 100)
+  })(0)
+</script>
+</body>
+</html>
