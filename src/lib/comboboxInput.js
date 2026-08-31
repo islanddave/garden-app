@@ -176,15 +176,30 @@ export function looseIncludes(haystack, needle) {
 // it is one normalisation applied to BOTH sides of every comparison, and duplicating it as an extra
 // term would leave the two half-fixes free to disagree later.
 //
-// `cropType` is the crop_types row when the surface has the vocabulary in hand (VarietyPicker holds
-// it already via useCropTypes); omit it and the slug term still stands. display_name is what reaches
-// "scallion" -> bunching_onion. search_aliases ("cantaloupe" -> melon) is NOT reachable from any
-// client today — it is deliberately never SELECTed into a response shape — so that half stays
-// server-only; see the lane report.
+// `cropType` is the crop_types row when the surface has the vocabulary in hand (all four surfaces
+// now hold it via useCropTypes); omit it and the slug term still stands. display_name is what
+// reaches "scallion" -> bunching_onion.
+//
+// OPS-CROPTYPEALIASCLIENT-001 — search_aliases is the third term, and it is the one that answers the
+// sentence this whole feature was built from: "I don't always remember spelling — is it charentais?
+// charantais? but I know it is a cantaloupe." No crop type is NAMED cantaloupe; Charentais sits
+// under 'melon' / 'Melon', and the word lives only in crop_types.search_aliases. The dashboard has
+// matched it server-side since v4-croptypealias-001; /api/varieties/crop-types now carries it too,
+// so the client filters answer it offline and instantly like every other term.
+export function splitCropAliases(raw) {
+  // The column is comma-separated TEXT, not an array ('cantaloupe, muskmelon, honeydew'). Split and
+  // trim rather than matching the raw string: looseKey strips whitespace but NOT commas, so a raw
+  // haystack lets a needle span the separator ("loupe,musk" would hit) and lets one alias's tail run
+  // into the next one's head. Per-term matching also keeps each alias a real word boundary, which is
+  // what makes "honeydew" a melon hit and nothing else.
+  return String(raw ?? '').split(',').map(s => s.trim()).filter(Boolean)
+}
+
 export function cropTypeTerms(slug, cropType = null) {
   const terms = []
   if (slug) terms.push(String(slug))
   if (cropType?.display_name) terms.push(String(cropType.display_name))
+  terms.push(...splitCropAliases(cropType?.search_aliases))
   return terms
 }
 

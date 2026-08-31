@@ -11,9 +11,12 @@
 //   · Search.jsx           — whole-garden search, client filter. Had NO crop-type term at all.
 //   · PlantingSelect.jsx   — the typed /log picker. Had the slug, unreachable by its spoken form.
 //   · VarietyPicker.jsx    — the variety combobox. Had NO crop-type term at all.
-// NOT covered — routed, not forgotten: VoiceHarvest.jsx's plantingAliases() (another lane owns that
-// file) and crop_types.search_aliases, which is deliberately never SELECTed into a response shape
-// and so cannot reach any client until the ?view=picker projection widens. See the lane report.
+// The two residuals this file originally pinned are CLOSED by OPS-CROPTYPEALIASCLIENT-001 and their
+// tests are inverted in place at the bottom. Search.jsx and PlantingSelect.jsx now hold the crop-type
+// vocabulary themselves (useCropTypes), and /api/varieties/crop-types selects search_aliases, so
+// display_name and the alias list reach all three surfaces. The ?view=picker projection did NOT have
+// to widen — the crop-type row arrives from the vocabulary endpoint, not from the planting payload.
+// The fourth surface, VoiceHarvest.jsx, is covered by VoiceHarvest.cropType.test.jsx.
 //
 // FIXTURES ARE REAL PROD ROWS, carried over verbatim from the recon file's prod read (garden_ro,
 // 2026-08-31), and the distribution is the point:
@@ -39,10 +42,14 @@ import Search from '../pages/Search.jsx'
 import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 
+// search_aliases carried verbatim from migrations/v4-croptypealias-001/0a-data.sql, which is the row
+// prod holds. Only 54 of the crop types have any alias at all and neither cucumber nor bunching_onion
+// is one of them — the nulls are as real as the melon string and are what keep the assertions below
+// honest about which column answered.
 const CROP_TYPES = [
-  { slug: 'cucumber', display_name: 'Cucumber', category: 'vegetable' },
-  { slug: 'melon', display_name: 'Melon', category: 'fruit' },
-  { slug: 'bunching_onion', display_name: 'Onion (bunching / scallion)', category: 'vegetable' },
+  { slug: 'cucumber', display_name: 'Cucumber', category: 'vegetable', search_aliases: null },
+  { slug: 'melon', display_name: 'Melon', category: 'fruit', search_aliases: 'cantaloupe, muskmelon, honeydew' },
+  { slug: 'bunching_onion', display_name: 'Onion (bunching / scallion)', category: 'vegetable', search_aliases: null },
 ]
 
 // The wide /api/plants shape Search reads (variety_ref carries all 21 subfields there).
@@ -159,20 +166,51 @@ describe('the crop DISPLAY NAME, where the surface holds the vocabulary', () => 
     expect(await typeInVarietyPicker('scallion')).toEqual(['cv-3'])
   })
 
-  it('RESIDUAL — the other two surfaces cannot: display_name is not on their wire', async () => {
-    expect(await typeInWholeGardenSearch('scallion')).toEqual([])
+  // RESIDUAL CLOSED by OPS-CROPTYPEALIASCLIENT-001. Both surfaces now hold the crop-type vocabulary
+  // themselves (useCropTypes), so display_name is on their wire after all — it just arrives from the
+  // vocabulary endpoint rather than from the planting/variety payload, which is why no projection had
+  // to widen. Inverted rather than deleted, per the note the residual was written with.
+  it('the other two surfaces reach it too, now that they hold the vocabulary', async () => {
+    expect(await typeInWholeGardenSearch('scallion')).toEqual(['pl-tokyo'])
     cleanup()
-    expect(await typeInPicker('scallion')).toEqual([])
+    expect(await typeInPicker('scallion')).toEqual(['pl-tokyo'])
+  })
+})
+
+// ── OPS-CROPTYPEALIASCLIENT-001 — the alias axis, on the three typed surfaces ──────────────────────
+// The residual this replaces read: '"cantaloupe" reaches no client at all: search_aliases is
+// server-only'. /api/varieties/crop-types now selects that column, so all three answer it.
+//
+// This is the ONLY crop-type term that cannot be reached by any other route. 'cucumber' is the slug,
+// 'scallion' is inside the display name — but "cantaloupe" shares no characters with "melon", so a
+// hit here can ONLY have come from search_aliases. That is what makes these three assertions
+// non-vacuous without needing a separate control.
+describe("Dave's acceptance sentence — \"I know it is a cantaloupe\"", () => {
+  it('whole-garden search: "cantaloupe" finds Charentais', async () => {
+    expect(await typeInWholeGardenSearch('cantaloupe')).toEqual(['pl-char'])
   })
 
-  it('RESIDUAL — "cantaloupe" reaches no client at all: search_aliases is server-only', async () => {
-    // crop-types-columns.test.js pins that search_aliases is never SELECTed into a response shape.
-    // Until that changes deliberately, this half of the row\'s acceptance needs the server slice.
-    expect(await typeInWholeGardenSearch('cantaloupe')).toEqual([])
+  it('typed /log picker: "cantaloupe" finds Charentais', async () => {
+    expect(await typeInPicker('cantaloupe')).toEqual(['pl-char'])
+  })
+
+  it('variety picker: "cantaloupe" finds Charentais', async () => {
+    expect(await typeInVarietyPicker('cantaloupe')).toEqual(['cv-2'])
+  })
+
+  // The column is comma-separated TEXT ('cantaloupe, muskmelon, honeydew'), so the SECOND and THIRD
+  // entries are the ones that prove it was split rather than substring-matched against the raw
+  // string. A raw-string matcher would pass the first assertion above and these as well — what it
+  // could not do is reject a needle that spans the separator, which the last case pins.
+  it('every alias in the list resolves, not just the first', async () => {
+    expect(await typeInWholeGardenSearch('muskmelon')).toEqual(['pl-char'])
     cleanup()
-    expect(await typeInPicker('cantaloupe')).toEqual([])
-    cleanup()
-    expect(await typeInVarietyPicker('cantaloupe')).toEqual([])
+    expect(await typeInWholeGardenSearch('honeydew')).toEqual(['pl-char'])
+  })
+
+  it('a needle spanning the comma separator matches nothing', async () => {
+    // looseKey strips whitespace but NOT commas, so against the raw column text this WOULD hit.
+    expect(await typeInWholeGardenSearch('cantaloupe, musk')).toEqual([])
   })
 })
 

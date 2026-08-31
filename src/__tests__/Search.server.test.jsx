@@ -43,14 +43,16 @@ vi.mock('../lib/featureFlags.js', async (importActual) => ({
   PROJECTS_HIDDEN: false,
 }))
 
-vi.mock('../lib/api.js', () => ({
-  useApiFetch: () => ({
-    fetch: async (path, options) => {
-      if (path.startsWith('/api/search')) return searchImpl(path, options)
-      return SAMPLE[path] ?? []
-    },
-  }),
-}))
+// One `fetch` for the whole factory, not one per useApiFetch() call — the real hook useCallbacks it
+// (lib/api.js:310). A per-call identity re-runs every consumer effect keyed on `[fetch]` on every
+// render; Search mounts useCropTypes, whose effect sets state, so the unstable form spins forever.
+vi.mock('../lib/api.js', () => {
+  const fetch = async (path, options) => {
+    if (path.startsWith('/api/search')) return searchImpl(path, options)
+    return SAMPLE[path] ?? []
+  }
+  return { useApiFetch: () => ({ fetch }) }
+})
 vi.mock('../lib/transcribe.js', () => ({ isTranscriptionSupported: () => false, startLiveTranscription: () => ({ stop() {}, cancel() {} }) }))
 
 import Search from '../pages/Search.jsx'

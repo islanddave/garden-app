@@ -13,9 +13,10 @@
 // The two normalisation fixes (looseKey treating '_' as a separator, and voiceFuzzyMatch's tokeniser
 // agreeing) are what actually close the leg, and they cost no network.
 //
-// The one word that would genuinely add reach is a search_alias, and NO client can see that column.
-// That gap is PINNED below rather than left implied, so it surfaces as a red test the day someone
-// widens the projection.
+// The one word that would genuinely add reach is a search_alias. That gap was PINNED here rather
+// than left implied, and OPS-CROPTYPEALIASCLIENT-001 closed it: /api/varieties/crop-types selects
+// search_aliases, the page decorates each planting row with its crop's aliases, and the pin is
+// inverted at the bottom of this file into the assertion it was written to become.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
@@ -48,12 +49,28 @@ const PLANTS = [
 
 let mic
 
+// OPS-CROPTYPEALIASCLIENT-001 — the crop-type vocabulary this page now fetches, with the alias
+// strings prod actually holds (migrations/v4-croptypealias-001/0a-data.sql). Only 54 of the crop
+// types carry an alias and neither cucumber nor bunching_onion is one, so those nulls are real: they
+// are what proves the "bunching onion" and "cucumber" cases above still resolve through the SLUG and
+// did not quietly start depending on this fetch.
+const CROP_TYPES = [
+  { slug: 'bunching_onion', display_name: 'Onion (bunching / scallion)', search_aliases: null },
+  { slug: 'cucumber', display_name: 'Cucumber', search_aliases: null },
+  { slug: 'melon', display_name: 'Melon', search_aliases: 'cantaloupe, muskmelon, honeydew' },
+]
+
 beforeEach(() => {
   mic = installFakeSpeechRecognition(vi)
   apiFetchSpy.mockReset()
-  apiFetchSpy.mockImplementation((url) => (String(url).startsWith('/api/plants')
-    ? Promise.resolve({ plants: PLANTS })
-    : Promise.resolve({ id: 'evt-1' })))
+  apiFetchSpy.mockImplementation((url) => {
+    const u = String(url)
+    // Ordered before /api/plants is irrelevant here but the crop-types check must precede any
+    // prefix that would swallow it; keep the most specific path first as a habit.
+    if (u.startsWith('/api/varieties/crop-types')) return Promise.resolve(CROP_TYPES)
+    if (u.startsWith('/api/plants')) return Promise.resolve({ plants: PLANTS })
+    return Promise.resolve({ id: 'evt-1' })
+  })
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
@@ -112,25 +129,35 @@ describe('saying the crop type reaches the planting', () => {
     expect(record()).not.toContain('Tokyo Long White')
   })
 
-  it('KNOWN GAP — "cantaloupe" does NOT reach Charentais on any client, voice included', async () => {
-    // This pins a gap, not a requirement, and it is deliberately written to FAIL when the gap closes.
-    //
-    // Charentais sits under crop type 'melon', display 'Melon'. No crop type is NAMED cantaloupe;
-    // the word lives only in crop_types.search_aliases ('melon' -> 'cantaloupe, muskmelon, honeydew',
-    // migrations/v4-croptypealias-001/0a-data.sql). Whole-garden search matches that column
-    // server-side (lambda/dashboard/handlers.js:1117); no client can, because
-    // /api/varieties/crop-types does not select it (lambda/varieties/index.js:135). So Dave's own
-    // acceptance sentence holds on the server leg and on none of the four client filters.
-    //
-    // TO WHOEVER WIDENS THAT PROJECTION: this test is SUPPOSED to go red. Invert it — assert
-    // Charentais IS selected — rather than deleting it, so the pin reports the fix.
+  // GAP CLOSED by OPS-CROPTYPEALIASCLIENT-001 — inverted in place, as the pin asked for.
+  //
+  // Charentais sits under crop type 'melon', display 'Melon'. No crop type is NAMED cantaloupe; the
+  // word lives only in crop_types.search_aliases ('melon' -> 'cantaloupe, muskmelon, honeydew',
+  // migrations/v4-croptypealias-001/0a-data.sql). /api/varieties/crop-types now selects that column
+  // and this page decorates each planting row with its crop's aliases, so the word reaches the
+  // matcher. This is the ONE crop-type term with no other route: 'melon' is the slug and 'Melon' is
+  // the display name, but "cantaloupe" shares no characters with either — a hit can only be the alias.
+  it('"cantaloupe" reaches Charentais, which no other crop-type term could', async () => {
     const rec = await startListening()
     await speak(rec, 'cantaloupe')
-    expect(record()).not.toContain('Charentais')
-    expect(statusText()).toContain('Nothing matched')
-    // And the planting IS otherwise reachable, so this is a gap in the crop-type vocabulary rather
-    // than a broken fixture.
-    await speak(rec, 'melon')
     expect(record()).toContain('Charentais')
+    expect(record()).not.toContain('Suyo Long')
+  })
+
+  it('the whole alias list resolves, not just its first entry', async () => {
+    // Proves the comma-separated column was SPLIT. 'muskmelon' and 'honeydew' sit second and third.
+    const rec = await startListening()
+    await speak(rec, 'honeydew')
+    expect(record()).toContain('Charentais')
+  })
+
+  it('an alias belonging to a DIFFERENT crop still matches nothing', async () => {
+    // Non-vacuity floor for the two above: 'rocket' is a real alias in the migration (arugula), and
+    // no planting here is an arugula. A page that had started matching the whole vocabulary rather
+    // than each row's own crop would satisfy the cases above and fail this one.
+    const rec = await startListening()
+    await speak(rec, 'rocket')
+    expect(statusText()).toContain('Nothing matched')
+    expect(record()).not.toContain('Charentais')
   })
 })
