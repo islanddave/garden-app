@@ -34,6 +34,7 @@ import useScrollRestore from '../hooks/useScrollRestore.js'
 // different days across the midnight boundary.
 import { etDay } from '../lib/harvestSummary.js'
 import { HARVEST_TZ } from '../lib/growYear.js'
+import { snapshotFiles } from '../lib/fileSnapshot.js'
 
 // Device-local memory of the zone filter, mirroring LogMany.jsx's SCOPE_KEY ('quicklog.lastScope').
 // Same namespaced-by-surface shape, same write-on-change / validate-on-restore contract.
@@ -167,6 +168,10 @@ export default function PhotoLibrary() {
   // Per-file errors live on the items themselves; this exists so the count is visible without
   // scanning the strip, NOT as a replacement for them.
   const [batchSummary,  setBatchSummary]  = useState(null)
+  // BUG-PHOTOSTAGEDREAD-001: { done, total } while the picked files are being copied out of the
+  // picker's handles, else null. Picking is no longer instant — this is what stops a tap on twenty
+  // photos looking like a dead button.
+  const [stagedPreparing, setStagedPreparing] = useState(null)
   // Photos with no parent, as of the last UNSCOPED list fetch. `null` means "not measured yet" and
   // is DOCUMENTATION, not mechanism — the badge is suppressed by the `> 0` test at the render site,
   // which is false for null and 0 alike, so seeding this with 0 would change nothing observable. A
@@ -456,20 +461,66 @@ export default function PhotoLibrary() {
     el.click()
   }
 
-  function onStagedPick(e) {
+  // BUG-PHOTOSTAGEDREAD-001 — the bytes are COPIED here, at pick time, not held as picker handles.
+  //
+  // Measured on Dave's Android against prod v4.80.0: he picked 10, one uploaded and nine failed with
+  // Chrome's "requested file could not be read ... permission problems that have occurred after a
+  // reference to a file was acquired". This function used to stage the raw `File` objects, and
+  // uploadStaged() below reads them one at a time on the Upload tap — by which point Android had
+  // reclaimed the temporary picker handles. Full mechanism in lib/fileSnapshot.js; the short version
+  // is that the first photo's decode is itself the memory pressure that reclaims the other nine, and
+  // the thumbnails keep rendering the whole time because an object URL is a pointer, not a copy.
+  //
+  // Now async, which is why the picker shows a "Preparing" line: this tap does real I/O now (one
+  // memcpy per photo). That cost buys the failure moving to where it can be acted on — an unreadable
+  // photo is reported while the user is still in the picker, instead of after they have chosen a
+  // planting and pressed Upload.
+  async function onStagedPick(e) {
     const picked = Array.from(e.target.files ?? [])
     e.target.value = ''   // re-picking the same file must refire onChange
     if (!picked.length) return
     setUploadErr(null)
     setBatchSummary(null)
+
+    // Room is computed twice on purpose. Here it bounds how much we bother COPYING; the updater
+    // below re-derives it from `prev` and is the authority on what is actually staged, because this
+    // function now awaits and `stagedItems` may be a render behind by the time it resumes.
+    const roomNow = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_STAGED - stagedItems.length) : 1
+    const candidates = picked.slice(0, roomNow)
+    if (!candidates.length) return
+
+    setStagedPreparing({ done: 0, total: candidates.length })
+    let ok = [], failed = []
+    try {
+      ;({ ok, failed } = await snapshotFiles(
+        candidates,
+        (done, total) => setStagedPreparing({ done, total }),
+      ))
+    } finally {
+      setStagedPreparing(null)
+    }
+
+    if (failed.length) {
+      // Named, not counted: with nine failures the user needs to know WHICH photo to re-pick.
+      const names = failed.map(f => f.file?.name).filter(Boolean)
+      setUploadErr(
+        `${failed.length} of ${candidates.length} couldn't be read and ${failed.length === 1 ? 'was' : 'were'} not added` +
+        `${names.length ? ` (${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''})` : ''}` +
+        '. Re-pick from the gallery and try again.'
+      )
+    }
+    if (!ok.length) return
+
     setStagedItems(prev => {
       const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_STAGED - prev.length) : 1
-      const accepted = picked.slice(0, room)
+      const accepted = ok.slice(0, room)
       if (!accepted.length) return prev
       // Single mode REPLACES, which is what "Change photo" has always meant here.
       const keep = PHOTO_MULTI_ATTACH_ENABLED ? prev : []
       if (!PHOTO_MULTI_ATTACH_ENABLED) for (const it of prev) URL.revokeObjectURL(it.url)
-      return keep.concat(accepted.map(file => ({
+      // The object URL is minted from the SNAPSHOT, not the original. Pointing it at the handle we
+      // just replaced would leave the preview dying on exactly the schedule this fix exists to stop.
+      return keep.concat(accepted.map(({ file }) => ({
         id: nextStagedId(), file, url: URL.createObjectURL(file), status: 'staged', error: null,
       })))
     })
@@ -1120,6 +1171,13 @@ export default function PhotoLibrary() {
               {batchSummary && (
                 <p role="status" data-testid="pl-batch-summary" style={{ margin: 0, fontSize: '0.8rem', color: P.mid }}>
                   {batchSummary}
+                </p>
+              )}
+              {/* BUG-PHOTOSTAGEDREAD-001: picking now copies the bytes, so a twenty-photo pick has a
+                  visible duration. role="status" for the same reason the summary above has it. */}
+              {stagedPreparing && (
+                <p role="status" data-testid="pl-staged-preparing" style={{ margin: 0, fontSize: '0.8rem', color: P.mid }}>
+                  Preparing {stagedPreparing.done} of {stagedPreparing.total}…
                 </p>
               )}
 

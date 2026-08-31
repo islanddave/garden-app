@@ -44,6 +44,7 @@ const nextPhotoId = () => `evphoto-${++eventPhotoSeq}`
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 // BUG-DISCLOSURETAPSIZE-001: the tap floor is a token, not a literal repeated at four call sites.
 import { T } from '../components/forms/formStyles.js'
+import { snapshotFile, snapshotFiles } from '../lib/fileSnapshot.js'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
@@ -777,6 +778,9 @@ export default function EventNew() {
 
   // V1.2a-2 Wave 3: non-fatal notice (e.g. deep-link project not found).
   const [notice, setNotice] = useState(null)
+  // BUG-PHOTOSTAGEDREAD-001: { done, total } while picked files are copied out of the picker's
+  // handles, else null. Picking does real I/O now and must not look like a dead tap.
+  const [photoPreparing, setPhotoPreparing] = useState(null)
 
   // V4-PHOTOBULK-001 S2 (design V100 §3 B1) — the harvest/observation form stages N photos, not one.
   // `photoItems` is [{ id, file, url }] in pick order; `photoItems[0]` is the old `photoFile` and the
@@ -969,7 +973,20 @@ export default function EventNew() {
     // parks a single File by construction (QuickActions.jsx:124), so multi changes nothing here
     // except the container it goes into.
     const f = takePendingCapture()
-    if (f) setPhotoItems([{ id: nextPhotoId(), file: f, url: URL.createObjectURL(f) }])
+    if (f) {
+      const id = nextPhotoId()
+      setPhotoItems([{ id, file: f, url: URL.createObjectURL(f) }])
+      // BUG-PHOTOSTAGEDREAD-001, applied WITHOUT changing this effect's timing. The parked File is
+      // held until Save, which is the same read-much-later exposure the pickers had — but this claim
+      // must stay synchronous (it races a remount for module state that is cleared on read, see
+      // BUG-SNAPATTACH-001 below), so the file is staged first and the copy swapped in when it
+      // lands. Fire-and-forget on purpose: on failure the original stays, which is exactly today's
+      // behaviour, so this can only improve the odds and never cost the photo.
+      snapshotFile(f).then(
+        snap => setPhotoItems(prev => prev.map(p => (p.id === id ? { ...p, file: snap } : p))),
+        () => {},
+      )
+    }
     // BUG-SNAPATTACH-001: the claim can MISS — the park is module state cleared on read, so a
     // remount between park and claim (overlay host, StrictMode, any route churn) consumes it and
     // the second mount finds nothing. Silence here is what produced photo-typed events carrying no
@@ -1357,18 +1374,53 @@ export default function EventNew() {
   // trip to the picker adds rather than replaces). Flag-off takes the first file only, which is the
   // shipped behaviour: the input carries no `multiple` attribute in that branch, so the FileList is
   // one entry anyway and the slice is a belt-and-braces guard, not the mechanism.
-  function handlePhotoChange(e) {
+  // BUG-PHOTOSTAGEDREAD-001 — copy the bytes at pick time. These items are held until Save, which is
+  // the longest gap between pick and read anywhere in the app: the user still has to choose a
+  // planting, a kind and a date. Android reclaims picker handles well inside that window, and the
+  // read failure that follows is Chrome's "could not be read ... after a reference to a file was
+  // acquired" — measured on prod v4.80.0 in the Photo Library's copy of this pattern, 9 of 10 lost.
+  // Mechanism and why a preview keeps rendering the whole time: lib/fileSnapshot.js.
+  async function handlePhotoChange(e) {
     const picked = Array.from(e.target.files ?? [])
     e.target.value = ''
     if (!picked.length) return
+
+    // Bounds the copying only; the updater below re-derives room from `prev` and is the authority,
+    // since this function now awaits and `photoItems` can be a render behind when it resumes.
+    const roomNow = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - photoItems.length) : 1
+    const candidates = picked.slice(0, roomNow)
+    if (!candidates.length) return
+
+    setPhotoPreparing({ done: 0, total: candidates.length })
+    let ok = [], failed = []
+    try {
+      ;({ ok, failed } = await snapshotFiles(
+        candidates,
+        (done, total) => setPhotoPreparing({ done, total }),
+      ))
+    } finally {
+      setPhotoPreparing(null)
+    }
+
+    if (failed.length) {
+      const names = failed.map(f => f.file?.name).filter(Boolean)
+      setNotice(
+        `${failed.length} of ${candidates.length} couldn't be read and ${failed.length === 1 ? 'was' : 'were'} not added` +
+        `${names.length ? ` (${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''})` : ''}` +
+        '. Re-pick from the gallery and try again.'
+      )
+    }
+    if (!ok.length) return
+
     setPhotoItems(prev => {
       const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - prev.length) : 1
-      const accepted = picked.slice(0, room)
+      const accepted = ok.slice(0, room)
       if (!accepted.length) return prev
       // Replace, not append, in single mode — re-picking has always swapped the staged file.
       const next = PHOTO_MULTI_ATTACH_ENABLED ? prev : []
       if (!PHOTO_MULTI_ATTACH_ENABLED) for (const it of prev) URL.revokeObjectURL(it.url)
-      return next.concat(accepted.map(file => ({ id: nextPhotoId(), file, url: URL.createObjectURL(file) })))
+      // Object URL from the SNAPSHOT — one taken from the replaced handle dies on the same schedule.
+      return next.concat(accepted.map(({ file }) => ({ id: nextPhotoId(), file, url: URL.createObjectURL(file) })))
     })
   }
 
@@ -2053,6 +2105,14 @@ export default function EventNew() {
                 The strip below only differs at N > 1, where each item shrinks to a 96px tile so a
                 handful fits without pushing the rest of the form off screen. The single case is the
                 overwhelmingly common one and was not worth re-laying-out to serve the new one. */}
+            {/* BUG-PHOTOSTAGEDREAD-001: picking copies the bytes now, so a multi-photo pick has a
+                visible duration. Sits above the strip so it is the first thing that moves. */}
+            {photoPreparing && (
+              <p role="status" data-testid="eventnew-photo-preparing"
+                 style={{ margin: `0 0 ${T.space.sm}px`, fontSize: T.type.sm, color: P.mid }}>
+                Preparing {photoPreparing.done} of {photoPreparing.total}…
+              </p>
+            )}
             {photoItems.length > 0 ? (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {photoItems.map((item, idx) => {

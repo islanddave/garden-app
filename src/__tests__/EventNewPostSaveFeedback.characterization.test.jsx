@@ -97,11 +97,16 @@ async function pickPlanting(id) {
   fireEvent.click(await screen.findByTestId(`ps-opt-${id}`))
 }
 
-function stagePhoto(container) {
+// BUG-PHOTOSTAGEDREAD-001 made the pick handler async — it copies each picked file's bytes out of
+// the picker's handle before staging anything, so the item is no longer on screen by the time
+// fireEvent.change returns. Awaited here rather than at the four call sites; every assertion in this
+// file is unchanged, and what it characterizes (a photo failure reaching both the strip and the
+// toast) is untouched by the copy.
+async function stagePhoto(container) {
   const input = container.querySelector('input[type="file"]')
   expect(input).not.toBeNull()
   const file = new File(['x'], 'shot.jpg', { type: 'image/jpeg' })
-  fireEvent.change(input, { target: { files: [file] } })
+  await act(async () => { fireEvent.change(input, { target: { files: [file] } }) })
 }
 
 beforeEach(() => {
@@ -253,7 +258,7 @@ describe('S5a characterization — photoError reaches both the strip and the toa
     const { container } = renderInOverlay('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    stagePhoto(container)
+    await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
     // the save itself succeeded — the photo failure is non-fatal
@@ -278,7 +283,7 @@ describe('S5a characterization — photoError reaches both the strip and the toa
     const { container } = renderFullPage('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    stagePhoto(container)
+    await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
     expect(postCalls.length).toBe(1)
@@ -296,7 +301,7 @@ describe('S5a characterization — photoError reaches both the strip and the toa
     const { container } = renderInOverlay('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    stagePhoto(container)
+    await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /undo/i })) })
 
@@ -310,7 +315,7 @@ describe('S5a characterization — photoError reaches both the strip and the toa
     const { container } = renderInOverlay('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    stagePhoto(container)
+    await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(screen.getByRole('status').textContent).toMatch(/Logged/)
     expect(screen.queryByRole('alert')).toBeNull()
