@@ -441,7 +441,15 @@ export default function VoiceHarvest() {
           },
         }),
       })
-      const eventId = res?.eventId ?? res?.event?.id ?? null
+      // THE KEY THE API ACTUALLY RETURNS. lambda/events/index.js:3890 answers `resp(201, {
+      // ...newEvent, … })` where newEvent is the event_log row (`:3495`), so the id is a TOP-LEVEL
+      // `id` — there is no `eventId` key and no nested `event` object anywhere in lambda/events.
+      // This read was `res?.eventId ?? res?.event?.id`, so it resolved to null on every real
+      // response, the Undo button (`{!r.undone && r.eventId && …}`) never rendered on device, and
+      // this page's own "every committed row carries an Undo" was false in production. Its test was
+      // green because the fixture had been written to match the client instead of the producer.
+      // `eventId` is kept as a tail read only because CaptureFlow.jsx:443 tolerates both shapes.
+      const eventId = res?.id ?? res?.eventId ?? null
       hapticSaveCommitted()
       const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ''}`
       say('ok', `Saved ${label} — ${said}`)
@@ -590,6 +598,19 @@ export default function VoiceHarvest() {
       unmatchedRef.current = rescued === null && hits.length === 1 ? null : result.text
       if (hits.length === 0) {
         hapticDigitRejected()
+        // A FAILED RE-SELECTION MUST NOT LEAVE THE OLD CROP SELECTED (BUG-VOICEFAILSILENT-001).
+        // Measured sequence: "Suyo Long" selects, "Marketmore" is misheard and matches nothing, the
+        // banner says so — and then "three count" and "next" each overwrite that one message, and
+        // the row lands against Suyo Long announced as a clean success. The failure was told once
+        // and buried twice. This is the SAME harm as the bare-number reselect this release fixes,
+        // reached by another route: a save against a plant the user never confirmed.
+        //
+        // Clearing the SELECTION only, not the record. The count and weight stay, so re-saying the
+        // name is one utterance and nothing already spoken is lost; and until a name lands, the
+        // existing "still need a crop" refusal in saveRecord makes `next` fail loudly instead of
+        // committing. Chosen over marking it stale or blocking the save because it needs no new
+        // state to drift and it reuses a refusal that is already tested.
+        setSelected(null); selectedRef.current = null
         // The phrase survives into the candidate-less state so the manual picker below can still
         // teach it. Without this, a total miss — the case most worth learning from — is the one case
         // that cannot be taught.
@@ -629,6 +650,10 @@ export default function VoiceHarvest() {
         return
       }
       hapticDigitRejected()
+      // AMBIGUOUS IS ALSO UNCONFIRMED, so the previous crop goes here too. A list on screen is a
+      // question, not an answer — until one is tapped the user has chosen nothing, and leaving the
+      // old plant selected behind the list is the same silent-wrong-save route as the miss above.
+      setSelected(null); selectedRef.current = null
       // THE WHOLE HIT LIST, not the eight that fit. The render caps the buttons; holding the full
       // list here is what lets the card say how many it is hiding, and a cap the user can see is a
       // different thing from a truncation they cannot. A crop-type utterance reaches 46 live tomato

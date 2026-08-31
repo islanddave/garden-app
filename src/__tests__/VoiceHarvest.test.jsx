@@ -22,10 +22,16 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy, getT
 vi.mock('../lib/haptics.js', () => ({
   hapticSaveCommitted: vi.fn(), hapticSaveFailed: vi.fn(),
   hapticDigitAccepted: vi.fn(), hapticDigitRejected: vi.fn(), hapticUndoApplied: vi.fn(),
+  hapticMatchUncertain: vi.fn(),
 }))
+// The mocked module itself, so the cue tests can assert WHICH symbol fired. haptics.test.js proves the
+// patterns are distinct; these prove the page reaches for the right one, which is the half that was
+// wrong — a guess fired the success cue and a dead mic fired nothing at all.
+import * as haptics from '../lib/haptics.js'
 
 import VoiceHarvest, {
   matchPlantings, matchPlantingsWithRescue, resolveCommandCollision, plantingAliases, resolveOneBreath,
+  namesAPlantingExactly, CANDIDATE_LIMIT,
 } from '../pages/VoiceHarvest.jsx'
 import { indexAliases } from '../lib/voiceAliases.js'
 import { looseKey } from '../lib/comboboxInput.js'
@@ -42,6 +48,38 @@ const PLANTS = [
   planting('p4', 'Pineapple Tomatillo', 'tomatillo', 'count'),
 ]
 
+// THE REAL CREATE RESPONSE, taken from the producer rather than invented. lambda/events/index.js:3890
+// returns `resp(201, { ...newEvent, … })` and `:3495` builds newEvent from the event_log row, so the
+// id arrives as a TOP-LEVEL `id`. There is no `eventId` key and no nested `event` object anywhere in
+// lambda/events — every `eventId` in that file is an internal variable.
+//
+// The previous fixture was `{ eventId: 'evt-1' }`, a shape the API has never returned. That is why the
+// undo test below was green against a client that could not find the id in production: the Undo button
+// requires `r.eventId`, so on device it never rendered and the session's stated "every committed row
+// carries an Undo" was false. A fixture invented to match the client cannot falsify the client.
+const EVENT_ID = '9c4b1f2e-6a7d-4f10-8b33-5d2e0a71c4ab'
+const createdEvent = () => ({
+  id: EVENT_ID,
+  event_type: 'harvest',
+  event_date: '2026-08-31',
+  plant_id: 'p1',
+  project_id: null,
+  notes: null,
+  private_notes: null,
+  quantity: null,
+  is_public: false,
+  has_photo: false,
+  metadata: { harvest_input_source: 'voice' },
+  created_at: '2026-08-31T16:00:00.000Z',
+  harvest: { id: 'h-1', quantity: 3, unit: 'count', quality_rating: null, weight_grams: null },
+  newly_earned_achievements: [],
+  updated_streak: 1,
+  xp_gained: 5,
+  daily_xp_remaining: 95,
+  level: 3,
+  leveled_up: false,
+})
+
 let mic
 
 beforeEach(() => {
@@ -49,7 +87,7 @@ beforeEach(() => {
   apiFetchSpy.mockReset()
   apiFetchSpy.mockImplementation((url) => {
     if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: PLANTS })
-    return Promise.resolve({ eventId: 'evt-1' })
+    return Promise.resolve(createdEvent())
   })
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -257,11 +295,47 @@ describe('VoiceHarvest — the four ways a spoken record must fail LOUDLY', () =
   })
 
   it('says so when nothing matched, instead of leaving the last crop selected', async () => {
+    // THE SECOND HALF OF THIS TEST'S OWN NAME, which it did not previously assert. It checked the
+    // banner and stopped, so "instead of leaving the last crop selected" described behaviour the
+    // code did not have: the failed re-selection left Suyo Long in the Crop slot, and `say` then
+    // overwrote the failure with the next message. See the end-to-end below for what that cost.
     const rec = await startListening()
     await speak(rec, 'Suyo Long')
     await speak(rec, 'rhubarb')
     expect(statusText()).toContain('Nothing matched')
     expect(statusText()).toContain('rhubarb')
+    expect(record()).not.toContain('Suyo Long')
+  })
+
+  it('drops the crop when the name matched MANY, so an unpicked list cannot be saved against', async () => {
+    // Same hole, other branch. An ambiguous name puts a list on screen and until one is tapped the
+    // user has confirmed nothing — but the previous crop stayed selected behind the list.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'cucumber')
+    expect(statusText()).toContain('2 match')
+    expect(screen.getByTestId('voice-harvest-candidates')).toBeTruthy()
+    expect(record()).not.toContain('Suyo Long')
+  })
+
+  it('a "next" after a failed re-selection refuses, instead of saving against the old crop', async () => {
+    // THE HARM, end to end, and the reason this outranked everything else in the lane. Measured
+    // sequence: the failure is announced ONCE and then buried under two successful-sounding
+    // messages, and the row that lands names a plant he never confirmed — eyes-off, indistinguishable
+    // from success. Identical in effect to the bare-number reselect this release already fixed,
+    // reached by a completely different route.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'rhubarb')       // misheard crop — matches nothing
+    await speak(rec, 'three count')   // banner overwrites the failure
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    expect(harvestPosts()).toHaveLength(0)
+    expect(statusText()).toContain('Not saved')
+    expect(statusText()).toContain('crop')
+    vi.useRealTimers()
   })
 
   it('routes a near-miss of a command to "say it again", never to a different action', async () => {
@@ -324,7 +398,7 @@ describe('VoiceHarvest — the mic itself', () => {
 
     await act(async () => { fireEvent.click(screen.getByLabelText(/Undo Suyo Long/)) })
     await waitFor(() => expect(
-      apiFetchSpy.mock.calls.some(([u, o]) => u === '/api/events/evt-1' && o?.method === 'DELETE'),
+      apiFetchSpy.mock.calls.some(([u, o]) => u === `/api/events/${EVENT_ID}` && o?.method === 'DELETE'),
     ).toBe(true))
     expect(statusText()).toContain('Removed Suyo Long')
     vi.useRealTimers()
@@ -663,5 +737,206 @@ describe('V5-VOICEONEBREATH-001 — one sentence, whole record', () => {
       { name: 'two', values: [{ kind: 'quantity', value: 9, unit: 'count' }] },
     ]
     expect(resolveOneBreath(TWINS, cands)).toBeNull()
+  })
+})
+
+// ── BUG-VOICEFAILSILENT-001 — the channel that reaches him when he is not looking ─────────────────
+//
+// Dave, verbatim: "I DON'T JUST MISS IT COMPLETELY AND BELIEVE IT WAS FINE. A SILENT FAIL IS A LOST
+// LOG." The page already announces every outcome on a banner. These pin the two places where the
+// banner was the ONLY channel and the hand was told either nothing or the wrong thing — which is the
+// same as being told nothing, since he is holding a cucumber and looking at the bed.
+describe('BUG-VOICEFAILSILENT-001 — mic death and an uncertain match reach the hand', () => {
+  const cues = () => [
+    haptics.hapticSaveFailed, haptics.hapticMatchUncertain,
+    haptics.hapticDigitAccepted, haptics.hapticDigitRejected,
+  ]
+  beforeEach(() => { for (const c of cues()) c.mockClear() })
+
+  it.each([['not-allowed'], ['service-not-allowed'], ['audio-capture']])(
+    'buzzes the failure cue when the mic dies with %j, not just a banner', async (code) => {
+      // HIGHEST LOSS PER OCCURRENCE in the whole flow: capture is over, and until he happens to look
+      // down every further utterance is gone. It was signalled on the one channel he is not using.
+      const rec = await startListening()
+      await act(async () => { rec.deliverError(code) })
+      expect(haptics.hapticSaveFailed).toHaveBeenCalled()
+      expect(statusText().length).toBeGreaterThan(0)
+    })
+
+  it('stays silent on a no-speech error, which is ordinary and re-arms', async () => {
+    // Non-vacuity for the pair above. If the cue fired on every onerror it would fire constantly in a
+    // continuous session and mean nothing by the second bed.
+    const rec = await startListening()
+    await act(async () => { rec.deliverError('no-speech') })
+    expect(haptics.hapticSaveFailed).not.toHaveBeenCalled()
+  })
+
+  it('buzzes when the mic cannot restart itself — the dead-but-looks-live case', async () => {
+    // The re-arm is what makes this page hands-free. When it throws, hands-free is over; the banner
+    // says so and now so does the motor.
+    const rec = await startListening()
+    rec.start = () => { throw new Error('InvalidStateError') }
+    await act(async () => { rec.endSession() })
+    expect(haptics.hapticSaveFailed).toHaveBeenCalled()
+    expect(statusText()).toContain('could not restart')
+  })
+
+  it('a GUESSED match feels different from a match the matcher was sure of', async () => {
+    // The false-success class. This branch auto-selects on one hit whether the strict matcher
+    // answered or a rescue scored its way there — the banner says which, the hand could not, and a
+    // rescue onto the wrong plant then took the following "next" with it.
+    const DIGITS = [planting('p1', 'Suyo Long', 'cucumber'), planting('d1', '1884', 'tomato')]
+    apiFetchSpy.mockImplementation((url) => (String(url).startsWith('/api/plants')
+      ? Promise.resolve({ plants: DIGITS })
+      : Promise.resolve(createdEvent())))
+    const rec = await startListening()
+
+    await speak(rec, 'Suyo Long')                 // strict — the matcher was sure
+    expect(haptics.hapticDigitAccepted).toHaveBeenCalled()
+    expect(haptics.hapticMatchUncertain).not.toHaveBeenCalled()
+
+    for (const c of cues()) c.mockClear()
+    await speak(rec, 'eighteen eighty four')      // rescued by the number-word fold
+    expect(statusText()).toContain('Heard')
+    expect(haptics.hapticMatchUncertain).toHaveBeenCalled()
+    expect(haptics.hapticDigitAccepted).not.toHaveBeenCalled()
+  })
+})
+
+// ── The residuals the dev-state recon measured on 1a22ae2 ────────────────────────────────────────
+describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a number that is lost', () => {
+  // Dave's real digit-named planting, beside the real decoy that made the hold necessary: "two" is a
+  // substring of *Brentwood*. One fixture, both directions, so a change that satisfies one and
+  // breaks the other cannot pass.
+  const MIXED = [
+    planting('p1', 'Suyo Long', 'cucumber'),
+    planting('d1', '1884', 'tomato'),
+    planting('p7', 'Brentwood Leaf Lettuce', 'lettuce'),
+  ]
+  const useMixed = (plants = MIXED) => apiFetchSpy.mockImplementation((url) => (
+    String(url).startsWith('/api/plants')
+      ? Promise.resolve({ plants })
+      : Promise.resolve(createdEvent())))
+
+  it('switches to a planting whose WHOLE NAME is the number that was said', async () => {
+    // Case C. Before this, "1884" while another crop was selected was held as a pending quantity, so
+    // the digit route to that planting was unreachable while the word route still worked.
+    useMixed()
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '1884')
+    expect(statusText()).toContain('now say the count or the weight')
+    expect(record()).toContain('1884')
+    expect(record()).not.toContain('Suyo Long')
+    expect(record()).not.toContain('needs a unit')
+  })
+
+  it('still HOLDS a number that merely appears inside a name — the guard is not reopened', async () => {
+    // The whole reason case C is a trade and not a free fix. Whole-key equality cannot be satisfied
+    // by a proper substring, and this is that claim executed rather than argued.
+    useMixed()
+    expect(matchPlantings(MIXED, 'two').map((p) => p.id)).toEqual(['p7'])   // reachable by substring
+    expect(namesAPlantingExactly(MIXED, 'two')).toBe(false)                 // but not by whole name
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'two')
+    expect(record()).toContain('Suyo Long')
+    expect(record()).not.toContain('Brentwood')
+    expect(record()).toContain('needs a unit')
+  })
+
+  it('holds a number WORD even when a planting is named for it — the digit bound', async () => {
+    // The second bound, and the one that costs nothing today: measured against the 239 live
+    // plantings, zero number-word utterances key-match any alias. It exists so that a planting named
+    // "Three" cannot put every spoken count one mishearing away from switching crops.
+    const WORDY = [planting('p1', 'Suyo Long', 'cucumber'), planting('w1', 'Three', 'bean')]
+    expect(namesAPlantingExactly(WORDY, 'three')).toBe(false)
+    expect(namesAPlantingExactly(WORDY, '1884')).toBe(false)
+    useMixed(WORDY)
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    expect(record()).toContain('Suyo Long')
+    expect(record()).toContain('needs a unit')
+  })
+
+  it('takes a count against the planting it switched to — the fall-through lands somewhere usable', async () => {
+    useMixed()
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '1884')
+    await speak(rec, 'two count')
+    expect(record()).toContain('1884')
+    expect(record()).toContain('2 count')
+  })
+
+  it('SAYS the held number it threw away when the next utterance changes the plant', async () => {
+    // Case E. Dropping it is right — a value with no unit must never be applied — but dropping it
+    // silently is the defect: he spoke a 3, nothing on screen ever admitted it was gone, and "next"
+    // then refuses for a reason he has no way to connect to the utterance that caused it.
+    useMixed()
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'Brentwood')
+    expect(record()).toContain('Brentwood')
+    expect(statusText()).toContain('dropped 3')
+    expect(record()).not.toContain('needs a unit')
+  })
+
+  it('says it on an utterance it did not understand either, where the loss is least explicable', async () => {
+    useMixed()
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'text')
+    expect(statusText()).toContain("Didn't catch that")
+    expect(statusText()).toContain('dropped 3')
+  })
+
+  it('says NOTHING about a drop when the number gets its unit — non-vacuity for the note', async () => {
+    // If the note fired on the rejoin too it would be noise on the path that works, and it would no
+    // longer distinguish a lost value from a captured one.
+    useMixed()
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'count')
+    expect(record()).toContain('3 count')
+    expect(statusText()).toContain('two parts')
+    expect(statusText()).not.toContain('dropped')
+  })
+})
+
+describe('the candidate list says how much of itself it is hiding', () => {
+  // Dave logs by planting name, so this is not his path — but a crop-type utterance reaches 46 live
+  // tomatoes and the card rendered eight of them with nothing admitting the other 38 existed, which
+  // reads as "these are all of them". Ordering and ranking are deliberately untouched.
+  const many = (n) => Array.from({ length: n }, (_, i) => planting(`t${i}`, `Tomato ${i}`, 'tomato'))
+
+  it('counts the hits it did not render', async () => {
+    const TOMATOES = many(12)
+    apiFetchSpy.mockImplementation((url) => (String(url).startsWith('/api/plants')
+      ? Promise.resolve({ plants: TOMATOES })
+      : Promise.resolve(createdEvent())))
+    const rec = await startListening()
+    await speak(rec, 'tomato')
+
+    const card = screen.getByTestId('voice-harvest-candidates')
+    expect(card.querySelectorAll('button')).toHaveLength(CANDIDATE_LIMIT)
+    expect(card.textContent).toContain(`showing ${CANDIDATE_LIMIT} of 12`)
+  })
+
+  it('says nothing about a cap when the whole list fits', async () => {
+    const FEW = many(3)
+    apiFetchSpy.mockImplementation((url) => (String(url).startsWith('/api/plants')
+      ? Promise.resolve({ plants: FEW })
+      : Promise.resolve(createdEvent())))
+    const rec = await startListening()
+    await speak(rec, 'tomato')
+
+    const card = screen.getByTestId('voice-harvest-candidates')
+    expect(card.querySelectorAll('button')).toHaveLength(3)
+    expect(card.textContent).not.toContain('showing')
   })
 })
