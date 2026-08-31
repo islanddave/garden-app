@@ -18,6 +18,14 @@
       "url": "http://localhost:5325/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=844&n=5"
     },
     {
+      "name": "sheetcensus-harness",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "tests/harness/vite.harness.config.mjs", "--port", "5326"],
+      "port": 5326,
+      "autoPort": false,
+      "url": "http://localhost:5326/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=500&page=sheetcensus.html&case=editor"
+    },
+    {
       "name": "garden-app",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

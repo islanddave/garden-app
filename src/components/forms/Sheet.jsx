@@ -177,6 +177,28 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
 
   const maxHeight = size === 'full' ? 'calc(100dvh - env(safe-area-inset-top) - 8px)' : '85vh'
 
+  // BUG-SHEETOVERSHOOT-001 — the cap must govern the PAINTED box, and by default it does not.
+  // The panel is content-box (no reset in this app), so paddingTop 8 + paddingBottom 12 are added
+  // OUTSIDE maxHeight: at 390x500 with a full batch staged the cap resolved to 492px, the panel
+  // painted 512px, and since it is bottom:0 the extra 20px went out of the TOP of the screen — the
+  // grab handle at y=-4, the panel at y=-12. Measured, not reasoned: tests/harness/sheetcensus.jsx.
+  //
+  // SCOPED TO `full`, DELIBERATELY, and this is the whole reason this is a one-line change rather
+  // than a sizing-model change. 21 render sites use this component: 4 pass size='full', 16 pass
+  // peek, and App.jsx's OverlayHost forwards a per-route size (3 full routes, 1 peek) — 7 full
+  // surfaces against 17 peek. Peek has the same 20px arithmetic but CANNOT overshoot: its cap is
+  // 85vh, so the panel tops out at 15vh-20px from the top edge — positive on any viewport over
+  // ~133px, and measured at +55 on the worst case (390x500). Applying border-box there would fix
+  // nothing and would cost every peek sheet 20px of visible content; PhotoDeleteConfirm at 390x500
+  // (the keyboard-open geometry) measures 417px of content against a 425px cap, so it would flip
+  // from "fits whole" to "scrolls" for no defect. Peek's 85vh is 20px optimistic; it is inaccurate,
+  // not broken, and correcting it is a separate call with its own blast radius.
+  //
+  // Costs 20px of visible content on a `full` sheet that was ALREADY at its cap (492 -> 472 at
+  // vh=500) — unavoidable: 492px of content plus 20px of padding cannot paint inside a 492px
+  // budget. Those surfaces already scroll, so this lengthens a scroll rather than clipping anything.
+  const boxSizing = size === 'full' ? 'border-box' : 'content-box'
+
   return (
     <>
       <div
@@ -198,6 +220,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
           position: 'fixed',
           bottom: 0, left: 0, right: 0,
           maxHeight,
+          boxSizing,
           overflowY: 'auto',
           backgroundColor: P.white,
           borderRadius: '16px 16px 0 0',

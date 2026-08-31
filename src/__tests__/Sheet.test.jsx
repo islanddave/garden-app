@@ -147,6 +147,31 @@ describe('Sheet (V4-THEME-001)', () => {
     expect(screen.getByRole('dialog').style.maxHeight).toContain('dvh')
   })
 
+  // BUG-SHEETOVERSHOOT-001. WHAT THIS DOES NOT PROVE: jsdom has no layout engine — every
+  // getBoundingClientRect returns zero and nothing rasterises — so the 12px overshoot this fixes is
+  // unfalsifiable here, and so is the claim that peek is unaffected. Both were MEASURED in real
+  // headless Chrome (tests/harness/sheetcensus.jsx at 390x500: full went from top y=-12 h=512 to
+  // y=+8 h=492; all three peek consumers byte-identical). What IS falsifiable here is the DECISION,
+  // which is the part a later edit would silently undo: on `full` the cap governs the PAINTED box,
+  // the padding stays on the panel so border-box has something to absorb, and `peek` is left alone.
+  it('BUG-SHEETOVERSHOOT-001 MUTANT-GUARD (sizing model): full caps the painted box, peek is untouched', () => {
+    const { rerender } = render(<Sheet open size="full" title="T" onClose={() => {}}><button>a</button></Sheet>)
+    const full = screen.getByRole('dialog')
+    expect(full.style.boxSizing).toBe('border-box')
+    // The cap and the padding must sit on the SAME element or border-box absorbs nothing. Moving the
+    // padding to an inner wrapper is a valid alternative fix but a DIFFERENT one; it would leave
+    // this panel padding-less and this assertion is what makes that swap visible rather than silent.
+    expect(full.style.paddingTop).toBe('8px')
+    expect(full.style.paddingBottom).toContain('safe-area-inset-bottom')
+    // peek is 17 of the 24 surfaces these 21 render sites produce, and CANNOT overshoot (its cap is
+    // 85vh, so the panel top is 15vh-20px — positive on any real viewport). Converting it would cost
+    // each of them 20px of visible content for no defect: PhotoDeleteConfirm at 390x500 measures
+    // 417px of content against a 425px cap and would flip from fits-whole to scrolls. That is why
+    // this fix is branch-scoped.
+    rerender(<Sheet open title="T" onClose={() => {}}><button>a</button></Sheet>)
+    expect(screen.getByRole('dialog').style.boxSizing).toBe('content-box')
+  })
+
   it('§5.4 MUTANT-GUARD (scroll lock): body scroll locks on open and the prior value is restored on close', () => {
     // qa mutant class: dropping the body scroll-lock (or its restore). Asserts both edges.
     expect(document.body.style.overflow).toBe('')

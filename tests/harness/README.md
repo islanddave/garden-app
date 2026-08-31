@@ -157,6 +157,32 @@ and still callable directly: `overflow()`, `sheet()`, `strip()`, `tapTargets()`,
 Launch entry `plantingphotosheet-harness` (port 5325). What it found, and the fixes, are in
 `Projects/Gardening/_lane_reports/psheetverify-20260830.md`.
 
+## `sheetcensus.*` — one Sheet consumer per run, added 2026-08-31
+
+`plantingphotosheet.*` answers "does THIS surface fit". This one answers the question that blocked
+BUG-SHEETOVERSHOOT-001 for a day: `forms/Sheet.jsx` has **21 render sites** (7 `size='full'`, 14
+peek), so a change to its sizing model is an unmeasured change on twenty surfaces. Each `?case=`
+mounts a REAL consumer — a synthetic filler div would answer a question about the filler.
+
+```
+http://localhost:5326/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=500&page=sheetcensus.html&case=editor
+    case=photodelete|batchundo|timeframe   peek consumers, shortest to tallest
+    case=export|editor                     the two size='full' consumers reachable without a route
+    case=peektall                          synthetic: peek content far past 85vh, so its cap BINDS
+    verdict=0                              hide the measurement bar
+```
+
+Reuses `plantingphotosheet.viewport.html` via its `?page=`. `__h.sheet()` reports panel top/height,
+the COMPUTED `max-height` and `box-sizing`, and `visibleContentPx` vs `naturalContentPx` — the pair
+that says whether the cap is the active constraint on a given consumer or is inert there. It makes no
+assertions; the report compares two runs. Unlike `plantingphotosheet.jsx` it DOES mount the real
+`AuthProvider` (on the harness Clerk stub, as `editdeeplink.jsx` has since BUG-EDITDEEPLINKRACE-001),
+which is what lets the `editor` case measure the tallest full-size consumer in the census.
+
+Launch entry `sheetcensus-harness` (port 5326 — 5325 is the photo-sheet entry, and two harness
+servers on one port measure each other's code). Findings:
+`Projects/Gardening/_lane_reports/sheetoverflow-20260831.md`.
+
 ## Retired entries
 
 **`photostrips.*` — removed 2026-08-30, V4-PHOTOBULK-001 D4b.** It measured the staged-photo strip
