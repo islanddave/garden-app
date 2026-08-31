@@ -1,0 +1,86 @@
+# Daily Meta credential health check — OPS-FBDATAACCESSEXPIRY-001.
+#
+# The prod Facebook Page token never expires (expires_at=0) but the app's DATA ACCESS to the owning
+# user's data does, 90 days after that user's last authorization. When it lapses Meta reduces the
+# grant's scopes rather than invalidating the token, so is_valid stays true and every existing
+# instrument reports healthy: the Lambda Errors metric is blind (failure paths return, they do not
+# throw), Garden/Share ShareFailed only moves if somebody attempts a post, and there is no webhook,
+# no developer-notification category and no documented pre-expiry email from Meta. Polling is the
+# only signal that exists.
+#
+# The deadline MOVES — it is keyed to the app<->user grant, not the token, and prod and staging share
+# one clock. Measured 2026-08-30 it read 2026-11-19; measured 2026-08-31, with nothing rotated, it
+# read 2026-11-28. So this is a poller, not a reminder.
+#
+# Scheduled workflows only fire from the DEFAULT BRANCH (main), so this begins running daily at the
+# next prod promote. Until then, and any time you want an on-demand reading:
+#   gh workflow run meta-token-expiry.yml --ref dev
+# The OIDC role trusts refs/heads/main and refs/heads/dev for exactly that reason.
+name: Meta credential expiry check
+
+on:
+  schedule:
+    - cron: '0 12 * * *'   # daily 12:00 UTC = 08:00 ET, after the morning brief has been read
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC for the metatoken role
+  contents: read
+
+concurrency:
+  group: meta-token-expiry
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Poll debug_token, emit metrics, alert on ALERT
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS credentials (metatoken role, OIDC)
+        id: aws
+        continue-on-error: true   # a creds failure degrades to UNVERIFIED rather than a false alarm
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: arn:aws:iam::769788341849:role/garden-app-github-metatoken
+          aws-region: us-east-1
+
+      - name: Classifier selftest (no network, no credentials)
+        run: bash scripts/meta-token-check.sh selftest
+
+      - name: Check Meta credential health
+        id: check
+        if: steps.aws.outcome == 'success'
+        env:
+          OUT: meta-token-report.json
+        run: bash scripts/meta-token-check.sh check
+
+      - name: Report UNVERIFIED (AWS credentials unavailable)
+        if: steps.aws.outcome != 'success'
+        run: |
+          echo "::warning::Could not assume the metatoken role — credential health is UNVERIFIED this run."
+          echo '{"status":"UNVERIFIED","reason":"aws credentials unavailable"}' > meta-token-report.json
+
+      - name: Render summary
+        if: always()
+        run: |
+          {
+            echo '### Meta credential health'
+            echo
+            echo '```json'
+            cat meta-token-report.json 2>/dev/null || echo '{"status":"UNVERIFIED","reason":"no report produced"}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 90-day retention deliberately spans the 2026-11-28 window. Meta has never published whether
+      # Page publishing survives a data-access lapse and no empirical report exists in either
+      # direction, so this daily record of the scope set is what turns that ambiguity into a
+      # measured fact when the date arrives.
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: meta-token-report-${{ github.run_id }}
+          path: meta-token-report.json
+          retention-days: 90
