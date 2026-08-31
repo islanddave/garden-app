@@ -14,7 +14,7 @@
 //   On /feed failure: delete the orphaned published=false media. Best-effort read-back asserts the
 //   attached media count. Rows -> posted | failed | orphan_cleaned | orphan_cleanup_failed.
 //
-// FLOW (POST /api/share/instagram — V4-IGSHARE-001, ships DARK behind IG_SHARE_ENABLED):
+// FLOW (POST /api/share/instagram — V4-IGSHARE-001, LIVE since 2026-08-30 behind IG_SHARE_ENABLED):
 //   same auth/admin gates -> validate against INSTAGRAM's limits (2200 caption, 30 tags, 10 carousel,
 //   8MB) -> replay guard scoped to target='instagram' -> household-scoped fetch -> bounded prepare ->
 //   size check -> content assertion -> stage STRIPPED bytes to S3 -> presign -> container(s) -> poll
@@ -276,8 +276,9 @@ export const handler = async (event, context) => {
 
   // Kill switches are PER-TARGET, not global. Both default OFF and both demand exactly '1'.
   //
-  // Facebook has been live since 2026-08-21; Instagram ships DARK behind its own IG_SHARE_ENABLED,
-  // which scripts/lambda-config-expected.json pins as MUST-BE-ABSENT. One flag must not be able to
+  // Facebook has been live since 2026-08-21 and Instagram since 2026-08-30; each stays behind its
+  // OWN flag, and scripts/lambda-config-expected.json now declares BOTH as '1' (it pinned
+  // IG_SHARE_ENABLED as must-be-absent until the 08-30 enablement). One flag must not be able to
   // turn on a surface that has never posted — and the reverse matters just as much: an operator
   // turning Facebook OFF to stop a problem would, under a single global flag, be unable to leave
   // Instagram running (or worse, would believe they had stopped both when they had stopped neither).
