@@ -111,6 +111,31 @@ export function describeResult(r) {
   }
 }
 
+// V4-SEARCHCROPTYPE-001, the VOICE leg. The three typed client filters (whole-garden search, the
+// /log picker, the variety picker) got crop type as a first-class term; this surface is the fourth,
+// and the one where it matters most — a recogniser has no chance on a cultivar name it has never
+// heard and every chance on "cucumber".
+//
+// THE SLUG IS THE WHOLE CROP-TYPE TERM, and a `display_name` term was BUILT AND THEN REMOVED here
+// rather than never considered. It was measured to be a near-duplicate: display_name is the Title
+// Case of the slug for every type in the vocabulary ('bunching_onion' / "Bunching Onion"), looseKey
+// lowercases both, and the tokeniser agreement in voiceFuzzyMatch.js already reaches the multi-word
+// slug from its spoken form. The non-vacuity check is what caught it — with the crop-type vocabulary
+// deliberately failed, "bunching onion" STILL selected the right planting, so the term the fetch paid
+// for was carrying nothing. It cost a third network dependency on mount for that. Reverted; the
+// evidence is in the lane report. Re-adding it needs a crop type whose display name is not its
+// de-snake-cased slug, and there is not one today.
+//
+// WHAT NO CLIENT CAN REACH, stated because the acceptance sentence for V4-SEARCHCROPTYPE-001 is
+// Dave's "I know it is a cantaloupe". Charentais sits under crop type 'melon', display 'Melon', and
+// no crop type anywhere is NAMED cantaloupe — that word lives only in `crop_types.search_aliases`,
+// which whole-garden search matches server-side (lambda/dashboard/handlers.js:1117) and which no
+// client can see: `/api/varieties/crop-types` selects slug, display_name, default_lifecycle,
+// category, sort_order and dtm_basis, not that column (lambda/varieties/index.js:135). So the
+// acceptance holds on the server leg and on NO client filter — voice, whole-garden search, the /log
+// picker and the variety picker alike. Closing it is one column in that SELECT plus a term here; it
+// is nobody's lane today, and VoiceHarvest.cropType.test.jsx pins it as a known gap so the next
+// session finds a red test rather than re-deriving this paragraph.
 export function plantingAliases(p) {
   return [p?.name, p?.variety_ref?.name, p?.variety_ref?.crop_type_slug].filter(Boolean).map(String)
 }
@@ -570,7 +595,17 @@ export default function VoiceHarvest() {
           private_notes: null,
           quantity: null,           // harvests use the structured panel; the freetext field is nulled
           plant_id: plant.id,
-          is_public: false,
+          // BUG-EVENTPUBFALSE-001 — `is_public` is deliberately NOT SENT, and the fix was a DELETION
+          // rather than a flip to `true`. V4-PUBHIDE-001 is "default everything to true on all create
+          // paths"; the Lambda implements exactly that with `body.is_public ?? true`
+          // (lambda/events/index.js:3118) — and `false ?? true` is `false`, so an explicit false beats
+          // the default all the way to the row. This page sent one on every harvest, so a voice-logged
+          // row was excluded from the public garden page by `AND is_public IS TRUE`
+          // (lambda/projects/index.js:194) with no UI to notice or undo it: V4-PUBHIDE-001 removed
+          // every is_public toggle. 16 rows were repaired by a system sweep on 2026-08-30 and the
+          // producer was left alone; this is that producer. Sending `true` would work today and drift
+          // the moment the default changes — staying SILENT is the pattern, which is why the key is
+          // absent and this comment stands in its place (EventNew.jsx:1746-1749 says the same).
           has_photo: false,
           metadata: { harvest_input_source: 'voice' },   // C8 — see the note below
           harvest: {

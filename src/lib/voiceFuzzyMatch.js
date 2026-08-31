@@ -83,8 +83,38 @@ export function similarity(a, b) {
 
 // Split on the same separators looseKey() collapses, so tokenisation and keying agree about what a
 // word boundary is. Disagreement between the two would make the whole-string floor below incoherent.
-function tokens(s) {
-  return String(s ?? '').toLowerCase().split(/[\s\-'’.]+/).filter(Boolean)
+//
+// BUG-LOOSEKEYREPEAT-001 (A) put '_' into looseKey's separator class, so a snake_case crop-type slug
+// finally keys the same as the words a human says for it. Without the matching '_' here the two
+// disagreed: 'bunching_onion' stayed ONE token while "bunching onion" arrives as two.
+//
+// WHAT THAT ACTUALLY COST, swept rather than argued (all 10 underscore crop types × 72 utterances,
+// scored under the post-merge looseKey with only this line differing):
+//   * the EXACT phrase is unaffected — "bunching onion" vs 'bunching_onion' scores 1.000 either way,
+//     because the whole-string floor takes it. Anyone reasoning only from that case would conclude
+//     this line does not matter.
+//   * a REORDERED utterance flips outright. "onion bunching" -> fuzzyMatch 'none' before, 'one' at
+//     1.000 after, and identically for all ten (potato sweet, balm bee, plant spider, maple japanese,
+//     cactus christmas, verbena lemon, raspberry red, melon bitter, mix flower). One token cannot be
+//     re-ordered against two; that is precisely what the consumption rule (property 2) exists to do,
+//     and mis-tokenising the alias disables it.
+//   * every other decision in the sweep is unchanged — the only movement is 'none' -> the correct
+//     row, never a new or different auto-select.
+// So the floor covers the utterance that IS the whole alias, and the token half carries every reading
+// that is reordered or padded. The agreement is load-bearing exactly as the paragraph above claimed.
+//
+// THE INVARIANT IS ONE-DIRECTIONAL, and voiceFuzzyMatch.agreement.test.js pins that direction rather
+// than string-comparing the two regexes: every character looseKey REMOVES must also be a boundary
+// here. The converse is harmless — splitting on something looseKey keeps only makes tokens finer, and
+// the floor still compares whole keys — which is why this correction is safe to land before, with, or
+// after the looseKey change itself.
+//
+// Defect (B), the digit-scoped repeat-collapse, needs NO matching edit here and that was checked
+// rather than assumed: this function only SPLITS. Every collapse happens inside the injected `keyOf`,
+// which is applied to each token and to the whole string alike, so both sides of every comparison
+// move together whatever the collapse does.
+export function tokens(s) {
+  return String(s ?? '').toLowerCase().split(/[\s\-'’._]+/).filter(Boolean)
 }
 
 /**

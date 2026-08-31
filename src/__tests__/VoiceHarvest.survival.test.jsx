@@ -234,6 +234,32 @@ describe('BUG-VOICEWEIGHTLESSNOTE-001 — a save with no weight', () => {
     vi.useRealTimers()
   })
 
+  it('sends NO is_public key at all — the silent-client contract (BUG-EVENTPUBFALSE-001)', async () => {
+    // This page sent `is_public: false` on every harvest. V4-PUBHIDE-001 is "default everything to
+    // true on all create paths" and the Lambda implements it as `body.is_public ?? true` — but
+    // `false ?? true` is `false`, so an explicit false wins all the way to the row, and
+    // lambda/projects/index.js:194 then filters the harvest out of the public garden page with
+    // `AND is_public IS TRUE`. V4-PUBHIDE-001 removed every is_public toggle from the UI, so there
+    // was no surface on which to notice or undo it.
+    //
+    // ASSERTED AS ABSENCE OF THE KEY, not as `=== true`. A `true` would pass an equality test and
+    // still be the same defect one default-change later; staying silent is the contract.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three count')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    expect(harvestPosts()).toHaveLength(1)
+    const body = JSON.parse(harvestPosts()[0][1].body)
+    expect(Object.keys(body)).not.toContain('is_public')
+    // Non-vacuity for the assertion itself: this body IS the create body, and it does carry the
+    // sibling keys — so "no is_public" is a fact about the payload, not about an empty object.
+    expect(Object.keys(body)).toEqual(expect.arrayContaining(['plant_id', 'event_type', 'harvest']))
+    vi.useRealTimers()
+  })
+
   it('says nothing of the kind when a weight WAS spoken', async () => {
     // Non-vacuity for the pair above. A note that fired on every save would mean nothing by the
     // second bed, and would make the count-only case invisible again.
