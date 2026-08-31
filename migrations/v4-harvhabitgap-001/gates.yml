@@ -114,6 +114,16 @@ post:
   # this list exists to require — the same "narrowing an honesty list to exclude the row that broke
   # it" move that v4-putupprov-002-fruitseed's gate comment warns against. The seven are recorded in
   # not_harvest_tracked.slugs with their reason, and the projection binding still holds.
+  #
+  # 2026-08-31 (BUG-HABITGAPREGISTRY-001): goldenrod and hoya added. Both crop types were minted
+  # 2026-08-30 with a NULL harvest_habit and were on no list, so this gate went red on prod the next
+  # run — expected scalar_eq=0, got 2. Registered rather than seeded: NULL is the CORRECT value for
+  # both and no habit was invented to clear the red. goldenrod is category='flower' and hoya is
+  # category='houseplant', which is the not_harvest_tracked shape exactly, and neither carries a pick.
+  # This is the drift this gate exists to catch working as designed — a slug minted today with no list
+  # entry is a hard CI failure rather than a slow drift, same as yarrow on 2026-08-25. Recorded in
+  # not_harvest_tracked.slugs in the same change, which harvestNullHabitCoverage.test.js requires;
+  # projection untouched (nothing added to by_crop_type).
   - name: post_every_null_habit_is_a_recorded_decision
     sql: |
       SELECT count(*) FROM public.crop_types c
@@ -126,8 +136,8 @@ post:
            'carnation','carrot','celery','cheese','cherry','christmas_cactus','chrysanthemum',
            'cobaea','coleus','columbine','cranberry','crown_of_thorns','delphinium','dogwood',
            'dracaena','echeveria','edelweiss','elderberry','fish','fittonia','flower_mix',
-           'four_o_clock','foxglove','geranium','ginger','grape','haworthia','helichrysum',
-           'hibiscus','hollyhock','hosta','jade','japanese_maple','lantana','lithops','luffa',
+           'four_o_clock','foxglove','geranium','ginger','goldenrod','grape','haworthia','helichrysum',
+           'hibiscus','hollyhock','hosta','hoya','jade','japanese_maple','lantana','lithops','luffa',
            'marigold','meat','milk','milkweed','money_plant','morning_glory','mustard',
            'nectarine','parsnip','pear','perilla','petunia','pineapple','plum','poppy','pothos',
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
