@@ -99,6 +99,12 @@ cols = [
     # RLS). Adding it there would fail a check for a property it is not supposed to have.
     ('preservation_log','user_id'), ('preservation_log','crop_type_slug'),
     ('preservation_log','source_kind'), ('preservation_log','source_label'),
+    # V4-PUTUPSESSION-001 slice 1. Without this line the column is in the SILENT tier: nothing reds
+    # if it is missing from an environment, and the freezer walk's estimates quietly read back as
+    # dates the user picked. ORDERING: this job (db-schema-check in deploy-staging.yml) gates the
+    # smoke tests, so migrations/v4-putupsession-001 must be applied to STAGING before this branch
+    # deploys there — which is step 1 of that migration's sequencing anyway.
+    ('preservation_log','preserved_at_approx'),
 ]
 for tbl, col in cols:
     check_eq(f"col:{tbl}.{col}",

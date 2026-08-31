@@ -75,15 +75,26 @@ export function exactDate(ymd) {
   return ymd ? { date: ymd, approx: false } : null
 }
 
-// "around Jul 16" vs "Jul 16". One string, one place, so an estimate can never be rendered with the
-// same words as a date he chose.
+// "around Jul 16" vs "Jul 16". ONE STRING, ONE PLACE — this is the only literal in the app that
+// marks a date as an estimate, so the walk's band, the form, and a record read back out of the
+// database cannot drift into saying it three different ways (or one of them not saying it at all).
+//
+// Slice 1 split the wording out of describeDate so the two READ surfaces can reach it without
+// re-deriving a YYYY-MM-DD string. PutUp.jsx and PutUpFromPlanting.jsx each already own a prettyDate
+// that copes with the neon driver handing dates back as JS Date objects; describeDate's parseYmd
+// does not, and passing it a Date returns the Date itself, which React then refuses to render. So
+// they format first and mark second. `approx === true` at every call site, never truthiness: the
+// column is three-valued and NULL means "nobody was asked", which must read exactly as it does today.
+export function describeApprox(pretty, approx) {
+  return approx ? `around ${pretty}` : pretty
+}
 export function describeDate(date, approx) {
   if (!date) return ''
   const d = parseYmd(date)
   const pretty = isNaN(d.getTime())
     ? date
     : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-  return approx ? `around ${pretty}` : pretty
+  return describeApprox(pretty, approx)
 }
 
 // ── auto-resolution (design §4.2 G2) ────────────────────────────────────────

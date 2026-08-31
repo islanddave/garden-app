@@ -28,6 +28,10 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import PutUpPhotoThumb from '../PutUpPhotoThumb.jsx'
+// V4-PUTUPSESSION-001 slice 1 — the "around" wording lives in exactly one module. This surface is
+// the second reader of preserved_at (PutUp's RecordRow is the first) and would otherwise present a
+// freezer-walk estimate as a date the user picked, which is the defect the slice exists to close.
+import { describeApprox } from '../../lib/putUpSession.js'
 
 // V4-PUTUPPROV-001 — NO PROVENANCE LINE HERE, AND THAT IS DELIBERATE. This component fetches
 // whats-put-up?plant_id=<id>, so every row it can render has a non-null plant_id; the provenance
@@ -173,7 +177,7 @@ export default function PutUpFromPlanting({ planting, fetch }) {
               </div>
               <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>
                 {r.storage_label ? `${r.storage_label} · ` : ''}
-                put up {prettyDate(r.preserved_at)}
+                put up {describeApprox(prettyDate(r.preserved_at), r.preserved_at_approx === true)}
                 {used ? ' · all used' : (remaining !== r.package_count ? ` · ${remaining} left` : '')}
                 {!used && r.use_by_target ? ` · use by ${prettyDate(r.use_by_target)}` : ''}
               </div>

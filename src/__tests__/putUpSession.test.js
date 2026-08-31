@@ -11,7 +11,7 @@ import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 installStoragePolyfill()
 
 import {
-  coarseDate, exactDate, describeDate, plantingsForCrop, solePlanting, unrecordedCrops,
+  coarseDate, exactDate, describeDate, describeApprox, plantingsForCrop, solePlanting, unrecordedCrops,
   readWalk, writeWalk, clearWalk, readDismissed, dismissCrop,
 } from '../lib/putUpSession.js'
 
@@ -57,6 +57,24 @@ describe('exactDate / describeDate — an estimate never wears the same words as
     expect(describeDate('2026-07-16', true)).toMatch(/^around /)
     expect(describeDate('2026-07-16', false)).not.toMatch(/^around /)
     expect(describeDate('', true)).toBe('')
+  })
+
+  // V4-PUTUPSESSION-001 slice 1 — the read surfaces mark an ALREADY-FORMATTED date, because both of
+  // them get a JS Date object back from the neon driver and describeDate's parseYmd cannot take one.
+  it('describeApprox marks a pre-formatted date and is the SAME wording describeDate uses', () => {
+    expect(describeApprox('Jul 16, 2026', true)).toBe('around Jul 16, 2026')
+    expect(describeApprox('Jul 16, 2026', false)).toBe('Jul 16, 2026')
+    // The single-source claim, asserted rather than assumed: change the word in one place and this
+    // fails rather than letting the walk's band and the saved record drift apart.
+    expect(describeDate('2026-07-16', true)).toBe(describeApprox(describeDate('2026-07-16', false), true))
+  })
+
+  // NULL is not FALSE. Every row written before the column existed carries NULL, and a read surface
+  // that tested truthiness-vs-nullishness rather than `=== true` would be right by accident here and
+  // wrong the moment somebody wrote `approx ?? true` or `!approx`.
+  it('an unrecorded flag renders exactly like a chosen date', () => {
+    expect(describeApprox('Jul 16, 2026', null)).toBe('Jul 16, 2026')
+    expect(describeApprox('Jul 16, 2026', undefined)).toBe('Jul 16, 2026')
   })
 })
 

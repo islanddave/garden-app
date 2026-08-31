@@ -372,6 +372,72 @@ describe('PutUp — "what\'s put up" read surface', () => {
   })
 })
 
+// V4-PUTUPSESSION-001 slice 1. The read half of the slice: a stored estimate has to read back as an
+// estimate. The write half (the walk) is covered in PutUpWalk.test.jsx.
+describe('PutUp — an estimated date does not read as a date you picked', () => {
+  const withApprox = (v) => ({ ...STORES_FIXTURE, groups: [{ ...STORES_FIXTURE.groups[0],
+    records: [{ ...STORES_FIXTURE.groups[0].records[0], preserved_at_approx: v }] }] })
+
+  it('marks a TRUE row', async () => {
+    wire({ stores: withApprox(true) })
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    expect(screen.getByText(/put up around Jul 1, 2026/)).toBeTruthy()
+  })
+
+  it('leaves a FALSE row plain', async () => {
+    wire({ stores: withApprox(false) })
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    expect(screen.getByText(/put up Jul 1, 2026/)).toBeTruthy()
+    expect(screen.queryByText(/around/)).toBeNull()
+  })
+
+  it('leaves a NULL row plain — unrecorded is not a claim that the date is approximate', async () => {
+    // Every row written before the column existed carries NULL, including the freezer-walk rows
+    // already in prod from v4.87.0. They must look exactly as they look today.
+    wire({ stores: withApprox(null) })
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    expect(screen.getByText(/put up Jul 1, 2026/)).toBeTruthy()
+    expect(screen.queryByText(/around/)).toBeNull()
+  })
+
+  it('the ordinary form records FALSE rather than leaving it unrecorded', async () => {
+    // Not an omission: this form always knows where the date came from, and the today-default is a
+    // fact, not a guess. Sending nothing would store NULL — "nobody was ever asked" — which is the
+    // one thing that is not true here.
+    renderPutUp()
+    fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Crop' }), { target: { value: 'tomato' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '14' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
+    await waitFor(() => expect(lastPost()).not.toBeNull())
+    expect(lastPost().preserved_at_approx).toBe(false)
+  })
+
+  it('a Mark-used tap carries an existing TRUE through the full-replace PUT', async () => {
+    // The class of bug that made source_kind COALESCE-preserved: a one-tap decrement from a stale
+    // bundle rewriting a field it never heard of. Here the payload DOES carry it, so the flag has to
+    // survive the round trip rather than being re-defaulted to false by the client.
+    wire({ stores: withApprox(true) })
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    await waitFor(() => expect(putCalls().length).toBe(1))
+    expect(JSON.parse(putCalls()[0][1].body).preserved_at_approx).toBe(true)
+  })
+
+  it('a Mark-used tap on a pre-migration row sends NULL, which the Lambda reads as "unchanged"', async () => {
+    wire({ stores: withApprox(undefined) })
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    await waitFor(() => expect(putCalls().length).toBe(1))
+    expect(JSON.parse(putCalls()[0][1].body).preserved_at_approx).toBeNull()
+  })
+})
+
 // BUG-PUTUPLOC-001 — the add-location failure that succeeded on retry and left no evidence.
 // These lock in the self-heal (one automatic retry for transient classes) and the self-report
 // (a diagnostic code in the message), so a recurrence arrives already classified.

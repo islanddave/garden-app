@@ -246,12 +246,20 @@ post:
     expect: rowcount_eq
     value: 1
 
-  - name: post_column_count_is_23
+  # RE-PINNED 23 -> 24 by V4-PUTUPSESSION-001 slice 1, which adds preserved_at_approx. This gate is
+  # `continuous` (this file sets `continuous` nowhere and scripts/gate_runner.py:215 defaults it to
+  # True), so it re-runs against LIVE prod and staging in the scheduled sweep — which is exactly why
+  # it must be edited in the same commit as any column addition. Leaving it at 23 would fail the new
+  # migration in whichever environment nobody happened to be watching.
+  # It reds on an environment where the code has landed but the DDL has not; that is the gate working.
+  # See migrations/v4-putupsession-001/gates.yml for the apply sequencing and a self-armed sibling of
+  # this assertion. Bump BOTH when the next column lands.
+  - name: post_column_count_is_24
     sql: |
       SELECT count(*) FROM information_schema.columns
        WHERE table_schema='public' AND table_name='preservation_log'
     expect: scalar_eq
-    value: 23
+    value: 24
 
   - name: post_schema_version_recorded
     sql: |

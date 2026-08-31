@@ -180,6 +180,14 @@ function validateCommon(body) {
   if (!body.quantity_unit || !String(body.quantity_unit).trim()) return 'quantity_unit is required';
   if (body.package_count != null && Number(body.package_count) < 1) return 'package_count must be >= 1';
   if (!body.preserved_at) return 'preserved_at is required';
+  // V4-PUTUPSESSION-001 slice 1. Shape-only, and absent stays legal on BOTH verbs — the column is
+  // nullable with NULL meaning "nobody was ever asked", and a service-worker-cached bundle from
+  // before this ship never sends the key. Rejecting a non-boolean matters because Postgres would
+  // silently accept 'yes'/'on'/'t' through a ::boolean cast, so a client typo would land as TRUE and
+  // stamp a date the user picked as an estimate — the defect inverted.
+  if (body.preserved_at_approx != null && typeof body.preserved_at_approx !== 'boolean') {
+    return 'preserved_at_approx must be true or false';
+  }
   if (body.remaining_count != null && Number(body.remaining_count) < 0) return 'remaining_count must be >= 0';
   return null;
 }
@@ -334,6 +342,12 @@ function projectRow(r) {
     consumed_at: r.consumed_at,
     notes: r.notes,
     photo_id: r.photo_id,
+    // V4-PUTUPSESSION-001 slice 1 — the whole point of the slice reaches the UI through THIS LINE.
+    // Every read surface that prints a put-up date (RecordRow, PutUpFromPlanting) goes through the
+    // four GET routes, so without this key an estimate reads back as a date the user chose and the
+    // column changes nothing the user can see. `?? null` and never `?? false`: NULL means unrecorded
+    // and FALSE means chosen, and the read path must not invent the second.
+    preserved_at_approx: r.preserved_at_approx ?? null,
     // V4-PUTUPPROV-001. projectRow is an explicit whitelist and is the ONLY projection for all four
     // GET routes, while POST/PUT return raw rows[0] from RETURNING *. So omitting these here is
     // INVISIBLE to create-path smoke testing: the POST echoes them back correctly while every read
@@ -578,6 +592,16 @@ export const handler = async (event) => {
             plant_id            = ${body.plant_id ?? null},
             harvest_log_id      = ${body.harvest_log_id ?? null},
             preserved_at        = ${body.preserved_at},
+            -- V4-PUTUPSESSION-001 slice 1 — COALESCE-PRESERVED, same contract and same reason as
+            -- source_kind below. Written house-style (a plain body-or-null replace) every "Mark
+            -- used" tap from a service-worker-cached bundle would rewrite an estimate as a date the
+            -- user chose, return 200, and look like nothing happened. Absent key means unchanged.
+            -- An explicit false is NOT absent (nullish-coalescing passes false straight through), so
+            -- a client that corrects an estimate to a real date can still clear the flag.
+            -- ::boolean IS LOAD-BEARING for the same reason the ::text casts below are: the neon
+            -- driver sends untyped params, and an untyped placeholder in COALESCE() gives Postgres
+            -- no type context to resolve against.
+            preserved_at_approx = COALESCE(${body.preserved_at_approx ?? null}::boolean, preserved_at_approx),
             method              = ${body.method},
             method_other_text   = ${body.method === 'other' ? (body.method_other_text ?? null) : null},
             quantity_value      = ${body.quantity_value},
@@ -718,12 +742,12 @@ export const handler = async (event) => {
       const rows = await sql`
         INSERT INTO preservation_log (
           user_id, crop_type_slug, variety_id, plant_id, harvest_log_id,
-          preserved_at, method, method_other_text, quantity_value, quantity_unit,
+          preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit,
           package_count, storage_location_id, use_by_target, remaining_count, notes, photo_id,
           source_kind, source_label
         ) VALUES (
           ${userId}, ${attr.crop_type_slug ?? null}, ${attr.variety_id ?? null}, ${body.plant_id ?? null}, ${body.harvest_log_id ?? null},
-          ${body.preserved_at}, ${body.method}, ${body.method === 'other' ? (body.method_other_text ?? null) : null}, ${body.quantity_value}, ${body.quantity_unit},
+          ${body.preserved_at}, ${body.preserved_at_approx ?? null}, ${body.method}, ${body.method === 'other' ? (body.method_other_text ?? null) : null}, ${body.quantity_value}, ${body.quantity_unit},
           ${packageCount}, ${body.storage_location_id ?? null}, ${useByTarget ?? null}, ${remaining}, ${body.notes ?? null}, ${body.photo_id ?? null},
           ${body.source_kind ?? null}, ${body.source_kind === 'own_garden' ? null : normalizeSourceLabel(body.source_label)}
         ) RETURNING *

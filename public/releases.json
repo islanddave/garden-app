@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.88.0",
+    "date": "2026-08-31",
+    "highlights": [
+      "Freezer walk: a put-up date you estimated (\"this summer\") is now recorded and shown as an estimate — \"put up around Jul 16, 2026\" — instead of reading like a date you picked off the calendar. Type an exact date for any item and it stops being an estimate."
+    ]
+  },
+  {
     "version": "4.87.0",
     "date": "2026-08-31",
     "highlights": [

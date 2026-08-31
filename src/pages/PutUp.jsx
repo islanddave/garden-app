@@ -47,7 +47,7 @@ import { useReportOverlayDirty, useInOverlaySurface } from '../context/OverlayCo
 import NumberPad from '../components/NumberPad.jsx'
 import { useSuppressBottomNav } from '../hooks/useSuppressBottomNav.js'
 import {
-  WALK_PARAM, coarseDate, exactDate, describeDate, solePlanting, unrecordedCrops,
+  WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
   readWalk, writeWalk, clearWalk, readDismissed, dismissCrop,
 } from '../lib/putUpSession.js'
 
@@ -860,6 +860,11 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   // The walk's two answers seed these and are re-applied below whenever they change, so one tap at
   // the start of a sitting stands in for one tap per item.
   const [preservedAt, setPreservedAt] = useState(session?.date || todayYMD())
+  // V4-PUTUPSESSION-001 slice 1 — travels with preservedAt and is written to the column of the same
+  // name. TRUE only for a date this form did not obtain from the user: the walk's coarse answer
+  // resolved to a window midpoint. Every other entry path starts false, including the plain form's
+  // today-default, which is a fact rather than an estimate.
+  const [dateApprox, setDateApprox] = useState(!!session?.dateApprox)
   const [storageId, setStorageId] = useState(session?.storageId || '')
   const [useByMode, setUseByMode] = useState('auto') // 'auto' | 'none' | 'custom'
   const [useByDate, setUseByDate] = useState('')
@@ -1020,6 +1025,10 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
     if (typeof draft.method === 'string') setMethod(draft.method)
     if (typeof draft.methodOther === 'string') setMethodOther(draft.methodOther)
     if (typeof draft.preservedAt === 'string') setPreservedAt(draft.preservedAt)
+    // Restored WITH its date, not separately. A draft that carried the date but not the flag would
+    // resume an estimate as a date the user picked — the same defect this slice removes, arriving by
+    // a different door. A pre-slice-1 draft has no key and keeps the useState seed.
+    if (typeof draft.dateApprox === 'boolean') setDateApprox(draft.dateApprox)
     if (typeof draft.storageId === 'string') setStorageId(draft.storageId)
     if (typeof draft.useByMode === 'string') setUseByMode(draft.useByMode)
     if (typeof draft.useByDate === 'string') setUseByDate(draft.useByDate)
@@ -1067,7 +1076,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
     if (savedOnceRef.current && !guardDirty) return
     if (!dirty) return
     writeDraft(DRAFT_KEY, {
-      cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, storageId,
+      cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, dateApprox, storageId,
       useByMode, useByDate, showMore, packageCount, notes,
       variety, plantId, harvestLogId, sourceKind, sourceLabel, stashedPlantId,
       // BUG-PUTUPSTASHHARVLINK-001 — the context this snapshot was taken in. harvestLogId keeps
@@ -1075,7 +1084,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
       // handed to a mount that is not that context.
       prefillKey: mountPrefillKey,
     })
-  }, [dirty, guardDirty, success, cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, storageId,
+  }, [dirty, guardDirty, success, cropSlug, qtyValue, qtyUnit, method, methodOther, preservedAt, dateApprox, storageId,
       useByMode, useByDate, showMore, packageCount, notes,
       variety, plantId, harvestLogId, sourceKind, sourceLabel, stashedPlantId, mountPrefillKey])
 
@@ -1107,11 +1116,16 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   // changes, which is the behaviour §3.3 asks for ("both stay visible, small, and overridable").
   const sessionStorageId = session?.storageId ?? null
   const sessionDate = session?.date ?? null
+  // Slice 1: the flag is re-applied WITH the date, never independently. Tapping "Change" in the band
+  // and switching from "This summer" to a date he picks has to clear it in the same pass that moves
+  // the date, or the next item carries the old answer's approximate-ness on the new answer's value.
+  const sessionApprox = !!session?.dateApprox
   useEffect(() => {
     if (sessionDate == null) return
     setPreservedAt(sessionDate)
+    setDateApprox(sessionApprox)
     setStorageId(sessionStorageId || '')
-  }, [sessionDate, sessionStorageId])
+  }, [sessionDate, sessionApprox, sessionStorageId])
 
   // ── V4-PUTUPSESSION-001: auto-resolve the planting when the crop has exactly one ──────────────
   // 18 of the 31 crops harvested this year have exactly one planting (measured 2026-08-31), so for
@@ -1171,6 +1185,12 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
 
     const body = {
       preserved_at: preservedAt,
+      // V4-PUTUPSESSION-001 slice 1. In the BASE literal for the same reason source_kind is, and it
+      // is the reason the column can be trusted: this form ALWAYS knows whether the date came from
+      // the user or from a coarse answer, so sending `false` is a recorded fact rather than a
+      // default. Routing it through the `if (x) body.x = ...` chain below would send nothing for the
+      // ordinary path and leave it NULL — "nobody was asked" — when we did in fact ask.
+      preserved_at_approx: dateApprox,
       method,
       quantity_value: Number(qtyValue),
       quantity_unit: qtyUnit,
@@ -1593,16 +1613,23 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
 
         <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 150 }}>
-            {/* V4-PUTUPSESSION-001, the knowing limitation of slice 0: preserved_at is NOT NULL and
-                there is no preserved_at_approx column yet, so a walk's estimate is stored in the
-                same shape as a date he chose. The help text is the only place that distinction
-                survives — it is not decoration. Slice 1 adds the column and this line stops being
-                the sole carrier. */}
+            {/* V4-PUTUPSESSION-001 slice 1 closed slice 0's knowing limitation: the estimate now
+                rides to the database in preserved_at_approx, so the help text is no longer the only
+                place the distinction survives. The help still keys on the SESSION answer (what the
+                walk proposed); the flag below keys on local state, which is what he has done to it
+                since. Typing a date is the one act that turns an estimate into a fact — it is the
+                only place in the form where a date is obtained FROM him — so it clears the flag
+                here rather than anywhere further downstream. */}
             <Field label="Put-up date *" htmlFor="pu-date"
               help={session?.dateApprox ? 'An estimate from the start of this walk — change it for any item you know exactly.' : undefined}>
               <Input id="pu-date" type="date" value={preservedAt} max={todayYMD()}
-                onChange={e => setPreservedAt(e.target.value)} aria-label="Put-up date" />
+                onChange={e => { setPreservedAt(e.target.value); setDateApprox(false) }} aria-label="Put-up date" />
             </Field>
+            {dateApprox && (
+              <div style={{ fontSize: '0.74rem', color: P.mid, marginTop: 4 }}>
+                Saved as <strong>{describeDate(preservedAt, true)}</strong> — an estimate, not a date you picked.
+              </div>
+            )}
           </div>
           <div style={{ flex: 1, minWidth: 150 }}>
             <Field label="Use by" htmlFor="pu-useby-mode" help="Auto uses tested shelf-life for the method and storage.">
@@ -1910,6 +1937,11 @@ function buildFullPayload(rec, overrides = {}) {
     plant_id: rec.plant_id ?? null,
     harvest_log_id: rec.harvest_log_id ?? null,
     preserved_at: ymd(rec.preserved_at),
+    // V4-PUTUPSESSION-001 slice 1. `?? null` and never `?? false`: null is what the Lambda's
+    // COALESCE reads as "unchanged", so a row whose flag was never recorded keeps its NULL instead
+    // of being rewritten as "the user chose this date" by a Mark-used tap that knows nothing about
+    // it. The same reasoning as source_kind below, one line up because it belongs beside its date.
+    preserved_at_approx: rec.preserved_at_approx ?? null,
     method: rec.method,
     method_other_text: rec.method_other_text ?? null,
     quantity_value: rec.quantity_value,
@@ -1998,7 +2030,11 @@ function RecordRow({ rec, onChanged, fetch }) {
       <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 3 }}>
         {rec.package_count} {rec.package_count === 1 ? 'container' : 'containers'}
         {remaining !== rec.package_count ? ` · ${remaining} left` : ''}
-        {' · put up '}{prettyDate(rec.preserved_at)}
+        {/* V4-PUTUPSESSION-001 slice 1 — THE LINE THE SLICE EXISTS FOR. Through describeApprox, not
+            a local "around " prefix, so the walk's band and the saved record are guaranteed to say
+            the same words about the same date. `=== true` and not truthiness: the column is
+            three-valued and NULL (nobody was asked) must render exactly as it does today, plain. */}
+        {' · put up '}{describeApprox(prettyDate(rec.preserved_at), rec.preserved_at_approx === true)}
         {rec.use_by_target ? ` · use by ${prettyDate(rec.use_by_target)}` : ''}
       </div>
       {/* Planting provenance — which wave this jar actually came from. Only rendered when the link

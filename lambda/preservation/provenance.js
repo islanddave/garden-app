@@ -32,7 +32,10 @@ export const SOURCE_LABEL_MAX = 120;
 // so the NEXT column cannot be half-added either.
 export const PRESERVATION_EDITABLE_COLUMNS = [
   'crop_type_slug', 'variety_id', 'plant_id', 'harvest_log_id',
-  'preserved_at', 'method', 'method_other_text', 'quantity_value', 'quantity_unit',
+  // preserved_at_approx (V4-PUTUPSESSION-001 slice 1) rides beside the date it qualifies. TRUE means
+  // preserved_at is an estimate the freezer walk derived from a coarse answer, not a date the user
+  // picked; NULL means nobody was ever asked. Only TRUE changes how a date renders.
+  'preserved_at', 'preserved_at_approx', 'method', 'method_other_text', 'quantity_value', 'quantity_unit',
   'package_count', 'storage_location_id', 'use_by_target',
   'remaining_count', 'consumed_at', 'notes', 'photo_id',
   'source_kind', 'source_label',

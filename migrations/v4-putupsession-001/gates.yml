@@ -1,0 +1,219 @@
+# gates.yml
+# V4-PUTUPSESSION-001 slice 1 — preservation_log.preserved_at_approx (the estimate flag).
+#
+# STATUS (2026-08-31): NOT APPLIED ANYWHERE. Authored on lane-putupslice1-20260831; no DDL has run
+#   against staging, prod, or any Neon branch from this lane. Dave applies it.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING (ORDERED — do not reorder, do not skip)
+#
+#   staging apply -> rehearse 0r-rollback -> re-apply to staging -> PROD apply -> dev push -> promote
+#
+# 1. STAGING: pre gates -> apply 0a-additive-ddl.sql -> post gates.
+#    No 0b loader and no 0c validate: one nullable column with no default and no constraint. There is
+#    nothing to backfill and nothing that can be invalid.
+# 2. STAGING: run 0r-rollback.sql, then re-apply 0a and re-run post gates. The rollback is REHEARSED,
+#    not assumed. On staging immediately after the apply the 0r window condition holds (no row
+#    carries a value yet), so the rehearsal exercises the real drop path rather than the refusal.
+# 3. PROD: pre gates -> apply 0a -> post gates. Confirm the DATABASE_URL host the runner prints
+#    before applying. Quote the information_schema.columns result.
+# 4. ONLY THEN push the code to dev, and only then dispatch the promote.
+#
+# WHY STAGING BEFORE THE DEV PUSH: integration-test.yml runs against an ephemeral Neon branch off
+# STAGING and does not apply migrations, so a missing column there presents as an infra flake, gets
+# retried, and hides.
+#
+# WHY PROD BEFORE THE PROMOTE: the 42703 window v4-putupprov-001/gates.yml:30-45 documents applies
+# verbatim. A promote produces three independent production approvals and the SPA and Lambda deploys
+# race. New Lambda + column-less prod = 42703 on every POST and PUT, while SELECT p.* reads keep
+# working — THE APP LOOKS HEALTHY WHILE ALL WRITES ARE DEAD. New SPA + old Lambda is the gentler
+# half: the form POSTs preserved_at_approx to a Lambda that never references it, HTTP 201, the flag
+# is silently discarded and the date renders plain. That second one is a display regression, not a
+# write outage, but it is the exact defect this slice exists to remove — so approve the deploy-lambda
+# production gate BEFORE the promote-gate deploy job's gate.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# THE COORDINATED EDIT IN ANOTHER MIGRATION'S GATES
+#
+# migrations/v4-putupprov-001/gates.yml carried post_column_count_is_23. That file sets `continuous`
+# nowhere and scripts/gate_runner.py:215 defaults it to True, so every gate in it re-runs against
+# LIVE prod and staging in the scheduled --continuous-only sweep (gate-invariants.yml, BLOCKING since
+# 2026-08-10). This migration takes preservation_log to 24 columns, so that gate is renamed
+# post_column_count_is_24 and re-pinned in the SAME commit as this file.
+#
+# It reds on any environment where the code has landed but the DDL has not. That is the gate doing
+# its job — it is the reason a forgotten prod apply cannot stay invisible — and it is why the
+# sequencing above puts both applies before the dev push. Do not weaken it to buy silence.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * `continuous` DEFAULTS TO TRUE and the sweep runs post gates against LIVE prod, so a bare shape
+#     assert would stand red until the prod apply.
+#   * The SHAPE gates are SELF-ARMING and continuous: each is violation-shaped
+#     (`SELECT ... WHERE <armed> AND NOT <the fact>`, rowcount_eq 0) with the arming conjunct being
+#     the EXISTENCE OF the column. Before the apply the arm is false and they pass vacuously; the
+#     instant 0a lands they begin asserting the real shape with NO human flip.
+#   * post_column_present is `continuous: false` — arming a column-exists assert on column-existence
+#     is tautological, so it cannot self-arm. Flip it to true after the prod apply if you want it.
+#   * post_no_preexisting_row_flagged is PERMANENTLY window-scoped — NEVER flip it. The first walk
+#     item Dave saves populates this column, so a sweep asserting emptiness would go red the moment
+#     the feature works.
+#   * post_shape_still_nullable_no_default is the one that earns its place. Everything else here is
+#     "did the apply happen"; that one is "did somebody later "tidy" this into NOT NULL DEFAULT
+#     false", which is the single change that would silently convert every unrecorded row into a
+#     claim that the user picked the date deliberately — the exact falsehood this column removes,
+#     re-introduced by a plausible-looking cleanup. It fails loudly and forever if that lands.
+
+pre:
+  - name: pre_preservation_log_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_column_absent
+    note: >
+      A name collision would mean this migration is silently adopting someone else's column with
+      unknown semantics (v4-harvattr-001 precedent, re-used by v4-putupprov-001).
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name='preserved_at_approx'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_column_count_is_23
+    note: >
+      The number the sibling gate in v4-putupprov-001 is being re-pinned FROM. If this is not 23,
+      some other migration has already changed this table and the 24 in that file is wrong — stop
+      and reconcile before applying.
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: scalar_eq
+    value: 23
+
+  - name: pre_preserved_at_is_not_null
+    note: >
+      The premise of the whole slice, asserted rather than assumed: preserved_at is NOT NULL, so a
+      walk's coarse answer HAS to be resolved to a concrete date and there is nowhere in the existing
+      shape for "this is an estimate" to live. If this ever stops being true the design should be
+      revisited, not extended.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name='preserved_at' AND is_nullable='NO'
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_column_present
+    note: Tautological arm — cannot self-arm, so it is window-scoped. See GATE CLASSIFICATION above.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name='preserved_at_approx'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_column_is_boolean
+    note: >
+      Self-armed on column existence. A text or integer column here would accept 'maybe' or 2 and the
+      read surfaces would render an unknown third state as exact.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='preservation_log'
+                        AND column_name='preserved_at_approx')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='preservation_log'
+                            AND column_name='preserved_at_approx' AND data_type='boolean')
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_shape_still_nullable_no_default
+    note: >
+      THE INVARIANT WORTH HAVING. NULL means "nobody was ever asked" and FALSE means "the user picked
+      this date". A later NOT NULL DEFAULT false — which reads like tidying — collapses those two
+      into the second, asserting deliberate choice on every row written before the column existed,
+      including the freezer-walk rows already in prod from v4.87.0 that are the reason this column
+      exists. Same assertion shape v4-harvattr-001 pins across its six NULL=UNKNOWN columns.
+      Self-armed, so it is vacuous before the apply and permanent after it.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='preservation_log'
+                        AND column_name='preserved_at_approx')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='preservation_log'
+                            AND column_name='preserved_at_approx'
+                            AND is_nullable='YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_no_check_constraint_added
+    note: >
+      D2 — a boolean's domain is already closed by its type, so this column deliberately carries no
+      CHECK. The failure this guards is a future "consistency" pass adding one that requires the
+      value, which would 400 every write from a service-worker-cached bundle that has never heard of
+      the column. Matches on the column name inside any CHECK definition on this table. Self-armed.
+    sql: |
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log' AND c.contype='c'
+         AND pg_get_constraintdef(c.oid) ILIKE '%preserved_at_approx%'
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_column_count_is_24
+    note: >
+      The sibling of the re-pinned gate in v4-putupprov-001/gates.yml, self-armed so it is honest
+      before the apply as well as after. Two gates asserting the same count is deliberate: that one
+      catches this migration being forgotten, this one catches a LATER column being added without
+      its own gate, and they disagree loudly if only one is updated.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='preservation_log'
+                        AND column_name='preserved_at_approx')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='preservation_log') <> 24
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  - name: post_no_preexisting_row_flagged
+    note: >
+      D3 — no backfill. Every row that existed before this apply stays NULL, because a midpoint date
+      and a date Dave typed are the same value in the same column and neither FALSE nor TRUE could be
+      derived honestly. WINDOW-SCOPED, NEVER CONTINUOUS: the first walk item saved after the code
+      ships populates this column, and a sweep asserting emptiness would go red the moment the
+      feature works (L-369 category 1).
+    sql: |
+      SELECT id FROM public.preservation_log WHERE preserved_at_approx IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_schema_version_recorded
+    note: >
+      Self-armed on the column so it is a real continuous invariant rather than a standing red before
+      the apply: if the column is here, the version row must be here too. A column present without
+      its schema_version row means someone applied the DDL by hand and the ledger cannot be trusted.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='preservation_log'
+                        AND column_name='preserved_at_approx')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version='4.88.0-putupsession-001')
+    expect: rowcount_eq
+    value: 0
+    continuous: true

@@ -213,6 +213,85 @@ describe('the two questions, asked once and applied to every save', () => {
   })
 })
 
+// V4-PUTUPSESSION-001 slice 1. Slice 0 knew the date was an estimate and had nowhere to put it, so
+// the record read back as a date Dave picked. These are the assertions that say it now travels.
+describe('an estimate is STORED as an estimate, not just spoken about on screen', () => {
+  it('a coarse answer puts preserved_at_approx TRUE on the wire', async () => {
+    renderWalk()
+    await answerSetup({ when: 'This summer' })
+    pickCrop('blueberry')
+    typeQty('1')
+    await saveItem()
+    expect(lastPost().preserved_at_approx).toBe(true)
+  })
+
+  it('a date he PICKS puts FALSE — a recorded fact, not an omission', async () => {
+    // Absent would mean NULL in the column, i.e. "nobody was ever asked", which is false here: he
+    // was asked and he answered with a calendar date.
+    renderWalk()
+    fireEvent.click(await screen.findByRole('button', { name: 'Chest Freezer 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pick a date' }))
+    fireEvent.change(screen.getByLabelText('Put-up date'), { target: { value: '2026-07-04' } })
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByRole('combobox', { name: 'Crop' })
+    pickCrop('blueberry')
+    typeQty('1')
+    await saveItem()
+    expect(lastPost().preserved_at).toBe('2026-07-04')
+    expect(lastPost().preserved_at_approx).toBe(false)
+    expect('preserved_at_approx' in lastPost()).toBe(true)
+  })
+
+  it('typing an exact date for ONE item stops that item being an estimate', async () => {
+    // The setup copy promises exactly this: "change it for any item you know exactly". Typing a date
+    // is the only act in the form that obtains a date FROM him, so it is the only thing that can
+    // turn the estimate into a fact.
+    renderWalk()
+    await answerSetup({ when: 'This summer' })
+    pickCrop('blueberry')
+    typeQty('1')
+    fireEvent.change(screen.getByLabelText('Put-up date'), { target: { value: '2026-08-02' } })
+    await saveItem()
+    expect(lastPost().preserved_at).toBe('2026-08-02')
+    expect(lastPost().preserved_at_approx).toBe(false)
+  })
+
+  it('the flag never separates from the date it qualifies', async () => {
+    // Slice 0 carries a corrected date forward to the next item (resetForNext leaves it alone, the
+    // same way it leaves the freezer alone). The flag has to travel with it: reverting on its own
+    // would re-label a date he typed as a guess, and staying true would be the original defect.
+    renderWalk()
+    await answerSetup({ when: 'This summer' })
+    pickCrop('blueberry')
+    typeQty('1')
+    fireEvent.change(screen.getByLabelText('Put-up date'), { target: { value: '2026-08-02' } })
+    await saveItem()
+    expect(lastPost()).toMatchObject({ preserved_at: '2026-08-02', preserved_at_approx: false })
+
+    typeQty('2')
+    await saveItem()
+    expect(lastPost()).toMatchObject({ preserved_at: '2026-08-02', preserved_at_approx: false })
+
+    // A genuinely different session answer moves the PAIR — not the date with a stale flag on it.
+    fireEvent.click(screen.getByTestId('putup-walk-change'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Earlier this year' }))
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByRole('combobox', { name: 'Crop' })
+    typeQty('3')
+    await saveItem()
+    expect(lastPost().preserved_at).not.toBe('2026-08-02')
+    expect(lastPost().preserved_at_approx).toBe(true)
+  })
+
+  it('says on the form itself that the date it is about to save is an estimate', async () => {
+    renderWalk()
+    await answerSetup({ when: 'This summer' })
+    expect(screen.getByText(/an estimate, not a date you picked/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Put-up date'), { target: { value: '2026-08-02' } })
+    expect(screen.queryByText(/an estimate, not a date you picked/)).toBeNull()
+  })
+})
+
 describe('the inversion — the bag count is the number the inventory actually reports', () => {
   it('"How many bags / jars?" is on the fast path in the walk, not behind More', async () => {
     renderWalk()

@@ -47,6 +47,13 @@ const PRESERVATION_COLUMNS = [
   'plant_id',
   'harvest_log_id',
   'preserved_at',
+  // V4-PUTUPSESSION-001 slice 1. LISTED HERE ONLY BECAUSE IT NOW APPEARS IN A sql`` TEMPLATE (the
+  // INSERT column list and the COALESCE-preserving UPDATE) — the assertion below rejects a name the
+  // handler does not actually reference. Note the ordering consequence: this array is audited
+  // against the LIVE PROD information_schema by schema-audit.yml, so it reports a genuine FAIL until
+  // migrations/v4-putupsession-001 is applied to prod. That is the L-081 guard doing its job, and it
+  // is why the DDL goes in before the promote.
+  'preserved_at_approx',
   'method',
   'method_other_text',
   'quantity_value',

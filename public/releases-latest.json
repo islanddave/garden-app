@@ -1,12 +1,7 @@
 {
-  "version": "4.87.0",
+  "version": "4.88.0",
   "date": "2026-08-31",
   "highlights": [
-    "Voice harvest no longer saves against the wrong plant when a spoken number is heard on its own, or when the plant you named was misheard and the previous one stayed selected.",
-    "Voice harvest now buzzes differently when it only guessed at the plant, and buzzes at all when the microphone dies mid-session — previously both felt like success.",
-    "Undo after a voice harvest actually appears now; it never could before.",
-    "Log Many finally has a search box and crop-type filters, and no longer wipes your whole selection when you change the zone, the event type or the date.",
-    "A harvest logged against the wrong plant can now be moved to the right one, instead of being deleted and logged again.",
-    "Recording what you put up: a freezer-walk mode that remembers where you left off across evenings."
+    "Freezer walk: a put-up date you estimated (\"this summer\") is now recorded and shown as an estimate — \"put up around Jul 16, 2026\" — instead of reading like a date you picked off the calendar. Type an exact date for any item and it stops being an estimate."
   ]
 }
