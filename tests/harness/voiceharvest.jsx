@@ -78,11 +78,21 @@ window.webkitSpeechRecognition = HarnessSR
 // "studio long" is the REAL transcript Chrome returns for "Suyo Long" on Dave's Android (2026-08-30)
 // — it is here so the V5-VOICEFUZZYMATCH-001 rescue is reachable by hand rather than only in a test.
 // "chinees red nodle" exercises the same rescue on a name whose damage is spread across two words.
-// "eighteen eighty four" is the TEACH case: a planting named 1884 that edit distance cannot reach
-// (it ranks helichrysum 0.353 on the real data), so it falls to the teach picker. Say it, type
-// "1884", pick it — then say it again and it should resolve straight to the planting.
+//
+// "eighteen eighty four" WAS the teach case — edit distance cannot reach a planting named 1884 (it
+// ranks helichrysum 0.353 on the real data), so it fell through to the teach picker. Since
+// BUG-VOICENUMWORD-001 it FOLDS to "1884" and resolves directly, announced as a rescue so the swap
+// is visible. The teach picker is still reachable behind it: say "rhubarb" for a true miss, or teach
+// this phrase deliberately and watch the learned layer take it back — learned still outranks the fold.
+//
+// THE LAST TWO ARE BUG-VOICENUMSUM-001, and they are here because a unit test cannot show what Dave
+// SEES. Both used to save silently and report success — "1884 two count" wrote 1886 count and
+// "eighteen eighty four two count" wrote 104. Both must now refuse, and the refusal must say to
+// separate the name from the amount rather than the bare "Didn't catch that" that left him repeating
+// a phrase the recogniser had heard perfectly.
 const PHRASES = ['cucumber', 'Suyo Long', 'studio long', 'chinees red nodle',
-  'eighteen eighty four', 'three count', '231 grams', 'next', 'rhubarb', 'text', 'done']
+  'eighteen eighty four', 'three count', '231 grams', 'next', 'rhubarb', 'text', 'done',
+  '1884 two count', 'eighteen eighty four two count']
 
 function Driver() {
   const [, force] = useState(0)
