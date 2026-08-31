@@ -252,10 +252,116 @@ alarms_staleness() {
   echo "  ok  garden-meta-token-check-missing-run (armed on ${n} observed datapoints)"
 }
 
+# ---------------------------------------------------------------------------
+# System-user migration (OPS-FBSYSTEMUSER-001).
+#
+# A Meta SYSTEM USER token needs no re-authorization, which would end the 90-day chore outright.
+# Whether it actually helps is an EMPIRICAL question Meta has never documented: nothing on the
+# system-users page mentions data access at all (searched: "data_access", "never expire", "do not
+# expire" — zero hits). If a system user token carries its own 90-day clock, the migration trades one
+# chore for the same chore plus a harder setup. So the swap is gated on a MEASUREMENT, not a promise.
+#
+# THE CANDIDATE TOKEN MUST NEVER TRANSIT CHAT. Put it in one of two places and this script reads it:
+#   - a local file:  CANDIDATE_TOKEN_FILE=~/candidate.txt scripts/meta-token-check.sh verify-candidate
+#   - or an AWS secret named  garden-app/facebook-page-token-candidate  (key: page_token)
+# Delete the local file afterwards; `swap-candidate` reminds you.
+CANDIDATE_SECRET="${CANDIDATE_SECRET:-garden-app/facebook-page-token-candidate}"
+
+read_candidate() {   # echoes the token, never logs it
+  if [ -n "${CANDIDATE_TOKEN_FILE:-}" ]; then
+    [ -r "$CANDIDATE_TOKEN_FILE" ] || { log "cannot read CANDIDATE_TOKEN_FILE=$CANDIDATE_TOKEN_FILE"; return 1; }
+    tr -d ' \t\r\n' < "$CANDIDATE_TOKEN_FILE"
+  else
+    aws secretsmanager get-secret-value --region "$REGION" --secret-id "$CANDIDATE_SECRET" \
+      --query SecretString --output text \
+      | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["page_token"] if isinstance(d,dict) else d)'
+  fi
+}
+
+verify_candidate() {
+  local live app_id app_secret cand page_id ig_id
+  live="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET_ID" --query SecretString --output text)"
+  app_id="$(printf '%s' "$live"     | python3 -c 'import sys,json;print(json.load(sys.stdin)["app_id"])')"
+  app_secret="$(printf '%s' "$live" | python3 -c 'import sys,json;print(json.load(sys.stdin)["app_secret"])')"
+  page_id="$(printf '%s' "$live"    | python3 -c 'import sys,json;print(json.load(sys.stdin)["page_id"])')"
+  ig_id="$(printf '%s' "$live"      | python3 -c 'import sys,json;print(json.load(sys.stdin).get("ig_user_id",""))')"
+  cand="$(read_candidate)" || return 1
+  [ -n "$cand" ] || { log "candidate token is empty"; return 1; }
+
+  local resp
+  resp="$(curl -sS -G "https://graph.facebook.com/${GRAPH_VERSION}/debug_token" \
+            --data-urlencode "input_token=${cand}" \
+            --data-urlencode "access_token=${app_id}|${app_secret}")"
+
+  # NOTE: the heredoc supplies python's PROGRAM on stdin, so the response cannot also come by pipe —
+  # it is passed by environment instead. Piping it here silently yields an empty read.
+  RESP="$resp" python3 - "$FB_SCOPES $IG_SCOPES" <<'PY'
+import sys, os, json, datetime
+required = sorted(set(sys.argv[1].split()))
+raw = json.loads(os.environ["RESP"])
+if "error" in raw:
+    print("FAIL  debug_token returned an error:", raw["error"].get("message")); sys.exit(1)
+d = raw["data"]
+iso = lambda t: datetime.datetime.fromtimestamp(int(t), datetime.timezone.utc).isoformat() if int(t) else "0 (never)"
+scopes, fails = d.get("scopes") or [], []
+print(f"  type                   {d.get('type')}")
+print(f"  is_valid               {d.get('is_valid')}")
+print(f"  expires_at             {iso(d.get('expires_at') or 0)}")
+print(f"  data_access_expires_at {iso(d.get('data_access_expires_at') or 0)}")
+print(f"  scopes                 {', '.join(scopes)}")
+if not d.get("is_valid"):                     fails.append("token is not valid")
+if int(d.get("expires_at") or 0) != 0:        fails.append("expires_at is NOT 0 — this token expires by time")
+# The whole point of the migration. A non-zero value here means we gained nothing.
+if int(d.get("data_access_expires_at") or 0) != 0:
+    fails.append("data_access_expires_at is NOT 0 — this token carries the SAME 90-day clock. "
+                 "The migration buys nothing; keep the existing token.")
+missing = [s for s in required if s not in scopes]
+if missing:                                    fails.append("missing scopes: " + ", ".join(missing))
+if fails:
+    print("\nFAIL"); [print("  -", f) for f in fails]; sys.exit(1)
+print("\nPASS  never expires, no data-access clock, all required scopes present")
+PY
+  local rc=$?
+  [ $rc -eq 0 ] || return $rc
+
+  # Smoke: the credential must actually reach both publish targets, not merely look well-formed.
+  local pn ign
+  pn="$(curl -sS -G "https://graph.facebook.com/${GRAPH_VERSION}/${page_id}" --data-urlencode "fields=name" \
+        --data-urlencode "access_token=${cand}" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("name") or "ERROR: "+str(d.get("error",{}).get("message")))')"
+  echo "  page  ${page_id} -> ${pn}"
+  case "$pn" in ERROR*) log "candidate cannot read the Page"; return 1 ;; esac
+  if [ -n "$ig_id" ]; then
+    ign="$(curl -sS -G "https://graph.facebook.com/${GRAPH_VERSION}/${ig_id}" --data-urlencode "fields=username" \
+          --data-urlencode "access_token=${cand}" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("username") or "ERROR: "+str(d.get("error",{}).get("message")))')"
+    echo "  ig    ${ig_id} -> ${ign}"
+    # IG is the half actually exposed to the data-access lapse — a candidate that cannot reach it is useless.
+    case "$ign" in ERROR*) log "candidate cannot read the Instagram account — this is the half that matters"; return 1 ;; esac
+  fi
+  echo "VERIFIED — safe to swap"
+}
+
+swap_candidate() {
+  echo "verifying before swapping..." && verify_candidate || { log "REFUSING to swap: verification failed"; return 1; }
+  local live cand
+  live="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET_ID" --query SecretString --output text)"
+  cand="$(read_candidate)"
+  # Back up the OLD token before overwriting. It stays valid, so this is a real rollback, not a formality.
+  printf '%s' "$live" > "/tmp/fb-page-token-previous-$(date +%Y%m%d%H%M%S).json"
+  local backup; backup="$(ls -t /tmp/fb-page-token-previous-*.json | head -1)"
+  chmod 600 "$backup"
+  echo "  previous secret saved to ${backup} (chmod 600) — restore with: aws secretsmanager put-secret-value --region ${REGION} --secret-id ${SECRET_ID} --secret-string file://${backup}"
+  printf '%s' "$live" | CAND="$cand" python3 -c 'import sys,json,os;d=json.load(sys.stdin);d["page_token"]=os.environ["CAND"];print(json.dumps(d))' \
+    | aws secretsmanager put-secret-value --region "$REGION" --secret-id "$SECRET_ID" --secret-string file:///dev/stdin >/dev/null
+  echo "  swapped. The Lambda caches secrets for 5 minutes (SECRETS_TTL_MS) — wait before smoke-testing a real post."
+  echo "  now delete the candidate: rm -f \"\${CANDIDATE_TOKEN_FILE:-}\" and/or aws secretsmanager delete-secret --region ${REGION} --secret-id ${CANDIDATE_SECRET} --force-delete-without-recovery"
+}
+
 case "${1:-}" in
   check)            check ;;
   selftest)         selftest ;;
   alarms)           alarms ;;
   alarms-staleness) alarms_staleness ;;
-  *) echo "usage: $0 {check|selftest|alarms|alarms-staleness}" >&2; exit 2 ;;
+  verify-candidate) verify_candidate ;;
+  swap-candidate)   swap_candidate ;;
+  *) echo "usage: $0 {check|selftest|alarms|alarms-staleness|verify-candidate|swap-candidate}" >&2; exit 2 ;;
 esac
