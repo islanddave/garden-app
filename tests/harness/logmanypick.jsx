@@ -55,12 +55,24 @@ for (let t = 0; PLANTINGS.length < 239; t++) {
   })
 }
 
+// V4-LOGMANYUXREFRESH-001 S4 — a 2-TIER tree, not the flat list S3 shipped with. The location
+// filter's whole claim is the descendant cascade (pick Pasture, keep Bag Area), and a flat fixture
+// cannot falsify it. Shape copied from prod: level-0 zones with sub-locations under two of them,
+// including the repeated "Shade" name that makes the disambiguating chip prefix load-bearing.
 const LOCATIONS = [
-  { id: 'bag', name: 'Bag Area', sort_order: 1 },
-  { id: 'trough', name: 'Trough', sort_order: 2 },
-  { id: 'deck', name: 'Deck', sort_order: 3 },
-  { id: 'yard', name: 'Yard', sort_order: 4 },
+  { id: 'pasture', name: 'Pasture', parent_id: null, sort_order: 1 },
+  { id: 'bag', name: 'Bag Area', parent_id: 'pasture', sort_order: 1 },
+  { id: 'pshade', name: 'Shade', parent_id: 'pasture', sort_order: 2 },
+  { id: 'drive', name: 'Drive', parent_id: null, sort_order: 2 },
+  { id: 'trough', name: 'Trough', parent_id: 'drive', sort_order: 1 },
+  { id: 'dshade', name: 'Shade', parent_id: 'drive', sort_order: 2 },
+  { id: 'deck', name: 'Deck', parent_id: null, sort_order: 3 },
+  { id: 'yard', name: 'Yard', parent_id: null, sort_order: 4 },
 ]
+// Spread across the tree, with a null tail so the "No zone" bucket renders. Deterministic (index
+// modulo) rather than random: a harness whose fixture changes between runs cannot be a baseline.
+const PLACES = ['bag', 'bag', 'trough', 'pasture', 'deck', 'pshade', 'yard', 'dshade', 'drive', null]
+PLANTINGS.forEach((pl, i) => { pl.location_id = PLACES[i % PLACES.length] })
 
 // Stubbed at the NETWORK layer so the real page, the real ScopeChecklist and the real
 // useApiFetch/token path all run. A `space` scope resolves to a slice, mirroring the server-side
@@ -134,6 +146,35 @@ window.__h = {
   rows: () => [...document.querySelectorAll('[data-testid="pick-list"] button[aria-pressed]')]
     .map(b => b.textContent).slice(0, 8),
 
+  // ── S4: the second filter axis ────────────────────────────────────────────────────────────
+  // FilterChipRow collapses its tray on selecting a tray-only chip (its own BD-011 rider), so
+  // every tap on a non-pinned chip has to be preceded by its own expand. Returning false when a
+  // control is missing matters: `?.click()` on a null makes a no-op look like a completed step.
+  // Expand and tap are SEPARATE calls on purpose, one render tick apart. Doing both in one
+  // function looked right and silently did nothing: setExpanded is async, so the re-query for the
+  // now-revealed chip ran against the pre-expand DOM, found nothing, and returned false — a filter
+  // that never applied, reported as a step that ran. (Caught by the measurement disagreeing with
+  // the jsdom test, not by the harness.)
+  chipExpand: (testid) => {
+    const scope = document.querySelector(`[data-testid="${testid}"]`)
+    const more = scope && [...scope.querySelectorAll('button')].find(b => /^More/.test(b.textContent))
+    if (!more) return false
+    more.click()
+    return true
+  },
+  chipTap: (testid, label) => {
+    const scope = document.querySelector(`[data-testid="${testid}"]`)
+    if (!scope) return false
+    const btn = [...scope.querySelectorAll('button')]
+      .find(b => b.textContent.replace(/\s+/g, ' ').trim() === label)
+    if (!btn) return 'missing'
+    btn.click()
+    // 'tapped', never the post-click aria-pressed: React has not re-rendered yet, so that attribute
+    // still reads "false" — indistinguishable, in a dataset attribute, from "the chip was not
+    // there". A step that no-opped has to look different from one that worked.
+    return 'tapped'
+  },
+
   // ── S2: the four targets that were under the app's own 44px floor ─────────────────────────
   targets: () => {
     const label = q('[data-testid="sc-default-all"]')?.closest('label')
@@ -162,6 +203,105 @@ window.__h = {
     }
   },
 
+  // ── S5: the BULK review list's geometry, which is the panel Dave ruled on ──────────────────
+  // S4 argued AGAINST grouping this list with an ESTIMATE: "a maxHeight 240 window showing ~5 rows,
+  // and 28px headers would consume ~40% of its viewport". Dave accepted that cost and asked for the
+  // grouping anyway, so the number he agreed to has to become a measured one. Everything here is
+  // read at scrollTop 0 — the state the list opens in, which is the only state the estimate was
+  // about; scrolled, a header is just another 28px anywhere on an 11,000px strip.
+  //
+  // `headerPxVisible` INTERSECTS each header with the panel's visible box rather than summing header
+  // heights: a header below the fold costs nothing on the screen the user is looking at, and summing
+  // all 56 of them would report a share over 100% and read as a catastrophe.
+  review: () => {
+    // The testid is S5's own addition, so a BASELINE run (baselinePlugin serving src/** from a
+    // pre-S5 object, which is how the before/after column is produced) would find nothing and report
+    // `present: false` — an instrument that only works on the build it was written for measures
+    // nothing. The fallback is structural: in BULK the review list is the only <ul> outside the pick
+    // frame carrying exclusion toggles.
+    const list = q('[data-testid="sc-review-list"]')
+      || [...document.querySelectorAll('ul')]
+        .find(u => !u.closest('[data-testid="pick-frame"]') && u.querySelector('button[aria-pressed]'))
+    if (!list) return { present: false, innerWidth: window.innerWidth, innerHeight: window.innerHeight }
+    const lr = list.getBoundingClientRect()
+    // clientHeight, not rect.height: the visible scrollport, with the maxHeight cap applied.
+    const viewTop = lr.top
+    const viewBottom = lr.top + list.clientHeight
+    const headers = [...list.querySelectorAll(':scope > [data-testid^="sc-group-"]')]
+    const rows = [...list.querySelectorAll('button[aria-pressed]')]
+    const overlap = (el) => {
+      const r = el.getBoundingClientRect()
+      return Math.max(0, Math.min(r.bottom, viewBottom) - Math.max(r.top, viewTop))
+    }
+    const headerPxVisible = headers.reduce((s, el) => s + overlap(el), 0)
+    const fullyVisible = (el) => {
+      const r = el.getBoundingClientRect()
+      return r.top >= viewTop - 0.5 && r.bottom <= viewBottom + 0.5
+    }
+    return {
+      present: true,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      panelTop: Math.round(lr.top),
+      panelClientH: list.clientHeight,
+      panelScrollH: list.scrollHeight,
+      panelScrolls: list.scrollHeight > list.clientHeight + 1,
+      headerCount: headers.length,
+      headerH: headers.length ? Math.min(...headers.map(h)) : null,
+      // The pitch a header really costs the list: its own height plus the flex `gap` above it.
+      headerPitch: (() => {
+        if (headers.length < 1 || !rows.length) return null
+        const hr = headers[0].getBoundingClientRect()
+        const next = headers[0].nextElementSibling
+        return next ? Math.round(next.getBoundingClientRect().top - hr.top) : Math.round(hr.height)
+      })(),
+      headersVisible: headers.filter(el => overlap(el) > 0).length,
+      headerPxVisible: Math.round(headerPxVisible),
+      // THE NUMBER S4 ESTIMATED AT ~40%.
+      headerSharePct: list.clientHeight ? Math.round((headerPxVisible / list.clientHeight) * 1000) / 10 : null,
+      rowCount: rows.length,
+      rowH: rows.length ? Math.min(...rows.map(h)) : null,
+      rowsFullyVisible: rows.filter(fullyVisible).length,
+      rowsPartlyVisible: rows.filter(el => overlap(el) > 0).length,
+      // THE OTHER HALF OF S4's ESTIMATE, and the half that makes it defensible. The share above is
+      // the list AS IT OPENS, where the first group is 46 tomatoes and exactly one header is on
+      // screen. Scroll into the tail — 45 crop types with 1-3 plantings each — and a 240px window
+      // holds three or four headers instead of one. S4's "~40%" is a claim about THAT window, not
+      // about the opening one, so the honest comparison measures the worst window in the list.
+      // Every window start is a real laid-out element top, so this reports a position the user can
+      // actually scroll to rather than an arbitrary offset.
+      worstWindow: (() => {
+        if (!headers.length) return { headerPx: 0, headerPct: 0, headersInView: 0, rowsFullyVisible: rows.length ? Math.min(rows.length, Math.floor(list.clientHeight / (rows[0].getBoundingClientRect().height + 4))) : 0, startPx: 0 }
+        const contentTop = lr.top - list.scrollTop
+        const box = el => { const r = el.getBoundingClientRect(); return { top: r.top - contentTop, bottom: r.bottom - contentTop } }
+        const hb = headers.map(box)
+        const rb = rows.map(box)
+        const view = list.clientHeight
+        let best = { headerPx: -1 }
+        for (const start of [...hb, ...rb].map(b => b.top)) {
+          const end = start + view
+          let px = 0, n = 0
+          for (const b of hb) { const o = Math.max(0, Math.min(b.bottom, end) - Math.max(b.top, start)); if (o > 0) { px += o; n += 1 } }
+          if (px > best.headerPx) {
+            best = {
+              startPx: Math.round(start), headerPx: Math.round(px), headersInView: n,
+              headerPct: Math.round((px / view) * 1000) / 10,
+              rowsFullyVisible: rb.filter(b => b.top >= start - 0.5 && b.bottom <= end + 0.5).length,
+            }
+          }
+        }
+        return best
+      })(),
+      headerText: headers.slice(0, 4).map(g => g.textContent.replace(/\s+/g, ' ').trim()),
+      // The bucket BD-073 says must never vanish, on this list too.
+      ungrouped: (() => {
+        const g = list.querySelector('[data-testid="sc-group-__ungrouped__"]')
+        return g ? g.textContent.replace(/\s+/g, ' ').trim() : null
+      })(),
+      firstRowText: rows.slice(0, 3).map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+    }
+  },
+
   // ── S3: the frame's geometry ──────────────────────────────────────────────────────────────
   frame: () => {
     const f = q('[data-testid="pick-frame"]')
@@ -180,8 +320,30 @@ window.__h = {
       return /auto|scroll/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1
     }).map(el => el.dataset.testid ?? el.tagName.toLowerCase())
     const pr = primary?.getBoundingClientRect()
+    // S4 — the two things this slice ADDS to the frame, and both of them cost track 2 its height:
+    // a second chip row in track 1, and a header per crop group inside the scroller.
+    const zoneChips = [...document.querySelectorAll('[data-testid="sc-zone-chips"] button')]
+    const cropChips = [...document.querySelectorAll('[data-testid="sc-crop-chips"] button')]
+    const groupHeaders = [...list.querySelectorAll('[data-testid^="pick-group-"]')]
+    const track1 = f.firstElementChild
     return {
       present: true,
+      // TRACK 1's real height is the S4 number to watch: at 390x500 (keyboard up) whatever this
+      // costs comes straight out of the candidate list, which is the thing being chosen from.
+      track1H: h(track1),
+      zoneChipCount: zoneChips.length,
+      zoneChipH: zoneChips.length ? Math.min(...zoneChips.map(h)) : null,
+      zoneChipRows: new Set(zoneChips.map(b => Math.round(b.getBoundingClientRect().top))).size,
+      zoneChipLabels: zoneChips.map(b => b.textContent.replace(/\s+/g, ' ').trim()),
+      cropChipRows: new Set(cropChips.map(b => Math.round(b.getBoundingClientRect().top))).size,
+      groupHeaderCount: groupHeaders.length,
+      groupHeaderH: groupHeaders.length ? Math.min(...groupHeaders.map(h)) : null,
+      groupHeaderText: groupHeaders.slice(0, 4).map(g => g.textContent.replace(/\s+/g, ' ').trim()),
+      // The bucket BD-073 says must never vanish — asserted as PRESENT and as its own group.
+      ungrouped: (() => {
+        const g = list.querySelector('[data-testid="pick-group-__ungrouped__"]')
+        return g ? g.textContent.replace(/\s+/g, ' ').trim() : null
+      })(),
       innerWidth: window.innerWidth,
       innerHeight: window.innerHeight,
       frameTop: Math.round(rect.top), frameBottom: Math.round(rect.bottom),

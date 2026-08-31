@@ -528,6 +528,44 @@ export function normalizeNotes(v) {
 // F9 UUID regex — applied before any SQL fires so Postgres never sees a malformed UUID.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ── V4-LOGMANYUXREFRESH-001 S4 — scope.type:'ids' ("pick, don't un-pick") ───────────────────────
+// The three shipped scopes are all SERVER-RESOLVED sets the client then subtracts from with
+// exclude_plant_ids. That is the right model for "water the whole Bag Area" and the wrong one for
+// "these three": a 3-planting pick out of 239 travels as 236 exclusions, so the body's size is set
+// by the garden rather than by the intent, and — the part that matters — the client's intent is
+// only recoverable by SUBTRACTING two sets it does not control. If the server's resolution moves
+// between the preview and the commit (a planting archived, ended, or reassigned by the other
+// household member in the interim), the complement quietly re-includes or drops plantings and
+// nothing anywhere can tell. An explicit id list makes the intent the payload, which is what makes
+// the count assertion in index.js possible at all: you cannot assert "we logged what you picked"
+// against a body that never said what was picked.
+//
+// Cap = the batch cap. Anything above it is rejected here rather than silently truncated by the
+// resolver's LIMIT 501 — a truncation on this path would under-write a set the user named
+// explicitly, which is the exact failure BD-073 was filed about.
+export const MAX_SCOPE_IDS = 500;
+
+// Deduped, lower-cased plant ids for scope.type='ids'; [] for every other scope.
+//
+// BOTH normalizations are load-bearing for the count assertion, not tidiness. Postgres compares
+// uuid VALUES, so '5C6…' and '5c6…' are one planting to the resolver and two to a naive
+// `requested.length === resolved.length` — the assertion would 409 a correct batch. Duplicates do
+// the same thing. Normalizing here, once, means the number the assertion compares against is the
+// number of DISTINCT plantings the client actually named.
+export function normalizeScopeIds(scope) {
+  if (!scope || scope.type !== 'ids' || !Array.isArray(scope.plant_ids)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of scope.plant_ids) {
+    if (typeof raw !== 'string') continue;
+    const id = raw.toLowerCase();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 // ── Bulk "Quick Log" / Unit A (2026-05-24, expanded 2026-05-28) ───────────
 // V3-EVENT-008: the batch allowlist is now DERIVED, not hand-listed. It is generated
 // from the canonical src/lib/eventTypes.js (EVENT_TYPES − BATCH_EXCLUDED_TYPES) into the
@@ -566,8 +604,8 @@ export function validateBatchBody(body) {
   }
   const s = body.scope;
   if (!s || typeof s !== 'object') return { status: 400, error: 'scope is required' };
-  if (!['all', 'project', 'space'].includes(s.type)) {
-    return { status: 400, error: 'scope.type must be all, project, or space' };
+  if (!['all', 'project', 'space', 'ids'].includes(s.type)) {
+    return { status: 400, error: 'scope.type must be all, project, space, or ids' };
   }
   if (s.type === 'project' && !UUID_RE.test(s.project_id ?? '')) {
     return { status: 400, error: 'scope.project_id must be a UUID when scope.type=project' };
@@ -575,12 +613,34 @@ export function validateBatchBody(body) {
   if (s.type === 'space' && !UUID_RE.test(s.location_id ?? '')) {
     return { status: 400, error: 'scope.location_id must be a UUID when scope.type=space' };
   }
+  // V4-LOGMANYUXREFRESH-001 S4. EMPTY IS REJECTED, not treated as "nothing to do": an empty list
+  // reaching the resolver would resolve to zero rows and fall out as the generic "No plantings
+  // matched the scope", which reads as "your garden is empty" for what is really a malformed body.
+  if (s.type === 'ids') {
+    if (!Array.isArray(s.plant_ids) || s.plant_ids.length === 0) {
+      return { status: 400, error: 'scope.plant_ids must be a non-empty array when scope.type=ids' };
+    }
+    if (s.plant_ids.some((id) => typeof id !== 'string' || !UUID_RE.test(id))) {
+      return { status: 400, error: 'scope.plant_ids must all be UUIDs' };
+    }
+    if (normalizeScopeIds(s).length > MAX_SCOPE_IDS) {
+      return { status: 400, error: `scope.plant_ids may name at most ${MAX_SCOPE_IDS} plantings` };
+    }
+  }
   if (body.exclude_plant_ids != null) {
     if (!Array.isArray(body.exclude_plant_ids)) {
       return { status: 400, error: 'exclude_plant_ids must be an array' };
     }
     if (body.exclude_plant_ids.some((id) => !UUID_RE.test(id))) {
       return { status: 400, error: 'exclude_plant_ids must all be UUIDs' };
+    }
+    // The two are OPPOSITE models and a body carrying both states its intent twice. It is rejected
+    // rather than reconciled because reconciling it breaks the count assertion in the confusing
+    // direction: an id that is both named and excluded resolves to nothing, the assertion fires,
+    // and the user is told plantings "are no longer available" when the client asked for exactly
+    // that. Empty arrays pass — a client that always sends the key is not making a claim.
+    if (s.type === 'ids' && body.exclude_plant_ids.length > 0) {
+      return { status: 400, error: 'exclude_plant_ids cannot be combined with scope.type=ids' };
     }
   }
 

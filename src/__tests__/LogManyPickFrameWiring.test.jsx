@@ -109,8 +109,39 @@ describe('S3 wiring — the commit control moves, it does not multiply', () => {
     await waitFor(() => expect(commitButtons()[0].textContent).toBe('Log watered on 1'))
     fireEvent.click(commitButtons()[0])
     await waitFor(() => expect(batchPosts).toHaveLength(1))
-    // The wire contract §5.1 names: the shipped scope plus the COMPLEMENT as exclusions. No new
-    // scope type, so no Lambda change is needed to ship PICK.
+    // V4-LOGMANYUXREFRESH-001 S4 — THIS ASSERTION CHANGED, and the change is the slice. S3 shipped
+    // PICK on the existing wire contract (the scope plus its COMPLEMENT as 7 exclusions) precisely
+    // so it could ship without a Lambda diff; S4 added `scope.type:'ids'` and the commit now names
+    // the picks. The old form is still correct arithmetic and is still what BULK sends — what it
+    // cannot do is let the server notice that the set it resolves at commit time is no longer the
+    // set the preview showed. See the confirm() comment in LogMany.jsx.
+    expect(batchPosts[0].scope).toEqual({ type: 'ids', plant_ids: ['pl-4'] })
+    // OMITTED, not empty: the server 400s a body carrying both models.
+    expect('exclude_plant_ids' in batchPosts[0]).toBe(false)
+  })
+
+  // S5 — INVERTED, DELIBERATELY, and only on the half that Dave moved. S4 wrote this test as
+  // "S4 changed the PICK path only" and its own lane report cites it as the pin that "BULK did not
+  // move"; the blanket claim in that title is now false, because Dave overruled S4's decision to
+  // leave the review list ungrouped ("Group it too — I want consistency"). Rather than delete the
+  // pin or leave it asserting the old world, it now states the BOUNDARY: the WIRE did not move (the
+  // assertions below are byte-for-byte S4's) while the LIST did. Grouping is presentation — a change
+  // that grouped the review list AND altered what it commits would be the far more expensive bug,
+  // and this is the test that catches it.
+  it('BULK now groups the review list but still commits on the exclusion contract', async () => {
+    await renderReady()
+    fireEvent.click(await screen.findByText(/Review \d+ plantings/))
+    // The half that MOVED. `sc-group-*` headers do not exist anywhere in S4's build.
+    const headers = [...document.querySelectorAll('[data-testid="sc-review-list"] > [data-testid^="sc-group-"]')]
+      .map(li => li.dataset.testid.slice('sc-group-'.length))
+    expect(headers).toContain('tomato')
+    expect(headers).toContain('__ungrouped__')
+    // The half that did NOT. Everything from here down is S4's test unchanged.
+    fireEvent.click(screen.getByTestId('sc-select-none'))
+    fireEvent.click(screen.getByText('Sun Gold'))
+    await waitFor(() => expect(commitButtons()[0].textContent).toBe('Log watered on 1'))
+    fireEvent.click(commitButtons()[0])
+    await waitFor(() => expect(batchPosts).toHaveLength(1))
     expect(batchPosts[0].scope).toEqual({ type: 'all' })
     expect(batchPosts[0].exclude_plant_ids.sort()).toEqual(
       ALL.map(p => p.id).filter(id => id !== 'pl-4').sort(),

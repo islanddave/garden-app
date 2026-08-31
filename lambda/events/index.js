@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId, normalizeScopeIds } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
@@ -286,6 +286,10 @@ export const handler = async (event) => {
       const projectId = scope.project_id ?? null;
       const locationId = scope.location_id ?? null;
       const excludeIds = Array.isArray(body.exclude_plant_ids) ? body.exclude_plant_ids : [];
+      // V4-LOGMANYUXREFRESH-001 S4 — deduped/lower-cased, and [] for every non-ids scope. See
+      // normalizeScopeIds in validators.js for why both normalizations are the count assertion's
+      // foundation rather than housekeeping.
+      const scopeIds = normalizeScopeIds(scope);
       const dryRun = body.dry_run === true;
 
       // Timezone for the streak / daily-XP window. The single path pre-fetches this the same way
@@ -428,8 +432,22 @@ export const handler = async (event) => {
       // eliminate a row, it can only fail to name one: crop_type_slug comes back NULL and the
       // client buckets it as Ungrouped. The `plantings selected == events written` invariant is
       // unchanged and is asserted directly in logmany-cropslug.test.js.
+      //
+      // V4-LOGMANYUXREFRESH-001 S4 / BD-073 — the preview also carries the planting's LOCATION, for
+      // the combined location × crop-type filter ("bag area + tomatoes", the intersection Dave calls
+      // "even better"). The expression is COALESCE(p.location_id, pp.location_id) and it is copied
+      // from the 'space' scope arm below RATHER THAN CHOSEN: the client filters on this value, so
+      // if it disagreed with what the 'space' scope resolves, filtering to a zone in the picker and
+      // scoping to the same zone would return different sets on the same screen. One expression,
+      // used twice, is the only way those two stay the same answer.
+      //
+      // NO NEW JOIN. `location_id` and `container_id` are columns on rows this statement already
+      // has, so the LEFT-JOIN hazard above is not re-opened here — S4 adds a projection, not a
+      // relation. A planting with neither location arrives as an explicit null and the client
+      // buckets it as unlocated, the same way a null crop slug becomes Ungrouped.
       const resolved = await sql`
-        SELECT p.id AS plant_id, p.display_name AS plant_name, pv.crop_type_slug AS crop_type_slug
+        SELECT p.id AS plant_id, p.display_name AS plant_name, pv.crop_type_slug AS crop_type_slug,
+               COALESCE(p.location_id, pp.location_id) AS location_id
         FROM public.garden_node p
         LEFT JOIN public.container pp ON pp.id = p.container_id AND pp.deleted_at IS NULL
         LEFT JOIN public.plant_varieties pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
@@ -470,6 +488,15 @@ export const handler = async (event) => {
                   )
                   SELECT id FROM loc_subtree
                 )
+                -- V4-LOGMANYUXREFRESH-001 S4 — the EXPLICIT LIST. Every other filter in this WHERE
+                -- clause still applies on top of it, deliberately and in this order: the id list
+                -- says WHICH plantings the user meant, and the ownership / soft-delete / archived /
+                -- live-status terms above say which of those this caller is allowed to write to.
+                -- An id list that bypassed them would be a client-supplied plant list, which is the
+                -- one thing this resolver's opening comment says it must never be. The gap that
+                -- opens between "named" and "resolved" is not swallowed — it is exactly what the
+                -- count assertion below reports.
+                WHEN 'ids'     THEN p.id = ANY(${scopeIds})
                 ELSE false
               END
           AND NOT (p.id = ANY(${excludeIds}))
@@ -490,12 +517,57 @@ export const handler = async (event) => {
       // missing key — the same silent-omission class BUG-LOGMANYPROJECTLESS-001 named.
       const previewRows = resolved.slice(0, 500).map((r) => ({
         id: r.plant_id, name: r.plant_name, crop_type_slug: r.crop_type_slug ?? null,
+        location_id: r.location_id ?? null,
       }));
       // Derived from `resolved`, NOT from previewRows: these two must stay the same slice of the
       // same rows, and the write is keyed off this one.
       const plantIds = resolved.slice(0, 500).map((r) => r.plant_id);
+
+      // ── V4-LOGMANYUXREFRESH-001 S4 / BD-073 — THE COUNT ASSERTION ────────────────────────────
+      // BD-073, verbatim: "add an explicit assertion that the number of plantings selected equals
+      // the number of events written, surfacing a visible warning rather than under-writing in
+      // silence." That invariant has TWO seams and only the second one was guarded:
+      //
+      //   named  →  resolved     THIS check. New, and only expressible on the ids scope: it is the
+      //                          first scope where the client states a set the server can be held
+      //                          to. On all/project/space the server IS the authority on the set,
+      //                          so there is nothing to compare it against.
+      //   resolved → written     already guarded further down (missingPlantIds, from
+      //                          BUG-LOGMANYPROJECTLESS-001), by re-reading event_log.
+      //
+      // Case-insensitive, because the ids came back from Postgres as canonical lower-case uuids
+      // while the client may have echoed whatever case it was given.
+      const resolvedIdSet = new Set(resolved.map((r) => String(r.plant_id).toLowerCase()));
+      const unresolvedScopeIds = scopeType === 'ids'
+        ? scopeIds.filter((id) => !resolvedIdSet.has(id))
+        : [];
+
       // dry_run: server-accurate preview (count + plantings), no write, no idempotency needed.
-      if (dryRun) return resp(200, { count: plantIds.length, capped, plantings: previewRows });
+      // The two S4 keys are ADDITIVE and appear ONLY on a divergence, so no existing client sees a
+      // response change shape. A dry run must still PREVIEW — failing it here would blank the
+      // picker at the exact moment the user needs to see which of their picks survived.
+      if (dryRun) return resp(200, {
+        count: plantIds.length, capped, plantings: previewRows,
+        ...(unresolvedScopeIds.length
+          ? { requested_count: scopeIds.length, unresolved_plant_ids: unresolvedScopeIds }
+          : {}),
+      });
+      // THE LOUD FAILURE. Before randomUUID(), before the transaction, before anything is written:
+      // if the client named plantings this resolver cannot reach, the batch does not run at all.
+      // The alternative — log the ones that resolved — is what BD-073 calls under-writing in
+      // silence, and it is worse here than on any other scope, because on the ids path the user has
+      // an explicit list on screen and a success count that agreed with it would be a lie about a
+      // set they can see. Ordered BEFORE the empty check so the specific diagnosis wins over the
+      // generic "No plantings matched the scope" when every named id has gone.
+      if (unresolvedScopeIds.length) {
+        return resp(409, {
+          error: `${unresolvedScopeIds.length} of ${scopeIds.length} picked plantings are no longer available to log — nothing was logged. Re-check your picks.`,
+          code: 'SCOPE_IDS_UNRESOLVED',
+          requested_count: scopeIds.length,
+          resolved_count: plantIds.length,
+          unresolved_plant_ids: unresolvedScopeIds,
+        });
+      }
       if (plantIds.length === 0) return resp(400, { error: 'No plantings matched the scope' });
       if (capped) return resp(400, { error: 'Too many plantings (>500) — narrow the scope' });
       const batchId = randomUUID();

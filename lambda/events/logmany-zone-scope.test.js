@@ -96,9 +96,11 @@ describe('events Lambda — Log Many By-zone scope resolution', () => {
   });
 
   it('an unrecognised scope type resolves to NOTHING, never to everything', () => {
-    // validators.js gates scope.type to all|project|space before this runs, so this arm is
+    // validators.js gates scope.type to all|project|space|ids before this runs, so this arm is
     // unreachable today — which is exactly why it needs pinning: `ELSE true` would be invisible
-    // until the day a fourth scope type is added and ships matching the entire garden.
+    // until the day a fifth scope type is added and ships matching the entire garden. The fourth
+    // (`ids`, V4-LOGMANYUXREFRESH-001 S4) arrived 2026-08-31 and this assertion is why adding it
+    // could not silently turn the ELSE arm into a wildcard on the way past.
     expect(SCOPE_SELECT.slice(caseIdx, endIdx + 3)).toMatch(/ELSE false\s+END/);
   });
 });

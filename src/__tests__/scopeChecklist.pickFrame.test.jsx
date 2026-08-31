@@ -139,11 +139,18 @@ describe('S2 — the four controls that shipped under the app\'s own 44px floor'
 })
 
 // ══ S3 ══════════════════════════════════════════════════════════════════════════════════════
-describe('S3 — BULK is untouched until the user asks for PICK', () => {
+// S5 — this block was titled "BULK is untouched until the user asks for PICK". It no longer is:
+// Dave overruled S4's density call and the review list is grouped. What survives, and is what these
+// tests were really guarding, is that PICK's own machinery stays out of BULK — no frame, no
+// pick-summary, and the net-count line still framed as exclusions.
+describe('S3 — BULK keeps its own model; the PICK frame stays out of it', () => {
   it('mounts in BULK: the review list, the preference and the net-count line are all present', async () => {
     render(<Harness />)
     await openList()
     expect(screen.getByTestId('sc-default-all')).toBeDefined()
+    // S5 — grouped, like the pick list, and NOT via a second implementation: both mount the same
+    // <CropGroupList/>. Named here because this is the block that used to assert the opposite.
+    expect(document.querySelector('[data-testid="sc-review-list"] > [data-testid^="sc-group-"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="pick-frame"]')).toBeNull()
     expect(lastSel.frameOpen).toBe(false)
     // Baseline is the stored default (true), so BULK still starts with everything selected.

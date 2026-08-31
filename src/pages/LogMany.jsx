@@ -396,7 +396,11 @@ export default function LogMany() {
   // V4-EVENTSEL-005: DERIVED, not plain state — see the useState comment above.
   const notesOpen = showNotes || !!notes
   const committedCount = selection?.committedCount ?? 0
-  const scopeLabel = scope.type === 'all' ? 'all active plantings'
+  // S4 — a PICK batch is committed as `{type:'ids'}`, so "in all active plantings" on the result
+  // card would name the pool the picks were drawn FROM, not what was logged. The page's `scope`
+  // state is still the pool (it drives the dry-run), so the label has to branch on the mode.
+  const scopeLabel = pickMode ? 'the plantings you picked'
+    : scope.type === 'all' ? 'all active plantings'
     : scope.type === 'project' ? (projects.find(p => p.id === scope.project_id)?.name ?? 'project')
     : (locations.find(l => l.id === scope.location_id)?.name ?? 'zone')
 
@@ -424,14 +428,35 @@ export default function LogMany() {
       const overrideEntries = depthApplies
         ? Object.entries(rowDepth).filter(([plantId]) => !excludedIds.includes(plantId))
         : []
+      // V4-LOGMANYUXREFRESH-001 S4 — "pick, don't un-pick", completed on the wire. In PICK mode the
+      // commit states the plantings the user chose instead of the 236 they did not:
+      // `{type:'ids', plant_ids:[…]}` rather than the shipped scope plus its complement.
+      //
+      // THIS IS NOT A SIZE OPTIMISATION. The complement is only equal to the pick as long as the
+      // server resolves the same 239 rows it resolved for the preview — and it may not, because
+      // the other household member can archive, end or reassign a planting in between. With the
+      // exclusion form the difference is unobservable: whatever the server now resolves minus the
+      // 236 named ids is simply logged, and the count comes back looking right. Naming the picks
+      // makes that same drift a 409 (SCOPE_IDS_UNRESOLVED, lambda/events/index.js), which is what
+      // BD-073 means by "surfacing a visible warning rather than under-writing in silence".
+      //
+      // BULK is untouched and stays on the exclusion contract: there the user really did mean "this
+      // whole scope, minus these", so a resolution that has since moved is a feature — a planting
+      // added to the Bag Area this morning belongs in this evening's watering.
+      const pickedIds = selection?.includedIds ?? []
+      const usePickScope = pickMode && pickedIds.length > 0
+      const postScope = usePickScope ? { type: 'ids', plant_ids: pickedIds } : scope
       // V4-EVENTSEL-005 — ONE note, applied to every row server-side (the batch INSERT binds it
       // once). Trimmed and omitted when blank so a whitespace-only field never becomes 500 rows of
       // empty-string notes; the server re-does both (normalizeNotes) because this is a public
       // endpoint and the client is not the guard.
       const trimmedNotes = notes.trim()
       const r = await fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({
-        idempotency_key: idemRef.current, event_type: eventType, scope,
-        exclude_plant_ids: excludedIds,
+        idempotency_key: idemRef.current, event_type: eventType, scope: postScope,
+        // OMITTED on the ids path, not sent empty: the server 400s a body carrying both, because
+        // the two are opposite models and an id that is named AND excluded would trip the count
+        // assertion with a message blaming the data for something the client asked for.
+        ...(usePickScope ? {} : { exclude_plant_ids: excludedIds }),
         ...(eventDate ? { event_date: eventDate } : {}),
         ...(trimmedNotes ? { notes: trimmedNotes } : {}),
         ...(depthApplies ? { metadata: waterDepthMetadata(batchDepth, batchDepthTouched) } : {}),
@@ -500,6 +525,24 @@ export default function LogMany() {
             ✓ {result.count} {result.count === 1 ? 'planting' : 'plantings'} {verbLabel}
           </p>
           <p style={{ margin: '0 0 16px', color: P.mid, fontSize: '0.85rem' }}>in {scopeLabel}</p>
+          {/* V4-LOGMANYUXREFRESH-001 S4 / BD-073 — THE SECOND HALF OF THE COUNT ASSERTION, MADE
+              VISIBLE. The events Lambda has re-read event_log after every batch since
+              BUG-LOGMANYPROJECTLESS-001 and returned `warning` + `skipped_plant_ids` whenever the
+              rows written disagreed with the plantings resolved — and its own comment says
+              "LogMany surfacing `warning` is a src/ change and belongs to whoever owns that lane."
+              Until now nothing read it, so the assertion could fire into a green tick: the count
+              above is TRUE (it is insertedEvents.length), but a user who selected 20 and got 18
+              saw "✓ 18 plantings watered" and no reason to think 20 had ever been asked for. That
+              is the silent under-write BD-073 was filed about, one layer up.
+              role="alert" and not aria-live="polite": this is the one thing on a success screen
+              that is not success. It renders only on a divergence, so no normal batch changes. */}
+          {result.warning && (
+            <p data-testid="logmany-partial-warning" role="alert"
+              style={{ margin: '-8px 0 16px', color: P.terra, fontWeight: 600, fontSize: '0.85rem' }}>
+              {result.warning}
+              {result.requested_count ? ` — ${result.count} of ${result.requested_count} were logged.` : ''}
+            </p>
+          )}
           {/* V4-WATERMATH-001 F0: state the class that was RECORDED, beside the undo that can take
               it back. Operational, not celebratory (Reward-UX V101) — it reports a stored value. */}
           {depthApplies && (

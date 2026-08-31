@@ -94,7 +94,16 @@ describe('events Lambda — Log Many preview carries crop_type_slug (V4-LOGMANYU
     expect(PROJECTION).toMatch(/crop_type_slug: r\.crop_type_slug \?\? null/);
   });
 
+  // The three keys this slice put on the wire, asserted as a PREFIX rather than as the whole
+  // object literal. S4 appends two conditional keys (requested_count / unresolved_plant_ids) to
+  // this same return, so an exact-shape match would have to be rewritten by every later slice that
+  // adds a field — and a test that must be edited to stay green stops being evidence. What has to
+  // hold is that the dry run returns `previewRows` UNFILTERED and counts `plantIds`; the S4 keys
+  // are pinned by their own file (logmany-scopeids.test.js).
   it('the dry-run response still returns the preview rows unfiltered', () => {
-    expect(BATCH).toMatch(/if \(dryRun\) return resp\(200, \{ count: plantIds\.length, capped, plantings: previewRows \}\)/);
+    expect(BATCH).toMatch(/if \(dryRun\) return resp\(200, \{\s*count: plantIds\.length, capped, plantings: previewRows,/);
+    // The mutation this really guards: narrowing what the preview returns to what some filter
+    // matched. `plantings:` must be the projection itself, never a derived list.
+    expect(BATCH).not.toMatch(/plantings: previewRows\.(filter|slice|map)/);
   });
 });
