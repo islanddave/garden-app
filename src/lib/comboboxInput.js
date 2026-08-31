@@ -122,18 +122,78 @@ export function useComboboxInput({ open, inputRef, onVoiceText, defaultMode = 'n
 // collapse repeated letters ("chilli" and "chili" both -> "chili"). Applied to BOTH sides, so
 // matching stays consistent — and it is strictly WIDENING over the old .toLowerCase().includes()
 // (every previous match still matches; see PlantingSelectKeyboard.test.jsx for the pins).
+//
+// BUG-LOOSEKEYREPEAT-001 — TWO defects, both on the two .replace() lines below.
+//
+// (A) THE SEPARATOR CLASS NOW INCLUDES '_'. It did not, so a snake_case crop-type slug kept its
+// underscore while the words a human types or says collapse without one, and the two keys could
+// never be equal: 'bunching_onion' -> "bunching_onion" vs 'bunching onion' -> "bunchingonion".
+// The slug term therefore contributed NOTHING for any multi-word crop type addressed by its natural
+// form. This is the half with users today — 10 underscore crop types carry 12 live plantings
+// (bunching_onion, sweet_potato, bee_balm, spider_plant, japanese_maple, christmas_cactus,
+// lemon_verbena, red_raspberry, bitter_melon, flower_mix) — and it is strictly WIDENING, so the
+// invariant this header claims is preserved. It does mean voiceFuzzyMatch.js's tokens() no longer
+// splits on exactly this class; that file documents the agreement as load-bearing and is owned by
+// another lane, so the correction is routed rather than made here.
+//
+// (B) THE REPEAT-COLLAPSE IS NON-DIGIT ONLY. It used to run over every character class, so
+// looseKey('1884') === looseKey('184') === '184' and two plantings whose names differ only by a
+// repeated digit collided in every typed picker. Letters are the class the collapse exists for — a
+// recogniser doubles a LETTER ("chilli" for "chili"), which is the whole motivation — while digits
+// carry meaning per character: 1884 is one cultivar name, 184 is a different one, 100 is not 10.
+// Scoping the capture to a non-digit keeps every letter case the collapse was built for (both pins
+// in comboboxInput.test.js are letter cases and stay green either way, which is exactly why the
+// digit cases needed their own test) and makes digit runs identity-preserving. Latent today: no
+// live planting pair triggers it. Strictly NARROWING, and only over digit runs. The one downstream
+// reader that leaned on the old width is namesAPlantingExactly (VoiceHarvest.jsx:138), and it gets
+// SAFER — the digit utterances that key-match Dave's planting named 1884 drop from four
+// (184 / 1184 / 1844 / 1884) to one, so three accidental mid-record plant switches stop existing.
+// That file's measured-blast-radius comment becomes false; also routed, not edited here.
 export function looseKey(s) {
   return String(s ?? '')
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\s\-'’.]+/g, '')
-    .replace(/(.)\1+/g, '$1')
+    .replace(/[\s\-'’._]+/g, '')
+    .replace(/([^\d])\1+/g, '$1')
 }
 
 export function looseIncludes(haystack, needle) {
   const n = looseKey(needle)
   if (!n) return true
   return looseKey(haystack).includes(n)
+}
+
+// ── V4-SEARCHCROPTYPE-001, client leg — crop type as a first-class search term ─
+// Dave's ask is that search ALWAYS match on crop type, not just cultivar name: "cucumber" must find
+// Suyo Long. The dashboard Lambda has done this server-side since a5d80526, but the server leg is
+// only half the surface — the client filters are what run instantly, offline, and when the server
+// degrades, and three of them (whole-garden search, the /log planting picker, the variety picker)
+// matched crop type either not at all or slug-only. This is the ONE implementation all three share,
+// so the surfaces cannot drift apart again.
+//
+// A multi-word slug is reachable by its spoken/typed form ("bunching onion" -> bunching_onion)
+// because looseKey now treats '_' as a separator — defect (A) above. That belongs there, not here:
+// it is one normalisation applied to BOTH sides of every comparison, and duplicating it as an extra
+// term would leave the two half-fixes free to disagree later.
+//
+// `cropType` is the crop_types row when the surface has the vocabulary in hand (VarietyPicker holds
+// it already via useCropTypes); omit it and the slug term still stands. display_name is what reaches
+// "scallion" -> bunching_onion. search_aliases ("cantaloupe" -> melon) is NOT reachable from any
+// client today — it is deliberately never SELECTed into a response shape — so that half stays
+// server-only; see the lane report.
+export function cropTypeTerms(slug, cropType = null) {
+  const terms = []
+  if (slug) terms.push(String(slug))
+  if (cropType?.display_name) terms.push(String(cropType.display_name))
+  return terms
+}
+
+// Haystack-first, needle-second — the looseIncludes argument order, deliberately. A slug-less row
+// yields no terms and so matches nothing, including an empty needle (looseIncludes returns true for
+// an empty needle; every call site already guards on a non-empty query, and this asymmetry is the
+// safe direction — an untyped crop type must not silently match).
+export function looseIncludesCropType(slug, needle, cropType = null) {
+  return cropTypeTerms(slug, cropType).some(t => looseIncludes(t, needle))
 }
 
 // ── Shared toggle-button chrome ───────────────────────────────────────────────
