@@ -47,7 +47,10 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 import { looseKey, looseIncludes } from '../lib/comboboxInput.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
 import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
-import { classify, foldNumberWords, normalise } from '../lib/voiceHarvestGrammar.js'
+import {
+  buildValue, classify, classifyPartial, foldNumberWords, normalise, segmentCandidates,
+} from '../lib/voiceHarvestGrammar.js'
+import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
 import {
   hapticSaveCommitted, hapticSaveFailed, hapticDigitAccepted, hapticDigitRejected, hapticUndoApplied,
@@ -68,6 +71,27 @@ function ctor() {
 // shipped for, in Dave's words: "I don't always remember spelling — is it charentais? charantais? —
 // but I know it is a cantaloupe." Speaking makes that worse, not better: a recogniser has no chance
 // on a cultivar name it has never heard, and every chance on "cucumber".
+// The `src` column every voiceDebug entry from this page carries, so a log that also contains
+// transcribe.js or probe entries can be read back to the surface that produced it.
+const VOICE_DEBUG_SRC = 'voiceharvest'
+
+// One-line rendering of a classify() result for the debug log. EXPORTED AND PURE so the log format
+// is testable without a recogniser. Quotes the transcript on every branch: the whole point of the
+// capture is to pair what was heard with what was done, and a decision line without the words is
+// only half a datum.
+export function describeResult(r) {
+  if (!r || !r.kind) return '?'
+  const said = JSON.stringify(String(r.transcript ?? ''))
+  switch (r.kind) {
+    case 'quantity':
+    case 'weight':  return `${r.kind} ${r.value} ${r.unit}${r.implausible ? ' IMPLAUSIBLE' : ''}${r.joined ? ' JOINED' : ''} <- ${said}`
+    case 'command':  return `command ${r.command} <- ${said}`
+    case 'search':   return `search ${JSON.stringify(String(r.text ?? ''))} <- ${said}`
+    case 'unparsed': return `unparsed ${r.reason || '?'} <- ${said}`
+    default:         return `${r.kind} <- ${said}`
+  }
+}
+
 export function plantingAliases(p) {
   return [p?.name, p?.variety_ref?.name, p?.variety_ref?.crop_type_slug].filter(Boolean).map(String)
 }
@@ -154,6 +178,47 @@ export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
   return { hits: [], rescued: null }
 }
 
+// V5-VOICEONEBREATH-001 — pick the ONE reading of a one-breath sentence that the live planting
+// vocabulary actually supports, or none.
+//
+// `segmentCandidates` deliberately refuses to choose: for "eighteen eighty four two count" the
+// string alone cannot say whether the count is 2, 6 or 86, because every token before the unit is a
+// number word and the planting really is named 1884. The vocabulary can. This is closed-set
+// selection again — the same reframe that fixed V5-VOICEFUZZYMATCH-001 — applied to the split point
+// instead of to the spelling.
+//
+// EXACTNESS IS THE TIEBREAK, and it is needed rather than decorative. Measured on Dave's real names:
+// "super sweet one hundred three count" yields BOTH "super sweet one hundred" (folds to the exact
+// alias "super sweet 100") and "super sweet one" (folds to "super sweet 1", which is a SUBSTRING of
+// the same planting) — one planting, two readings, counts of 3 and 103. Preferring the exact alias
+// resolves it the way a human would; without that rule this correct sentence would be refused.
+// It is the same promotion matchPlantings already applies internally, reused rather than reinvented.
+//
+// REFUSES ON A GENUINE TIE. If two survivors of equal strength disagree about the planting or the
+// values, no reading is chosen — the caller falls through to "say the parts separately". A wrong
+// harvest committed silently is the one outcome this flow is not allowed to have, and a one-breath
+// sentence is where it is most reachable.
+export function resolveOneBreath(plantings, candidates, aliasIndex = null) {
+  const survivors = []
+  for (const c of candidates) {
+    const { hits } = matchPlantingsWithRescue(plantings, c.name, aliasIndex)
+    if (hits.length !== 1) continue
+    const keys = [looseKey(c.name), looseKey(foldNumberWords(c.name))]
+    const exact = plantingAliases(hits[0]).some((a) => keys.includes(looseKey(a)))
+    survivors.push({ ...c, planting: hits[0], exact })
+  }
+  if (survivors.length === 0) return null
+  const strong = survivors.filter((s) => s.exact)
+  const pool = strong.length ? strong : survivors
+  const first = pool[0]
+  // Agreement, not arrival order. Two readings that land on the same planting AND the same values
+  // are the same answer reached twice and are safe to accept; anything else is a real ambiguity.
+  const sameValues = (a, b) => a.length === b.length
+    && a.every((v, i) => v.kind === b[i].kind && v.value === b[i].value && v.unit === b[i].unit)
+  const agreed = pool.every((s) => s.planting.id === first.planting.id && sameValues(s.values, first.values))
+  return agreed ? first : null
+}
+
 // THE GUARD THE GRAMMAR ASKS FOR AT THE CALL SITE, in its own words: "do not treat a whole-utterance
 // command match as a command while the chooser's live result set contains an exact name match for
 // that same text." A planting name is free text with no vocabulary file, so the grammar cannot check
@@ -191,6 +256,7 @@ export default function VoiceHarvest() {
   // resolve from scratch.
   const [unmatched, setUnmatched]   = useState(null)
   const [qty, setQty]               = useState(null)     // { value, unit }
+  const [heldNum, setHeldNum]       = useState(null)     // BUG-VOICECOUNTSPLIT-001 — number awaiting its unit
   const [weight, setWeight]         = useState(null)     // { value, unit }
   const [rows, setRows]             = useState([])       // committed harvests, newest last
   const [heard, setHeard]           = useState(null)     // the pending, not-yet-settled utterance
@@ -219,6 +285,11 @@ export default function VoiceHarvest() {
   // must read what was actually heard, not what the last render closed over.
   const aliasRef    = useRef(null)
   const unmatchedRef = useRef(null)
+  // BUG-VOICECOUNTSPLIT-001 — a number whose unit has not arrived yet. A REF because the recogniser
+  // callbacks that read it fire outside React's render cycle and must see the value the previous
+  // utterance wrote, not the one their closure captured; `heldNum` is the render-visible mirror so
+  // the half-finished value is never invisible on screen.
+  const heldNumRef  = useRef(null)
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
@@ -249,6 +320,10 @@ export default function VoiceHarvest() {
     setSelected(null); setCandidates([]); setUnmatched(null); setQty(null); setWeight(null)
     selectedRef.current = null; qtyRef.current = null; weightRef.current = null
     unmatchedRef.current = null
+    // A held number belongs to the record being cleared. Carrying it into the NEXT planting would
+    // let a count spoken for one crop attach itself to another — the silent wrong save this flow
+    // exists to prevent, reached by the back door.
+    heldNumRef.current = null; setHeldNum(null)
   }, [])
 
   // V5-VOICEALIAS-001 — THE TEACH. One handler for every manual pick, so a correction is learned
@@ -363,7 +438,88 @@ export default function VoiceHarvest() {
 
   // ── one settled utterance ───────────────────────────────────────────────────────────────────────
   const applyCommitted = useCallback((raw, meta) => {
-    const result = resolveCommandCollision(raw, plantingsRef.current)
+    let result = resolveCommandCollision(raw, plantingsRef.current)
+
+    // ── BUG-VOICECOUNTSPLIT-001: rejoin a value Chrome split across two utterances ────────────────
+    //
+    // Chrome ends the recogniser session mid-phrase, so "three count" reaches us as "three" then
+    // "count". The debouncer's supersede rule already rejoins the two when they land inside ONE
+    // session; it cannot when a session boundary falls between them, because `onend` flushes data
+    // immediately — deliberately, and correctly, since a data commit is not destructive.
+    //
+    // THIS IS STRICTLY ADDITIVE, in the same sense the fuzzy rescue is. Both halves are already a
+    // failure or a hazard today: the unit half is `unparsed`, and the number half falls into the
+    // permissive search branch where — measured against Dave's real 239 live plantings — "two"
+    // silently reselects Brentwood Leaf Lettuce and "four" Marvel of Four Seasons, so the following
+    // "next" saves against a plant he never named. No utterance that resolves correctly today
+    // reaches this code: classify() answers a complete phrase before it is ever consulted.
+    const partial = classifyPartial(result.transcript)
+    if (partial?.kind === 'unit' && heldNumRef.current != null) {
+      const joined = buildValue(heldNumRef.current, partial.unit, result.transcript)
+      heldNumRef.current = null; setHeldNum(null)
+      // Falls through to the ordinary quantity/weight branches rather than applying the value here:
+      // the implausibility warning, the haptic and the announcement must be identical whether the
+      // phrase arrived whole or in halves, and a second copy of them is a second thing to drift.
+      if (joined) result = { ...joined, joined: true }
+    } else if (partial?.kind === 'number' && selectedRef.current) {
+      // GATED ON A PLANTING BEING SELECTED, which is what makes suppressing the search safe: before
+      // a plant is chosen a bare number can legitimately be a search term, and after one is chosen
+      // it can only be an amount. A second number simply replaces the first — saying "three" then
+      // "fifteen" means he corrected himself.
+      heldNumRef.current = partial.value; setHeldNum(partial.value)
+      hapticDigitAccepted()
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-number ${partial.value} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
+      say('warn', `${partial.value} — now say the unit: “count”, or “grams”.`)
+      return
+    } else if (heldNumRef.current != null) {
+      // Any other utterance ends the pairing. The number is NOT applied on its own: a value with no
+      // unit is exactly the shape of a silent wrong save, and saveRecord already refuses loudly
+      // ("still need a quantity") if "next" arrives here, which is the honest outcome.
+      heldNumRef.current = null; setHeldNum(null)
+    }
+
+    // ── V5-VOICEONEBREATH-001: the whole record in one sentence ──────────────────────────────────
+    //
+    // "Big Boy, two count, fifteen grams" — which is how Dave actually speaks, against a flow that
+    // was specified as three separate utterances. HOOKED ONLY ON `unparsed`, which is what makes it
+    // additive in the strictest sense available: an utterance reaching here already produced nothing
+    // but "Didn't catch that", so there is no behaviour to regress. classify() answers first and
+    // always; this only picks up what it declined.
+    if (result.kind === 'unparsed') {
+      const one = resolveOneBreath(
+        plantingsRef.current, segmentCandidates(result.transcript), aliasRef.current,
+      )
+      if (one) {
+        // A DIFFERENT planting means a NEW record, so the old one is cleared rather than merged.
+        // Merging would let a weight spoken for the previous crop survive onto this one — the
+        // record would look complete and be wrong, which is the failure mode this page is built
+        // around. The same planting is a correction and keeps whatever axis was not restated.
+        if (selectedRef.current?.id !== one.planting.id) clearRecord()
+        heldNumRef.current = null; setHeldNum(null)
+        setSelected(one.planting); selectedRef.current = one.planting
+        setCandidates([]); setUnmatched(null); unmatchedRef.current = null
+        for (const v of one.values) {
+          const next = { value: v.value, unit: v.unit }
+          if (v.kind === 'weight') { setWeight(next); weightRef.current = next }
+          else { setQty(next); qtyRef.current = next }
+        }
+        const label = one.planting.name || one.planting.variety_ref?.name
+        const said = one.values.map((v) => `${v.value} ${v.unit}`).join(' · ')
+        const implausible = one.values.some((v) => v.implausible)
+        hapticDigitAccepted()
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath ${label} ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
+        // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
+        // words did not settle, so Dave sees the reading it picked before "next" commits it.
+        say(implausible ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}`)
+        return
+      }
+    }
+
+    // The RAW event stream alone cannot answer BUG-VOICECOUNTSPLIT-001: two runs can deliver the
+    // same words and diverge on what the app made of them. This is the other half of the pair — one
+    // line per SETTLED utterance saying which branch it took, so "three counts -> quantity 3 count"
+    // and "three -> search" are distinguishable in the log without re-deriving the grammar by hand.
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', describeResult(result))
 
     if (result.kind === 'search') {
       // `rescued` is the alias a FUZZY match landed on, or null when the strict matcher answered.
@@ -417,13 +573,19 @@ export default function VoiceHarvest() {
       return
     }
 
+    // A JOINED VALUE IS ANNOUNCED AS ONE, for the same reason a fuzzy rescue is: the app assembled
+    // it from two utterances rather than hearing it, and a rejoin that stays silent is a guess
+    // wearing the costume of a clean parse. Dave sees "3 count (heard in two parts)" and can correct
+    // it before "next" instead of after the save.
+    const joinNote = result.joined ? ' (heard in two parts)' : ''
+
     if (result.kind === 'quantity') {
       hapticDigitAccepted()
       const next = { value: result.value, unit: result.unit }
       setQty(next); qtyRef.current = next
       say(result.implausible ? 'warn' : 'ok',
-        result.implausible ? `${result.value} ${result.unit} — that looks high. Say it again to correct it.`
-          : `${result.value} ${result.unit}`)
+        result.implausible ? `${result.value} ${result.unit}${joinNote} — that looks high. Say it again to correct it.`
+          : `${result.value} ${result.unit}${joinNote}`)
       return
     }
 
@@ -432,8 +594,8 @@ export default function VoiceHarvest() {
       const next = { value: result.value, unit: result.unit }
       setWeight(next); weightRef.current = next
       say(result.implausible ? 'warn' : 'ok',
-        result.implausible ? `${result.value} ${result.unit} — that looks high. Say it again to correct it.`
-          : `${result.value} ${result.unit}`)
+        result.implausible ? `${result.value} ${result.unit}${joinNote} — that looks high. Say it again to correct it.`
+          : `${result.value} ${result.unit}${joinNote}`)
       return
     }
 
@@ -498,7 +660,17 @@ export default function VoiceHarvest() {
     rec.lang = 'en-US'
     recRef.current = rec
 
+    // BUG-VOICECOUNTSPLIT-001 — this page was the ONLY mic surface with no raw capture, which is why
+    // the count defect had to be diagnosed by replaying a simulation instead of by reading what
+    // Dave's phone actually did. The recorder is the same one BUG-VOICEDUPE-002 already ships
+    // (`src/lib/voiceDebug.js`): flag-gated in localStorage, off by default, and every entry point
+    // returns on the flag check BEFORE touching the event, so a disabled recorder never reads the
+    // live SpeechRecognitionResultList. Recorded FIRST in the handler, before the debouncer sees the
+    // event, so the log shows what the browser delivered rather than what survived our own filtering.
+    rec.onstart = () => { recordVoiceMark(VOICE_DEBUG_SRC, 'start') }
+
     rec.onresult = (ev) => {
+      recordVoiceEvent(VOICE_DEBUG_SRC, ev)
       const results = ev.results || []
       for (let i = ev.resultIndex || 0; i < results.length; i++) {
         const r = results[i]
@@ -508,6 +680,7 @@ export default function VoiceHarvest() {
       }
     }
     rec.onerror = (ev) => {
+      recordVoiceMark(VOICE_DEBUG_SRC, 'error', ev?.error)
       const e = ev?.error
       if (e === 'not-allowed' || e === 'service-not-allowed') {
         stopRef.current = true
@@ -519,6 +692,11 @@ export default function VoiceHarvest() {
       // 'no-speech' and 'aborted' are ordinary in a continuous session — onend re-arms.
     }
     rec.onend = () => {
+      // Marked BEFORE sessionEnd() flushes, because the session boundary IS the evidence in
+      // BUG-VOICECOUNTSPLIT-001: whether the boundary lands between "three" and "count" is the
+      // whole difference between the count registering and vanishing, and a log that records the
+      // flush without the boundary cannot tell those two runs apart.
+      recordVoiceMark(VOICE_DEBUG_SRC, 'end')
       // A DATA utterance flushes at the session boundary; a WRITE deliberately does not, and waits
       // out the settle window on a tick. That asymmetry is the whole reason a bare "next" can be
       // superseded by "next to the fence" instead of having already saved.
@@ -646,7 +824,13 @@ export default function VoiceHarvest() {
         {/* Every value in these three slots was SPOKEN. Nothing is pre-filled and nothing carries a
             default, so a slot reading "—" means the words have not been said yet — which is the only
             reading that lets a glance at this card be trusted. */}
-        <Slot label="Quantity" value={qty ? `${qty.value} ${qty.unit}` : null} />
+        {/* A HELD NUMBER IS SHOWN IN THE QUANTITY SLOT, not hidden until its unit lands. It is not a
+            quantity yet and must not read as one — hence the explicit "needs a unit" rather than a
+            bare number, which would look exactly like a filled slot and reintroduce the
+            looks-complete-but-isn't failure this card was built to make impossible. */}
+        <Slot label="Quantity"
+              value={qty ? `${qty.value} ${qty.unit}`
+                : heldNum != null ? `${heldNum} … needs a unit` : null} />
         <Slot label="Weight"   value={weight ? `${weight.value} ${weight.unit}` : null} />
         <div style={{ marginTop: 6, fontSize: '0.78rem', color: P.light, fontStyle: 'italic' }} data-testid="voice-harvest-heard">
           hearing: {heard ? (heard.transcript || '—') : '—'}

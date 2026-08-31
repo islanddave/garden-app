@@ -25,7 +25,7 @@ vi.mock('../lib/haptics.js', () => ({
 }))
 
 import VoiceHarvest, {
-  matchPlantings, matchPlantingsWithRescue, resolveCommandCollision, plantingAliases,
+  matchPlantings, matchPlantingsWithRescue, resolveCommandCollision, plantingAliases, resolveOneBreath,
 } from '../pages/VoiceHarvest.jsx'
 import { indexAliases } from '../lib/voiceAliases.js'
 import { looseKey } from '../lib/comboboxInput.js'
@@ -392,5 +392,276 @@ describe('BUG-VOICENUMWORD-001 — spoken number words reach a digit-named plant
     const { hits, rescued } = matchPlantingsWithRescue(DIGITS, 'eighteen eighty four', aliasIdx)
     expect(rescued).toBe('learned')
     expect(hits.map((h) => h.id)).toEqual(['d2'])
+  })
+})
+
+// ── BUG-VOICECOUNTSPLIT-001 — the count that arrives in two pieces ────────────────────────────────
+//
+// Dave, 2026-08-31: "sometimes it hears it, and sometimes it doesn't, and it's not clear why."
+// The words were never the problem — voiceHarvestGrammar.test.js pins that "three count" and
+// "fifteen counts" both parse. What varies is whether Chrome ends the recogniser session BETWEEN the
+// number and the unit. `speak()` ends a session after every utterance, which is exactly that shape,
+// so these tests reproduce the defect rather than approximate it.
+describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () => {
+  it('rejoins "three" + "count" into the quantity that was actually spoken', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'count')
+    expect(record()).toContain('3 count')
+  })
+
+  it('announces the rejoin instead of passing it off as a clean parse', async () => {
+    // Same rule as a fuzzy rescue: the app ASSEMBLED this value, so it says so and Dave can correct
+    // it before "next" rather than after the row is written.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'count')
+    expect(statusText()).toContain('two parts')
+  })
+
+  it('saves the rejoined value — the split path reaches a real row', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'fifteen')
+    await speak(rec, 'counts')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    const posts = harvestPosts()
+    expect(posts).toHaveLength(1)
+    expect(JSON.parse(posts[0][1].body).harvest).toMatchObject({ quantity: 15, unit: 'count' })
+    vi.useRealTimers()
+  })
+
+  it('rejoins onto the WEIGHT axis too, by unit vocabulary and not by field order', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '231')
+    await speak(rec, 'grams')
+    expect(record()).toContain('231 g')
+  })
+
+  // THE DANGEROUS HALF, and the reason this is a bug rather than an annoyance. Measured against
+  // Dave's real 239 live plantings: the search branch is substring-permissive, so a stray "two"
+  // selects *Brentwood* Leaf Lettuce and "four" Marvel of *Four* Seasons. The count is lost AND the
+  // chosen plant is silently replaced, so the following "next" writes a harvest he never named.
+  it('a bare number no longer reselects a planting whose NAME merely contains it', async () => {
+    const DECOYS = [...PLANTS, planting('p7', 'Brentwood Leaf Lettuce', 'lettuce')]
+    apiFetchSpy.mockImplementation((url) => {
+      if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: DECOYS })
+      return Promise.resolve({ eventId: 'evt-1' })
+    })
+    // Non-vacuity: the decoy IS reachable by substring, so this test would fail without the fix.
+    expect(matchPlantings(DECOYS, 'two').map((p) => p.id)).toEqual(['p7'])
+
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'two')
+    expect(record()).toContain('Suyo Long')
+    expect(record()).not.toContain('Brentwood')
+  })
+
+  it('shows a held number as UNFINISHED, never as a filled quantity', async () => {
+    // A bare number rendered as "2" would look exactly like a complete slot, which is the
+    // looks-complete-but-isn't failure the record card exists to prevent.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'two')
+    expect(record()).toContain('needs a unit')
+    expect(statusText()).toContain('now say the unit')
+  })
+
+  it('refuses to save a held number that never got its unit', async () => {
+    // The honest outcome. A number with no unit is exactly the shape of a silent wrong save, so it
+    // is never applied on its own — saveRecord reports the gap out loud instead.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    expect(harvestPosts()).toHaveLength(0)
+    expect(statusText()).toContain('Not saved')
+    expect(statusText()).toContain('quantity')
+    vi.useRealTimers()
+  })
+
+  it('a second number replaces the first — that is a correction, not a pair', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'fifteen')
+    await speak(rec, 'count')
+    expect(record()).toContain('15 count')
+    expect(record()).not.toContain('3 count')
+  })
+
+  it('does not hold a number before a planting is chosen — a bare number still searches', async () => {
+    // The gate that makes suppressing the search safe. Before a plant is selected a number can
+    // legitimately be a search term; only after one is chosen can it only be an amount.
+    const rec = await startListening()
+    await speak(rec, 'three')
+    expect(record()).not.toContain('needs a unit')
+    expect(statusText()).toContain('Nothing matched')
+  })
+
+  it('drops the held number when the record is cleared, so it cannot bleed into the next crop', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'clear')
+    await speak(rec, 'Marketmore')
+    await speak(rec, 'count')
+    // The "count" finds no held number and is refused, rather than attaching Suyo Long's 3 to
+    // Marketmore.
+    expect(record()).not.toContain('3 count')
+    expect(statusText()).toContain("Didn't catch that")
+  })
+
+  it('leaves a COMPLETE phrase entirely alone — the change is additive', async () => {
+    // Non-vacuity for the whole slice: the pairing must be unreachable for an utterance classify()
+    // already resolves, or it has started intercepting the path that works.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three count')
+    expect(record()).toContain('3 count')
+    expect(statusText()).not.toContain('two parts')
+  })
+})
+
+// ── V5-VOICEONEBREATH-001 — the whole record in one sentence ──────────────────────────────────────
+//
+// Dave, 2026-08-31: "I don't know if I can just say, big boy, two count, fifteen grams really fast,
+// and it'll pick it up. I haven't tried that yet." He could not: the sentence returned unparsed.
+// The grammar offers candidate splits; these test the half that CHOOSES, which is the half that can
+// commit a wrong harvest.
+describe('V5-VOICEONEBREATH-001 — one sentence, whole record', () => {
+  const NUMBERED = [
+    planting('p1', 'Suyo Long', 'cucumber'),
+    planting('n1', '1884', 'tomato'),
+    planting('n2', 'Super Sweet 100', 'tomato'),
+    planting('n3', 'Big Boy', 'tomato'),
+  ]
+  const useNumbered = () => {
+    apiFetchSpy.mockImplementation((url) => {
+      if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: NUMBERED })
+      return Promise.resolve({ eventId: 'evt-1' })
+    })
+  }
+
+  it('fills the whole record from one utterance', async () => {
+    useNumbered()
+    const rec = await startListening()
+    await speak(rec, 'big boy two count fifteen grams')
+    expect(record()).toContain('Big Boy')
+    expect(record()).toContain('2 count')
+    expect(record()).toContain('15 g')
+  })
+
+  it('saves that record — the sentence reaches a real row', async () => {
+    useNumbered()
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'big boy two count fifteen grams')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    const posts = harvestPosts()
+    expect(posts).toHaveLength(1)
+    const body = JSON.parse(posts[0][1].body)
+    expect(body.plant_id).toBe('n3')
+    expect(body.harvest).toMatchObject({ quantity: 2, unit: 'count', weight: 15, weight_unit: 'g' })
+    vi.useRealTimers()
+  })
+
+  // THE CASE THE STRING CANNOT DECIDE. "eighteen eighty four two count" reads as 1884 + 2, or
+  // 188 0 + 6, or 18 + 86 — the vocabulary is what rules out the last two, and getting this wrong
+  // is BUG-VOICENUMSUM-001 re-entered through the one-breath door.
+  it('lets the planting vocabulary pick the split for a number-NAMED crop', async () => {
+    useNumbered()
+    const rec = await startListening()
+    await speak(rec, 'eighteen eighty four two count 165 grams')
+    expect(record()).toContain('1884')
+    expect(record()).toContain('2 count')     // NOT 6, NOT 86
+    expect(record()).toContain('165 g')
+  })
+
+  it('prefers the EXACT name over a reading that merely matches part of it', async () => {
+    // Both "super sweet one hundred" (exact, count 3) and "super sweet one" (substring of the same
+    // planting, count 103) resolve to one hit. Without the exactness tiebreak this correct sentence
+    // would be refused as ambiguous.
+    useNumbered()
+    const rec = await startListening()
+    await speak(rec, 'super sweet one hundred three count')
+    expect(record()).toContain('Super Sweet 100')
+    expect(record()).toContain('3 count')
+    expect(record()).not.toContain('103')
+  })
+
+  it('resolves the DIGIT form of the same sentence — "1884 two count"', async () => {
+    // classify() still refuses this on its own (BUG-VOICENUMSUM-001 is untouched: parseNumber must
+    // never sum a digit-literal name into the count, and its tests still pin 1886 as unreachable).
+    // What changed is that the REFUSAL is no longer the end of the line — the vocabulary is asked,
+    // and it says the name is 1884 and the count is 2.
+    useNumbered()
+    const rec = await startListening()
+    await speak(rec, '1884 two count')
+    expect(record()).toContain('1884')
+    expect(record()).toContain('2 count')
+    expect(record()).not.toContain('1886')
+  })
+
+  it('refuses a sentence whose name half matches nothing, and says how to recover', async () => {
+    useNumbered()
+    const rec = await startListening()
+    await speak(rec, 'rhubarb two count fifteen grams')
+    expect(record()).not.toContain('2 count')
+    expect(statusText()).toContain("Didn't catch that")
+    expect(statusText()).toContain('separately')
+  })
+
+  it('clears the previous record when the sentence names a DIFFERENT planting', async () => {
+    // Otherwise a weight spoken for the previous crop survives onto this one and the record looks
+    // complete while being wrong.
+    useNumbered()
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '900 grams')
+    await speak(rec, 'big boy two count')
+    expect(record()).toContain('Big Boy')
+    expect(record()).toContain('2 count')
+    expect(record()).not.toContain('900')
+  })
+
+  it('leaves the three-utterance flow exactly as it was', async () => {
+    // Non-vacuity for the whole slice: this hooks only `unparsed`, so the path Dave uses today must
+    // be untouched. If this reddens, the one-breath reader has started intercepting working speech.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three count')
+    await speak(rec, '231 grams')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    const posts = harvestPosts()
+    expect(posts).toHaveLength(1)
+    expect(JSON.parse(posts[0][1].body).harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231 })
+    vi.useRealTimers()
+  })
+
+  it('resolveOneBreath refuses when two equally-exact readings disagree', async () => {
+    // The tie the tiebreak cannot break. Two plantings named so that both splits are exact means no
+    // reading is chosen — a wrong harvest committed silently is worse than one more utterance.
+    const TWINS = [planting('t1', 'Two', 'lettuce'), planting('t2', 'Two Count Three', 'lettuce')]
+    const cands = [
+      { name: 'two count three', values: [{ kind: 'quantity', value: 4, unit: 'count' }] },
+      { name: 'two', values: [{ kind: 'quantity', value: 9, unit: 'count' }] },
+    ]
+    expect(resolveOneBreath(TWINS, cands)).toBeNull()
   })
 })

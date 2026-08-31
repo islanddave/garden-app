@@ -381,6 +381,187 @@ export function foldNumberWords(text) {
  * server's own CHECK bound: the caller should confirm rather than discard, because the likeliest
  * cause is a misheard digit and the user is standing right there able to say it again.
  */
+/**
+ * A value and a canonical unit → the quantity/weight result the caller stores.
+ *
+ * WHICH AXIS. A mass unit is ambiguous by construction — 'g','kg','lb','oz' are in BOTH lists, and
+ * Dave's flow says "three count" then "231 grams", i.e. the quantity axis takes the counting unit
+ * and the weight axis takes the mass unit. So: mass unit -> weight, everything else -> quantity.
+ * This resolves the ambiguity by VOCABULARY rather than by field order, which matters because a
+ * continuous session cannot rely on the two utterances arriving in order.
+ *
+ * EXTRACTED FROM classify() rather than copied, and that is the point. BUG-VOICECOUNTSPLIT-001 adds
+ * a SECOND way to reach a value — a number and a unit that arrived as two separate utterances —
+ * and a second copy of the axis rule is a second place for `lb` to drift onto the wrong field.
+ * There is one implementation and both callers reach it.
+ *
+ * Returns null for a unit in neither list, which classify() then falls through to `search`.
+ */
+export function buildValue(value, unit, transcript = '') {
+  if (WEIGHT_UNITS.includes(unit)) {
+    const grams = unit === 'g' ? value
+      : unit === 'kg' ? value * 1000
+      : unit === 'lb' ? value * 453.592
+      : value * 28.3495
+    return { kind: 'weight', value, unit, grams, implausible: grams > MAX_PLAUSIBLE_WEIGHT_G, transcript }
+  }
+  if (HARVEST_UNITS.includes(unit)) {
+    return { kind: 'quantity', value, unit, implausible: value > (MAX_PLAUSIBLE[unit] ?? Infinity), transcript }
+  }
+  return null
+}
+
+/**
+ * BUG-VOICECOUNTSPLIT-001 — the two HALVES of a value that arrived as separate utterances.
+ *
+ * THE DEFECT, measured on 2026-08-31 by replaying the real debouncer. Chrome sometimes ends the
+ * recogniser session BETWEEN the number and the unit, and VoiceHarvest's `onend` flushes data
+ * immediately (that asymmetry is deliberate and correct — see voiceCommitDebounce sessionEnd). So
+ * "three count" arrives as "three" then "count", and each half is separately useless:
+ *
+ *   "three" -> classify() says `search`, because a bare number carries no unit. Against Dave's real
+ *              239 live plantings the search branch is SUBSTRING-permissive, so "two" selects
+ *              *Brentwood* Leaf Lettuce, "four" selects Marvel of *Four* Seasons, "2" selects
+ *              Danvers 1*2*6 Carrot — the count is lost AND the chosen planting is silently
+ *              replaced, so the following "next" saves against the wrong plant. v4.83.0's
+ *              foldNumberWords widened this from 5 to 8 of 19 tested numbers (five -> Chinese
+ *              5-Color, six and twelve -> Danvers 126).
+ *   "count" -> `unparsed`/unit-without-number. Nothing at all.
+ *
+ * WHY A SEPARATE FUNCTION AND NOT A NEW classify() KIND. classify() is whole-utterance and
+ * stateless, and it must stay that way — it is what makes a command match provable. Pairing halves
+ * needs memory ACROSS utterances, which is host state. So the grammar answers only the stateless
+ * question ("is this utterance nothing but a number, or nothing but a unit?") and the host owns the
+ * holding. classify()'s contract is untouched.
+ *
+ * THE HOST MUST GATE THE NUMBER ON A PLANTING BEING SELECTED. Before a plant is chosen a bare
+ * number can legitimately be a search; after one is chosen it can only be an amount. That gate is
+ * what makes suppressing the search safe, and it is the caller's to enforce — stated here because
+ * this function cannot see it.
+ *
+ * A MULTI-WORD NAME-SHAPED NUMBER IS DELIBERATELY NOT A NUMBER HERE. "eighteen eighty four" (the
+ * planting named 1884) fails parseNumber's monotonic rule and so returns null from this function
+ * too, falling through to the search branch where foldNumberWords already resolves it. The two
+ * mechanisms do not overlap and must not.
+ *
+ * Returns { kind: 'number', value } | { kind: 'unit', unit } | null.
+ */
+export function classifyPartial(raw) {
+  const text = normalise(raw)
+  if (!text) return null
+  // A command is a command. Checked first so a hold can never eat "next", "save" or "stop" — the
+  // one class of utterance where being swallowed costs a save rather than a repeated word.
+  if (Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, text)) return null
+  if (Object.prototype.hasOwnProperty.call(COMMANDS, text)) return null
+  if (COMMAND_NEAR_MISSES.has(text)) return null
+
+  const tokens = collapseAdjacentDupes(text.split(' ').filter(Boolean))
+  const meaningful = tokens.filter((t) => !FILLER.has(t))
+  if (meaningful.length === 0) return null
+
+  // BARE UNIT — "count", "counts", "a count", "grams". Exactly one meaningful token and it is a unit.
+  if (meaningful.length === 1
+      && Object.prototype.hasOwnProperty.call(UNIT_ALIASES, meaningful[0])) {
+    return { kind: 'unit', unit: UNIT_ALIASES[meaningful[0]] }
+  }
+
+  // BARE NUMBER — no unit anywhere in the utterance, and the whole thing parses as one cardinal.
+  // The no-unit check is what keeps this from firing on something classify() already handles.
+  if (meaningful.some((t) => Object.prototype.hasOwnProperty.call(UNIT_ALIASES, t))) return null
+  const value = parseNumber(tokens)
+  if (value == null || !(value > 0)) return null
+  return { kind: 'number', value }
+}
+
+/**
+ * V5-VOICEONEBREATH-001 — "Big Boy, two count, fifteen grams" as ONE utterance.
+ *
+ * Dave's flow was specified as separate utterances with pauses and he speaks it as a sentence. Today
+ * that returns `unparsed`/ambiguous-number: classify() anchors on the LAST token being a unit and
+ * requires everything before it to be a number, so a leading NAME disqualifies the whole phrase.
+ *
+ * THE REASON THIS IS NOT JUST "SPLIT ON THE UNITS", and the trap the ledger row names ("one-breath
+ * parsing is exactly where a leading name-number does the most damage"): nine of Dave's live
+ * plantings are NAMED with digits, and Chrome dictates those digits as words. In
+ *
+ *     eighteen eighty four | two | count | one sixty five | grams
+ *
+ * every token before "count" is a number word, so a backward walk cannot see where the NAME ends and
+ * the COUNT begins. Taking the longest run that parses gives "eighty four two" = 86; taking the
+ * shortest gives 2. Both are defensible from the string alone, and one of them is a silently wrong
+ * harvest — which is precisely BUG-VOICENUMSUM-001 re-entered through a new door.
+ *
+ * SO THE STRING IS NOT ASKED TO DECIDE. This returns every split the grammar considers legal, in
+ * NAME-LONGEST-FIRST order, and the caller resolves them against the live planting vocabulary —
+ * closed-set selection, the same reframe that fixed V5-VOICEFUZZYMATCH-001. A candidate whose name
+ * half matches exactly one planting is the answer; if none does, or if two disagree, the caller
+ * refuses and asks for the parts separately. The grammar has no vocabulary and must not pretend to.
+ *
+ * Every candidate is `{ name, values }` where `values` are already built quantity/weight results.
+ * A candidate is legal only when: the name is non-empty (a nameless phrase is classify()'s job and
+ * is left alone), every number group parses cleanly on its own, and every unit resolves. One bad
+ * group refuses the WHOLE utterance rather than yielding a partial record — a half-applied one-breath
+ * sentence is a record that looks complete and is not.
+ *
+ * Returns [] for anything that is not a multi-part utterance, which is the overwhelming majority.
+ */
+export function segmentCandidates(raw) {
+  const text = normalise(raw)
+  if (!text) return []
+  // A command is a command, checked first for the same reason classifyPartial checks it first.
+  if (Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, text)) return []
+  if (Object.prototype.hasOwnProperty.call(COMMANDS, text)) return []
+  if (COMMAND_NEAR_MISSES.has(text)) return []
+
+  const tokens = collapseAdjacentDupes(text.split(' ').filter(Boolean))
+  const unitAt = []
+  for (let i = 0; i < tokens.length; i++) {
+    if (Object.prototype.hasOwnProperty.call(UNIT_ALIASES, tokens[i])) unitAt.push(i)
+  }
+  if (unitAt.length === 0) return []
+  // A unit must be the last token of its group; a trailing word after the final unit means this is
+  // prose, not a record ("three count of cucumber" is not a shape anyone dictates).
+  if (unitAt[unitAt.length - 1] !== tokens.length - 1) return []
+
+  // GROUPS AFTER THE FIRST are fully determined — their number tokens are exactly what lies between
+  // the previous unit and this one, with no choice to make. Any that fails to parse refuses the
+  // whole utterance, because a partially-understood sentence must not become a partial record.
+  const tailValues = []
+  for (let g = 1; g < unitAt.length; g++) {
+    const from = unitAt[g - 1] + 1
+    const to = unitAt[g]
+    const value = parseNumber(tokens.slice(from, to))
+    if (value == null || !(value > 0)) return []
+    const built = buildValue(value, UNIT_ALIASES[tokens[to]], text)
+    if (!built) return []
+    tailValues.push(built)
+  }
+
+  // THE FIRST GROUP is the only ambiguous one, because the name sits in front of it. Split points
+  // are enumerated NAME-LONGEST-FIRST: the prior is that a speaker says as much of the name as they
+  // can, so the shortest number run is the likeliest reading — but the caller, not this order,
+  // decides, and it decides by asking the vocabulary.
+  const u0 = unitAt[0]
+  // NO NAME, NOTHING TO DISAMBIGUATE. If the entire run before the first unit parses as one clean
+  // cardinal then there is no name in front of it — "two hundred thirty one grams" — and classify()
+  // already reads it correctly. Without this guard the split enumeration happily offers a name of
+  // "two hundred thirty" carrying a weight of 1 g, which is a wrong reading of a phrase that was
+  // never ambiguous. Measured: it produced exactly that.
+  if (parseNumber(tokens.slice(0, u0)) != null) return []
+
+  const firstUnit = UNIT_ALIASES[tokens[u0]]
+  const out = []
+  for (let k = u0 - 1; k >= 1; k--) {
+    const numToks = tokens.slice(k, u0)
+    const value = parseNumber(numToks)
+    if (value == null || !(value > 0)) continue
+    const built = buildValue(value, firstUnit, text)
+    if (!built) continue
+    out.push({ name: tokens.slice(0, k).join(' '), values: [built, ...tailValues] })
+  }
+  return out
+}
+
 export function classify(raw) {
   const transcript = String(raw ?? '')
   const text = normalise(transcript)
@@ -437,29 +618,8 @@ export function classify(raw) {
     }
     if (value <= 0) return { kind: 'unparsed', reason: 'non-positive', transcript }
 
-    // WHICH AXIS. A mass unit is ambiguous by construction — 'g','kg','lb','oz' are in BOTH lists,
-    // and Dave's flow says "three count" then "231 grams", i.e. the quantity axis takes the counting
-    // unit and the weight axis takes the mass unit. So: mass unit -> weight, everything else ->
-    // quantity. This resolves the ambiguity by VOCABULARY rather than by field order, which matters
-    // because a continuous session cannot rely on the two utterances arriving in order.
-    if (WEIGHT_UNITS.includes(unit)) {
-      const grams = unit === 'g' ? value
-        : unit === 'kg' ? value * 1000
-        : unit === 'lb' ? value * 453.592
-        : value * 28.3495
-      return {
-        kind: 'weight', value, unit, grams,
-        implausible: grams > MAX_PLAUSIBLE_WEIGHT_G,
-        transcript,
-      }
-    }
-    if (HARVEST_UNITS.includes(unit)) {
-      return {
-        kind: 'quantity', value, unit,
-        implausible: value > (MAX_PLAUSIBLE[unit] ?? Infinity),
-        transcript,
-      }
-    }
+    const built = buildValue(value, unit, transcript)
+    if (built) return built
   }
 
   // Everything else is a search term for the planting chooser — the one branch that is permissive,

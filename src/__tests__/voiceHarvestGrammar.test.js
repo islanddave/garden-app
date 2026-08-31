@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   classify, parseNumber, normalise, collapseAdjacentDupes, COMMANDS, COMMAND_PHRASES, UNIT_ALIASES,
-  COMMAND_NEAR_MISSES, foldNumberWords,
+  COMMAND_NEAR_MISSES, foldNumberWords, classifyPartial, buildValue, segmentCandidates,
 } from '../lib/voiceHarvestGrammar.js'
 import { HARVEST_UNITS, WEIGHT_UNITS } from '../lib/harvest-constants.js'
 
@@ -367,5 +367,166 @@ describe('near-miss of a command word — refuse rather than search', () => {
   it('leaves the eight correctly-heard commands from the same run untouched', () => {
     // Non-vacuity: the guard must not have cost anything. This is the utterance it sits next to.
     expect(classify('next')).toMatchObject({ kind: 'command', command: 'save_and_advance' })
+  })
+})
+
+// ── BUG-VOICECOUNTSPLIT-001 ───────────────────────────────────────────────────────────────────────
+//
+// Dave, 2026-08-31: "what I'm having issue getting picked up consistently is the count. So I'll say
+// something like three count or fifteen counts. And sometimes it hears it, and sometimes it doesn't,
+// and it's not clear why."
+//
+// It is not the words — every phrase he named parses correctly, and the first test here pins that so
+// no future session re-investigates the vocabulary. It is that Chrome sometimes ends the recogniser
+// session BETWEEN the number and the unit, and each half alone is useless. `classifyPartial` is the
+// stateless half of the fix; the pairing itself is host state and lives in VoiceHarvest.test.jsx.
+describe('BUG-VOICECOUNTSPLIT-001 — the two halves of a split value', () => {
+  it('parses every count phrase Dave actually named — the vocabulary was never the defect', () => {
+    // Pinned so the next investigation starts from the real cause instead of re-testing these.
+    expect(classify('three count')).toMatchObject({ kind: 'quantity', value: 3, unit: 'count' })
+    expect(classify('fifteen counts')).toMatchObject({ kind: 'quantity', value: 15, unit: 'count' })
+    expect(classify('two count')).toMatchObject({ kind: 'quantity', value: 2, unit: 'count' })
+    expect(classify('3 count')).toMatchObject({ kind: 'quantity', value: 3, unit: 'count' })
+  })
+
+  it('reads a bare number as a number half', () => {
+    expect(classifyPartial('three')).toEqual({ kind: 'number', value: 3 })
+    expect(classifyPartial('fifteen')).toEqual({ kind: 'number', value: 15 })
+    expect(classifyPartial('15')).toEqual({ kind: 'number', value: 15 })
+    expect(classifyPartial('twenty one')).toEqual({ kind: 'number', value: 21 })
+  })
+
+  it('reads a bare unit as a unit half, through the same aliases classify uses', () => {
+    expect(classifyPartial('count')).toEqual({ kind: 'unit', unit: 'count' })
+    expect(classifyPartial('counts')).toEqual({ kind: 'unit', unit: 'count' })
+    expect(classifyPartial('grams')).toEqual({ kind: 'unit', unit: 'g' })
+    // Filler is stripped, so the determiner Chrome likes to insert does not defeat the pairing.
+    expect(classifyPartial('a count')).toEqual({ kind: 'unit', unit: 'count' })
+  })
+
+  it('refuses a COMMAND outright — a hold must never be able to eat a save', () => {
+    // The asymmetry the whole grammar is built on: a swallowed word costs a repeat, a swallowed
+    // command costs a harvest. Checked before anything else in classifyPartial for that reason.
+    for (const w of ['next', 'save', 'done', 'stop', 'clear', 'next one', 'save and next']) {
+      expect(classifyPartial(w)).toBeNull()
+    }
+    for (const w of COMMAND_NEAR_MISSES) expect(classifyPartial(w)).toBeNull()
+  })
+
+  it('returns null for a COMPLETE phrase, so it can never shadow classify()', () => {
+    // The non-overlap that makes the change additive: anything classify() already resolves is not a
+    // partial. If this ever goes red, the pairing has started intercepting working utterances.
+    for (const t of ['three count', '231 grams', 'cucumber', 'suyo long', '1.2 kilograms', '']) {
+      expect(classifyPartial(t)).toBeNull()
+    }
+  })
+
+  it('does NOT read a name-shaped number as a number — 1884 still reaches foldNumberWords', () => {
+    // "eighteen eighty four" is the planting named 1884, not the count 102. It fails parseNumber's
+    // monotonic rule and must fail here too, or the fold that resolves it would never run.
+    expect(classifyPartial('eighteen eighty four')).toBeNull()
+    expect(foldNumberWords('eighteen eighty four')).toBe('1884')
+  })
+
+  it('refuses zero and a non-positive number', () => {
+    expect(classifyPartial('zero')).toBeNull()
+    expect(classifyPartial('0')).toBeNull()
+  })
+
+  it('buildValue routes by unit vocabulary, identically for both callers', () => {
+    // The extraction's whole point: one axis rule. A mass unit is a weight even though 'g' is in
+    // HARVEST_UNITS too, and that must not depend on which caller assembled the value.
+    expect(buildValue(3, 'count')).toMatchObject({ kind: 'quantity', value: 3, unit: 'count' })
+    expect(buildValue(231, 'g')).toMatchObject({ kind: 'weight', value: 231, unit: 'g', grams: 231 })
+    expect(buildValue(1, 'kg')).toMatchObject({ kind: 'weight', grams: 1000 })
+    expect(buildValue(1, 'furlong')).toBeNull()
+  })
+
+  it('buildValue agrees with classify on the same value and unit', () => {
+    // Non-vacuity for the refactor: the extracted function must produce what the inline code did.
+    for (const [phrase, value, unit] of [['three count', 3, 'count'], ['231 grams', 231, 'g'],
+      ['two pounds', 2, 'lb'], ['5 bunches', 5, 'bunch']]) {
+      const whole = classify(phrase)
+      const built = buildValue(value, unit, phrase)
+      expect(built.kind).toBe(whole.kind)
+      expect(built.value).toBe(whole.value)
+      expect(built.unit).toBe(whole.unit)
+      expect(built.implausible).toBe(whole.implausible)
+    }
+  })
+
+  it('carries implausibility through the joined path — a split value is checked like a whole one', () => {
+    // Otherwise the rejoin becomes a way to smuggle an unchecked number past the bound.
+    expect(buildValue(999999, 'count').implausible).toBe(true)
+    expect(buildValue(999999, 'kg').implausible).toBe(true)
+  })
+})
+
+// ── V5-VOICEONEBREATH-001 ─────────────────────────────────────────────────────────────────────────
+//
+// Dave, 2026-08-31: "I don't know if I can just say, big boy, two count, fifteen grams really fast,
+// and it'll pick it up." He could not — the whole sentence returned unparsed. These pin what the
+// grammar offers; WHICH offer wins is the vocabulary's decision and is tested in VoiceHarvest.test.
+describe('V5-VOICEONEBREATH-001 — candidate splits of a one-breath sentence', () => {
+  it('offers the one reading of an ordinary named sentence', () => {
+    const c = segmentCandidates('big boy two count fifteen grams')
+    expect(c).toHaveLength(1)
+    expect(c[0].name).toBe('big boy')
+    expect(c[0].values).toMatchObject([
+      { kind: 'quantity', value: 2, unit: 'count' },
+      { kind: 'weight', value: 15, unit: 'g' },
+    ])
+  })
+
+  it('accepts a name plus a single value — not every sentence carries a weight', () => {
+    expect(segmentCandidates('cucumber two count')).toMatchObject([
+      { name: 'cucumber', values: [{ kind: 'quantity', value: 2, unit: 'count' }] },
+    ])
+  })
+
+  // THE TRAP THE ROW NAMES. Nine live plantings are named with digits and Chrome dictates them as
+  // words, so every token before the unit is a number and the string alone cannot say where the name
+  // ends. All three readings are offered and NONE is preferred here.
+  it('offers EVERY split of a number-named planting rather than guessing one', () => {
+    const c = segmentCandidates('eighteen eighty four two count 165 grams')
+    expect(c.map((x) => x.name)).toEqual(['eighteen eighty four', 'eighteen eighty', 'eighteen'])
+    expect(c.map((x) => x.values[0].value)).toEqual([2, 6, 86])
+    // Name-longest-first, because a speaker says as much of the name as they can. The ORDER is a
+    // prior, not a decision — the caller resolves it against the live plantings.
+    expect(c[0].name).toBe('eighteen eighty four')
+  })
+
+  it('stays out of the way of a phrase classify() already reads correctly', () => {
+    // No name means nothing to disambiguate. Without this guard the enumeration offered a planting
+    // called "two hundred thirty" carrying 1 gram — measured, and a wrong reading of a phrase that
+    // was never ambiguous.
+    for (const t of ['two hundred thirty one grams', 'three count', '231 grams', '1.2 kilograms']) {
+      expect(segmentCandidates(t), t).toEqual([])
+    }
+    expect(classify('two hundred thirty one grams')).toMatchObject({ kind: 'weight', value: 231 })
+  })
+
+  it('offers nothing for a plain search, a command, or a name that merely contains a unit word', () => {
+    for (const t of ['suyo long', 'cucumber', 'next', 'save', 'head lettuce', 'three head lettuce', '']) {
+      expect(segmentCandidates(t), t).toEqual([])
+    }
+  })
+
+  it('refuses the WHOLE sentence when any later group fails to parse', () => {
+    // "one sixty five" is a NAME-shaped number in a VALUE slot — 1|65 concatenated, not a cardinal.
+    // Reading it as 66 would be a silently wrong weight, so the sentence is refused entirely rather
+    // than yielding a partial record.
+    expect(segmentCandidates('eighteen eighty four two count one sixty five grams')).toEqual([])
+  })
+
+  it('requires the final token to be a unit — trailing prose is not a record', () => {
+    expect(segmentCandidates('three count of cucumber')).toEqual([])
+  })
+
+  it('never emits a nameless candidate', () => {
+    for (const t of ['big boy two count fifteen grams', 'eighteen eighty four 2 count',
+      'super sweet one hundred three count']) {
+      for (const c of segmentCandidates(t)) expect(c.name.length, t).toBeGreaterThan(0)
+    }
   })
 })
