@@ -1040,12 +1040,75 @@ export const handler = async (event) => {
       // photo should surface in the gallery, not vanish behind an unrelated planting's archive flag.
       // 86 soft-deleted events exist in prod, none with an archived planting and none retaining a
       // photo — the shape is reachable only by a future cascade leak, which is what this guards.
+      //
+      // BUG-PHOTOPARENTUNDELIVERED-001 — `p.inventory_item_id` and `p.intake_status` are projected by
+      // all five templates below. Both were READ by the client and never SENT by the server, which is
+      // the one defect shape a green client-side test cannot see: photoModel's own unit tests supply
+      // the field the wire omitted, so they passed throughout.
+      //
+      // THE PARENT SET IS SEVEN CLAUSES, and these SELECTs delivered four of them. photos_must_have_parent
+      // counts six FKs — event, project, location, plant, inventory_item, space — plus the seventh
+      // escape hatch intake_status='pending_tag' that makes a parentless row legal. photoModel.js:28/32
+      // enumerates all six in PARENT_KINDS/PARENT_FIELDS and :66-70 counts them off the raw row, so a
+      // column the query never selected is a parent the model cannot see. Two were missing here:
+      //
+      //   inventory_item_id — the WORSE one. 6 live photos hang off an inventory item and NOTHING else
+      //     (measured prod 2026-08-31: 6 rows with inventory_item_id NOT NULL, all 6 with plant_id,
+      //     event_id, project_id and location_id all NULL). Undelivered, every one reads parentCount=0
+      //     -> isAttached=false, so PhotoLibrary's Untagged chip (:417) flags them as unfinished work on
+      //     every visit and the app cannot represent the only relationship they have. photoModel.js:15-17
+      //     already names these six as "fully attached", and PhotoLibrary.jsx:411-416 already claims to
+      //     have fixed them by switching to isAttached — the MODEL was fixed, the WIRE was not.
+      //
+      //   intake_status — 1 live row, 54777683-2244-449c-bbbb-4a65396963e8, intake_status='pending_tag'
+      //     with all six parent FKs null. Undelivered, photoModel.js:72's `pendingTag` is permanently
+      //     false, so :74-76 classifies it PARENTAGE.ORPHAN — the state photoModel.js:45 documents as
+      //     "an INVALID state that the CHECK forbids". A legal photo reported as impossible.
+      //
+      // THIS IS THE THIRD INSTANCE OF ONE RECURRENCE. select-columns.test.js:8-10 records that
+      // BUG-PHOTOPARENT-001 "recurred TWICE because a parent column was missed — inventory_item_id
+      // first, then space_id". Both earlier fixes were applied to the WRITE path and the client model;
+      // this projection was never revisited, so inventory_item_id has been missing here the whole time.
+      // gallery-intake-status.test.js closes the class by enumeration rather than by naming columns:
+      // every PARENT_FIELDS entry must be reachable on every gallery template, so a seventh parent kind
+      // added to photoModel cannot silently reopen this.
+      //
+      // WHY COLUMNS AND NOT A DECORATING QUERY like the space_id block below. That block spends an extra
+      // round trip to buy ONE property these two do not need: byte-identical flag-off rollback. space_id
+      // was code-ahead-of-DDL behind SPACE_PHOTOS_ENABLED, so naming it here would have 42703'd wherever
+      // the column was absent and would have inverted space-photos.test.js's flag-off assertions.
+      // Neither of these has a flag; both have been in prod for the life of the feature; both are already
+      // named by the INSERT templates (:213, :252) and pinned in select-columns.test.js's evidence-derived
+      // list, which scripts/dev-main-schema-audit.py verifies against prod information_schema. With no
+      // rollback invariant to protect, a second query is pure cost and a second source of truth. Both
+      // columns take the SAME route deliberately — fixing one by projection and one by decoration would
+      // leave the next reader with two patterns and no rule.
+      //
+      // ALL FIVE, including ?attachedTo, whose rows carry a parent by construction and so can never be
+      // PENDING. Uniformity is the point: a reader comparing the templates should not have to work out
+      // which one may omit a column, and the next branch added by copy-paste inherits both.
+      //
+      // STILL NOT DELIVERED HERE, both deliberate, both measured rather than assumed:
+      //   p.space_id  — gated. The decorating query below supplies it only when SPACE_PHOTOS_ENABLED
+      //     is on, and that gating is the point (see its header); projecting it here would break the
+      //     flag-off rollback invariant space-photos.test.js pins.
+      //   p.taken_at  — read by photoModel.js:90 as `takenAt` but consumed by NOTHING: a repo-wide
+      //     search finds no production reader of photo.takenAt (every other `takenAt` hit is the EXIF
+      //     upload path in imagePipeline.js/useUploadPhoto.js, which WRITES taken_at). Delivering it
+      //     would populate a property no surface reads.
+      //     ⚠ DO NOT justify that from photoModel.js:18-20's "taken_at ... 100% NULL on every live
+      //     row". That was measured 2026-08-07 over 1094 rows and is STALE: on 2026-08-31, 127 of
+      //     1396 live rows carry a non-null taken_at. The column is inert here because it has no
+      //     reader, NOT because it has no data — the distinction matters the moment someone adds one.
+      // Full field-by-field census of what photoModel reads vs what these templates send, with the
+      // supplied-post-query cases separated out, is asserted in gallery-intake-status.test.js.
 
       let rows;
       if (attachedTo) {
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.inventory_item_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1066,6 +1129,7 @@ export const handler = async (event) => {
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.inventory_item_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1099,6 +1163,7 @@ export const handler = async (event) => {
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.inventory_item_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1125,7 +1190,8 @@ export const handler = async (event) => {
         // space the caller can see would expose every OTHER household's photos on that space.
         rows = await sql`
             SELECT
-              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.space_id,
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.inventory_item_id, p.space_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1150,6 +1216,7 @@ export const handler = async (event) => {
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.inventory_item_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
