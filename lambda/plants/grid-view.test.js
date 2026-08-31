@@ -382,6 +382,20 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     //   variety_ref.crop_type_slug    -> the third alias ("cucumber" for Suyo Long) + the disambig row
     //   variety_ref.default_unit      -> seeds the quantity unit per crop (V4-HARVUNITDEFAULT-001)
     // It reads NO field outside PICKER_KEYS, and needs no widening of the projection.
+    //
+    // FOURTH CONSUMER ADDED 2026-08-31 — pages/PutUp.jsx (V4-PUTUPSESSION-001, the freezer walk).
+    // It fetches through useCachedFetch on the SAME path PlantingSelect self-fetches, so the two
+    // share one warm cache entry rather than each holding their own. Its field reads, counted:
+    //   variety_ref.crop_type_slug  -> plantingsForCrop(), the sole-planting-for-this-crop filter
+    //   archived_at                 -> the !p.archived_at filter, same as EventNew and VoiceHarvest
+    //   id                          -> setPlantId, i.e. the put-up row's attribution
+    //   name                        -> the stated auto-resolution banner "✓ My garden · <name>"
+    //   variety_ref.name,
+    //   succession_order, sown_at   -> only via plantingWaveLabel()'s fallback when name is empty
+    // All inside PICKER_KEYS; no widening. NOTE the archived_at read was ADDED when this consumer
+    // was censused — the original auto-resolve omitted it, which would have attributed a put-up to
+    // an archived planting and shown that guess to the user as a fact. Counting the fields is what
+    // surfaced it, which is the point of this list.
     const CLIENT = resolve(__dirname, '..', '..', 'src');
     // --exclude-dir=__tests__: the census is of PRODUCTION call sites. Test files legitimately name
     // the URL in their assertions, and counting those would make this assertion self-satisfying —
@@ -389,7 +403,8 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     const hits = execSync(`grep -rl --exclude-dir=__tests__ "view=picker" ${CLIENT} || true`, { encoding: 'utf8' })
       .split('\n').filter(Boolean).map((p) => p.replace(`${CLIENT}/`, '')).sort();
     expect(hits).toEqual([
-      'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/VoiceHarvest.jsx',
+      'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/PutUp.jsx',
+      'pages/VoiceHarvest.jsx',
     ]);
   });
 });

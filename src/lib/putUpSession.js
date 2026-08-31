@@ -92,7 +92,18 @@ export function describeDate(date, approx) {
 // choice and the caller must ask.
 export function plantingsForCrop(plants, cropSlug) {
   if (!Array.isArray(plants) || !cropSlug) return []
-  return plants.filter(p => p?.variety_ref?.crop_type_slug === cropSlug)
+  // ARCHIVED PLANTINGS ARE EXCLUDED, and this is load-bearing rather than tidy. The picker
+  // projection RETURNS archived_at rather than filtering in SQL, so every consumer filters it
+  // itself — EventNew and VoiceHarvest.jsx:340 both do. Without it, a crop whose only planting is
+  // archived would silently auto-attribute the put-up to it, and a crop with one live + one
+  // archived would count 2 and decline to auto-resolve at all. Both are wrong, and the first is the
+  // worse kind: a default the user is shown as a stated fact. Archive-Hiding Rule, and "a wrong
+  // default launders a wrong decision".
+  //
+  // The picker query param is deliberately NOT spelled out above: the consumer census in
+  // lambda/plants/grid-view.test.js greps that literal string across src/, so naming it in a comment
+  // registers this file as a call site and reds the guard. Found exactly that way, 2026-08-31.
+  return plants.filter(p => p?.variety_ref?.crop_type_slug === cropSlug && !p.archived_at)
 }
 export function solePlanting(plants, cropSlug) {
   const hits = plantingsForCrop(plants, cropSlug)

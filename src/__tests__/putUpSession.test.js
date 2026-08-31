@@ -82,6 +82,22 @@ describe('solePlanting — auto-resolution only where there is nothing to choose
   it('ignores plantings with no variety_ref rather than throwing on them', () => {
     expect(plantingsForCrop(PLANTS, 'blueberry')).toHaveLength(1)
   })
+
+  // ?view=picker returns archived_at rather than filtering in SQL, so each consumer filters it —
+  // VoiceHarvest.jsx:340 and EventNew both do. Auto-attribution is the worst place to skip it: the
+  // result is shown to the user as a stated fact ("✓ My garden · <name>"), so an archived planting
+  // would be laundered into a decision rather than surfaced as a guess.
+  const WITH_ARCHIVED = [
+    { id: 'p-arch', archived_at: '2026-05-01T00:00:00Z', variety_ref: { crop_type_slug: 'garlic' } },
+    { id: 'p-live', variety_ref: { crop_type_slug: 'garlic' } },
+    { id: 'p-arch-only', archived_at: '2026-05-01T00:00:00Z', variety_ref: { crop_type_slug: 'leek' } },
+  ]
+  it('never auto-resolves onto an ARCHIVED planting, even when it is the only one for the crop', () => {
+    expect(solePlanting(WITH_ARCHIVED, 'leek')).toBeNull()
+  })
+  it('resolves to the live planting when an archived sibling shares the crop, instead of declining', () => {
+    expect(solePlanting(WITH_ARCHIVED, 'garlic').id).toBe('p-live')
+  })
 })
 
 describe('unrecordedCrops — a list that can never become a forever nag', () => {
