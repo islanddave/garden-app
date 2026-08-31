@@ -96,11 +96,19 @@ export default function VoiceDebug() {
         data-testid="voice-debug-steps"
         style={{ marginTop: 16, paddingLeft: 20, color: P.mid, fontSize: '0.88rem', lineHeight: 1.6 }}
       >
-        <li>Turn capture ON, then tap <strong>Clear</strong> so the log holds one dictation only.</li>
-        <li>Go to <strong>Log an event</strong> and dictate one known phrase into Notes — say it
-            once, normally, then stop the mic.</li>
+        <li>Turn capture ON, then tap <strong>Clear</strong> so the log holds one run only.</li>
+        {/* TWO SURFACES, because the recorder now covers both and they answer different questions.
+            The Notes path is BUG-VOICEDUPE — one phrase, one field, does the transcript double.
+            Harvest by voice is BUG-VOICECOUNTSPLIT — a whole run, where the question is WHERE the
+            session boundaries fell, which is only visible across several utterances. Sending Dave
+            to Notes for a count problem would capture the wrong screen entirely. */}
+        <li>For a <strong>dictation</strong> problem: go to <strong>Log an event</strong> and
+            dictate one known phrase into Notes — say it once, normally, then stop the mic.</li>
+        <li>For a <strong>Harvest by voice</strong> problem: run a normal harvest — crop, count,
+            weight, “next” — for two or three plants, then stop. Say them the way you normally
+            would; a run that is spoken carefully is a run that does not reproduce the fault.</li>
         <li>Come back here, tap <strong>Copy</strong>, and paste the block to Claude along with the
-            exact words you said and the exact text that landed in the field.</li>
+            exact words you said and what actually landed on screen.</li>
         <li>Turn capture back OFF when you are done.</li>
       </ol>
 
