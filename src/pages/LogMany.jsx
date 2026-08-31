@@ -119,7 +119,12 @@ export default function LogMany() {
   const [notes, setNotes] = useState('')
   const [showNotes, setShowNotes] = useState(false)
   const [scope, setScope]   = useState({ type: 'all' })
-  const [selection, setSelection] = useState(null) // { committedCount, excludedIds } from ScopeChecklist
+  const [selection, setSelection] = useState(null) // { committedCount, excludedIds, selectionState } from ScopeChecklist
+  // V4-LOGMANYUXREFRESH-001 S0 — the restore seed for ScopeChecklist's decisions map. Held
+  // SEPARATELY from `selection` above, and set exactly twice (draft restore, logMore), because
+  // `selection` is written by the child on every toggle: feeding that straight back down as the
+  // child's own seed would be a render loop with extra steps.
+  const [restoredSelection, setRestoredSelection] = useState(null)
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState(null)       // { batch_id, count }
   const [error, setError]   = useState(null)
@@ -187,6 +192,21 @@ export default function LogMany() {
               || (ds.type === 'project' && proj.some(p => p.id === ds.project_id))
               || (ds.type === 'space' && locs.some(l => l.id === ds.location_id)))) setScope(ds)
             if (typeof draft.idemKey === 'string') idemRef.current = draft.idemKey   // idempotent retry across dismiss
+            // V4-LOGMANYUXREFRESH-001 S0 — the selection rides in the stash now. Restored BEFORE
+            // setReady(true) below, which is what makes the "seed once, in the initializer" contract
+            // on ScopeChecklist's side safe: the child does not mount until ready.
+            // Shape-checked rather than trusted: sessionStorage is user-writable and a malformed
+            // `decisions` would take the whole review list down on its first isKept() call.
+            if (draft.selection && typeof draft.selection === 'object'
+                && draft.selection.decisions && typeof draft.selection.decisions === 'object') {
+              setRestoredSelection({
+                decisions: Object.fromEntries(
+                  Object.entries(draft.selection.decisions).filter(([, v]) => typeof v === 'boolean'),
+                ),
+                baseline: draft.selection.baseline !== false,
+                touched: !!draft.selection.touched,
+              })
+            }
             // V4-LOGMANYDEPTHSTASH-001: the amount class rides in the batch POST but was in neither
             // the snapshot nor either predicate, so a dismissed watering batch came back as
             // Normal/default — silently re-answering a question the user had already answered, on
@@ -231,8 +251,14 @@ export default function LogMany() {
   // starts false and flips only on a chip tap, and rowDepth is empty until a row override is set —
   // neither has a sticky/localStorage seed, so neither can trip this on a bare mount.
   const rowDepthCount = Object.keys(rowDepth).length
+  // V4-LOGMANYUXREFRESH-001 S0 — the child's own pristine flag, not a count of exclusions. A
+  // count would be armed on a bare mount for anyone whose stored default is "start with nothing
+  // selected" (Jen), because that state has every planting excluded and zero user taps behind it.
+  // `touched` flips only on a deliberate row/Select-none tap, so it passes the same test
+  // `eventDate` passes and `eventType`/`scope` fail.
+  const selectionTouched = !!selection?.selectionState?.touched
   const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes ||
-    batchDepthTouched || rowDepthCount > 0
+    batchDepthTouched || rowDepthCount > 0 || selectionTouched
 
   // §4 draft stash: persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001 (c)),
   // so a dismiss OR a full-page exit preserves it; cleared on a successful confirm/undo below.
@@ -246,8 +272,8 @@ export default function LogMany() {
   // lastScope memory; from then on it persists real edits normally.
   useEffect(() => {
     if (result || !ready) return
-    if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current, batchDepth, batchDepthTouched, rowDepth })
-  }, [result, ready, dirty, eventType, eventDate, scope, notes, batchDepth, batchDepthTouched, rowDepth])
+    if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current, batchDepth, batchDepthTouched, rowDepth, selection: selection?.selectionState })
+  }, [result, ready, dirty, eventType, eventDate, scope, notes, batchDepth, batchDepthTouched, rowDepth, selection])
 
   // `hasUnsavedInput` is the GUARD predicate: it feeds the two channels that COST the user something
   // when they fire — the overlay backdrop stops dismissing, and a deploy's reload is held. Both are
@@ -275,7 +301,14 @@ export default function LogMany() {
   // dismiss. Gated on `depthApplies` so the terms can only count while the chips are actually on
   // screen — a class left over from a type the user has since changed away from is not content a
   // dismissal would destroy, and the reset effect below has already cleared it anyway.
-  const hasUnsavedInput = !result && !!(eventDate || notes || (depthApplies && (batchDepthTouched || rowDepthCount > 0)))
+  // V4-LOGMANYUXREFRESH-001 S0 adds `selectionTouched`, on the same test the excluded picks fail:
+  // a hand-built selection over a 239-planting scope is the single most expensive thing on this form
+  // to lose, and it was in NEITHER channel — a stray backdrop tap dismissed the sheet and a deploy's
+  // reload was not held, both destroying it silently. It is not seeded from localStorage, a deep
+  // link or a save; the stored "start with everything selected" preference moves `baseline`, not
+  // `touched`. Ungated by `depthApplies` (unlike the depth terms) because the selection is on screen
+  // for every event type.
+  const hasUnsavedInput = !result && !!(eventDate || notes || selectionTouched || (depthApplies && (batchDepthTouched || rowDepthCount > 0)))
 
   // §4 (b): report in-progress content to the hosting Sheet — a stray backdrop tap no-ops while
   // there is unsaved input. No-op on the full page (no provider); the draft stash above covers
@@ -366,7 +399,7 @@ export default function LogMany() {
     // full page turned a failed batch into a non-idempotent retry.
     // Same payload shape as the persist effect above — a failed POST that the user dismisses must
     // come back with the amount class intact, not just the idemKey.
-    writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current, batchDepth, batchDepthTouched, rowDepth })
+    writeDraft(DRAFT_KEY, { eventType, eventDate, scope, notes, idemKey: idemRef.current, batchDepth, batchDepthTouched, rowDepth, selection: selection?.selectionState })
     setSaving(true); setError(null)
     try {
       // V4-WATERMATH-001 F0 — batch metadata contract with the events Lambda (W-F0-LAMBDA):
@@ -423,6 +456,11 @@ export default function LogMany() {
       await fetch('/api/events/batch/' + id, { method: 'DELETE' })
       idemRef.current = null
       clearDraft(DRAFT_KEY)
+      // V4-LOGMANYUXREFRESH-001 S0 — Undo means "that batch was wrong, let me redo it", so the
+      // selection is carried back into the remounted ScopeChecklist. Same asymmetry the note
+      // already has (Undo keeps it, "Log more" clears it): re-picking N of 239 by hand is the most
+      // expensive thing on this form, and an undo is exactly when the user still wants that set.
+      setRestoredSelection(selection?.selectionState ?? null)
       setResult(null); setError(null)   // ScopeChecklist remounts → fresh preview
     } catch (err) { setError('Undo failed: ' + err.message) }
   }
@@ -432,7 +470,11 @@ export default function LogMany() {
   // because they are cheap re-picks), and silently re-attaching last batch's prose to a new set of
   // plantings is the exact data-quality defect the "applies to all" label exists to prevent. Undo
   // means "that batch was wrong, let me redo it", so the text the user just typed must survive.
-  function logMore() { idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null); setNotes(''); setShowNotes(false) }
+  // S0: the selection is cleared here for the same reason the note is — "Log more" starts a
+  // DIFFERENT batch, and silently re-applying last batch's hand-picked set to a new one is the same
+  // data-quality defect. `null` is what makes the remounted ScopeChecklist seed from the stored
+  // preference again.
+  function logMore() { idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null); setNotes(''); setShowNotes(false); setRestoredSelection(null) }
 
   if (!ready) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
@@ -603,6 +645,7 @@ export default function LogMany() {
         verbLabel={verbLabel}
         runDryRun={runDryRun}
         onSelectionChange={onSelectionChange}
+        initialSelection={restoredSelection}
         renderRowExtra={depthApplies ? ((pl, { excluded }) => (
           <WaterDepthRowOverride
             key={`d-${pl.id}`}

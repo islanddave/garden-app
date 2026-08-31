@@ -111,7 +111,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events plant_varieties column contr
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(2);
+    // 3 since V4-LOGMANYUXREFRESH-001 S1: the Log Many batch scope resolver now LEFT JOINs pv to
+    // carry crop_type_slug into the dry-run preview (index.js, `SELECT p.id AS plant_id`).
+    expect(STATEMENTS).toHaveLength(3);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pv']);
   });

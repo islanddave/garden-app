@@ -413,10 +413,26 @@ export const handler = async (event) => {
       // is NULL, not true — correct, they belong to no project), and 'space' already reads
       // COALESCE(p.location_id, pp.location_id) so it matches on the planting's OWN location, which
       // all 5 have.
+      //
+      // V4-LOGMANYUXREFRESH-001 S1 — the preview also carries the planting's CROP TYPE. Log Many's
+      // review list had no narrowing axis but zone: the app knows every planting's crop (the picker
+      // feed reads it) and this projection threw it away, so the client had 239 bare names in
+      // alphabetical order and literally no crop dimension to filter on.
+      //
+      // LEFT JOIN, and the join key is the FK COLUMN. This is the resolver BUG-LOGMANYPROJECTLESS-001
+      // was filed against, where an INNER join on container silently under-wrote the batch; a second
+      // inner join here would reproduce that defect exactly, on a different relation. MEASURED on
+      // prod 2026-08-31 through the read-only role: 3 of 228 eligible plantings carry no
+      // cultivar_id, and 3 resolve to no crop_type_slug — small, and exactly the population an
+      // inner join would delete from every "all active" batch without saying so. `pv` cannot
+      // eliminate a row, it can only fail to name one: crop_type_slug comes back NULL and the
+      // client buckets it as Ungrouped. The `plantings selected == events written` invariant is
+      // unchanged and is asserted directly in logmany-cropslug.test.js.
       const resolved = await sql`
-        SELECT p.id AS plant_id, p.display_name AS plant_name
+        SELECT p.id AS plant_id, p.display_name AS plant_name, pv.crop_type_slug AS crop_type_slug
         FROM public.garden_node p
         LEFT JOIN public.container pp ON pp.id = p.container_id AND pp.deleted_at IS NULL
+        LEFT JOIN public.plant_varieties pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
         WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
           -- Byte-equivalent to the old INNER JOIN + WHERE pp.deleted_at IS NULL for every
           -- project-BEARING planting: a container_id that resolves to nothing — missing project or
@@ -469,7 +485,14 @@ export const handler = async (event) => {
         LIMIT 501
       `;
       const capped = resolved.length > 500;
-      const previewRows = resolved.slice(0, 500).map((r) => ({ id: r.plant_id, name: r.plant_name }));
+      // `crop_type_slug ?? null`, never omitted: a planting with no cultivar must arrive as an
+      // EXPLICIT null so the client can bucket it as Ungrouped rather than infer its absence from a
+      // missing key — the same silent-omission class BUG-LOGMANYPROJECTLESS-001 named.
+      const previewRows = resolved.slice(0, 500).map((r) => ({
+        id: r.plant_id, name: r.plant_name, crop_type_slug: r.crop_type_slug ?? null,
+      }));
+      // Derived from `resolved`, NOT from previewRows: these two must stay the same slice of the
+      // same rows, and the write is keyed off this one.
       const plantIds = resolved.slice(0, 500).map((r) => r.plant_id);
       // dry_run: server-accurate preview (count + plantings), no write, no idempotency needed.
       if (dryRun) return resp(200, { count: plantIds.length, capped, plantings: previewRows });
