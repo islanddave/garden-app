@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.86.0",
+    "date": "2026-08-31",
+    "highlights": [
+      "Harvest by voice: saying just a number no longer jumps to a different plant. A bare \"two\" was matching any planting with \"two\" in its name — so the count vanished and the plant silently changed underneath you, and the next save went against the wrong one.",
+      "Harvest by voice: a number said on its own now waits for its unit instead of looking like a finished entry, and it won't save without one."
+    ]
+  },
+  {
     "version": "4.85.0",
     "date": "2026-08-31",
     "highlights": [
