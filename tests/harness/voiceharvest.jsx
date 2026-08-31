@@ -85,14 +85,25 @@ window.webkitSpeechRecognition = HarnessSR
 // is visible. The teach picker is still reachable behind it: say "rhubarb" for a true miss, or teach
 // this phrase deliberately and watch the learned layer take it back — learned still outranks the fold.
 //
-// THE LAST TWO ARE BUG-VOICENUMSUM-001, and they are here because a unit test cannot show what Dave
-// SEES. Both used to save silently and report success — "1884 two count" wrote 1886 count and
-// "eighteen eighty four two count" wrote 104. Both must now refuse, and the refusal must say to
-// separate the name from the amount rather than the bare "Didn't catch that" that left him repeating
-// a phrase the recogniser had heard perfectly.
+// "1884 two count" and "eighteen eighty four two count" ARE BUG-VOICENUMSUM-001. Both used to save
+// silently and report success — 1886 count and 104 count respectively. classify() still refuses
+// both, and parseNumber still cannot reach those numbers; what CHANGED (V5-VOICEONEBREATH-001) is
+// that the refusal is no longer the end of the line. The refused sentence is offered to the planting
+// vocabulary, which says the name is 1884 and the count is 2. Watch the banner: it reads back the
+// split it chose, which is the only way a wrong choice is catchable before "next".
+//
+// "three" then "count" as two taps IS BUG-VOICECOUNTSPLIT-001 — the shape Chrome produces when it
+// ends the session mid-phrase. `deliver()` stops the session after every utterance, so tapping them
+// in sequence reproduces the defect exactly. Before the fix the "three" tap searched the plantings
+// and the count was lost; now the pair rejoins and the banner says "heard in two parts".
+//
+// "two" alone is the DANGEROUS half of that defect, and it needs a real screen to see: on Dave's
+// live data a stray bare number silently RESELECTED a different planting. Tap Suyo Long, then two —
+// the crop slot must not change.
 const PHRASES = ['cucumber', 'Suyo Long', 'studio long', 'chinees red nodle',
   'eighteen eighty four', 'three count', '231 grams', 'next', 'rhubarb', 'text', 'done',
-  '1884 two count', 'eighteen eighty four two count']
+  '1884 two count', 'eighteen eighty four two count',
+  'three', 'count', 'two', 'Suyo Long two count 231 grams']
 
 function Driver() {
   const [, force] = useState(0)

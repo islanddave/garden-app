@@ -119,5 +119,9 @@ describe('VoiceDebug page', () => {
     expect(steps).toMatch(/Log an event/)
     expect(steps).toMatch(/Clear/)
     expect(steps).toMatch(/Copy/)
+    // BUG-VOICECOUNTSPLIT-001 wired the recorder into the harvest page too, and the instructions
+    // must name it. Without this the steps send Dave to the Notes field to capture a COUNT fault —
+    // the wrong screen, and a capture that cannot contain the evidence.
+    expect(steps).toMatch(/Harvest by voice/)
   })
 })
