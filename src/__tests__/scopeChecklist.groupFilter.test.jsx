@@ -244,6 +244,23 @@ describe('S5 — the BULK review list is grouped by the same rule as the pick li
     expect(screen.getByTestId('sc-group-tomato').textContent).toMatch(/Tomato\s*5/)
   })
 
+  // THE COST PIN — grafted from the parallel lane-bd073group-20260831 build of this same ruling,
+  // which is the one thing that branch had and this one did not (OPS-BD073GROUPING-001).
+  //
+  // Dave ruled FOR grouping against a quoted ~40% of the review panel, and the measured cost came in
+  // at 11.7% at the top / 35.0% in the densest window. That trade is only honoured while the window
+  // stays 240px. The obvious future "fix" for a review list that feels cramped is to grow the
+  // scrollport — which silently converts the cost he accepted into a different one he never saw, and
+  // leaves every prose record of the decision still reading true. A comment cannot stop that edit;
+  // this assertion can. The headings must come OUT of the 240px, not be paid for by enlarging it.
+  it('the 240px window is unchanged — the headings come out of it, which is the accepted cost', async () => {
+    render(<Harness />)
+    const list = await openReview()
+    expect(list.style.maxHeight).toBe('240px')
+    expect(list.style.overflowY).toBe('auto')
+    expect(list.querySelectorAll('[data-testid^="sc-group-"]').length).toBeGreaterThan(0)
+  })
+
   // THE ANTI-DRIFT PIN, and the reason the grouping is one shared component rather than two
   // implementations. Dave's word was "consistency": these two lists are one tap apart, so a
   // difference in the header set, its order, or the row order underneath it is visible in the same
