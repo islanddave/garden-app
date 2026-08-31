@@ -103,8 +103,12 @@ export default function NumberPad({
   ariaLabel,
   keyAriaPrefix,
   maxLen,
+  // V4-PUTUPSESSION-001 — opt-in, default off. The put-up walk's bag count is an integer column, so
+  // its pad dims `.` rather than offering a value the server rejects. Passed straight through to
+  // lib/numberPad.js; every existing caller omits it and is unchanged.
+  integer = false,
 }) {
-  const opts = maxLen == null ? undefined : { maxLen }
+  const opts = maxLen == null && !integer ? undefined : { ...(maxLen == null ? null : { maxLen }), integer }
   const press = (key) => onChange(appendDigit(value, key, opts))
   const dis = (key) => padKeyDisabled(value, key, opts)
   const hand = useHandedness()

@@ -18,13 +18,14 @@
 // Cross-Device (all state server-side). Offline = require-online: the save is blocked with a clear
 // "can't save offline" state that PRESERVES entered input (no draft queue in V100 — tech-debt).
 import React, { useState, useEffect, useCallback, useMemo, useId, useRef } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 // V4-PUTUPENGINE-001 slice 2 — harvest -> put-up prefill mapping lives in its own pure module
 // because the two tables' unit vocabularies disagree (see the UNIT_GROUPS comment below, which
 // named this hazard before anything consumed it).
 import { prefillFromHarvestEntry, harvestPickLabel, harvestPickAmount } from '../lib/putUpPrefill.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
+import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { P } from '../lib/constants.js'
 import { T } from '../lib/tokens.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, SegmentedControl } from '../components/forms'
@@ -39,7 +40,16 @@ import { PUTUP_SOURCE_OPTIONS, PUTUP_SOURCE_LABELS } from '../lib/dropdownRegist
 // below for what each one asks and why one shared predicate could not answer both.
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
-import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
+import { useReportOverlayDirty, useInOverlaySurface } from '../context/OverlayContext.jsx'
+// V4-PUTUPSESSION-001 slice 0 — the freezer walk. A MODE FLAG on this page (?session=putup), not a
+// new page, a new endpoint or a new table, copying the weigh-in's shape rather than editing it
+// (EventNew.jsx is frozen: OPS-WEIGHINUXFROZEN-001).
+import NumberPad from '../components/NumberPad.jsx'
+import { useSuppressBottomNav } from '../hooks/useSuppressBottomNav.js'
+import {
+  WALK_PARAM, coarseDate, exactDate, describeDate, solePlanting, unrecordedCrops,
+  readWalk, writeWalk, clearWalk, readDismissed, dismissCrop,
+} from '../lib/putUpSession.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -165,6 +175,13 @@ function prettyDate(v) {
 export default function PutUp() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  // V4-PUTUPSESSION-001. ONE derived predicate for the whole walk, so there is no way to ship half
+  // of it — the same shape EventNew's `inHarvestSession = param && !inOverlay` uses, and for the
+  // same reason: the walk's fixed bottom band and BottomNav suppression cannot survive inside a
+  // Sheet, so in an overlay the param degrades to a plain deep link to the ordinary page.
+  const inOverlay = useInOverlaySurface()
+  const inWalk = searchParams.get('session') === WALK_PARAM && !inOverlay
   const prefill = (location.state && typeof location.state.prefill === 'object' && location.state.prefill) || {}
   const prefillKey = prefillContextKey(prefill)
   const hasPrefill = prefillKey !== BARE_PREFILL_KEY
@@ -201,10 +218,25 @@ export default function PutUp() {
     navigate(location.pathname, { state: null, replace: true })
   }, [navigate, location.pathname])
 
+  // Declared AFTER every hook above, so the walk branch cannot reorder them.
+  if (inWalk) return <PutUpWalk />
+
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 620, margin: '0 auto', padding: '24px 18px 80px' }}>
-        <h1 style={{ margin: '0 0 4px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Put-Up</h1>
+        {/* V4-PUTUPSESSION-001 — the walk's door, on the title line and DELIBERATELY NOT a
+            full-width filled primary CTA. That shape is what V4-WEIGHINCTA-001 shipped for the
+            weigh-in and it was reversed; this copies the reversal, not the original. */}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: T.space.sm, margin: '0 0 4px' }}>
+          <h1 style={{ margin: 0, flex: 1, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Put-Up</h1>
+          <button type="button" onClick={() => navigate(`/put-up?session=${WALK_PARAM}`)}
+            data-testid="putup-walk-door"
+            style={{ background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
+              color: P.green, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit',
+              padding: '6px 12px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
+            🧊 Freezer walk
+          </button>
+        </div>
         <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.light }}>
           What you&rsquo;ve preserved — your freezer, pantry and stores.
         </p>
@@ -263,6 +295,451 @@ export default function PutUp() {
           ? <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => setView('stores')} />
           : <StoresView />}
       </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V4-PUTUPSESSION-001 slice 0 — the freezer walk
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PROBLEM, in Dave's words (2026-08-25): "I still put up a ton (all of the blueberries have
+// been put up, but not recorded in the app) — I just don't have a ton of time in the middle of
+// harvest season to do it." Capture friction is NOT the complaint; TIMING is. The measured cost:
+// 48 blueberry harvests, 37.2 lb, exactly ONE planting, and zero put-up rows.
+//
+// So this is a RETROSPECTIVE surface. It asks the two questions a freezer walk can answer once —
+// which freezer, roughly when — applies both to every save in the sitting, and then asks per item
+// only for the thing he can actually observe standing there: HOW MANY BAGS. It never proposes a
+// quantity from harvest weight (the app knows 37.2 lb and must not offer it — a number the app
+// invented is indistinguishable from one he counted the moment it is stored).
+//
+// Modelled on the weigh-in and DELIBERATELY NOT EDITING IT. Copied: the mode-flag predicate, the
+// BottomNav suppression, the sticky answers across the sitting, one write per item, an exit control
+// built in from the start (the weigh-in needed one added retroactively — V4-WEIGHSESSIONCLOSE-001).
+// NOT copied: the fixed 3-track 100dvh grid (that geometry was measured for two number pads and a
+// ledger, not for this form) and the 56px pad keys (V4-PADTARGETSIZE-001, unshipped, measured to
+// push a pad row under a sticky band). Not built at all: a worklist with ticks, a denominator or
+// auto-advance — Dave had exactly that deleted from the weigh-in (V4-WEIGHQUEUEKILL-001).
+const WALK_BAND_FALLBACK_PX = 96   // jsdom and pre-measure paints only; the live value is measured
+
+function PutUpWalk() {
+  const navigate = useNavigate()
+  const { fetch } = useApiFetch()
+  useSuppressBottomNav(true)
+
+  // The stash is read ONCE, lazily, so a re-render can never resurrect a walk that was just exited.
+  const [walk, setWalk] = useState(() => readWalk())
+  const [resumed] = useState(() => !!readWalk())
+  const [editingSetup, setEditingSetup] = useState(() => !readWalk())
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false)
+  const [storageLocations, setStorageLocations] = useState([])
+  // { id, text, undone, error } — the LAST item saved in this sitting. Deliberately not restored
+  // from the stash: an "Undo" offered for something saved yesterday evening is not what undo means.
+  const [lastSaved, setLastSaved] = useState(null)
+  const [bandH, setBandH] = useState(WALK_BAND_FALLBACK_PX)
+  const bandRef = useRef(null)
+
+  // The offline PRE-FLIGHT (design §5.1.6). Put-Up refuses to save anything offline
+  // (handleSubmit's first branch), so without this the worst failure mode is thirty minutes of
+  // walking followed by twenty items identified and none saved. Checking BEFORE the walk turns that
+  // into a five-second one. navigator.onLine === false means the OS reports no network at all, so
+  // it is trustworthy in the blocking direction (its unreliability is the other way — online:true
+  // with no real connectivity), which is why this gate is safe to make hard.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+
+  useEffect(() => {
+    let live = true
+    fetch('/api/storage-locations')
+      .then(rows => { if (live) setStorageLocations(Array.isArray(rows) ? rows : []) })
+      .catch(() => { /* non-fatal — the walk still runs with Unassigned */ })
+    return () => { live = false }
+  }, [fetch])
+
+  // The band's height is MEASURED, not assumed. It grows the moment the first item lands (a saved
+  // line + Undo appear), and the scroller's bottom padding is what guarantees every control below
+  // it — including the number pad's last row — can be scrolled clear of it. Assuming a constant is
+  // exactly how the weight pad ended up 15px inside the weigh-in's band (BUG-WEIGHPADSAVEBAND-001).
+  useEffect(() => {
+    const el = bandRef.current
+    if (!el) return undefined
+    const measure = () => setBandH(Math.round(el.getBoundingClientRect().height) || WALK_BAND_FALLBACK_PX)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [editingSetup, lastSaved])
+
+  const exitWalk = useCallback(() => {
+    clearWalk()
+    navigate('/put-up', { replace: true })
+  }, [navigate])
+
+  const startWalk = useCallback((answers) => {
+    const next = { ...answers, savedCount: walk?.savedCount ?? 0, cropSlug: walk?.cropSlug ?? '' }
+    writeWalk(next)
+    setWalk(next)
+    setEditingSetup(false)
+  }, [walk])
+
+  // One item saved. The row is already durable in the database — this only advances the PLACE the
+  // stash remembers, so a walk torn down by the launcher comes back on the same freezer, the same
+  // date and the same crop.
+  const onSaved = useCallback((row, text) => {
+    setLastSaved({ id: row?.id ?? null, text, undone: false, error: null })
+    setWalk(w => {
+      const next = { ...w, savedCount: (w?.savedCount ?? 0) + 1, cropSlug: row?.crop_type_slug ?? w?.cropSlug ?? '' }
+      writeWalk(next)
+      return next
+    })
+  }, [])
+
+  // Undo = the sanctioned soft-delete, the same DELETE the inventory's per-row delete uses. An
+  // undone item stays on screen struck through rather than vanishing: the band is an honest record
+  // of what happened, not a mutable cart.
+  const undoLast = useCallback(async () => {
+    if (!lastSaved?.id || lastSaved.undone) return
+    try {
+      await fetch(`/api/preservation/${lastSaved.id}`, { method: 'DELETE' })
+      setLastSaved(s => (s ? { ...s, undone: true, error: null } : s))
+      setWalk(w => {
+        const next = { ...w, savedCount: Math.max(0, (w?.savedCount ?? 1) - 1) }
+        writeWalk(next)
+        return next
+      })
+    } catch {
+      setLastSaved(s => (s ? { ...s, error: "Couldn't undo — try again." } : s))
+    }
+  }, [fetch, lastSaved])
+
+  const walkStorageId = walk?.storageId ?? ''
+  const walkDate = walk?.date ?? ''
+  const walkApprox = !!walk?.dateApprox
+  const walkCrop = walk?.cropSlug ?? ''
+  const session = useMemo(
+    () => (walkDate ? { storageId: walkStorageId, date: walkDate, dateApprox: walkApprox, cropSlug: walkCrop } : null),
+    [walkStorageId, walkDate, walkApprox, walkCrop],
+  )
+  const storageLabel = storageLocations.find(s => String(s.id) === String(walkStorageId))?.label
+    || (walkStorageId ? 'this freezer' : 'Unassigned')
+
+  return (
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
+      <div style={{ maxWidth: 620, margin: '0 auto', padding: `16px 18px ${bandH + 28}px` }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: T.space.sm, marginBottom: 4 }}>
+          <h1 style={{ margin: 0, flex: 1, color: P.green, fontSize: '1.2rem', fontWeight: 700 }}>
+            🧊 Freezer walk
+          </h1>
+          {editingSetup && (
+            <button type="button" onClick={exitWalk} data-testid="putup-walk-setup-exit"
+              style={{ background: 'none', border: 'none', color: P.mid, fontSize: T.type.sm,
+                fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline',
+                padding: '4px 0', minHeight: 32, cursor: 'pointer' }}>
+              Not now
+            </button>
+          )}
+        </div>
+
+        {editingSetup ? (
+          <WalkSetup
+            online={online}
+            initial={walk}
+            resumed={resumed}
+            storageLocations={storageLocations}
+            onStart={startWalk}
+            fetch={fetch}
+            onCreated={(row) => setStorageLocations(list => [...list, row])}
+          />
+        ) : (
+          <>
+            {resumed && (
+              <div data-testid="putup-walk-resumed" role="status"
+                style={{ marginBottom: 14, padding: '9px 12px', fontSize: T.type.sm, color: P.green,
+                  backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
+                Picked up where you left off{walk?.savedCount ? ` — ${walk.savedCount} logged so far` : ''}.
+              </div>
+            )}
+            <UnrecordedLine fetch={fetch} />
+            <PutUpForm
+              prefill={{}}
+              session={session}
+              onSaved={onSaved}
+              onLogged={exitWalk}
+            />
+          </>
+        )}
+      </div>
+
+      {/* The band. Fixed to the bottom because BottomNav is suppressed, so `bottom: 0` is the real
+          bottom of the device rather than 56px above it. Everything above scrolls past it. */}
+      {!editingSetup && (
+        <div ref={bandRef} data-testid="putup-walk-band"
+          style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 30,
+            backgroundColor: P.white, borderTop: `1px solid ${P.border}`,
+            padding: '10px 18px calc(10px + env(safe-area-inset-bottom))' }}>
+          {lastSaved && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginBottom: 6 }}>
+              <span data-testid="putup-walk-last"
+                style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: lastSaved.undone ? P.light : P.dark,
+                  textDecoration: lastSaved.undone ? 'line-through' : 'none',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {lastSaved.undone ? 'Undone' : '✓'} {lastSaved.text}
+              </span>
+              {!lastSaved.undone && lastSaved.id && (
+                <button type="button" onClick={undoLast} data-testid="putup-walk-undo"
+                  style={{ background: 'none', border: 'none', color: P.terra, fontSize: T.type.sm,
+                    fontWeight: 700, fontFamily: 'inherit', textDecoration: 'underline',
+                    padding: '4px 2px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
+                  Undo
+                </button>
+              )}
+            </div>
+          )}
+          {lastSaved?.error && (
+            <div role="alert" style={{ fontSize: '0.78rem', color: P.terra, marginBottom: 6 }}>{lastSaved.error}</div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', color: P.light,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {storageLabel} · {describeDate(walkDate, walkApprox)}
+            </span>
+            <button type="button" onClick={() => setEditingSetup(true)} data-testid="putup-walk-change"
+              style={{ background: 'none', border: 'none', color: P.green, fontSize: '0.78rem',
+                fontWeight: 700, fontFamily: 'inherit', textDecoration: 'underline',
+                padding: '4px 2px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
+              Change
+            </button>
+            <button type="button" onClick={exitWalk} data-testid="putup-walk-exit"
+              style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: T.radiusButton,
+                color: P.mid, fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit',
+                padding: '6px 12px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The two questions, asked ONCE (design §3.3). A freezer walk has strong locality — that is the
+// lever that makes this cheap. The freezer is the field most likely to be right for a whole sitting
+// at once, and the date is the field retrospection cannot supply truthfully.
+//
+// The words "project" and "container" appear nowhere here. Dave has no concept of a Project, and
+// "container" is already spent on a package elsewhere in this file: the labels are freezer and bag.
+function WalkSetup({ online, initial, resumed, storageLocations, onStart, onCreated, fetch }) {
+  const today = todayYMD()
+  const [storageId, setStorageId] = useState(initial?.storageId ?? '')
+  const [storagePicked, setStoragePicked] = useState(!!initial)
+  const [elsewhere, setElsewhere] = useState(false)
+  const [dateChoice, setDateChoice] = useState(initial?.dateChoice ?? '')
+  const [exactYmd, setExactYmd] = useState(initial && !initial.dateApprox ? initial.date : '')
+
+  const summer = coarseDate('summer', today)
+  const earlier = coarseDate('earlier', today)
+  const resolved = dateChoice === 'exact'
+    ? exactDate(exactYmd)
+    : dateChoice === 'summer' ? summer : dateChoice === 'earlier' ? earlier : null
+
+  const canStart = online && storagePicked && !!resolved
+
+  function pickFreezer(id) { setStorageId(id); setStoragePicked(true); setElsewhere(false) }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
+      {!online && (
+        <div role="alert" data-testid="putup-walk-offline"
+          style={{ padding: '12px 14px', fontSize: T.type.sm, lineHeight: 1.45, color: P.bannerInk,
+            backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: T.radiusButton }}>
+          <strong>You&rsquo;re offline — nothing you log here will save.</strong> Put-ups need a
+          connection. Better to find out now than after a walk round the freezers. This clears itself
+          the moment you&rsquo;re back on.
+        </div>
+      )}
+
+      <Card>
+        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 10 }}>
+          Which freezer are you at?
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm }}>
+          {storageLocations.map(l => (
+            <WalkChip key={l.id} selected={storagePicked && String(storageId) === String(l.id)}
+              testId="putup-walk-freezer" onClick={() => pickFreezer(String(l.id))}>
+              {l.label}
+            </WalkChip>
+          ))}
+          <WalkChip selected={elsewhere} testId="putup-walk-freezer-else"
+            onClick={() => { setElsewhere(true); setStoragePicked(true); setStorageId('') }}>
+            ＋ Somewhere else
+          </WalkChip>
+        </div>
+        {elsewhere && (
+          <div style={{ marginTop: 14 }}>
+            {/* The shipped storage field, reused whole rather than re-implemented — it already owns
+                the "＋ New location" creator and its BUG-PUTUPLOC-001 retry. */}
+            <StorageField
+              value={storageId}
+              onChange={setStorageId}
+              locations={storageLocations}
+              onCreated={(row) => { onCreated(row); setStorageId(String(row.id)) }}
+              fetch={fetch}
+            />
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 4 }}>
+          Roughly when did you put this up?
+        </div>
+        <div style={{ fontSize: '0.8rem', color: P.light, marginBottom: 10 }}>
+          A rough answer is a real answer — you can change it on any single item.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm }}>
+          {summer && (
+            <WalkChip selected={dateChoice === 'summer'} testId="putup-walk-date"
+              onClick={() => setDateChoice('summer')}>This summer</WalkChip>
+          )}
+          {earlier && (
+            <WalkChip selected={dateChoice === 'earlier'} testId="putup-walk-date"
+              onClick={() => setDateChoice('earlier')}>Earlier this year</WalkChip>
+          )}
+          <WalkChip selected={dateChoice === 'exact'} testId="putup-walk-date"
+            onClick={() => setDateChoice('exact')}>Pick a date</WalkChip>
+        </div>
+        {dateChoice === 'exact' && (
+          <div style={{ marginTop: 12 }}>
+            <Field label="Put-up date" htmlFor="pu-walk-date">
+              <Input id="pu-walk-date" type="date" value={exactYmd} max={today}
+                onChange={e => setExactYmd(e.target.value)} aria-label="Put-up date" />
+            </Field>
+          </div>
+        )}
+        {/* The resolved date is SHOWN, never hidden. A coarse button that silently writes a date
+            nobody looked at is the "a wrong default launders a wrong decision" failure; a default
+            he is shown before he starts is a fact he can catch. Slice 0 has no column for the
+            approximate flag yet, so this sentence is the only thing carrying it — say it plainly. */}
+        {resolved && (
+          <div data-testid="putup-walk-date-resolved"
+            style={{ marginTop: 12, fontSize: T.type.sm, color: P.mid }}>
+            Everything in this walk gets recorded as <strong>{describeDate(resolved.date, resolved.approx)}</strong>
+            {resolved.approx ? ' — an estimate, not a date you picked.' : '.'}
+          </div>
+        )}
+      </Card>
+
+      <Button type="button" variant="primary" disabled={!canStart}
+        data-testid="putup-walk-start"
+        onClick={() => onStart({
+          storageId,
+          date: resolved.date,
+          dateApprox: resolved.approx,
+          dateChoice,
+        })}>
+        {resumed ? 'Back to the walk' : 'Start the walk'}
+      </Button>
+    </div>
+  )
+}
+
+function WalkChip({ selected, onClick, children, testId }) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={selected} data-testid={testId}
+      style={{ minHeight: T.tapMinHeight, padding: '10px 14px', borderRadius: T.radiusButton,
+        border: `1px solid ${selected ? P.green : P.border}`,
+        backgroundColor: selected ? P.greenPale : P.white,
+        color: selected ? P.green : P.dark, fontWeight: selected ? 700 : 600,
+        fontSize: '0.9rem', fontFamily: 'inherit', cursor: 'pointer' }}>
+      {children}
+    </button>
+  )
+}
+
+// "What haven't I put up?" (design §6 Q4) — ONE collapsed line, no ticks, no denominator, no
+// ordering, no auto-advance. Dave asked for it with a constraint in his own words: "it cannot be a
+// forever nag — i pick watermelons for example but mostly eat them fresh, not freezing."
+//
+// Two things answer that constraint:
+//   1. COLLAPSED IT MAKES NO ACCUSATION. The line carries no count until he opens it, so the walk
+//      never greets him with a number of things he has "failed" to record. It is also why the
+//      season-wide aggregates scan is deferred to the tap rather than run on entry.
+//   2. EVERY CROP IS DISMISSIBLE, AND THE DISMISSAL STICKS. "Not one I put up" is the label —
+//      not "done" — because watermelon is not an outstanding task, it is a crop that will never
+//      belong on this list. localStorage, per crop, no schema.
+function UnrecordedLine({ fetch }) {
+  const [open, setOpen] = useState(false)
+  // `wanted` only ever goes false -> true, and that is the whole point. Keying the fetch on `open`
+  // (which flips back) or on `state.loading` (which this effect sets itself) makes the effect
+  // cancel its OWN in-flight request through its cleanup and then decline to retry — the panel sits
+  // on "Checking…" forever. Caught by the test below, which is why it is a monotone latch.
+  const [wanted, setWanted] = useState(false)
+  const [state, setState] = useState({ loading: false, failed: false, crops: null })
+  const [dismissed, setDismissed] = useState(() => readDismissed())
+
+  useEffect(() => {
+    if (!wanted) return undefined
+    let live = true
+    setState({ loading: true, failed: false, crops: null })
+    Promise.all([
+      fetch('/api/harvests?include=aggregates'),
+      fetch('/api/preservation/whats-put-up?group=crop'),
+    ])
+      .then(([h, p]) => {
+        if (!live) return
+        const putUp = (p?.groups ?? []).flatMap(g => [
+          g.group_key,
+          ...(g.records ?? []).map(r => r.crop_type_slug),
+        ].filter(Boolean))
+        setState({ loading: false, failed: false, crops: h?.aggregates?.crops ?? [], putUp })
+      })
+      .catch(() => { if (live) setState({ loading: false, failed: true, crops: null }) })
+    return () => { live = false }
+  }, [wanted, fetch])
+
+  const rows = useMemo(
+    () => unrecordedCrops({ harvestCrops: state.crops, putUpSlugs: state.putUp, dismissed }),
+    [state.crops, state.putUp, dismissed],
+  )
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <button type="button" onClick={() => { setOpen(o => !o); setWanted(true) }} aria-expanded={open}
+        data-testid="putup-walk-unrecorded-toggle"
+        style={{ background: 'none', border: 'none', padding: '6px 0', cursor: 'pointer',
+          color: P.mid, fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit',
+          display: 'flex', alignItems: 'center', gap: 6, minHeight: 36 }}>
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span>What haven&rsquo;t I put up?</span>
+      </button>
+      {open && (
+        <div data-testid="putup-walk-unrecorded" style={{ paddingLeft: 18 }}>
+          {state.loading && <div style={{ fontSize: T.type.sm, color: P.light }}>Checking&hellip;</div>}
+          {state.failed && <div style={{ fontSize: T.type.sm, color: P.light }}>Couldn&rsquo;t check just now.</div>}
+          {!state.loading && !state.failed && state.crops && rows.length === 0 && (
+            <div style={{ fontSize: T.type.sm, color: P.light }}>Nothing outstanding.</div>
+          )}
+          {rows.map(c => (
+            <div key={c.slug} style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, padding: '4px 0' }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.dark }}>{c.name}</span>
+              <button type="button" onClick={() => setDismissed(dismissCrop(c.slug))}
+                data-testid="putup-walk-not-mine"
+                style={{ background: 'none', border: 'none', color: P.light, fontSize: '0.76rem',
+                  fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline',
+                  padding: '4px 2px', minHeight: 32, cursor: 'pointer', flexShrink: 0 }}>
+                Not one I put up
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -356,7 +833,10 @@ function RecentHarvestPicker({ onPick }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Log form
 // ─────────────────────────────────────────────────────────────────────────────
-function PutUpForm({ prefill, onLogged }) {
+// `session` (V4-PUTUPSESSION-001) is the freezer walk's answers — { storageId, date, dateApprox,
+// cropSlug } — or null on every other entry path, where this form is byte-identical to what shipped
+// apart from the promoted bag count. `onSaved` replaces the success screen with the walk's band.
+function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   const { fetch } = useApiFetch()
   // V4-PUTUPFOODCATEGORY-001 — the ONE surface that opts into the non-plant food classes. This is
   // the pantry, not the garden: "where's my bread?" is answerable only if bread is offerable here.
@@ -364,8 +844,10 @@ function PutUpForm({ prefill, onLogged }) {
   // fields below, which is why a food class can be picked as a CROP here but never as a variety.
   const { cropTypes } = useCropTypes({ scope: 'all' })
 
-  // Fast-path (2 required)
-  const [cropSlug, setCropSlug]   = useState(prefill.crop_type_slug || '')
+  // Fast-path (2 required). The walk seeds the crop from its stash so a sitting torn down by the
+  // launcher — Dave runs this as an installed PWA on Android, over several evenings — comes back on
+  // the crop he was standing in front of.
+  const [cropSlug, setCropSlug]   = useState(prefill.crop_type_slug || session?.cropSlug || '')
   // V4-PUTUPENGINE-001 slice 2 — quantity/unit now arrive on the prefill from a picked harvest.
   // They come as a PAIR or not at all (putUpPrefill.js drops both when the harvest unit has no
   // lossless mapping), so a seeded value can never be a number sitting against the wrong unit.
@@ -375,8 +857,10 @@ function PutUpForm({ prefill, onLogged }) {
   // Defaulted (visible, pre-filled)
   const [method, setMethod]       = useState('whole_freeze')
   const [methodOther, setMethodOther] = useState('')
-  const [preservedAt, setPreservedAt] = useState(todayYMD())
-  const [storageId, setStorageId] = useState('')
+  // The walk's two answers seed these and are re-applied below whenever they change, so one tap at
+  // the start of a sitting stands in for one tap per item.
+  const [preservedAt, setPreservedAt] = useState(session?.date || todayYMD())
+  const [storageId, setStorageId] = useState(session?.storageId || '')
   const [useByMode, setUseByMode] = useState('auto') // 'auto' | 'none' | 'custom'
   const [useByDate, setUseByDate] = useState('')
 
@@ -616,6 +1100,50 @@ function PutUpForm({ prefill, onLogged }) {
   }, [fetch])
   useEffect(() => { loadStorage() }, [loadStorage])
 
+  // ── V4-PUTUPSESSION-001: the walk's answers, applied to every save ────────────────────────────
+  // Re-applied on CHANGE (he tapped "Change" in the band and moved to the next freezer), not only
+  // at mount, and deliberately keyed on the two primitives rather than the object — the walk builds
+  // a fresh object every render. A per-item override survives until the session answer itself
+  // changes, which is the behaviour §3.3 asks for ("both stay visible, small, and overridable").
+  const sessionStorageId = session?.storageId ?? null
+  const sessionDate = session?.date ?? null
+  useEffect(() => {
+    if (sessionDate == null) return
+    setPreservedAt(sessionDate)
+    setStorageId(sessionStorageId || '')
+  }, [sessionDate, sessionStorageId])
+
+  // ── V4-PUTUPSESSION-001: auto-resolve the planting when the crop has exactly one ──────────────
+  // 18 of the 31 crops harvested this year have exactly one planting (measured 2026-08-31), so for
+  // most of the freezer the app can name the plant with no input at all — G2 provenance for zero
+  // taps. Reads through useCachedFetch on the SAME path PlantingSelect self-fetches, so host and
+  // picker share one warm cache entry rather than each holding their own; `null` when not in a walk
+  // means the hook does nothing at all on every other entry path.
+  const walkPlants = useCachedFetch(session ? '/api/plants?view=picker' : null)
+  const soleForCrop = useMemo(
+    () => (session ? solePlanting(walkPlants.data, cropSlug) : null),
+    [session, walkPlants.data, cropSlug],
+  )
+  // What this effect set, so it can revise its OWN guess when the crop changes but must never
+  // overwrite a planting the user picked by hand.
+  const autoPlantRef = useRef(null)
+  useEffect(() => {
+    if (!session) return
+    if (plantId && plantId !== autoPlantRef.current) return   // user's choice — hands off
+    if (soleForCrop) {
+      if (plantId === soleForCrop.id) return
+      autoPlantRef.current = soleForCrop.id
+      setPlantId(soleForCrop.id)
+    } else if (plantId && plantId === autoPlantRef.current) {
+      autoPlantRef.current = null
+      setPlantId(null)
+    }
+  }, [session, soleForCrop, plantId])
+  // Stated, never silent. "A default he is shown once per save is a fact he can catch; one he never
+  // sees is an assumption" — the same rationale the provenance echo on save already gives. This is
+  // the on-screen half of design §4.4 rule 4.
+  const autoResolvedPlanting = session && soleForCrop && plantId === soleForCrop.id ? soleForCrop : null
+
   function validate() {
     // A planting is sufficient attribution on its own — the server derives crop + variety from it.
     if (!cropSlug && !effectiveVarietyId && !plantId) return 'Pick a crop, a variety, or a planting so this put-up is attributed.'
@@ -697,10 +1225,16 @@ function PutUpForm({ prefill, onLogged }) {
         : ''
       clearDraft(DRAFT_KEY)   // saved to the DB — no longer a resumable draft
       savedOnceRef.current = true   // …and keep the persist effect from putting it straight back
-      setSuccess({
-        text: `Now in ${storeLabel}: ${Number(qtyValue)} ${qtyUnit} ${cropLabel} (${body.package_count} ${body.package_count === 1 ? 'container' : 'containers'})${fromBit}.`,
-        row,
-      })
+      const text = `Now in ${storeLabel}: ${Number(qtyValue)} ${qtyUnit} ${cropLabel} (${body.package_count} ${body.package_count === 1 ? 'container' : 'containers'})${fromBit}.`
+      // V4-PUTUPSESSION-001. In a walk the confirmation IS the band — it carries the saved item and
+      // its Undo — so the form stays put and clears for the next bag rather than swapping itself
+      // for a success screen he then has to tap past sixty times.
+      if (session && onSaved) {
+        onSaved(row, `${body.package_count} × ${cropLabel}`)
+        resetForNext()
+      } else {
+        setSuccess({ text, row })
+      }
     } catch (err) {
       setError(friendlyError(err))
     } finally {
@@ -791,6 +1325,134 @@ function PutUpForm({ prefill, onLogged }) {
 
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false
 
+  // ── V4-PUTUPSESSION-001: the fast path, as blocks, because the walk orders them differently ──
+  // THE INVERSION THAT MATTERS (design §0.3/§3.4). The inventory read surface builds its headline
+  // as `g.total_packages += Number(r.package_count)` and never aggregates quantity_value ANYWHERE
+  // (lambda/preservation/index.js). So package_count is the number "what's put up" actually
+  // reports — and until now it was the one field hidden behind the collapsed "More · optional"
+  // reveal at a default of 1, while quantity, which nothing sums, was the required fast-path field.
+  // For a freezer walk that is exactly backwards: standing at a chest freezer the countable fact is
+  // "there are twelve bags"; the quart-size of each bag is a per-crop constant.
+  //
+  // Promoted UNCONDITIONALLY, not only in the walk — the read surface reads the same column on
+  // every entry path, so hiding it anywhere is the same defect.
+  const bagsField = (
+    <div style={{ marginTop: 14 }}>
+      <Field label="How many bags / jars?" htmlFor="pu-packages"
+        help={session ? undefined : 'How many separate bags, jars or boxes this went into.'}>
+        <Input id="pu-packages" type="number" min={1} inputMode="numeric" value={packageCount}
+          onChange={e => setPackageCount(e.target.value)} aria-label="How many bags or jars" />
+      </Field>
+      {/* The pad is WALK-ONLY. Its clearance is not inherited from the weigh-in's geometry — that
+          pad sits in a fixed 3-track grid over a 48-184px band, this one sits in ordinary document
+          flow above a band whose height is MEASURED and paid for as the scroller's bottom padding
+          (PutUpWalk). `integer` dims the decimal key: package_count is an integer column, so '1.5
+          bags' would be a value the server rejects after he had finished tapping. Six columns, 48px
+          keys — deliberately NOT the 56px of V4-PADTARGETSIZE-001, which is unshipped precisely
+          because it pushed a pad row under a sticky band. */}
+      {session && (
+        <div style={{ marginTop: 10 }}>
+          <NumberPad
+            value={packageCount}
+            onChange={setPackageCount}
+            idPrefix="pu-bagpad"
+            ariaLabel="How many bags or jars"
+            keyAriaPrefix="Bags"
+            maxLen={3}
+            integer
+          />
+        </div>
+      )}
+    </div>
+  )
+
+  const qtyRow = (
+    <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14 }}>
+      <div style={{ flex: 2 }}>
+        <Field label={session ? 'How big is each? *' : 'How much *'} htmlFor="pu-qty">
+          <Input
+            id="pu-qty"
+            type="text"
+            inputMode="decimal"
+            value={qtyValue}
+            onChange={e => setQtyValue(e.target.value)}
+            aria-label="Quantity"
+            placeholder="e.g. 14"
+          />
+        </Field>
+      </div>
+      <div style={{ flex: 1 }}>
+        <Field label="Unit *" htmlFor="pu-unit">
+          <Select id="pu-unit" value={qtyUnit} onChange={e => setQtyUnit(e.target.value)} aria-label="Unit">
+            {UNIT_GROUPS.map(g => (
+              <optgroup key={g.group} label={g.group}>
+                {g.options.map(u => <option key={u} value={u}>{u}</option>)}
+              </optgroup>
+            ))}
+          </Select>
+        </Field>
+      </div>
+    </div>
+  )
+
+  // Which one? Crop alone ("Peppers") isn't enough to know what's in the jar — jalapeño vs
+  // habanero matters when you go looking for it later. Promoted out of the "More" reveal to sit
+  // with the crop (Dave, 2026-07-21). Optional: the attribution CHECK needs crop OR variety.
+  // SUPPRESSED IN THE WALK: retrospectively, at a freezer, the cultivar is not a fact he has — and
+  // where a planting auto-resolves the server derives the variety from it anyway.
+  const varietyBlock = (
+    <div style={{ marginTop: 14 }}>
+      <Field label="Which variety?" htmlFor="pu-variety" optional
+        help={cropSlug
+          ? 'e.g. Jalapeño, Habanero — so you know exactly what you put up.'
+          : 'Choose a crop above to narrow this list — or search them all.'}>
+        {/* Scoped to the chosen crop so this is a short, relevant list (pepper = 107 of 398)
+            rather than every variety in the garden. */}
+        <VarietyPicker id="pu-variety" value={variety} onChange={setVariety}
+          cropSlugFilter={cropSlug || undefined}
+          placeholder={cropSlug ? 'Search this crop’s varieties…' : 'Search varieties…'} />
+      </Field>
+    </div>
+  )
+
+  // Which planting? The spine link. Optional by design (V101 line 57: a put-up drawn from several
+  // waves has no single planting), but offered on EVERY entry — not just the harvest-triggered one
+  // — so "3 waves of zucchini, tracked separately" actually works. Selecting a planting derives
+  // crop + variety, so this alone is full attribution.
+  const plantingBlock = (
+    <div style={{ marginTop: 14 }}>
+      {autoResolvedPlanting && (
+        <div data-testid="pu-auto-planting" role="status"
+          style={{ marginBottom: 10, padding: '9px 12px', fontSize: T.type.sm, lineHeight: 1.4,
+            color: P.green, backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`,
+            borderRadius: T.radiusButton }}>
+          {/* The PLAIN name, not plantingWaveLabel: the wave format exists to disambiguate
+              successions ("— wave 2, sown Apr 20"), and by construction there is nothing here to
+              disambiguate. Measured at 390px the wave form cost this box a third line for a fact
+              the picker directly below already shows. */}
+          ✓ My garden · <strong>{autoResolvedPlanting.name || plantingWaveLabel(autoResolvedPlanting)}</strong>
+          <span style={{ color: P.mid }}> — the only planting of this crop. Change it below if
+            that&rsquo;s wrong.</span>
+        </div>
+      )}
+      <PlantingField
+        value={plantId}
+        onChange={setPlantId}
+        cropSlug={cropSlug}
+        varietyId={effectiveVarietyId}
+        onDerive={({ crop_type_slug, variety_id, variety }) => {
+          if (crop_type_slug && !cropSlug) setCropSlug(crop_type_slug)
+          if (variety_id && !effectiveVarietyId && variety) setVariety(variety)
+          // V4-PUTUPPROV-001 (D2-c, reverse edge). Picking a planting can never leave a
+          // contradictory source behind — otherwise a user could set 'store', then pick a wave,
+          // and ship a row asserting both. The server rejects that pair; this stops them
+          // reaching it.
+          setSourceKind('own_garden'); setSourceLabel('')
+        }}
+      />
+    </div>
+  )
+
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
       {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -809,70 +1471,24 @@ function PutUpForm({ prefill, onLogged }) {
           </Select>
         </Field>
 
-        {/* Which one? Crop alone ("Peppers") isn't enough to know what's in the jar — jalapeño vs
-            habanero matters when you go looking for it later. Promoted out of the "More" reveal to
-            sit with the crop (Dave, 2026-07-21). Optional: the attribution CHECK needs crop OR variety. */}
-        <div style={{ marginTop: 14 }}>
-          <Field label="Which variety?" htmlFor="pu-variety" optional
-            help={cropSlug
-              ? 'e.g. Jalapeño, Habanero — so you know exactly what you put up.'
-              : 'Choose a crop above to narrow this list — or search them all.'}>
-            {/* Scoped to the chosen crop so this is a short, relevant list (pepper = 107 of 398)
-                rather than every variety in the garden. */}
-            <VarietyPicker id="pu-variety" value={variety} onChange={setVariety}
-              cropSlugFilter={cropSlug || undefined}
-              placeholder={cropSlug ? 'Search this crop’s varieties…' : 'Search varieties…'} />
-          </Field>
-        </div>
-
-        {/* Which planting? The spine link. Optional by design (V101 line 57: a put-up drawn from
-            several waves has no single planting), but offered on EVERY entry — not just the
-            harvest-triggered one — so "3 waves of zucchini, tracked separately" actually works.
-            Selecting a planting derives crop + variety, so this alone is full attribution. */}
-        <div style={{ marginTop: 14 }}>
-          <PlantingField
-            value={plantId}
-            onChange={setPlantId}
-            cropSlug={cropSlug}
-            varietyId={effectiveVarietyId}
-            onDerive={({ crop_type_slug, variety_id, variety }) => {
-              if (crop_type_slug && !cropSlug) setCropSlug(crop_type_slug)
-              if (variety_id && !effectiveVarietyId && variety) setVariety(variety)
-              // V4-PUTUPPROV-001 (D2-c, reverse edge). Picking a planting can never leave a
-              // contradictory source behind — otherwise a user could set 'store', then pick a wave,
-              // and ship a row asserting both. The server rejects that pair; this stops them
-              // reaching it.
-              setSourceKind('own_garden'); setSourceLabel('')
-            }}
-          />
-        </div>
-
-        <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14 }}>
-          <div style={{ flex: 2 }}>
-            <Field label="How much *" htmlFor="pu-qty">
-              <Input
-                id="pu-qty"
-                type="text"
-                inputMode="decimal"
-                value={qtyValue}
-                onChange={e => setQtyValue(e.target.value)}
-                aria-label="Quantity"
-                placeholder="e.g. 14"
-              />
-            </Field>
-          </div>
-          <div style={{ flex: 1 }}>
-            <Field label="Unit *" htmlFor="pu-unit">
-              <Select id="pu-unit" value={qtyUnit} onChange={e => setQtyUnit(e.target.value)} aria-label="Unit">
-                {UNIT_GROUPS.map(g => (
-                  <optgroup key={g.group} label={g.group}>
-                    {g.options.map(u => <option key={u} value={u}>{u}</option>)}
-                  </optgroup>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        </div>
+        {/* Order. WALK: crop → how many bags → how big is each → which planting. The countable
+            fact first, then the per-crop constant, then the provenance the app usually fills in
+            itself. ORDINARY FORM: its shipped order, unchanged, with the bag count inserted above
+            quantity exactly where the read surface's arithmetic says it belongs. */}
+        {session ? (
+          <>
+            {bagsField}
+            {qtyRow}
+            {plantingBlock}
+          </>
+        ) : (
+          <>
+            {varietyBlock}
+            {plantingBlock}
+            {bagsField}
+            {qtyRow}
+          </>
+        )}
       </Card>
 
       {/* ── Defaulted: source / method / storage / date / use-by ── */}
@@ -977,7 +1593,13 @@ function PutUpForm({ prefill, onLogged }) {
 
         <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 150 }}>
-            <Field label="Put-up date *" htmlFor="pu-date">
+            {/* V4-PUTUPSESSION-001, the knowing limitation of slice 0: preserved_at is NOT NULL and
+                there is no preserved_at_approx column yet, so a walk's estimate is stored in the
+                same shape as a date he chose. The help text is the only place that distinction
+                survives — it is not decoration. Slice 1 adds the column and this line stops being
+                the sole carrier. */}
+            <Field label="Put-up date *" htmlFor="pu-date"
+              help={session?.dateApprox ? 'An estimate from the start of this walk — change it for any item you know exactly.' : undefined}>
               <Input id="pu-date" type="date" value={preservedAt} max={todayYMD()}
                 onChange={e => setPreservedAt(e.target.value)} aria-label="Put-up date" />
             </Field>
@@ -1013,10 +1635,9 @@ function PutUpForm({ prefill, onLogged }) {
         </button>
         {showMore && (
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <Field label="Number of containers" htmlFor="pu-packages" help="How many bags / jars / boxes.">
-              <Input id="pu-packages" type="number" min={1} value={packageCount}
-                onChange={e => setPackageCount(e.target.value)} aria-label="Number of containers" />
-            </Field>
+            {/* "Number of containers" USED TO LIVE HERE, behind this reveal, at a default of 1.
+                It is now `bagsField` in the fast path above — see its comment for the arithmetic
+                that moved it. Nothing replaced it here; the reveal is one field shorter. */}
             <Field label="Notes" htmlFor="pu-notes" optional>
               <Textarea id="pu-notes" value={notes} onChange={e => setNotes(e.target.value)}
                 aria-label="Notes" style={{ height: 72, resize: 'vertical' }} placeholder="Anything worth remembering" />
@@ -1041,10 +1662,10 @@ function PutUpForm({ prefill, onLogged }) {
         )}
       </Card>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ display: 'flex', justifyContent: session ? 'stretch' : 'flex-end' }}>
         <Button type="submit" variant="primary" loading={saving || isUploading} loadingLabel={isUploading ? "Uploading photo…" : "Saving…"}
-          disabled={offline} style={{ minWidth: 160 }}>
-          Save put-up
+          disabled={offline} style={session ? { width: '100%' } : { minWidth: 160 }}>
+          {session ? 'Save & next' : 'Save put-up'}
         </Button>
       </div>
     </form>
