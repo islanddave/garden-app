@@ -190,7 +190,13 @@ const LAST_PLANT_KEY = 'logone.lastPlant'
 // type, target plant, notes, quantity, date) without fighting the reset effects. project_id is
 // excluded so the load effect's remembered/validated project stands (avoids a mount-order race).
 const EVENTNEW_DRAFT_KEY = 'logone'
-const DRAFT_FORM_FIELDS = ['event_type', 'notes', 'private_notes', 'quantity', 'event_date', 'is_public', 'plant_id']
+// is_public was REMOVED from this list on 2026-08-31 (BUG-EVENTPUBFALSE-001). It is the only
+// field here with no control anywhere in the form — V4-PUBHIDE-001 removed the toggle — so
+// persisting it could never preserve a user's choice, only carry a stale one forward forever.
+// A draft holding false from before that toggle was removed made every subsequent harvest
+// non-public, invisible on the public site, with nothing in the UI able to show or undo it.
+// Rule of thumb this encodes: a draft may persist what the user can SEE. Nothing else.
+const DRAFT_FORM_FIELDS = ['event_type', 'notes', 'private_notes', 'quantity', 'event_date', 'plant_id']
 
 // V4-HARVSCROLLANCHOR-001 (BD-016) + V4-HARVPOSTSAVESCROLL-001 (BD-017). Two filed defects, one
 // mechanism: nothing on this form ever positions the page, so the two moments that MOVE the user's
@@ -655,7 +661,6 @@ export default function EventNew() {
     private_notes: '',
     quantity:      '',
     plant_id:      preselectedPlantId,
-    is_public:     true,
   })
 
   // Tier 2 metadata state — { [field.key]: value } — only populated keys submitted
@@ -1507,7 +1512,7 @@ export default function EventNew() {
   }
 
   // V3-EVENT-001: reset the form for another entry on the "Save & Next" path.
-  // PRESERVES project_id + plant_id + is_public (scope continuity for rapid sequential
+  // PRESERVES project_id + plant_id (scope continuity for rapid sequential
   // logging) and the localStorage-persisted harvest unit. CLEARS event_type (forces a
   // deliberate re-pick — see DECISION note), event_date→now, notes/quantity/private_notes,
   // and all type-specific panels. Collapses add-details/private back to defaults.
@@ -1536,7 +1541,6 @@ export default function EventNew() {
       private_notes: '',
       quantity:      '',
       plant_id:      mode === 'type' ? '' : f.plant_id,
-      is_public:     f.is_public,
     }))
     setMetadataState({})
     // Treatment was the one dirty-predicate field this reset missed. Stale values also meant the
@@ -1739,7 +1743,10 @@ export default function EventNew() {
           // freetext quantity field is intentionally nulled for them.
           quantity:      isHarvest ? null : (form.quantity.trim() || null),
           plant_id:      form.plant_id               || null,
-          is_public:     form.is_public,
+          // is_public deliberately NOT sent. V4-PUBHIDE-001 is 'default everything to true on
+          // all create paths', and the Lambda implements exactly that with `body.is_public ??
+          // true` — which only holds while the client stays silent. Sending an explicit false
+          // beats a ?? default every time, and that is how 16 harvests went dark on 2026-08-30.
           has_photo:     photoItems.length > 0,
           metadata,
           ...harvestPayload,
@@ -1855,7 +1862,7 @@ export default function EventNew() {
           project_id: form.project_id,
           event_id:   eventId,
         },
-        is_public: form.is_public,
+        // Same reasoning as the event payload above; useUploadPhoto defaults it to true.
       })
       if (photoRes?.error) {
         photoFailCount += 1
