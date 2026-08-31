@@ -109,8 +109,25 @@ describe('S3 wiring — the commit control moves, it does not multiply', () => {
     await waitFor(() => expect(commitButtons()[0].textContent).toBe('Log watered on 1'))
     fireEvent.click(commitButtons()[0])
     await waitFor(() => expect(batchPosts).toHaveLength(1))
-    // The wire contract §5.1 names: the shipped scope plus the COMPLEMENT as exclusions. No new
-    // scope type, so no Lambda change is needed to ship PICK.
+    // V4-LOGMANYUXREFRESH-001 S4 — THIS ASSERTION CHANGED, and the change is the slice. S3 shipped
+    // PICK on the existing wire contract (the scope plus its COMPLEMENT as 7 exclusions) precisely
+    // so it could ship without a Lambda diff; S4 added `scope.type:'ids'` and the commit now names
+    // the picks. The old form is still correct arithmetic and is still what BULK sends — what it
+    // cannot do is let the server notice that the set it resolves at commit time is no longer the
+    // set the preview showed. See the confirm() comment in LogMany.jsx.
+    expect(batchPosts[0].scope).toEqual({ type: 'ids', plant_ids: ['pl-4'] })
+    // OMITTED, not empty: the server 400s a body carrying both models.
+    expect('exclude_plant_ids' in batchPosts[0]).toBe(false)
+  })
+
+  it('BULK still commits on the exclusion contract — S4 changed the PICK path only', async () => {
+    await renderReady()
+    fireEvent.click(await screen.findByText(/Review \d+ plantings/))
+    fireEvent.click(screen.getByTestId('sc-select-none'))
+    fireEvent.click(screen.getByText('Sun Gold'))
+    await waitFor(() => expect(commitButtons()[0].textContent).toBe('Log watered on 1'))
+    fireEvent.click(commitButtons()[0])
+    await waitFor(() => expect(batchPosts).toHaveLength(1))
     expect(batchPosts[0].scope).toEqual({ type: 'all' })
     expect(batchPosts[0].exclude_plant_ids.sort()).toEqual(
       ALL.map(p => p.id).filter(id => id !== 'pl-4').sort(),

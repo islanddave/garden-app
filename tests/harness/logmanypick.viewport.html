@@ -18,6 +18,9 @@
      pick3     — enter PICK, search `?q=`, tap the first 3 rows (the three-planting scenario)
      picktray  — pick 3, then clear the search so the tray is measured against a full list
      pickdone  — pick 3, then leave the frame (the page-side summary card)
+     s4        — enter PICK; measure the frame with the zone chip row and the crop-type group
+                 headers in place, nothing filtered (the worst case for track 1's height)
+     s4combo   — BD-073's own example: filter to Bag Area AND Tomato, i.e. the intersection
   `?read=targets|frame` chooses which measurement block is reported.
 -->
 <style>
@@ -64,6 +67,19 @@
         .then(() => after(150, () => {
           if (step === 'picktray') w.__h.type('')
           if (step === 'pickdone') w.__h.doneFrame()
+          // S4 — expand and tap are separate hops. FilterChipRow reveals its tray on a state
+          // change, so a tap issued in the same tick as the expand queries the PRE-expand DOM,
+          // finds nothing, and reports a filter that never applied. Each hop records what it
+          // returned on `out.dataset`, so a step that no-opped is visible in the output rather
+          // than showing up as a suspiciously round measurement.
+          if (step === 's4combo') out.dataset.zoneExpand = w.__h.chipExpand('sc-zone-chips')
+        }))
+        .then(() => after(150, () => {
+          if (step === 's4combo') out.dataset.zone = w.__h.chipTap('sc-zone-chips', 'Bag Area')
+        }))
+        .then(() => after(150, () => {
+          // Tomato is a PIN (top-2 by count), so the crop row needs no expand.
+          if (step === 's4combo') out.dataset.crop = w.__h.chipTap('sc-crop-chips', 'Tomato')
         }))
         .then(() => after(200, () => {
           out.textContent = JSON.stringify({ step, read, ...(read === 'frame' ? w.__h.frame() : w.__h.targets()) }, null, 1)

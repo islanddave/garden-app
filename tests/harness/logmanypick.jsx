@@ -55,12 +55,24 @@ for (let t = 0; PLANTINGS.length < 239; t++) {
   })
 }
 
+// V4-LOGMANYUXREFRESH-001 S4 — a 2-TIER tree, not the flat list S3 shipped with. The location
+// filter's whole claim is the descendant cascade (pick Pasture, keep Bag Area), and a flat fixture
+// cannot falsify it. Shape copied from prod: level-0 zones with sub-locations under two of them,
+// including the repeated "Shade" name that makes the disambiguating chip prefix load-bearing.
 const LOCATIONS = [
-  { id: 'bag', name: 'Bag Area', sort_order: 1 },
-  { id: 'trough', name: 'Trough', sort_order: 2 },
-  { id: 'deck', name: 'Deck', sort_order: 3 },
-  { id: 'yard', name: 'Yard', sort_order: 4 },
+  { id: 'pasture', name: 'Pasture', parent_id: null, sort_order: 1 },
+  { id: 'bag', name: 'Bag Area', parent_id: 'pasture', sort_order: 1 },
+  { id: 'pshade', name: 'Shade', parent_id: 'pasture', sort_order: 2 },
+  { id: 'drive', name: 'Drive', parent_id: null, sort_order: 2 },
+  { id: 'trough', name: 'Trough', parent_id: 'drive', sort_order: 1 },
+  { id: 'dshade', name: 'Shade', parent_id: 'drive', sort_order: 2 },
+  { id: 'deck', name: 'Deck', parent_id: null, sort_order: 3 },
+  { id: 'yard', name: 'Yard', parent_id: null, sort_order: 4 },
 ]
+// Spread across the tree, with a null tail so the "No zone" bucket renders. Deterministic (index
+// modulo) rather than random: a harness whose fixture changes between runs cannot be a baseline.
+const PLACES = ['bag', 'bag', 'trough', 'pasture', 'deck', 'pshade', 'yard', 'dshade', 'drive', null]
+PLANTINGS.forEach((pl, i) => { pl.location_id = PLACES[i % PLACES.length] })
 
 // Stubbed at the NETWORK layer so the real page, the real ScopeChecklist and the real
 // useApiFetch/token path all run. A `space` scope resolves to a slice, mirroring the server-side
@@ -134,6 +146,35 @@ window.__h = {
   rows: () => [...document.querySelectorAll('[data-testid="pick-list"] button[aria-pressed]')]
     .map(b => b.textContent).slice(0, 8),
 
+  // ── S4: the second filter axis ────────────────────────────────────────────────────────────
+  // FilterChipRow collapses its tray on selecting a tray-only chip (its own BD-011 rider), so
+  // every tap on a non-pinned chip has to be preceded by its own expand. Returning false when a
+  // control is missing matters: `?.click()` on a null makes a no-op look like a completed step.
+  // Expand and tap are SEPARATE calls on purpose, one render tick apart. Doing both in one
+  // function looked right and silently did nothing: setExpanded is async, so the re-query for the
+  // now-revealed chip ran against the pre-expand DOM, found nothing, and returned false — a filter
+  // that never applied, reported as a step that ran. (Caught by the measurement disagreeing with
+  // the jsdom test, not by the harness.)
+  chipExpand: (testid) => {
+    const scope = document.querySelector(`[data-testid="${testid}"]`)
+    const more = scope && [...scope.querySelectorAll('button')].find(b => /^More/.test(b.textContent))
+    if (!more) return false
+    more.click()
+    return true
+  },
+  chipTap: (testid, label) => {
+    const scope = document.querySelector(`[data-testid="${testid}"]`)
+    if (!scope) return false
+    const btn = [...scope.querySelectorAll('button')]
+      .find(b => b.textContent.replace(/\s+/g, ' ').trim() === label)
+    if (!btn) return 'missing'
+    btn.click()
+    // 'tapped', never the post-click aria-pressed: React has not re-rendered yet, so that attribute
+    // still reads "false" — indistinguishable, in a dataset attribute, from "the chip was not
+    // there". A step that no-opped has to look different from one that worked.
+    return 'tapped'
+  },
+
   // ── S2: the four targets that were under the app's own 44px floor ─────────────────────────
   targets: () => {
     const label = q('[data-testid="sc-default-all"]')?.closest('label')
@@ -180,8 +221,30 @@ window.__h = {
       return /auto|scroll/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1
     }).map(el => el.dataset.testid ?? el.tagName.toLowerCase())
     const pr = primary?.getBoundingClientRect()
+    // S4 — the two things this slice ADDS to the frame, and both of them cost track 2 its height:
+    // a second chip row in track 1, and a header per crop group inside the scroller.
+    const zoneChips = [...document.querySelectorAll('[data-testid="sc-zone-chips"] button')]
+    const cropChips = [...document.querySelectorAll('[data-testid="sc-crop-chips"] button')]
+    const groupHeaders = [...list.querySelectorAll('[data-testid^="pick-group-"]')]
+    const track1 = f.firstElementChild
     return {
       present: true,
+      // TRACK 1's real height is the S4 number to watch: at 390x500 (keyboard up) whatever this
+      // costs comes straight out of the candidate list, which is the thing being chosen from.
+      track1H: h(track1),
+      zoneChipCount: zoneChips.length,
+      zoneChipH: zoneChips.length ? Math.min(...zoneChips.map(h)) : null,
+      zoneChipRows: new Set(zoneChips.map(b => Math.round(b.getBoundingClientRect().top))).size,
+      zoneChipLabels: zoneChips.map(b => b.textContent.replace(/\s+/g, ' ').trim()),
+      cropChipRows: new Set(cropChips.map(b => Math.round(b.getBoundingClientRect().top))).size,
+      groupHeaderCount: groupHeaders.length,
+      groupHeaderH: groupHeaders.length ? Math.min(...groupHeaders.map(h)) : null,
+      groupHeaderText: groupHeaders.slice(0, 4).map(g => g.textContent.replace(/\s+/g, ' ').trim()),
+      // The bucket BD-073 says must never vanish — asserted as PRESENT and as its own group.
+      ungrouped: (() => {
+        const g = list.querySelector('[data-testid="pick-group-__ungrouped__"]')
+        return g ? g.textContent.replace(/\s+/g, ' ').trim() : null
+      })(),
       innerWidth: window.innerWidth,
       innerHeight: window.innerHeight,
       frameTop: Math.round(rect.top), frameBottom: Math.round(rect.bottom),

@@ -88,6 +88,11 @@ const UNGROUPED = '__ungrouped__'
 const slugOf = (pl) => pl?.crop_type_slug || UNGROUPED
 const titleizeSlug = s => String(s).split(/[-_]/).map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')
 const chipLabel = s => (s === UNGROUPED ? 'Ungrouped' : titleizeSlug(s))
+// V4-LOGMANYUXREFRESH-001 S4 — the location axis's own fallback bucket, exactly parallel to
+// UNGROUPED. A planting whose location_id is null (or names a location this client never loaded)
+// matches no zone chip, so with a zone filter on it would become unreachable — the same
+// silent-omission class the crop bucket exists to close, on a second dimension.
+const NO_ZONE = '__nozone__'
 
 export default function ScopeChecklist({
   scope,
@@ -161,7 +166,7 @@ export default function ScopeChecklist({
   // (or parentless) locations; picking a zone or sub-location cascades to descendants
   // server-side (lambda/events batch resolver). Tolerant of the minimal {id,name} shape used
   // in tests (no parent_id => treated as a zone).
-  const { zones, childrenByParent, rootOf } = useMemo(() => {
+  const { zones, childrenByParent, rootOf, chainOf, locLabelOf } = useMemo(() => {
     const byId = new Map(locations.map(l => [l.id, l]))
     const childrenByParent = new Map()
     for (const l of locations) {
@@ -181,7 +186,44 @@ export default function ScopeChecklist({
       while (cur?.parent_id && byId.has(cur.parent_id) && guard++ < 12) cur = byId.get(cur.parent_id)
       return cur?.id
     }
-    return { zones, childrenByParent, rootOf }
+    // V4-LOGMANYUXREFRESH-001 S4 / BD-073 — the location filter's ANCESTOR-OR-SELF chain, leaf
+    // first. This is the client-side twin of the server's `WITH RECURSIVE loc_subtree` descendant
+    // cascade: picking "Pasture" has to keep a planting that actually sits in "Pasture > Bag Area",
+    // which is V4-LOGMANYLOC-001's whole behaviour and the thing BD-073 says to EXTEND rather than
+    // rebuild. Walking UP from the planting is cheap and equivalent to walking DOWN from the chip.
+    // Same `guard < 12` cycle bound rootOf uses; an unknown id yields [] and lands in NO_ZONE.
+    const chainOf = (id) => {
+      const out = []
+      let cur = byId.get(id), guard = 0
+      while (cur && guard++ < 12) {
+        out.push(cur.id)
+        cur = cur.parent_id ? byId.get(cur.parent_id) : null
+      }
+      return out
+    }
+    // Zones read as themselves; a sub-location reads as its own name UNLESS that name is ambiguous,
+    // in which case it carries its zone. A flat chip row has no indentation to carry the hierarchy
+    // (unlike buildLocationGroupedList's `depth`), and prod really does have a "Shade" under Pasture
+    // AND a "Shade" under Drive — two chips with one label would be unusable.
+    //
+    // PREFIX ONLY WHERE IT DISAMBIGUATES, and that is a measured decision rather than a style one.
+    // Prefixing every child made the collapsed zone row 3 lines tall at 390px ("Pasture > Bag Area"
+    // is 170px of a 390px row), which at the keyboard-open 390x500 geometry left the candidate list
+    // 47px tall — one header and ZERO rows. Names that already say where they are cost nothing to
+    // read and half the width.
+    const nameCount = new Map()
+    for (const l of locations) {
+      const k = String(l.name || '').toLowerCase()
+      nameCount.set(k, (nameCount.get(k) ?? 0) + 1)
+    }
+    const locLabelOf = (id) => {
+      const l = byId.get(id)
+      if (!l) return 'Somewhere else'
+      const root = byId.get(rootOf(id))
+      if (!root || root.id === id) return l.name || 'Zone'
+      return nameCount.get(String(l.name || '').toLowerCase()) > 1 ? `${root.name} > ${l.name}` : l.name
+    }
+    return { zones, childrenByParent, rootOf, chainOf, locLabelOf }
   }, [locations])
 
   const activeZoneId = scope.type === 'space' ? rootOf(scope.location_id) : null
@@ -267,6 +309,12 @@ export default function ScopeChecklist({
   // committed set would be the silent-omission class again.
   const [query, setQuery] = useState('')
   const [chipSelection, setChipSelection] = useState(() => new Set())
+  // S4 / BD-073 (2) — the SECOND filter axis. Dave calls location AND crop together "even better",
+  // and the row says to treat the intersection as the target rather than a stretch. It is a FILTER,
+  // never the scope: `scope` replaces the candidate pool (and fires a server dry-run that resets
+  // the water-depth class), whereas this narrows what is shown inside whatever pool is already
+  // loaded — which is what lets it COMPOSE with crop instead of replacing it.
+  const [locSelection, setLocSelection] = useState(() => new Set())
   const searchRef = useRef(null)
   const hand = useHandedness()
   // ── V4-LOGMANYUXREFRESH-001 S3: PICK mode ──────────────────────────────────
@@ -346,6 +394,50 @@ export default function ScopeChecklist({
   }, [])
   const clearChips = useCallback(() => setChipSelection(new Set()), [])
 
+  // ── S4 / BD-073 (2): the location axis ──────────────────────────────────────────────────────
+  // Universe = every location that is ancestor-or-self of at least one candidate's location, so a
+  // zone chip appears even when all of its plantings actually live in its children. Counts are
+  // "plantings at or below here", which is what the chip means when you tap it.
+  const locUniverse = useMemo(() => {
+    const counts = new Map()
+    let noZone = 0
+    for (const pl of plantings) {
+      const chain = chainOf(pl.location_id)
+      if (!chain.length) { noZone += 1; continue }
+      for (const id of chain) counts.set(id, (counts.get(id) ?? 0) + 1)
+    }
+    return { counts, noZone }
+  }, [plantings, chainOf])
+  // ONE pin, not the crop row's two, and that is a measured number rather than a taste. The
+  // collapsed row is pinned ∪ SELECTED, so two location pins plus an active filter plus More plus
+  // Clear is five chips — 2 lines at 390px, 112px of track 1, and at the keyboard-open 390x500
+  // geometry that left the candidate list 47px tall: one group header and ZERO rows. With one pin
+  // the same state is a single line. The axis also needs pins less than crop does: there are ~6
+  // zones against 88 crop types, so the tray is one flick rather than a hunt.
+  const LOC_PIN_COUNT = 1
+  const locPinned = useMemo(
+    () => [...locUniverse.counts].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+      .slice(0, LOC_PIN_COUNT).map(([id]) => id),
+    [locUniverse],
+  )
+  // No `rank` — there is no location equivalent of the crop-log ledger, so bandOrder degrades to
+  // pins-then-alphabetical. Alphabetical on the COMPOSED label is what keeps the hierarchy
+  // readable in a flat row: "Pasture" sorts immediately before "Pasture > Bag Area".
+  const locOptions = useMemo(() => {
+    const opts = bandOrder({
+      options: [...locUniverse.counts.keys()].map(id => ({ value: id, label: locLabelOf(id) })),
+      pinned: locPinned, rank: null, counts: locUniverse.counts,
+    })
+    return locUniverse.noZone > 0 ? [...opts, { value: NO_ZONE, label: 'No zone' }] : opts
+  }, [locUniverse, locPinned, locLabelOf])
+  // Same shape as chipsEligible: below CHIPS_MIN_CROPS distinct places there is nothing to choose
+  // between, and a one-chip filter row is clutter that only ever removes rows.
+  const locEligible = locOptions.length >= CHIPS_MIN_CROPS && total >= CHIPS_MIN_ROWS
+  const toggleLoc = useCallback((id) => {
+    setLocSelection(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }, [])
+  const clearLocs = useCallback(() => setLocSelection(new Set()), [])
+
   const shown = useMemo(() => {
     let list = plantings
     const q = query.trim()
@@ -353,8 +445,19 @@ export default function ScopeChecklist({
     // slug is in the haystack so typing "pepper" narrows even where no name carries the word.
     if (q) list = list.filter(pl => looseIncludes(pl.name, q) || looseIncludes(pl.crop_type_slug, q))
     if (chipsEligible && chipSelection.size > 0) list = list.filter(pl => chipSelection.has(slugOf(pl)))
+    // THE INTERSECTION. ANDed across axes, ORed within one — the same grammar PlantingSelect uses
+    // for chips + text, so "bag area + tomatoes" is 46 tomatoes narrowed to the ones in that area
+    // rather than everything that is either. Ancestor-or-self, so selecting a zone keeps its
+    // sub-locations' plantings (the server's descendant cascade, client side).
+    if (locEligible && locSelection.size > 0) {
+      list = list.filter(pl => {
+        const chain = chainOf(pl.location_id)
+        if (!chain.length) return locSelection.has(NO_ZONE)
+        return chain.some(id => locSelection.has(id))
+      })
+    }
     return list
-  }, [plantings, query, chipSelection, chipsEligible])
+  }, [plantings, query, chipSelection, chipsEligible, locSelection, locEligible, chainOf])
   const hiddenCount = total - shown.length
 
   // Session-scoped bulk selection. NEITHER of these writes a preference: the only clear-all on this
@@ -395,6 +498,37 @@ export default function ScopeChecklist({
   // the chip itself may be off to the right in a long selection. Flagged for Dave's smoke pass.
   const picked = useMemo(() => plantings.filter(p => isKept(p.id)), [plantings, isKept])
 
+  // ── S4 / BD-073 (3): CROP-TYPE GROUPING ─────────────────────────────────────────────────────
+  // Dave's words on the row: "the selections should be parented under their crop types rather than
+  // only an alphabetical otherwise ungrouped list." GROUP BY CROP TYPE, NEVER BY PROJECT OR
+  // CONTAINER — that row says so explicitly, and projects are not a concept he wants surfaced.
+  //
+  // THE UNGROUPED BUCKET IS THE POINT, not a fallback. Three live plantings on prod carry no crop
+  // type; BD-073 names dropping them the same silent-omission class as BUG-LOGMANYPROJECTLESS-001,
+  // where 5 project-less plantings were invisible to this very surface. A grouping built as
+  // `for (const slug of knownSlugs)` loses them without a word, which is exactly why the bucket is
+  // derived from the PLANTINGS (every row lands in some group by construction) rather than from a
+  // list of crop types that rows are then matched against.
+  //
+  // Group order = bandRank (pins → recents → alphabetical, the SAME order the chip row above uses),
+  // with Ungrouped forced LAST regardless of where it would otherwise fall. Rows inside a group
+  // arrive already alphabetical, because `candidates` is sorted band-then-name.
+  const groups = useMemo(() => {
+    const bySlug = new Map()
+    for (const pl of candidates) {
+      const s = slugOf(pl)
+      if (!bySlug.has(s)) bySlug.set(s, [])
+      bySlug.get(s).push(pl)
+    }
+    return [...bySlug].map(([slug, rows]) => ({ slug, label: chipLabel(slug), rows }))
+      .sort((a, b) => {
+        if (a.slug === UNGROUPED) return 1
+        if (b.slug === UNGROUPED) return -1
+        return (bandRank.get(a.slug) ?? Number.MAX_SAFE_INTEGER) - (bandRank.get(b.slug) ?? Number.MAX_SAFE_INTEGER)
+          || a.label.localeCompare(b.label)
+      })
+  }, [candidates, bandRank])
+
   // Switching modes is a MODEL switch, so it moves the baseline and drops the decisions taken under
   // the old model. PICK starts empty (§5.1 "starts empty, you add"); BULK returns to the user's own
   // stored default, which is the whole point of that preference. `touched` is set because this is a
@@ -406,7 +540,7 @@ export default function ScopeChecklist({
     setTouched(true)
     setDecisions(new Map())
     setBaseline(next === 'pick' ? false : defaultAllSelected)
-    setQuery(''); setChipSelection(new Set())
+    setQuery(''); setChipSelection(new Set()); setLocSelection(new Set())
     setShowList(false)
     setFrameOpen(next === 'pick')
   }, [mode, defaultAllSelected])
@@ -419,6 +553,12 @@ export default function ScopeChecklist({
   const excludedIds = useMemo(() => plantings.filter(p => !isKept(p.id)).map(p => p.id), [plantings, isKept])
   const excludedCount = excludedIds.length
   const committedCount = total - excludedCount
+  // S4 — the POSITIVE form of the same set, so the parent can commit `scope:{type:'ids'}` instead
+  // of the complement. Derived from the SAME `plantings` ⋈ `isKept` pass as excludedIds rather than
+  // computed independently: two derivations of one selection is how a batch starts writing a
+  // different set from the one it counted, and `committedCount` (the number on the button) is
+  // total − excludedCount, so this list must be exactly its other half.
+  const includedIds = useMemo(() => plantings.filter(p => isKept(p.id)).map(p => p.id), [plantings, isKept])
 
   // The resumable form of the selection, handed to the parent so a dismiss/reload can restore it.
   // `mode` rides in it: coming back from a dismiss into BULK with a PICK-shaped selection would show
@@ -433,9 +573,9 @@ export default function ScopeChecklist({
   // suppress its own copy of the primary action while the frame is showing one, and it is transient
   // UI position, not selection — stashing it would reopen a full-screen picker on a restore.
   useEffect(() => {
-    onSelectionChange?.({ committedCount, excludedIds, selectionState, frameOpen })
+    onSelectionChange?.({ committedCount, excludedIds, includedIds, selectionState, frameOpen })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedCount, excludedIds, selectionState, frameOpen])
+  }, [committedCount, excludedIds, includedIds, selectionState, frameOpen])
 
   // ── The two filter controls, authored ONCE and rendered on both surfaces ─────────────────────
   // The BULK review list and the S3 PICK frame narrow the same `shown` memo through the same field
@@ -506,6 +646,25 @@ export default function ScopeChecklist({
         trayMaxHeight={TRAY_MAX_H}
         aria-label="Filter by crop"
         data-testid="sc-crop-chips"
+      />
+    </div>
+  ) : null
+  // S4 / BD-073 (2) — the location axis, in the SAME primitive as crop so the two read as two
+  // filters and not as a filter plus a mode. Rendered in the PICK frame only: BULK already carries
+  // a location SCOPE five inches up the page, and a screen with both a zone scope and a zone filter
+  // is two controls that look like one. `locSelection` is cleared by switchMode, so a filter set in
+  // the frame can never survive into BULK where there is nothing to clear it with.
+  const locChipRow = locEligible ? (
+    <div style={{ marginTop: 8 }}>
+      <FilterChipRow
+        options={locOptions}
+        selected={locSelection}
+        onToggle={toggleLoc}
+        pinned={locPinned}
+        onClear={clearLocs}
+        trayMaxHeight={TRAY_MAX_H}
+        aria-label="Filter by zone"
+        data-testid="sc-zone-chips"
       />
     </div>
   ) : null
@@ -744,15 +903,23 @@ export default function ScopeChecklist({
             </div>
             {searchField}
             {chipRow}
-            {shownNote}
+            {locChipRow}
             {/* §5.3's answer to "search returns 46 tomatoes": state the number, then offer the BULK
                 exit from inside pick mode rather than more scrolling. Only while a filter is
-                actually narrowing — with nothing hidden it would read as "select all 239". */}
-            {hiddenCount > 0 && shown.length > 0 && (
-              <button type="button" data-testid="pick-select-shown" onClick={selectAllShown} style={{ ...bulkBtn, margin: '8px 0 0' }}>
-                Select all {shown.length} shown
-              </button>
-            )}
+                actually narrowing — with nothing hidden it would read as "select all 239".
+                S4: the note and the button share ONE row here (they are stacked in the BULK list,
+                which is inside a scrolling page and has the height to spare). Track 1 is a fixed
+                track and every pixel it takes comes out of the chooser: stacked, this pair cost 84px
+                of a 500px keyboard-open viewport; side by side it is 56px, and the button was
+                already 48px tall so the note rides along for free. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+              {shownNote}
+              {hiddenCount > 0 && shown.length > 0 && (
+                <button type="button" data-testid="pick-select-shown" onClick={selectAllShown} style={{ ...bulkBtn, margin: '8px 0 0', flex: '0 0 auto' }}>
+                  Select all {shown.length} shown
+                </button>
+              )}
+            </div>
           </div>
 
           {/* ── TRACK 2 — flex, THE ONLY SCROLLER: candidates ─────────────────────────────── */}
@@ -772,33 +939,49 @@ export default function ScopeChecklist({
                 No planting here matches that. Clear the search or the crop chips to see all {total}.
               </li>
             )}
-            {candidates.map(pl => {
-              const on = isKept(pl.id)
-              return (
-                <li key={pl.id}>
-                  {/* TAPPING ADDS. `aria-pressed` and not a checkbox: this is a toggle button whose
-                      pressed state IS "picked", which is what TalkBack should announce, and it is
-                      the same grammar the review list rows already use. */}
-                  <button type="button" onClick={() => toggleExclude(pl.id)} aria-pressed={on}
-                    data-testid={`pick-row-${pl.id}`}
-                    style={{
-                      width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10,
-                      minHeight: T.tapMinHeight, padding: '4px 6px', borderRadius: T.radiusField,
-                      background: on ? P.greenPale : 'none', border: 'none', cursor: 'pointer',
-                      fontFamily: 'inherit', color: P.dark, minWidth: 0,
-                    }}>
-                    <span aria-hidden="true" style={{ color: on ? P.green : P.light, fontWeight: 700 }}>{on ? '✓' : '+'}</span>
-                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.88rem', fontWeight: on ? 700 : 400 }}>
-                      {pl.name}
-                    </span>
-                    {/* The crop type on the row is what makes 46 near-identical tomato names
-                        distinguishable at a glance, and it is the dimension the S1 Lambda change
-                        put on the wire. Slug-less plantings say so rather than showing nothing. */}
-                    <span style={{ flex: '0 0 auto', color: P.light, fontSize: '0.75rem' }}>{chipLabel(slugOf(pl))}</span>
-                  </button>
+            {/* S4 / BD-073 (3) — PARENTED UNDER CROP TYPES, not a flat alphabetical list. The
+                headers are ordinary <li>s inside the same <ul>: a nested list per group would give
+                the scroller a second axis of nesting for no gain, and `role="presentation"` keeps
+                a header out of the item count TalkBack announces for the list. Deliberately NOT
+                `position: sticky` — the whole design of this frame is ONE scroller, and a sticky
+                child inside it is a second thing that moves independently under the thumb. Each
+                row keeps its own crop-type label instead, so a row halfway down 46 tomatoes still
+                names its crop without its header on screen. */}
+            {groups.map(g => (
+              <React.Fragment key={g.slug}>
+                <li role="presentation" data-testid={`pick-group-${g.slug}`} style={groupHeader}>
+                  <span>{g.label}</span>
+                  <span style={{ color: P.light, fontWeight: 400 }}>{g.rows.length}</span>
                 </li>
-              )
-            })}
+                {g.rows.map(pl => {
+                  const on = isKept(pl.id)
+                  return (
+                    <li key={pl.id}>
+                      {/* TAPPING ADDS. `aria-pressed` and not a checkbox: this is a toggle button whose
+                          pressed state IS "picked", which is what TalkBack should announce, and it is
+                          the same grammar the review list rows already use. */}
+                      <button type="button" onClick={() => toggleExclude(pl.id)} aria-pressed={on}
+                        data-testid={`pick-row-${pl.id}`}
+                        style={{
+                          width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10,
+                          minHeight: T.tapMinHeight, padding: '4px 6px', borderRadius: T.radiusField,
+                          background: on ? P.greenPale : 'none', border: 'none', cursor: 'pointer',
+                          fontFamily: 'inherit', color: P.dark, minWidth: 0,
+                        }}>
+                        <span aria-hidden="true" style={{ color: on ? P.green : P.light, fontWeight: 700 }}>{on ? '✓' : '+'}</span>
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.88rem', fontWeight: on ? 700 : 400 }}>
+                          {pl.name}
+                        </span>
+                        {/* The crop type on the row is what makes 46 near-identical tomato names
+                            distinguishable at a glance, and it is the dimension the S1 Lambda change
+                            put on the wire. Slug-less plantings say so rather than showing nothing. */}
+                        <span style={{ flex: '0 0 auto', color: P.light, fontSize: '0.75rem' }}>{chipLabel(slugOf(pl))}</span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </React.Fragment>
+            ))}
           </ul>
 
           {/* ── TRACK 3 — fixed, bottom, thumb zone: the answer to failure mode (d) ─────────
@@ -860,6 +1043,14 @@ const frameDoneBtn = {
   flex: '0 0 auto', minHeight: T.buttonMinHeight, padding: T.chipPadSm, borderRadius: T.radiusPill,
   border: `1px solid ${P.greenLight}`, backgroundColor: P.white, color: P.green,
   fontFamily: 'inherit', fontSize: T.type.sm, fontWeight: 700, cursor: 'pointer',
+}
+// S4 — the crop-type group header. Authored against T.* names; the 6px inline padding matches the
+// rows' own `padding: '4px 6px'` so a header's text edge lines up with the names beneath it rather
+// than floating 6px to their left.
+const groupHeader = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+  padding: '10px 6px 4px', fontSize: T.type.xs, fontWeight: 700, color: P.mid,
+  textTransform: 'uppercase', letterSpacing: '0.04em',
 }
 const trayChip = {
   flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6,
