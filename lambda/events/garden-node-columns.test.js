@@ -52,7 +52,7 @@ const HANDLERS = readdirSync(__dirname)
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
   garden_node: [
-    'archived_at', 'container_id', 'created_by', 'deleted_at', 'display_name',
+    'archived_at', 'container_id', 'created_by', 'cultivar_id', 'deleted_at', 'display_name',
     'featured_image_id', 'featured_photo_id', 'id', 'location_id', 'planted_out_at',
     'qty_harvested', 'qty_lost', 'quantity', 'sown_at', 'status', 'transplanted_at'
   ],
