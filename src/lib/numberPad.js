@@ -15,10 +15,15 @@ export const PAD_BACKSPACE = '⌫' // ⌫
 // asserting a bound the server does not also assert.
 export const PAD_MAX_LEN = 8
 
-export function appendDigit(value, key, { maxLen = PAD_MAX_LEN } = {}) {
+// `integer` — opt-in, default off, so every existing caller is byte-identical. The put-up walk's
+// bag count is a COUNT: preservation_log.package_count is an integer column, so '1.5 bags' is a
+// value the server will reject after the user has finished tapping. Refusing the dot at the
+// keypress is the same late-failure argument the dot-guard below already makes, one column over.
+export function appendDigit(value, key, { maxLen = PAD_MAX_LEN, integer = false } = {}) {
   const cur = value == null ? '' : String(value)
   if (key === PAD_BACKSPACE) return cur.slice(0, -1)
   if (key === '.') {
+    if (integer) return cur
     // Number('3.4.5') is NaN, which validateHarvest() rejects with a generic error only AFTER the
     // user has finished typing — a late, confusing failure. Refuse the second dot at the keypress.
     if (cur.includes('.')) return cur
