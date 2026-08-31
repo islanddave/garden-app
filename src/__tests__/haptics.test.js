@@ -26,6 +26,7 @@ import {
   hapticSaveCommitted,
   hapticSaveFailed,
   hapticUndoApplied,
+  hapticMatchUncertain,
 } from '../lib/haptics.js'
 
 function installVibrate(impl = vi.fn(() => true)) {
@@ -46,7 +47,7 @@ afterEach(() => {
 })
 
 // ── The vocabulary ────────────────────────────────────────────────────────────────────────────
-describe('the six events resolve to five structurally distinct patterns', () => {
+describe('the seven events resolve to six structurally distinct patterns', () => {
   // A vibration pattern array alternates [pulse, gap, pulse, …], so the even indices are the pulses.
   const pulsesOf = (p) => (Array.isArray(p) ? p.filter((_, i) => i % 2 === 0) : [p])
   const weightOf = (ms) => (ms <= 20 ? 'tick' : ms <= 45 ? 'mid' : 'heavy')
@@ -63,8 +64,23 @@ describe('the six events resolve to five structurally distinct patterns', () => 
       saveCommitted: 'mid',
       saveFailed:    'heavy+heavy',
       undoApplied:   'tick+mid',
+      matchUncertain: 'tick+tick+tick',
     })
     expect(new Set(Object.values(sigs)).size).toBe(Object.keys(PATTERNS).length)
+  })
+
+  it('separates an UNCERTAIN match from both a success and a failure — BUG-VOICEFAILSILENT-001', () => {
+    // A cue vocabulary with two identical symbols is not a vocabulary. This is the assertion that
+    // makes matchUncertain worth adding at all: the voice flow auto-selects on a single hit whether
+    // the matcher was sure or guessing, so if the guess feels like the success the hand is being
+    // told the wrong thing. Pinned on COUNT, the axis a fingertip reads without attention.
+    expect(pulsesOf(PATTERNS.matchUncertain)).toHaveLength(3)
+    for (const other of ['digitAccepted', 'digitRejected', 'saveCommitted', 'saveFailed', 'undoApplied']) {
+      expect(signatureOf(PATTERNS.matchUncertain)).not.toBe(signatureOf(PATTERNS[other]))
+    }
+    // And it is built from the REJECTED tick, not a new weight: an uncertain match is nearer a
+    // refusal than a success, and the family resemblance is deliberate rather than incidental.
+    expect(new Set(pulsesOf(PATTERNS.matchUncertain))).toEqual(new Set(pulsesOf(PATTERNS.digitRejected)))
   })
 
   it('separates a REJECTED keypress from an accepted one by pulse COUNT', () => {
@@ -250,6 +266,7 @@ describe('named wrappers', () => {
       [hapticSaveCommitted, PATTERNS.saveCommitted],
       [hapticSaveFailed,    PATTERNS.saveFailed],
       [hapticUndoApplied,   PATTERNS.undoApplied],
+      [hapticMatchUncertain, PATTERNS.matchUncertain],
     ]
     for (const [fn, pattern] of cases) {
       spy.mockClear()

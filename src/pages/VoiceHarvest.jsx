@@ -54,6 +54,7 @@ import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
 import {
   hapticSaveCommitted, hapticSaveFailed, hapticDigitAccepted, hapticDigitRejected, hapticUndoApplied,
+  hapticMatchUncertain,
 } from '../lib/haptics.js'
 
 // A HARD STOP, not a nag. An unbounded live mic is a recorder someone forgets, and this surface is
@@ -74,6 +75,10 @@ function ctor() {
 // The `src` column every voiceDebug entry from this page carries, so a log that also contains
 // transcribe.js or probe entries can be read back to the surface that produced it.
 const VOICE_DEBUG_SRC = 'voiceharvest'
+
+// How many candidate buttons the "Which one?" card renders. Exported so the test asserts against the
+// same number the UI caps at rather than a copy of it that can drift out from under it.
+export const CANDIDATE_LIMIT = 8
 
 // One-line rendering of a classify() result for the debug log. EXPORTED AND PURE so the log format
 // is testable without a recogniser. Quotes the transcript on every branch: the whole point of the
@@ -105,6 +110,35 @@ export function matchPlantings(plantings, spoken) {
   const hits = plantings.filter((p) => plantingAliases(p).some((a) => looseIncludes(a, spoken)))
   const exact = hits.filter((p) => plantingAliases(p).some((a) => looseKey(a) === needle))
   return exact.length ? exact : hits
+}
+
+// BUG-VOICECOUNTSPLIT-001, residual case C — is this bare number the WHOLE NAME of a live planting?
+//
+// The hold that fixed the count split gates on a planting being selected, and it must: after a plant
+// is chosen a bare number can only be an amount. Except when the number IS the plant. Saying "1884"
+// to switch to the planting literally named 1884 stopped working, while the word form "eighteen
+// eighty four" still resolves (it fails parseNumber's monotonic rule, so it never reaches the hold).
+// One utterance form of one planting became unreachable; the other kept working. That asymmetry is
+// the defect.
+//
+// TWO BOUNDS, AND BOTH ARE THE SAFETY ARGUMENT rather than convenience:
+//   * KEY EQUALITY, NOT looseIncludes. The class the hold exists to stop is SUBSTRING reselection —
+//     "two" inside *Brentwood*, "four" inside Marvel of *Four* Seasons, "2" inside Danvers 1*2*6.
+//     Whole-key equality cannot be satisfied by a proper substring, so none of those can reach this.
+//     Measured on Dave's real 239 live plantings: every number in that class has exact-hits = 0.
+//   * DIGITS ONLY. A digit literal is what the recogniser emits for a name that is digits. Allowing
+//     word forms would put "three" one badly-named planting away from silently switching crops mid
+//     record, which is the expensive direction. Measured on the same 239: zero number-WORD utterances
+//     key-match any alias, so the bound costs nothing today and caps what it can cost later.
+//
+// Blast radius, measured not reasoned: of the digit utterances 1..3000, exactly four key-match a live
+// alias — 184, 1184, 1844 and 1884 — and all four resolve to the one planting named 1884, because
+// looseKey collapses the repeated 8. Nothing under 184 fires, so no plausible spoken count is
+// reachable by this at all.
+export function namesAPlantingExactly(plantings, spoken) {
+  const needle = looseKey(spoken)
+  if (!needle || !/^\d+$/.test(needle)) return false
+  return (plantings ?? []).some((p) => plantingAliases(p).some((a) => looseKey(a) === needle))
 }
 
 // BUG-VOICENUMWORD-001 — the same STRICT matcher, re-run with spoken number words folded to the
@@ -453,6 +487,9 @@ export default function VoiceHarvest() {
     // silently reselects Brentwood Leaf Lettuce and "four" Marvel of Four Seasons, so the following
     // "next" saves against a plant he never named. No utterance that resolves correctly today
     // reaches this code: classify() answers a complete phrase before it is ever consulted.
+    // BUG-VOICEFAILSILENT-001 — the number this utterance THREW AWAY, carried to the announcement.
+    // Null on every path that keeps or applies it; set only where the pairing ends unfinished.
+    let dropped = null
     const partial = classifyPartial(result.transcript)
     if (partial?.kind === 'unit' && heldNumRef.current != null) {
       const joined = buildValue(heldNumRef.current, partial.unit, result.transcript)
@@ -461,11 +498,18 @@ export default function VoiceHarvest() {
       // the implausibility warning, the haptic and the announcement must be identical whether the
       // phrase arrived whole or in halves, and a second copy of them is a second thing to drift.
       if (joined) result = { ...joined, joined: true }
-    } else if (partial?.kind === 'number' && selectedRef.current) {
+    } else if (partial?.kind === 'number' && selectedRef.current
+               && !namesAPlantingExactly(plantingsRef.current, result.transcript)) {
       // GATED ON A PLANTING BEING SELECTED, which is what makes suppressing the search safe: before
       // a plant is chosen a bare number can legitimately be a search term, and after one is chosen
       // it can only be an amount. A second number simply replaces the first — saying "three" then
       // "fifteen" means he corrected himself.
+      //
+      // AND GATED OFF A NUMBER THAT IS A WHOLE PLANTING NAME (case C). That utterance is not an
+      // amount, it is the crop, so it falls through to the ordinary search branch rather than being
+      // handled here — no second copy of the selection, the announcement, or the teach bookkeeping.
+      // The bound is whole-key equality on a digit literal, which by construction cannot readmit the
+      // substring reselection this gate exists to stop; see namesAPlantingExactly.
       heldNumRef.current = partial.value; setHeldNum(partial.value)
       hapticDigitAccepted()
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-number ${partial.value} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
@@ -475,8 +519,18 @@ export default function VoiceHarvest() {
       // Any other utterance ends the pairing. The number is NOT applied on its own: a value with no
       // unit is exactly the shape of a silent wrong save, and saveRecord already refuses loudly
       // ("still need a quantity") if "next" arrives here, which is the honest outcome.
+      //
+      // BUG-VOICEFAILSILENT-001 — but DISCARDING it silently is not. Measured: "Suyo Long", "three",
+      // "Brentwood" switched the plant and the 3 simply vanished, with the status line reading like
+      // an ordinary clean selection. Dropping it is right; doing so without saying it is the defect,
+      // because A SILENT FAIL IS A LOST LOG — he says "next" believing a count he spoke is in there.
+      // Carried out as a note on the announcement this utterance was going to make anyway, exactly
+      // as the rejoin's "(heard in two parts)" is: `say` REPLACES the status line, so a second call
+      // here would be overwritten by the selection message before it could ever be read.
+      dropped = heldNumRef.current
       heldNumRef.current = null; setHeldNum(null)
     }
+    const dropNote = dropped != null ? ` (dropped ${dropped} — no unit was said)` : ''
 
     // ── V5-VOICEONEBREATH-001: the whole record in one sentence ──────────────────────────────────
     //
@@ -510,7 +564,7 @@ export default function VoiceHarvest() {
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath ${label} ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
         // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
         // words did not settle, so Dave sees the reading it picked before "next" commits it.
-        say(implausible ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}`)
+        say(implausible || dropped != null ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}`)
         return
       }
     }
@@ -541,12 +595,19 @@ export default function VoiceHarvest() {
         // that cannot be taught.
         setCandidates([])
         setUnmatched(result.text)
-        say('fail', `Nothing matched “${result.text}”. Say it again, or pick it below to teach me.`)
+        say('fail', `Nothing matched “${result.text}”. Say it again, or pick it below to teach me.${dropNote}`)
         return
       }
       setUnmatched(null)
       if (hits.length === 1) {
-        hapticDigitAccepted()
+        // BUG-VOICEFAILSILENT-001 — A GUESS MUST NOT FEEL LIKE A MATCH. This branch auto-selects on a
+        // single hit whether the strict matcher answered or the fuzzy/learned/folded rescue scored
+        // its way there. The banner already says which ("Heard X — matched Y"); the hand could not
+        // tell, so a rescue onto the WRONG plant delivered the success cue and the next "next" wrote
+        // a harvest against it. `rescued` is exactly the flag that distinguishes them, and it was
+        // already being computed for the banner — the cue just was not reading it.
+        if (rescued !== null) hapticMatchUncertain()
+        else hapticDigitAccepted()
         setSelected(hits[0]); selectedRef.current = hits[0]
         setCandidates([])
         // NO DEFAULT QUANTITY IS SEEDED HERE, and that is a correction rather than an omission.
@@ -560,16 +621,20 @@ export default function VoiceHarvest() {
         // trailing unit ("three count"), so a bare "three" returns `unparsed` either way — the
         // default unit had no utterance it could rescue. A quantity now exists only if it was said.
         const chosen = hits[0].name || hits[0].variety_ref?.name
-        say('ok', rescued
+        say(dropped != null ? 'warn' : 'ok', (rescued
           // The heard text is quoted back verbatim so the swap is legible at a glance. Without the
           // "heard X" half, a rescue of the WRONG planting reads exactly like a correct match.
           ? `Heard “${result.text}” — matched ${chosen}. Say the count, or say it again to change it.`
-          : `${chosen} — now say the count or the weight.`)
+          : `${chosen} — now say the count or the weight.`) + dropNote)
         return
       }
       hapticDigitRejected()
-      setCandidates(hits.slice(0, 8))
-      say('warn', `${hits.length} match “${result.text}” — say more of the name, or tap one.`)
+      // THE WHOLE HIT LIST, not the eight that fit. The render caps the buttons; holding the full
+      // list here is what lets the card say how many it is hiding, and a cap the user can see is a
+      // different thing from a truncation they cannot. A crop-type utterance reaches 46 live tomato
+      // plantings and 38 of them used to leave no trace on screen at all.
+      setCandidates(hits)
+      say('warn', `${hits.length} match “${result.text}” — say more of the name, or tap one.${dropNote}`)
       return
     }
 
@@ -583,9 +648,9 @@ export default function VoiceHarvest() {
       hapticDigitAccepted()
       const next = { value: result.value, unit: result.unit }
       setQty(next); qtyRef.current = next
-      say(result.implausible ? 'warn' : 'ok',
-        result.implausible ? `${result.value} ${result.unit}${joinNote} — that looks high. Say it again to correct it.`
-          : `${result.value} ${result.unit}${joinNote}`)
+      say(result.implausible || dropped != null ? 'warn' : 'ok',
+        result.implausible ? `${result.value} ${result.unit}${joinNote} — that looks high. Say it again to correct it.${dropNote}`
+          : `${result.value} ${result.unit}${joinNote}${dropNote}`)
       return
     }
 
@@ -593,9 +658,9 @@ export default function VoiceHarvest() {
       hapticDigitAccepted()
       const next = { value: result.value, unit: result.unit }
       setWeight(next); weightRef.current = next
-      say(result.implausible ? 'warn' : 'ok',
-        result.implausible ? `${result.value} ${result.unit}${joinNote} — that looks high. Say it again to correct it.`
-          : `${result.value} ${result.unit}${joinNote}`)
+      say(result.implausible || dropped != null ? 'warn' : 'ok',
+        result.implausible ? `${result.value} ${result.unit}${joinNote} — that looks high. Say it again to correct it.${dropNote}`
+          : `${result.value} ${result.unit}${joinNote}${dropNote}`)
       return
     }
 
@@ -631,7 +696,7 @@ export default function VoiceHarvest() {
     const hint = result.reason === 'near-command' ? ' — say "next" again'
       : result.reason === 'ambiguous-number' ? ' — say the planting, then the amount separately'
       : ''
-    say('warn', `Didn't catch that${hint}.`)
+    say('warn', `Didn't catch that${hint}.${dropNote}`)
   }, [clearRecord, saveRecord, say])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
@@ -679,14 +744,26 @@ export default function VoiceHarvest() {
         scheduleTick()
       }
     }
+    // BUG-VOICEFAILSILENT-001 — MIC DEATH IS THE ONE EVENT WITH UNBOUNDED LOSS, and it was the one
+    // event with no haptic. Every branch below stops capture for good, and the only cue was a banner
+    // on a screen he is not looking at: he keeps talking into a dead recogniser and loses every
+    // utterance until he happens to glance down. `saveFailed` is reused rather than given its own
+    // symbol — to the hand these carry the identical message ("stop, something you believe is
+    // happening is not"), the screen already says which, and a seventh symbol buys nothing.
+    //
+    // These fire from an async callback, so Chrome may refuse the vibration for want of user
+    // activation (haptics.js ACTIVATION RISK). That is exactly why the banner stays: this is a second
+    // channel on the worst failure, not a replacement for the first.
     rec.onerror = (ev) => {
       recordVoiceMark(VOICE_DEBUG_SRC, 'error', ev?.error)
       const e = ev?.error
       if (e === 'not-allowed' || e === 'service-not-allowed') {
         stopRef.current = true
+        hapticSaveFailed()
         say('fail', 'Microphone permission was refused. Allow the mic, then tap Start.')
       } else if (e === 'audio-capture') {
         stopRef.current = true
+        hapticSaveFailed()
         say('fail', 'No microphone available.')
       }
       // 'no-speech' and 'aborted' are ordinary in a continuous session — onend re-arms.
@@ -705,6 +782,7 @@ export default function VoiceHarvest() {
       if (stopRef.current) { setRunning(false); return }
       if (restartsRef.current >= RUN_BUDGET.restarts) {
         setRunning(false)
+        hapticSaveFailed()
         say('warn', 'Stopped — session limit reached. Tap Start to carry on.')
         return
       }
@@ -714,10 +792,15 @@ export default function VoiceHarvest() {
       // rather than leaving a dead mic that looks live.
       try { rec.start() } catch {
         setRunning(false)
+        hapticSaveFailed()
         say('fail', 'The mic could not restart on its own. Tap Start to keep going.')
       }
     }
-    try { rec.start() } catch { setRunning(false); say('fail', 'The mic would not start. Tap Start again.') }
+    try { rec.start() } catch {
+      setRunning(false)
+      hapticSaveFailed()
+      say('fail', 'The mic would not start. Tap Start again.')
+    }
   }, [say, scheduleTick])
 
   const start = useCallback(() => {
@@ -746,6 +829,10 @@ export default function VoiceHarvest() {
     wallRef.current = setTimeout(() => {
       stopRef.current = true
       try { recRef.current?.stop() } catch { /* ignore */ }
+      // The SIBLING of the restart-budget stop in onend, and cued the same way for the same reason:
+      // the run ends on a timer while he is mid-sentence in a bed, which is the shape of the loss
+      // this whole cue exists for. The user-initiated stop() below stays silent — he just tapped it.
+      hapticSaveFailed()
       say('warn', `Stopped after ${RUN_BUDGET.label}. Tap Start to carry on.`)
     }, RUN_BUDGET.runMs)
   }, [applyCommitted, arm, say])
@@ -840,9 +927,19 @@ export default function VoiceHarvest() {
       {candidates.length > 0 && (
         <div style={card} data-testid="voice-harvest-candidates">
           <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 6, color: P.dark }}>
+            {/* THE CAP IS SAID OUT LOUD. The list is capped at CANDIDATE_LIMIT buttons because a
+                crop-type utterance can match 46 plantings and an endless scroll is not a chooser —
+                but a cap with nothing on screen admitting it is indistinguishable from "these are
+                all of them", which is how a plant that IS in the list reads as absent. Naming the
+                total keeps the truncation visible; the ordering and the ranking are untouched. */}
             Which one?
+            {candidates.length > CANDIDATE_LIMIT
+              ? <span style={{ fontWeight: 400, color: P.light }}>
+                  {` showing ${CANDIDATE_LIMIT} of ${candidates.length} — say more of the name`}
+                </span>
+              : null}
           </div>
-          {candidates.map((c) => (
+          {candidates.slice(0, CANDIDATE_LIMIT).map((c) => (
             <button
               key={c.id}
               type="button"

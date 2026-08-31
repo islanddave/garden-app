@@ -51,15 +51,15 @@ export const HAPTIC_PREF_KEY = 'haptics.enabled.v1'
 export const HAPTIC_DEFAULT_ENABLED = true
 
 // ── THE VOCABULARY ────────────────────────────────────────────────────────────────────────────
-// Six events, five patterns (field advance is silent by ruling 4). The set is designed to be
+// Seven events, six patterns (field advance is silent by ruling 4). The set is designed to be
 // discriminable BY FEEL ALONE, eyes elsewhere, on three orthogonal axes:
-//   • PULSE COUNT      — 1 or 2. The most robust discriminator for cues this brief.
+//   • PULSE COUNT      — 1, 2 or 3. The most robust discriminator for cues this brief.
 //   • PULSE WEIGHT     — tick (≤20ms) / mid (21-45ms) / heavy (≥46ms).
 //   • SYMMETRY         — equal pulses vs an ascending short→long ramp.
 // The ordered weight-class signature is UNIQUE per event, so no two patterns share both count and
 // weight profile: accepted [tick] · rejected [tick,tick] · committed [mid] · failed [heavy,heavy] ·
-// undo [tick,mid]. haptics.test.js pins that uniqueness as a feature vector, not as array
-// inequality — array inequality would pass for two patterns that feel identical.
+// undo [tick,mid] · uncertain [tick,tick,tick]. haptics.test.js pins that uniqueness as a feature
+// vector, not as array inequality — array inequality would pass for two patterns that feel identical.
 export const PATTERNS = {
   // A landed digit. Deliberately the lightest thing the motor can do: it fires on EVERY keypress,
   // and anything heavier becomes noise across a 12-variety session.
@@ -77,6 +77,18 @@ export const PATTERNS = {
   // 40ms gap, but rejected is [tick,tick] and this is [tick,mid]: the second pulse growing rather
   // than matching is what the hand reads, and the two never fire from the same control anyway.
   undoApplied: [15, 40, 30],
+  // BUG-VOICEFAILSILENT-001 — "I picked something, but I GUESSED." The voice flow auto-selects on a
+  // single hit whether the strict matcher answered or voiceFuzzyMatch scored its way there; the
+  // banner says which and the hand could not tell, so a wrong-plant guess felt exactly like a correct
+  // match. That is the false-success class, on the one channel that reaches him while he is holding a
+  // cucumber and looking at the bed.
+  //
+  // THREE ticks: unique on pulse count (nothing else in the set has three) and deliberately built
+  // from the REJECTED tick rather than a new weight class — an uncertain match is nearer a refusal
+  // than a success, and that family resemblance is the message. Rare by construction: it can only
+  // fire on a rescue, never on the strict path that answers most utterances, so it adds nothing to
+  // the frequent classes the 175-buzz weigh-in has to tolerate.
+  matchUncertain: [8, 40, 8, 40, 8],
 }
 
 export function hapticsSupported() {
@@ -146,3 +158,4 @@ export const hapticDigitRejected = () => haptic('digitRejected')
 export const hapticSaveCommitted = () => haptic('saveCommitted')
 export const hapticSaveFailed = () => haptic('saveFailed')
 export const hapticUndoApplied = () => haptic('undoApplied')
+export const hapticMatchUncertain = () => haptic('matchUncertain')
