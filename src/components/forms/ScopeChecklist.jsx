@@ -12,8 +12,17 @@
 //   - runDryRun({scope,eventType,eventDate,signal}) -> Promise<{count,capped,plantings:[{id,name}]}>
 //                                parent-supplied (closes over useApiFetch); `signal` enables
 //                                AbortController cancellation + race-safety
-//   - onSelectionChange({committedCount, excludedIds})  fires whenever the net selection
-//                                changes so the parent can build the confirm body + button state
+//   - onSelectionChange({committedCount, excludedIds, selectionState})  fires whenever the net
+//                                selection changes so the parent can build the confirm body +
+//                                button state. `selectionState` is the RESUMABLE form of the
+//                                selection (see the decisions model below) — the parent stashes it
+//                                and hands it back as `initialSelection` after a dismiss/reload.
+//   - initialSelection           OPTIONAL restore payload, shape {decisions:{[id]:bool}, baseline,
+//                                touched}. Read ONCE, in the useState initializers: LogMany only
+//                                mounts this component after its own async draft load has resolved
+//                                (`if (!ready) return <Spinner/>`), so a seed is always available on
+//                                the first render and a re-sync effect would only be able to stomp
+//                                live edits.
 //   - renderRowExtra(planting, {excluded}) -> ReactNode | null   OPTIONAL (V4-WATERMATH-001 F0).
 //                                Renders BESIDE a review-list row, for a per-row override of a
 //                                batch-level value. Deliberately a render prop: this component
@@ -25,7 +34,7 @@
 // Net-count rule (plan §5 Phase D): never make the user mentally compute the set
 // difference — when any planting is skipped we render "N matched − M skipped → K will
 // be logged" continuously, aria-live so it's announced as toggles happen.
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { P } from '../../lib/constants.js'
 import ProjectOptions from '../ProjectOptions.jsx'
 import SelectChip from './SelectChip.jsx'
@@ -36,6 +45,11 @@ import { fetchNotificationPrefs, saveLogManyAllSelected } from '../../lib/notifi
 // FIX-3: per-DEVICE default selection (true=start all selected [Dave], false=start none [Jen]).
 // Device-local expedient; server-side per-user migration tracked as V4-LOGMANY-001.
 const DEFAULT_SEL_KEY = 'quicklog.defaultAllSelected'
+// Hoisted so the preference and the selection `baseline` below seed from ONE read. They start life
+// as the same answer and diverge only when the user overrides the baseline for a single batch.
+function readDefaultSel() {
+  try { const v = localStorage.getItem(DEFAULT_SEL_KEY); return v === null ? true : v === '1' } catch (e) { return true }
+}
 
 export default function ScopeChecklist({
   scope,
@@ -48,15 +62,37 @@ export default function ScopeChecklist({
   runDryRun,
   onSelectionChange,
   renderRowExtra,
+  initialSelection,
 }) {
   const [preview, setPreview] = useState(null)       // { count, capped, plantings:[{id,name}] }
-  const [excluded, setExcluded] = useState(() => new Set())
+  // V4-LOGMANYUXREFRESH-001 S0 — THE SELECTION IS NOW DURABLE STATE, not a by-product of the last
+  // dry-run. It was `excluded: Set`, reset to empty on line 1 of the preview effect and re-seeded
+  // from the default in its .then, so a hand-built selection was destroyed with no warning by ANY
+  // of: a zone chip, an event-type tile, a date change. Three states replace it:
+  //
+  //   decisions  Map<plantId, boolean>  EXPLICIT per-planting choices (true = log it). Persists
+  //              across every re-preview, and deliberately keeps ids that have fallen OUT of the
+  //              current scope — dropping them would silently re-include, on the next widening, a
+  //              planting the user went out of their way to skip. That is a worse bug than the one
+  //              this fixes, so the map is the record and the intersection with the live preview is
+  //              taken at read time (excludedIds below) rather than at write time.
+  //   baseline   what an UNDECIDED planting gets. Seeded from the stored preference, but a separate
+  //              value so a session-scoped "Select none" can flip it without writing a preference
+  //              (S1) and so a re-preview cannot undo a choice the user has already made.
+  //   touched    has the user changed the selection at all this session. Drives both the baseline
+  //              re-seed rule below and the parent's unsaved-input guards. Pristine-safe: false on
+  //              mount, flipped only by a deliberate tap.
+  const [decisions, setDecisions] = useState(() => new Map(Object.entries(initialSelection?.decisions ?? {})))
+  const [baseline, setBaseline] = useState(() => initialSelection?.baseline ?? readDefaultSel())
+  const [touched, setTouched] = useState(() => !!initialSelection?.touched)
+  // Read inside the preview effect, which must NOT list `touched` as a dep — doing so would refire
+  // the server dry-run on the user's first row tap.
+  const touchedRef = useRef(touched)
+  touchedRef.current = touched
   const [previewing, setPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState(null)
   const [showList, setShowList] = useState(false)
-  const [defaultAllSelected, setDefaultAllSelected] = useState(() => {
-    try { const v = localStorage.getItem(DEFAULT_SEL_KEY); return v === null ? true : v === '1' } catch (e) { return true }
-  })
+  const [defaultAllSelected, setDefaultAllSelected] = useState(readDefaultSel)
   const { getToken } = useApiFetch()
 
   // V4-LOGMANY-001 — adopt this USER's stored default once, on mount.
@@ -119,12 +155,18 @@ export default function ScopeChecklist({
   useEffect(() => {
     if (!runDryRun) return
     const ctrl = new AbortController()
-    setPreviewing(true); setPreviewError(null); setExcluded(new Set())
+    setPreviewing(true); setPreviewError(null)
     Promise.resolve(runDryRun({ scope, eventType, eventDate, signal: ctrl.signal }))
       .then(r => {
         if (ctrl.signal.aborted) return
         setPreview(r); setPreviewing(false)
-        setExcluded(defaultAllSelected ? new Set() : new Set((r?.plantings || []).map(pl => pl.id)))
+        // V4-LOGMANYUXREFRESH-001 S0 — the ONLY selection write left in this effect, and it is
+        // conditional. Re-seeding the baseline from the stored preference is the old behaviour and
+        // is still right for an UNTOUCHED form (it is how a Jen-defaulted mount starts empty). Once
+        // the user has picked anything it is destructive: a back-date after choosing three
+        // plantings would put the whole scope back. `touchedRef`, not `touched`, so this stays out
+        // of the dep array — see its declaration.
+        if (!touchedRef.current) setBaseline(defaultAllSelected)
       })
       .catch(err => {
         if (ctrl.signal.aborted || err?.name === 'AbortError') return
@@ -136,20 +178,33 @@ export default function ScopeChecklist({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, eventType, eventDate, runDryRun])
 
+  // Records an EXPLICIT decision rather than flipping set membership, so the choice survives a
+  // re-preview and cannot be re-derived (wrongly) from a baseline that has since moved.
   const toggleExclude = useCallback((id) => {
-    setExcluded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
-  }, [])
+    setTouched(true)
+    setDecisions(prev => {
+      const n = new Map(prev)
+      n.set(id, !(prev.has(id) ? prev.get(id) : baseline))
+      return n
+    })
+  }, [baseline])
 
   // V4-LOGMANY-001 / V4-USERPREFS-001: flip the default and re-apply to the current preview
   // immediately. localStorage stays as the SYNCHRONOUS local layer — it seeds useState on first
   // render, so removing it would make the checkbox flicker to the wrong state on every mount while
   // the prefs GET is in flight. The server write is fire-and-forget on top of it.
+  //
+  // Flipping the STORED preference is still a full reset (that is what it always did, and stating a
+  // new default while keeping the old default's consequences would be incoherent), so it clears the
+  // decisions AND un-touches the form — a later scope change then re-seeds from the new preference.
+  // The session-scoped Select none / Select all shown pair below is the affordance that does NOT
+  // write a preference.
   const applyDefaultSel = useCallback((on) => {
     setDefaultAllSelected(on)
     try { localStorage.setItem(DEFAULT_SEL_KEY, on ? '1' : '0') } catch (e) {}
     saveLogManyAllSelected({ getToken, value: on })
-    setExcluded(on ? new Set() : new Set((preview?.plantings || []).map(pl => pl.id)))
-  }, [preview, getToken])
+    setBaseline(on); setDecisions(new Map()); setTouched(false)
+  }, [getToken])
 
   // BUG-BATCHORDER-001: display order only. The server-side ORDER BY in lambda/events is what makes
   // the 500-cap deterministic; this mirrors EventNew.jsx:736's localeCompare so both log surfaces
@@ -159,16 +214,30 @@ export default function ScopeChecklist({
     () => [...(preview?.plantings || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')),
     [preview]
   )
+  const isKept = useCallback(
+    (id) => (decisions.has(id) ? decisions.get(id) : baseline),
+    [decisions, baseline],
+  )
   const total = plantings.length
-  const committed = plantings.filter(p => !excluded.has(p.id))
-  const committedCount = committed.length
-  const excludedCount = total - committedCount
+  // THE INTERSECTION, taken here rather than in the decisions map: `excludedIds` is what rides in
+  // the POST body and what the net-count line reports, so it must name only plantings the current
+  // scope actually resolved. Decisions about anything else stay in the map, unreported, ready for
+  // the moment that planting comes back into scope.
+  const excludedIds = useMemo(() => plantings.filter(p => !isKept(p.id)).map(p => p.id), [plantings, isKept])
+  const excludedCount = excludedIds.length
+  const committedCount = total - excludedCount
+
+  // The resumable form of the selection, handed to the parent so a dismiss/reload can restore it.
+  const selectionState = useMemo(
+    () => ({ decisions: Object.fromEntries(decisions), baseline, touched }),
+    [decisions, baseline, touched],
+  )
 
   // Lift the committed selection up so the parent can build the confirm body + button.
   useEffect(() => {
-    onSelectionChange?.({ committedCount, excludedIds: [...excluded] })
+    onSelectionChange?.({ committedCount, excludedIds, selectionState })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedCount, excluded])
+  }, [committedCount, excludedIds, selectionState])
 
   return (
     <>
@@ -247,7 +316,7 @@ export default function ScopeChecklist({
             {showList && (
               <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {plantings.map(pl => {
-                  const off = excluded.has(pl.id)
+                  const off = !isKept(pl.id)
                   // The extra node is a SIBLING of the toggle button, never a child: nesting an
                   // interactive control inside a <button> is invalid HTML and, on Chrome Android,
                   // makes the inner tap toggle the row instead of doing its own job.
