@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   classify, parseNumber, normalise, collapseAdjacentDupes, COMMANDS, COMMAND_PHRASES, UNIT_ALIASES,
-  COMMAND_NEAR_MISSES,
+  COMMAND_NEAR_MISSES, foldNumberWords,
 } from '../lib/voiceHarvestGrammar.js'
 import { HARVEST_UNITS, WEIGHT_UNITS } from '../lib/harvest-constants.js'
 
@@ -218,6 +218,111 @@ describe('number parsing', () => {
     // "one point twenty" is not a number anyone means — refuse rather than interpret.
     expect(parseNumber(['one', 'point', 'twenty'])).toBeNull()
   })
+})
+
+// BUG-VOICENUMSUM-001 — MEASURED on Dave's real plantings during his first live run of /log/voice,
+// 2026-08-30. Nine of his live plantings carry digits in the NAME (one is literally "1884"), and the
+// utterance that reaches parseNumber is everything before the trailing unit — so the name arrived as
+// a number token sitting in front of the quantity and was SUMMED into it.
+//
+// Every one of these four SAVED and REPORTED SUCCESS on prod v4.76.0. None trips MAX_PLAUSIBLE.count
+// (10,000), so no downstream check could have caught them. This is the exact outcome the ledger row
+// for this flow names as unacceptable — "a silent wrong save is worse than a slow form" — reached
+// through a parser that was correct for every utterance anyone thought to test.
+describe('BUG-VOICENUMSUM-001 — a planting NAMED after a number must not join the count', () => {
+  it.each([
+    ['1884 two count', 1886],
+    ['eighteen eighty four two count', 104],
+    ['1884 165 grams', 2049],
+    ['eighteen eighty four 165 grams', 267],
+  ])('refuses %j instead of silently saving %i', (utterance, wouldHaveSaved) => {
+    const r = classify(utterance)
+    expect(r.kind).toBe('unparsed')
+    // The point is not merely that it refuses — it is that it never again produces THAT number.
+    expect(r.value).toBeUndefined()
+    expect(r).not.toMatchObject({ value: wouldHaveSaved })
+  })
+
+  it('says WHICH failure it was, because the two need opposite advice', () => {
+    // "grams" alone -> say a number. "1884 two count" -> say the name and the amount separately.
+    // Collapsing both into unit-without-number would be false: there were two numbers, not none.
+    expect(classify('1884 two count')).toMatchObject({ reason: 'ambiguous-number' })
+    expect(classify('grams')).toMatchObject({ reason: 'unit-without-number' })
+  })
+
+  it('rejects the token sequences directly, not just through classify', () => {
+    expect(parseNumber(['1884', 'two'])).toBeNull()          // guard 1: digit literal is atomic
+    expect(parseNumber(['1884', '165'])).toBeNull()          // guard 1: two digit literals
+    expect(parseNumber(['eighteen', 'eighty', 'four'])).toBeNull()  // guard 2: 18 then 80 ascends
+    expect(parseNumber(['eighteen', 'eighty', 'four', 'two'])).toBeNull()
+  })
+
+  // NON-VACUITY. Two independent guards do the work here and each must be shown to be load-bearing
+  // ON ITS OWN, or a later simplification drops one and the suite stays green. Guard 1 (digit
+  // atomicity) cannot see "eighteen eighty four" — there is no digit in it. Guard 2 (strict descent)
+  // cannot see "1884 two" — 2 IS smaller than 1884, so the sequence descends perfectly.
+  it('needs BOTH guards — neither one covers the other case', () => {
+    expect(parseNumber(['eighteen', 'eighty', 'four'])).toBeNull()  // only guard 2 catches this
+    expect(parseNumber(['1884', 'two'])).toBeNull()                 // only guard 1 catches this
+  })
+
+  // The guards must not have cost anything. Every legal form below parsed correctly BEFORE the fix
+  // and must still — a guard that buys safety by refusing valid speech has just moved the failure.
+  it.each([
+    [['twelve'], 12], [['a', 'dozen'], 12], [['two', 'hundred', 'thirty', 'one'], 231],
+    [['a', 'hundred'], 100], [['twenty', 'five'], 25], [['one', 'thousand'], 1000],
+    [['half'], 0.5], [['half', 'a'], 0.5], [['two', 'and', 'a', 'half'], 2.5],
+    [['1.5'], 1.5], [['231'], 231],
+  ])('still parses the legal form %j as %s', (tokens, expected) => {
+    expect(parseNumber(tokens)).toBeCloseTo(expected, 5)
+  })
+
+  it('leaves the whole of Dave\'s stated flow working', () => {
+    expect(classify('three count')).toMatchObject({ kind: 'quantity', value: 3, unit: 'count' })
+    expect(classify('231 grams')).toMatchObject({ kind: 'weight', value: 231, grams: 231 })
+    expect(classify('two hundred thirty one grams')).toMatchObject({ kind: 'weight', value: 231 })
+    expect(classify('1.2 kilograms')).toMatchObject({ kind: 'weight', value: 1.2 })
+  })
+})
+
+// BUG-VOICENUMWORD-001 — the other half of the same live run. Saying a digit-named planting out loud
+// produced number WORDS, which reached a name stored as digits not at all: zero hits, and repeating
+// it more clearly never helped because the recogniser was never wrong.
+describe('BUG-VOICENUMWORD-001 — folding spoken number words to the digits in a name', () => {
+  // All nine of Dave's digit-carrying plantings, in the form the recogniser emits them.
+  it.each([
+    ['eighteen eighty four', '1884'],
+    ['super sweet one hundred', 'super sweet 100'],
+    ['danvers one twenty six carrot', 'danvers 126 carrot'],
+    ['clemson spineless eighty', 'clemson spineless 80'],
+    ['chinese five color', 'chinese 5 color'],
+    ['alaska mix nasturtium one', 'alaska mix nasturtium 1'],
+    ['cherry rescue one', 'cherry rescue 1'],
+    ['fairway orange coleus clone one', 'fairway orange coleus clone 1'],
+  ])('folds %j to %j', (spoken, expected) => {
+    expect(foldNumberWords(spoken)).toBe(expected)
+  })
+
+  // A NAME is read in groups and CONCATENATED; a cardinal is SUMMED. Same words, different answer —
+  // which is why this is a separate function and must never be merged into parseNumber.
+  it('reads a name in year-form, not as a cardinal sum', () => {
+    expect(foldNumberWords('eighteen eighty four')).toBe('1884')   // 18|84 concatenated
+    expect(parseNumber(['eighteen', 'eighty', 'four'])).toBeNull() // NOT 102
+  })
+
+  it('leaves text with no number words untouched', () => {
+    expect(foldNumberWords('cucumber')).toBe('cucumber')
+    expect(foldNumberWords('sungold cherry tomato')).toBe('sungold cherry tomato')
+  })
+
+  // The homophone entries in NUMBER_WORDS are scoped by their own comment to the slot immediately
+  // before a unit word. A name is not that slot, so folding must not reach them — otherwise a search
+  // for "tomato to table" silently becomes "tomato 2 table" in the branch where the chooser is
+  // ALREADY lost and least able to show the user what happened.
+  it.each(['to', 'too', 'won', 'for', 'fore', 'ate', 'tree', 'oh', 'dozen'])(
+    'does NOT fold the homophone %j', (word) => {
+      expect(foldNumberWords(`tomato ${word} table`)).toBe(`tomato ${word} table`)
+    })
 })
 
 // V5-HARVESTVOICEFLOW-001 — measured on Dave's Android, 2026-08-28 probe run, round-trip OFF.

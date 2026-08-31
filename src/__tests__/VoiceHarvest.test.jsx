@@ -24,7 +24,11 @@ vi.mock('../lib/haptics.js', () => ({
   hapticDigitAccepted: vi.fn(), hapticDigitRejected: vi.fn(), hapticUndoApplied: vi.fn(),
 }))
 
-import VoiceHarvest, { matchPlantings, resolveCommandCollision, plantingAliases } from '../pages/VoiceHarvest.jsx'
+import VoiceHarvest, {
+  matchPlantings, matchPlantingsWithRescue, resolveCommandCollision, plantingAliases,
+} from '../pages/VoiceHarvest.jsx'
+import { indexAliases } from '../lib/voiceAliases.js'
+import { looseKey } from '../lib/comboboxInput.js'
 
 const planting = (id, name, slug, unit = null) => ({
   id, name, archived_at: null,
@@ -324,5 +328,69 @@ describe('VoiceHarvest — the mic itself', () => {
     ).toBe(true))
     expect(statusText()).toContain('Removed Suyo Long')
     vi.useRealTimers()
+  })
+})
+
+// BUG-VOICENUMWORD-001 — the fold layer, in place, against the real names it exists for.
+//
+// Dave has nine live plantings whose names carry digits. Chrome dictates those digits as WORDS, so
+// before this the chooser returned NOTHING for them and saying it again more clearly never helped —
+// the recogniser was never wrong. These use his actual names, not invented ones, because the whole
+// defect was that the grammar had only ever been checked against invented identifiers.
+describe('BUG-VOICENUMWORD-001 — spoken number words reach a digit-named planting', () => {
+  const DIGITS = [
+    planting('d1', '1884', 'tomato'),
+    planting('d2', 'Danvers 126 Carrot', 'carrot'),
+    planting('d3', 'Clemson Spineless 80', 'okra'),
+    planting('d4', 'Chinese 5-Color', 'pepper'),
+  ]
+
+  it.each([
+    ['eighteen eighty four', 'd1'],
+    ['danvers one twenty six', 'd2'],
+    ['clemson spineless eighty', 'd3'],
+    ['chinese five color', 'd4'],
+  ])('resolves %j to the planting named with digits', (spoken, id) => {
+    const { hits, rescued } = matchPlantingsWithRescue(DIGITS, spoken, null)
+    expect(hits.map((h) => h.id)).toEqual([id])
+    // Truthy so the caller QUOTES the heard text back. Dave said words and got digits; a fold that
+    // announced itself as a clean match would hide the one step worth seeing.
+    expect(rescued).toBe('folded')
+  })
+
+  it('does not disturb a phrase that already resolves', () => {
+    // The strict matcher still answers first, so nothing that works today changes — including the
+    // digit name TYPED or spoken as digits, which never needed folding.
+    expect(matchPlantingsWithRescue(DIGITS, '1884', null))
+      .toEqual({ hits: [DIGITS[0]], rescued: null })
+    expect(matchPlantings(PLANTS, 'Suyo Long').map((p) => p.id)).toEqual(['p1'])
+  })
+
+  it('leaves a phrase with no number words byte-identical', () => {
+    // Guards the early-out: a fold that changed nothing must not re-run the query or alter the shape.
+    expect(matchPlantingsWithRescue(PLANTS, 'marketmore', null))
+      .toEqual({ hits: [PLANTS[1]], rescued: null })
+    expect(matchPlantingsWithRescue(DIGITS, 'rhubarb', null))
+      .toEqual({ hits: [], rescued: null })
+  })
+
+  // LAYER ORDER, asserted from this side too. c2's voiceAliases suite owns the learned-beats-fuzzy
+  // property; this pins the boundary the fold introduced between them, which neither suite covered.
+  it('a human\'s taught alias still outranks the derived fold', () => {
+    // The teach is deliberately WRONG — it claims "eighteen eighty four" means the carrot. It must
+    // still win: aliases are user-scoped because two people's recognisers mishear differently, and a
+    // universal rule must not silently overrule one person's correction of their own device.
+    //
+    // The key is DERIVED via looseKey, never hand-written — it collapses the doubled "e", so the
+    // stored key is "eightenightyfour". A literal here inserts fine and matches nothing, which is a
+    // silent pass: the fold would answer instead and the assertion would look like it had exercised
+    // the learned layer. c2's suite documents hitting exactly this; the first draft of THIS test hit
+    // it too and reported 'folded'.
+    const aliasIdx = indexAliases([
+      { heard_key: looseKey('eighteen eighty four'), variety_id: 'v-d2' },
+    ])
+    const { hits, rescued } = matchPlantingsWithRescue(DIGITS, 'eighteen eighty four', aliasIdx)
+    expect(rescued).toBe('learned')
+    expect(hits.map((h) => h.id)).toEqual(['d2'])
   })
 })

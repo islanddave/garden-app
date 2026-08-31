@@ -216,16 +216,35 @@ export function parseNumber(tokens) {
     return Number.isFinite(value) ? value : null
   }
 
+  // BUG-VOICENUMSUM-001, GUARD 1 OF 2 — A DIGIT LITERAL IS ATOMIC.
+  // Dave has plantings NAMED after numbers (one is literally "1884"), and the utterance that reaches
+  // here is everything before the trailing unit — so the NAME arrives as a number token sitting in
+  // front of the quantity. "1884 two count" parsed as 1884 + 2 and SAVED 1886 count, reporting
+  // success; "1884 165 grams" saved 2049 g. Neither trips MAX_PLAUSIBLE, so nothing downstream
+  // catches it. A silent wrong save is the one outcome this grammar exists to prevent.
+  // A spoken digit run like "231" is a COMPLETE number, and English never composes two of them
+  // additively — "1884 two" is two numbers, not one. So a digit literal may be the whole sequence and
+  // nothing else. The cost is that a mixed form like "5 hundred" is now refused rather than read as
+  // 500; that is the safe direction (an `unparsed` costs one repeated phrase) and it is speculative
+  // anyway, whereas the four failures above were MEASURED against Dave's real plantings.
+  const valueToks = tokens.filter((t) => !FILLER.has(t))
+  if (valueToks.length > 1 && valueToks.some((t) => /^\d+(\.\d+)?$/.test(t))) return null
+
   let total = 0
   let current = 0
   let seenAny = false
   let fraction = 0
+  // BUG-VOICENUMSUM-001, GUARD 2 OF 2 — magnitude of the previous ADDITIVE component. See below.
+  let lastAdd = null
 
   for (const tok of tokens) {
     if (FILLER.has(tok)) continue
 
     if (Object.prototype.hasOwnProperty.call(FRACTIONS, tok)) {
-      fraction += FRACTIONS[tok]
+      const v = FRACTIONS[tok]
+      if (lastAdd !== null && v >= lastAdd) return null
+      fraction += v
+      lastAdd = v
       seenAny = true
       continue
     }
@@ -233,16 +252,32 @@ export function parseNumber(tokens) {
       // "hundred" with nothing before it means one hundred ("a hundred grams").
       current = (current === 0 ? 1 : current) * SCALES[tok]
       if (SCALES[tok] >= 1000) { total += current; current = 0 }
+      // A scale MULTIPLIES rather than adds, so it is not itself subject to the descent rule — but it
+      // resets the ceiling for what may follow it: "two hundred thirty one" is 200 then 30 then 1.
+      lastAdd = SCALES[tok]
       seenAny = true
       continue
     }
     if (Object.prototype.hasOwnProperty.call(NUMBER_WORDS, tok)) {
-      current += NUMBER_WORDS[tok]
+      const v = NUMBER_WORDS[tok]
+      // BUG-VOICENUMSUM-001, GUARD 2 OF 2 — COMPONENTS MUST STRICTLY DESCEND.
+      // A well-formed English cardinal falls monotonically: "twenty three" (20>3), "two hundred
+      // thirty one" (200>30>1). "eighteen eighty four" does NOT — 18 then 80 ascends — because it is
+      // a NAME read in year-form, not a cardinal. Summing it gave 18+80+4+2 = 104 count for
+      // "eighteen eighty four two count", and 267 g for the weight form. Guard 1 cannot catch these:
+      // there is no digit literal in the utterance at all, every token is a legitimate number word,
+      // and only the ORDER reveals that two separate numbers were spoken.
+      if (lastAdd !== null && v >= lastAdd) return null
+      current += v
+      lastAdd = v
       seenAny = true
       continue
     }
     if (/^\d+(\.\d+)?$/.test(tok)) {
+      // Reachable only as the single value token — Guard 1 rejects a digit literal in any longer
+      // sequence, and the whole-sequence fast path above already returned for the bare form.
       current += Number(tok)
+      lastAdd = Number(tok)
       seenAny = true
       continue
     }
@@ -253,6 +288,83 @@ export function parseNumber(tokens) {
   if (!seenAny) return null
   const value = total + current + fraction
   return Number.isFinite(value) ? value : null
+}
+
+// BUG-VOICENUMWORD-001 — the number words a NAME is spoken with, and ONLY the canonical spellings.
+//
+// Deliberately NOT NUMBER_WORDS. That map carries recogniser homophones (to/too/won/for/fore/ate/
+// tree/oh) and its own comment scopes them explicitly: "it only ever fires immediately before a unit
+// word". A planting name is not that slot. Folding them here would rewrite "tomato to table" into
+// "tomato 2 table" and, worse, would do it in the branch where the chooser is already lost — so the
+// homophones stay out, and `dozen` with them (nobody names a bed "dozen" and means 12).
+const NAME_NUMBER_WORDS = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+}
+
+/**
+ * BUG-VOICENUMWORD-001 — spoken number WORDS → the digit string a planting is actually named with.
+ *
+ * Nine of Dave's live plantings carry digits in their name (1884, Super Sweet 100, Super Sweet 100
+ * Rescue, Danvers 126 Carrot, Clemson Spineless 80, Chinese 5-Color, Alaska Mix Nasturtium 1, Cherry
+ * Rescue 1, Fairway Orange Coleus Clone 1). Chrome dictates those digits as WORDS, so "eighteen
+ * eighty four" reached a name stored as "1884" not at all — zero hits, and saying it again more
+ * clearly never helps, because the recogniser was never wrong.
+ *
+ * THIS IS NOT parseNumber AND MUST NOT BE MERGED INTO IT. A name is read the way a YEAR is read: in
+ * groups, CONCATENATED — "eighteen eighty four" is 18|84 = "1884", "one twenty six" is 1|26 = "126".
+ * A cardinal is SUMMED — "two hundred thirty one" is 231. Running the cardinal parser over a name
+ * yields 18+80+4 = 102, which is exactly how BUG-VOICENUMSUM-001 read it and is wrong in a different
+ * direction. The two grammars share ONE rule and nothing else: the group boundary below.
+ *
+ * GROUP BOUNDARY: a group ends when the next word is NOT strictly smaller than the last one added to
+ * it — the same monotonic property parseNumber now uses to reject an ascending sequence. That is why
+ * "eighty four" stays one group (4 < 80) while "eighteen eighty" splits (80 >= 18).
+ *
+ * Edit distance cannot substitute for this. Session gardening-c2 measured its fuzzy scorer over these
+ * exact cases against Dave's real 239 plantings: "eighteen eighty four" scores 0.353 against
+ * *helichrysum*, nowhere near 1884. A bare digit name is unreachable from number words by any string
+ * metric, because they share no characters — folding is the only mechanism that spans the gap.
+ *
+ * Returns the text with number-word runs folded; unchanged when there is nothing to fold.
+ */
+export function foldNumberWords(text) {
+  const toks = normalise(text).split(' ').filter(Boolean)
+  const out = []
+  let groups = []
+  let cur = null
+  let lastAdd = null
+
+  const closeGroup = () => {
+    if (cur !== null) groups.push(String(cur))
+    cur = null
+    lastAdd = null
+  }
+  const flushRun = () => {
+    closeGroup()
+    if (groups.length) { out.push(groups.join('')); groups = [] }
+  }
+
+  for (const t of toks) {
+    if (Object.prototype.hasOwnProperty.call(SCALES, t)) {
+      cur = (cur === null ? 1 : cur) * SCALES[t]
+      lastAdd = SCALES[t]
+      continue
+    }
+    if (Object.prototype.hasOwnProperty.call(NAME_NUMBER_WORDS, t)) {
+      const v = NAME_NUMBER_WORDS[t]
+      if (lastAdd !== null && v >= lastAdd) closeGroup()
+      cur = (cur === null ? 0 : cur) + v
+      lastAdd = v
+      continue
+    }
+    flushRun()
+    out.push(t)
+  }
+  flushRun()
+  return out.join(' ')
 }
 
 /**
@@ -302,8 +414,23 @@ export function classify(raw) {
   const unit = Object.prototype.hasOwnProperty.call(UNIT_ALIASES, unitTok) ? UNIT_ALIASES[unitTok] : null
 
   if (unit) {
-    const value = parseNumber(tokens.slice(0, lastIdx))
+    const numToks = tokens.slice(0, lastIdx)
+    const value = parseNumber(numToks)
     if (value == null) {
+      // WHICH failure this was matters to the caller, because the two need opposite advice.
+      // "grams" alone is a bare unit — the user says it when correcting a unit and the fix is to say
+      // a number. "1884 two count" is the BUG-VOICENUMSUM-001 shape — the user said a planting NAME
+      // and a quantity in one breath, and the fix is to split them. Reporting the second as
+      // "unit-without-number" would be actively false: there were two numbers, not none. Without the
+      // distinction the UI can only say "didn't catch that", and Dave repeats the same phrase forever
+      // because nothing tells him the name is being read as part of the count.
+      const numeric = (t) => /^\d/.test(t)
+        || Object.prototype.hasOwnProperty.call(NUMBER_WORDS, t)
+        || Object.prototype.hasOwnProperty.call(SCALES, t)
+        || Object.prototype.hasOwnProperty.call(FRACTIONS, t)
+      if (numToks.some(numeric)) {
+        return { kind: 'unparsed', reason: 'ambiguous-number', transcript }
+      }
       // A bare unit with no number ("grams") is a real thing people say when correcting a unit, but
       // this parser will not guess which number it belongs to.
       return { kind: 'unparsed', reason: 'unit-without-number', transcript }

@@ -47,7 +47,7 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 import { looseKey, looseIncludes } from '../lib/comboboxInput.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
 import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
-import { classify } from '../lib/voiceHarvestGrammar.js'
+import { classify, foldNumberWords, normalise } from '../lib/voiceHarvestGrammar.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
 import {
   hapticSaveCommitted, hapticSaveFailed, hapticDigitAccepted, hapticDigitRejected, hapticUndoApplied,
@@ -83,6 +83,23 @@ export function matchPlantings(plantings, spoken) {
   return exact.length ? exact : hits
 }
 
+// BUG-VOICENUMWORD-001 — the same STRICT matcher, re-run with spoken number words folded to the
+// digits a planting is actually named with ("eighteen eighty four" → "1884"). Returns [] when there
+// was nothing to fold, so the caller can tell "no numbers in this phrase" from "folded and missed".
+//
+// WHY NOT IN looseKey, which is where it would be tidiest. `looseKey` is shared by three surfaces —
+// this matcher, PlantingSelect (the /log picker) and VarietyPicker — so folding inside it would reach
+// all three INCLUDING TYPED queries, and typing "1884" would start returning eighteen-eighty-four
+// rows on the form Dave uses every day. This is a defect of the RECOGNISER, not of matching: nobody
+// types "eighteen eighty four". Keeping the fold on the voice path is the same principle that put
+// this whole flow on a parallel route — a voice defect must not become a defect in the form the
+// harvest depends on.
+function matchFolded(plantings, spoken) {
+  const folded = foldNumberWords(spoken)
+  if (folded === normalise(String(spoken ?? ''))) return []
+  return matchPlantings(plantings, folded)
+}
+
 // V5-VOICEFUZZYMATCH-001 — the rescue, and WHERE it sits is the whole safety argument.
 //
 // It runs ONLY when matchPlantings returns empty. Every utterance that resolves today resolves
@@ -97,21 +114,39 @@ export function matchPlantings(plantings, spoken) {
 //
 // Returns the SAME shape the caller already handles plus a `rescued` marker, so a fuzzy hit is
 // announced as a correction instead of passing itself off as a clean match.
-// THREE LAYERS, IN THIS ORDER, and the order is the whole safety argument:
+// FOUR LAYERS, IN THIS ORDER, and the order is the whole safety argument:
 //   1. strict   — exact/substring. Unchanged and still first, so every utterance that resolves today
 //                 resolves identically.
 //   2. learned  — a mishearing Dave has already corrected by hand (V5-VOICEALIAS-001).
-//   3. fuzzy    — closed-set scoring, for a mishearing nobody has taught yet.
+//   3. folded   — spoken number words read as the digits in a name (BUG-VOICENUMWORD-001).
+//   4. fuzzy    — closed-set scoring, for a mishearing nobody has taught yet.
 // LEARNED BEATS FUZZY DELIBERATELY. Fuzzy is a guess that is right 77% of the time on adversarial
 // input; an alias is a fact a human asserted. No score outranks that. Placing learned SECOND rather
 // than first is equally deliberate: a strict match needs no rescue, and letting an alias shadow an
 // exact name match would let one bad teach make a real planting unreachable.
+//
+// FOLDED SITS BETWEEN THEM, and both boundaries are deliberate:
+//   * ABOVE FUZZY, because a fold is DERIVABLE — "eighteen eighty four" is 1884 by rule, not by
+//     resemblance. Edit distance cannot reach it at all (measured: it scores 0.353 against
+//     *helichrysum*), so letting a guess answer first would be strictly worse.
+//   * BELOW LEARNED, because the layer-order principle above is about CONFIDENCE, not mechanism: a
+//     correction a human actually made outranks one a rule derived. A fold is still an inference
+//     about what was meant, and if Dave or Jen has explicitly taught this phrase, their word wins.
+//     Aliases are user-scoped precisely because two people's recognisers mishear differently, and a
+//     universal rule must not silently overrule one person's correction of their own device.
 export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
   const strict = matchPlantings(plantings, spoken)
   if (strict.length) return { hits: strict, rescued: null }
 
   const learned = resolveAlias(aliasIndex, spoken, plantings)
   if (learned.length) return { hits: learned, rescued: 'learned' }
+
+  // Announced via a truthy `rescued` like any other non-strict outcome: Dave said words and got
+  // digits back, so the caller quotes the heard text alongside the match. A fold that stayed silent
+  // would look exactly like a clean match and hide the one step worth seeing.
+  const folded = matchFolded(plantings, spoken)
+  if (folded.length === 1) return { hits: folded, rescued: 'folded' }
+  if (folded.length > 1) return { hits: folded, rescued: null }
 
   const res = fuzzyMatch(plantings, spoken, plantingAliases, looseKey)
   if (res.kind === 'one') return { hits: [res.planting], rescued: res.alias }
@@ -424,8 +459,17 @@ export default function VoiceHarvest() {
     // unparsed — INCLUDING a near-miss of a command word. The grammar routes "text" (a measured 1-in-9
     // mishear of "next") here rather than to search, precisely so it cannot perform a different
     // action that looks like it worked. Costs one repeated word; says so out loud.
+    //
+    // `ambiguous-number` (BUG-VOICENUMSUM-001) needs its OWN sentence, not the generic one. It fires
+    // when the utterance carried more than one number — the shape you get saying a planting NAMED
+    // after a number together with the amount ("1884 two count"). A bare "Didn't catch that" is a
+    // dead end there: the recogniser heard him perfectly, so he repeats it more clearly, gets the
+    // same refusal, and has no way to discover that the name is being read as part of the count.
     hapticDigitRejected()
-    say('warn', `Didn't catch that${result.reason === 'near-command' ? ' — say "next" again' : ''}.`)
+    const hint = result.reason === 'near-command' ? ' — say "next" again'
+      : result.reason === 'ambiguous-number' ? ' — say the planting, then the amount separately'
+      : ''
+    say('warn', `Didn't catch that${hint}.`)
   }, [clearRecord, saveRecord, say])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
