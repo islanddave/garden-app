@@ -23,8 +23,17 @@
 // default would put a loaf of bread in the planting picker the first time somebody added a call
 // site without reading this file, and nothing would have failed.
 //
-// Contract: { cropTypes: [{ slug, display_name, default_lifecycle, category, sort_order, dtm_basis }], loading,
+// OPS-CROPTYPEALIASCLIENT-001 adds `search_aliases` to the row shape — the comma-separated alternate
+// names for the crop ('melon' -> 'cantaloupe, muskmelon, honeydew'), null for most types. It is a
+// MATCHING column, never a display one: split it with splitCropAliases() and filter against it, and
+// do not render it. The reason it is a column of its own rather than more parentheticals inside
+// display_name is that display_name reaches the text of a public Facebook/Instagram post
+// (lambda/facebook-share/index.js:319), and the alias list must not follow it there.
+//
+// Contract: { cropTypes: [{ slug, display_name, default_lifecycle, category, sort_order, dtm_basis,
+//                           search_aliases }], loading,
 //             createCropType(payload) -> { cropType } | { error, existing, reason } }
+// Options:  { scope: 'garden' | 'all', enabled: boolean }
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApiFetch } from '../lib/api.js'
@@ -33,19 +42,32 @@ import { useApiFetch } from '../lib/api.js'
 // this constant to the migration's own VALUES tuples rather than re-typing the string.
 export const NON_PLANT_FOOD_CATEGORY = 'non_plant_food'
 
-export function useCropTypes({ scope = 'garden' } = {}) {
+export function useCropTypes({ scope = 'garden', enabled = true } = {}) {
   const { fetch } = useApiFetch()
   const [cropTypes, setCropTypes] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // OPS-CROPTYPEALIASCLIENT-001 — `enabled` exists for ONE call site and one invariant.
+    // PlantingSelect needs this vocabulary to match a crop's aliases, but in CONTROLLED mode
+    // (`plants` supplied by the host) it is contractually forbidden to hit the network at all —
+    // BUG-PLANTFETCHSILENT-001, and PlantingSelect.test.jsx asserts the fetch spy was never called
+    // on mount OR on focus. The vocabulary is read only inside the typed filter, so that site defers
+    // until a query exists and this flag is what lets it. Default true: every other caller
+    // (VarietyPicker, PutUp, VarietyEdit, ProjectsAdminClassify, Search, VoiceHarvest) is unchanged
+    // and still loads once per mount.
+    //
+    // `loading` must resolve even when disabled, or a consumer gating render on it hangs forever
+    // on a page that was never going to fetch.
+    if (!enabled) { setLoading(false); return undefined }
     let alive = true
+    setLoading(true)
     Promise.resolve(fetch('/api/varieties/crop-types'))
       .then(data => { if (alive) setCropTypes(Array.isArray(data) ? data : []) })
       .catch(() => { if (alive) setCropTypes([]) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [fetch])
+  }, [fetch, enabled])
 
   // { cropType } on success, or { error, existing, reason } when the server steers to an existing
   // type. `reason` is 'exists' | 'plural' | 'coupled_synonym'; the last means the requested name is

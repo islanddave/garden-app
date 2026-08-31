@@ -50,19 +50,21 @@ const SAMPLE = {
 }
 // PARTIAL mock: harness B imports App.jsx, which transitively pulls useUploadPhoto's `apiFetch`
 // re-export. A bare replacement of this module fails the whole SUITE at collection time.
-vi.mock('../lib/api.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  useApiFetch: () => ({
-    fetch: async (path) => {
-      if (path.startsWith('/api/search')) {
-        // The notes-column slice: a THIN planting row, no variety_ref (handlers.js searchPlantings
-        // selects id/name/status/project_id/project_name/snippet and nothing else).
-        return { results: { plantings: [{ id: 'p9', name: 'Shishito', status: 'growing', project_id: 'pr1', snippet: 'blistered' }] } }
-      }
-      return SAMPLE[path] ?? []
-    },
-  }),
-}))
+// `fetch` is built ONCE here rather than per useApiFetch() call, matching the real hook's
+// useCallback identity (lib/api.js:310). With a per-call identity, any consumer effect keyed on
+// `[fetch]` re-runs every render — Search mounts useCropTypes, whose effect sets state, so the
+// unstable form loops forever and this suite HANGS instead of failing.
+vi.mock('../lib/api.js', async (importOriginal) => {
+  const fetch = async (path) => {
+    if (path.startsWith('/api/search')) {
+      // The notes-column slice: a THIN planting row, no variety_ref (handlers.js searchPlantings
+      // selects id/name/status/project_id/project_name/snippet and nothing else).
+      return { results: { plantings: [{ id: 'p9', name: 'Shishito', status: 'growing', project_id: 'pr1', snippet: 'blistered' }] } }
+    }
+    return SAMPLE[path] ?? []
+  }
+  return { ...(await importOriginal()), useApiFetch: () => ({ fetch }) }
+})
 vi.mock('../lib/transcribe.js', () => ({ isTranscriptionSupported: () => false, startLiveTranscription: () => ({ stop() {}, cancel() {} }) }))
 
 import Search from '../pages/Search.jsx'

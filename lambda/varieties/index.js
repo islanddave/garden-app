@@ -131,8 +131,25 @@ export const handler = async (event) => {
     // /api/varieties/:id route so "crop-types" is not mis-parsed as a variety id.
     if (rawPath === '/api/varieties/crop-types') {
       if (method === 'GET') {
+        // OPS-CROPTYPEALIASCLIENT-001 — search_aliases joins the projection, and this is the ONE
+        // response shape in the repo that carries it. Dave's acceptance sentence is "I know it is a
+        // cantaloupe": no crop type is NAMED cantaloupe, the word lives only in this column on the
+        // 'melon' row, and until now only the dashboard's server-side search could see it — so every
+        // client filter answered nothing for it (V4-SEARCHCROPTYPE-001 shipped its client leg with
+        // that residual pinned as a red-when-fixed test).
+        //
+        // THE NEVER-RENDER RULE STILL HOLDS AND IS NOT RELAXED BY THIS. The reason the column exists
+        // at all instead of more parentheticals in display_name is that display_name is SELECTed as
+        // crop_name by lambda/facebook-share/index.js:319 and reaches the text of a public post.
+        // That constraint is about RENDERING, not about the byte reaching the browser: this is a
+        // controlled-vocabulary list a client filters against, and no share/post path reads it —
+        // facebook-share runs its own SQL and never calls this route. The dashboard search guards
+        // (lambda/dashboard/crop-types-columns.test.js, search.test.js) are deliberately left intact,
+        // because a SEARCH RESULT ROW is a render surface and this list is not; the client-side
+        // counterpart is pinned in src/__tests__/cropTypeAliasClient.test.jsx, which asserts the
+        // alias text never reaches the DOM on any of the four surfaces that now match on it.
         const rows = await sql`
-          SELECT slug, display_name, default_lifecycle, category, sort_order, dtm_basis
+          SELECT slug, display_name, default_lifecycle, category, sort_order, dtm_basis, search_aliases
           FROM public.crop_types
           WHERE deleted_at IS NULL
           ORDER BY sort_order ASC, display_name ASC

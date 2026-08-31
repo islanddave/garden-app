@@ -16,6 +16,7 @@ import { useInOverlaySurface, useOverlaySwap } from '../context/OverlayContext.j
 import { useApiFetch } from '../lib/api.js'
 import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcribe.js'
 import { looseIncludesCropType } from '../lib/comboboxInput.js'
+import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P, statusLabel } from '../lib/constants.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
@@ -174,6 +175,16 @@ export default function Search() {
   const [locations, setLocations] = useState([])
   const [varieties, setVarieties] = useState([])
   const [loading, setLoading] = useState(true)
+  // OPS-CROPTYPEALIASCLIENT-001 — the crop-type vocabulary, for its display_name and search_aliases.
+  // Deliberately NOT gating `loading`: the hook fails soft to [] and this page's whole design is that
+  // a degraded dependency narrows the match rather than blocking the box (the server slice already
+  // works that way). With no vocabulary every term this page had before still resolves, because the
+  // slug travels on the planting/variety rows themselves.
+  const { cropTypes } = useCropTypes()
+  const cropBySlug = useMemo(
+    () => Object.fromEntries((cropTypes ?? []).map(c => [c.slug, c])),
+    [cropTypes],
+  )
   const [voice, setVoice] = useState('idle') // idle | listening | error
   const [server, setServer] = useState(null)          // /api/search payload for the CURRENT query, or null
   const [serverState, setServerState] = useState('idle') // idle | loading | ok | error
@@ -298,18 +309,21 @@ export default function Search() {
   // name terms keep their exact substring semantics, so this is purely additive.
   // Do NOT spell the picker query param here: lambda/plants/grid-view.test.js censuses its consumers
   // by grepping src/ for that literal, and a mention in a comment reads to it as a call site.
-  // Still narrower than the server: crop_types.display_name and .search_aliases are not on the
-  // client at all, so "cantaloupe" -> Charentais still needs the server slice to land.
+  // OPS-CROPTYPEALIASCLIENT-001 closes the last of that narrowness: with cropBySlug in hand this
+  // filter now matches the crop's display_name AND its search_aliases, so "scallion" and "cantaloupe"
+  // resolve here rather than only on the server slice. Parity with lambda/dashboard/handlers.js is
+  // three-for-three on the crop-type axis (slug / display_name / search_aliases).
   const results = useMemo(() => {
     if (!query) return { plants: [], locations: [], varieties: [] }
     const hit = s => norm(s).includes(query)
     return {
       plants: plants.filter(p => hit(p.name) || hit(p.variety_ref?.name) || hit(p.variety_ref?.group)
-        || looseIncludesCropType(p.variety_ref?.crop_type_slug, query)).slice(0, 40),
+        || looseIncludesCropType(p.variety_ref?.crop_type_slug, query, cropBySlug[p.variety_ref?.crop_type_slug])).slice(0, 40),
       locations: locations.filter(l => hit(l.name)).slice(0, 40),
-      varieties: varieties.filter(v => hit(v.name) || looseIncludesCropType(v.crop_type_slug, query)).slice(0, 40),
+      varieties: varieties.filter(v => hit(v.name)
+        || looseIncludesCropType(v.crop_type_slug, query, cropBySlug[v.crop_type_slug])).slice(0, 40),
     }
-  }, [query, plants, locations, varieties])
+  }, [query, plants, locations, varieties, cropBySlug])
 
   // Merge: server hits on the core three that the client filter missed (notes/care-notes
   // columns live server-side only). Client rows win; dedupe by id.

@@ -36,6 +36,7 @@ import { useInOverlaySurface } from '../../context/OverlayContext.jsx'
 import FilterChipRow from './FilterChipRow.jsx'
 import { readCropRank } from '../../lib/cropLogLedger.js'
 import { useHandedness } from '../../hooks/useHandedness.js'
+import { useCropTypes } from '../../hooks/useCropTypes.js'
 import { useDismissable } from '../../context/DismissRegistry.jsx'
 import { LAYER } from '../../lib/dismissLayers.js'
 import {
@@ -398,6 +399,27 @@ export default function PlantingSelect({
   const [loading, setLoading] = useState(plants == null)
   const [failed, setFailed] = useState(false)
   const [query, setQuery] = useState('')
+  // OPS-CROPTYPEALIASCLIENT-001 — the crop-type vocabulary, for matching a crop's display name and
+  // search_aliases ("cantaloupe" -> the melon rows). Fetched HERE rather than accepted as a prop:
+  // every one of this component's call sites would otherwise have to pass it, and the /log hosts
+  // that mount it have no reason to know the vocabulary exists.
+  //
+  // LAZY, AND THE LAZINESS IS AN INVARIANT, NOT AN OPTIMISATION. In controlled mode (`plants` given
+  // by the host) this component is contractually forbidden to touch the network — BUG-PLANTFETCHSILENT-001,
+  // because a self-fetch failure flag that can fire in a mode with no self-fetch is what made a
+  // failed load render "No plantings yet.". PlantingSelect.test.jsx asserts the fetch spy is never
+  // called on mount or on focus, and an eager hook here breaks that. The vocabulary is read ONLY
+  // inside the typed filter below, so nothing is lost by waiting for a query.
+  //
+  // LATCHED rather than tracking `query` directly: clearing the box would otherwise flip the flag
+  // back to false and the next keystroke would re-fetch. Once wanted, always wanted, for this mount.
+  const [vocabWanted, setVocabWanted] = useState(false)
+  useEffect(() => { if (query.trim() && !vocabWanted) setVocabWanted(true) }, [query, vocabWanted])
+  const { cropTypes } = useCropTypes({ enabled: vocabWanted })
+  const cropBySlug = useMemo(
+    () => Object.fromEntries((cropTypes ?? []).map(c => [c.slug, c])),
+    [cropTypes],
+  )
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const [touched, setTouched] = useState(false)
@@ -628,13 +650,16 @@ export default function PlantingSelect({
       // V4-SEARCHCROPTYPE-001 client leg: the same slug, now through the shared crop-type matcher —
       // and reachable by its spoken form at last, since looseKey stopped treating '_' as a letter
       // (BUG-LOOSEKEYREPEAT-001 (A)): "bunching onion" now narrows to the bunching_onion rows.
-      // No crop-type row is passed because ?view=picker carries the slug and nothing else crop-shaped
-      // (lambda/plants/index.js:1313) — display_name/aliases need that projection widened first.
+      // OPS-CROPTYPEALIASCLIENT-001: the crop-type ROW now comes from the vocabulary endpoint rather
+      // than from the planting payload, so this needs no widening of ?view=picker (which still
+      // carries the slug and nothing else crop-shaped, lambda/plants/index.js:1313). That is what
+      // puts display_name and search_aliases on this filter — "scallion" and "cantaloupe" narrow here
+      // exactly as they do in whole-garden search.
       list = list.filter(p =>
         looseIncludes(p.name, q) ||
         looseIncludes(p.variety_ref?.name, q) ||
         looseIncludes(p.project_name, q) ||
-        looseIncludesCropType(p.variety_ref?.crop_type_slug, q)
+        looseIncludesCropType(p.variety_ref?.crop_type_slug, q, cropBySlug[p.variety_ref?.crop_type_slug])
       )
     }
     // V4-CROPFILTER-001: multi-select OR across chips (set membership), AND with the typeahead
@@ -663,7 +688,7 @@ export default function PlantingSelect({
       if (ri > 0) sorted.unshift(sorted.splice(ri, 1)[0])
     }
     return { candidates: sorted, hiddenByChips: chipHidden }
-  }, [rows, varietyId, cropSlug, query, sort, recentPlantId, chipFilterActive, chipSelection])
+  }, [rows, varietyId, cropSlug, query, sort, recentPlantId, chipFilterActive, chipSelection, cropBySlug])
 
   const selected = useMemo(
     () => rows.find(p => String(p.id) === String(value)) || null,

@@ -49,7 +49,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { useApiFetch } from '../lib/api.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
-import { looseKey, looseIncludes } from '../lib/comboboxInput.js'
+import { looseKey, looseIncludes, splitCropAliases } from '../lib/comboboxInput.js'
+import { useCropTypes } from '../hooks/useCropTypes.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
 import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
 import {
@@ -126,18 +127,23 @@ export function describeResult(r) {
 // evidence is in the lane report. Re-adding it needs a crop type whose display name is not its
 // de-snake-cased slug, and there is not one today.
 //
-// WHAT NO CLIENT CAN REACH, stated because the acceptance sentence for V4-SEARCHCROPTYPE-001 is
-// Dave's "I know it is a cantaloupe". Charentais sits under crop type 'melon', display 'Melon', and
-// no crop type anywhere is NAMED cantaloupe — that word lives only in `crop_types.search_aliases`,
-// which whole-garden search matches server-side (lambda/dashboard/handlers.js:1117) and which no
-// client can see: `/api/varieties/crop-types` selects slug, display_name, default_lifecycle,
-// category, sort_order and dtm_basis, not that column (lambda/varieties/index.js:135). So the
-// acceptance holds on the server leg and on NO client filter — voice, whole-garden search, the /log
-// picker and the variety picker alike. Closing it is one column in that SELECT plus a term here; it
-// is nobody's lane today, and VoiceHarvest.cropType.test.jsx pins it as a known gap so the next
-// session finds a red test rather than re-deriving this paragraph.
+// OPS-CROPTYPEALIASCLIENT-001 — AND THE ALIAS, which is what finally answers the acceptance sentence
+// this whole feature was built from: "I know it is a cantaloupe." Charentais sits under crop type
+// 'melon', display 'Melon', and no crop type anywhere is NAMED cantaloupe — the word lives only in
+// `crop_types.search_aliases`. Whole-garden search has matched that column server-side since
+// v4-croptypealias-001 (lambda/dashboard/handlers.js:1117) and NO client could, because
+// /api/varieties/crop-types did not select it. It does now, so the sentence holds on the server leg
+// and on all four client filters — voice, whole-garden search, the /log picker and the variety
+// picker. (The paragraph this replaces predicted the fix as "one column in that SELECT plus a term
+// here", and that is exactly what it was.)
+//
+// `crop_aliases` is attached to the row by the page, not read from the payload: ?view=picker carries
+// the crop-type SLUG and nothing else crop-shaped, and the alias text comes from the separate
+// vocabulary fetch. A row without it — no vocabulary loaded, or a crop type with no aliases, which
+// is most of them — yields exactly the three terms it always did.
 export function plantingAliases(p) {
-  return [p?.name, p?.variety_ref?.name, p?.variety_ref?.crop_type_slug].filter(Boolean).map(String)
+  return [p?.name, p?.variety_ref?.name, p?.variety_ref?.crop_type_slug, ...(p?.crop_aliases ?? [])]
+    .filter(Boolean).map(String)
 }
 
 // EXPORTED AND PURE so the matcher is testable without a recogniser, a network or a DOM. Returns
@@ -321,7 +327,11 @@ const TONE = {
 export default function VoiceHarvest() {
   const { fetch: apiFetch } = useApiFetch()
 
-  const [plantings, setPlantings] = useState([])
+  // OPS-CROPTYPEALIASCLIENT-001 — the raw picker payload, and the crop-type vocabulary it is
+  // decorated with below. Held apart because they arrive from two independent fetches and either may
+  // land first; the memo re-derives whenever either does.
+  const [rawPlantings, setRawPlantings] = useState([])
+  const { cropTypes } = useCropTypes()
   const [loadError, setLoadError] = useState(null)
   const [running, setRunning]     = useState(false)
   const [supported]               = useState(() => !!ctor())
@@ -384,6 +394,30 @@ export default function VoiceHarvest() {
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
+  // OPS-CROPTYPEALIASCLIENT-001 — DECORATE THE ROWS, don't thread a map through the matchers.
+  //
+  // plantingAliases() is consumed by six call sites, four of them exported pure helpers that take
+  // `plantings` and nothing else (matchPlantings, namesAPlantingExactly, resolveOneBreath,
+  // resolveCommandCollision) plus fuzzyMatch, which takes it as an injected function. Adding a
+  // vocabulary parameter would have to travel through every one of those signatures and their tests,
+  // and any call site that forgot it would silently match less than its neighbour — the exact drift
+  // the shared cropTypeTerms() helper exists to prevent on the typed surfaces. Attaching the terms to
+  // the ROW instead means every layer (strict, learned, folded, fuzzy, one-breath, the teach picker's
+  // own filter) sees them without knowing they exist.
+  //
+  // The slug stays on the row and is still a term in its own right, so a planting whose crop type is
+  // missing from the vocabulary — or the whole vocabulary failing to load — matches exactly what it
+  // matched before. display_name is deliberately NOT added: it was built, measured to be the Title
+  // Case of the slug for every type in the vocabulary, and reverted (see the note on plantingAliases).
+  // Aliases are the opposite case — "cantaloupe" shares no characters with "melon", which is why this
+  // fetch now carries something the slug cannot.
+  const plantings = useMemo(() => {
+    const bySlug = new Map((cropTypes ?? []).map((c) => [c.slug, c]))
+    return rawPlantings.map((p) => {
+      const aliases = splitCropAliases(bySlug.get(p?.variety_ref?.crop_type_slug)?.search_aliases)
+      return aliases.length ? { ...p, crop_aliases: aliases } : p
+    })
+  }, [rawPlantings, cropTypes])
   useEffect(() => { plantingsRef.current = plantings }, [plantings])
   useEffect(() => { runningRef.current = running }, [running])
 
@@ -501,7 +535,7 @@ export default function VoiceHarvest() {
     // consumer and the census in lambda/plants/grid-view.test.js is extended to say so. Fields read
     // here: id, name, archived_at, variety_ref.{name,crop_type_slug,default_unit}. All present.
     apiFetch('/api/plants?view=picker')
-      .then((r) => { if (live) setPlantings((r?.plants ?? r ?? []).filter((p) => !p.archived_at)) })
+      .then((r) => { if (live) setRawPlantings((r?.plants ?? r ?? []).filter((p) => !p.archived_at)) })
       .catch((e) => { if (live) setLoadError(e?.message || 'Could not load your plantings') })
 
     // V5-VOICEALIAS-001 — learned mishearings, fetched ALONGSIDE the plantings rather than gating

@@ -17,7 +17,15 @@ const SAMPLE = {
   '/api/locations': [{ id: 'l1', name: 'Greenhouse Bench' }, { id: 'l2', name: 'Pasture Bed' }],
   '/api/varieties': [{ id: 'v1', name: 'Sungold', group: 'tomato' }],
 }
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: async (path) => SAMPLE[path] ?? [] }) }))
+// `fetch` is defined ONCE in the factory, not per useApiFetch() call, because the real hook returns
+// a useCallback'd function whose identity is stable across renders (lib/api.js:310) and a mock that
+// mints a new one every render does not model it. Any consumer with `[fetch]` in an effect dep array
+// then re-runs that effect on every render — Search now mounts useCropTypes, which sets state in
+// exactly such an effect, so the per-call form spins forever and the suite HANGS rather than failing.
+vi.mock('../lib/api.js', () => {
+  const fetch = async (path) => SAMPLE[path] ?? []
+  return { useApiFetch: () => ({ fetch }) }
+})
 vi.mock('../lib/transcribe.js', () => ({ isTranscriptionSupported: () => false, startLiveTranscription: () => ({ stop() {}, cancel() {} }) }))
 
 import Search from '../pages/Search.jsx'

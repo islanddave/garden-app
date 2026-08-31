@@ -49,8 +49,12 @@ const HANDLERS = readdirSync(__dirname)
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
+// OPS-CROPTYPEALIASCLIENT-001 adds search_aliases. It was already contracted in the DASHBOARD
+// directory's copy of this file (added by migration v4-croptypealias-001, verified present on prod
+// AND staging 2026-08-28); this Lambda began reading it when the crop-types vocab route widened its
+// projection so a client filter can finally answer "cantaloupe".
 const AUDIT_COLUMNS = {
-  crop_types: ['category', 'default_lifecycle', 'deleted_at', 'display_name', 'dtm_basis', 'slug', 'sort_order'],
+  crop_types: ['category', 'default_lifecycle', 'deleted_at', 'display_name', 'dtm_basis', 'search_aliases', 'slug', 'sort_order'],
 };
 
 const CROP_TYPES_COLUMNS = AUDIT_COLUMNS.crop_types;
@@ -110,8 +114,12 @@ const UNALIASED_ARMS = [
     file: 'index.js',
     // GET /api/varieties/crop-types — the controlled vocabulary the planting form renders.
     // sort_order and category exist only for this list; nothing else in the repo reads them.
-    pin: /SELECT slug, display_name, default_lifecycle, category, sort_order, dtm_basis\s+FROM public\.crop_types\s+WHERE deleted_at IS NULL\s+ORDER BY sort_order ASC, display_name ASC/,
-    columns: ['slug', 'display_name', 'default_lifecycle', 'category', 'sort_order', 'dtm_basis', 'deleted_at'],
+    // search_aliases is the OPS-CROPTYPEALIASCLIENT-001 widening: it is matched against but never
+    // rendered, which the client half pins (src/__tests__/cropTypeAliasClient.test.jsx). This is
+    // the only response shape in the repo that carries the column — the dashboard's search SELECTs
+    // still must not, and lambda/dashboard/crop-types-columns.test.js still asserts that.
+    pin: /SELECT slug, display_name, default_lifecycle, category, sort_order, dtm_basis, search_aliases\s+FROM public\.crop_types\s+WHERE deleted_at IS NULL\s+ORDER BY sort_order ASC, display_name ASC/,
+    columns: ['slug', 'display_name', 'default_lifecycle', 'category', 'sort_order', 'dtm_basis', 'search_aliases', 'deleted_at'],
   },
   {
     file: 'index.js',

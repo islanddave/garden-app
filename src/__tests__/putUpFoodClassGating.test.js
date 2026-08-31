@@ -95,9 +95,10 @@ describe('every call site asks for the scope it should', () => {
       .map(m => ({ file: relative(root, p), args: m[1].trim() })))
 
   it('found the call sites it is meant to be auditing', () => {
-    // Four today: VarietyPicker, VarietyEdit, ProjectsAdminClassify, PutUp. A zero here would make
-    // every assertion below vacuous, which is exactly how this class of guard rots.
-    expect(callSites.length).toBeGreaterThanOrEqual(4)
+    // Seven today: VarietyPicker, VarietyEdit, ProjectsAdminClassify, PutUp, and the three
+    // OPS-CROPTYPEALIASCLIENT-001 additions (Search, PlantingSelect, VoiceHarvest). A zero here
+    // would make every assertion below vacuous, which is exactly how this class of guard rots.
+    expect(callSites.length).toBeGreaterThanOrEqual(7)
   })
 
   it('only the Put-Up crop field opts into the full vocabulary', () => {
@@ -105,12 +106,27 @@ describe('every call site asks for the scope it should', () => {
     expect(optedIn).toEqual(['src/pages/PutUp.jsx'])
   })
 
-  it('every other call site takes the garden default', () => {
-    const wrong = callSites.filter(c => c.file !== 'src/pages/PutUp.jsx' && c.args !== '')
+  it('no other call site names a scope at all', () => {
+    // WIDENED FROM `args !== ''` BY OPS-CROPTYPEALIASCLIENT-001, and narrowed back to the thing this
+    // guard is actually about. The old form read "pass no options whatsoever", which was the same
+    // assertion as long as `scope` was the only option there was; `enabled` is now a second one and
+    // PlantingSelect passes it (it must not fetch before it is typed into — BUG-PLANTFETCHSILENT-001).
+    // The protection is unchanged in the direction that matters: naming `scope` outside PutUp still
+    // reds, whatever value it is given, so scope:'all' and a typo'd scope alike are still caught.
+    const wrong = callSites.filter(c => c.file !== 'src/pages/PutUp.jsx' && /\bscope\b/.test(c.args))
     expect(
       wrong.map(c => `${c.file}: useCropTypes(${c.args})`),
       'a garden picker must not pass a scope — the default is the safe one',
     ).toEqual([])
+  })
+
+  it('the widened guard still catches a scope smuggled in beside another option', () => {
+    // Non-vacuity for the rewrite above: prove the predicate reds on the shape it now has to catch,
+    // rather than trusting that it would. This is the exact string the old `args !== ''` form would
+    // also have caught and the new one must not lose.
+    const smuggled = [{ file: 'src/pages/Search.jsx', args: "{ enabled: true, scope: 'all' }" }]
+    expect(smuggled.filter(c => c.file !== 'src/pages/PutUp.jsx' && /\bscope\b/.test(c.args)))
+      .toHaveLength(1)
   })
 })
 
