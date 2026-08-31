@@ -37,6 +37,11 @@
 //     tell a refusal from a success.
 //   * Every outcome is announced on THREE channels — a large banner, a distinct haptic, and a
 //     permanent ledger row. BUG-VOICEFAILSILENT-001 (Dave, verbatim): "a silent fail is a lost log."
+//     The strip counts BOTH halves ("12 saved · 3 not captured") because the banner is a single
+//     overwritten slot: a refusal he did not glance at is erased by the next utterance, and the
+//     count is the only surface that can still answer "did everything I said get logged?".
+//   * The screen going dark takes all three channels at once, so a Screen Wake Lock is held for the
+//     run (BUG-VOICESCREENSLEEP-001). It is a precondition for the line above, not an optimisation.
 //   * Every committed row carries an Undo for the whole session, not just the last one.
 //   * A save that FAILS releases the write cooldown, so saying "next" again actually retries rather
 //     than being swallowed for 1500 ms as a transport duplicate.
@@ -66,6 +71,15 @@ export const RUN_BUDGET = { restarts: 600, runMs: 30 * 60 * 1000, label: '30 min
 function ctor() {
   if (typeof window === 'undefined') return null
   return window.SpeechRecognition || window.webkitSpeechRecognition || null
+}
+
+// BUG-VOICESCREENSLEEP-001 — one reader for "is this document hidden", because four separate places
+// now branch on it and they must not disagree. Both spellings are consulted: `visibilityState` is
+// the one the spec defines the platform behaviour against and the one a test can redefine, `hidden`
+// is the shorthand, and an environment where they disagree should be treated as hidden either way.
+function isHidden() {
+  if (typeof document === 'undefined') return false
+  return document.visibilityState === 'hidden' || document.hidden === true
 }
 
 // What a planting can be called out loud. Crop type is included for the reason V4-SEARCHCROPTYPE-001
@@ -131,10 +145,14 @@ export function matchPlantings(plantings, spoken) {
 //     record, which is the expensive direction. Measured on the same 239: zero number-WORD utterances
 //     key-match any alias, so the bound costs nothing today and caps what it can cost later.
 //
-// Blast radius, measured not reasoned: of the digit utterances 1..3000, exactly four key-match a live
-// alias — 184, 1184, 1844 and 1884 — and all four resolve to the one planting named 1884, because
-// looseKey collapses the repeated 8. Nothing under 184 fires, so no plausible spoken count is
-// reachable by this at all.
+// Blast radius, measured not reasoned: of the digit utterances 1..3000, exactly four key-matched a
+// live alias — 184, 1184, 1844 and 1884 — all four resolving to the one planting named 1884. Three
+// of those four were an artefact of `looseKey` collapsing runs of repeated characters, which is
+// right for doubled letters and wrong for digit runs (BUG-LOOSEKEYREPEAT-001). With that collapse
+// removed only 1884 itself key-matches, so the reachable set gets STRICTLY SMALLER and this bound
+// gets tighter, never looser — the safety argument above does not depend on which side of that fix
+// you read it from. Nothing under 184 fires either way, so no plausible spoken count is reachable by
+// this at all.
 export function namesAPlantingExactly(plantings, spoken) {
   const needle = looseKey(spoken)
   if (!needle || !/^\d+$/.test(needle)) return false
@@ -296,6 +314,10 @@ export default function VoiceHarvest() {
   const [heard, setHeard]           = useState(null)     // the pending, not-yet-settled utterance
   const [status, setStatus]         = useState({ tone: 'idle', text: 'Tap Start, then say a crop.' })
   const [endsAt, setEndsAt]         = useState(null)
+  // BUG-VOICESCREENSLEEP-001 — whether the screen is being held awake, said out loud rather than
+  // assumed. A wake lock can be refused (low battery, insecure context, no API at all) and a refusal
+  // that presents as a success is the same silent fail this page exists to close.
+  const [screenNote, setScreenNote] = useState(null)
 
   // The recogniser and the run's own bookkeeping. Refs, not state: the recogniser callbacks fire
   // outside React's render cycle and must read CURRENT values, never the ones closed over at arm().
@@ -305,6 +327,16 @@ export default function VoiceHarvest() {
   const wallRef     = useRef(null)
   const restartsRef = useRef(0)
   const stopRef     = useRef(false)
+  // BUG-VOICESCREENSLEEP-001. `wakeRef` is the live WakeLockSentinel or null; `hiddenRef` records
+  // that THIS run was interrupted by the page hiding, so the interruption is announced once rather
+  // than once per event that notices it (Chrome's own `aborted`, our visibilitychange listener and
+  // `onend` can all arrive for the same screen timeout). `runningRef` exists because the visibility
+  // listener fires outside React's render cycle and must read the current run state.
+  const wakeRef     = useRef(null)
+  const hiddenRef   = useRef(false)
+  const runningRef  = useRef(false)
+  // BUG-VOICEFAILSILENT-001 R4 — how many cues the platform REFUSED since the last report.
+  const refusedRef  = useRef(0)
 
   // THE RECORD UNDER CONSTRUCTION, mirrored into refs. `setState` updaters are not a synchronous
   // read — a ref is the only synchronous truth — and the save path has to know, at the instant the
@@ -328,8 +360,115 @@ export default function VoiceHarvest() {
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
   useEffect(() => { plantingsRef.current = plantings }, [plantings])
+  useEffect(() => { runningRef.current = running }, [running])
 
   const say = useCallback((tone, text) => setStatus({ tone, text }), [])
+
+  // BUG-VOICEFAILSILENT-001 R4 — FIRE A CUE AND READ WHETHER IT LANDED.
+  //
+  // `haptic()` already returns true only when the platform accepted the vibration (haptics.js), and
+  // every call site on this page threw that answer away. Chrome refuses on a hidden document and
+  // drops the request outright when the ringer is on silent — which is precisely the pocketed-phone
+  // case the whole vocabulary was designed for, so the channel can be dead exactly when it is the
+  // only one left. Counting the refusals is what makes the design honest about its own reach.
+  //
+  // ONLY AN EXPLICIT `false` COUNTS. That is the module's documented refusal value; anything else,
+  // including a test double that returns nothing, is not evidence the platform said no.
+  const cue = useCallback((fire) => { if (fire() === false) refusedRef.current += 1 }, [])
+
+  // BUG-VOICEFAILSILENT-001 R3 — THE CHANNEL THAT SURVIVES NOT LOOKING.
+  //
+  // `status` is one slot and `say()` replaces it, so a refusal is erased by the next utterance that
+  // parses cleanly: "Nothing matched" then "3 count" reads green, and the failure is gone before he
+  // glances. Dave's own worst case is reachable in two utterances. A miss row is appended for every
+  // outcome the app ANNOUNCES AS A FAILURE, so the strip's header can answer the only question that
+  // matters at the end of a session — "did everything I said get logged?".
+  //
+  // AN AMBIGUOUS MATCH IS DELIBERATELY NOT A MISS. It leaves a candidate list on screen and is
+  // normally resolved by the next utterance; counting it would inflate "not captured" with things
+  // that were captured a second later, and a count that overstates is a count he stops reading.
+  const noteMiss = useCallback((text) => {
+    setRows((r) => [...r, { kind: 'miss', text, at: Date.now() }])
+  }, [])
+
+  // R4's other half. Reported when the document next becomes VISIBLE, because that is the first
+  // moment the report can be read — and because the refusals it is reporting were mostly caused by
+  // the document being hidden in the first place. Returns the count so the caller can decide whether
+  // to spend the banner on it. It is a NOTE, not a miss: nothing was lost, a channel was, and
+  // folding it into "not captured" would make that number mean two different things.
+  const reportRefusedCues = useCallback(() => {
+    const n = refusedRef.current
+    if (!n) return 0
+    refusedRef.current = 0
+    setRows((r) => [...r, {
+      kind: 'note', at: Date.now(),
+      text: `Your phone did not buzz for ${n} cue${n === 1 ? '' : 's'} — this list is the record of them.`,
+    }])
+    return n
+  }, [])
+
+  // ── BUG-VOICESCREENSLEEP-001 ────────────────────────────────────────────────────────────────────
+  //
+  // On Chrome Android the screen turning off kills the capture AND every non-visual cue in one event,
+  // and it is the most likely way a hands-free run actually dies. Sourced from Chromium rather than
+  // assumed: speech_recognition.cc aborts recognition unconditionally under #if BUILDFLAG(IS_ANDROID)
+  // when the page hides, vibration_controller.cc returns false from navigator.vibrate on a hidden
+  // document and re-checks it per pulse, hidden-tab timer throttling stalls the settle-window tick
+  // below, and the banner is on a dark screen. The page had no handling at all: it swallowed the one
+  // signal the platform emits for this ('aborted', treated as routine) and then re-armed a mic Chrome
+  // would abort again, burning the restart budget until it reported "session limit reached".
+  //
+  // FEATURE-DETECTED, AND A REFUSAL IS SAID OUT LOUD. Wake Lock is absent in some browsers and in any
+  // insecure context, and it can be refused at request time (low battery). Its absence must degrade,
+  // never throw — but it must also never be assumed to have held, because the whole cue stack is
+  // downstream of it.
+  const requestWakeLock = useCallback(async () => {
+    const wl = typeof navigator !== 'undefined' ? navigator.wakeLock : null
+    if (!wl || typeof wl.request !== 'function') {
+      setScreenNote('This browser will not hold the screen awake — listening stops when it sleeps.')
+      return
+    }
+    try {
+      wakeRef.current = await wl.request('screen')
+      setScreenNote('Screen held awake while listening.')
+    } catch (err) {
+      wakeRef.current = null
+      setScreenNote(`The screen may sleep — ${err?.message || 'the wake lock was refused'}. Listening stops if it does.`)
+    }
+  }, [])
+
+  const releaseWakeLock = useCallback(() => {
+    const sentinel = wakeRef.current
+    wakeRef.current = null
+    setScreenNote(null)
+    // release() is async and rejects if the sentinel is already gone; neither outcome is worth a
+    // banner, and a teardown must not be able to throw.
+    if (sentinel) { try { sentinel.release()?.catch?.(() => {}) } catch { /* already released */ } }
+  }, [])
+
+  // Detach BEFORE aborting, for the reason the unmount path does: a teardown still dispatches, and a
+  // final arriving after we have decided to stop would commit into a session nobody is watching.
+  const releaseRecogniser = useCallback(() => {
+    const rec = recRef.current
+    recRef.current = null
+    if (!rec) return
+    rec.onstart = null; rec.onresult = null; rec.onerror = null; rec.onend = null; rec.onnomatch = null
+    try { rec.abort() } catch { /* already gone */ }
+  }, [])
+
+  // ONE announcement per interruption. Chrome's `aborted`, our visibilitychange listener and `onend`
+  // can each notice the same screen timeout, and three miss rows for one event would make the count
+  // this row exists to provide untrustworthy. The haptic is fired even though a hidden document is
+  // exactly where Chrome refuses it — the refusal is then counted and reported by R4, which is more
+  // honest than not trying and is the only way the report can be true.
+  const noteScreenSleep = useCallback(() => {
+    if (hiddenRef.current) return false
+    hiddenRef.current = true
+    recordVoiceMark(VOICE_DEBUG_SRC, 'hidden')
+    cue(hapticSaveFailed)
+    noteMiss('The screen went off — listening stopped there, and anything said after it was not captured.')
+    return true
+  }, [cue, noteMiss])
 
   useEffect(() => {
     let live = true
@@ -410,8 +549,9 @@ export default function VoiceHarvest() {
     // silently lost, which is the one failure mode this flow is least allowed to have.
     if (!plant || !q) {
       const missing = !plant && !q ? 'a crop and a quantity' : !plant ? 'a crop' : 'a quantity'
-      hapticSaveFailed()
+      cue(hapticSaveFailed)
       say('fail', `Not saved — still need ${missing}. Say it, then "next".`)
+      noteMiss(`Not saved — still need ${missing}.`)
       debRef.current?.invalidateLastWrite(token)
       return
     }
@@ -450,33 +590,41 @@ export default function VoiceHarvest() {
       // green because the fixture had been written to match the client instead of the producer.
       // `eventId` is kept as a tail read only because CaptureFlow.jsx:443 tolerates both shapes.
       const eventId = res?.id ?? res?.eventId ?? null
-      hapticSaveCommitted()
-      const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ''}`
+      cue(hapticSaveCommitted)
+      // BUG-VOICEWEIGHTLESSNOTE-001 — A WEIGHTLESS SAVE SAYS SO. 1,079 of 1,080 prod harvests carry a
+      // weight, so a row with none is far likelier to be a capture failure than an intention: the
+      // weight utterance was misheard, or the session boundary ate it, and the save announced plain
+      // success anyway. A NOTE, NEVER A GATE — the row is explicit that a genuine count-only harvest
+      // must still save cleanly, so this changes no payload, blocks nothing and keeps the `ok` tone
+      // (it DID save). The note travels into the ledger row rather than only the banner, because the
+      // banner is the channel that gets overwritten and this is exactly a thing to reconcile later.
+      const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ' · no weight was said'}`
       say('ok', `Saved ${label} — ${said}`)
-      setRows((r) => [...r, { eventId, label, said, at: Date.now() }])
+      setRows((r) => [...r, { kind: 'save', eventId, label, said, at: Date.now() }])
       clearRecord()
     } catch (err) {
       // The row did not land. Say so on every channel, keep the record so nothing is retyped, and
       // release the cooldown so "next" is a real retry.
-      hapticSaveFailed()
+      cue(hapticSaveFailed)
       say('fail', `NOT SAVED — ${err?.message || 'the save failed'}. Say "next" to try again.`)
+      noteMiss(`NOT SAVED — ${err?.message || 'the save failed'}.`)
       debRef.current?.invalidateLastWrite(token)
     }
-  }, [apiFetch, clearRecord, say])
+  }, [apiFetch, clearRecord, cue, noteMiss, say])
 
   const undoRow = useCallback(async (idx) => {
     const row = rows[idx]
     if (!row?.eventId) return
     try {
       await apiFetch(`/api/events/${row.eventId}`, { method: 'DELETE' })
-      hapticUndoApplied()
+      cue(hapticUndoApplied)
       setRows((r) => r.map((x, i) => (i === idx ? { ...x, undone: true } : x)))
       say('warn', `Removed ${row.label} — ${row.said}`)
     } catch (err) {
-      hapticSaveFailed()
+      cue(hapticSaveFailed)
       say('fail', `Could not remove that row — ${err?.message || 'the delete failed'}`)
     }
-  }, [apiFetch, rows, say])
+  }, [apiFetch, cue, rows, say])
 
   // ── one settled utterance ───────────────────────────────────────────────────────────────────────
   const applyCommitted = useCallback((raw, meta) => {
@@ -519,7 +667,7 @@ export default function VoiceHarvest() {
       // The bound is whole-key equality on a digit literal, which by construction cannot readmit the
       // substring reselection this gate exists to stop; see namesAPlantingExactly.
       heldNumRef.current = partial.value; setHeldNum(partial.value)
-      hapticDigitAccepted()
+      cue(hapticDigitAccepted)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-number ${partial.value} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
       say('warn', `${partial.value} — now say the unit: “count”, or “grams”.`)
       return
@@ -537,6 +685,9 @@ export default function VoiceHarvest() {
       // here would be overwritten by the selection message before it could ever be read.
       dropped = heldNumRef.current
       heldNumRef.current = null; setHeldNum(null)
+      // R3 — and a PERMANENT row, because the note below rides on a banner the next utterance
+      // overwrites. A count he spoke and the app threw away is the definition of a lost log.
+      noteMiss(`Dropped ${dropped} — no unit was said after it.`)
     }
     const dropNote = dropped != null ? ` (dropped ${dropped} — no unit was said)` : ''
 
@@ -568,7 +719,7 @@ export default function VoiceHarvest() {
         const label = one.planting.name || one.planting.variety_ref?.name
         const said = one.values.map((v) => `${v.value} ${v.unit}`).join(' · ')
         const implausible = one.values.some((v) => v.implausible)
-        hapticDigitAccepted()
+        cue(hapticDigitAccepted)
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath ${label} ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
         // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
         // words did not settle, so Dave sees the reading it picked before "next" commits it.
@@ -597,7 +748,7 @@ export default function VoiceHarvest() {
       // phrase that already resolved exactly.
       unmatchedRef.current = rescued === null && hits.length === 1 ? null : result.text
       if (hits.length === 0) {
-        hapticDigitRejected()
+        cue(hapticDigitRejected)
         // A FAILED RE-SELECTION MUST NOT LEAVE THE OLD CROP SELECTED (BUG-VOICEFAILSILENT-001).
         // Measured sequence: "Suyo Long" selects, "Marketmore" is misheard and matches nothing, the
         // banner says so — and then "three count" and "next" each overwrite that one message, and
@@ -617,6 +768,7 @@ export default function VoiceHarvest() {
         setCandidates([])
         setUnmatched(result.text)
         say('fail', `Nothing matched “${result.text}”. Say it again, or pick it below to teach me.${dropNote}`)
+        noteMiss(`Nothing matched “${result.text}”.`)
         return
       }
       setUnmatched(null)
@@ -627,8 +779,8 @@ export default function VoiceHarvest() {
         // tell, so a rescue onto the WRONG plant delivered the success cue and the next "next" wrote
         // a harvest against it. `rescued` is exactly the flag that distinguishes them, and it was
         // already being computed for the banner — the cue just was not reading it.
-        if (rescued !== null) hapticMatchUncertain()
-        else hapticDigitAccepted()
+        if (rescued !== null) cue(hapticMatchUncertain)
+        else cue(hapticDigitAccepted)
         setSelected(hits[0]); selectedRef.current = hits[0]
         setCandidates([])
         // NO DEFAULT QUANTITY IS SEEDED HERE, and that is a correction rather than an omission.
@@ -649,7 +801,7 @@ export default function VoiceHarvest() {
           : `${chosen} — now say the count or the weight.`) + dropNote)
         return
       }
-      hapticDigitRejected()
+      cue(hapticDigitRejected)
       // AMBIGUOUS IS ALSO UNCONFIRMED, so the previous crop goes here too. A list on screen is a
       // question, not an answer — until one is tapped the user has chosen nothing, and leaving the
       // old plant selected behind the list is the same silent-wrong-save route as the miss above.
@@ -670,7 +822,7 @@ export default function VoiceHarvest() {
     const joinNote = result.joined ? ' (heard in two parts)' : ''
 
     if (result.kind === 'quantity') {
-      hapticDigitAccepted()
+      cue(hapticDigitAccepted)
       const next = { value: result.value, unit: result.unit }
       setQty(next); qtyRef.current = next
       say(result.implausible || dropped != null ? 'warn' : 'ok',
@@ -680,7 +832,7 @@ export default function VoiceHarvest() {
     }
 
     if (result.kind === 'weight') {
-      hapticDigitAccepted()
+      cue(hapticDigitAccepted)
       const next = { value: result.value, unit: result.unit }
       setWeight(next); weightRef.current = next
       say(result.implausible || dropped != null ? 'warn' : 'ok',
@@ -695,7 +847,7 @@ export default function VoiceHarvest() {
         return
       }
       if (result.command === 'clear_field') {
-        hapticDigitAccepted()
+        cue(hapticDigitAccepted)
         clearRecord()
         say('warn', 'Cleared. Say a crop to start the next one.')
         return
@@ -717,12 +869,16 @@ export default function VoiceHarvest() {
     // after a number together with the amount ("1884 two count"). A bare "Didn't catch that" is a
     // dead end there: the recogniser heard him perfectly, so he repeats it more clearly, gets the
     // same refusal, and has no way to discover that the name is being read as part of the count.
-    hapticDigitRejected()
+    cue(hapticDigitRejected)
     const hint = result.reason === 'near-command' ? ' — say "next" again'
       : result.reason === 'ambiguous-number' ? ' — say the planting, then the amount separately'
       : ''
     say('warn', `Didn't catch that${hint}.${dropNote}`)
-  }, [clearRecord, saveRecord, say])
+    // THE HEARD TEXT GOES IN THE ROW, not just the refusal. Recovery from a mishear means knowing
+    // WHAT it heard — "Didn't catch that ← "text"" is actionable minutes later; "Didn't catch that"
+    // alone asks him to remember which of forty utterances it was.
+    noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
+  }, [clearRecord, cue, noteMiss, saveRecord, say])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
   const scheduleTickRef = useRef(null)
@@ -759,6 +915,25 @@ export default function VoiceHarvest() {
     // event, so the log shows what the browser delivered rather than what survived our own filtering.
     rec.onstart = () => { recordVoiceMark(VOICE_DEBUG_SRC, 'start') }
 
+    // OPS-VOICENOMATCH-001 — the one failure class where the engine tells us plainly that it heard
+    // speech and could not make anything of it. It was unwired, so "the recogniser gave up on that
+    // phrase" was indistinguishable from "he said nothing" in both the UI and the trace, and a
+    // platform seat sourced from Chromium establishes that it DOES fire on Chrome Android
+    // (SpeechRecognitionImpl.java maps ERROR_NO_MATCH → a distinct `nomatch` event) — correcting the
+    // received wisdom that it never fires. That makes wiring it load-bearing rather than defensive:
+    // unhandled, it is evidence lost on every occurrence.
+    //
+    // ROUTED TO THE SOFT-REJECT FAMILY, not to the terminal-error one. `nomatch` arrives with a null
+    // results list and does NOT end capture, so it is F6-shaped ("say it again"), not F1-shaped ("the
+    // mic is dead") — three channels, same as every other refusal, but claiming the mic died when it
+    // did not would be its own dishonesty.
+    rec.onnomatch = () => {
+      recordVoiceMark(VOICE_DEBUG_SRC, 'nomatch')
+      cue(hapticDigitRejected)
+      say('warn', 'Heard something but could not make it out — say it again.')
+      noteMiss('Heard something but could not make it out.')
+    }
+
     rec.onresult = (ev) => {
       recordVoiceEvent(VOICE_DEBUG_SRC, ev)
       const results = ev.results || []
@@ -784,14 +959,23 @@ export default function VoiceHarvest() {
       const e = ev?.error
       if (e === 'not-allowed' || e === 'service-not-allowed') {
         stopRef.current = true
-        hapticSaveFailed()
+        cue(hapticSaveFailed)
         say('fail', 'Microphone permission was refused. Allow the mic, then tap Start.')
+        noteMiss('The microphone was refused — capture stopped there.')
       } else if (e === 'audio-capture') {
         stopRef.current = true
-        hapticSaveFailed()
+        cue(hapticSaveFailed)
         say('fail', 'No microphone available.')
+        noteMiss('No microphone available — capture stopped there.')
+      } else if (e === 'aborted' && isHidden()) {
+        // BUG-VOICESCREENSLEEP-001 — 'aborted' IS ordinary when WE aborted (stop, unmount, the
+        // visibility release below), and it is NOT ordinary when the page is hidden and we did not
+        // ask. That is Chrome ending the session because the screen went off, which it does
+        // unconditionally on Android, and it is the single most likely way a hands-free run dies.
+        // Swallowing it as routine is what let `onend` re-arm into the dark.
+        noteScreenSleep()
       }
-      // 'no-speech' and 'aborted' are ordinary in a continuous session — onend re-arms.
+      // 'no-speech', and a VISIBLE 'aborted', are ordinary in a continuous session — onend re-arms.
     }
     rec.onend = () => {
       // Marked BEFORE sessionEnd() flushes, because the session boundary IS the evidence in
@@ -804,11 +988,20 @@ export default function VoiceHarvest() {
       // superseded by "next to the fence" instead of having already saved.
       debRef.current?.sessionEnd(Date.now())
       scheduleTick()
-      if (stopRef.current) { setRunning(false); return }
+      if (stopRef.current) { releaseWakeLock(); setRunning(false); return }
+      // BUG-VOICESCREENSLEEP-001 — NEVER RE-ARM AGAINST A HIDDEN DOCUMENT. Chrome aborts the session
+      // on every hide, so the old loop re-armed a mic that could not hear, aborted again, and burned
+      // the 600-restart budget until it reported "session limit reached" — a message describing a
+      // time budget for a failure that was nothing of the kind. `running` deliberately stays true:
+      // the user never tapped Stop, their intent is unchanged, and the visibility handler re-arms
+      // the moment the page comes back — which is also the first moment anyone could read a button.
+      if (isHidden()) { noteScreenSleep(); return }
       if (restartsRef.current >= RUN_BUDGET.restarts) {
+        releaseWakeLock()
         setRunning(false)
-        hapticSaveFailed()
+        cue(hapticSaveFailed)
         say('warn', 'Stopped — session limit reached. Tap Start to carry on.')
+        noteMiss('Stopped — session limit reached.')
         return
       }
       restartsRef.current += 1
@@ -816,24 +1009,35 @@ export default function VoiceHarvest() {
       // re-prompt. If it ever throws, hands-free is off the table and the message says so plainly
       // rather than leaving a dead mic that looks live.
       try { rec.start() } catch {
+        releaseWakeLock()
         setRunning(false)
-        hapticSaveFailed()
+        cue(hapticSaveFailed)
         say('fail', 'The mic could not restart on its own. Tap Start to keep going.')
+        noteMiss('The mic could not restart on its own — capture stopped there.')
       }
     }
     try { rec.start() } catch {
+      releaseWakeLock()
       setRunning(false)
-      hapticSaveFailed()
+      cue(hapticSaveFailed)
       say('fail', 'The mic would not start. Tap Start again.')
+      noteMiss('The mic would not start.')
     }
-  }, [say, scheduleTick])
+  }, [cue, noteMiss, noteScreenSleep, releaseWakeLock, say, scheduleTick])
 
   const start = useCallback(() => {
     stopRef.current = false
     restartsRef.current = 0
+    hiddenRef.current = false
+    runningRef.current = true
     setRunning(true)
     setRows((r) => r)   // the ledger persists across a stop/start within the visit
     say('ok', 'Listening — say a crop.')
+    // BUG-VOICESCREENSLEEP-001 — asked for HERE rather than in an effect, because this is the tap:
+    // the request is a user-gesture descendant and the sentinel it returns is what keeps the whole
+    // cue stack alive. Deliberately not awaited — a slow or refused lock must not delay the mic, and
+    // the outcome lands on the persistent screen note either way.
+    requestWakeLock()
 
     // A FRESH DEBOUNCER PER RUN. resetSession() would clear duplicate-suppression memory while a
     // pending utterance from the previous run might still be held, which its own docstring warns
@@ -843,8 +1047,13 @@ export default function VoiceHarvest() {
       onPending: (r) => setHeard(r),
       onSuppressed: (r, reason) => {
         // A swallowed command with no signal is indistinguishable from a dead mic. Say which.
+        // Only STALE leaves a miss row: a cooldown suppression means the save happened once and
+        // correctly, so counting it as "not captured" would be false.
         if (reason === 'cooldown') say('warn', 'Heard "next" twice in a moment — saved once.')
-        else if (reason === 'stale') say('warn', 'That "next" went stale and was not saved. Say it again.')
+        else if (reason === 'stale') {
+          say('warn', 'That "next" went stale and was not saved. Say it again.')
+          noteMiss('A "next" went stale and did not save.')
+        }
       },
     })
 
@@ -857,18 +1066,24 @@ export default function VoiceHarvest() {
       // The SIBLING of the restart-budget stop in onend, and cued the same way for the same reason:
       // the run ends on a timer while he is mid-sentence in a bed, which is the shape of the loss
       // this whole cue exists for. The user-initiated stop() below stays silent — he just tapped it.
-      hapticSaveFailed()
+      cue(hapticSaveFailed)
       say('warn', `Stopped after ${RUN_BUDGET.label}. Tap Start to carry on.`)
+      noteMiss(`Stopped after ${RUN_BUDGET.label}.`)
+      releaseWakeLock()
     }, RUN_BUDGET.runMs)
-  }, [applyCommitted, arm, say])
+  }, [applyCommitted, arm, cue, noteMiss, releaseWakeLock, requestWakeLock, say])
 
   const stop = useCallback(() => {
     stopRef.current = true
+    hiddenRef.current = false
     if (wallRef.current) { clearTimeout(wallRef.current); wallRef.current = null }
     setEndsAt(null)
     try { recRef.current?.stop() } catch { /* ignore */ }
+    // Released here as well as in onend: a stop() that throws, or one with no recogniser to stop,
+    // must not leave the screen pinned awake for the rest of the visit.
+    releaseWakeLock()
     say('idle', 'Stopped.')
-  }, [say])
+  }, [releaseWakeLock, say])
 
   // RELEASE THE MIC ON UNMOUNT, however the page is left. abort() rather than stop(): stop() is the
   // graceful shutdown that asks the engine to FINALISE, and a final dispatched into an unmounted
@@ -877,18 +1092,70 @@ export default function VoiceHarvest() {
     stopRef.current = true
     if (wallRef.current) clearTimeout(wallRef.current)
     if (tickRef.current) clearTimeout(tickRef.current)
-    const rec = recRef.current
-    if (rec) { rec.onresult = null; rec.onend = null; rec.onerror = null; try { rec.abort() } catch { /* gone */ } }
-    recRef.current = null
+    releaseRecogniser()
+    releaseWakeLock()
     debRef.current = null
-  }, [])
+  }, [releaseRecogniser, releaseWakeLock])
+
+  // ── BUG-VOICESCREENSLEEP-001: the only event that tells us the run was interrupted ──────────────
+  //
+  // A screen wake lock is released BY THE PLATFORM whenever the document hides — that is spec
+  // behaviour, not a bug — so coming back always needs a fresh request; a lock acquired once and
+  // assumed to persist is a lock that stops working the first time he takes a call.
+  //
+  // Registered unconditionally rather than only while running, so the R4 refused-cue report can be
+  // delivered on the next visible moment even if the run has already ended.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const onVisibility = () => {
+      if (isHidden()) {
+        wakeRef.current = null          // already released by the platform; nothing of ours to free
+        if (!runningRef.current) return
+        // Release the mic rather than leave one armed behind a dark screen. On Android Chrome has
+        // already aborted it; on every other platform this is what stops a live recogniser that
+        // nobody can see is running.
+        releaseRecogniser()
+        noteScreenSleep()
+        return
+      }
+      if (runningRef.current) requestWakeLock()
+      const resumed = hiddenRef.current
+      if (resumed) {
+        hiddenRef.current = false
+        // The miss row was written when the interruption happened; this is the recovery. Re-arming
+        // without a fresh tap is the same gesture-free re-arm `onend` already does — sticky user
+        // activation from the Start tap survives for the document's lifetime — and it is what makes
+        // "the screen went off" a recoverable event rather than the end of the weigh-in.
+        if (runningRef.current) {
+          arm()
+          say('warn', 'The screen went off — listening stopped. Listening again now.')
+        }
+      }
+      const refused = reportRefusedCues()
+      // The banner is one slot: the resume message is the more urgent of the two, and the refused-cue
+      // report is durable in the strip either way, so it only takes the banner when nothing else needs it.
+      if (refused && !resumed) {
+        say('warn', `Your phone did not buzz for ${refused} cue${refused === 1 ? '' : 's'} — check the list below.`)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [arm, noteScreenSleep, releaseRecogniser, reportRefusedCues, requestWakeLock, say])
 
   const tone = TONE[status.tone] ?? TONE.idle
-  const liveRows = rows.filter((r) => !r.undone)
+  const savedCount = rows.filter((r) => r.kind === 'save' && !r.undone).length
+  const missCount  = rows.filter((r) => r.kind === 'miss').length
+  // BUG-VOICEFAILSILENT-001 R3 — ONE LINE THAT ANSWERS THE ONLY QUESTION HE HAS AT THE END OF A BED.
+  // "12 saved · 3 not captured" is the reconciliation surface this flow has never had: the banner
+  // said each of those three things once and was overwritten, so without a count the misses are
+  // unrecoverable by design. The second half appears only when there IS one — a bare "12 saved"
+  // stays the shape of the old label on a clean session rather than adding "· 0 not captured"
+  // noise to every glance.
   const totalLabel = useMemo(() => {
-    if (!liveRows.length) return null
-    return `${liveRows.length} harvest${liveRows.length === 1 ? '' : 's'} saved this session`
-  }, [liveRows.length])
+    if (!savedCount && !missCount) return null
+    const saved = `${savedCount} saved`
+    return missCount ? `${saved} · ${missCount} not captured` : saved
+  }, [savedCount, missCount])
 
   const card = { background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 12, marginBottom: 12 }
 
@@ -1016,12 +1283,20 @@ export default function VoiceHarvest() {
           The mic stops on its own after {RUN_BUDGET.label}.
         </p>
       )}
+      {/* BUG-VOICESCREENSLEEP-001 — whether the screen is being held awake, stated rather than
+          assumed. A wake lock that was refused and a wake lock that is holding look identical from
+          inside the app, and everything else on this page depends on which it is. */}
+      {screenNote && (
+        <p data-testid="voice-harvest-screen" style={{ fontSize: '0.75rem', color: P.light, margin: '0 0 12px' }}>
+          {screenNote}
+        </p>
+      )}
 
       <div style={card} data-testid="voice-harvest-ledger">
         <div style={{ fontSize: '0.85rem', fontWeight: 700, color: P.dark, marginBottom: 6 }}>
           {totalLabel ?? 'Nothing saved yet'}
         </div>
-        {rows.map((r, i) => (
+        {rows.map((r, i) => (r.kind === 'save' ? (
           <div
             key={`${r.at}-${i}`}
             data-testid="voice-harvest-row"
@@ -1050,7 +1325,25 @@ export default function VoiceHarvest() {
               </button>
             )}
           </div>
-        ))}
+        ) : (
+          // A MISS ROW, and a REFUSED-CUE NOTE, in the same strip as the saves — because the strip is
+          // the only thing on this page that is still true a minute later, and a reconciliation
+          // surface that lists only the successes cannot reconcile anything. Informational: never
+          // blocking, never dismissable, no micro-decision, no focus steal. A note is styled like a
+          // miss but is NOT counted in the header — nothing was lost, a channel was.
+          <div
+            key={`${r.at}-${i}`}
+            data-testid={r.kind === 'note' ? 'voice-harvest-note' : 'voice-harvest-miss'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0',
+              borderTop: i === 0 ? 'none' : `1px solid ${P.border}`,
+            }}
+          >
+            <span style={{ flex: 1, fontSize: '0.85rem', color: P.light, fontStyle: 'italic' }}>
+              {r.text}
+            </span>
+          </div>
+        )))}
       </div>
     </div>
   )

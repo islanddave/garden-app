@@ -189,29 +189,28 @@ describe('(c) which recogniser error codes fire in the field', () => {
     expect(trace()).toContain('voiceharvest  error no-speech')
   })
 
-  it('GAP: no onnomatch HANDLER is attached, so the event has nowhere to land', async () => {
-    // SCOPE, stated because it is easy to over-read. This asserts the page attaches no handler. It
-    // says NOTHING about whether Chrome on Android ever FIRES onnomatch — that is a device question
-    // and jsdom has no opinion on it. Whichever way the device answers, an unattached handler means
-    // speech that produced no result is indistinguishable from silence in the trace.
+  it('onnomatch IS handled — the engine giving up is not the same as silence', async () => {
+    // OPS-VOICENOMATCH-001, CLOSED. This was a deliberately-inverted gap pin: it asserted
+    // `rec.onnomatch` was undefined and instructed whoever wired the handler to flip it rather than
+    // delete it, so the pin would report the fix instead of being quietly removed with it.
     //
-    // The three siblings are asserted alongside so the pin cannot pass by being blind: if `arm()`
+    // SCOPE IS UNCHANGED, and is easy to over-read in the other direction now. This asserts the page
+    // ATTACHES a handler and that firing it records a mark. It says NOTHING about whether Chrome on
+    // Android ever FIRES the event — that is a device question and jsdom has no opinion on it. (The
+    // platform seat sourced the answer from Chromium: ERROR_NO_MATCH maps to a distinct `nomatch`
+    // event on Android. That is a source read, not a trace from Dave's phone.)
+    //
+    // The four siblings are asserted alongside so the pin cannot pass by being blind: if `arm()`
     // stopped attaching handlers altogether this goes red rather than quietly agreeing.
-    //
-    // TO WHOEVER CLOSES OPS-VOICENOMATCH-001: this test is SUPPOSED to fail when you wire the
-    // handler ("expected [Function] to be undefined", verified by mutation). It records a known gap,
-    // not a requirement. Invert it — assert `typeof rec.onnomatch === 'function'` and that firing it
-    // puts a `nomatch` line in the trace — rather than deleting it.
     const rec = await startListening()
     expect(typeof rec.onstart).toBe('function')
     expect(typeof rec.onresult).toBe('function')
     expect(typeof rec.onerror).toBe('function')
     expect(typeof rec.onend).toBe('function')
-    expect(rec.onnomatch).toBeUndefined()
+    expect(typeof rec.onnomatch).toBe('function')
 
-    // The consequence: firing it the way Chrome would records nothing at all.
-    await act(async () => { rec.onnomatch?.({}) })
-    expect(kinds()).not.toContain('nomatch')
+    await act(async () => { rec.onnomatch({}) })
+    expect(kinds()).toContain('nomatch')
   })
 })
 
