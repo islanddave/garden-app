@@ -31,8 +31,13 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: apiFetchSpy }),
 }))
 
+// V4-REANCHORFLAG-001: useAuthOptional is owed because EventDetail's edit form now mounts
+// PlantingSelect, which self-fetches through useCachedFetch. Null user on purpose — that puts
+// the hook on its plain fetch branch rather than the module-level dataCache, so one test's
+// plantings cannot leak into the next.
 vi.mock('../context/AuthContext.jsx', () => ({
   useAuth: () => ({ user: { id: 'u1' } }),
+  useAuthOptional: () => ({ user: null }),
 }))
 
 vi.mock('../hooks/useUploadPhoto.js', () => ({
