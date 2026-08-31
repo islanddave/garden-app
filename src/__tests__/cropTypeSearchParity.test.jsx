@@ -100,19 +100,18 @@ describe('RESIDUAL — the client surfaces are slug-only, so a crop\'s COMMON wo
     expect(matchPlantings(PLANTS, 'scallion')).toEqual([])
   })
 
-  // A SECOND, NARROWER DEFECT, found by this file rather than by the ticket, and independent of the
-  // alias/display gap above: looseKey (comboboxInput.js:129) collapses whitespace, hyphens,
-  // apostrophes and periods — but NOT underscores. So a multi-word slug keeps its underscore while
-  // the words a human says collapse without one, and the two keys can never be equal:
-  //   'bunching_onion' -> "bunching_onion"   vs   'bunching onion' -> "bunchingonion"
-  // The slug term therefore contributes NOTHING for any multi-word crop type addressed by its
-  // natural spoken form. 10 crop types with live plantings carry an underscore slug (12 plantings):
-  // sweet_potato, bee_balm, spider_plant, japanese_maple, christmas_cactus, lemon_verbena,
-  // red_raspberry, bitter_melon, flower_mix, bunching_onion. It is user-visible only where the
-  // cultivar name does not already carry the word — which is exactly the Tokyo Long White case.
-  it('a multi-word slug is unreachable by its spoken two-word form (underscore is not collapsed)', () => {
-    expect(matchPlantings(PLANTS, 'bunching onion')).toEqual([])
-    // The single word still substring-matches, so the term is not wholly dead — just partial.
+  // CLOSED 2026-08-31 by BUG-LOOSEKEYREPEAT-001 (A) — coming here to say so, as this file's header
+  // asks. The second, narrower defect this file found: looseKey (comboboxInput.js) dropped
+  // whitespace, hyphens, apostrophes and periods but NOT underscores, so a multi-word slug kept its
+  // underscore while the words a human says collapsed without one, and the two keys could never be
+  // equal ('bunching_onion' -> "bunching_onion" vs 'bunching onion' -> "bunchingonion"). The slug
+  // term therefore contributed NOTHING for any multi-word crop type addressed by its natural spoken
+  // form. 10 crop types with live plantings carry an underscore slug (12 plantings). '_' is now in
+  // the separator class, so both spellings key identically and the assertion inverts. The rest of
+  // this describe block still stands: display_name and search_aliases remain server-only.
+  it('a multi-word slug IS now reachable by its spoken two-word form (underscore is collapsed)', () => {
+    expect(matchPlantings(PLANTS, 'bunching onion').map(p => p.id)).toEqual(['pl-tokyo'])
+    // The single word substring-matched even before the fix; it must keep doing so.
     expect(matchPlantings(PLANTS, 'onion').map(p => p.id)).toEqual(['pl-tokyo'])
   })
 })

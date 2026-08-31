@@ -15,6 +15,7 @@ import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-do
 import { useInOverlaySurface, useOverlaySwap } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcribe.js'
+import { looseIncludesCropType } from '../lib/comboboxInput.js'
 import { P, statusLabel } from '../lib/constants.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
@@ -288,13 +289,25 @@ export default function Search() {
     return () => { clearTimeout(t); ctl.abort() }
   }, [query, fetch])
 
+  // V4-SEARCHCROPTYPE-001, client leg. The SERVER half of this search has matched crop type since
+  // a5d80526, but this filter is what answers instantly, offline, and whenever the server slice
+  // degrades — and it matched cultivar name only, so "cucumber" found Suyo Long on a good connection
+  // and nothing on a bad one. `crop_type_slug` is already on both row shapes the page fetched
+  // (variety_ref carries all 21 subfields here — this is the WIDE /api/plants, not the narrow picker
+  // projection), so this needs no server change. Only the crop-type term is loose-matched; the three
+  // name terms keep their exact substring semantics, so this is purely additive.
+  // Do NOT spell the picker query param here: lambda/plants/grid-view.test.js censuses its consumers
+  // by grepping src/ for that literal, and a mention in a comment reads to it as a call site.
+  // Still narrower than the server: crop_types.display_name and .search_aliases are not on the
+  // client at all, so "cantaloupe" -> Charentais still needs the server slice to land.
   const results = useMemo(() => {
     if (!query) return { plants: [], locations: [], varieties: [] }
     const hit = s => norm(s).includes(query)
     return {
-      plants: plants.filter(p => hit(p.name) || hit(p.variety_ref?.name) || hit(p.variety_ref?.group)).slice(0, 40),
+      plants: plants.filter(p => hit(p.name) || hit(p.variety_ref?.name) || hit(p.variety_ref?.group)
+        || looseIncludesCropType(p.variety_ref?.crop_type_slug, query)).slice(0, 40),
       locations: locations.filter(l => hit(l.name)).slice(0, 40),
-      varieties: varieties.filter(v => hit(v.name)).slice(0, 40),
+      varieties: varieties.filter(v => hit(v.name) || looseIncludesCropType(v.crop_type_slug, query)).slice(0, 40),
     }
   }, [query, plants, locations, varieties])
 

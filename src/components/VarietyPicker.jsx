@@ -27,7 +27,7 @@ import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
 import { T } from '../lib/tokens.js'
 import {
-  useComboboxInput, looseIncludes, looseKey,
+  useComboboxInput, looseIncludes, looseIncludesCropType, looseKey,
   kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingStyle,
 } from '../lib/comboboxInput.js'
 import { useHandedness } from '../hooks/useHandedness.js'
@@ -209,10 +209,16 @@ export default function VarietyPicker({
     // "Chili Red"). Strictly widens the old .toLowerCase().includes() — typed queries keep every
     // match they had. NOTE: the SERVER ?q= LIKE stays strict, so a spaced transcript can still
     // return an empty server page; this defensive filter can only be as loose as its input list.
+    // V4-SEARCHCROPTYPE-001 client leg: crop type joins the haystack, so "cucumber" reaches Suyo
+    // Long and "scallion" reaches a bunching_onion variety. This surface is the one client that can
+    // do it on the crop's DISPLAY NAME as well as its slug — cropBySlug is already in hand for
+    // labelling, so no extra request — and doing so is consistent with its own crop chooser below,
+    // which has always filtered types on display_name/category/slug (filteredCropTypes).
     return list.filter(v =>
-      looseIncludes(v.name, q) || looseIncludes(v.species, q) || looseIncludes(v.common_name, q)
+      looseIncludes(v.name, q) || looseIncludes(v.species, q) || looseIncludes(v.common_name, q) ||
+      looseIncludesCropType(v.crop_type_slug, q, cropBySlug[v.crop_type_slug])
     ).sort(byName)
-  }, [varieties, query, speciesFilter, cropSlugFilter])
+  }, [varieties, query, speciesFilter, cropSlugFilter, cropBySlug])
 
   const filtered = useMemo(() => matched.slice(0, MAX_RESULTS), [matched])
   const hiddenCount = matched.length - filtered.length

@@ -39,7 +39,7 @@ import { useHandedness } from '../../hooks/useHandedness.js'
 import { useDismissable } from '../../context/DismissRegistry.jsx'
 import { LAYER } from '../../lib/dismissLayers.js'
 import {
-  useComboboxInput, looseIncludes,
+  useComboboxInput, looseIncludes, looseIncludesCropType,
   kbToggleBtnStyle, micToggleBtnStyle, closeToggleBtnStyle, toggleSlotsPaddingStyle,
 } from '../../lib/comboboxInput.js'
 
@@ -625,11 +625,16 @@ export default function PlantingSelect({
       // Fully client-side here (unlike VarietyPicker there is no server ?q= leg to stay strict).
       // V4-CROPFILTER-001 rider: crop_type_slug joins the haystack so typing "pepper" narrows
       // even when no name/variety/project carries the word.
+      // V4-SEARCHCROPTYPE-001 client leg: the same slug, now through the shared crop-type matcher —
+      // and reachable by its spoken form at last, since looseKey stopped treating '_' as a letter
+      // (BUG-LOOSEKEYREPEAT-001 (A)): "bunching onion" now narrows to the bunching_onion rows.
+      // No crop-type row is passed because ?view=picker carries the slug and nothing else crop-shaped
+      // (lambda/plants/index.js:1313) — display_name/aliases need that projection widened first.
       list = list.filter(p =>
         looseIncludes(p.name, q) ||
         looseIncludes(p.variety_ref?.name, q) ||
         looseIncludes(p.project_name, q) ||
-        looseIncludes(p.variety_ref?.crop_type_slug, q)
+        looseIncludesCropType(p.variety_ref?.crop_type_slug, q)
       )
     }
     // V4-CROPFILTER-001: multi-select OR across chips (set membership), AND with the typeahead
