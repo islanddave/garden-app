@@ -1040,12 +1040,40 @@ export const handler = async (event) => {
       // photo should surface in the gallery, not vanish behind an unrelated planting's archive flag.
       // 86 soft-deleted events exist in prod, none with an archived planting and none retaining a
       // photo — the shape is reachable only by a future cascade leak, which is what this guards.
+      //
+      // BUG-PHOTOINTAKEUNDELIVERED-001 — `p.intake_status` is projected by all five templates below.
+      // It is the SEVENTH clause of photos_must_have_parent: the escape hatch that makes a parentless
+      // row legal. src/lib/photoModel.js:72 reads it (`raw.intake_status === 'pending_tag'`) and :74-76
+      // uses it to separate PARENTAGE.PENDING from PARENTAGE.ORPHAN — and ORPHAN is documented at
+      // photoModel.js:45 as a state the CHECK FORBIDS. Until this line no template selected the column,
+      // so the field was `undefined` on every gallery row, `pendingTag` was permanently false, and the
+      // one legitimately-pending photo in the corpus was classified as a constraint violation. Same
+      // shape as the space_id defect below, one rung worse in its consequence: space_id made an
+      // attached photo read as unfinished, this made a legal photo read as impossible.
+      //
+      // MEASURED on prod 2026-08-31 (garden_ro, RLS admitted): 1395 live photos NULL, exactly 1
+      // 'pending_tag' — 54777683-2244-449c-bbbb-4a65396963e8, all six parent FKs null. Not hypothetical
+      // and not a future shape; the misclassification is live in today's data.
+      //
+      // WHY THE COLUMN AND NOT A DECORATING QUERY like the space_id block below. That block spends an
+      // extra round trip to buy ONE property these templates do not need: byte-identical flag-off
+      // rollback. space_id was code-ahead-of-DDL behind SPACE_PHOTOS_ENABLED, so naming it here would
+      // have 42703'd wherever the column was absent and would have inverted space-photos.test.js's
+      // flag-off assertions. intake_status has no flag, has been in prod since the inbox shipped, is
+      // already named by both INSERT templates (:213, :252) and by the re-tag UPDATE, and is pinned in
+      // select-columns.test.js's evidence-derived list — which is verified against prod
+      // information_schema by scripts/dev-main-schema-audit.py. There is no rollback invariant to
+      // protect, so the second query would be pure cost and a second source of truth for one scalar.
+      //
+      // ALL FIVE, including ?attachedTo, whose rows carry a parent by construction and so can never
+      // be PENDING. Uniformity is the point: a reader comparing the templates should not have to work
+      // out which one may omit it, and the next branch added by copy-paste inherits the column.
 
       let rows;
       if (attachedTo) {
         rows = await sql`
             SELECT
-              p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1065,7 +1093,7 @@ export const handler = async (event) => {
       } else if (locationId) {
         rows = await sql`
             SELECT
-              p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1098,7 +1126,7 @@ export const handler = async (event) => {
       } else if (projectId) {
         rows = await sql`
             SELECT
-              p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1125,7 +1153,7 @@ export const handler = async (event) => {
         // space the caller can see would expose every OTHER household's photos on that space.
         rows = await sql`
             SELECT
-              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.space_id,
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.space_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
@@ -1149,7 +1177,7 @@ export const handler = async (event) => {
       } else {
         rows = await sql`
             SELECT
-              p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.intake_status,
               p.storage_path, p.caption, p.is_public, p.created_at,
               pp.display_name AS project_name
             FROM photos p
