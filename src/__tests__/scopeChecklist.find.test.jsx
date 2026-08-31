@@ -60,6 +60,17 @@ function Harness({ runDryRun = dryRunOk(), ...rest }) {
 const openList = async () => fireEvent.click(await screen.findByText(/Review \d+ plantings/))
 const rowNames = () => [...document.querySelectorAll('ul li button[aria-pressed]')].map(b => b.textContent.replace(/^[✓○]/, ''))
 const type = (v) => fireEvent.change(screen.getByTestId('sc-search'), { target: { value: v } })
+// S5 — SCOPED to the chip row, where these used to be a bare getByText. Grouping the review list
+// (Dave's call over S4's density recommendation) puts a "Pepper" header in the same document as the
+// "Pepper" chip, so an unscoped query now finds two nodes and throws. Same shape as the helper
+// scopeChecklist.groupFilter.test.jsx already uses for the PICK frame, which has had the collision
+// since S4 — the query was ambiguous by luck, not by design.
+const cropChip = (label) => {
+  const btn = [...document.querySelectorAll('[data-testid="sc-crop-chips"] button')]
+    .find(b => b.textContent.replace(/\s+/g, ' ').trim() === label)
+  if (!btn) throw new Error(`no crop chip labelled "${label}"`)
+  return btn
+}
 
 beforeEach(() => {
   lastSel = null
@@ -151,7 +162,7 @@ describe('S1 — crop chips', () => {
   it('a chip narrows the list to that crop', async () => {
     render(<Harness />)
     await openList()
-    fireEvent.click(screen.getByText('Pepper'))
+    fireEvent.click(cropChip('Pepper'))
     await waitFor(() => expect(rowNames().length).toBe(4))
     expect(rowNames()).toContain('Jalapeno')
   })
@@ -159,8 +170,8 @@ describe('S1 — crop chips', () => {
   it('two chips are OR, and a chip ANDs with the text search', async () => {
     render(<Harness />)
     await openList()
-    fireEvent.click(screen.getByText('Tomato'))
-    fireEvent.click(screen.getByText('Pepper'))
+    fireEvent.click(cropChip('Tomato'))
+    fireEvent.click(cropChip('Pepper'))
     await waitFor(() => expect(rowNames().length).toBe(9))
     type('sun')
     await waitFor(() => expect(rowNames()).toEqual(['Sun Gold', 'Sunray']))
@@ -172,7 +183,7 @@ describe('S1 — crop chips', () => {
     render(<Harness />)
     await openList()
     fireEvent.click(screen.getByText('More ▾'))
-    fireEvent.click(await screen.findByText('Ungrouped'))
+    fireEvent.click(cropChip('Ungrouped'))
     await waitFor(() => expect(rowNames()).toEqual(['Kousa Dogwood']))
   })
 
@@ -195,7 +206,7 @@ describe('S1 — the filters narrow the VIEW, never the batch', () => {
     render(<Harness />)
     await openList()
     await waitFor(() => expect(lastSel.committedCount).toBe(12))
-    fireEvent.click(screen.getByText('Pepper'))
+    fireEvent.click(cropChip('Pepper'))
     type('jala')
     await waitFor(() => expect(rowNames()).toEqual(['Jalapeno']))
     expect(lastSel.committedCount).toBe(12)
@@ -211,7 +222,7 @@ describe('S1 — the filters narrow the VIEW, never the batch', () => {
     await openList()
     fireEvent.click(screen.getByText('Shishito'))
     await waitFor(() => expect(lastSel.excludedIds).toEqual(['p3']))
-    fireEvent.click(screen.getByText('Tomato'))       // Shishito is a pepper — now hidden
+    fireEvent.click(cropChip('Tomato'))       // Shishito is a pepper — now hidden
     await waitFor(() => expect(rowNames().length).toBe(5))
     expect(screen.queryByText('Shishito')).toBeNull()
     expect(lastSel.excludedIds).toEqual(['p3'])
@@ -221,10 +232,10 @@ describe('S1 — the filters narrow the VIEW, never the batch', () => {
   it('a skip made under a filter survives clearing the filter', async () => {
     render(<Harness />)
     await openList()
-    fireEvent.click(screen.getByText('Pepper'))
+    fireEvent.click(cropChip('Pepper'))
     fireEvent.click(await screen.findByText('Shishito'))
     await waitFor(() => expect(lastSel.excludedIds).toEqual(['p3']))
-    fireEvent.click(screen.getByText('Pepper'))     // deselect the chip
+    fireEvent.click(cropChip('Pepper'))     // deselect the chip
     await waitFor(() => expect(rowNames().length).toBe(12))
     expect(screen.getByText('Shishito').getAttribute('aria-pressed')).toBe('false')
   })
@@ -268,7 +279,7 @@ describe('S1 — session-scoped Select none / Select all shown', () => {
     render(<Harness />)
     await openList()
     fireEvent.click(screen.getByTestId('sc-select-none'))
-    fireEvent.click(screen.getByText('Pepper'))
+    fireEvent.click(cropChip('Pepper'))
     await waitFor(() => expect(screen.getByTestId('sc-select-shown').textContent).toBe('Select all 4 shown'))
     fireEvent.click(screen.getByTestId('sc-select-shown'))
     await waitFor(() => expect(lastSel.committedCount).toBe(4))

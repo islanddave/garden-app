@@ -13,6 +13,10 @@
 
   `?step=` scripts the frame before it is measured, so one run reports a real interaction state:
      s2        — open the review list (the S2 targets, bulk mode)
+     s2q       — open the review list, then type `?q=`. S5 uses it to reach the geometry S4's
+                 "~40%" estimate is really about: a filter that leaves ONE planting per crop type
+                 turns the list into a run of singleton groups, which is the densest headers can
+                 ever be. Unfiltered, the list opens on 46 tomatoes and shows one header.
      s2zone    — switch the scope to By zone (the zone chip rows at 48px)
      pick      — enter PICK mode; the frame opens empty
      pick3     — enter PICK, search `?q=`, tap the first 3 rows (the three-planting scenario)
@@ -21,7 +25,9 @@
      s4        — enter PICK; measure the frame with the zone chip row and the crop-type group
                  headers in place, nothing filtered (the worst case for track 1's height)
      s4combo   — BD-073's own example: filter to Bag Area AND Tomato, i.e. the intersection
-  `?read=targets|frame` chooses which measurement block is reported.
+  `?read=targets|frame|review` chooses which measurement block is reported. `review` is S5's — the
+  BULK review list's own geometry, i.e. what the crop-type headers cost the 240px panel Dave ruled
+  on. Pair it with a `s2*` step, which is what opens that list: `?step=s2&read=review`.
 -->
 <style>
   html, body { margin: 0; padding: 0; background: #333; }
@@ -56,13 +62,13 @@
     if (w && w.__h && w.__h.ready && w.__h.ready()) {
       Promise.resolve()
         .then(() => after(50, () => {
-          if (step === 's2') w.__h.openReview()
+          if (step === 's2' || step === 's2q') w.__h.openReview()
           else if (step === 's2zone') w.__h.setZone()
           else if (step === 's2date') w.__h.backDate()
           else w.__h.pickMode()
         }))
         .then(() => after(200, () => { if (step === 's2zone' || step === 's2date') w.__h.openReview() }))
-        .then(() => after(150, () => { if (step === 'pick3' || step === 'picktray' || step === 'pickdone') w.__h.type(term) }))
+        .then(() => after(150, () => { if (step === 'pick3' || step === 'picktray' || step === 'pickdone' || step === 's2q') out.dataset.typed = w.__h.type(term) }))
         .then(() => after(150, () => { if (step === 'pick3' || step === 'picktray' || step === 'pickdone') w.__h.tapRows(3) }))
         .then(() => after(150, () => {
           if (step === 'picktray') w.__h.type('')
@@ -82,7 +88,8 @@
           if (step === 's4combo') out.dataset.crop = w.__h.chipTap('sc-crop-chips', 'Tomato')
         }))
         .then(() => after(200, () => {
-          out.textContent = JSON.stringify({ step, read, ...(read === 'frame' ? w.__h.frame() : w.__h.targets()) }, null, 1)
+          const block = read === 'frame' ? w.__h.frame() : read === 'review' ? w.__h.review() : w.__h.targets()
+          out.textContent = JSON.stringify({ step, read, ...block }, null, 1)
           out.dataset.done = '1'
         }))
       return

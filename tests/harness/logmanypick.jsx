@@ -203,6 +203,105 @@ window.__h = {
     }
   },
 
+  // ── S5: the BULK review list's geometry, which is the panel Dave ruled on ──────────────────
+  // S4 argued AGAINST grouping this list with an ESTIMATE: "a maxHeight 240 window showing ~5 rows,
+  // and 28px headers would consume ~40% of its viewport". Dave accepted that cost and asked for the
+  // grouping anyway, so the number he agreed to has to become a measured one. Everything here is
+  // read at scrollTop 0 — the state the list opens in, which is the only state the estimate was
+  // about; scrolled, a header is just another 28px anywhere on an 11,000px strip.
+  //
+  // `headerPxVisible` INTERSECTS each header with the panel's visible box rather than summing header
+  // heights: a header below the fold costs nothing on the screen the user is looking at, and summing
+  // all 56 of them would report a share over 100% and read as a catastrophe.
+  review: () => {
+    // The testid is S5's own addition, so a BASELINE run (baselinePlugin serving src/** from a
+    // pre-S5 object, which is how the before/after column is produced) would find nothing and report
+    // `present: false` — an instrument that only works on the build it was written for measures
+    // nothing. The fallback is structural: in BULK the review list is the only <ul> outside the pick
+    // frame carrying exclusion toggles.
+    const list = q('[data-testid="sc-review-list"]')
+      || [...document.querySelectorAll('ul')]
+        .find(u => !u.closest('[data-testid="pick-frame"]') && u.querySelector('button[aria-pressed]'))
+    if (!list) return { present: false, innerWidth: window.innerWidth, innerHeight: window.innerHeight }
+    const lr = list.getBoundingClientRect()
+    // clientHeight, not rect.height: the visible scrollport, with the maxHeight cap applied.
+    const viewTop = lr.top
+    const viewBottom = lr.top + list.clientHeight
+    const headers = [...list.querySelectorAll(':scope > [data-testid^="sc-group-"]')]
+    const rows = [...list.querySelectorAll('button[aria-pressed]')]
+    const overlap = (el) => {
+      const r = el.getBoundingClientRect()
+      return Math.max(0, Math.min(r.bottom, viewBottom) - Math.max(r.top, viewTop))
+    }
+    const headerPxVisible = headers.reduce((s, el) => s + overlap(el), 0)
+    const fullyVisible = (el) => {
+      const r = el.getBoundingClientRect()
+      return r.top >= viewTop - 0.5 && r.bottom <= viewBottom + 0.5
+    }
+    return {
+      present: true,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      panelTop: Math.round(lr.top),
+      panelClientH: list.clientHeight,
+      panelScrollH: list.scrollHeight,
+      panelScrolls: list.scrollHeight > list.clientHeight + 1,
+      headerCount: headers.length,
+      headerH: headers.length ? Math.min(...headers.map(h)) : null,
+      // The pitch a header really costs the list: its own height plus the flex `gap` above it.
+      headerPitch: (() => {
+        if (headers.length < 1 || !rows.length) return null
+        const hr = headers[0].getBoundingClientRect()
+        const next = headers[0].nextElementSibling
+        return next ? Math.round(next.getBoundingClientRect().top - hr.top) : Math.round(hr.height)
+      })(),
+      headersVisible: headers.filter(el => overlap(el) > 0).length,
+      headerPxVisible: Math.round(headerPxVisible),
+      // THE NUMBER S4 ESTIMATED AT ~40%.
+      headerSharePct: list.clientHeight ? Math.round((headerPxVisible / list.clientHeight) * 1000) / 10 : null,
+      rowCount: rows.length,
+      rowH: rows.length ? Math.min(...rows.map(h)) : null,
+      rowsFullyVisible: rows.filter(fullyVisible).length,
+      rowsPartlyVisible: rows.filter(el => overlap(el) > 0).length,
+      // THE OTHER HALF OF S4's ESTIMATE, and the half that makes it defensible. The share above is
+      // the list AS IT OPENS, where the first group is 46 tomatoes and exactly one header is on
+      // screen. Scroll into the tail — 45 crop types with 1-3 plantings each — and a 240px window
+      // holds three or four headers instead of one. S4's "~40%" is a claim about THAT window, not
+      // about the opening one, so the honest comparison measures the worst window in the list.
+      // Every window start is a real laid-out element top, so this reports a position the user can
+      // actually scroll to rather than an arbitrary offset.
+      worstWindow: (() => {
+        if (!headers.length) return { headerPx: 0, headerPct: 0, headersInView: 0, rowsFullyVisible: rows.length ? Math.min(rows.length, Math.floor(list.clientHeight / (rows[0].getBoundingClientRect().height + 4))) : 0, startPx: 0 }
+        const contentTop = lr.top - list.scrollTop
+        const box = el => { const r = el.getBoundingClientRect(); return { top: r.top - contentTop, bottom: r.bottom - contentTop } }
+        const hb = headers.map(box)
+        const rb = rows.map(box)
+        const view = list.clientHeight
+        let best = { headerPx: -1 }
+        for (const start of [...hb, ...rb].map(b => b.top)) {
+          const end = start + view
+          let px = 0, n = 0
+          for (const b of hb) { const o = Math.max(0, Math.min(b.bottom, end) - Math.max(b.top, start)); if (o > 0) { px += o; n += 1 } }
+          if (px > best.headerPx) {
+            best = {
+              startPx: Math.round(start), headerPx: Math.round(px), headersInView: n,
+              headerPct: Math.round((px / view) * 1000) / 10,
+              rowsFullyVisible: rb.filter(b => b.top >= start - 0.5 && b.bottom <= end + 0.5).length,
+            }
+          }
+        }
+        return best
+      })(),
+      headerText: headers.slice(0, 4).map(g => g.textContent.replace(/\s+/g, ' ').trim()),
+      // The bucket BD-073 says must never vanish, on this list too.
+      ungrouped: (() => {
+        const g = list.querySelector('[data-testid="sc-group-__ungrouped__"]')
+        return g ? g.textContent.replace(/\s+/g, ' ').trim() : null
+      })(),
+      firstRowText: rows.slice(0, 3).map(r => r.textContent.replace(/\s+/g, ' ').trim()),
+    }
+  },
+
   // ── S3: the frame's geometry ──────────────────────────────────────────────────────────────
   frame: () => {
     const f = q('[data-testid="pick-frame"]')

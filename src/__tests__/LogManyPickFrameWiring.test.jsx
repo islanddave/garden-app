@@ -120,9 +120,23 @@ describe('S3 wiring — the commit control moves, it does not multiply', () => {
     expect('exclude_plant_ids' in batchPosts[0]).toBe(false)
   })
 
-  it('BULK still commits on the exclusion contract — S4 changed the PICK path only', async () => {
+  // S5 — INVERTED, DELIBERATELY, and only on the half that Dave moved. S4 wrote this test as
+  // "S4 changed the PICK path only" and its own lane report cites it as the pin that "BULK did not
+  // move"; the blanket claim in that title is now false, because Dave overruled S4's decision to
+  // leave the review list ungrouped ("Group it too — I want consistency"). Rather than delete the
+  // pin or leave it asserting the old world, it now states the BOUNDARY: the WIRE did not move (the
+  // assertions below are byte-for-byte S4's) while the LIST did. Grouping is presentation — a change
+  // that grouped the review list AND altered what it commits would be the far more expensive bug,
+  // and this is the test that catches it.
+  it('BULK now groups the review list but still commits on the exclusion contract', async () => {
     await renderReady()
     fireEvent.click(await screen.findByText(/Review \d+ plantings/))
+    // The half that MOVED. `sc-group-*` headers do not exist anywhere in S4's build.
+    const headers = [...document.querySelectorAll('[data-testid="sc-review-list"] > [data-testid^="sc-group-"]')]
+      .map(li => li.dataset.testid.slice('sc-group-'.length))
+    expect(headers).toContain('tomato')
+    expect(headers).toContain('__ungrouped__')
+    // The half that did NOT. Everything from here down is S4's test unchanged.
     fireEvent.click(screen.getByTestId('sc-select-none'))
     fireEvent.click(screen.getByText('Sun Gold'))
     await waitFor(() => expect(commitButtons()[0].textContent).toBe('Log watered on 1'))

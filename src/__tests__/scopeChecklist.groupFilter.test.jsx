@@ -93,6 +93,21 @@ const listItems = () => [...document.querySelectorAll('[data-testid="pick-list"]
 })
 const rowIds = () => listItems().filter(i => i.row).map(i => i.row)
 const headers = () => listItems().filter(i => i.header).map(i => i.header)
+// S5 — the same three readers, pointed at the BULK review list. Written as a parallel pair rather
+// than one parameterised helper on purpose: if the two lists ever diverge, the diff has to be
+// visible in the assertions, not hidden inside a shared query.
+const openReview = async () => {
+  fireEvent.click(await screen.findByText(/Review \d+ plantings/))
+  return screen.findByTestId('sc-review-list')
+}
+const reviewItems = () => [...document.querySelectorAll('[data-testid="sc-review-list"] > *')].map(li => {
+  const tid = li.dataset.testid ?? ''
+  if (tid.startsWith('sc-group-')) return { header: tid.slice('sc-group-'.length), text: li.textContent }
+  const btn = li.querySelector('button[aria-pressed]')
+  return btn ? { row: btn.textContent.replace(/^[✓○]/, '') } : { other: tid }
+})
+const reviewRows = () => reviewItems().filter(i => i.row).map(i => i.row)
+const reviewHeaders = () => reviewItems().filter(i => i.header).map(i => i.header)
 const zoneChip = (label) => [...document.querySelectorAll('[data-testid="sc-zone-chips"] button')]
   .find(b => b.textContent.replace(/\s+/g, ' ').trim() === label)
 const cropChip = (label) => [...document.querySelectorAll('[data-testid="sc-crop-chips"] button')]
@@ -182,6 +197,86 @@ describe('S4 — the candidate list is parented under crop types', () => {
     type('jalapeno')
     expect(headers()).toEqual(['pepper'])
     expect(rowIds()).toEqual(['p2'])
+  })
+})
+
+// ══ S5 — THE SAME GROUPING ON THE BULK REVIEW LIST ═════════════════════════════════════════════
+// S4 grouped the PICK list and deliberately left this one flat, on a measured density argument: the
+// review list is a `maxHeight: 240` panel and 28px headers eat a large share of it. Dave was given
+// that measurement and overruled it — "Group it too — I want consistency" — so the cost is accepted
+// and these pin the ruling. Every test here FAILS against S4's code; that is the point of the file.
+describe('S5 — the BULK review list is grouped by the same rule as the pick list', () => {
+  it('renders a header per crop type, each immediately followed by its own rows', async () => {
+    render(<Harness />)
+    await openReview()
+    const under = {}
+    let current = null
+    for (const it of reviewItems()) {
+      if (it.header) { current = it.header; under[current] = []; continue }
+      if (it.row) under[current] = [...(under[current] ?? []), it.row]
+    }
+    expect(under.tomato).toEqual(['Black Krim', 'Brandywine', 'Cherokee Purple', 'San Marzano', 'Sun Gold'])
+    expect(under.pepper).toEqual(['Aji Dulce', 'Jalapeno', 'Shishito'])
+    expect(under.basil).toEqual(['Genovese'])
+    // Nothing orphaned above the first header — the shape a `{shown.map()}` left in place beside a
+    // grouped block would produce, and the one that still LOOKS grouped in a screenshot.
+    expect(under.null).toBeUndefined()
+    expect(under.undefined).toBeUndefined()
+  })
+
+  it('the three crop-type-less plantings land in an explicit Ungrouped bucket here too', async () => {
+    render(<Harness />)
+    await openReview()
+    const items = reviewItems()
+    const i = items.findIndex(x => x.header === '__ungrouped__')
+    expect(i, 'no Ungrouped header in the review list').toBeGreaterThan(-1)
+    expect(items[i].text).toMatch(/^Ungrouped/)
+    expect(items.slice(i + 1).filter(x => x.row).map(x => x.row).sort())
+      .toEqual(['Aloe Vera', 'Hydrangeas', 'Kousa Dogwood'])
+    // The number that matters on BOTH lists: every planting the preview returned is still here.
+    expect(reviewRows()).toHaveLength(PLANTINGS.length)
+  })
+
+  it('a header is not a list item to a screen reader', async () => {
+    render(<Harness />)
+    await openReview()
+    expect(screen.getByTestId('sc-group-tomato').getAttribute('role')).toBe('presentation')
+    expect(screen.getByTestId('sc-group-tomato').textContent).toMatch(/Tomato\s*5/)
+  })
+
+  // THE ANTI-DRIFT PIN, and the reason the grouping is one shared component rather than two
+  // implementations. Dave's word was "consistency": these two lists are one tap apart, so a
+  // difference in the header set, its order, or the row order underneath it is visible in the same
+  // sitting. Two independent copies would agree on the day they were written and not much after.
+  it('the review list and the pick list agree on the headers AND on the rows under them', async () => {
+    render(<Harness />)
+    await openReview()
+    const bulkHeaders = reviewHeaders()
+    const bulkRows = reviewRows()
+    fireEvent.click(screen.getByTestId('sc-mode-pick'))
+    await screen.findByTestId('pick-frame')
+    expect(headers()).toEqual(bulkHeaders)
+    expect(rowIds().map(id => PLANTINGS.find(p => p.id === id).name)).toEqual(bulkRows)
+  })
+
+  it('groups follow the filter — an empty crop group disappears rather than showing a bare header', async () => {
+    render(<Harness />)
+    await openReview()
+    fireEvent.change(screen.getByTestId('sc-search'), { target: { value: 'jalapeno' } })
+    expect(reviewHeaders()).toEqual(['pepper'])
+    expect(reviewRows()).toEqual(['Jalapeno'])
+  })
+
+  // Grouping is PRESENTATION. The one thing it must not touch is the batch — the invariant S1
+  // established and the class BUG-LOGMANYPROJECTLESS-001 was filed under.
+  it('grouping changes what the list looks like, never what is committed', async () => {
+    render(<Harness />)
+    await openReview()
+    expect(lastSel.committedCount).toBe(PLANTINGS.length)
+    expect(lastSel.excludedIds).toEqual([])
+    fireEvent.click(screen.getByText('Aloe Vera'))          // a row inside the Ungrouped bucket
+    expect(lastSel.excludedIds).toEqual(['n2'])
+    expect(lastSel.committedCount).toBe(PLANTINGS.length - 1)
   })
 })
 

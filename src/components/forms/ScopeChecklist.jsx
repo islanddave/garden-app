@@ -94,6 +94,27 @@ const chipLabel = s => (s === UNGROUPED ? 'Ungrouped' : titleizeSlug(s))
 // silent-omission class the crop bucket exists to close, on a second dimension.
 const NO_ZONE = '__nozone__'
 
+// V4-LOGMANYCROPFILTER-001 S5 — THE grouped-list rendering, authored once and mounted by both the
+// PICK frame's candidate list and the BULK review list. It owns the header markup and the group
+// iteration; each caller owns only its own row, which is where the two lists genuinely differ (BULK
+// toggles an exclusion and can carry a per-row override, PICK adds a pick and shows a crop label).
+//
+// The headers are ordinary <li>s inside the caller's own <ul>: a nested list per group would give
+// the scroller a second axis of nesting for no gain, and role="presentation" keeps a header out of
+// the item count TalkBack announces for the list. `idPrefix` differs per list ONLY so a test or a
+// measurement can address one of them; everything an eye can see is the same on both.
+function CropGroupList({ groups, idPrefix, renderRow }) {
+  return groups.map(g => (
+    <React.Fragment key={g.slug}>
+      <li role="presentation" data-testid={`${idPrefix}${g.slug}`} style={groupHeader}>
+        <span>{g.label}</span>
+        <span style={{ color: P.light, fontWeight: 400 }}>{g.rows.length}</span>
+      </li>
+      {g.rows.map(renderRow)}
+    </React.Fragment>
+  ))
+}
+
 export default function ScopeChecklist({
   scope,
   onScopeChange,
@@ -513,6 +534,13 @@ export default function ScopeChecklist({
   // Group order = bandRank (pins → recents → alphabetical, the SAME order the chip row above uses),
   // with Ungrouped forced LAST regardless of where it would otherwise fall. Rows inside a group
   // arrive already alphabetical, because `candidates` is sorted band-then-name.
+  //
+  // S5 — ONE memo, BOTH lists. S4 shipped grouping on the PICK list only and left the BULK review
+  // list flat, on a measured density argument (28px headers against a 240px panel). Dave overruled
+  // it — "Group it too — I want consistency" — knowing the cost, so BULK now renders from this same
+  // `groups` value through the same <CropGroupList/>. Nothing here is mode-aware: two grouping
+  // implementations on two lists that are one tap apart is a worse outcome than either answer to
+  // whether to group at all, and this is the surface where the mismatch would show first.
   const groups = useMemo(() => {
     const bySlug = new Map()
     for (const pl of candidates) {
@@ -820,13 +848,19 @@ export default function ScopeChecklist({
               </div>
             )}
             {mode === 'bulk' && showList && (
-              <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <ul data-testid="sc-review-list" style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {shown.length === 0 && (
                   <li data-testid="sc-no-matches" style={{ padding: '12px 0', textAlign: 'center', color: P.light, fontSize: '0.83rem' }}>
                     No planting here matches that. Clear the search or the crop chips to see all {total}.
                   </li>
                 )}
-                {shown.map(pl => {
+                {/* S5 — grouped, by Dave's ruling against S4's density recommendation. This iterates
+                    `groups` and NOT `shown`, which also puts the review rows in the crop-band order
+                    the PICK list uses rather than the flat alphabetical one they had: the two lists
+                    are one tap apart, and "consistency" is not satisfied by headers alone if the
+                    same garden reads back in two different orders underneath them. Ungrouped rides
+                    along, so the 3 crop-type-less plantings stay visible here too. */}
+                <CropGroupList groups={groups} idPrefix="sc-group-" renderRow={pl => {
                   const off = !isKept(pl.id)
                   // The extra node is a SIBLING of the toggle button, never a child: nesting an
                   // interactive control inside a <button> is invalid HTML and, on Chrome Android,
@@ -844,7 +878,7 @@ export default function ScopeChecklist({
                       {extra}
                     </li>
                   )
-                })}
+                }} />
               </ul>
             )}
           </>
@@ -939,49 +973,39 @@ export default function ScopeChecklist({
                 No planting here matches that. Clear the search or the crop chips to see all {total}.
               </li>
             )}
-            {/* S4 / BD-073 (3) — PARENTED UNDER CROP TYPES, not a flat alphabetical list. The
-                headers are ordinary <li>s inside the same <ul>: a nested list per group would give
-                the scroller a second axis of nesting for no gain, and `role="presentation"` keeps
-                a header out of the item count TalkBack announces for the list. Deliberately NOT
+            {/* S4 / BD-073 (3) — PARENTED UNDER CROP TYPES, not a flat alphabetical list, through
+                the shared <CropGroupList/> the BULK review list also mounts. Deliberately NOT
                 `position: sticky` — the whole design of this frame is ONE scroller, and a sticky
                 child inside it is a second thing that moves independently under the thumb. Each
                 row keeps its own crop-type label instead, so a row halfway down 46 tomatoes still
                 names its crop without its header on screen. */}
-            {groups.map(g => (
-              <React.Fragment key={g.slug}>
-                <li role="presentation" data-testid={`pick-group-${g.slug}`} style={groupHeader}>
-                  <span>{g.label}</span>
-                  <span style={{ color: P.light, fontWeight: 400 }}>{g.rows.length}</span>
+            <CropGroupList groups={groups} idPrefix="pick-group-" renderRow={pl => {
+              const on = isKept(pl.id)
+              return (
+                <li key={pl.id}>
+                  {/* TAPPING ADDS. `aria-pressed` and not a checkbox: this is a toggle button whose
+                      pressed state IS "picked", which is what TalkBack should announce, and it is
+                      the same grammar the review list rows already use. */}
+                  <button type="button" onClick={() => toggleExclude(pl.id)} aria-pressed={on}
+                    data-testid={`pick-row-${pl.id}`}
+                    style={{
+                      width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10,
+                      minHeight: T.tapMinHeight, padding: '4px 6px', borderRadius: T.radiusField,
+                      background: on ? P.greenPale : 'none', border: 'none', cursor: 'pointer',
+                      fontFamily: 'inherit', color: P.dark, minWidth: 0,
+                    }}>
+                    <span aria-hidden="true" style={{ color: on ? P.green : P.light, fontWeight: 700 }}>{on ? '✓' : '+'}</span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.88rem', fontWeight: on ? 700 : 400 }}>
+                      {pl.name}
+                    </span>
+                    {/* The crop type on the row is what makes 46 near-identical tomato names
+                        distinguishable at a glance, and it is the dimension the S1 Lambda change
+                        put on the wire. Slug-less plantings say so rather than showing nothing. */}
+                    <span style={{ flex: '0 0 auto', color: P.light, fontSize: '0.75rem' }}>{chipLabel(slugOf(pl))}</span>
+                  </button>
                 </li>
-                {g.rows.map(pl => {
-                  const on = isKept(pl.id)
-                  return (
-                    <li key={pl.id}>
-                      {/* TAPPING ADDS. `aria-pressed` and not a checkbox: this is a toggle button whose
-                          pressed state IS "picked", which is what TalkBack should announce, and it is
-                          the same grammar the review list rows already use. */}
-                      <button type="button" onClick={() => toggleExclude(pl.id)} aria-pressed={on}
-                        data-testid={`pick-row-${pl.id}`}
-                        style={{
-                          width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10,
-                          minHeight: T.tapMinHeight, padding: '4px 6px', borderRadius: T.radiusField,
-                          background: on ? P.greenPale : 'none', border: 'none', cursor: 'pointer',
-                          fontFamily: 'inherit', color: P.dark, minWidth: 0,
-                        }}>
-                        <span aria-hidden="true" style={{ color: on ? P.green : P.light, fontWeight: 700 }}>{on ? '✓' : '+'}</span>
-                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.88rem', fontWeight: on ? 700 : 400 }}>
-                          {pl.name}
-                        </span>
-                        {/* The crop type on the row is what makes 46 near-identical tomato names
-                            distinguishable at a glance, and it is the dimension the S1 Lambda change
-                            put on the wire. Slug-less plantings say so rather than showing nothing. */}
-                        <span style={{ flex: '0 0 auto', color: P.light, fontSize: '0.75rem' }}>{chipLabel(slugOf(pl))}</span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </React.Fragment>
-            ))}
+              )
+            }} />
           </ul>
 
           {/* ── TRACK 3 — fixed, bottom, thumb zone: the answer to failure mode (d) ─────────
