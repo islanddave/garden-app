@@ -205,6 +205,11 @@ export default function LogMany() {
                 ),
                 baseline: draft.selection.baseline !== false,
                 touched: !!draft.selection.touched,
+                // S3: the selection MODE rides back with the selection. Restoring a 3-planting pick
+                // into the bulk review list would show it as 236 exclusions — the same set, in the
+                // shape the user left behind. Narrowed to the two known values rather than passed
+                // through, for the same reason the rest of this block is shape-checked.
+                mode: draft.selection.mode === 'pick' ? 'pick' : 'bulk',
               })
             }
             // V4-LOGMANYDEPTHSTASH-001: the amount class rides in the batch POST but was in neither
@@ -257,6 +262,11 @@ export default function LogMany() {
   // `touched` flips only on a deliberate row/Select-none tap, so it passes the same test
   // `eventDate` passes and `eventType`/`scope` fail.
   const selectionTouched = !!selection?.selectionState?.touched
+  // V4-LOGMANYUXREFRESH-001 S3 — transient UI position reported by the child, NOT part of the
+  // selection: while the full-screen pick frame is up it renders the primary action itself, so the
+  // page must not render a second copy behind it.
+  const pickFrameOpen = !!selection?.frameOpen
+  const pickMode = selection?.selectionState?.mode === 'pick'
   const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all' || !!notes ||
     batchDepthTouched || rowDepthCount > 0 || selectionTouched
 
@@ -521,6 +531,20 @@ export default function LogMany() {
   }
 
   // ── Picker + scope/preview + confirm ──
+  // V4-LOGMANYUXREFRESH-001 S3 — ONE primary action, rendered in one of TWO places. While the PICK
+  // frame is open it belongs in the frame's bottom track, directly under the tray of what is picked
+  // (design §5.2: "what is selected is always on screen … directly above the primary button");
+  // otherwise it stays where it has always been, at the foot of the page. Built once and handed to
+  // whichever surface is showing, rather than authored twice — two copies of a commit button is two
+  // places for the disabled rule to drift, and rendering both at once would put the same
+  // `Log watered on 3` in the document twice.
+  const primaryAction = (
+    <button type="button" onClick={confirm} disabled={saving || committedCount === 0}
+      style={{ ...btnPrimary, width: '100%', minHeight: 48, opacity: (saving || committedCount === 0) ? 0.5 : 1,
+        cursor: (saving || committedCount === 0) ? 'default' : 'pointer' }}>
+      {saving ? 'Logging…' : `Log ${verbLabel} on ${committedCount}`}
+    </button>
+  )
   return (
     <Shell>
       <Header />
@@ -558,8 +582,14 @@ export default function LogMany() {
             onChange={(v) => { setBatchDepth(v); setBatchDepthTouched(true) }}
             groupLabel="How much water for this batch"
           />
+          {/* V4-LOGMANYUXREFRESH-001 S3 — the second sentence is BULK-ONLY, because in PICK mode
+              there is no Review list to send anyone to. The per-row override is a review-list
+              affordance (renderRowExtra, rendered beside a review row); the pick frame's rows carry
+              name + crop type and nothing else, per the design. Pointing at a control that is not
+              on screen is the same class of dishonesty V4-LOGMANYHONEST-001 fixed one Section up. */}
           <p style={{ margin: '10px 2px 0', fontSize: '0.78rem', color: P.light, lineHeight: 1.45 }}>
-            Applies to every planting in this batch. Change individual ones under Review below.
+            Applies to every planting in this batch.
+            {pickMode ? '' : ' Change individual ones under Review below.'}
           </p>
         </Section>
       )}
@@ -646,6 +676,7 @@ export default function LogMany() {
         runDryRun={runDryRun}
         onSelectionChange={onSelectionChange}
         initialSelection={restoredSelection}
+        primaryAction={primaryAction}
         renderRowExtra={depthApplies ? ((pl, { excluded }) => (
           <WaterDepthRowOverride
             key={`d-${pl.id}`}
@@ -667,11 +698,7 @@ export default function LogMany() {
 
       {error && <ErrInline msg={error} />}
 
-      <button type="button" onClick={confirm} disabled={saving || committedCount === 0}
-        style={{ ...btnPrimary, width: '100%', minHeight: 48, opacity: (saving || committedCount === 0) ? 0.5 : 1,
-          cursor: (saving || committedCount === 0) ? 'default' : 'pointer' }}>
-        {saving ? 'Logging…' : `Log ${verbLabel} on ${committedCount}`}
-      </button>
+      {!pickFrameOpen && primaryAction}
     </Shell>
   )
 }
@@ -756,5 +783,9 @@ const btnPrimary = { backgroundColor: P.green, color: P.white, border: 'none', b
 const btnGhost = { backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '10px 16px', fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
 // V4-EVENTSEL-004: byte-identical to Log Event's cross-link button (EventNew.jsx) so the two match exactly.
 const crossLinkStyle = { display: 'inline-block', marginTop: 4, backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }
-const linkBtn = { background: 'none', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }
+// V4-LOGMANYUXREFRESH-001 S2 — the fourth sub-44 control on the selection path ("Reset to today",
+// the only way back from a back-date). Same one-line fix as ScopeChecklist's twin: `padding: 0` left
+// the line box as the whole target, so inline-flex + the named floor raises it without moving a pixel
+// of the visible text. `marginTop: 8` at the call site still applies — this only sets the box.
+const linkBtn = { background: 'none', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: 'inherit', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', minHeight: 44 }
 const selectStyle = { width: '100%', minHeight: 44, padding: '8px 12px', borderRadius: 8, border: `1px solid ${P.border}`, fontSize: '0.9rem', fontFamily: 'inherit', backgroundColor: P.white, color: P.dark }

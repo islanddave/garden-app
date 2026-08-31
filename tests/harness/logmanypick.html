@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there: the
+         `interactive-widget=resizes-content` key is what makes a 390x500 window a faithful
+         keyboard-open layout, and the S3 pick frame's bottom track depends on it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Log Many S2/S3 — whole page, real browser</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #f8f5f0; }
+      #root { min-height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/logmanypick.jsx"></script>
+  </body>
+</html>
