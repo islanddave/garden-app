@@ -59,6 +59,32 @@ describe('FacebookShareSheet', () => {
     expect(JSON.parse(fetchSpy.mock.calls[0][1].body).photo_ids).toEqual(['a', 'b']);
   });
 
+  // The test above supplies a permalink, and so does every other Facebook fixture in this directory
+  // — which meant linkFor's OTHER branch, the synthesised facebook.com/{post_id}, had no coverage at
+  // all despite being the branch that ran on every real post until BUG-FBPERMALINK-001. It still
+  // runs whenever the server's permalink read-back comes back empty (that read is non-fatal by
+  // design: a post that succeeded must not report failure because a cosmetic field was unreadable).
+  // Both the id and the resulting URL are in the shape live Graph uses, {page}_{post}.
+  it('synthesises a View on Facebook link when the server returns no permalink', async () => {
+    fetchSpy.mockResolvedValue({ post_id: '1264819220051470_122101954179456294', permalink: null });
+    render(<FacebookShareSheet open photos={photos} onClose={() => {}} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /post to facebook/i })); });
+    await waitFor(() => expect(screen.getByText(/Posted to Facebook/i)).toBeTruthy());
+    expect(screen.getByRole('link', { name: /view on facebook/i }).getAttribute('href'))
+      .toBe('https://www.facebook.com/1264819220051470_122101954179456294');
+  });
+
+  // Facebook can guess; Instagram cannot, and guessing there would 404 on the one surface the user
+  // has no way to correct. With neither a permalink nor a synthesisable id, the button is omitted —
+  // the success message still shows, because the post did land.
+  it('renders no link at all when there is nothing to link to', async () => {
+    fetchSpy.mockResolvedValue({ post_group_id: 'g1', permalink: null });
+    render(<FacebookShareSheet open photos={photos} onClose={() => {}} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /post to facebook/i })); });
+    await waitFor(() => expect(screen.getByText(/Posted to Facebook/i)).toBeTruthy());
+    expect(screen.queryByRole('link', { name: /view on facebook/i })).toBeNull();
+  });
+
   it('shows the admin-only message on a 403', async () => {
     fetchSpy.mockRejectedValueOnce(Object.assign(new Error('Admin only'), { status: 403, body: { error: 'Admin only' } }));
     render(<FacebookShareSheet open photos={photos} onClose={() => {}} />);

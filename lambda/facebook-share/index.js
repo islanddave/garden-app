@@ -369,12 +369,18 @@ async function share(event, secrets, userId) {
     // INSTAGRAM row. The endpoint then answers replay:true with an Instagram media id as post_id
     // and the sheet reports a Facebook post that was never made. Scoping the lookup makes the
     // client's id scheme a choice rather than a load-bearing assumption of the server.
+    //
+    // `permalink` rides along for a weaker reason than on the Instagram side, where it is the only
+    // link the user can get: here linkFor can already synthesise facebook.com/{post_id}. It is worth
+    // the column anyway — the canonical URL beats a guess, and it keeps the replay response the same
+    // shape as the fresh-post response below, which returns `permalink`. Rows written before
+    // BUG-FBPERMALINK-001 carry NULL and simply fall back to the synthesised form.
     const prior = await sql`
-      SELECT post_group_id, fb_post_id
+      SELECT post_group_id, fb_post_id, permalink
       FROM share_log
       WHERE client_request_id = ${clientRequestId} AND target = 'facebook' AND status = 'posted'
       ORDER BY created_at DESC LIMIT 1`;
-    if (prior.length) return resp(200, { replay: true, post_group_id: prior[0].post_group_id, post_id: prior[0].fb_post_id });
+    if (prior.length) return resp(200, { replay: true, post_group_id: prior[0].post_group_id, post_id: prior[0].fb_post_id, permalink: prior[0].permalink ?? null });
   }
 
   // Household-scoped existence check. Bytes never leave the household: a photo not owned by a
@@ -424,11 +430,15 @@ async function share(event, secrets, userId) {
       INSERT INTO share_log (post_group_id, photo_id, target, client_request_id, fb_page_id, status, caption, requested_by)
       VALUES (${groupId}, ${id}, 'facebook', ${clientRequestId}, ${pageId}, 'pending', ${caption}, ${userId})`;
   }
+  // BUG-FBPERMALINK-001: `permalink` was missing from this UPDATE entirely, so the column could never
+  // be written on the Facebook path no matter what any call site passed — the NULLs in share_log say
+  // nothing about what Graph returned. Mirrors the Instagram closure below, which has always had it.
   const setStatus = (photoId, patch) => sql`
     UPDATE share_log SET
       status      = COALESCE(${patch.status ?? null}, status),
       fb_media_id = COALESCE(${patch.fb_media_id ?? null}, fb_media_id),
       fb_post_id  = COALESCE(${patch.fb_post_id ?? null}, fb_post_id),
+      permalink   = COALESCE(${patch.permalink ?? null}, permalink),
       error       = ${patch.error ?? null},
       updated_at  = now()
     WHERE post_group_id = ${groupId} AND photo_id = ${photoId}`;
@@ -512,8 +522,16 @@ async function share(event, secrets, userId) {
     if (!r.ok || r.json?.error) { await failAll(classifyGraphError(r.json, r.status).message); throw new GraphError(r); }
     const postId = r.json.post_id ?? r.json.id;
     await setStatus(p.photo_id, { status: 'posted', fb_media_id: r.json.id, fb_post_id: postId });
-    await readBackAssert(postId, pageToken, 1);
-    return resp(201, { post_group_id: groupId, post_id: postId, media: [{ photo_id: p.photo_id, fb_media_id: r.json.id }], permalink: r.json?.permalink_url ?? null });
+    // Deliberately NOT the Instagram shape (fetch the permalink first, persist it in the one UPDATE).
+    // status='posted' is the durable record the replay guard keys on, and it is the only thing between
+    // a retry and a duplicate post on the Page — putting a Graph GET in front of it would widen the
+    // crash window where a live post has no 'posted' row, which is a bad trade for an audit field.
+    // So: write posted, then read back, then fill in the permalink. Guarded because a null read must
+    // not spend a second UPDATE, and because setStatus assigns `error` outright rather than
+    // COALESCEing it — harmless here (it is already NULL on this path) but not worth exercising.
+    const permalink = await readBackAssert(postId, pageToken, 1);
+    if (permalink) await setStatus(p.photo_id, { permalink });
+    return resp(201, { post_group_id: groupId, post_id: postId, media: [{ photo_id: p.photo_id, fb_media_id: r.json.id }], permalink });
   }
 
   // ── MULTI photo: published=false uploads (parallel) -> /feed attached_media (caption on feed). ──
@@ -569,8 +587,13 @@ async function share(event, secrets, userId) {
 
   const postId = feed.json.id;
   for (const m of media) await setStatus(m.photo_id, { status: 'posted', fb_post_id: postId });
-  await readBackAssert(postId, pageToken, media.length);
-  return resp(201, { post_group_id: groupId, post_id: postId, media: media.map((m) => ({ photo_id: m.photo_id, fb_media_id: m.media_fbid })) });
+  // Same ordering rationale as the single-photo path above. The permalink is post-level, so every row
+  // in the group gets the same value — share_log is per-photo, and a row that cannot say where its
+  // photo went is the gap the column exists to close. This path returned no `permalink` key at all
+  // before, so a multi-photo post's response was shaped differently from a single-photo one.
+  const permalink = await readBackAssert(postId, pageToken, media.length);
+  if (permalink) for (const m of media) await setStatus(m.photo_id, { permalink });
+  return resp(201, { post_group_id: groupId, post_id: postId, media: media.map((m) => ({ photo_id: m.photo_id, fb_media_id: m.media_fbid })), permalink });
 }
 
 // Delete orphaned published=false media so a failed /feed doesn't leave invisible objects on the Page.
@@ -797,13 +820,19 @@ async function instagramShare(event, secrets, userId, context) {
   // thing between a retried request and a duplicate Instagram post — and unlike Facebook, a mistaken
   // Instagram post CANNOT be deleted through the API (verified 2026-08-21: DELETE -> code 10). It is
   // removable only by hand in the app, which makes the guard matter more here, not less.
+  //
+  // BUG-IGREPLAYLINK-001: `permalink` is in the SELECT because the replay response is the ONLY place
+  // the client can get it. FacebookShareSheet.linkFor refuses to synthesise an Instagram URL (a media
+  // id is not addressable as a web URL), so without this column a replayed post renders no "View on
+  // Instagram" link at all — the fresh post shows one, the retry of the same post shows none. It is
+  // already in share_log; it just was not being read back out.
   if (clientRequestId) {
     const prior = await sql`
-      SELECT post_group_id, fb_post_id
+      SELECT post_group_id, fb_post_id, permalink
       FROM share_log
       WHERE client_request_id = ${clientRequestId} AND target = 'instagram' AND status = 'posted'
       ORDER BY created_at DESC LIMIT 1`;
-    if (prior.length) return resp(200, { replay: true, post_group_id: prior[0].post_group_id, media_id: prior[0].fb_post_id });
+    if (prior.length) return resp(200, { replay: true, post_group_id: prior[0].post_group_id, media_id: prior[0].fb_post_id, permalink: prior[0].permalink ?? null });
   }
 
   // Household-scoped existence check; a photo outside the household is simply "not found".
@@ -1017,11 +1046,22 @@ async function instagramShare(event, secrets, userId, context) {
 
 // DoD read-back: confirm the created post carries the expected media count. Non-fatal — logs a
 // mismatch (the post already succeeded); the client's success does not hinge on this.
+//
+// It ALSO harvests the post's permalink and returns it (null if the read failed or Graph omitted it).
+// BUG-FBPERMALINK-001 needed a permalink for share_log and this GET was already hitting the post node
+// on both publish paths, so `permalink_url` is one more field on a query that was happening anyway —
+// no extra Graph call, and therefore no extra queued response in the publish tests. The Instagram
+// path spends a dedicated GET on this because it has no equivalent read-back to piggyback on.
+//
+// VERIFIED against live Graph 2026-08-31: GET /v21.0/{page-post-id}?fields=permalink_url with the
+// Page token returns e.g. "https://www.facebook.com/{page}/posts/{post}". The field IS readable on a
+// Page post node at v21.0 — it is simply not in the POST /{page-id}/photos response.
 async function readBackAssert(postId, pageToken, expected) {
   try {
-    const r = await graphGet(`${nodeUrl(postId)}?fields=attachments{subattachments}&access_token=${encodeURIComponent(pageToken)}`);
+    const r = await graphGet(`${nodeUrl(postId)}?fields=attachments{subattachments},permalink_url&access_token=${encodeURIComponent(pageToken)}`);
     const subs = r.json?.attachments?.data?.[0]?.subattachments?.data;
     const got = Array.isArray(subs) ? subs.length : (r.json?.attachments?.data?.length ?? null);
     if (got != null && expected > 1 && got !== expected) console.warn(`readBack: post ${postId} media count ${got} != expected ${expected}`);
-  } catch (err) { console.warn('readBack skipped:', err?.message ?? String(err)); }
+    return r.json?.permalink_url ?? null;
+  } catch (err) { console.warn('readBack skipped:', err?.message ?? String(err)); return null; }
 }

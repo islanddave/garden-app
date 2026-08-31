@@ -108,6 +108,66 @@ describe('facebook-share publish path', () => {
     expect(feeds()).toHaveLength(1);
   });
 
+  // ── BUG-FBPERMALINK-001: the permalink reaches share_log, not just the response ─────────────────
+  //
+  // The Instagram equivalent (handlerInstagram.test.js) has asserted this since V4-IGSHARE-001; the
+  // Facebook side had NO permalink assertion at all, which is how a setStatus with no `permalink`
+  // column in it shipped and stayed green. share_log is append-only, so a row that cannot say where
+  // its photo went is unrecoverable history.
+  //
+  // The URL shape is the one live Graph returned for a real Page post (v21.0), not an invented
+  // facebook.com/p1 — a fixture that cannot occur in prod proves nothing about the path that runs.
+  const PERMALINK = 'https://www.facebook.com/122102484477456294/posts/122101954179456294';
+
+  it('single photo: the permalink from the read-back is persisted AND returned', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    fetchMock.mockResolvedValueOnce(okJson({ id: 'MEDIA1', post_id: 'POST1' }))
+             .mockResolvedValueOnce(okJson({ permalink_url: PERMALINK }));   // read-back
+    const { status, body } = parse(await handler(post({ photo_ids: ['p1'], caption: 'hi' })));
+
+    expect(status).toBe(201);
+    expect(body.permalink).toBe(PERMALINK);
+    // The load-bearing half. `permalink` now appears in EVERY setStatus statement, so matching the
+    // text alone would pass even if no call site ever supplied a value — the bound value is what
+    // proves the column is actually written.
+    const updates = stubState.sqlCalls.filter((c) => /UPDATE share_log/i.test(c.text));
+    expect(updates.some((c) => /permalink/.test(c.text) && c.values.includes(PERMALINK))).toBe(true);
+    // And it costs no extra Graph call: the field rides the read-back GET that already ran.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(graphCalls().find((c) => c.method === 'GET').url).toContain('permalink_url');
+  });
+
+  it('multi photo: every row in the group gets the post-level permalink', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1'), photoRow('p2')] });
+    fetchMock.mockResolvedValueOnce(okJson({ id: 'M1' }))
+             .mockResolvedValueOnce(okJson({ id: 'M2' }))
+             .mockResolvedValueOnce(okJson({ id: 'POSTX' }))                 // /feed
+             .mockResolvedValueOnce(okJson({ permalink_url: PERMALINK }));   // read-back
+    const { status, body } = parse(await handler(post({ photo_ids: ['p1', 'p2'], caption: 'two' })));
+
+    expect(status).toBe(201);
+    // This path returned no `permalink` key AT ALL before — a multi-photo post answered with a
+    // different response shape than a single-photo one for no reason the client could see.
+    expect(body.permalink).toBe(PERMALINK);
+    const carrying = stubState.sqlCalls
+      .filter((c) => /UPDATE share_log/i.test(c.text) && c.values.includes(PERMALINK));
+    expect(carrying).toHaveLength(2);           // one per photo, not just the first
+    expect(fetchMock).toHaveBeenCalledTimes(4); // 2 uploads + feed + read-back; no new call
+  });
+
+  it('a read-back that yields no permalink leaves the column alone rather than nulling it', async () => {
+    stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
+    fetchMock.mockResolvedValueOnce(okJson({ id: 'MEDIA1', post_id: 'POST1' }))
+             .mockResolvedValueOnce(okJson({}));   // read-back with no permalink_url
+    const { status, body } = parse(await handler(post({ photo_ids: ['p1'] })));
+
+    expect(status).toBe(201);
+    expect(body.permalink).toBeNull();
+    // One status write, not a second no-op UPDATE. The publish still succeeded — a missing permalink
+    // is cosmetic and must never look like a failure.
+    expect(stubState.sqlCalls.filter((c) => /UPDATE share_log/i.test(c.text))).toHaveLength(1);
+  });
+
   // ── The guard this file exists for ────────────────────────────────────────────────────────────
   it('FAIL-CLOSED: a malformed JPEG is refused and NOTHING is sent to Graph', async () => {
     stubState.sqlHandler = sqlRouter({ photos: [photoRow('p1')] });
@@ -271,6 +331,39 @@ describe('facebook-share publish path', () => {
     expect(body.replay).toBe(true);
     expect(body.post_id).toBe('POST-OLD');
     expect(fetchMock).not.toHaveBeenCalled();   // the whole point: no second post
+  });
+
+  // Two assertions, two different regressions, neither catching the other's: the response check
+  // fails if `permalink` is dropped from resp(), the SQL check fails if it is dropped from the
+  // SELECT. The stub returns `prior` whole whatever columns the query names, so the response
+  // assertion alone would stay green over a query that no longer reads the column.
+  it('a replay hands back the stored permalink, not just the post id', async () => {
+    stubState.sqlHandler = sqlRouter({
+      photos: [photoRow('p1')],
+      prior: [{ post_group_id: 'GROUP-OLD', fb_post_id: 'POST-OLD', permalink: PERMALINK }],
+    });
+    const { status, body } = parse(
+      await handler(post({ photo_ids: ['p1'], client_request_id: 'req-replay-link' })));
+
+    expect(status).toBe(200);
+    expect(body.replay).toBe(true);
+    expect(body.permalink).toBe(PERMALINK);
+    const replayQuery = stubState.sqlCalls.map((c) => c.text).find((t) => /FROM share_log/i.test(t));
+    expect(replayQuery).toContain('permalink');
+  });
+
+  // Rows written before BUG-FBPERMALINK-001 have permalink NULL. The replay must degrade to the
+  // synthesised facebook.com/{post_id} link the sheet builds, not send `undefined` to the client.
+  it('an older row with no permalink replays a null, leaving the sheet to synthesise', async () => {
+    stubState.sqlHandler = sqlRouter({
+      photos: [photoRow('p1')],
+      prior: [{ post_group_id: 'GROUP-OLD', fb_post_id: 'POST-OLD', permalink: null }],
+    });
+    const { body } = parse(
+      await handler(post({ photo_ids: ['p1'], client_request_id: 'req-replay-old' })));
+    expect(body.replay).toBe(true);
+    expect(body.permalink).toBeNull();
+    expect(body.post_id).toBe('POST-OLD');
   });
 
   // The replay lookup is scoped to target='facebook'. Today that predicate matches nothing extra —

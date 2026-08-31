@@ -67,6 +67,10 @@ const AUDITED_COLUMNS = [
   'error',
   'created_at',
   'updated_at',
+  // Added with BUG-FBPERMALINK-001. It was omitted here for an honest reason — before that fix the
+  // identifier appeared in the Instagram SQL only, and this array is the intersection of prod's
+  // columns with the SQL this Lambda actually issues. Both targets write it now, so it belongs.
+  'permalink',
 ];
 
 describe('facebook-share SELECT-column contract (L-081 Phase 1)', () => {

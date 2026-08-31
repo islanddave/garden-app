@@ -557,6 +557,26 @@ describe('instagram publish path', () => {
     expect(publishes()).toHaveLength(0);
   });
 
+  // BUG-IGREPLAYLINK-001. The two assertions below catch two different regressions and neither
+  // catches the other's: the response check fails if `permalink` is dropped from the resp() object,
+  // and the SQL check fails if it is dropped from the SELECT — the stub returns `prior` whole
+  // regardless of which columns the query names, so the response alone would stay green.
+  it('a replayed Instagram post still surfaces its permalink — the sheet cannot synthesise one', async () => {
+    const sql = sqlRouter({
+      photos: [photoRow('p1')],
+      prior: [{ post_group_id: 'G-OLD', fb_post_id: 'IGMEDIA-OLD', permalink: 'https://instagram.com/p/old' }],
+    });
+    stubState.sqlHandler = sql;
+    const { status, body } = parse(await handler(igPost({ photo_ids: ['p1'], client_request_id: 'req-replay-link' })));
+
+    expect(status).toBe(200);
+    expect(body.replay).toBe(true);
+    // Without this the retry of a post renders NO "View on Instagram" link while the original render
+    // showed one — linkFor refuses to guess an IG URL, so the replay response is the only source.
+    expect(body.permalink).toBe('https://instagram.com/p/old');
+    expect(sql.seen.find((t) => /FROM share_log/.test(t))).toContain('permalink');
+  });
+
   it('scopes the replay lookup to target=instagram in the SQL it actually issues', async () => {
     const sql = sqlRouter({ photos: [photoRow('p1')] });
     stubState.sqlHandler = sql;
