@@ -150,8 +150,37 @@ describe('the hero photo query (static — index.js cannot be imported here)', (
   it('requires the featured photo to be ALIVE before preferring it over the fallback', () => {
     // Reading gn.featured_photo_id directly would emit an id for a soft-deleted photo, which can
     // only 404 — and 404 is terminal, so the row would render nothing instead of falling back.
-    expect(SRC).toMatch(/LEFT JOIN photos fph ON fph\.id = gn\.featured_photo_id AND fph\.deleted_at IS NULL/);
+    expect(SRC).toMatch(/WHERE ph\.id = gn\.featured_photo_id\s+AND ph\.deleted_at IS NULL/);
     expect(SRC).toMatch(/COALESCE\(fph\.id, alt\.id\) AS photo_id/);
+  });
+
+  // BUG-HARVHEROMEMBER-001. The half of INV-HERO this query shipped without.
+  //
+  // Alive-only is not enough: re-parenting a photo (PhotoLibrary's full-replace PUT, or
+  // V4-PHOTOUNTAG-001 returning it to the untagged inbox) leaves gn.featured_photo_id pointing at a
+  // photo that still EXISTS and is NOT deleted but no longer belongs to this planting. No deleted_at
+  // filter can see that. Every other hero read in the fleet re-checks membership and is held to it by
+  // lambda/hero-read-derivation.test.js — this one is structurally invisible to that guard (its FILES
+  // list does not include harvests, and its HERO_JOIN_RE matches /(?:fp|ph)\.id/, which does not match
+  // this query's `fph` alias), so the assertion has to live here or nowhere.
+  it('re-checks MEMBERSHIP on the explicit arm, not just deleted_at', () => {
+    expect(SRC, 'crop hero prefers a featured photo that has been re-parented away')
+      .toMatch(/AND \(ph\.plant_id = gn\.id OR fe\.plant_id = gn\.id\)/);
+  });
+
+  it('keeps the explicit arm EVENT-INCLUSIVE — a plant_id-only re-check would demote event photos', () => {
+    // Same reason plants/index.js is event-inclusive: EventNew logs event photos with
+    // {project_id, event_id} and no plant_id. Narrowing this to ph.plant_id would silently drop
+    // every hero attached that way down to the fallback.
+    expect(SRC).toMatch(/LEFT JOIN event_log fe ON fe\.id = ph\.event_id AND fe\.deleted_at IS NULL/);
+  });
+
+  it('makes the explicit arm a LATERAL so it can reach event_log at all', () => {
+    // A plain `LEFT JOIN photos fph ON ...` cannot reference a later join, so the membership arms
+    // above are only expressible once this is a LATERAL. Pinning the shape keeps a "simplify this
+    // back to a plain join" pass from silently taking the membership re-check with it.
+    expect(SRC).toMatch(/\)\s*fph ON TRUE/);
+    expect(SRC).not.toMatch(/LEFT JOIN photos fph ON/);
   });
 
   it('holds the I7 line: photo IDs only, no presign and no photos-bucket env in this Lambda', () => {

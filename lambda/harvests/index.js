@@ -470,12 +470,40 @@ export const handler = async (event) => {
       // The LATERAL therefore reaches both attachment points. `fph` is joined rather than read off
       // gn directly so a featured pointer at a soft-deleted photo falls through to the fallback
       // instead of emitting an id that can only 404.
+      //
+      // BUG-HARVHEROMEMBER-001 — `fph` is a LATERAL, and it RE-CHECKS MEMBERSHIP, because alive is
+      // only half of INV-HERO. The other half: the stored pointer survives its photo being RE-PARENTED
+      // away (PhotoLibrary's full-replace PUT, and V4-PHOTOUNTAG-001's return-to-inbox). Nothing is
+      // deleted in either case, so `deleted_at IS NULL` cannot catch it — only a membership re-check
+      // can. Without this the crop rail keeps rendering a photo that now belongs to a different
+      // planting, and the fallback below never gets a chance because COALESCE already had a non-null
+      // id. The other eight hero reads in the fleet resolve this way and are held to it by
+      // lambda/hero-read-derivation.test.js; this one is invisible to that guard (wrong file, and its
+      // `fph` alias does not match the guard's /(?:fp|ph)\.id/ shape), which is how it shipped
+      // half-implemented. See lambda/harvests/crop-hero.test.js for the local guard.
+      //
+      // Membership is EVENT-INCLUSIVE for the same reason it is on plants: EventNew logs event photos
+      // with {project_id, event_id} and no plant_id, so a plant_id-only check would demote every hero
+      // attached that way. `fe` is deleted-filtered so the explicit arm and the fallback arm below
+      // agree on what "attached to this planting" means — otherwise a photo could be preferred as the
+      // explicit hero while being unselectable as a fallback. Measured on prod 2026-08-31: filtered
+      // and unfiltered both resolve 238 of 251 pointers, so the choice is free today and the
+      // re-check demotes nothing reachable — the 13 it drops are all on SOFT-DELETED plantings, which
+      // computeAggregates already excludes from heroPlantIds (crop-hero.test.js, "ignores a row whose
+      // planting is soft-deleted").
       const heroPlantIds = [...new Set((out.aggregates.crops ?? []).map((c) => c.hero_plant_id).filter(Boolean))];
       if (heroPlantIds.length > 0) {
         const heroRows = await sql`
           SELECT gn.id AS plant_id, COALESCE(fph.id, alt.id) AS photo_id
           FROM public.garden_node gn
-          LEFT JOIN photos fph ON fph.id = gn.featured_photo_id AND fph.deleted_at IS NULL
+          LEFT JOIN LATERAL (
+            SELECT ph.id
+            FROM photos ph
+            LEFT JOIN event_log fe ON fe.id = ph.event_id AND fe.deleted_at IS NULL
+            WHERE ph.id = gn.featured_photo_id
+              AND ph.deleted_at IS NULL
+              AND (ph.plant_id = gn.id OR fe.plant_id = gn.id)
+          ) fph ON TRUE
           LEFT JOIN LATERAL (
             SELECT p.id
             FROM photos p
