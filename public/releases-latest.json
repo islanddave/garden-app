@@ -1,9 +1,7 @@
 {
-  "version": "4.84.0",
+  "version": "4.85.0",
   "date": "2026-08-31",
   "highlights": [
-    "Adding several photos at once now keeps all of them. On Android the phone was releasing its hold on the files while they waited to upload, so a batch of ten could arrive as one — the photos are now copied the moment you pick them, and any that can't be read are named right away instead of failing later.",
-    "A photo you moved to a different plant no longer keeps showing as the cover photo on the crop screen you moved it away from.",
-    "Tall pop-up panels no longer push their top edge off the screen when they're full of content."
+    "Harvests logged from the app are public again — a stale saved draft could silently hide them from the public site"
   ]
 }

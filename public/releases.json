@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.85.0",
+    "date": "2026-08-31",
+    "highlights": [
+      "Harvests logged from the app are public again — a stale saved draft could silently hide them from the public site"
+    ]
+  },
+  {
     "version": "4.84.0",
     "date": "2026-08-31",
     "highlights": [
