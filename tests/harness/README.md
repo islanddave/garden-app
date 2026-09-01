@@ -102,10 +102,61 @@ this one.
 | `stubs/clerk.jsx` | `@clerk/react` stand-in (aliased only in the harness config) |
 | `stubs/fixtures.js` | 24 plantings / 2 projects / event POST responses |
 | `baselinePlugin.mjs` | serves `src/**` from a git object |
-| `vite.harness.config.mjs` | port 5311, Clerk alias, baseline plugin |
+| `appGlobalStyle.js` | **the app's runtime global stylesheet** — injected into every entry (see below) |
+| `vite.harness.config.mjs` | port 5311, Clerk alias, baseline plugin, global-style injector |
 | `BASELINE-eeb7019.json` | the recorded baseline this harness was built to capture |
 
 Nothing under `src/` or `lambda/` is touched, imported-from-only.
+
+## The app's global stylesheet — fixed 2026-09-01, BUG-HARNESSGLOBALCSS-001
+
+**Every measurement this harness produced before 2026-09-01 was taken in the wrong box model and the
+wrong font.** The app has no `.css` file, and this README used to conclude from that it had no global
+styles at all. It does: `src/main.jsx:10-24` *builds* a `<style>` in JavaScript and appends it to
+`document.head` — `box-sizing: border-box`, the `-apple-system` stack, `a { color: inherit }`,
+`input, button, textarea, select { font: inherit }`, `--bottom-nav-height`, `iconCssVars()`. Being
+constructed at runtime, it is invisible to any search for a stylesheet, and no entry ever loaded it.
+
+What that cost, on the run that found it: `/seeds/saved`'s sheet inputs are `width:100%` with 12px
+padding and a 1px border. Under the UA's `content-box` default they computed to **416px inside a
+390px sheet** — a 26px overflow that looked exactly like a shipped bug and was one keystroke from
+being filed as one. Under the app's real `border-box` they are 390px and fit. The font swap is
+quieter and worse: serif metrics move every wrap point, line count and height this harness measures.
+
+`appGlobalStyle.js` now carries that block and the `harness-app-global-style` plugin in
+`vite.harness.config.mjs` injects it into **every** entry via `transformIndexHtml` — including any
+entry added later. That placement is deliberate: entries do not share a root module (each `.html`
+loads its own `.jsx`), so fixing `main.jsx` would have covered `index.html` alone and left the other
+twenty entries wrong in exactly the way that created this bug.
+
+The block is **copied** from `src/main.jsx`, because importing that module would also boot Clerk, the
+service worker and `warmApiOrigins()`. `src/__tests__/harnessGlobalStyle.test.js` pins the two copies
+together and fails on drift (verified by mutation, not just by passing). **If you change the block in
+`src/main.jsx`, change it here too.**
+
+⚠ **Baselines recorded before this date are not comparable to anything measured after it** —
+`BASELINE-eeb7019.json` and the numbers in the `psheetverify-20260830` and `sheetoverflow-20260831`
+reports were all taken under the old conditions. Re-take rather than diff against them.
+
+## `seedssaved.*` — /seeds/saved, added 2026-09-01
+
+`SavedSeeds` shipped in v4.90.0 having never been rendered in a browser. This entry mounts the real
+page inside the real `ToastProvider`, stubs `window.fetch` (so the real `useApiFetch` seam runs) and
+fixtures it with **real prod inventory names taken longest-first** — the 44-character "Money Plant
+(self-saved, variety unrecorded)" is the widest name in the seed set and the reason the entry exists.
+
+```
+http://localhost:5311/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=844&page=seedssaved.html&case=empty
+    case=empty       0 tracked lots — the LIVE prod state (0 of 260 packets staged, 2026-09-01)
+    case=populated   lots across all three stages, incl. the worst-case name
+    case=picker      the "Track a saved-seed lot" sheet, opened by tapping the real control
+    case=advance     the advance sheet, with the backdating date field
+    verdict=0        hide the measurement bar, for a screenshot of the surface alone
+```
+
+`__h.all()` reports `hscroll`, per-card overflow, clipped names, `sheetOverflowX` and every tap
+target under 48px. The sheet check is separate from the document one on purpose: a sheet scrolls its
+own content, so a field wider than the panel does **not** show up as document `hscroll`.
 
 ## Limits — what this harness CANNOT prove
 

@@ -16,8 +16,17 @@
     <title>garden-app mobile layout harness</title>
     <style>
       html, body { margin: 0; padding: 0; }
-      /* No app-level global CSS exists (the app styles inline via src/lib/constants.js P), so this
-         page needs nothing beyond the reset the app itself relies on from the UA. */
+      /* ⚠ THIS COMMENT USED TO SAY "no app-level global CSS exists". IT WAS WRONG, and it was wrong
+         in the direction that voids measurements (BUG-HARNESSGLOBALCSS-001). The app styles its
+         COMPONENTS inline via src/lib/constants.js P — that part was true — but src/main.jsx:10-24
+         also BUILDS a <style> at runtime and appends it to document.head: box-sizing:border-box, the
+         system font stack, `a { color: inherit }`, `input,button,textarea,select { font: inherit }`,
+         --bottom-nav-height and iconCssVars(). It is constructed in JS, so no grep for a stylesheet
+         finds it, and on the strength of this comment no harness entry ever loaded it. Everything
+         measured here before 2026-09-01 was laid out in content-box and the UA serif.
+         It is now injected into every entry by the `harness-app-global-style` plugin in
+         vite.harness.config.mjs — see tests/harness/appGlobalStyle.js. Do NOT add a competing copy
+         to this file. */
       #harness-badge {
         position: fixed; top: 0; left: 0; z-index: 99999;
         font: 10px/1.4 ui-monospace, monospace; background: #2d6a4f; color: #fff;
