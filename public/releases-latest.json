@@ -1,13 +1,12 @@
 {
-  "version": "4.88.0",
-  "date": "2026-08-31",
+  "version": "4.89.0",
+  "date": "2026-09-01",
   "highlights": [
-    "Harvests you log by voice are no longer hidden from your public garden page. Every voice-logged harvest was being saved as not-public and vanishing from the public page, with no toggle anywhere to notice or undo it. Fixed at the source.",
-    "Voice logging survives your screen going dark. If the phone screen turned off mid-session, capture died and every non-visual cue died with it, silently. It now holds the screen awake while listening, and stops trying to listen to a screen that isn't on.",
-    "Voice tells you when it did NOT capture something. A failed capture used to be indistinguishable from a quiet moment. Misses are now recorded and counted in the header, and if your phone refused to buzz, it says so instead of pretending the cue landed.",
-    "Spoken and typed plant names match better. Crop names containing underscores now resolve (\"bunching onion\" reaches the planting), and two plantings whose names differ only by a repeated digit stop colliding.",
-    "Searching by crop type now works on the app's own filters, not just whole-garden search, so \"cucumber\" finds Suyo Long. Crop nicknames like \"cantaloupe\" for melon still only work in whole-garden search; that half is a separate fix and is not in this release.",
-    "Log Many is easier to hit and easier to read. The small tap targets on the selection path are raised, and picking plantings now happens in one scrolling list with your picks staying visible in the thumb zone instead of hiding behind a disclosure.",
-    "Freezer walk: a put-up date you estimated (\"this summer\") is now recorded and shown as an estimate — \"put up around Jul 16, 2026\" — instead of reading like a date you picked off the calendar. Type an exact date for any item and it stops being an estimate."
+    "Crop nicknames now find the plant. Searching or saying \"cantaloupe\" returns Charentais, and \"cucumber\" returns Suyo Long — on whole-garden search, the log picker, the variety picker and voice alike. Previously the nickname only worked in whole-garden search, because the app's own filters never received the alias list.",
+    "Log Many: pick exactly the plantings you mean. The selection is sent as an explicit list rather than a rule, with a count check that refuses the batch if fewer plantings resolve than you picked — so a batch can no longer quietly log against a smaller set than the one on screen.",
+    "Log Many: filter by location and crop type together — \"bag area + tomatoes\" narrows to the intersection rather than either one.",
+    "Log Many: the review list is now grouped by crop type, matching the picker. Group headers take about 12% of the panel as it opens and up to 35% in the densest stretch; the panel itself is unchanged.",
+    "Photos attached only to an inventory item now show as attached. Six photos linked to a seed packet or supply — and nothing else — were reading as having no link at all, because the gallery never fetched that connection.",
+    "A photo waiting to be tagged now reads as pending rather than as an error state."
   ]
 }
