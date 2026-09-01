@@ -1,9 +1,8 @@
 {
-  "version": "4.90.0",
+  "version": "4.91.0",
   "date": "2026-09-01",
   "highlights": [
-    "Saved seeds: a new page for seed you save yourself — track each lot through fermenting, drying and stored",
-    "Sow windows corrected — \"as soon as the soil can be worked\" now closes in spring instead of suggesting spinach and peas in late summer",
-    "Watering: eight plantings that were on a generic 3-day default now have real intervals"
+    "Security: removed an unused build dependency, clearing 8 advisories (7 high) from the build toolchain — no change to how the app behaves",
+    "Internal: the mobile layout test harness now loads the app's real global styles, so measurements taken from it match the real app"
   ]
 }

@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.91.0",
+    "date": "2026-09-01",
+    "highlights": [
+      "Security: removed an unused build dependency, clearing 8 advisories (7 high) from the build toolchain — no change to how the app behaves",
+      "Internal: the mobile layout test harness now loads the app's real global styles, so measurements taken from it match the real app"
+    ]
+  },
+  {
     "version": "4.90.0",
     "date": "2026-09-01",
     "highlights": [
