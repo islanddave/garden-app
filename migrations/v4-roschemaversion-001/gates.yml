@@ -1,0 +1,99 @@
+# gates.yml
+# OPS-ROSCHEMAVERSIONBLIND-001 — SELECT-only RLS policy on public.schema_version.
+#
+# CATALOG GATES, ENVIRONMENT-SYMMETRIC. Everything below reads pg_policies / pg_class, which exist
+# and mean the same thing in both environments, so no gate here can pass vacuously for want of a
+# row and none needs env: prod.
+#
+# A NOTE ON WHAT THESE GATES CANNOT SEE, stated rather than left to be discovered: gate_runner
+# connects with the OWNER DSN, and relforcerowsecurity is false, so the owner BYPASSES RLS. No gate
+# in this file can therefore prove that garden_ro can actually read the table — a `SELECT count(*)`
+# gate would return 116 whether the policy existed or not, and would have passed before the fix.
+# That is precisely the instrument-that-cannot-fail trap. So these gates assert the CATALOG STATE
+# that causes the fix (policy present, correct command, RLS still armed, no write policy), and the
+# behavioural proof is done separately through the garden_ro DSN and recorded in the README.
+#
+# POST GATES SELF-ARM on the receipt so they are vacuously green wherever this is unapplied and
+# disarm again under 0r-rollback.sql.
+
+pre:
+  - name: pre_schema_version_has_no_policies
+    note: >
+      The starting state: RLS is armed and there is not one policy, which is what denies every
+      non-owner role. Violation-count shape — must be 0 policies before the fix.
+      continuous:false; it is false by design once 0a has run.
+    sql: |
+      SELECT 1 FROM pg_policies
+       WHERE schemaname = 'public' AND tablename = 'schema_version'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_rls_is_enabled_on_schema_version
+    note: >
+      Confirms RLS really is the mechanism before we treat it as such. If this were false the
+      blindness would have some other cause and this migration would be aimed at the wrong thing.
+    sql: |
+      SELECT 1 FROM pg_class
+       WHERE oid = 'public.schema_version'::regclass AND relrowsecurity = true
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+post:
+  # VIOLATION-COUNT SHAPE THROUGHOUT, AND THAT IS LOAD-BEARING FOR THE SELF-ARMING. A "the good
+  # state is present" gate written as rowcount_eq=1 does NOT go vacuously green when the receipt is
+  # absent — the EXISTS clause makes it return 0 rows, which reads as FAILURE, leaving it
+  # permanently red everywhere this is unapplied. Asserting the VIOLATION instead (expect 0) gives
+  # all three states correctly: no receipt -> green; receipt + fix intact -> green; receipt + fix
+  # reverted -> RED.
+  - name: post_select_policy_not_missing
+    note: >
+      The policy is present AND scoped to SELECT. `cmd` is asserted, not just the name — a policy
+      recreated FOR ALL under the same name would satisfy a name-only check while quietly granting
+      write visibility this migration never intended. Phrased as "receipt written but no correct
+      SELECT policy found", so it is vacuously green before apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-roschemaversion-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_policies
+                          WHERE schemaname = 'public' AND tablename = 'schema_version'
+                            AND policyname = 'schema_version_select_all' AND cmd = 'SELECT')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_write_policy_exists
+    note: >
+      THE INVARIANT THAT MATTERS MOST HERE. Reads were opened; writes must stay deny-all for every
+      non-owner role. Goes red if anyone later adds an INSERT/UPDATE/DELETE/ALL policy to this
+      receipt table. Violation-count shape.
+    sql: |
+      SELECT 1 FROM pg_policies
+       WHERE schemaname = 'public' AND tablename = 'schema_version'
+         AND cmd <> 'SELECT'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-roschemaversion-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_rls_not_disabled
+    note: >
+      This migration must NOT have disabled RLS. Goes red if someone reached for
+      DISABLE ROW LEVEL SECURITY, which opens the table far wider than the SELECT policy does.
+      Violation shape, so it is vacuously green before apply.
+    sql: |
+      SELECT 1 FROM pg_class
+       WHERE oid = 'public.schema_version'::regclass AND relrowsecurity = false
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-roschemaversion-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous:false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.89.0-roschemaversion-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false

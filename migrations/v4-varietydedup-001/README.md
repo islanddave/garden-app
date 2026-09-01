@@ -7,8 +7,40 @@ and reversible via `0r-rollback.sql`.
 
 ## Status
 
-**PREPARED — NOT APPLIED.** No writes have been made to prod or staging. `0a-data-fix.sql` has not
-been run anywhere. This is ready for Dave's review before anyone applies it.
+**APPLIED TO PROD 2026-09-01** (session `garden-bigclose-20260901`, Dave-authorised). Result:
+`UPDATE 1` repoint, `UPDATE 1` Alaska loser archived, `UPDATE 3` CA-Wonder family archived,
+`INSERT 0 1` receipt — exactly the shape predicted below. Receipt `4.36.0-varietydedup-001`.
+Verified by content, not by the psql return: Alaska Mix is 2→1 live, 0 plantings remain on the
+archived loser, and **0 visible plantings anywhere in the database point at an archived variety**.
+
+### Correction 2026-09-01 — one premise in `0a-data-fix.sql` had gone stale before apply
+
+The comment block in `0a-data-fix.sql` (and the reasoning repeated below) asserts:
+
+> `7a6ab71f`'s planting (`6cb08d0d`, status=failed) is the **ONLY** one of the four rows' plantings
+> that is neither archived nor deleted — it is Dave's current active pepper planting.
+
+**That was false by the time this was applied.** Measured live 2026-09-01, `6cb08d0d` is
+`archived_at`-set, and **all six plantings across all four rows are archived or deleted — zero are
+visible.** Either it was wrong when written on 2026-08-18 or the planting was archived in the
+fortnight between authoring and apply.
+
+The *conclusion* — Emerald Green (`7a6ab71f`) is the keeper and no rename is needed — is unaffected,
+because it never rested on that leg alone. The two surviving arguments are the load-bearing ones:
+
+1. `uq_plant_varieties_name_species` genuinely blocks renaming `1eff5046` → 'Emerald Green', since
+   `7a6ab71f` already holds `(lower(name), COALESCE(species,''))` = `('emerald green','annuum')`.
+2. `7a6ab71f` carries cultivar-specific data (DTM 72–80) against `1eff5046`'s generic
+   gardeningchannel.com growing-guide content (DTM 60–90).
+
+The durable `schema_version` receipt text never repeated the stale claim — it cites only the unique
+key — so the permanent record was already clean. Recorded here so the next reader does not inherit
+a measurement that has expired. This is the failure mode the project already knows as
+*comments carrying measurements go stale silently*; it cost nothing this time only because the
+guards were structural rather than trusting the comment.
+
+**Applying it changed nothing Dave can see**, which is the strongest safety statement available
+here: with zero visible plantings on any archive target, no currently-rendered screen moved.
 
 **Prod-only by construction.** The SQL is keyed to specific live prod row UUIDs found by querying
 prod directly. Staging's isolated Neon branch doesn't carry these rows, so unlike a schema

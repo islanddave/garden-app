@@ -1,0 +1,90 @@
+# gates.yml
+# BUG-GROWNASDEFAULT-001 — drop the manufactured DEFAULT on plant_varieties.grown_as.
+#
+# SCHEMA-SHAPE GATES, SO THEY ARE ENVIRONMENT-SYMMETRIC. Unlike v4-varietydedup-001 (which was
+# keyed to specific prod row UUIDs and needed env: prod), this migration is pure DDL on a column
+# that exists in BOTH environments. Every gate below reads information_schema, so it means the same
+# thing on staging as on prod and none of them can pass vacuously for want of a row.
+#
+# POST GATES SELF-ARM on the receipt. gate-invariants.yml runs continuously against both
+# environments and `continuous:` defaults to TRUE when absent, so a post gate asserting this
+# migration's own effect would be permanently red anywhere it is unapplied. Each post assertion
+# therefore carries
+#   AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.89.0-grownasdefault-001')
+# making it vacuously green before apply, a real standing invariant after, and disarmed again by
+# 0r-rollback.sql. Not flipped by hand.
+#
+# WHAT IS DELIBERATELY NOT GATED: the value distribution of grown_as. This migration changes zero
+# rows, and the ledger row explicitly defers correcting the 195 already-defaulted rows to
+# sow-window Phase 0. A gate pinning today's 362-annual count would therefore go red the moment
+# that legitimate correction lands — it would be asserting the bug rather than the fix.
+
+pre:
+  - name: pre_grown_as_default_is_armed
+    note: >
+      The DEFAULT is present before the fix. Confirms the starting state and that this migration is
+      not a no-op. continuous:false — this is an apply-window precondition, and it is FALSE by
+      design once 0a has run.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plant_varieties'
+         AND column_name = 'grown_as' AND column_default IS NOT NULL
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_grown_as_is_nullable
+    note: >
+      NULL must already be a legal value for the column, or dropping the default would convert
+      omitting-the-column from 'silently annual' into an outright insert failure. Verified nullable
+      before touching anything.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plant_varieties'
+         AND column_name = 'grown_as' AND is_nullable = 'YES'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+post:
+  # VIOLATION-COUNT SHAPE, AND THAT IS LOAD-BEARING FOR THE SELF-ARMING. A "the good state is
+  # present" gate written as rowcount_eq=1 does NOT go vacuously green when the receipt is absent —
+  # the EXISTS clause makes it return 0 rows, which reads as FAILURE, so it would be permanently red
+  # everywhere this migration is unapplied. That is the opposite of self-arming. Asserting the
+  # VIOLATION instead (expect 0) gives all three states correctly: no receipt -> 0 rows -> green;
+  # receipt + fix intact -> 0 rows -> green; receipt + fix reverted -> 1 row -> RED.
+  - name: post_grown_as_default_not_rearmed
+    note: >
+      The standing invariant this migration exists to create: grown_as must have no column_default,
+      so no future insert can inherit 'annual' without stating it. Goes red if a later migration
+      re-adds the default.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plant_varieties'
+         AND column_name = 'grown_as' AND column_default IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-grownasdefault-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_grown_as_did_not_gain_not_null
+    note: >
+      Dropping a default must not have been accompanied by a NOT NULL. Goes red if the column ever
+      acquires a constraint that would reject exactly the honest NULL this migration exists to
+      permit — which would convert an omitted column from 'silently annual' into an insert failure.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plant_varieties'
+         AND column_name = 'grown_as' AND is_nullable <> 'YES'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-grownasdefault-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous:false — it is an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.89.0-grownasdefault-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
