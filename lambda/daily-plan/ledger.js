@@ -241,7 +241,8 @@ function foldLedger(ctx) {
     const t = p.msOfDay === 0 ? etMidnightMs(p.date) + 12 * 3600000 : e.t;
     if (t < windowStartMs || t > effNowMs) continue;
     if (e.type === 'moisture_check') snoozeCount++;
-    items.push({ t, prio: PRIO[e.type] ?? 0, id: String(e.id), type: e.type, depth: e.depth || null });
+    items.push({ t, prio: PRIO[e.type] ?? 0, id: String(e.id), type: e.type, depth: e.depth || null,
+      gaugeSourced: e.gaugeSourced === true });
   }
   // Gauge/forecast rain day-credits: once per qualifying day, outdoor only, transplant carve-out
   // honored per-day. DRG-RAINDEPTH-001: the day's MEASURED precip maps to a depth class (per
@@ -342,6 +343,28 @@ function foldLedger(ctx) {
       // A rain event with NO depth is a MANUAL log — Dave watching it pour and calling these
       // watered — and keeps canon Decision 12 full-reset semantics. A depth-carrying rain event is
       // gauge-written (metadata.water_depth_source='rain_gauge') and folds like a watering.
+      //
+      // BUG-RAINEVENTNEUTRALIZES-001 — THE THIRD CASE, and the one that erased this whole feature.
+      // The gauge writer (handler.js logRainEvents) emits NO water_depth, so a gauge rain event
+      // reaches here depth=null and was taking the manual branch: a FULL RESET, on every logged
+      // rain day, regardless of how much fell. The day_credit for that same day is timestamped
+      // 23:59 with PRIO 2, so it then applied onto an already-zeroed D where every depth class is a
+      // no-op. Measured by execution: an in_ground bed at 0.21" and at 2.84" folded to a
+      // byte-identical D — precisely the amount-blind cliff DRG-RAINDEPTH-001 exists to remove.
+      //
+      // A gauge day therefore belongs to the day_credit path, which is the ONE place that knows the
+      // substrate tier, the bag-heat demotion and the transplant carve-out. Skipping the event here
+      // is not dropping the rain — it hands it to the only reader equipped to price it.
+      //
+      // Deliberately keyed on gaugeSourced (metadata.precip_source) rather than on depth==null: the
+      // two are not the same question, and conflating them is what caused this. A manual log has no
+      // precip_source and keeps full-reset semantics untouched.
+      //
+      // Side effect, and it is a correction rather than a regression: a gauge event fans out to
+      // EVERY planting including covered/indoor ones, while day_credit is gated on
+      // exposure==='outdoor'. Under the old branch an indoor planting was full-reset by rain that
+      // never touched it. It now gets nothing, which is right.
+      if (it.gaugeSourced) continue;                                 // day_credit owns this day
       D = it.depth ? applyDepth(D, it.depth, false) : 0;
     } else if (it.type === 'moisture_check') {
       D = Math.min(D, Math.max(0, thr - Math.max(P.SNOOZE.minFloorWi * wiEff, demandFor(etParts(it.t).date))));

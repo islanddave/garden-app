@@ -629,7 +629,14 @@ async function readLedgerEvents(pg, fromDate, toDate) {
     const { rows } = await pg.query(
       `select e.id, e.plant_id, e.event_type,
               (extract(epoch from e.event_date) * 1000)::float8 as t_ms,
-              e.metadata->>'water_depth' as water_depth
+              e.metadata->>'water_depth' as water_depth,
+              -- BUG-RAINEVENTNEUTRALIZES-001: the fold must be able to tell a GAUGE-written rain
+              -- event from a MANUAL one ("Dave watching it pour"). Only the gauge writer stamps
+              -- precip_source (logRainEvents -> 'awn_gauge'); a hand-logged rain has no such key.
+              -- Without this the two are indistinguishable, both arrive depth=null, and both take
+              -- ledger.js's full-reset branch -- which erases the entire DRG-RAINDEPTH-001 depth
+              -- model, since the day_credit for the same day then applies onto an already-zeroed D.
+              e.metadata->>'precip_source' as precip_source
          from event_log e
         where e.event_type in ('watering','rain','moisture_check')
           and e.deleted_at is null
@@ -640,7 +647,10 @@ async function readLedgerEvents(pg, fromDate, toDate) {
       [fromDate, toDate]);
     const by = {};
     for (const r of rows) {
-      (by[r.plant_id] ||= []).push({ id: r.id, t: Number(r.t_ms), type: r.event_type, depth: r.water_depth || null });
+      (by[r.plant_id] ||= []).push({
+        id: r.id, t: Number(r.t_ms), type: r.event_type, depth: r.water_depth || null,
+        gaugeSourced: !!r.precip_source,
+      });
     }
     return by;
   } catch (e) {

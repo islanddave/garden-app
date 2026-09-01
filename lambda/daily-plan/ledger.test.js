@@ -365,6 +365,38 @@ describe('fold ops', () => {
     const f = mk({ events: [PRIMER, { id: 'r1', t: at('2026-08-10', 12), type: 'rain', depth: null }] });
     expect(f.d).toBeCloseTo(1.583, 2);
   });
+
+  // ── BUG-RAINEVENTNEUTRALIZES-001 ────────────────────────────────────────────────────────────────
+  // A GAUGE-written rain event carries no water_depth (the writer never emits one), so before this
+  // fix it was indistinguishable from the manual log above and took the same full reset -- on every
+  // logged rain day, at any amount. Because the day_credit for that day lands later (23:59, PRIO 2)
+  // onto an already-zeroed D, every depth class became a no-op and the whole DRG-RAINDEPTH-001
+  // model was dead. These two tests pin the discrimination in BOTH directions; either one alone
+  // could be satisfied by deleting the feature.
+  it('a GAUGE rain event does NOT full-reset — the day_credit prices that day', () => {
+    const rainDay = '2026-08-10';
+    const weather = flatWeather({ precipOn: { [rainDay]: 0.12 } });   // intermediate: light (>=0.10, <0.25)
+    const gauge = mk({ events: [PRIMER, { id: 'r1', t: at(rainDay, 12), type: 'rain', depth: null,
+      gaugeSourced: true }], weather });
+    const creditOnly = mk({ events: [PRIMER], weather });             // same day, no event at all
+    // The event contributes NOTHING of its own: the fold is identical to the day_credit acting alone.
+    expect(gauge.d).toBeCloseTo(creditOnly.d, 6);
+    // And that shared value is a LIGHT credit, not a reset — the discrimination is real, not vacuous.
+    expect(gauge.d).toBeGreaterThan(2);
+  });
+
+  it('gauge rain at 0.12" and at 2.84" fold DIFFERENTLY (the amount-blindness is gone)', () => {
+    const rainDay = '2026-08-10';
+    const mkAt = (inches) => mk({
+      events: [PRIMER, { id: 'r1', t: at(rainDay, 12), type: 'rain', depth: null, gaugeSourced: true }],
+      weather: flatWeather({ precipOn: { [rainDay]: inches } }),
+    });
+    const drizzle = mkAt(0.12);                                       // light
+    const downpour = mkAt(2.84);                                      // deep
+    // The exact failure signature of the bug was these two being byte-identical.
+    expect(drizzle.d).not.toBeCloseTo(downpour.d, 3);
+    expect(drizzle.d).toBeGreaterThan(downpour.d);                    // less rain => drier => due sooner
+  });
   it('unknown depth strings fold as Normal (absent/historical = normal)', () => {
     const a = mk({ events: [PRIMER, W('2026-08-10', 12, 'torrential', 'x')] });
     const b = mk({ events: [PRIMER, W('2026-08-10', 12, null, 'x')] });

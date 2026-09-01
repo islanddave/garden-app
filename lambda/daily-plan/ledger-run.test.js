@@ -122,10 +122,32 @@ describe('the fold can never take down (or silently distort) the nightly plan', 
     ] });
     const by = await readLedgerEvents(pg, '2026-07-13', TODAY);
     expect(by.p1).toEqual([
-      { id: 'e1', t: 1754900000000, type: 'watering', depth: 'deep' },
-      { id: 'e2', t: 1754990000000, type: 'moisture_check', depth: null },
+      { id: 'e1', t: 1754900000000, type: 'watering', depth: 'deep', gaugeSourced: false },
+      { id: 'e2', t: 1754990000000, type: 'moisture_check', depth: null, gaugeSourced: false },
     ]);
     expect(by.p2[0].depth).toBeNull();
+  });
+
+  // BUG-RAINEVENTNEUTRALIZES-001 — the fold cannot price a gauge rain day correctly unless this
+  // read tells it which rain events are gauge-written. Pinned at the READ boundary because that is
+  // where the distinction is available (metadata.precip_source) and lost if the column is dropped
+  // from the select; ledger.test.js pins what the fold then does with it.
+  it('marks gauge-written rain events via metadata.precip_source, manual ones stay false', async () => {
+    const pg = recordingPg({ eventRows: [
+      { id: 'g1', plant_id: 'p1', event_type: 'rain', t_ms: 1754990000000, water_depth: null,
+        precip_source: 'awn_gauge' },
+      { id: 'm1', plant_id: 'p2', event_type: 'rain', t_ms: 1754990000000, water_depth: null,
+        precip_source: null },
+    ] });
+    const by = await readLedgerEvents(pg, '2026-07-13', TODAY);
+    expect(by.p1[0].gaugeSourced).toBe(true);
+    expect(by.p2[0].gaugeSourced).toBe(false);   // manual log keeps its full-reset semantics
+  });
+
+  it('the event-window SQL selects precip_source (dropping it silently re-breaks the depth model)', async () => {
+    const pg = recordingPg();
+    await readLedgerEvents(pg, '2026-07-13', TODAY);
+    expect(ledgerQ(pg)[0].sql).toMatch(/metadata->>'precip_source'/);
   });
   it('every bind in the event-window SQL carries an explicit cast (Neon null-typing rule)', async () => {
     const pg = recordingPg();
