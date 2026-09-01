@@ -68,8 +68,11 @@ describe('App route table (single source of truth)', () => {
     // BESIDE /log rather than inside it, which is the containment Dave asked for — the existing
     // harvest form is not modified, not wrapped and not reachable from it, so a failure here is
     // recovered by leaving the route.
-    expect(paths).toHaveLength(56)
-    expect(new Set(paths).size).toBe(56)
+    // 56 -> 57: V4-SEEDSAVEFLOW-001 adds /seeds/saved, the saved-seed lot surface. A PAGE, not
+    // `overlayable`, for the same reason /sow is one: it is a destination reached from the More
+    // sheet and worked in, not a task flyover launched over whatever was already open.
+    expect(paths).toHaveLength(57)
+    expect(new Set(paths).size).toBe(57)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {

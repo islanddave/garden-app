@@ -317,6 +317,22 @@ const NOT_IN_SITES = [
   // written row is gn.created_by, read back off the database, matching the batch writer in
   // lambda/events/index.js which derives the same two columns the same way.
   'daily-plan::location_id', 'daily-plan::project_id',
+  // inventory-items::inventory_item_id — seed_lot_stage_log's FK, written by V4-SEEDSAVEFLOW-001's
+  // POST /api/inventory-items/{id}/seed-stage. NOT BODY-SETTABLE, and structurally so rather than by
+  // convention: the request body is read for `stage`, `entered_at` and `note` ONLY, and the FK value
+  // is never taken from it. The INSERT selects `upd.id` out of its own CTE, where `upd` is an UPDATE
+  // on public.inventory_items carrying `created_by = ANY(householdIds) AND deleted_at IS NULL AND
+  // category = 'seeds'`.
+  //
+  // So the gate is the CTE itself and it fails CLOSED by construction: hand the route another
+  // household's item id in the PATH and the UPDATE matches zero rows, `upd` is empty, the INSERT
+  // selects from an empty relation and writes nothing, and the route 404s having changed nothing.
+  // There is no arrangement of request body or path that lets a caller name a row they could not
+  // already update — which is the property SITES entries buy with a loader call, obtained here from
+  // the statement's own shape. Same class as the daily-plan entries above (value read off a
+  // relation the handler has already scoped), with the difference that this one DOES parse a body;
+  // it just never reads an FK out of it.
+  'inventory-items::inventory_item_id',
   'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::user_id',
   'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
   'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',

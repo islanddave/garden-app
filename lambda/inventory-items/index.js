@@ -253,6 +253,68 @@ export const handler = async (event) => {
       return resp(200, rows[0]);
     }
 
+    // ── V4-SEEDSAVEFLOW-001 — seed-lot stage history ────────────────────────────────────────────
+    // GET  returns the lot's stage entries, newest first.
+    // POST advances the lot to a stage AND records the entry, in ONE statement.
+    const seedStageMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/seed-stage$/);
+    if (seedStageMatch) {
+      const itemId = seedStageMatch[1];
+      const STAGES = ['fermenting', 'drying', 'stored'];
+
+      if (method === 'GET') {
+        // Household-scoped through the PARENT rather than on the log row: seed_lot_stage_log carries
+        // created_by but joining the parent is what stops one household reading another's history
+        // via a guessed id, and it is the same predicate the write path enforces.
+        const rows = await sql`
+          SELECT l.id, l.stage, l.entered_at, l.note, l.created_by, l.created_at
+            FROM public.seed_lot_stage_log l
+            JOIN public.inventory_items i ON i.id = l.inventory_item_id
+           WHERE l.inventory_item_id = ${itemId}
+             AND i.created_by = ANY(${householdIds})
+             AND i.deleted_at IS NULL
+           ORDER BY l.entered_at DESC, l.created_at DESC
+        `;
+        return resp(200, rows);
+      }
+
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+
+      const body = JSON.parse(event.body ?? '{}');
+      if (!STAGES.includes(body.stage)) {
+        return resp(400, { error: `stage must be one of ${STAGES.join(', ')}` });
+      }
+      // BACKDATABLE ON PURPOSE. The founding use case is retroactive — the 1884 tomato lot went
+      // through its ferment and out to dry before any of this existed, and a stage history that can
+      // only be written in the present tense cannot record what actually happened. Absent -> now().
+      const enteredAt = body.entered_at ?? null;
+      const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null;
+
+      // ONE STATEMENT, so the two writes cannot separate. A stage log entry without the matching
+      // seed_stage on the lot would show history the list view contradicts; the reverse would move
+      // the lot with no record of when or why. A CTE gives atomicity without reaching for the
+      // driver's transaction API, and it inherits the guard for free: if the UPDATE matches nothing
+      // — wrong household, deleted row, or a non-seed item — `upd` is empty, the INSERT selects from
+      // it and writes nothing, and the route 404s having changed exactly zero rows.
+      const rows = await sql`
+        WITH upd AS (
+          UPDATE public.inventory_items
+             SET seed_stage = ${body.stage},
+                 updated_at = NOW()
+           WHERE id = ${itemId}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+             AND category = 'seeds'
+          RETURNING id
+        )
+        INSERT INTO public.seed_lot_stage_log (inventory_item_id, stage, entered_at, note, created_by)
+        SELECT upd.id, ${body.stage}, COALESCE(${enteredAt}::timestamptz, NOW()), ${note}, ${userId}
+          FROM upd
+        RETURNING id, inventory_item_id, stage, entered_at, note
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(201, rows[0]);
+    }
+
     const idMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)$/);
 
     if (idMatch) {
@@ -365,6 +427,22 @@ export const handler = async (event) => {
 
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.inventory_item_id).
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
+        // V4-SEEDSAVEFLOW-001 — presence, not truthiness. `seed_stage: null` is a MEANINGFUL value
+        // (a lot deliberately cleared back to "no stage"), so the test has to be "did the client
+        // mention this key" rather than "did it send something". hasOwnProperty answers that; a
+        // `body.seed_stage != null` check would make clearing a stage impossible.
+        const hasSeedProcess = Object.prototype.hasOwnProperty.call(body, 'seed_process');
+        const hasSeedStage   = Object.prototype.hasOwnProperty.call(body, 'seed_stage');
+        // Vocabulary is enforced by a DB CHECK, but a 400 here is a better answer than a 500 from a
+        // constraint violation — and it names the legal values, which the constraint error does not.
+        const SEED_PROCESSES = ['wet', 'dry'];
+        const SEED_STAGES    = ['fermenting', 'drying', 'stored'];
+        if (hasSeedProcess && body.seed_process != null && !SEED_PROCESSES.includes(body.seed_process)) {
+          return resp(400, { error: `seed_process must be one of ${SEED_PROCESSES.join(', ')}` });
+        }
+        if (hasSeedStage && body.seed_stage != null && !SEED_STAGES.includes(body.seed_stage)) {
+          return resp(400, { error: `seed_stage must be one of ${SEED_STAGES.join(', ')}` });
+        }
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
             SELECT 1 FROM photos
@@ -451,6 +529,23 @@ export const handler = async (event) => {
             featured_photo_id = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE featured_photo_id
+            END,
+            -- V4-SEEDSAVEFLOW-001. EXPLICIT-PRESENCE GUARDS, NOT BARE ASSIGNMENTS, and this is the
+            -- difference between working and destroying data. Every other column above is a bare
+            -- assignment, which is safe only because the edit form renders and returns all of them
+            -- (see the note at the top of this block). It does NOT render these two:
+            -- InventoryDetail's buildChanges() sends name/category/status/notes/source/source_url/
+            -- purchase_date/unit_cost/location_text/quantity_purchased plus the consumable-or-durable
+            -- set, and nothing seed-related. A bare assignment here would therefore NULL the seed
+            -- stage every time Dave edited an inventory item for any unrelated reason — silently,
+            -- with a 200, losing the process history the whole feature exists to hold.
+            seed_process = CASE
+              WHEN ${hasSeedProcess} THEN ${body.seed_process ?? null}
+              ELSE seed_process
+            END,
+            seed_stage = CASE
+              WHEN ${hasSeedStage} THEN ${body.seed_stage ?? null}
+              ELSE seed_stage
             END
           WHERE id = ${itemId}
             AND created_by = ANY(${householdIds})
@@ -542,6 +637,16 @@ export const handler = async (event) => {
       // Stringify + explicit ::jsonb cast is the house pattern (lambda/events/index.js:485) — an
       // uncast bound object cannot be typed by the driver, and a bare null needs the cast too.
       const metadataJson = body.metadata != null ? JSON.stringify(body.metadata) : null;
+      // V4-SEEDSAVEFLOW-001 — seed_process / seed_stage are NAMED in the INSERT below rather than
+      // left to default, for exactly the reason the metadata note above records: Postgres does not
+      // complain about a key the INSERT never mentions, so an omitted column returns 201 and
+      // silently drops what the client sent. Both are nullable, so a non-seed item writes NULL.
+      //
+      // THIS COMMENT LIVES OUT HERE, NOT INSIDE THE COLUMN LIST, AND THAT IS NOT STYLE. The L-081
+      // auditor's Phase 2 parses the parenthesised column list literally and does NOT strip `--`
+      // comments inside it, so every English word of a comment placed there is read as a column
+      // name and reported missing from prod. Writing it inside produced 53 bogus misses ("the",
+      // "Postgres", "rather") on one run of scripts/dev-main-schema-audit.py.
       const rows = await sql`
         INSERT INTO inventory_items (
           user_id, created_by, type, name, category,
@@ -549,7 +654,8 @@ export const handler = async (event) => {
           unit_cost, unit, quantity_purchased, notes, tags, status,
           quantity_on_hand, reorder_threshold, reorder_quantity,
           quantity, condition, brand, model,
-          image_url, featured_image_id, variety_id, metadata
+          image_url, featured_image_id, variety_id, metadata,
+          seed_process, seed_stage
         ) VALUES (
           ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
@@ -563,7 +669,8 @@ export const handler = async (event) => {
           ${isDurable ? (body.condition ?? null) : null},
           ${body.brand ?? null}, ${body.model ?? null},
           ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
-          ${metadataJson}::jsonb
+          ${metadataJson}::jsonb,
+          ${body.seed_process ?? null}, ${body.seed_stage ?? null}
         ) RETURNING *
       `;
       return resp(201, rows[0]);

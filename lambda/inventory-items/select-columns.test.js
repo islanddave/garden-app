@@ -76,6 +76,13 @@ const INVENTORY_ITEMS_COLUMNS = [
   // BUG-INVMETADROP-001 added metadata to the POST INSERT, so it is now genuinely referenced in
   // this handler's SQL and belongs under the prod column audit like every other entry here.
   'metadata',
+  // V4-SEEDSAVEFLOW-001 — the seed-lot process axis. Both are genuinely referenced now: named in
+  // the POST INSERT column list, written under explicit-presence guards in the PUT, and set by the
+  // /seed-stage route's CTE. seed_lot_stage_log's own columns are NOT listed here — a second
+  // relation in an AUDIT_TABLES file would demand its columns exist on inventory_items too. That
+  // relation has its own contract in seed-stage-columns.test.js.
+  'seed_process',
+  'seed_stage',
 ];
 
 describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
@@ -91,7 +98,10 @@ describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
   });
 
   it('pins a non-trivial contract — an emptied array must fail, not silently pass', () => {
-    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(31);
+    // 31 -> 33 with V4-SEEDSAVEFLOW-001's two columns. Ratcheting the floor for columns genuinely
+    // added to THIS relation is the normal move; what must never happen is folding a DIFFERENT
+    // relation's columns in to raise it, which is why seed_lot_stage_log got its own file.
+    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(33);
   });
 
   it('queries inventory_items', () => {

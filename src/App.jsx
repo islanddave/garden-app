@@ -55,6 +55,7 @@ import Today from './pages/Today.jsx'
 import CaptureFlow from './pages/CaptureFlow.jsx'
 import AddSeeds from './pages/AddSeeds.jsx'
 import SowNow from './pages/SowNow.jsx'
+import SavedSeeds from './pages/SavedSeeds.jsx'
 import PutUp from './pages/PutUp.jsx'
 import SpaceDetail from './pages/SpaceDetail.jsx'
 import VarietyEdit from './pages/VarietyEdit.jsx'
@@ -301,6 +302,10 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/inventory/add-seeds', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><AddSeeds /></ErrorBoundary></Protected> },
     { path: '/inventory/:id', element: <Protected><InventoryDetail /></Protected> },
     { path: '/sow',           element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SowNow /></ErrorBoundary></Protected> },
+    // V4-SEEDSAVEFLOW-001. A full page, not `overlayable`: it is a destination Dave navigates TO
+    // from the More sheet and then works in, like /sow directly above — not a task flyover launched
+    // over whatever he was already doing, which is what the overlayable routes below are.
+    { path: '/seeds/saved',   element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SavedSeeds /></ErrorBoundary></Protected> },
     { path: '/log',           overlayable: true, ariaLabel: 'Log an event',      size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><EventNew /></ErrorBoundary></Protected> },
     { path: '/log/many',      overlayable: true, ariaLabel: 'Log many',          size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected> },
     // V5-HARVESTVOICEFLOW-001 — deliberately NOT `overlayable`. An overlay renders OVER the surface

@@ -150,6 +150,14 @@ const DIALOG_SURFACES = {
 // blocks dismissal while the write is in flight (V4-SHEETBUSY-001 applied at mint time). Rendered
 // inline rather than extracted to a component because it holds no state of its own — unlike
 // EventDeleteConfirm, whose checkbox is the whole reason that one is a file.
+// V4-SEEDSAVEFLOW-001: pages/SavedSeeds.jsx is a DELIBERATE addition, two sheets on one page. The
+// advance sheet holds a date and a note — the date is the whole point, because the founding case is
+// retroactive (the 1884 tomato lot fermented and dried before this surface existed), and a
+// window.confirm cannot hold a date field. The picker sheet holds a scrollable list of untracked
+// seed packets, which is likewise not a confirm. Both render the shared <Sheet>, so the registered
+// role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed; the advance sheet passes
+// `busy={busy}` so dismissal is blocked while the POST is in flight — V4-SHEETBUSY-001 applied at
+// mint time rather than after the fact, same as EventDetail and Garden above.
 const SHEET_SITES = [
   'App.jsx',
   'components/BatchUndoConfirm.jsx',
@@ -173,6 +181,7 @@ const SHEET_SITES = [
   'pages/Garden.jsx',
   'pages/Harvests.jsx',
   'pages/PlantingDetail.jsx',
+  'pages/SavedSeeds.jsx',
   'pages/SowNow.jsx',
 ]
 

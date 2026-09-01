@@ -70,8 +70,10 @@ describe('flag ON — the /space routes appear', () => {
     // counterpart, which moves 52 -> 53 for the same route).
     // 55 -> 56: V5-HARVESTVOICEFLOW-001 adds /log/voice, flag-independent (see the flag-OFF
     // counterpart, which moves 53 -> 54 for the same route).
-    expect(paths).toHaveLength(56)
-    expect(new Set(paths).size).toBe(56)
+    // 56 -> 57: V4-SEEDSAVEFLOW-001 adds /seeds/saved, flag-independent (see the flag-OFF
+    // counterpart, which moves 54 -> 55 for the same route).
+    expect(paths).toHaveLength(57)
+    expect(new Set(paths).size).toBe(57)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {

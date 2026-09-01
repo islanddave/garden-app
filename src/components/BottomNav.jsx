@@ -394,6 +394,19 @@ export default function BottomNav() {
         <SheetRowLink to="/sow" onClick={closeMore} style={menuRowStyle}>
           <Icon name="lifecycle.sprout" size={22} decorative />Sow now
         </SheetRowLink>
+        {/* V4-SEEDSAVEFLOW-001 — Saved seeds. Placed HERE, beside Sow now, rather than in
+            CREATE_ACTIONS: that array is create affordances and carries a hard 5-cap with a test
+            asserting it, and this is a VIEW surface. The two belong adjacent because they are the
+            two ends of one loop — seed you saved is seed you sow.
+
+            ITS OWN ROW RATHER THAN A FILTER INSIDE INVENTORY (design Q2). The alternative was fewer
+            places to look, but it buries the surface exactly the way Sow now was buried — which is
+            the complaint the four-door note above exists to answer. Dave could not find the
+            seed_saved event type at all, and prod has ZERO seed_saved events ever logged; putting
+            the answer behind one more filter would repeat the fault rather than fix it. */}
+        <SheetRowLink to="/seeds/saved" onClick={closeMore} style={menuRowStyle}>
+          <Icon name="event.seed_saved" size={22} decorative />Saved seeds
+        </SheetRowLink>
         {/* V4-NAVHARVEST-001 / V4-PUTUPENGINE-001 — BOTH the Harvests row and the Put-Up row that
             lived here were PROMOTED to the tab bar, not duplicated: two doors to one destination is
             the redundant door-pair the IA work exists to merge. Put-Up's original placement
