@@ -1,0 +1,108 @@
+# gates.yml
+# V4-SEEDSAVEFLOW-001 slice 1 — seed-saving process-stage substrate.
+#
+# SCHEMA-SHAPE GATES, ENVIRONMENT-SYMMETRIC. Everything reads information_schema / pg_constraint /
+# pg_class, so each gate means the same thing on staging as on prod and none can pass vacuously for
+# want of a row. No env: prod anywhere.
+#
+# POST GATES SELF-ARM on the receipt and are written in VIOLATION-COUNT shape (expect 0). That shape
+# is load-bearing, not stylistic: a "the good state is present" gate written as rowcount_eq=1 does
+# NOT go vacuously green where the migration is unapplied — the EXISTS arm makes it return 0 rows,
+# which reads as FAILURE, leaving it permanently red on every environment that has not applied it.
+# Asserting the VIOLATION gives all three states correctly: no receipt -> green; receipt + intact ->
+# green; receipt + reverted -> RED.
+
+pre:
+  - name: pre_seed_columns_absent
+    note: >
+      The starting state — neither column exists yet. Violation-count shape, so it is 0 before the
+      fix and 2 after. continuous:false; false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name IN ('seed_process', 'seed_stage')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_seed_columns_present
+    note: >
+      Both columns exist. Phrased as "receipt written but a column missing" so it is vacuously green
+      before apply and red only if one was dropped after.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.89.0-seedsaveflow-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                 AND column_name IN ('seed_process', 'seed_stage')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_seed_columns_still_nullable
+    note: >
+      Both must stay nullable. NULL is the honest value for the 260 seed lots that predate this
+      feature and for every non-seed inventory row, and a NOT NULL here would force a manufactured
+      stage onto all of them — the same defect class as the grown_as DEFAULT 'annual' removed today.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name IN ('seed_process', 'seed_stage') AND is_nullable <> 'YES'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.89.0-seedsaveflow-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stage_vocabulary_is_enforced
+    note: >
+      Both CHECK constraints survive. Without them seed_stage is free text and the stage list
+      silently grows a fourth value nobody designed — which is how a controlled vocabulary rots.
+      Asserts by constraint NAME, so a rename is caught too.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.89.0-seedsaveflow-001')
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('inventory_items_seed_process_check',
+                                 'inventory_items_seed_stage_check')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stage_log_table_and_index_exist
+    note: The stage history table and its lookup index both survive.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.89.0-seedsaveflow-001')
+         AND (to_regclass('public.seed_lot_stage_log') IS NULL
+              OR to_regclass('public.idx_seed_lot_stage_log_item') IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stage_log_rls_is_off_or_has_a_policy
+    note: >
+      THE FOOTGUN GATE, and the reason it exists is a live incident rather than caution. RLS enabled
+      with ZERO policies is deny-all for every non-owner role AND IT FAILS SILENTLY — zero rows, not
+      a permission error, so it reads as "no data" instead of "no access". Found exactly that on
+      public.schema_version on 2026-09-01, blinding the read-only role (v4-roschemaversion-001).
+      This table ships RLS-off by design, matching preservation_log; if anyone ever arms it, this
+      goes red until they add a policy in the same change.
+    sql: |
+      -- to_regclass, NOT ::regclass. The cast RAISES 42P01 on a missing relation, which made this
+      -- gate ERROR rather than pass where the migration is unapplied — the exact opposite of the
+      -- self-arming every other gate here relies on. to_regclass returns NULL instead, so the join
+      -- simply finds nothing and the gate is vacuously green. Caught by running the gates BEFORE
+      -- applying; a post-apply-only run would never have exercised the missing-table path.
+      SELECT 1 FROM pg_class c
+       WHERE c.oid = to_regclass('public.seed_lot_stage_log')
+         AND c.relrowsecurity = true
+         AND NOT EXISTS (SELECT 1 FROM pg_policies p
+                          WHERE p.schemaname = 'public' AND p.tablename = 'seed_lot_stage_log')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.89.0-seedsaveflow-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous:false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.89.0-seedsaveflow-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
