@@ -55,7 +55,7 @@
     "axe-core": "^4.13.0",
     "eslint": "^9.39.4",
     "fake-indexeddb": "^6.2.5",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^4.3.1",
     "jsdom": "^25.0.0",
     "typescript": "^5.9.3",
     "vite": "^8.0.9",
