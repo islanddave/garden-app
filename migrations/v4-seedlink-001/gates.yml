@@ -1,0 +1,119 @@
+# gates.yml
+# V4-SEEDLINK-001 — seed-lot provenance FK (inventory_items.source_plant_id -> plants.id).
+#
+# SCHEMA-SHAPE GATES, ENVIRONMENT-SYMMETRIC. Everything reads information_schema / pg_constraint /
+# pg_class, so each gate means the same thing on staging as on prod and none can pass vacuously for
+# want of a row. No env: prod anywhere.
+#
+# POST GATES SELF-ARM on the receipt and are written in VIOLATION-COUNT shape (expect 0). That shape
+# is load-bearing, not stylistic: a "the good state is present" gate written as rowcount_eq=1 does
+# NOT go vacuously green where the migration is unapplied — the EXISTS arm makes it return 0 rows,
+# which reads as FAILURE, leaving it permanently red on every environment that has not applied it.
+# Asserting the VIOLATION gives all three states correctly: no receipt -> green; receipt + intact ->
+# green; receipt + reverted -> RED.
+
+pre:
+  - name: pre_source_plant_absent
+    note: >
+      The starting state — the column does not exist yet. Violation-count shape, so it is 0 before
+      the change and 1 after. continuous:false; false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'source_plant_id'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_source_plant_present
+    note: >
+      The column exists. Phrased as "receipt written but column missing" so it is vacuously green
+      before apply and red only if it was dropped after.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.91.0-seedlink-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                            AND column_name = 'source_plant_id')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_source_plant_still_nullable
+    note: >
+      Must stay nullable. NULL is the honest value for the ~260 PURCHASED packets, which have no
+      parent planting and never will. A NOT NULL here would force a manufactured parent onto all of
+      them — the same defect class as the grown_as DEFAULT 'annual' bulk default.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'source_plant_id' AND is_nullable <> 'YES'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.91.0-seedlink-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_fk_targets_plants_not_garden_node
+    note: >
+      Asserted by DEFINITION, not just by name. A name-only check would pass an FK silently
+      repointed at a view, or weakened from RESTRICT to SET NULL — and SET NULL is precisely the
+      failure this column is designed against: provenance that erases itself when the parent record
+      goes reads as "saved from nowhere" rather than "the parent is gone".
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.91.0-seedlink-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint
+                WHERE conname = 'inventory_items_source_plant_id_fkey'
+                  AND pg_get_constraintdef(oid) ~ 'REFERENCES plants\(id\)'
+                  AND pg_get_constraintdef(oid) ~ 'ON DELETE RESTRICT'
+                  -- An unvalidated FK enforces new writes but was never checked against existing
+                  -- rows, so it is not the guarantee post_no_orphan_parents leans on. 0a adds this
+                  -- constraint VALID on purpose; catch anyone who later re-adds it NOT VALID and
+                  -- leaves the VALIDATE for a future session that never comes.
+                  AND pg_get_constraintdef(oid) !~ 'NOT VALID')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_index_exists
+    note: >
+      to_regclass, NOT ::regclass. The cast RAISES 42P01 on a missing relation, which makes the gate
+      ERROR rather than pass where the migration is unapplied — the opposite of the self-arming every
+      gate here relies on. Documented in the sibling gates.yml after exactly that bug.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.91.0-seedlink-001')
+         AND to_regclass('public.idx_inventory_source_plant') IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_orphan_parents
+    note: >
+      Standing referential invariant. The FK should make this impossible, so a non-zero here means
+      the constraint was dropped, or was added NOT VALID over pre-existing rows — the state this
+      migration deliberately refuses to leave behind.
+
+      READ THE COLUMN THROUGH row_to_json, NOT AS i.source_plant_id. Postgres resolves column
+      references at PARSE time, before any WHERE clause runs, so an `EXISTS (… schema_version …)`
+      guard cannot protect a direct reference: on an environment that has not applied 0a this gate
+      raised 42703 "column does not exist" and ERRORED rather than passing vacuously. That breaks
+      self-arming in exactly the way the sibling gates.yml documents for ::regclass vs to_regclass —
+      same bug class, different mechanism. row_to_json(i) is resolved against whatever columns the
+      row actually has and yields NULL for an absent key, so the gate is green before apply, green
+      after, and red only on a real orphan. Caught by running the gates BEFORE applying; a
+      post-apply-only run would never have exercised the unapplied path.
+    sql: |
+      SELECT 1 FROM public.inventory_items i
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.91.0-seedlink-001')
+         AND (row_to_json(i) ->> 'source_plant_id') IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plants p
+                          WHERE p.id = (row_to_json(i) ->> 'source_plant_id')::uuid)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous:false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.91.0-seedlink-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
