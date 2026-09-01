@@ -1,0 +1,102 @@
+# gates.yml
+# DRG-CADENCEFLOOR-001 — the standing guard, and the reason this migration exists at all.
+#
+# THE ROW'S ACTUAL ASK WAS NEVER THE DATA. The 2026-08-23 backfill drove unmatched live plantings to
+# ZERO and the row still stayed open, because its complaint is architectural: "nothing fails loudly
+# when a NEW planting lands with no cadence". Measured 2026-09-01, nine days after that backfill, it
+# had silently regrown to 8. Filling it again without a guard just restarts the same clock, so the
+# post gate below is the deliverable and the data fix is its precondition.
+#
+# THE RULE, AND WHY IT IS "A ROW EXISTS" RATHER THAN "A ROW CARRIES A WATERING KEY". Collards has a
+# cultivar care_profile that deliberately omits every watering key — its own note reads
+# "container-sizing only; watering/thresholds intentionally omitted so resolution still falls to
+# system default (no behavior change)", and engine.js:63-68 records that adopting it would move
+# Collards 2d -> 3d against its author's written intent. A key-presence rule would therefore flag
+# the one planting in the garden whose silence is a documented decision. Row-existence is the
+# distinction the data already encodes: a profile row that omits watering is a DECISION, and no
+# profile row at all is a GAP. Verified corpus-wide before adopting it — exactly one cultivar
+# profile omits all three watering keys, and it is Collards, and it carries that note.
+#
+# WHAT THIS GATE CANNOT SEE, stated rather than left to be discovered: a planting with NO variety_id
+# at all. Two live ones exist (a hanging basket of "Combo Annuals" and a potted "Tumeric"), and they
+# cannot hold a cultivar-scoped profile because there is no cultivar to scope it to. They are a
+# data-entry gap for Dave, not a cadence-resolution gap, and folding them in here would make this
+# gate un-closable by any amount of care-profile work. Tracked on the ledger row instead.
+
+pre:
+  - name: pre_cadence_gap_exists_before_fix
+    note: >
+      The starting state this migration corrects — live plantings whose variety has no cultivar
+      care_profile at all. Was 8 on 2026-09-01. continuous:false; it is false by design once 0a runs,
+      and ordinary app use (Dave adding a planting) is entitled to change it before anyone applies.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL AND p.variety_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.care_profile cp
+                          WHERE cp.scope = 'cultivar' AND cp.scope_id = p.variety_id)
+    expect: rowcount_gte
+    value: 1
+    continuous: false
+
+post:
+  - name: post_no_live_planting_lacks_a_cadence_profile
+    note: >
+      THE GUARD. Every live planting's variety must have a cultivar care_profile ROW — present but
+      watering-free is fine (that is Collards' documented decision), absent is not. This is what
+      makes a new planting with no cadence FAIL LOUDLY instead of silently inheriting the house
+      3-day default, which is the whole of DRG-CADENCEFLOOR-001. Violation-count shape and
+      self-armed on the receipt, so it is vacuously green before apply and a real standing invariant
+      after.
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL AND p.variety_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.care_profile cp
+                          WHERE cp.scope = 'cultivar' AND cp.scope_id = p.variety_id)
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-cadencerefill-20260901')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_collards_silence_is_still_intact
+    note: >
+      The other half, and it is not decoration. If a future well-meaning backfill "fixes" Collards by
+      giving it a watering key, the gate above would still pass while the engine quietly moved
+      Collards from its intended 2d to 3d. This asserts the deliberate row still omits all three
+      watering keys — the decision, not just the row.
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+       JOIN public.plant_varieties pv ON pv.id = cp.scope_id
+       WHERE cp.scope = 'cultivar' AND pv.crop_type_slug = 'collard'
+         AND (cp.profile ? 'water_interval_days'
+              OR cp.profile ? 'water_interval_days_container'
+              OR cp.profile ? 'water_interval_days_inground')
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-cadencerefill-20260901')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_judgement_rows_stay_labelled_as_judgement
+    note: >
+      Three of the eight rows are a Dave-ratified JUDGEMENT with no log and no sibling behind them
+      (hoya, goldenrod, yarrow). They carry _basis:"dave_decision" + confidence:"low" precisely so a
+      later reader can tell a ratified guess from a measured median. Goes red if that label is
+      stripped, because a guess wearing a measurement's clothes is how a decision gets laundered
+      into evidence.
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+       WHERE cp.profile->>'_source' = 'cadence-refill-20260901'
+         AND cp.profile->>'_basis' = 'dave_decision'
+         AND cp.profile->>'confidence' <> 'low'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-cadencerefill-20260901')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous:false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.89.0-cadencerefill-20260901'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
