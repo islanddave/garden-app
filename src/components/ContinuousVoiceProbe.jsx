@@ -65,6 +65,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { classify } from '../lib/voiceHarvestGrammar.js'
 import { createCommitDebouncer, WRITE_CLASS } from '../lib/voiceCommitDebounce.js'
+import { acquireMic, releaseMic } from '../lib/micArbiter.js'
 
 // RUN BUDGETS (C3). Two hard stops, so a forgotten probe cannot hold the mic open forever: a re-arm
 // count and a wall clock. The short pair is right for the 4-phrase fixture and WRONG for gate B6.
@@ -135,6 +136,7 @@ async function micPermission() {
 
 export default function ContinuousVoiceProbe() {
   const [running, setRunning] = useState(false)
+  const micTokenRef = useRef(null)
   const [lines, setLines] = useState([])
   const [stats, setStats] = useState({ sessions: 0, finals: 0, interims: 0, gaps: [] })
   const [env, setEnv] = useState({ onDevice: '…', permBefore: '…', permAfter: '—' })
@@ -275,8 +277,19 @@ export default function ContinuousVoiceProbe() {
     if (tickTimerRef.current) clearTimeout(tickTimerRef.current)
     try { recRef.current?.abort() } catch { /* already gone */ }
     recRef.current = null
+    releaseMic(micTokenRef.current)
+    micTokenRef.current = null
     debRef.current = null
   }, [])
+
+  // S1 — hand the mic back whenever the run stops, however it stopped. Same shape as VoiceHarvest:
+  // the run has several exits and they do not share one, so the state they all converge on is the
+  // only single release point. Never acquires — mounting the probe must not take the mic.
+  useEffect(() => {
+    if (running) return
+    releaseMic(micTokenRef.current)
+    micTokenRef.current = null
+  }, [running])
 
   const arm = useCallback(() => {
     const C = ctor()
@@ -371,6 +384,24 @@ export default function ContinuousVoiceProbe() {
     endedAtRef.current = 0
     t0Ref.current = Date.now()
     setRunning(true)
+    // S1 — held for the whole run, like VoiceHarvest and for the same reason: this probe re-arms on
+    // every onend. The eviction is LOGGED rather than silent, because this instrument's entire value
+    // is that the log explains what the hardware did — a run that ends because another surface took
+    // the mic would otherwise read as a spontaneous stop and pollute the restart-budget numbers.
+    micTokenRef.current = acquireMic('ContinuousVoiceProbe', () => {
+      stopRequestedRef.current = true
+      if (runTimerRef.current) { clearTimeout(runTimerRef.current); runTimerRef.current = null }
+      if (wallClockTimerRef.current) { clearTimeout(wallClockTimerRef.current); wallClockTimerRef.current = null }
+      if (tickTimerRef.current) { clearTimeout(tickTimerRef.current); tickTimerRef.current = null }
+      const dying = recRef.current
+      recRef.current = null
+      if (dying) {
+        dying.onstart = null; dying.onresult = null; dying.onerror = null; dying.onend = null
+        try { dying.abort() } catch { /* already gone */ }
+      }
+      setRunning(false)
+      log('— probe stopped: another microphone took over —')
+    })
 
     if (tickTimerRef.current) { clearTimeout(tickTimerRef.current); tickTimerRef.current = null }
     metricsRef.current = emptyHostMetrics()

@@ -47,6 +47,7 @@
  */
 
 import { recordVoiceEvent, recordVoiceMark } from './voiceDebug.js'
+import { acquireMic, releaseMic } from './micArbiter.js'
 
 export const START_TIMEOUT_MS = 3500
 export const NO_SPEECH_TIMEOUT_MS = 8000
@@ -186,6 +187,9 @@ export function startLiveTranscription(opts = {}) {
   let stopped   = false
   let cancelled = false
   let endedFired = false
+  // Assigned at .start() time, below. Declared here so the handlers attached above the acquire can
+  // close over it without a temporal-dead-zone read if a watchdog ever fires early.
+  let micToken  = null
 
   function clearWatchdogs() {
     if (startWatchdog    !== null) { clearTimeout(startWatchdog);    startWatchdog    = null }
@@ -303,6 +307,10 @@ export function startLiveTranscription(opts = {}) {
 
   recognition.onend = () => {
     clearWatchdogs()
+    // Release before the endedFired guard: onend is the one terminus every path reaches (natural
+    // end, stop(), cancel()'s abort(), and the watchdogs' abort()), and a hold that outlives its
+    // recogniser is a mic no other surface can ever take. Stale-token releases no-op by design.
+    releaseMic(micToken)
     if (endedFired) return
     endedFired = true
     recordVoiceMark(debugLabel, 'end', `finalTranscript=${JSON.stringify(finalTranscript)}`)
@@ -319,26 +327,41 @@ export function startLiveTranscription(opts = {}) {
     }, startTimeoutMs)
   }
 
+  // S1 — take the mic in the same frame as .start(), never at mount. Eviction uses the GRACEFUL
+  // stop rather than abort: the words already spoken belong to this caller's own field, and unlike
+  // EventNew's shared recRef every handler here is closed over THIS session, so a finalising
+  // onresult after the handover lands in the right place instead of the new owner's.
+  micToken = acquireMic(debugLabel, () => {
+    if (stopped || cancelled) return
+    stopped = true
+    clearWatchdogs()
+    try { recognition.stop() } catch {}
+  })
+
   try {
     recognition.start()
   } catch {
     clearWatchdogs()
+    releaseMic(micToken)
     try { onError('failed') } catch {}
     return { stop: noop, cancel: noop }
   }
 
   return {
+    // Both paths normally release via onend. These are the belt-and-braces case: if stop()/abort()
+    // throws, the engine never dispatches end and the hold would outlive the session, wedging the
+    // mic for every other surface. Releasing twice is a no-op.
     stop() {
       if (stopped || cancelled) return
       stopped = true
       clearWatchdogs()
-      try { recognition.stop() } catch {}
+      try { recognition.stop() } catch { releaseMic(micToken) }
     },
     cancel() {
       if (stopped || cancelled) return
       cancelled = true
       clearWatchdogs()
-      safeAbort()
+      try { recognition.abort() } catch { releaseMic(micToken) }
     },
   }
 }

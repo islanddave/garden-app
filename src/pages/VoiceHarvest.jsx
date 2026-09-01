@@ -58,6 +58,7 @@ import {
 } from '../lib/voiceHarvestGrammar.js'
 import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
+import { acquireMic, releaseMic } from '../lib/micArbiter.js'
 import {
   hapticSaveCommitted, hapticSaveFailed, hapticDigitAccepted, hapticDigitRejected, hapticUndoApplied,
   hapticMatchUncertain,
@@ -334,6 +335,7 @@ export default function VoiceHarvest() {
   const { cropTypes } = useCropTypes()
   const [loadError, setLoadError] = useState(null)
   const [running, setRunning]     = useState(false)
+  const micTokenRef               = useRef(null)
   const [supported]               = useState(() => !!ctor())
 
   const [selected, setSelected]     = useState(null)
@@ -1100,6 +1102,24 @@ export default function VoiceHarvest() {
     hiddenRef.current = false
     runningRef.current = true
     setRunning(true)
+    // S1 — the hold spans the RUN, not the recogniser. arm() builds a fresh one on every re-arm
+    // (15-22 ms apart), so a per-recogniser hold would open a window on each one in which a picker
+    // on another surface could take the mic mid-sentence. Evicting DETACHES before aborting, via
+    // releaseRecogniser, so a final in flight cannot commit into a run we have already abandoned —
+    // and it is announced, because a capture flow that goes quiet is indistinguishable from a dead
+    // mic (BUG-VOICEFAILSILENT-001).
+    micTokenRef.current = acquireMic('VoiceHarvest', () => {
+      stopRef.current = true
+      runningRef.current = false
+      if (wallRef.current) { clearTimeout(wallRef.current); wallRef.current = null }
+      setEndsAt(null)
+      releaseRecogniser()
+      releaseWakeLock()
+      setRunning(false)
+      cue(hapticSaveFailed)
+      say('warn', 'Another microphone took over — capture stopped.')
+      noteMiss('Another microphone took over.')
+    })
     setRows((r) => r)   // the ledger persists across a stop/start within the visit
     say('ok', 'Listening — say a crop.')
     // BUG-VOICESCREENSLEEP-001 — asked for HERE rather than in an effect, because this is the tap:
@@ -1163,8 +1183,21 @@ export default function VoiceHarvest() {
     if (tickRef.current) clearTimeout(tickRef.current)
     releaseRecogniser()
     releaseWakeLock()
+    releaseMic(micTokenRef.current)
+    micTokenRef.current = null
     debRef.current = null
   }, [releaseRecogniser, releaseWakeLock])
+
+  // S1 — hand the mic back whenever the run stops, HOWEVER it stopped: the user's tap, the
+  // wall-clock budget, the restart budget, or any error path. There are six sites that set
+  // stopRef.current = true and they do not share an exit, so keying on the state they all converge
+  // on is the only single point that covers them. Not an acquire — mounting this page must not take
+  // the mic; only tapping Start may.
+  useEffect(() => {
+    if (running) return
+    releaseMic(micTokenRef.current)
+    micTokenRef.current = null
+  }, [running])
 
   // ── BUG-VOICESCREENSLEEP-001: the only event that tells us the run was interrupted ──────────────
   //

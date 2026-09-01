@@ -3,6 +3,7 @@ import { takePendingCapture } from '../lib/pendingCapture.js'
 import { createFinalResultReader } from '../lib/voiceResults.js'
 import { createVoiceShapeRecorder } from '../lib/voiceShape.js'
 import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
+import { acquireMic, releaseMic } from '../lib/micArbiter.js'
 import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
@@ -373,6 +374,9 @@ function useVoiceInput() {
   const [listening, setListening] = useState(false)
   const [fieldKey,  setFieldKey]  = useState(null)
   const recRef = useRef(null)
+  // S1 — the hold belonging to the CURRENTLY live recogniser, so start() and stop() can hand it
+  // back. Handlers use their own per-recogniser copy instead; see the note at `myMicToken`.
+  const micTokenRef = useRef(null)
   // BUG-VOICEDUPE-003 shape telemetry only. Routed through useApiFetch rather than Clerk directly
   // so the many EventNew tests that mock '../lib/api.js' keep neutralizing it automatically.
   const { getToken } = useApiFetch()
@@ -394,12 +398,22 @@ function useVoiceInput() {
       prev.onerror  = null
       try { prev.stop() } catch { /* already dead */ }
     }
+    // S1 — hand our own hold back before taking a new one. Without this the acquire below evicts
+    // US, running the stop() closure against the instance we just detached and stopped by hand.
+    // Field-to-field dictation goes through here on every tap, so this is the common path.
+    releaseMic(micTokenRef.current)
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     const rec = new SR()
     rec.continuous    = false
     rec.interimResults = false
     rec.lang          = 'en-US'
+
+    // S1 — PER-RECOGNISER, deliberately not read off micTokenRef inside the handlers. onend is a
+    // real event and arrives after the next field's start() has already re-pointed the ref, so a
+    // handler that released `micTokenRef.current` would hand back the NEW field's hold and leave
+    // the mic ownerless while it is still live.
+    let myMicToken = null
 
     // BUG-VOICEDUPE-002 (a) — THE ROOT CAUSE, and the reason BUG-VOICEDUPE-001's fix could not
     // work. This hook does NOT go through src/lib/transcribe.js, so the dedupe shipped there never
@@ -443,15 +457,32 @@ function useVoiceInput() {
           })).catch(() => {})
         } catch { /* telemetry must never affect voice input */ }
       }
+      releaseMic(myMicToken)
       setListening(false); setFieldKey(null)
     }
     rec.onerror = (e) => {
       recordVoiceMark(`EventNew:${key}`, 'error', e && e.error)
+      releaseMic(myMicToken)
       setListening(false); setFieldKey(null)
     }
 
     recRef.current = rec
     recordVoiceMark(`EventNew:${key}`, 'start')
+    // S1 — acquire in the same frame as rec.start(). Eviction detaches before aborting for the same
+    // reason the unmount cleanup does: a graceful stop() asks the engine to finalize, and that late
+    // dispatch would append into a field the user has moved away from.
+    myMicToken = acquireMic(`EventNew:${key}`, () => {
+      const dying = recRef.current
+      if (!dying) return
+      dying.onresult = null
+      dying.onend    = null
+      dying.onerror  = null
+      try { dying.abort() } catch { /* already gone */ }
+      recRef.current = null
+      setListening(false)
+      setFieldKey(null)
+    })
+    micTokenRef.current = myMicToken
     rec.start()
     setListening(true)
     setFieldKey(key)
@@ -459,6 +490,7 @@ function useVoiceInput() {
 
   const stop = useCallback(() => {
     recRef.current?.stop()
+    releaseMic(micTokenRef.current)
     setListening(false)
     setFieldKey(null)
   }, [])
@@ -483,6 +515,9 @@ function useVoiceInput() {
     rec.onerror  = null
     try { rec.abort() } catch { /* already gone */ }
     recRef.current = null
+    // Handlers are detached above, so the onend that would normally release will never run.
+    releaseMic(micTokenRef.current)
+    micTokenRef.current = null
   }, [])
 
   return { start, stop, listening, fieldKey, supported }
