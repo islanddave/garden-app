@@ -45,7 +45,22 @@ const TODAY = '2026-08-12'
 const lettuce = (over = {}) => ({
   variety_name: 'Winter Density', item_name: 'Lettuce packet', crop_type_slug: 'lettuce',
   lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 72, days_to_maturity_min: null,
-  direct_sow_timing: 'as soon as the soil can be worked', start_method: null,
+  // Class B ("after last frost"), NOT class C. This fixture carried
+  // 'as soon as the soil can be worked' until 2026-09-01, when BUG-SOWCLASSC-001 moved class C's
+  // close onto a SPRING bound — because a spring clause producing an August sow date was the
+  // reported defect, and this fixture was reproducing it: the lead read "Sow Winter Density by
+  // Aug 18" off an instruction that says to sow as soon as the ground thaws.
+  //
+  // Retuning the INPUT rather than the expected strings is this file's own stated convention (see
+  // the note above — the dtm figures have been retuned three times for the same reason). The
+  // contract under test is the lead line's wording, cap and ordering, none of which moved. Class B
+  // still closes at latestSafe, so a fall-hardy cool annual still lands on FFobs - dtm = Aug 18 and
+  // every EXPECTED string below is unchanged.
+  //
+  // It also demonstrates the thing worth being sure of: the August FALL sowing is still reachable.
+  // BUG-SOWCLASSC-001 removed a spring clause's ability to masquerade as a fall window; it did not
+  // remove fall windows.
+  direct_sow_timing: 'after last frost', start_method: null,
   ...over,
 })
 

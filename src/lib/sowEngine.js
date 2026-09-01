@@ -489,9 +489,31 @@ function buildDirectWindows(candidate, dtm, ctx, gated = false) {
         close = latestSafe;
         break;
       case 'C':
+        // "As soon as the soil can be worked" — an EARLY-SPRING instruction, not a season-long
+        // licence. BUG-SOWCLASSC-001: this used to close at `latestSafe`, the last date a sowing
+        // could still beat frost to a harvest, which is a completely different question and is
+        // months later. The visible symptom was spinach, peas and every other soil-workable cool
+        // annual still advertising a direct-sow window in August and September — the engine saying
+        // "you can still sow this" about a crop whose actual instruction expired in April.
+        //
+        // Closes at LF + 14d (Dave, 2026-09-01). Not LF exactly: peas and spinach are genuinely
+        // sown right up to and a little past the last frost, so a hard cut at the frost date would
+        // clip a sowing he would really make in a late-frost year. Not a fixed calendar date
+        // either — that discards the year-to-year frost variation this engine anchors on
+        // everywhere else.
+        //
+        // FALL SOWING IS NOT LOST HERE. Autumn crops are carried by their own clause classes
+        // (B's post-frost window, F's explicit month windows, G's Sep 15 – Nov 15 overwinter
+        // window). Class C never was the fall path; it only looked like one because its close date
+        // was wrong.
         open = ctx.LF - 42 * DAY_MS;
-        if (latestSafe == null) { unknownClamp = true; continue; }
-        close = latestSafe;
+        close = ctx.LF + 14 * DAY_MS;
+        // No `latestSafe == null` bail any more, and that is a deliberate improvement rather than
+        // a dropped guard: the guard existed only because `close` WAS latestSafe and would have
+        // been null. The close is now derived from the frost anchor, which is always available, so
+        // a cool annual with no days-to-maturity gets its real spring window instead of vanishing
+        // into unknownClamp. pushDirect still clamps down to latestSafe when that is EARLIER
+        // (:555), which is the only case where maturity should shorten a spring window.
         break;
       case 'D':
         deferredD.push(cl);

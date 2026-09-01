@@ -1476,15 +1476,27 @@ describe('V4-SEEDZEROVIEW-001 depleted packets', () => {
 // leek. Measured on live v_sow_candidates 2026-08-17.
 //
 // PROBE. latestSafeMs is not exported and should not be — the clamp is only meaningful through a
-// window. A class-C clause ("as soon as the soil can be worked") opens at LF-42 and closes at
-// EXACTLY latestSafe, so the card's own label is a direct readout of it. PROBE_DAY sits after every
-// open and before every close under test, so the window is always live and the label always dated.
+// window. This probe needs a clause class whose close date IS latestSafe, so the card's own label
+// is a direct readout of it. PROBE_DAY sits after every open and before every close under test, so
+// the window is always live and the label always dated.
+//
+// USES CLASS B ("after last frost"), NOT CLASS C. It was class C until 2026-09-01, when
+// BUG-SOWCLASSC-001 moved class C's close from latestSafe to a spring bound (LF+14d) — "as soon as
+// the soil can be worked" is an early-spring instruction and had been advertising August sow
+// windows for spinach and peas. That fix deliberately severed the very property this probe relied
+// on, so the probe moved rather than the fix.
+//
+// Class B is the right replacement and not merely a convenient one: sowEngine case 'B' closes at
+// EXACTLY latestSafe (unchanged by that fix), and opens at LF + weeksMin (0 here), so the window is
+// still live at PROBE_DAY. The eight assertions below are about the FALL clamp — hardiness grace
+// and frost anchor — and never about which clause carries them; only the instrument changed, and
+// every expected date below is unchanged from before the fix.
 const PROBE_DAY = '2026-06-01';
 function latestSafe(over = {}) {
   const { entry } = one(viewRow({
     variety_name: 'Clamp probe',
     start_method: 'direct_sow',
-    direct_sow_timing: 'as soon as the soil can be worked',
+    direct_sow_timing: 'after last frost',
     days_to_maturity_max: 60,
     ...over,
   }), PROBE_DAY);
@@ -1558,14 +1570,60 @@ describe('V4-HARDYSET-001 fall hardiness set', () => {
     })).toBe(establishmentClamp);
   });
 
-  it('a hardy slug with no days-to-maturity is still UNKNOWN, not fabricated', () => {
-    // NULL must not become a date in either direction. The clause is dropped and the packet asks
-    // for a profile rather than claiming a window it cannot compute.
+  it('a hardy slug with no days-to-maturity is still UNKNOWN where the clamp is REQUIRED', () => {
+    // NULL must not become a date in either direction. A class-B clause ("after last frost") closes
+    // at latestSafe, so with no days-to-maturity there is genuinely no computable close: the clause
+    // is dropped and the packet asks for a profile rather than claiming a window it cannot compute.
     const { bucket } = one(viewRow({
       variety_name: 'No DTM', crop_type_slug: 'spinach', start_method: 'direct_sow',
-      direct_sow_timing: 'as soon as the soil can be worked', days_to_maturity_max: null,
+      direct_sow_timing: 'after last frost', days_to_maturity_max: null,
     }), PROBE_DAY);
     expect(bucket).toBe('needs_profile');
+  });
+
+  it('but a class-C spring window does NOT need days-to-maturity (BUG-SOWCLASSC-001)', () => {
+    // The counterpart, and the reason the assertion above had to move off class C. Until
+    // 2026-09-01 class C also closed at latestSafe, so a cool annual with no DTM fell into
+    // needs_profile — the engine refusing to say "sow it as soon as you can work the soil" purely
+    // because it did not know when the crop would MATURE. Those are different questions: DTM tells
+    // you when you will harvest, not when to sow, and class C's window is now derived from the
+    // frost anchors at both ends (LF-42d .. LF+14d). Neither end is fabricated from a null.
+    const { bucket } = one(viewRow({
+      variety_name: 'No DTM class C', crop_type_slug: 'spinach', start_method: 'direct_sow',
+      direct_sow_timing: 'as soon as the soil can be worked', days_to_maturity_max: null,
+    }), PROBE_DAY);
+    expect(bucket).not.toBe('needs_profile');
+  });
+});
+
+// ── BUG-SOWCLASSC-001 — "as soon as the soil can be worked" is an EARLY-SPRING instruction ───────
+// The reported symptom, in Dave's garden: spinach and peas still advertising a direct-sow window in
+// late summer, because class C closed at latestSafe (the last date a sowing could still beat frost
+// to a harvest) instead of at the end of the spring soil-working window. Two different questions,
+// months apart. These pin the SHAPE of the window at both ends, not just that late-summer is shut —
+// a fix that simply deleted class C would satisfy a September-only assertion.
+describe('BUG-SOWCLASSC-001 class-C closes in spring, not at the frost-math limit', () => {
+  const CLASS_C = {
+    variety_name: 'Class C probe', start_method: 'direct_sow',
+    direct_sow_timing: 'as soon as the soil can be worked', days_to_maturity_max: 45,
+  };
+  const openOn = (day, over = {}) => one(viewRow({ ...CLASS_C, ...over }), day).bucket;
+
+  it('is SHUT on Sep 1 for spinach and peas — the reported symptom', () => {
+    for (const slug of ['spinach', 'pea']) {
+      expect(openOn('2026-09-01', { crop_type_slug: slug }), slug).not.toBe('direct_sow_now');
+    }
+  });
+
+  it('is SHUT in high summer too, not merely past a September edge', () => {
+    expect(openOn('2026-08-01', { crop_type_slug: 'spinach' })).not.toBe('direct_sow_now');
+    expect(openOn('2026-07-01', { crop_type_slug: 'spinach' })).not.toBe('direct_sow_now');
+  });
+
+  it('is still OPEN in early spring — the instruction it actually encodes', () => {
+    // Non-vacuity for the three assertions above: deleting class C outright would pass all of them
+    // and fail this one. The window must still exist where it belongs.
+    expect(openOn('2026-04-15', { crop_type_slug: 'spinach' })).toBe('direct_sow_now');
   });
 });
 
@@ -1595,7 +1653,9 @@ describe('BUG-FROSTANCHORWRONG-001 alerting margin vs measured frost date', () =
     const row = viewRow({
       variety_name: 'Anchor probe',
       start_method: 'direct_sow',
-      direct_sow_timing: 'as soon as the soil can be worked',
+      // Class B, for the reason given at the latestSafe() probe above: BUG-SOWCLASSC-001 moved
+      // class C's close off latestSafe onto a spring bound, and this probe reads latestSafe.
+      direct_sow_timing: 'after last frost',
       days_to_maturity_max: 60,
       ...over,
     });
