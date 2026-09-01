@@ -1,12 +1,9 @@
 {
-  "version": "4.89.0",
+  "version": "4.90.0",
   "date": "2026-09-01",
   "highlights": [
-    "Crop nicknames now find the plant. Searching or saying \"cantaloupe\" returns Charentais, and \"cucumber\" returns Suyo Long — on whole-garden search, the log picker, the variety picker and voice alike. Previously the nickname only worked in whole-garden search, because the app's own filters never received the alias list.",
-    "Log Many: pick exactly the plantings you mean. The selection is sent as an explicit list rather than a rule, with a count check that refuses the batch if fewer plantings resolve than you picked — so a batch can no longer quietly log against a smaller set than the one on screen.",
-    "Log Many: filter by location and crop type together — \"bag area + tomatoes\" narrows to the intersection rather than either one.",
-    "Log Many: the review list is now grouped by crop type, matching the picker. Group headers take about 12% of the panel as it opens and up to 35% in the densest stretch; the panel itself is unchanged.",
-    "Photos attached only to an inventory item now show as attached. Six photos linked to a seed packet or supply — and nothing else — were reading as having no link at all, because the gallery never fetched that connection.",
-    "A photo waiting to be tagged now reads as pending rather than as an error state."
+    "Saved seeds: a new page for seed you save yourself — track each lot through fermenting, drying and stored",
+    "Sow windows corrected — \"as soon as the soil can be worked\" now closes in spring instead of suggesting spinach and peas in late summer",
+    "Watering: eight plantings that were on a generic 3-day default now have real intervals"
   ]
 }

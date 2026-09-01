@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.90.0",
+    "date": "2026-09-01",
+    "highlights": [
+      "Saved seeds: a new page for seed you save yourself — track each lot through fermenting, drying and stored",
+      "Sow windows corrected — \"as soon as the soil can be worked\" now closes in spring instead of suggesting spinach and peas in late summer",
+      "Watering: eight plantings that were on a generic 3-day default now have real intervals"
+    ]
+  },
+  {
     "version": "4.89.0",
     "date": "2026-09-01",
     "highlights": [
