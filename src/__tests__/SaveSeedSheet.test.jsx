@@ -1,0 +1,269 @@
+// V4-SAVESEEDBTN-001 — "Save seed" on planting detail, and the create-a-seed-lot write behind it.
+//
+// WHAT IS ACTUALLY WORTH PINNING HERE is the payload, not the pixels. Before this change no route
+// in the app could create a seed lot at all, and the two fields that make one worth creating are
+// the two that were historically dropped or refused:
+//   • source_plant_id — BUG-SEEDPOSTDROPSPARENT-001. The POST named it in neither the INSERT column
+//     list nor its VALUES, so a client that sent one got 201 back with the provenance gone. A test
+//     that only asserted "the request was made" would have passed throughout that bug's life, so
+//     the assertions below read the KEY out of the body.
+//   • variety_id — chk_inventory_seed_requires_variety refuses a category='seeds' row without one,
+//     and validateCreate 400s first. So there are two tests: the value is sent on the happy path,
+//     and a planting that HAS no variety produces no request at all rather than a doomed one.
+// No jest-dom (L-182).
+import React from 'react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+
+const { navigateSpy, apiFetchSpy } = vi.hoisted(() => ({
+  navigateSpy: vi.fn(), apiFetchSpy: vi.fn(),
+}))
+vi.mock('react-router-dom', async (orig) => {
+  const actual = await orig()
+  return { ...actual, useNavigate: () => navigateSpy }
+})
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy, getToken: vi.fn() }) }))
+vi.mock('../lib/pendingCapture.js', () => ({ setPendingCapture: vi.fn(), takePendingCapture: vi.fn() }))
+
+// VarietyPicker is stubbed for ONE reason and it is not convenience: its useVarieties hook fetches
+// /api/varieties on mount, which would put a read into apiFetchSpy's call list and make every
+// "the first call was the POST" assertion below depend on the picker's internals. The real picker
+// has its own five suites. The stub keeps the same contract this component uses: `value` in,
+// onChange(variety|null) out.
+vi.mock('../components/VarietyPicker.jsx', () => ({
+  default: ({ value, onChange }) => (
+    <div data-testid="variety-picker-stub">
+      <span data-testid="variety-picker-value">{value?.id ?? 'none'}</span>
+      <button type="button" onClick={() => onChange({ id: 'v-other', name: 'Cherokee Purple' })}>
+        stub pick other variety
+      </button>
+    </div>
+  ),
+}))
+
+import QuickActions from '../components/planting/QuickActions.jsx'
+import SaveSeedSheet, { defaultLotName } from '../components/planting/SaveSeedSheet.jsx'
+
+const PL = {
+  id: 'pl1', project_id: 'proj1', name: 'Brandywine #2', status: 'fruiting',
+  variety_id: 'v-brandywine',
+  variety_ref: { id: 'v-brandywine', name: 'Brandywine', crop_type_slug: 'tomato' },
+}
+
+const renderQA = (planting = PL) => render(
+  <MemoryRouter><QuickActions planting={planting} /></MemoryRouter>,
+)
+
+/** Open the sheet from the real quick-actions button — the entry point is part of what is tested. */
+const openSheet = (planting = PL) => {
+  renderQA(planting)
+  fireEvent.click(screen.getByTestId('save-seed-open'))
+}
+
+const bodyOf = (call) => JSON.parse(call[1].body)
+const postCalls = () => apiFetchSpy.mock.calls.filter(([, o]) => o?.method === 'POST')
+
+beforeEach(() => { apiFetchSpy.mockReset(); navigateSpy.mockReset() })
+
+describe('V4-SAVESEEDBTN-001 — the entry point on planting detail', () => {
+  it('renders a Save seed action in QuickActions', () => {
+    renderQA()
+    const btn = screen.getByRole('button', { name: /Save seed from this planting/i })
+    expect(btn).toBeTruthy()
+  })
+
+  it('renders it for every planting — no lifecycle gate, unlike the sprout action beside it', () => {
+    // The sprout gate exists because that button ASSERTS germination. This one asserts nothing, and
+    // a gate here would re-hide the only door this change opens.
+    for (const status of ['seed', 'seedling', 'vegetative', 'fruiting', 'harvested', 'ended']) {
+      const { unmount } = renderQA({ ...PL, status })
+      expect(screen.getByTestId('save-seed-open')).toBeTruthy()
+      unmount()
+    }
+  })
+
+  it('opening the sheet costs no request and defaults name + variety off the planting', () => {
+    openSheet()
+    expect(apiFetchSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId('save-seed-name').value).toMatch(/^Brandywine — saved \d{4}$/)
+    // The planting knows its cultivar, so the picker stays collapsed: no /api/varieties read.
+    expect(screen.queryByTestId('variety-picker-stub')).toBeNull()
+    expect(screen.getByTestId('save-seed-variety-name').textContent).toBe('Brandywine')
+  })
+})
+
+describe('V4-SAVESEEDBTN-001 — the POST payload', () => {
+  it('carries source_plant_id AND variety_id, plus the consumable-seed discriminators', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
+
+    const [path, opts] = apiFetchSpy.mock.calls[0]
+    expect(path).toBe('/api/inventory-items')
+    expect(opts.method).toBe('POST')
+    const body = bodyOf(apiFetchSpy.mock.calls[0])
+    // BUG-SEEDPOSTDROPSPARENT-001 — the whole point of launching from a planting.
+    expect(body.source_plant_id).toBe('pl1')
+    // chk_inventory_seed_requires_variety — never absent, never null.
+    expect(body.variety_id).toBe('v-brandywine')
+    // validateCreate's consumable arm needs all three of these together.
+    expect(body.category).toBe('seeds')
+    expect(body.type).toBe('consumable')
+    expect(body.unit).toBe('packet')
+    expect(body.quantity_on_hand).toBe(1)
+    expect(body.name).toMatch(/^Brandywine — saved \d{4}$/)
+  })
+
+  it('sends the edited name and packet count, not the defaults', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.change(screen.getByTestId('save-seed-name'), { target: { value: '  1884 tomato  ' } })
+    fireEvent.change(screen.getByTestId('save-seed-packets'), { target: { value: '4' } })
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
+    const body = bodyOf(apiFetchSpy.mock.calls[0])
+    expect(body.name).toBe('1884 tomato')
+    expect(body.quantity_on_hand).toBe(4)
+  })
+
+  it('an overridden variety wins over the planting default', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-variety-change'))
+    fireEvent.click(screen.getByRole('button', { name: /stub pick other variety/i }))
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
+    expect(bodyOf(apiFetchSpy.mock.calls[0]).variety_id).toBe('v-other')
+  })
+})
+
+describe('V4-SAVESEEDBTN-001 — a planting with no variety is handled, never POSTed', () => {
+  const NO_VARIETY = { id: 'pl2', project_id: 'proj1', name: 'Volunteer squash', status: 'fruiting' }
+
+  it('opens the picker, says why, and refuses to send a request', async () => {
+    openSheet(NO_VARIETY)
+    expect(screen.getByTestId('variety-picker-stub')).toBeTruthy()
+    expect(screen.getByTestId('save-seed-no-variety')).toBeTruthy()
+    // Save is LIVE, not greyed: the guard that stops the write is the one that can say why, and a
+    // disabled button beside it would be a redundant second mechanism neither of them could test.
+    const submit = screen.getByTestId('save-seed-submit')
+    expect(submit.disabled).toBe(false)
+    fireEvent.click(submit)
+    await act(async () => {})
+    // Not "the request 400s" — no request at all. The DB CHECK and validateCreate would both
+    // refuse it, so a POST here would burn a round trip to be told what the client already knows.
+    expect(apiFetchSpy).not.toHaveBeenCalled()
+    expect(navigateSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId('save-seed-error').textContent).toMatch(/variety/i)
+  })
+
+  it('becomes saveable once a variety is picked, and sends THAT id', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet(NO_VARIETY)
+    fireEvent.click(screen.getByRole('button', { name: /stub pick other variety/i }))
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
+    const body = bodyOf(apiFetchSpy.mock.calls[0])
+    expect(body.variety_id).toBe('v-other')
+    expect(body.source_plant_id).toBe('pl2')
+  })
+
+  it('a blank or zero packet count is refused the same way', () => {
+    openSheet()
+    fireEvent.change(screen.getByTestId('save-seed-packets'), { target: { value: '0' } })
+    expect(screen.getByTestId('save-seed-submit').disabled).toBe(true)
+    fireEvent.change(screen.getByTestId('save-seed-packets'), { target: { value: '' } })
+    expect(screen.getByTestId('save-seed-submit').disabled).toBe(true)
+    expect(apiFetchSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('V4-SAVESEEDBTN-001 — the success path has an end', () => {
+  it('routes to the lot it just created and closes the sheet', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9', name: 'Brandywine — saved 2026' })
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    // Plain navigate, ONE argument: /inventory/:id is not an overlayable route, so a `background`
+    // in route state would leave the page tree on this planting and render nothing.
+    expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/inv-9')
+    expect(navigateSpy.mock.calls[0][1]).toBeUndefined()
+    expect(screen.queryByTestId('save-seed-submit')).toBeNull()
+  })
+
+  it('defaults to NO stage — one request, and no fabricated ferment', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    // BUG-SEEDPROCFORCED-001 in a new place: a stage write is a PERMANENT seed_lot_stage_log row,
+    // so the sheet must never choose a process on the user's behalf.
+    expect(postCalls()).toHaveLength(1)
+    expect(apiFetchSpy.mock.calls.some(([p]) => String(p).includes('/seed-stage'))).toBe(false)
+  })
+
+  it('wet opens the lot in fermenting, dry in drying — the vocabulary of both DB CHECKs', async () => {
+    for (const [proc, stage] of [['wet', 'fermenting'], ['dry', 'drying']]) {
+      apiFetchSpy.mockReset(); navigateSpy.mockReset()
+      apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+      const { unmount } = render(<MemoryRouter><QuickActions planting={PL} /></MemoryRouter>)
+      fireEvent.click(screen.getByTestId('save-seed-open'))
+      fireEvent.click(screen.getByTestId(`save-seed-process-${proc}`))
+      fireEvent.click(screen.getByTestId('save-seed-submit'))
+      await waitFor(() => expect(postCalls()).toHaveLength(2))
+      const [stagePath, stageOpts] = apiFetchSpy.mock.calls[1]
+      expect(stagePath).toBe('/api/inventory-items/inv-9/seed-stage')
+      expect(stageOpts.method).toBe('POST')
+      expect(JSON.parse(stageOpts.body)).toEqual({ stage, seed_process: proc })
+      unmount()
+    }
+  })
+
+  it('surfaces a create failure and does NOT route anywhere', async () => {
+    apiFetchSpy.mockRejectedValue(Object.assign(new Error('variety_id is required for seeds'), { status: 400 }))
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(screen.getByTestId('save-seed-error')).toBeTruthy())
+    expect(screen.getByTestId('save-seed-error').textContent).toContain('variety_id is required')
+    expect(navigateSpy).not.toHaveBeenCalled()
+    // The sheet stays open on its filled-in values so the save is re-tryable.
+    expect(screen.getByTestId('save-seed-submit')).toBeTruthy()
+  })
+
+  it('a failed STAGE does not report the created lot as lost', async () => {
+    // Two independent facts with two independent failures: the lot exists whether or not the
+    // optional stage landed, and calling a landed create "failed" is the worse error.
+    apiFetchSpy.mockImplementation((path) => (String(path).includes('/seed-stage')
+      ? Promise.reject(new Error('nope'))
+      : Promise.resolve({ id: 'inv-9' })))
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-process-wet'))
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/inv-9')
+    expect(screen.queryByTestId('save-seed-error')).toBeNull()
+  })
+})
+
+describe('defaultLotName', () => {
+  it('leads with the variety and carries the local year', () => {
+    expect(defaultLotName(PL, '2026-09-02')).toBe('Brandywine — saved 2026')
+  })
+  it('falls back to the planting name when there is no cultivar', () => {
+    expect(defaultLotName({ name: 'Volunteer squash' }, '2026-09-02')).toBe('Volunteer squash — saved 2026')
+  })
+  it('never produces a bare dash for a nameless record', () => {
+    expect(defaultLotName(null, '2026-09-02')).toBe('Saved seed 2026')
+    expect(defaultLotName({}, '2026-09-02')).toBe('Saved seed 2026')
+  })
+})
+
+describe('SaveSeedSheet mounts standalone (the sheet is not welded to QuickActions)', () => {
+  it('renders its own fields with a planting prop alone', () => {
+    render(<MemoryRouter><SaveSeedSheet planting={PL} onClose={() => {}} /></MemoryRouter>)
+    expect(screen.getByTestId('save-seed-name')).toBeTruthy()
+    expect(screen.getByTestId('save-seed-packets')).toBeTruthy()
+  })
+})

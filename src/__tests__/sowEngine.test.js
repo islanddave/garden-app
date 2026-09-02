@@ -21,6 +21,8 @@ import {
   sowGoal,
   isArchivedForSeason,
   isDepleted,
+  isInProcess,
+  IN_PROCESS_STAGES,
   FALL_HARDY_CROPS,
 } from '../lib/sowEngine.js';
 // BUG-FROSTANCHORWRONG-001. Both imported ONLY to cross-check the measured anchor against surfaces
@@ -137,10 +139,11 @@ describe('exports', () => {
   // buckets[bucket].push() throw, which propagates out of SowNow's useMemo and white-screens /sow.
   // Every key bucketOne can return MUST be pre-seeded here — `buckets[bucket].push(entry)` throws
   // on a missing one, which propagates out of SowNow's useMemo and white-screens /sow. `archived`
-  // added by V4-SOWARCHIVE-001 (9th), `sowed_previously` by V4-SEEDZEROVIEW-001 (10th).
-  it('bucketize returns all ten buckets even for empty input', () => {
+  // added by V4-SOWARCHIVE-001 (9th), `sowed_previously` by V4-SEEDZEROVIEW-001 (10th),
+  // `in_process` by V4-SEEDSAVEFLOW-001 (11th).
+  it('bucketize returns all eleven buckets even for empty input', () => {
     expect(Object.keys(bucketize([], TODAY)).sort()).toEqual([
-      'archived', 'direct_sow_now', 'hold', 'needs_profile', 'sow_inside_anytime',
+      'archived', 'direct_sow_now', 'hold', 'in_process', 'needs_profile', 'sow_inside_anytime',
       'sow_next_year', 'sowed_previously', 'start_indoors_now', 'too_late', 'window_closing',
     ]);
   });
@@ -596,6 +599,10 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
       // V4-SEEDZEROVIEW-001: same evidence, same reason — every golden packet carries
       // quantity_on_hand 1, so nothing is depleted and every other count above is UNCHANGED.
       sowed_previously: 0,
+      // V4-SEEDSAVEFLOW-001: third time, same evidence. No golden packet carries seed_stage (they
+      // are bought packets, which is what NULL means), so nothing diverts and the eight counts
+      // above are UNCHANGED — the in-process guard is additive, not a re-bucketing.
+      in_process: 0,
     });
   });
 });
@@ -1463,6 +1470,148 @@ describe('V4-SEEDZEROVIEW-001 depleted packets', () => {
     ];
     const buckets = bucketize(rows, TODAY);
     expect(buckets.sowed_previously).toHaveLength(1);
+    expect(buckets.direct_sow_now).toHaveLength(0); // spinach was the only one
+    expect(buckets.window_closing).toHaveLength(1);
+    expect(buckets.hold).toHaveLength(1);
+  });
+});
+
+// ── V4-SEEDSAVEFLOW-001 — seed that is not seed yet ───────────────────────────
+// THE FILED DEFECT, measured on a real Neon branch 2026-09-02, not inferred: v_sow_candidates
+// selects on category/deleted_at/status/variety_id and says nothing about seed_stage, so a lot
+// inserted at seed_stage='fermenting' — wet tomato seed in its own pulp — came back out of the view
+// and was offered by Sow Now identically to a finished packet. The reverse half of the same gap:
+// advancing a lot to `stored` granted it nothing, because sowability was already fixed before the
+// lot was ever staged.
+//
+// Dave's call on the remedy is DIVERT, NOT HIDE: the lot stays on the page, marked with the stage it
+// is in, so he can see the seed exists and is coming while being unable to mis-sow it. So these
+// tests assert BOTH halves, exactly as the zero-count block above does.
+describe('V4-SEEDSAVEFLOW-001 in-process seed lots', () => {
+  const SEASON = 2026; // == the year TODAY ('2026-07-10') resolves to
+
+  it('isInProcess: the two unfinished stages divert', () => {
+    expect(isInProcess({ seed_stage: 'fermenting' })).toBe(true);
+    expect(isInProcess({ seed_stage: 'drying' })).toBe(true);
+    // The vocabulary is the DB CHECK's, minus its terminal value — pinned so the two cannot drift.
+    expect([...IN_PROCESS_STAGES].sort()).toEqual(['drying', 'fermenting']);
+  });
+
+  it('isInProcess: STORED is sowable — that is the whole point of finishing a lot', () => {
+    expect(isInProcess({ seed_stage: 'stored' })).toBe(false);
+  });
+
+  it('THE NULL DECISION: never-tracked is not in process, and stays sowable', () => {
+    // seed_stage is nullable with no default and is written only by POST /seed-stage, which exists
+    // solely for home-saved lots — so NULL is not an edge case here the way quantity_on_hand's NULL
+    // was, it is what EVERY bought packet carries. Treating it as in-process would divert the whole
+    // sow list into "not ready yet".
+    expect(isInProcess({ seed_stage: null })).toBe(false);
+    expect(isInProcess({ seed_stage: undefined })).toBe(false);
+    expect(isInProcess({})).toBe(false);
+    expect(isInProcess(undefined)).toBe(false);
+    expect(isInProcess({ seed_stage: '' })).toBe(false);
+    // Unparseable reads as sowable, same safe direction isDepleted and isArchivedForSeason take.
+    expect(isInProcess({ seed_stage: 'nope' })).toBe(false);
+    // Pre-migration view: the column simply is not projected, so the row behaves exactly as today.
+    expect(isInProcess({ quantity_on_hand: 1 })).toBe(false);
+  });
+
+  it('isInProcess: case and surrounding space do not decide sowability', () => {
+    expect(isInProcess({ seed_stage: ' Fermenting ' })).toBe(true);
+    expect(isInProcess({ seed_stage: 'DRYING' })).toBe(true);
+  });
+
+  it('THE FILED DEFECT: a fermenting lot is not offered as sowable', () => {
+    // Asserted on the window_closing packet specifically: that is the bucket CultivationLead reads,
+    // so a jar of wet seed there does not just sit on /sow, it puts an imperative line on Today.
+    const wet = toCandidate(PACKETS.cucumberSpacemaster, { seed_stage: 'fermenting' });
+    const buckets = bucketize([wet], TODAY);
+    expect(buckets.window_closing).toHaveLength(0);
+    expect(buckets.in_process).toHaveLength(1);
+    expect(buckets.in_process[0].inProcessFrom).toBe('window_closing');
+  });
+
+  it('a drying lot diverts the same way', () => {
+    const drying = toCandidate(PACKETS.cucumberSpacemaster, { seed_stage: 'drying' });
+    const buckets = bucketize([drying], TODAY);
+    expect(buckets.window_closing).toHaveLength(0);
+    expect(buckets.in_process).toHaveLength(1);
+  });
+
+  it('NO action bucket can hold an in-process lot — swept over all twelve goldens', () => {
+    // One packet proves one path. The sweep proves the divert happens before the bucket is honoured
+    // at all, so no future bucket can quietly acquire a jar of wet seed.
+    const rows = Object.values(PACKETS).map((p) => toCandidate(p, { seed_stage: 'fermenting' }));
+    const buckets = bucketize(rows, TODAY);
+    expect(buckets.in_process).toHaveLength(rows.length);
+    for (const key of ['start_indoors_now', 'direct_sow_now', 'sow_inside_anytime',
+      'sow_next_year', 'window_closing']) {
+      expect(buckets[key], `${key} must never hold an in-process lot`).toHaveLength(0);
+    }
+  });
+
+  it('THE FORWARD HALF: reaching `stored` puts the lot back on the working list', () => {
+    // The gap ran both ways — this is the one that had no implementation at all. Same row, one
+    // column advanced, and the lot is sowable seed again.
+    const stored = toCandidate(PACKETS.cucumberSpacemaster, { seed_stage: 'stored' });
+    const buckets = bucketize([stored], TODAY);
+    expect(buckets.in_process).toHaveLength(0);
+    expect(buckets.window_closing).toHaveLength(1);
+  });
+
+  it('an UNTRACKED packet stays on the working list — every bought packet is this row', () => {
+    const untracked = toCandidate(PACKETS.cucumberSpacemaster, { seed_stage: null });
+    const buckets = bucketize([untracked], TODAY);
+    expect(buckets.in_process).toHaveLength(0);
+    expect(locate(buckets, 'Spacemaster 80').bucket).toBe('window_closing');
+  });
+
+  it('the in-process card keeps its real window label and every column, not a blank', () => {
+    // "see it coming" needs the card to still say WHEN — the window it will return to once dry.
+    const plain = run(toCandidate(PACKETS.cucumberSpacemaster), TODAY);
+    const wet = bucketize(
+      [toCandidate(PACKETS.cucumberSpacemaster, { seed_stage: 'fermenting' })], TODAY,
+    ).in_process[0];
+    expect(wet.windowLabel).toBe(plain.entry.windowLabel);
+    expect(wet.windowLabel).toBeTruthy();
+    expect(wet.candidate.seed_stage).toBe('fermenting');
+    expect(wet.candidate.sow_depth_in).toBe(plain.entry.candidate.sow_depth_in);
+  });
+
+  it('ORDER: in-process beats depletion, so a wet lot never reads as already sown', () => {
+    // A lot mid-ferment has no meaningful count yet — the number is taken when it is packeted — so
+    // 0/NULL on a fermenting jar must not claim a sowing that never happened. Asserted, not assumed.
+    const both = toCandidate(PACKETS.cucumberSpacemaster, {
+      seed_stage: 'fermenting', quantity_on_hand: 0,
+    });
+    const buckets = bucketize([both], TODAY);
+    expect(buckets.sowed_previously).toHaveLength(0);
+    expect(buckets.in_process).toHaveLength(1);
+    expect(buckets.in_process[0].inProcessFrom).toBe('window_closing');
+  });
+
+  it('COMPOSES WITH ARCHIVE: an archived wet lot reports in-process as its home', () => {
+    // Same composition rule the depleted block pins: the divert picks the home bucket, archive
+    // diverts out of THAT — so un-archiving lands it back in in_process, never on the working list.
+    const both = toCandidate(PACKETS.cucumberSpacemaster, {
+      seed_stage: 'drying', sow_archived_season: SEASON,
+    });
+    const buckets = bucketize([both], TODAY);
+    expect(buckets.in_process).toHaveLength(0);
+    expect(buckets.archived).toHaveLength(1);
+    expect(buckets.archived[0].archivedFrom).toBe('in_process');
+    expect(buckets.archived[0].inProcessFrom).toBe('window_closing');
+  });
+
+  it('one lot in process does not disturb the others', () => {
+    const rows = [
+      toCandidate(PACKETS.spinachOceanside, { seed_stage: 'fermenting' }),
+      toCandidate(PACKETS.cucumberSpacemaster),
+      toCandidate(PACKETS.broccoliBelstar),
+    ];
+    const buckets = bucketize(rows, TODAY);
+    expect(buckets.in_process).toHaveLength(1);
     expect(buckets.direct_sow_now).toHaveLength(0); // spinach was the only one
     expect(buckets.window_closing).toHaveLength(1);
     expect(buckets.hold).toHaveLength(1);

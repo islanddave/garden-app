@@ -974,7 +974,9 @@ export default function PlantingDetail() {
       />
 
       {/* V4-PLANTINGUI-001 — primary quick-actions: water / photo. (V4-STATUSTAP-001: status
-          moved to the hero StatusPicker.) */}
+          moved to the hero StatusPicker.) V4-SAVESEEDBTN-001 adds "Save seed" as a full-width
+          secondary action beneath that row; it creates the lot itself and routes to /inventory/:id,
+          so it reports nothing through onLogged — that callback is for EVENTS on this planting. */}
       <QuickActions
         planting={pl}
         onLogged={(ev) => {

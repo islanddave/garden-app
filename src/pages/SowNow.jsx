@@ -10,14 +10,14 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { bucketize } from '../lib/sowEngine.js'
+import { bucketize, isInProcess } from '../lib/sowEngine.js'
 import { P } from '../lib/tokens.js'
 import { formatDate } from '../lib/format.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
-import { Sheet } from '../components/forms'
+import { Sheet, Badge } from '../components/forms'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 
 // V4-RELOADGATEWIRE-001 — this page's draft-stash route key.
@@ -41,6 +41,12 @@ const BUCKET_META = [
   ['sow_inside_anytime', 'Sow inside anytime'],
   ['sow_next_year',      'For next year — sow now', 'Sow now, bloom or harvest next spring — nothing here pays off this season.'],
   ['hold',               'Hold for later'],
+  // V4-SEEDSAVEFLOW-001. Seed you are still making. Open and mid-page rather than collapsed at the
+  // bottom with the other two divert targets, and the difference is what the section MEANS: those
+  // are review surfaces for packets that are done with (empty, or put away for the year), this one
+  // is forward-looking. Dave wants to keep seeing that the seed exists and is coming while being
+  // unable to mis-sow it, and a lot behind a ▸ toggle is not something you can see coming.
+  ['in_process',         'Still in process', 'Seed you are saving that is not finished yet. It stays on the list so you can see it coming — but it cannot be sown until it is dry and stored.'],
   ['needs_profile',      'Needs a sow profile'],
   ['too_late',           'Too late this year'],
   // V4-SEEDZEROVIEW-001. The packets there is none of left. Dave: "I want to keep zero counts in our
@@ -66,6 +72,14 @@ const COLLAPSED = new Set(['too_late', 'sowed_previously', 'archived'])
 
 // Buckets whose cards carry a Sow action.
 const ACTIONABLE = new Set(['window_closing', 'start_indoors_now', 'direct_sow_now', 'sow_inside_anytime', 'sow_next_year'])
+
+// V4-SEEDSAVEFLOW-001. Marker copy for a lot that is still being processed, keyed by the DB's own
+// seed_stage vocabulary and worded exactly as SavedSeeds' STAGE_META labels the same jar, so the two
+// surfaces cannot end up calling it two different things. `stored` has no entry on purpose — a
+// stored lot is a packet and gets no marker at all. Exported so the suite can pin that every stage
+// sowEngine diverts on has words here: a stage with no label would render a colour-only chip, which
+// is exactly the marker nobody who cannot see colour can read.
+export const SEED_STAGE_LABEL = { fermenting: 'Fermenting', drying: 'Drying' }
 
 // Unicode vulgar fractions for the common seed depths (text, not emoji).
 const FRACTIONS = { 0.125: '⅛', 0.25: '¼', 0.5: '½', 0.75: '¾' }
@@ -329,12 +343,21 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     const line = depthSpacingLine(c)
     const sown = sownIds.has(c.inventory_item_id)
     const busy = archiveBusy.has(c.inventory_item_id)
-    // Where the engine had actually put this packet before it was diverted. Both divert targets
+    // Where the engine had actually put this packet before it was diverted. All three divert targets
     // carry it, under their own key — an archived packet that is ALSO empty reads "From: Sowed
-    // previously", which is the honest answer to "why was this on my list?" for that card.
+    // previously", which is the honest answer to "why was this on my list?" for that card. On an
+    // in-process lot it answers something better: WHEN it would be sowable once it is dry.
     const divertedFrom = bucketKey === 'archived' ? entry.archivedFrom
       : bucketKey === 'sowed_previously' ? entry.depletedFrom
-        : null
+        : bucketKey === 'in_process' ? entry.inProcessFrom
+          : null
+    // V4-SEEDSAVEFLOW-001. Read off the CANDIDATE, not off bucketKey, so the marker travels with the
+    // lot into the archived section too — an archived jar of wet seed is still a jar of wet seed.
+    // Falls back rather than rendering an empty chip if a stage ever arrives with no label (pinned
+    // by test, but a blank marker on a real surface is worse than a vague one).
+    const stageLabel = isInProcess(c)
+      ? (SEED_STAGE_LABEL[String(c.seed_stage).trim().toLowerCase()] ?? 'Still in process')
+      : null
     return (
       <div key={c.inventory_item_id} style={cardStyle}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -345,6 +368,17 @@ export default function SowNow({ todayISO = localTodayISO() }) {
             )}
             {entry.reopensOn && (
               <span style={reopensBadge}>opens ~{formatDate(entry.reopensOn)}</span>
+            )}
+            {/* V4-SEEDSAVEFLOW-001. WORDS carry this, not colour: the chip names the stage the lot
+                is actually in and says plainly that it cannot be sown, so it reads the same to
+                anyone who cannot see the warn tone at all. The house Badge primitive rather than a
+                local span — no new export from components/forms, which the FROZEN-primitives test
+                fails on. whiteSpace overridden because Badge is nowrap by default and this string is
+                long enough to overflow the title column on a 360px phone. */}
+            {stageLabel && (
+              <Badge tone="warn" style={{ whiteSpace: 'normal' }}>
+                {stageLabel} — not ready to sow
+              </Badge>
             )}
           </div>
           {c.variety_name && c.item_name && c.item_name !== c.variety_name && (
@@ -383,8 +417,14 @@ export default function SowNow({ todayISO = localTodayISO() }) {
           )
         )}
         {/* Override: an engine misclassification must never hard-block an action the gardener
-            knows is right. Gated holds keep a secondary path to the same sow sheet. */}
-        {!ACTIONABLE.has(bucketKey) && entry.gated && (
+            knows is right. Gated holds keep a secondary path to the same sow sheet.
+            V4-SEEDSAVEFLOW-001 EXCEPTION, and it is the one place this page withholds the override
+            on purpose: every other divert is a JUDGEMENT the engine made about timing, which Dave
+            may know better than. `in_process` is not a judgement, it is a physical fact about the
+            seed — it is wet, in a jar, in pulp — and there is no override that makes it sowable
+            today. A "Sow anyway" here would offer the exact mis-sow this whole guard exists to
+            prevent. The lot is still fully on the page and still one tap from Inventory. */}
+        {!ACTIONABLE.has(bucketKey) && bucketKey !== 'in_process' && entry.gated && (
           sown ? (
             <span style={sownChip} role="status">Sown &#10003;</span>
           ) : (

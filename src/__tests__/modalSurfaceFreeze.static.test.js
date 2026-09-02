@@ -158,6 +158,14 @@ const DIALOG_SURFACES = {
 // role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed; the advance sheet passes
 // `busy={busy}` so dismissal is blocked while the POST is in flight — V4-SHEETBUSY-001 applied at
 // mint time rather than after the fact, same as EventDetail and Garden above.
+// V4-SAVESEEDBTN-001: components/planting/SaveSeedSheet.jsx is a DELIBERATE addition, the same
+// shape as OverwinterPrompt and TransplantDatePrompt already listed under components/planting/.
+// It is the CREATE half of the seed-lot flow — before it, no route in the app could create a seed
+// lot, so saving seed off a plant meant hand-building a packet at /inventory/add first. It holds a
+// name, a variety, a count and a process choice, so it is a form and not a confirm; window.confirm
+// holds none of that. It renders the shared <Sheet>, so the registered role="dialog" surface is
+// Sheet's and no DIALOG_SURFACES entry is owed; `busy={busy}` blocks dismissal while the POST is in
+// flight — V4-SHEETBUSY-001 applied at mint time, same as SavedSeeds above.
 const SHEET_SITES = [
   'App.jsx',
   'components/BatchUndoConfirm.jsx',
@@ -174,6 +182,7 @@ const SHEET_SITES = [
   'components/photo/PlantingPhotoSheet.jsx',
   'components/HarvestTimeframeChips.jsx',
   'components/planting/OverwinterPrompt.jsx',
+  'components/planting/SaveSeedSheet.jsx',
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',
   'pages/AddSeeds.jsx',

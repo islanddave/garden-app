@@ -926,13 +926,65 @@ export function isDepleted(candidate) {
 }
 
 /**
+ * The seed_stage values that mean the lot is not seed yet. The DB vocabulary is
+ * `fermenting | drying | stored | NULL` (inventory_items_seed_stage_check, migrations/
+ * v4-seedsaveflow-001/0a-ddl.sql:42-55); `stored` is terminal and IS sowable, so this is that
+ * vocabulary minus its endpoint rather than a set invented here.
+ */
+export const IN_PROCESS_STAGES = Object.freeze(['fermenting', 'drying']);
+
+/**
+ * V4-SEEDSAVEFLOW-001 (BD-071). Is this lot still being PROCESSED — seed that physically is not yet
+ * seed anyone can sow?
+ *
+ * THE FILED DEFECT, measured rather than reasoned: v_sow_candidates selects on
+ * `category='seeds' AND deleted_at IS NULL AND status='active'` plus a live variety_id and says
+ * nothing about seed_stage. A lot inserted at `seed_stage='fermenting'` — wet tomato seed sitting in
+ * its own pulp in a jar — came straight back out of the view on a real Neon branch (2026-09-02) and
+ * was offered by Sow Now identically to a finished packet. The same gap runs the other way:
+ * advancing a lot to `stored` granted it nothing, because sowability was fixed by those four
+ * columns before the lot was ever staged. That is the "→ a SOWABLE seed inventory item" link BD-071
+ * asks for, and it did not exist.
+ *
+ * DIVERTS rather than filters, exactly as isDepleted and isArchivedForSeason do, and here it is
+ * Dave's explicit call: an in-process lot STAYS on /sow, marked with the stage it is in. He wants to
+ * keep seeing that the seed exists and is coming while being unable to mis-sow it. The row keeps
+ * arriving from the view with every column intact; bucketize moves it to `in_process` and the card
+ * names the stage.
+ *
+ * Filtering lives HERE and not in the view for the hard reason isDepleted records above: five
+ * continuous gates across three migrations pin v_sow_candidates's rowcount to its unfiltered base
+ * join, so a server-side predicate reds prod AND staging on the next migrations/** push. The
+ * companion migration APPENDS seed_stage/seed_process to the projection — a column append, which
+ * those gates do not measure.
+ *
+ * NULL IS SOWABLE — same conclusion as isDepleted's NULL decision, reached from the opposite
+ * direction. There NULL was RARE ("nobody counted this"; 0 of 259 prod candidates) and the argument
+ * had to be made on cost asymmetry alone. Here NULL is the NORMAL state and structurally always will
+ * be: seed_stage is nullable with no default and is written only by POST /seed-stage, a route that
+ * exists solely for home-saved lots, so every packet ever bought is NULL. NULL means "never
+ * tracked", which is not "unfinished" — and treating it as in-process would divert the entire sow
+ * list into "not ready yet", which is the wrong-late direction at full scale.
+ *
+ * seed_process (`wet | dry`) is deliberately NOT read: it says HOW a lot is being processed, never
+ * WHETHER it still is. Stage alone decides. Trimmed/lower-cased before the membership test and
+ * anything unrecognized reads as NOT in process — the same safe direction both neighbours take, and
+ * it is what makes the pre-migration view (no such column -> undefined) behave exactly as today.
+ */
+export function isInProcess(candidate) {
+  const raw = candidate?.seed_stage;
+  if (raw == null || raw === '') return false;
+  return IN_PROCESS_STAGES.includes(String(raw).trim().toLowerCase());
+}
+
+/**
  * Bucket v_sow_candidates rows for a given day.
  * @param {Array<object>} candidates v_sow_candidates-shaped rows
  * @param {string} todayISO 'YYYY-MM-DD'; anchors resolve against its year
  * @param {object} [anchors] partial FROST_ANCHORS override
  * @returns {{start_indoors_now:[], direct_sow_now:[], sow_inside_anytime:[],
  *   sow_next_year:[], window_closing:[], hold:[], too_late:[], needs_profile:[],
- *   sowed_previously:[], archived:[]}}
+ *   sowed_previously:[], archived:[], in_process:[]}}
  */
 export function bucketize(candidates, todayISO, anchors = {}) {
   const cfg = {
@@ -970,9 +1022,10 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     needs_profile: [],
     // V4-SEEDZEROVIEW-001 (10th) and archived (9th) are DIVERT targets, not verdicts — bucketOne
     // never returns either. They are seeded here for the same reason as the rest: a missing key
-    // makes the push below throw.
+    // makes the push below throw. `in_process` (11th, V4-SEEDSAVEFLOW-001) is the third of them.
     sowed_previously: [],
     archived: [],
+    in_process: [],
   };
   for (const candidate of candidates || []) {
     // bucketOne runs FIRST even for archived packets, and the bucket it chose rides along as
@@ -985,8 +1038,23 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     // that home. So a packet that is both reads "From: Sowed previously" and, un-archived, returns
     // to the review section instead of to a working list it has no seed for. Doing it the other way
     // round would make an un-archive re-offer an empty packet.
-    const home = isDepleted(candidate) ? 'sowed_previously' : bucket;
-    const homeEntry = home === bucket ? entry : { ...entry, depletedFrom: bucket };
+    //
+    // V4-SEEDSAVEFLOW-001 — the third divert, and it is resolved AHEAD of depletion rather than
+    // beside it. A lot still fermenting has no meaningful count yet (the number is taken when the
+    // seed is dry and packeted), so a wet lot at 0/NULL diverted to `sowed_previously` would assert
+    // a sowing that never happened — it has not been sown, it is being made. The physical state of
+    // the seed wins; depletion decides among the rest; archive still diverts out of whichever home
+    // those two chose. Written as a chain rather than a nested ternary because each arm now has to
+    // stamp its own provenance key, which is what the card reads back as "From: …".
+    let home = bucket;
+    let homeEntry = entry;
+    if (isInProcess(candidate)) {
+      home = 'in_process';
+      homeEntry = { ...entry, inProcessFrom: bucket };
+    } else if (isDepleted(candidate)) {
+      home = 'sowed_previously';
+      homeEntry = { ...entry, depletedFrom: bucket };
+    }
     if (isArchivedForSeason(candidate, year)) {
       buckets.archived.push({ ...homeEntry, archivedFrom: home });
     } else {

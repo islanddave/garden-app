@@ -9,8 +9,10 @@ import { useToast } from '../context/ToastContext.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
-import { EnumSelect, Field, Input, Textarea, Button, PlantingSelect } from '../components/forms'
+import { EnumSelect, Field, Input, Select, Textarea, Button, PlantingSelect } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
+import SeedStageHistory from '../components/seed/SeedStageHistory.jsx'
+import { SEED_STAGE_OPTIONS } from '../components/seed/seedStages.js'
 import { formatQty } from '../lib/format.js'
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
@@ -38,6 +40,14 @@ export default function InventoryDetail() {
   // this page reporting dirty forever after a SUCCESSFUL save — the same post-save pin EventNew
   // hit. Re-baselining here is additive: nothing rendered reads it.
   const [baseline,     setBaseline]     = useState(null)
+  // V4-SEEDHISTORY-001 — the last row this page KNOWS is on the server, kept whole rather than as a
+  // form snapshot. Distinct from BOTH of the above: `form`/`baseline` are the edit-form projection
+  // (itemToForm drops every column the form does not render), and `item` is the LOAD-TIME row that
+  // handleSave deliberately does not refresh, so it goes stale the moment a save lands. Neither is
+  // safe to round-trip into a wide PUT. Written on load and on every successful write from this
+  // page; read only by saveSeedStage, which needs a complete, current row for the reason spelled
+  // out there. Nothing rendered reads it.
+  const [serverRow,    setServerRow]    = useState(null)
 
   // ── V4-SEEDLINK-001 — seed-lot provenance ("Saved from") ───────────────────
   // Its OWN state and its OWN write, deliberately outside form/baseline/buildChanges, for two
@@ -54,6 +64,22 @@ export default function InventoryDetail() {
   // failure rather than as "you have no plantings" — an unfillable field that looks legitimately
   // empty. The host owns the copy; PutUp's PlantingField is the precedent.
   const [sourcePlantLoadFailed, setSourcePlantLoadFailed] = useState(false)
+  // The parent's NAME, when this page happens to know it. PlantingSelect hands the chosen row to
+  // onChange(id, planting) but exposes nothing for a value it merely resolved on load, so this is
+  // populated by a selection made in this session and is null for a link loaded with the item. The
+  // chain below degrades to a bare link in that case rather than fetching a second time — see the
+  // prop note in SeedStageHistory.
+  const [sourcePlantName, setSourcePlantName] = useState(null)
+
+  // ── V4-SEEDHISTORY-001 — the lot's CURRENT processing stage ────────────────
+  // Its own state and its own write for the same two reasons "Saved from" has its own, plus a third
+  // that is specific to this column: routing it through buildChanges() would put it in the wide
+  // PUT's payload, and the wide PUT is where seed_stage's explicit-presence guard exists precisely
+  // so that form does NOT carry it (lambda/inventory-items/index.js:714-730 — a bare assignment
+  // there would null the stage on every unrelated edit).
+  const [seedStage,     setSeedStage]     = useState('')
+  const [seedStageBusy, setSeedStageBusy] = useState(false)
+  const [seedStageErr,  setSeedStageErr]  = useState(null)
 
   // ── Load item ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -66,8 +92,11 @@ export default function InventoryDetail() {
         setItem(data)
         setForm(itemToForm(data))
         setBaseline(itemToForm(data))
+        setServerRow(data)
         // '' not null: PlantingSelect's `value` is a string and '' is its cleared state.
         setSourcePlantId(data.source_plant_id ?? '')
+        // Same '' convention, same reason — Select's cleared state is the empty string.
+        setSeedStage(data.seed_stage ?? '')
         setLoading(false)
       })
       .catch(err => {
@@ -189,13 +218,19 @@ export default function InventoryDetail() {
     // guard correctly stays held.
     const sent = form
     setSaving(true)
-    const { error } = await updateItem(id, buildChanges())
+    const { error, item: saved } = await updateItem(id, buildChanges())
     setSaving(false)
 
     if (error) {
       setErrors({ _form: error })
     } else {
       setBaseline(sent)
+      // V4-SEEDHISTORY-001 — re-baseline the server mirror off the row the PUT returned. `item` is
+      // still deliberately left alone (the heading and breadcrumb keep showing the loaded name), so
+      // without this a stage change made after a save would round-trip pre-save values and revert
+      // the edit that just landed. Identity-checked for the reason saveSeedStage states: a truthy
+      // body that is not this row is worse than no refresh at all.
+      if (saved?.id === id) setServerRow(saved)
       // Operational confirmation via the GLOBAL toast layer (auto-dismisses).
       show({ message: '✓ Saved' })
     }
@@ -206,10 +241,15 @@ export default function InventoryDetail() {
   // meaning, and a picker that looks chosen while the value sits unsent is the silent-failure shape
   // BUG-SILENTFAILSWEEP-001 catalogued. Optimistic, then reverted on failure — showing a parent the
   // server does not have is worse than showing none.
-  async function saveSourcePlant(nextId) {
+  async function saveSourcePlant(nextId, planting) {
     const prev = sourcePlantId
+    const prevName = sourcePlantName
     if (nextId === prev) return
     setSourcePlantId(nextId)
+    // V4-SEEDHISTORY-001 — the picker hands the whole row along with the id, so the chain below can
+    // name the parent without a second request. Reverted with the id below, not left behind: an id
+    // that rolled back while its label did not is a chain that names the wrong plant.
+    setSourcePlantName(planting?.name ?? planting?.variety_ref?.name ?? null)
     setSourcePlantBusy(true)
     setSourcePlantErr(null)
     try {
@@ -223,9 +263,58 @@ export default function InventoryDetail() {
       show({ message: '✓ Saved' })
     } catch (e) {
       setSourcePlantId(prev)
+      setSourcePlantName(prevName)
       setSourcePlantErr(e?.message ?? 'Could not save that.')
     } finally {
       setSourcePlantBusy(false)
+    }
+  }
+
+  // ── Save the current seed stage (V4-SEEDHISTORY-001) ───────────────────────
+  // THE REPAIR PATH, and until now it existed only in the Lambda. The wide PUT has accepted
+  // `seed_stage` under a hasOwnProperty presence guard since v4-seedsaveflow-001 — including
+  // `seed_stage: null` as the deliberate clear — and no UI had ever put that key in a body, so the
+  // documented capability was reachable only by hand-crafting an HTTP request. It matters because
+  // seed_lot_stage_log has NO delete route (lambda/inventory-items/index.js has only the GET, the
+  // INSERT and two LATERAL reads): a mis-tapped stage on /seeds/saved is permanent, and moving this
+  // pointer is the only way to say where the lot actually is.
+  //
+  // IT DOES NOT WRITE HISTORY, deliberately. POST /seed-stage appends a log row; this does not. A
+  // correction that logged itself would make `stage_entered_at` the time of the correction rather
+  // than the time the lot entered the stage, which is the number /seeds/saved's whole queue is
+  // ordered by (BUG-SEEDELAPSEDUPDATED-001). The history panel says so when the two diverge.
+  //
+  // NOT buildChanges(), and NOT updateItem(). buildChanges() is the edit form's projection and does
+  // not carry seed columns at all; updateItem() merges against its own list, which is empty on a
+  // deep link. Both would leave the payload short, and the wide PUT assigns every column it names
+  // unconditionally (`= ${body.x ?? null}`) — so a short payload is not a partial update, it is a
+  // wipe. The complete current row is round-tripped instead.
+  async function saveSeedStage(nextStage) {
+    const prev = seedStage
+    const next = nextStage || null
+    // Normalised on both sides: '' and null both mean "no stage", and comparing them raw would fire
+    // a pointless write every time the placeholder was re-selected on an untracked lot.
+    if ((prev || null) === next) return
+    setSeedStage(next ?? '')
+    setSeedStageBusy(true)
+    setSeedStageErr(null)
+    try {
+      const updated = await fetch(`/api/inventory-items/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...putPayloadFrom(serverRow ?? item), seed_stage: next }),
+      })
+      // Only a response that IS this row replaces the mirror. A truthy-but-wrong body — `[]`, `{}`,
+      // an envelope — would otherwise poison it, and the NEXT stage write would round-trip that
+      // instead of the row, which is the wipe this whole function is built to avoid. Falling back
+      // to the previous mirror costs at most a stale field on a later write; accepting garbage
+      // costs the row.
+      if (updated?.id === id) setServerRow(updated)
+      show({ message: '✓ Saved' })
+    } catch (e) {
+      setSeedStage(prev)
+      setSeedStageErr(e?.message ?? 'Could not save that.')
+    } finally {
+      setSeedStageBusy(false)
     }
   }
 
@@ -256,6 +345,8 @@ export default function InventoryDetail() {
   // chosen (there is no staged-file step, unlike EventNew's), `confirmDelete` is a transient
   // confirmation, the Plant-from-packet CTA is pure navigation, and the V4-SEEDLINK-001 "Saved
   // from" picker PATCHes on selection — so its value is on the server before this could observe it.
+  // The V4-SEEDHISTORY-001 stage select is the same shape for the same reason: it PUTs on choice,
+  // so there is never a moment where it looks set and is not saved.
   //
   // Declared above the loading/error early returns because hooks cannot live below them. `form` and
   // `baseline` are both null until the load resolves, which reads as clean — correct, there is
@@ -394,7 +485,9 @@ export default function InventoryDetail() {
             <PlantingSelect
               id="inv-source-plant"
               value={sourcePlantId}
-              onChange={(pid) => saveSourcePlant(pid || '')}
+              // The second argument is the chosen ROW — the picker passes it so call sites never
+              // need their own id→row lookup, and the chain panel below uses it for the name.
+              onChange={(pid, planting) => saveSourcePlant(pid || '', planting)}
               // The lot's own cultivar pins the list exactly — every seed row carries a variety_id
               // (chk_inventory_seed_requires_variety), so this collapses ~239 plantings to the one
               // to three of that cultivar.
@@ -424,6 +517,66 @@ export default function InventoryDetail() {
                     ? 'Saving…'
                     : 'The plant this seed was saved from. Leave it empty for bought seed.'}
             </p>
+          </div>
+        )}
+
+        {/* ── V4-SEEDHISTORY-001 — this lot's processing chain, and the control that repairs it ────
+            Two things the app has never had, in one card because they answer one question.
+
+            THE HISTORY. GET /api/inventory-items/:id/seed-stage shipped with the write path and had
+            ZERO consumers — the log was written and never read anywhere. A two-week ferment→dry→
+            store commitment showed the user nothing back for it, which is the reinforcement loop
+            this closes.
+
+            THE CONTROL. The wide PUT has accepted `seed_stage` under a presence guard since
+            v4-seedsaveflow-001, `null` included as the deliberate clear, and no UI ever sent that
+            key — so the documented capability was reachable only by hand-crafting a request. Since
+            seed_lot_stage_log has no DELETE, it is also the ONLY repair for a mis-tapped stage.
+
+            SEEDS ONLY, gated exactly like the two cards above. A hori-hori has no processing chain
+            and must not grow an empty one.
+
+            OUTSIDE the <form>, same reasoning as "Saved from": the select writes on choice, so it
+            carries no unsaved state and has no business under a Save button that implies it does. */}
+        {item.category === 'seeds' && (
+          <div data-testid="seed-stage-panel" style={{ ...card, marginBottom: 20 }}>
+            <div style={groupLabel}>Seed processing</div>
+            <Field label="Current stage" htmlFor="inv-seed-stage">
+              <Select
+                id="inv-seed-stage"
+                value={seedStage}
+                onChange={e => saveSeedStage(e.target.value)}
+                options={SEED_STAGE_OPTIONS}
+                // The placeholder IS the clear. Choosing it sends `seed_stage: null` — an explicit
+                // key, never an omission, because the handler reads this by presence and an omitted
+                // key means "leave it alone", which is the opposite instruction.
+                placeholder="— Not tracked —"
+                disabled={seedStageBusy}
+                // Explicit, so the status line below is announced with the control. Field would
+                // otherwise clone `undefined` here — its own `help` slot is unused because this
+                // copy switches between three states and Field's is static.
+                aria-describedby="inv-seed-stage-help"
+                data-testid="seed-stage-select"
+              />
+            </Field>
+            <p id="inv-seed-stage-help" data-testid="seed-stage-help" style={{
+              margin: 0, color: seedStageErr ? P.terra : P.light,
+              fontSize: '0.78rem', lineHeight: 1.5,
+            }}>
+              {seedStageErr
+                ? seedStageErr
+                : seedStageBusy
+                  ? 'Saving…'
+                  : 'Corrects where this lot is now. It does not add a processing entry — advance a lot from Saved seeds to record one.'}
+            </p>
+            <SeedStageHistory
+              itemId={item.id}
+              // The optimistic value, not item.seed_stage: the control reverts on failure, so this
+              // tracks what the user is being shown and the two cannot disagree mid-write.
+              currentStage={seedStage || null}
+              sourcePlantId={sourcePlantId}
+              sourcePlantName={sourcePlantName}
+            />
           </div>
         )}
 
@@ -695,6 +848,42 @@ export default function InventoryDetail() {
 
     </div>
   )
+}
+
+// ── V4-SEEDHISTORY-001 — a complete wide-PUT body, built from a SERVER row ────────────────────────
+// The wide PUT is "replace all editable fields": every column in its SET list is assigned
+// unconditionally, so anything the body omits is NULLED rather than preserved
+// (lambda/inventory-items/index.js:660-672 states this in its own words). A stage-only body would
+// therefore not be a partial update — it would erase the name, type, category, quantities and the
+// rest. The row that came back from the server is round-tripped instead, which is exactly the
+// "frontend sends complete payload" contract the handler documents.
+//
+// A DENYLIST, not an allowlist, and the direction matters: a column added to that SET list later
+// rides through here automatically, where an allowlist would silently start nulling it. Two groups,
+// both small enough to state a reason for each:
+//
+// DERIVED — computed by the id-GET, not columns on the row. Inert in the SET list (it reads only
+// the keys it names), stripped because a PUT body carrying a germination summary is noise that
+// invites someone to wire it up.
+const PUT_DERIVED_KEYS = ['germination', 'featured_photo_view_url', 'variety_name', 'featured_is_explicit']
+// PRESENCE-GUARDED — columns the handler writes through `CASE WHEN hasOwnProperty(...)`. OMITTING
+// them is the guaranteed no-op; MENTIONING them is an assignment, which is not the same thing:
+//   featured_photo_id — the GET returns the DERIVED hero (INV-HERO), not the stored pointer, so
+//                       echoing it back would quietly rewrite the pointer to the derived value.
+//   variety_id        — validateUpdate 400s on category:'seeds' with an explicitly-null variety
+//                       (BUG-INVSEEDPUT400-001), and omission sidesteps that entirely.
+//   seed_process      — the lot's process is decided at the moment it enters the pipeline and has
+//                       no business being re-asserted from a snapshot by a stage correction.
+//   seed_stage        — stripped so the ONLY source of this key is the caller's explicit
+//                       assignment. Left in, a caller that stopped setting it would echo the stale
+//                       value straight back and the write would look like it worked; stripped, it
+//                       is absent instead, which the handler reads as "leave the stage alone" —
+//                       still wrong, but wrong in the direction that changes nothing.
+const PUT_PRESENCE_GUARDED_KEYS = ['featured_photo_id', 'variety_id', 'seed_process', 'seed_stage']
+function putPayloadFrom(row) {
+  const out = { ...(row ?? {}) }
+  for (const k of [...PUT_DERIVED_KEYS, ...PUT_PRESENCE_GUARDED_KEYS]) delete out[k]
+  return out
 }
 
 // ── Shared primitives ─────────────────────────────────────────────────────────

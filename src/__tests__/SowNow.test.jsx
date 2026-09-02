@@ -41,7 +41,8 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateSpy,
 }))
 
-import SowNow from '../pages/SowNow.jsx'
+import SowNow, { SEED_STAGE_LABEL } from '../pages/SowNow.jsx'
+import { IN_PROCESS_STAGES } from '../lib/sowEngine.js'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const TODAY = '2026-07-10'
@@ -562,6 +563,140 @@ describe('SowNow — sowed previously (zero-count packets)', () => {
 
     expect(screen.queryByText('Sowed previously')).toBeNull()
     expect(screen.getByText('From: Sowed previously')).toBeDefined()
+    expect(screen.getByLabelText('Un-archive Spacemaster 80')).toBeDefined()
+  })
+})
+
+// ── V4-SEEDSAVEFLOW-001 ───────────────────────────────────────────────────────
+// The filed defect, measured on a real Neon branch 2026-09-02: v_sow_candidates says nothing about
+// seed_stage, so a lot at 'fermenting' — wet tomato seed in its own pulp — was offered by this page
+// exactly as a finished packet is. Dave's remedy is DIVERT, NOT HIDE: the lot stays on the page,
+// marked with the stage it is in, so he can see the seed exists and is coming while being unable to
+// mis-sow it. Every negative below is asserted in the SAME render as its positive — a queryByText
+// that runs alone passes just as well against a page that renders no markers at all.
+describe('SowNow — seed still in process', () => {
+  const WET_CUKE = { ...CUCUMBER, seed_stage: 'fermenting' }
+  const DRYING_LETTUCE = { ...LETTUCE, seed_stage: 'drying' }
+  const STORED_LETTUCE = { ...LETTUCE, seed_stage: 'stored' }
+  // A saved lot off the same gated onion. Distinct id + name so it can sit in one render beside the
+  // bought packet and be told apart by label.
+  const WET_ONION = {
+    ...FLAT_OF_ITALY,
+    inventory_item_id: 'inv-flatitaly-saved',
+    variety_name: 'Flat of Italy (saved)',
+    seed_stage: 'fermenting',
+  }
+
+  // Scopes an assertion to ONE card's chips: the title span and every status badge are siblings
+  // inside the card's badge row, so the title's parent IS that row.
+  const chipsFor = (title) => screen.getByText(title).parentElement
+
+  it('THE FILED DEFECT: a fermenting lot is not offered as sowable', async () => {
+    // Cucumber is the page's only window_closing packet, so the whole section goes with it.
+    routeFetch({ candidates: [WET_CUKE, LETTUCE] })
+    await renderSowNow()
+    await screen.findByText('Direct sow now')
+
+    expect(screen.queryByText('Window closing')).toBeNull()
+    expect(screen.queryByLabelText('Sow Spacemaster 80')).toBeNull()
+    expect(screen.getByText('Still in process')).toBeDefined()
+    // The bought neighbour (seed_stage absent entirely) is untouched.
+    expect(screen.getByLabelText('Sow Black Seeded Simpson')).toBeDefined()
+  })
+
+  it('the marker NAMES the stage, and a stored lot in the same render gets none', async () => {
+    routeFetch({ candidates: [WET_CUKE, STORED_LETTUCE] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+
+    // Words, not colour: the chip says which stage and says it cannot be sown.
+    expect(within(chipsFor('Spacemaster 80')).getByText('Fermenting — not ready to sow')).toBeDefined()
+    // SAME RENDER, and scoped to the other card rather than to the page: the stored lot carries no
+    // marker at all, and is on the working list with a live Sow action.
+    expect(within(chipsFor('Black Seeded Simpson')).queryByText(/not ready to sow/)).toBeNull()
+    expect(screen.getByLabelText('Sow Black Seeded Simpson')).toBeDefined()
+    expect(screen.getAllByText(/not ready to sow/)).toHaveLength(1)
+  })
+
+  it('drying says Drying — the marker is the stage, not a generic "not ready"', async () => {
+    // Both stages in one render, each naming itself, plus a never-staged packet with no marker.
+    routeFetch({ candidates: [WET_CUKE, DRYING_LETTUCE, { ...MYSTERY, seed_stage: null }] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+
+    expect(within(chipsFor('Spacemaster 80')).getByText('Fermenting — not ready to sow')).toBeDefined()
+    expect(within(chipsFor('Black Seeded Simpson')).getByText('Drying — not ready to sow')).toBeDefined()
+    expect(within(chipsFor('Mystery Pepper')).queryByText(/not ready to sow/)).toBeNull()
+    expect(screen.getAllByText(/not ready to sow/)).toHaveLength(2)
+  })
+
+  it('every stage the engine diverts on has words on the card', () => {
+    // A stage in IN_PROCESS_STAGES with no entry here would render the fallback chip instead of its
+    // name — legible, but the stage would go unsaid. This is the drift guard for that.
+    expect(Object.keys(SEED_STAGE_LABEL).sort()).toEqual([...IN_PROCESS_STAGES].sort())
+  })
+
+  it('the section is OPEN on arrival — "see it coming" is not a thing behind a toggle', async () => {
+    routeFetch({ candidates: [WET_CUKE] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+
+    // Card content with no click, unlike sowed_previously/archived/too_late.
+    expect(screen.getByText('Spacemaster 80')).toBeDefined()
+    expect(screen.getByText(
+      'Seed you are saving that is not finished yet. It stays on the list so you can see it coming — but it cannot be sown until it is dry and stored.',
+    )).toBeDefined()
+    // Kept in full: the window it will return to once it is dry, and its depth/spacing line.
+    expect(screen.getByText('Direct sow through Jul 14')).toBeDefined()
+    expect(screen.getByText('From: Window closing')).toBeDefined()
+    expect(screen.getByText('Sow ½ in deep · 12 in apart')).toBeDefined()
+  })
+
+  it('NO override on a wet lot — the gated bought packet beside it keeps its own', async () => {
+    // The one place this page withholds "Sow anyway" on purpose: a gate is a judgement Dave may know
+    // better than, but wet seed in a jar is a physical fact and no tap makes it sowable today.
+    routeFetch({ candidates: [FLAT_OF_ITALY, WET_ONION] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+
+    expect(screen.getByLabelText('Sow Flat of Italy anyway')).toBeDefined()
+    expect(screen.queryByLabelText('Sow Flat of Italy (saved) anyway')).toBeNull()
+    expect(screen.queryByLabelText('Sow Flat of Italy (saved)')).toBeNull()
+    expect(screen.getAllByLabelText(/anyway$/)).toHaveLength(1)
+  })
+
+  it('THE FORWARD HALF: advancing to stored puts the lot back on the working list', async () => {
+    // Reaching `stored` used to grant a lot nothing at all. Same row, one column advanced.
+    routeFetch({ candidates: [{ ...CUCUMBER, seed_stage: 'stored' }] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Window closing')).toBeDefined()
+    expect(screen.getByLabelText('Sow Spacemaster 80')).toBeDefined()
+    expect(screen.queryByText('Still in process')).toBeNull()
+    expect(screen.queryByText(/not ready to sow/)).toBeNull()
+  })
+
+  it('THE NULL DECISION: a never-staged packet stays on the working list, unmarked', async () => {
+    // seed_stage NULL is what EVERY bought packet carries — "never tracked", not "unfinished".
+    routeFetch({ candidates: [{ ...CUCUMBER, seed_stage: null }] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Window closing')).toBeDefined()
+    expect(screen.getByLabelText('Sow Spacemaster 80')).toBeDefined()
+    expect(screen.queryByText('Still in process')).toBeNull()
+    expect(screen.queryByText(/not ready to sow/)).toBeNull()
+  })
+
+  it('a wet lot is still archivable, and the marker follows it into the archive', async () => {
+    routeFetch({ candidates: [{ ...WET_CUKE, sow_archived_season: 2026 }] })
+    await renderSowNow()
+    await act(async () => { fireEvent.click(await screen.findByText('Archived for this season')) })
+
+    expect(screen.queryByText('Still in process')).toBeNull()
+    expect(screen.getByText('From: Still in process')).toBeDefined()
+    // An archived jar of wet seed is still a jar of wet seed — the chip rides on the lot, not the
+    // section it happens to be sitting in.
+    expect(within(chipsFor('Spacemaster 80')).getByText('Fermenting — not ready to sow')).toBeDefined()
     expect(screen.getByLabelText('Un-archive Spacemaster 80')).toBeDefined()
   })
 })

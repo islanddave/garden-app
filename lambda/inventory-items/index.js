@@ -6,16 +6,17 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } from './extract.js';
-// V4-SEEDORIGIN-001. A byte-identical per-dir COPY of lambda/preservation/provenance.js, following
-// the household.js precedent: each Lambda is zipped from its own directory, so a `../preservation/`
-// import 502s the deployed handler (caught 2026-05-20). lambda/provenance-copies-sync.test.js
-// asserts this copy stays byte-identical to the canonical module AND that the directory list is
-// derived from disk, so the next copy cannot drift unguarded the way daily-plan-read's did.
+// V4-SEEDORIGIN-001. A per-directory copy of the vocabulary canonically defined in
+// lambda/preservation/provenance.js — each Lambda is zipped from its own directory, so a
+// `../preservation/` import 502s the deployed handler (caught 2026-05-20).
 //
-// The point of importing rather than re-typing the eight values: this is the SAME vocabulary
-// preservation_log uses, deliberately. Re-declaring it here as a literal would be a fourth place to
-// drift, which is exactly what the canonical module's own header warns about.
-import { VALID_SOURCE_KINDS } from './provenance.js';
+// NARROW copy, not the byte-identical whole-file copy the household.js precedent would suggest:
+// copying provenance.js whole put preservation_log's plant_id and harvest_log_id into this Lambda's
+// FK surface, and lambda/authz-write-fk.test.js correctly failed on two body-settable FKs with no
+// ownership decision. See source-kinds.js for why silencing that was the wrong fix.
+// lambda/provenance-copies-sync.test.js guards the values, and also checks the migration's DB CHECK
+// membership against them.
+import { VALID_SOURCE_KINDS } from './source-kinds.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({

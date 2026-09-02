@@ -13,6 +13,7 @@ import { useOptionalToast } from '../../context/ToastContext.jsx'
 import { todayLocalISO } from '../../lib/dateLocal.js'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
+import SaveSeedSheet from './SaveSeedSheet.jsx'
 
 // BUG-SPROUTGATE-001 — the sprout action used to gate on `!planting.germinated_at` ALONE, and that
 // stamp exists on 5 of 269 live plantings, so the celebratory button rendered on 264 of them:
@@ -60,6 +61,20 @@ const btn = (extra = {}) => ({
   backgroundColor: P.white, color: P.green, whiteSpace: 'nowrap', flex: 1, minWidth: 0, ...extra,
 })
 
+// V4-SAVESEEDBTN-001 — the seed action is FULL-WIDTH AND BELOW the row, and that is a layout
+// decision rather than a style one. The row above is `flex: 1` peers: at 390px it already carries
+// three of them whenever the sprout action shows, ~90px each before gaps, and jsdom returns 0 from
+// getBoundingClientRect() so no vitest assertion in this repo can falsify a fourth. A full-width
+// block underneath cannot overflow at any viewport width, so the unanswerable question does not
+// have to be answered. Same border/radius/ink as btn() so it reads as one family, one tier down.
+const seedBtn = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+  width: '100%', minHeight: 44, marginTop: 8,
+  border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '10px 12px',
+  fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
+  backgroundColor: P.white, color: P.green,
+}
+
 export default function QuickActions({ planting, onLogged }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
@@ -67,6 +82,7 @@ export default function QuickActions({ planting, onLogged }) {
   const [sprouting, setSprouting] = useState(false)
   const [sproutDateOpen, setSproutDateOpen] = useState(false)
   const [sproutDate, setSproutDate] = useState('')
+  const [seedOpen, setSeedOpen] = useState(false)
   const navigate = useOverlayNavigate()
   const photoInputRef = useRef(null)
 
@@ -251,6 +267,27 @@ export default function QuickActions({ planting, onLogged }) {
             </button>
           )}
         </div>
+      )}
+
+      {/* V4-SAVESEEDBTN-001 — the door to the seed surface, on the page where the seed comes from.
+          Until now the ONLY link into /seeds/saved anywhere in src/ was a row inside the collapsed
+          More sheet, and no route could create a seed lot at all: a lot had to be hand-built at
+          /inventory/add first. Launched from here the parent plant is a parameter rather than a
+          260-row picker — see SaveSeedSheet for the write shape.
+
+          UNGATED, unlike the sprout action directly above it. That gate exists because "It
+          sprouted!" ASSERTS something about the plant's state, so rendering it on a fruiting
+          nursery transplant was a claim that was false. This button asserts nothing — it is an
+          action the user initiates when they are holding seed, and only they know when that is.
+          A lifecycle gate here would re-hide the door this whole change exists to open. */}
+      <button type="button" onClick={() => setSeedOpen(true)}
+        aria-label="Save seed from this planting" data-testid="save-seed-open" style={seedBtn}>
+        <Icon name="event.seed_saved" size={18} decorative style={{ color: P.green }} />
+        Save seed
+      </button>
+
+      {seedOpen && (
+        <SaveSeedSheet planting={planting} onClose={() => setSeedOpen(false)} />
       )}
     </div>
   )
