@@ -25,6 +25,10 @@ const { navigateSpy, createItemSpy } = vi.hoisted(() => ({
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
   useNavigate: () => navigateSpy,
+  // V4-SEEDNOPLANTING-001 — InventoryAdd reads search params now (the seed flow links in with
+  // type/category/return pre-set). An empty set keeps every assertion in this file about the
+  // ORDINARY, unparameterised Add-item route, which is what it was already testing.
+  useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }))
 vi.mock('../hooks/useInventory.js', () => ({ useInventory: () => ({ createItem: createItemSpy }) }))
 vi.mock('../components/VarietyPicker.jsx', () => ({ default: () => null }))

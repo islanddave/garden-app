@@ -55,10 +55,38 @@ beforeEach(() => { fetchSpy.mockReset() })
 
 describe('SavedSeeds — provenance (V4-SEEDLINK-001)', () => {
   it('stops sending the user to the dead-end "Seed saved" event', async () => {
+    // The load-bearing half, unchanged: that event type has never been logged once in the app's
+    // history and could not point at a seed lot even if it had, so the empty state must not send
+    // anyone to it.
     await mount([])
     const empty = screen.getByTestId('saved-seeds-empty').textContent
     expect(empty).not.toContain('Seed saved')
-    expect(empty).toContain('Saved from')
+  })
+
+  it('V4-SEEDNOPLANTING-001 — the empty state offers BOTH doors, by where the seed came from', async () => {
+    // RE-AUTHORED 2026-09-02. This assertion used to pin `toContain('Saved from')` — the copy that
+    // replaced the dead-end pointer, which sent the reader to Inventory to find a provenance control
+    // on a packet that may not exist yet. Dave hit the gap that leaves: "i don't see where to go
+    // right now to add seeds into this flow when not from a planting". On an EMPTY page the question
+    // is not where provenance lives, it is where to start, and there are two answers depending on
+    // where the seed came from. Pinned as the two doors rather than as a copy string, so a reword
+    // does not red this and a REMOVED door does.
+    await mount([])
+    const empty = screen.getByTestId('saved-seeds-empty').textContent
+    expect(empty).toMatch(/Save seed/)                       // the from-a-planting route
+    expect(screen.getByTestId('empty-add-packet')).toBeTruthy()  // the not-from-a-planting route
+  })
+
+  it('the not-from-a-planting door pre-seeds the form and comes back here', async () => {
+    // The three facts that make it a door rather than a link: a seed packet is a consumable in
+    // category seeds (which the general Add-item form would otherwise make him re-derive), and the
+    // return leg lands him back on the page that has the tracking control.
+    await mount([])
+    const href = screen.getByTestId('empty-add-packet').getAttribute('href')
+    expect(href).toContain('/inventory/add')
+    expect(href).toContain('type=consumable')
+    expect(href).toContain('category=seeds')
+    expect(decodeURIComponent(href)).toContain('return=/seeds/saved')
   })
 
   it('names the parent on a linked lot’s card', async () => {

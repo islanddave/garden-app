@@ -1,6 +1,6 @@
 import React from 'react'
 import { useState, useEffect, useId, useRef } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import { useToast } from '../context/ToastContext.jsx'
@@ -16,6 +16,47 @@ import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 // V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
 const DRAFT_KEY = 'inventoryadd'
 
+// ── V4-SEEDNOPLANTING-001 — arriving here FROM the seed flow ──────────────────────────────────────
+// Dave, 2026-09-02, having just been shipped the create-a-lot flow: "i don't see where to go right
+// now to add seeds into this flow when not from a planting - is that just adding a seed item to
+// inventory?" It is, and that answer is the problem: the two-step detour was real, correct, and
+// signposted nowhere. /seeds/saved now links here, and these params are what stop the link dumping
+// him onto a blank general-purpose form to re-derive that a seed packet is a `consumable` in
+// category `seeds`.
+//
+// VALIDATED AGAINST THE SAME ENUMS THE FORM USES, never trusted. A URL is user-editable input;
+// `?category=nonsense` must leave the field empty for the user to fill, not seed an invalid value
+// that fails at submit with a message about a field they never touched.
+// THE TWO ENUM LISTS DO NOT SHARE A KEY NAME: INVENTORY_TYPES entries carry `value`,
+// INVENTORY_CATEGORIES entries carry `v` (inventoryEnums.js:24 and :39). A single `.value` test
+// would have matched nothing for categories and silently seeded no category at all — a dead link
+// that looks like it works. Read both, and fall back to a bare string so the helper survives either
+// list being flattened later.
+const enumHas = (list, wanted) => list.some(e => (e?.value ?? e?.v ?? e) === wanted)
+
+const seedFromParams = (params) => {
+  const out = {}
+  const type = params.get('type')
+  const category = params.get('category')
+  if (type && enumHas(TYPES, type)) out.type = type
+  if (category && enumHas(CATEGORIES, category)) out.category = category
+  return out
+}
+
+/**
+ * Where to go after a successful save. Exported for test.
+ *
+ * INTERNAL ABSOLUTE PATHS ONLY, and the guard is the point rather than ceremony: this value comes
+ * off the query string, and a bare `startsWith('/')` check still admits `//evil.example.com`, which
+ * browsers resolve as a protocol-relative URL to another origin. Anything that is not a single
+ * leading slash followed by a non-slash falls back to the default destination.
+ */
+export function safeReturnTo(raw, fallback = '/inventory') {
+  const to = String(raw ?? '')
+  if (!/^\/[^/\\]/.test(to)) return fallback
+  return to
+}
+
 // The free-text fields, named once. Consumed by the guard predicate only — the stash is broader and
 // takes the whole form object.
 const TEXT_FIELDS = ['name', 'brand', 'model', 'source', 'source_url', 'notes', 'location_text']
@@ -23,9 +64,15 @@ const TEXT_FIELDS = ['name', 'brand', 'model', 'source', 'source_url', 'notes', 
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function InventoryAdd() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { createItem } = useInventory()
   const { show } = useToast()
 
+  // V4-SEEDNOPLANTING-001 — read ONCE into the initialiser rather than in an effect. An effect that
+  // set type/category after mount would fight the draft restore below and would re-seed the fields
+  // if the user deliberately cleared them; the params describe where the user CAME FROM, which is a
+  // fact about this mount and does not change during it.
+  const [returnTo] = useState(() => searchParams.get('return'))
   const [form, setForm] = useState({
     name:             '',
     type:             '',
@@ -51,6 +98,10 @@ export default function InventoryAdd() {
     // Variety reference (CHECK constraint chk_inventory_seed_requires_variety:
     // category='seeds' requires variety_id NOT NULL).
     variety:          null, // full variety object — flattens to variety_id on submit
+    // V4-SEEDNOPLANTING-001 — LAST, so it overrides the blank defaults above rather than being
+    // overridden by them. Only ever sets `type`/`category`, and only to a value that is already in
+    // the form's own enum lists.
+    ...seedFromParams(searchParams),
   })
 
   const [showFull,      setShowFull]      = useState(false)
@@ -188,9 +239,13 @@ export default function InventoryAdd() {
 
       // Operational confirmation via the GLOBAL toast layer (2500ms), then navigate.
       show({ message: '✓ Item added' })
+      // V4-SEEDNOPLANTING-001 — return the user where they came from. Arriving from /seeds/saved to
+      // create the packet and then being dropped on the general Inventory list is the same
+      // navigational dead end the door was added to remove, one step further along: the reason they
+      // came here was to track that lot, and the tracking control is on the page they left.
       navTimerRef.current = setTimeout(() => {
         navTimerRef.current = null
-        navigate('/inventory')
+        navigate(safeReturnTo(returnTo))
       }, 2500)
     } catch (err) {
       setSaving(false)

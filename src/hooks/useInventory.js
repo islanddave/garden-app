@@ -132,6 +132,26 @@ export function useInventory() {
     }
   }, [fetch, commitItems])
 
+  // ── BUG-INVPUTREORDER-001 — which response is allowed to win ────────────────────────────────────
+  // id -> the sequence number of the most recently ISSUED write for that item. A response may only
+  // be applied if it is still the latest; anything older is a message from a superseded request and
+  // is dropped.
+  //
+  // THE DEFECT. Every optimistic path here was already correct — commitItems assigns itemsRef
+  // synchronously so two taps in one commit compound properly (BUG-INVUNDOQTY-001's fix). What was
+  // never guarded is the RESPONSE. Two + taps issue PUT(3) then PUT(4); if PUT(4)'s response lands
+  // first and PUT(3)'s second, line "commitItems(... updated ...)" below writes the OLDER server row
+  // last and the display settles on 3. No error, no revert, and the toast says the wrong number.
+  // Nothing about HTTP guarantees response order, and this got more reachable rather than less:
+  // BUG-SEEDZEROSOWABLE-001 made the seed count writable at every stage, so the same wide PUT now
+  // fires on any stage move that carries a count instead of only at `stored`.
+  //
+  // A REF, NOT STATE, and for the same reason itemsRef is one: this is read inside a callback that
+  // outlives the render which created it, and it must be true the instant a write is ISSUED rather
+  // than after the next commit. Bounded by the number of distinct inventory items ever adjusted in
+  // one session, which is the inventory size at worst.
+  const putSeqRef = useRef(new Map())
+
   const adjustQuantity = useCallback(async (id, delta) => {
     const current = itemsRef.current.find(i => i.id === id)
     if (!current) return
@@ -142,6 +162,12 @@ export function useInventory() {
     const newValue = Math.max(0, prevValue + Number(delta))
     if (newValue === prevValue) return
 
+    // BUG-INVPUTREORDER-001 — claim this write's place in the order BEFORE issuing it, so the
+    // comparison below is against every write issued after this one, whenever they land.
+    const seq = (putSeqRef.current.get(id) ?? 0) + 1
+    putSeqRef.current.set(id, seq)
+    const superseded = () => putSeqRef.current.get(id) !== seq
+
     // Optimistic update. Through commitItems, so a second tap landing in this same commit reads
     // newValue rather than the pre-tap row and increments from it.
     commitItems(prev => prev.map(i => i.id === id ? { ...i, [col]: newValue } : i))
@@ -151,6 +177,11 @@ export function useInventory() {
         method: 'PUT',
         body: JSON.stringify({ ...current, [col]: newValue }),
       })
+      // A newer tap has been issued since; its optimistic value is on screen and its own response is
+      // authoritative. Returning here drops BOTH the commit and the toast — a toast naming this
+      // request's number would be as wrong as the row it would have written, and its undo closure
+      // would reverse a delta the user can no longer see.
+      if (superseded()) return
       commitItems(prev => prev.map(i => i.id === id ? updated : i))
       showToast({
         msg: `Quantity changed to ${newValue}`,
@@ -165,6 +196,12 @@ export function useInventory() {
         },
       })
     } catch (err) {
+      // BUG-INVPUTREORDER-001 — the error path needs the SAME guard, and it is the more damaging of
+      // the two. `prevValue` is this request's pre-tap number; reverting to it after a later tap has
+      // already moved the row would not merely show a stale value, it would discard a change the
+      // user made and can still see. A failed superseded write is the newer request's problem: if it
+      // also fails it will revert to ITS own prevValue, which is the correct place to land.
+      if (superseded()) return
       // Revert optimistic change
       commitItems(prev => prev.map(i => i.id === id ? { ...i, [col]: prevValue } : i))
       showToast({ msg: "Couldn't save — please try again" })
