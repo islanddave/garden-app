@@ -241,11 +241,49 @@ export const FALL_HARDY_CROPS = new Set([
 const FALL_GRACE_COOL = 14;
 
 /** Split direct_sow_timing into clauses on ';' and ' or ' (case-insensitive). */
+/**
+ * BUG-SOWCLAUSEPARENSPLIT-001 — split on a separator only at PAREN DEPTH ZERO.
+ *
+ * THE DEFECT, measured on live prod rather than imagined. Packet prose puts qualifying detail in
+ * parentheses and that detail contains separators:
+ *
+ *   Quincy: "Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below
+ *            55-60F). Zone 5b: late May to mid-June."
+ *
+ * A bare `.split(';')` cuts inside the parenthetical and yields two fragments, neither of which is a
+ * sentence: `…reliably warm (optimal 75-95F` and `never below 55-60F). Zone 5b: late May to
+ * mid-June`. classifyClause returns null for both, they are dropped SILENTLY, and a live variety
+ * ends up with no parsed sow window at all — from a semicolon, not from anything about the crop.
+ *
+ * Depth-aware for ` or ` too, and for the same reason: "(spring or fall)" is one qualifier, not two
+ * clauses. Nesting is counted rather than flagged, so `((a; b); c)` behaves; an UNBALANCED prose
+ * paren cannot make the scanner lose a separator forever because depth is clamped at 0 — a stray
+ * `)` returns to top level rather than going negative and swallowing the rest of the string.
+ *
+ * This is the same class of bug as splitting SQL on a bare `;` — a separator that is only a
+ * separator outside its quoting context.
+ */
 export function splitClauses(timing) {
   if (!timing) return [];
-  return String(timing)
-    .split(';')
-    .flatMap((part) => part.split(/\s+or\s+/i))
+  const src = String(timing);
+  const parts = [];
+  let buf = '';
+  let depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '(' || ch === '[') { depth++; buf += ch; continue; }
+    if (ch === ')' || ch === ']') { depth = Math.max(0, depth - 1); buf += ch; continue; }
+    if (depth === 0) {
+      if (ch === ';') { parts.push(buf); buf = ''; continue; }
+      // ` or ` — whitespace-delimited on both sides, matching the previous /\s+or\s+/i split, so
+      // "colorful" and "or" as part of a word are untouched.
+      const m = /^\s+or\s+/i.exec(src.slice(i));
+      if (m) { parts.push(buf); buf = ''; i += m[0].length - 1; continue; }
+    }
+    buf += ch;
+  }
+  parts.push(buf);
+  return parts
     .map((part) => part.trim().replace(/^[,.]+|[,.]+$/g, '').trim())
     .filter(Boolean);
 }
@@ -444,6 +482,17 @@ function methodIncludesIndoor(method) {
 
 function buildDirectWindows(candidate, dtm, ctx, gated = false) {
   const clauses = splitClauses(candidate.direct_sow_timing).map(classifyClause);
+  // BUG-SOWPROSEUNREAD-001 — the packet SAID something about timing and we understood none of it.
+  //
+  // Measured on the ORIGINAL clause list rather than on `kept` below, and the distinction is the
+  // whole point: `kept` is narrowed on purpose (the gated-allium filter drops classes deliberately),
+  // and a deliberate drop is knowledge, not ignorance. This flag is only ever set when the
+  // CLASSIFIER failed — every clause the packet carries came back `cls: null`.
+  //
+  // Live prod, 2026-09-02: 114 varieties carry direct-sow prose and NINE are read this way — Quincy,
+  // Javelin, Common Milkweed, Long Island Improved, Red Mustard, Zebrune, Yellow Granex PRR,
+  // Althaea officinalis, Column Blend. See bucketOne's exit for what it is used for.
+  const unreadableProse = clauses.length > 0 && clauses.every((cl) => cl.cls == null);
   // Class K: zone-conditional — keep the 5b/6a clause, drop mild-climate ones.
   const hasZoneClause = clauses.some((cl) => cl.zone5b6a);
   let kept = hasZoneClause ? clauses.filter((cl) => !cl.mildClimates) : clauses;
@@ -567,7 +616,7 @@ function buildDirectWindows(candidate, dtm, ctx, gated = false) {
     pushDirect(windows, cl, open, latestSafe, latestSafe, true, ctx, 'this_season');
   }
 
-  return { windows, anyJ, neverTooLate, unknownClamp };
+  return { windows, anyJ, neverTooLate, unknownClamp, unreadableProse };
 }
 
 function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon = 'this_season') {
@@ -694,7 +743,7 @@ function bucketOne(candidate, ctx) {
     ? { gated: true, gateReason: GATE_REASONS[candidate.crop_type_slug] ?? GATE_REASONS.onion }
     : null;
   const indoorWindows = buildIndoorWindows(candidate, dtm, ctx, gated);
-  const { windows: directWindows, anyJ, neverTooLate, unknownClamp } =
+  const { windows: directWindows, anyJ, neverTooLate, unknownClamp, unreadableProse } =
     buildDirectWindows(candidate, dtm, ctx, gated);
   const all = [...indoorWindows, ...directWindows];
 
@@ -854,6 +903,28 @@ function bucketOne(candidate, ctx) {
     return {
       bucket: 'needs_profile',
       entry: { candidate, action: null, windowLabel: 'Add days to maturity to place this' },
+    };
+  }
+
+  // BUG-SOWPROSEUNREAD-001 — the SAME rule as unknownClamp above, applied to the other way this
+  // engine can be ignorant. There the clause was understood and its clamp was missing; here the
+  // clause was never understood at all, and falling through asserts "Sowing window passed" about
+  // timing nobody read.
+  //
+  // MEASURED, and it is not a near-miss: Quincy's packet says "Zone 5b: late May to mid-June" and
+  // this exit filed it under "Too late this year" on every date tested across the whole season —
+  // 1 March included. A claim that is wrong in March is not a timing verdict, it is a fallthrough
+  // wearing one. Nine live varieties sit here.
+  //
+  // Placed AFTER unknownClamp deliberately: that branch names a specific, actionable fix ("add days
+  // to maturity"), and a packet can be in both states. The more specific instruction wins.
+  //
+  // The label does not pretend to a verdict and does not blame the packet — the prose is usually
+  // perfectly clear to a human, which is why SowNow renders it verbatim underneath (`sow-prose`).
+  if (unreadableProse) {
+    return {
+      bucket: 'needs_profile',
+      entry: { candidate, action: null, windowLabel: "Couldn't read this packet's sow timing" },
     };
   }
 

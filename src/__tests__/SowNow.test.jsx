@@ -194,6 +194,63 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
     expect(navigateSpy).toHaveBeenCalledWith('/inventory/inv-mystery')
   })
 
+  // ── BUG-SOWPROSEUNREAD-001 — "Needs a sow profile" when the profile EXISTS ────────────────────
+  //
+  // A packet with no timing at all genuinely needs one, and MYSTERY above is that packet. The defect
+  // is the other kind: prose the classifier cannot parse. The card claimed the profile was missing,
+  // offered "Add sow details", and showed the gardener nothing — while the packet itself said
+  // something perfectly actionable.
+  //
+  // The fixture string is VERBATIM from live prod (Quincy), not invented. It is unreadable for a
+  // specific reason worth preserving in a test: the semicolon sits INSIDE the parenthetical, which
+  // used to make splitClauses cut the sentence into two unbalanced fragments
+  // (BUG-SOWCLAUSEPARENSPLIT-001, fixed alongside this). The split is correct now and the clause is
+  // still unclassified — which is exactly the state this surfacing exists for, and why an invented
+  // "unparseable" string would not have reproduced it.
+  const QUINCY_PROSE = 'Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May to mid-June.'
+  const UNREADABLE = {
+    ...MYSTERY,
+    inventory_item_id: 'inv-quincy',
+    item_name: 'Quincy Seeds',
+    variety_name: 'Quincy',
+    direct_sow_timing: QUINCY_PROSE,
+  }
+
+  it('shows the packet’s own words when the engine could not read them', async () => {
+    routeFetch({ candidates: [UNREADABLE] })
+    await renderSowNow()
+    await screen.findByText('Needs a sow profile')
+
+    const prose = screen.getByTestId('sow-prose')
+    expect(prose.textContent).toContain('Zone 5b: late May to mid-June')
+    // Labelled as the packet talking, never as an engine verdict — the app did not derive this.
+    expect(prose.textContent).toMatch(/packet says/i)
+  })
+
+  it('still offers the CTA — reading the prose is not a substitute for a real profile', async () => {
+    routeFetch({ candidates: [UNREADABLE] })
+    await renderSowNow()
+    expect(await screen.findByLabelText('Add sow details for Quincy')).toBeDefined()
+  })
+
+  it('a packet with NO timing shows no prose line at all', async () => {
+    // MYSTERY carries direct_sow_timing: null and sow_notes: null. An empty "The packet says:" label
+    // would be worse than the dead end it replaces.
+    routeFetch()
+    await renderSowNow()
+    await screen.findByText('Needs a sow profile')
+    expect(screen.queryByTestId('sow-prose')).toBeNull()
+  })
+
+  it('does NOT appear on a card the engine DID understand', async () => {
+    // Everywhere else the engine parsed the timing and its own window label is the better answer;
+    // echoing the raw prose beside a computed date would invite the reader to arbitrate between them.
+    routeFetch({ candidates: [CUCUMBER] })
+    await renderSowNow()
+    await screen.findByText('Window closing')
+    expect(screen.queryByTestId('sow-prose')).toBeNull()
+  })
+
   it('shows the empty state when there are no candidates', async () => {
     routeFetch({ candidates: [] })
     await renderSowNow()

@@ -1619,6 +1619,106 @@ describe('V4-SEEDSAVEFLOW-001 in-process seed lots', () => {
   });
 });
 
+describe('BUG-SOWPROSEUNREAD-001 — unreadable timing is UNKNOWN, not "too late"', () => {
+  // VERBATIM from live prod (Quincy). Unreadable for a reason worth keeping in the fixture: the
+  // semicolon sits inside the parenthetical, which used to make splitClauses cut the sentence into
+  // two unbalanced fragments (BUG-SOWCLAUSEPARENSPLIT-001). That split is correct now and the clause
+  // is STILL unclassified, which is exactly the state this exit exists for. An invented
+  // "unparseable" string would not have reproduced it.
+  const QUINCY = 'Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May to mid-June.';
+  const unreadable = (over = {}) => toCandidate(PACKETS.cucumberSpacemaster, {
+    direct_sow_timing: QUINCY, start_method: 'direct_sow',
+    days_to_maturity_min: null, days_to_maturity_max: null,
+    lifecycle: null, grown_as: null, sow_season: null, ...over,
+  });
+
+  it('THE DEFECT: it read "too late" in MARCH — a fallthrough wearing a verdict', () => {
+    // The decisive measurement. A window the engine cannot compute might be open or closed; saying
+    // "passed for 2026" on 1 March is a claim with nothing behind it. Swept across the season so a
+    // future change cannot make this pass by moving one date.
+    for (const day of ['2026-03-01', '2026-04-15', '2026-05-20', '2026-07-10', '2026-09-02']) {
+      const buckets = bucketize([unreadable()], day);
+      expect(buckets.too_late, `${day}: still filed as too late`).toHaveLength(0);
+      expect(buckets.needs_profile, `${day}: not routed to needs_profile`).toHaveLength(1);
+    }
+  });
+
+  it('says it could not read the packet, rather than blaming the packet or inventing a date', () => {
+    const entry = bucketize([unreadable()], TODAY).needs_profile[0];
+    expect(entry.windowLabel).toMatch(/read/i);
+    expect(entry.windowLabel).not.toMatch(/passed|too late/i);
+  });
+
+  it('does NOT fire for a packet with no timing prose at all — and that case is UNCHANGED', () => {
+    // The flag requires clauses.length > 0: it means "we could not read what was said", never "no
+    // one said anything". Asserted here because the two ignorances are easy to conflate.
+    //
+    // AND THE HONEST PART, recorded rather than quietly fixed: this fixture (start_method
+    // 'direct_sow', no prose, no dtm) lands in `too_late` both before and after this change, which
+    // is arguably the same unfounded claim in a second costume. It is deliberately OUT of scope —
+    // it is a different input class with a different remedy, and widening the exit to cover it would
+    // move cards this change has no measurement for. Filed as an observation, not fixed here.
+    const buckets = bucketize([unreadable({ direct_sow_timing: null })], TODAY);
+    expect(buckets.needs_profile, 'the unreadable-prose exit fired without any prose').toHaveLength(0);
+    expect(buckets.too_late, 'pre-existing routing for a no-prose packet changed').toHaveLength(1);
+  });
+
+  it('a READABLE clause is untouched — the flag needs EVERY clause to fail', () => {
+    // The guard against over-reach: one parseable clause means the engine understood the packet, and
+    // this exit must not fire. Uses the golden packet's own timing, which classifies.
+    const buckets = bucketize([toCandidate(PACKETS.cucumberSpacemaster)], TODAY);
+    expect(buckets.needs_profile).toHaveLength(0);
+  });
+
+  it('a genuinely late packet still reads too_late — the bucket is not emptied', () => {
+    // The control. If this exit swallowed the too_late branch entirely the sweep above would pass
+    // for the wrong reason, and a real "you missed it" would stop being said at all.
+    const late = toCandidate(PACKETS.cucumberSpacemaster, { direct_sow_timing: 'direct sow after last frost' });
+    const buckets = bucketize([late], '2026-11-20');
+    expect(buckets.too_late.length + buckets.sow_next_year.length).toBeGreaterThan(0);
+    expect(buckets.needs_profile).toHaveLength(0);
+  });
+});
+
+describe('BUG-SOWCLAUSEPARENSPLIT-001 — a separator inside parentheses is not a separator', () => {
+  it('does not cut a sentence at a semicolon inside a parenthetical', () => {
+    // Quincy's real prose. Split naively it yields two fragments, neither a sentence, one with an
+    // unbalanced paren: "…reliably warm (optimal 75-95F" and "never below 55-60F). Zone 5b: …".
+    const out = splitClauses('Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May to mid-June.');
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain('never below 55-60F');
+    expect(out[0]).toContain('Zone 5b');
+  });
+
+  it('does not cut on " or " inside parentheses either', () => {
+    const out = splitClauses('Direct sow in spring (either March or April)');
+    expect(out).toHaveLength(1);
+  });
+
+  it('STILL splits on a top-level semicolon and a top-level " or "', () => {
+    // The control: the fix must narrow the split, not disable it.
+    expect(splitClauses('sow in spring; also good as a fall crop')).toHaveLength(2);
+    expect(splitClauses('sow in spring or sow in fall')).toHaveLength(2);
+  });
+
+  it('splits correctly after a balanced parenthetical closes', () => {
+    const out = splitClauses('Direct sow early (as soon as workable); or start indoors');
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain('as soon as workable');
+    expect(out[1]).toBe('start indoors');
+  });
+
+  it('an UNBALANCED paren cannot swallow the rest of the string', () => {
+    // Prose is user data and comes unbalanced. Depth is clamped at 0 so a stray ")" returns to top
+    // level instead of going negative and disabling every separator that follows.
+    expect(splitClauses('sow early); or start indoors')).toHaveLength(2);
+    // An unclosed "(" legitimately keeps the remainder together — there is no honest place to guess
+    // the close — but it must not throw or lose text.
+    const out = splitClauses('sow early (unclosed; still here');
+    expect(out.join(' ')).toContain('still here');
+  });
+});
+
 describe('BUG-SEEDZEROSOWABLE-001 — the lot you just saved and have not started', () => {
   // THE ROW: quantity_on_hand 0 (the seed is wet and uncounted at save time; the CHECK refuses NULL
   // for a consumable), seed_stage NULL (the process control defaults to "Not yet", and choosing one
