@@ -166,6 +166,11 @@ export default function TranscriptReview({
     setState('transcribing')
 
     let accumulated = ''
+    // The last value THIS voice session wrote into the draft — tracked for both the final and the
+    // interim branch below, so onEnd can tell "the user has not touched what I typed" from "the user
+    // has since edited it". Not the same as `accumulated`: an interim preview is also written to the
+    // draft, and a session can end with one still showing.
+    let lastVoiceDraft = ''
     liveHandleRef.current = startLiveTranscription({
       languageCode:      'en-US',
       debugLabel:        'TranscriptReview:speak',   // BUG-VOICEDUPE-002 — names this surface in /admin/voice-debug
@@ -174,9 +179,11 @@ export default function TranscriptReview({
       onResult: ({ transcript, isFinal }) => {
         if (isFinal) {
           accumulated = (accumulated + ' ' + transcript).trim()
+          lastVoiceDraft = accumulated
           setDraft(accumulated)
         } else {
           const preview = (accumulated + ' ' + transcript).trim()
+          lastVoiceDraft = preview
           setDraft(preview)
         }
       },
@@ -205,7 +212,26 @@ export default function TranscriptReview({
       onEnd: ({ finalTranscript }) => {
         liveHandleRef.current = null
         if (finalTranscript && finalTranscript.length > 0) {
-          setDraft((cur) => cur || finalTranscript)
+          // THIS SURFACE SAVED THE PREFIX, not just displayed it. `onResult` accumulates by
+          // APPENDING each isFinal it receives — but transcribe.js deliberately SUPPRESSES the emit
+          // on a REVISED final (the BUG-VOICEDUPE-003 fix: `if (prev !== undefined) continue`), so a
+          // slot Chrome revises never reaches us. Say "231 grams" with an enunciated pause and
+          // Chrome finalises "231" first, then revises that same slot to "231 grams": `accumulated`
+          // holds "231", `finalTranscript` — re-joined from the slots — holds "231 grams".
+          //
+          // The old line was `cur || finalTranscript`. `cur` is truthy exactly when voice wrote
+          // something, so the correction was discarded on every revised utterance and `handleSave`
+          // stored the truncated draft. That is a WRONG SAVED VALUE, not a cosmetic artifact.
+          //
+          // Fixed HERE rather than in transcribe.js on purpose: emitting revisions would re-open
+          // VOICEDUPE-003 for every consumer that appends, and `transcribe.rawEvents.test.js:154`
+          // pins that suppression as shipped behaviour. This file needs no such change — it already
+          // receives the corrected text, it was throwing it away.
+          //
+          // GUARDED, because the old `cur ||` was protecting something real: text the USER typed
+          // must never be clobbered. Only a draft still holding exactly what this session wrote
+          // (final or interim) may be replaced.
+          setDraft((cur) => (!cur || cur === lastVoiceDraft ? finalTranscript : cur))
         }
         setState((s) => (s === 'transcribing' ? 'idle' : s))
       },
