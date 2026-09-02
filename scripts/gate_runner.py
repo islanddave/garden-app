@@ -105,16 +105,73 @@ class GateSchemaError(Exception):
     """A gates.yml is unparseable or violates the schema. Always exit 2."""
 
 
+def _scan_sql(sql):
+    """Strip comments and split on statement separators, RESPECTING STRING LITERALS.
+
+    Returns (body_without_comments, [statement, ...]).
+
+    A regex/`split(";")` pair cannot do this. Both `--` and `;` are ordinary characters
+    inside a quoted literal, and this repo's care corpus is written in a semicolon-separated
+    register (">85F daily; heat loosens heads; harvest promptly"), so ANY gate asserting on a
+    care_profile string used to be reported as a multi-statement gate and rejected. That is a
+    false positive in the direction that blocks correct work — and worse, the naive
+    comment-stripper would silently delete the tail of a literal containing `--`, changing the
+    predicate a gate asserts rather than failing loudly.
+
+    Handles: single-quoted literals with the '' escape, dollar-quoted bodies ($$…$$ / $tag$…$tag$),
+    double-quoted identifiers, line comments and block comments. Anything still ambiguous is left
+    in the body, so the SELECT/WITH lead check downstream stays the backstop.
+    """
+    out, stmts = [], []
+    i, n = 0, len(sql)
+    while i < n:
+        c = sql[i]
+        if c == "'":                                    # string literal, '' escapes a quote
+            j = i + 1
+            while j < n:
+                if sql[j] == "'":
+                    if j + 1 < n and sql[j + 1] == "'":
+                        j += 2
+                        continue
+                    break
+                j += 1
+            out.append(sql[i:j + 1]); i = j + 1; continue
+        if c == '"':                                    # quoted identifier
+            j = sql.find('"', i + 1)
+            j = n - 1 if j == -1 else j
+            out.append(sql[i:j + 1]); i = j + 1; continue
+        if c == "$":                                    # dollar-quoted body
+            m = re.match(r"\$[A-Za-z_]*\$", sql[i:])
+            if m:
+                tag = m.group(0)
+                j = sql.find(tag, i + len(tag))
+                j = n if j == -1 else j + len(tag)
+                out.append(sql[i:j]); i = j; continue
+        if sql.startswith("--", i):                     # line comment
+            j = sql.find("\n", i)
+            i = n if j == -1 else j
+            out.append(" "); continue
+        if sql.startswith("/*", i):                     # block comment
+            j = sql.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            out.append(" "); continue
+        if c == ";":                                    # real separator, outside every quote
+            stmts.append("".join(out)); out = []; i += 1; continue
+        out.append(c); i += 1
+    stmts.append("".join(out))
+    body = ";".join(stmts).strip()
+    return body, [t for t in stmts if t.strip()]
+
+
 def _strip_comments(sql):
-    return _BLOCK_COMMENT.sub(" ", _LINE_COMMENT.sub(" ", sql)).strip()
+    return _scan_sql(sql)[0]
 
 
 def validate_sql_readonly(sql, where):
     """Layer-1 structural read-only check. Raises GateSchemaError."""
-    body = _strip_comments(sql)
+    body, statements = _scan_sql(sql)
     if not body:
         raise GateSchemaError(f"{where}: sql is empty")
-    statements = [s for s in body.split(";") if s.strip()]
     if len(statements) > 1:
         raise GateSchemaError(
             f"{where}: sql contains {len(statements)} statements; gates must be a "

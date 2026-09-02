@@ -120,6 +120,30 @@ def test_layer1_allows_trailing_semicolon_and_comments():
     assert gr.validate_sql_readonly("/* block */ SELECT 1", "w")
 
 
+def test_a_semicolon_inside_a_string_literal_is_not_a_statement_separator():
+    """L-081/V5-HEATRESPONSEDISPLAY-001. `body.split(";")` rejected any gate asserting on this
+    repo's care corpus, which is written in a semicolon-separated register. That is a false
+    positive in the direction that blocks correct work: the gate below is one read-only SELECT."""
+    sql = ("SELECT 1 FROM public.care_profile "
+           "WHERE profile->>'heat_response' = '>85F daily; heat causes bolting; afternoon shade'")
+    assert gr.validate_sql_readonly(sql, "w")
+    # The '' escape must not end the literal early and re-expose its semicolons.
+    assert gr.validate_sql_readonly("SELECT 1 WHERE a = 'it''s; fine' ", "w")
+    # `--` inside a literal is data, not a comment: stripping it would silently truncate the
+    # predicate and change what the gate asserts, which is worse than rejecting the file.
+    assert "--" in gr.validate_sql_readonly("SELECT 1 WHERE a = 'x -- y'", "w")
+
+
+def test_the_scanner_still_rejects_genuinely_multi_statement_gates():
+    """The counterpart to the test above — proving the fix narrowed a false positive without
+    opening a hole. A quote-aware splitter that stops splitting is not an improvement."""
+    for sql in ("SELECT 1; SELECT 2",
+                "SELECT 1 WHERE a = 'has; semicolon'; DELETE FROM t",
+                "SELECT 1 -- trailing\n; DROP TABLE t"):
+        with pytest.raises(gr.GateSchemaError, match="single read-only statement"):
+            gr.validate_sql_readonly(sql, "w")
+
+
 def test_layer1_not_fooled_by_a_comment_before_a_write():
     """A DELETE hidden behind a comment must still be rejected."""
     with pytest.raises(gr.GateSchemaError):
