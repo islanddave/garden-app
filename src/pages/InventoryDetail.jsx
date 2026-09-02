@@ -13,6 +13,12 @@ import { EnumSelect, Field, Input, Select, Textarea, Button, PlantingSelect } fr
 import Spinner from '../components/forms/Spinner.jsx'
 import SeedStageHistory from '../components/seed/SeedStageHistory.jsx'
 import { SEED_STAGE_OPTIONS } from '../components/seed/seedStages.js'
+// V4-SEEDORIGIN-001 — the SAME eight values preservation_log uses, deliberately. This registry is
+// one of the four synchronised homes of that vocabulary (the others: lambda/preservation/
+// provenance.js, the per-Lambda copy in lambda/inventory-items/source-kinds.js, and the DB CHECK
+// chk_inventory_source_kind). preservationProvenance.test.js pins this list against the JS
+// canonical; the migration's post_vocabulary_exact gate pins the DB against it.
+import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { formatQty } from '../lib/format.js'
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
@@ -71,6 +77,14 @@ export default function InventoryDetail() {
   // prop note in SeedStageHistory.
   const [sourcePlantName, setSourcePlantName] = useState(null)
 
+  // ── V4-SEEDORIGIN-001 — where this lot came from when it came from no planting of ours ────
+  // Own state and own write, for the same reason "Saved from" has them: this writes on selection
+  // through a dedicated sub-route, so it has no business in a form whose Save button implies
+  // unsaved state, and it must never travel through the wide PUT.
+  const [sourceKind,     setSourceKind]     = useState('')
+  const [sourceKindBusy, setSourceKindBusy] = useState(false)
+  const [sourceKindErr,  setSourceKindErr]  = useState(null)
+
   // ── V4-SEEDHISTORY-001 — the lot's CURRENT processing stage ────────────────
   // Its own state and its own write for the same two reasons "Saved from" has its own, plus a third
   // that is specific to this column: routing it through buildChanges() would put it in the wide
@@ -112,6 +126,7 @@ export default function InventoryDetail() {
         setServerRow(data)
         // '' not null: PlantingSelect's `value` is a string and '' is its cleared state.
         setSourcePlantId(data.source_plant_id ?? '')
+        setSourceKind(data.source_kind ?? '')
         // Same '' convention, same reason — Select's cleared state is the empty string.
         setSeedStage(data.seed_stage ?? '')
         setLoading(false)
@@ -258,6 +273,30 @@ export default function InventoryDetail() {
   // meaning, and a picker that looks chosen while the value sits unsent is the silent-failure shape
   // BUG-SILENTFAILSWEEP-001 catalogued. Optimistic, then reverted on failure — showing a parent the
   // server does not have is worse than showing none.
+  // V4-SEEDORIGIN-001. Same optimistic-with-revert shape as saveSourcePlant below, and the same
+  // explicit-null contract: the route reads `source_kind` by PRESENCE, so omitting the key is a 400
+  // and sending null is the clear. "Not recorded" is the honest state of every packet that predates
+  // this column, and it has to stay reachable rather than being a value you can never get back to.
+  async function saveSourceKind(next) {
+    const prev = sourceKind
+    if (next === prev) return
+    setSourceKind(next)
+    setSourceKindBusy(true)
+    setSourceKindErr(null)
+    try {
+      await fetch(`/api/inventory-items/${id}/source-kind`, {
+        method: 'PATCH',
+        body: JSON.stringify({ source_kind: next || null }),
+      })
+      show({ message: '✓ Saved' })
+    } catch (e) {
+      setSourceKind(prev)
+      setSourceKindErr(e?.message ?? 'Could not save that.')
+    } finally {
+      setSourceKindBusy(false)
+    }
+  }
+
   async function saveSourcePlant(nextId, planting) {
     const prev = sourcePlantId
     const prevName = sourcePlantName
@@ -588,6 +627,55 @@ export default function InventoryDetail() {
                     ? 'Saving…'
                     : 'The plant this seed was saved from. Leave it empty for bought seed.'}
             </p>
+
+            {/* ── V4-SEEDORIGIN-001 — the OTHER half of provenance ────────────────────────────
+                "Saved from" answers which of MY plants. This answers where the seed came from when
+                it came from none of them: a store-bought pepper scraped for its seed, a gift
+                packet, a u-pick fruit. Dave's founding case for it is a Carolina Reaper bought to
+                eat. Before this the only place to record that was the item's NAME — a real prod row
+                reads "Money Plant (self-saved, variety unrecorded)".
+
+                SHOWN ONLY WHEN NO PARENT PLANT IS SET, and that is the DB constraint made visible
+                rather than a layout preference. chk_inventory_seed_source_plant is
+                `source_kind IS NULL OR source_kind = 'own_garden' OR source_plant_id IS NULL`, so a
+                lot cannot claim it came from a shop AND from one of our plants. With a parent set,
+                the origin is answered — it is this garden — so offering a contradicting dropdown
+                would be offering a choice the database will refuse.
+
+                Plain Select, NOT EnumSelect, for the reason dropdownRegistry.js records: EnumSelect
+                defaults to sort=true and would alphabetize the list, burying the frequency ordering
+                the vocabulary is built on ("My garden" first). Same call PutUp.jsx makes. */}
+            {!sourcePlantId && (
+              <div style={{ marginTop: 14 }} data-testid="seed-source-kind">
+                <Field label="Or where did it come from?" htmlFor="inv-source-kind" optional>
+                  <Select
+                    id="inv-source-kind"
+                    value={sourceKind}
+                    onChange={e => saveSourceKind(e.target.value)}
+                    disabled={sourceKindBusy}
+                    aria-label="Where this seed came from"
+                    data-testid="source-kind-select"
+                  >
+                    {/* "Not recorded" is a first-class answer, not a prompt to choose: it is the
+                        honest state of all 260 existing packets and must stay reachable. */}
+                    <option value="">Not recorded</option>
+                    {PUTUP_SOURCE_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Select>
+                </Field>
+                <p data-testid="source-kind-help" style={{
+                  margin: '6px 0 0', color: sourceKindErr ? P.terra : P.mid,
+                  fontSize: '0.78rem', lineHeight: 1.5,
+                }}>
+                  {sourceKindErr
+                    ? sourceKindErr
+                    : sourceKindBusy
+                      ? 'Saving…'
+                      : 'For seed you saved from something you did not grow — a shop-bought pepper, a gift, a u-pick.'}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
