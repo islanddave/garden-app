@@ -352,6 +352,21 @@ const NOT_IN_SITES = [
   'projects::parent_id',        // POST create: inline container.created_by SELECT (asserted below)
   'projects::new_parent_id',    // reparentCore step 3: household-scoped plant_projects SELECT
   'evidence-ingest::entity_id', // planting-typed arm scoped via planting_ref_id (asserted below)
+  // V4-SEEDLINK-001 — inventory_items.source_plant_id, written by PATCH /:id/source-plant. BODY-
+  // SETTABLE AND GATED, but the gate is an inline garden_node SELECT rather than a loader call, so
+  // the SITES regex (which anchors on `!await <loader>(sql, …<field>,`) cannot see it. Not a
+  // loader because lambda/inventory-items has no authz-parents.js copy and adding one would drag
+  // public.plants + public.plant_projects into that dir's L-081 Phase-4 relation set, pushing the
+  // joined-relation ratchet past its 48 baseline and failing schema-audit.yml.
+  //
+  // The inline predicate is STRICTER than the two-arm canonical one, not looser: own-created_by
+  // only, so it can refuse a planting created inside a container owned elsewhere and can never
+  // admit a foreign one. It carries the same UUID short-circuit, the same warnRejectedFk, and the
+  // same generic 400 as the two loader-backed gates in that handler.
+  //
+  // Pinned by its own running assertion below ('inventory-items gates source_plant_id inline
+  // against garden_node'), NOT pre-absolved here — the locations::parent_id lesson.
+  'inventory-items::source_plant_id',
   // V4-PLANTMERGE-001 — mergeCore (plants/merge.js). NONE of these is body-settable. The four
   // id-shaped ones are all written as the WINNER id, which is the ROUTE's path segment, and
   // mergeCore's step 2 loads the ENTIRE group (winner + every loser) with
@@ -570,6 +585,36 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // predicate instead: the create path could otherwise birth a project inside another household's tree.
     const src = decomment(readFileSync(join(here, 'projects/index.js'), 'utf8')).replace(/\s+/g, ' ');
     expect(src).toMatch(/body\.parent_project_id != null.*?FROM public\.container.*?created_by = ANY\(\$\{householdIds\}\).*?deleted_at IS NULL/);
+  });
+
+  it('inventory-items gates source_plant_id inline against garden_node', () => {
+    // V4-SEEDLINK-001. Four things are pinned, because any three of them can hold while the column
+    // is open: (1) the value really is read from the body — a gate on a server-derived value would
+    // be vacuous; (2) the ownership SELECT names garden_node and binds householdIds — the base
+    // `plants` table would ALSO be a Phase-4 ratchet regression, so the relation is load-bearing
+    // twice over; (3) the rejection is warnRejectedFk + a generic 400 with no existence oracle,
+    // matching the two loader-backed gates in the same handler; and (4) the gate sits ABOVE the
+    // UPDATE, which is the difference between a gate and a log line.
+    const raw = readFileSync(join(here, 'inventory-items/index.js'), 'utf8');
+    const src = decomment(raw).replace(/\s+/g, ' ');
+    expect(src).toMatch(/const sourcePlantId = body\.source_plant_id \?\? null;/);
+    expect(src).toMatch(
+      /SELECT p\.id FROM public\.garden_node p WHERE p\.id = \$\{sourcePlantId\} AND p\.created_by = ANY\(\$\{householdIds\}\) AND p\.deleted_at IS NULL/);
+    // The base table would satisfy an ownership check and regress the Phase-4 ratchet — assert the
+    // view is what is joined, not merely that SOMETHING household-scoped was queried.
+    expect(src).not.toMatch(/FROM public\.plants p WHERE p\.id = \$\{sourcePlantId\}/);
+    expect(src).toMatch(
+      /if \(!owned\.length\) \{ warnRejectedFk\(userId, 'inventory_items', 'source_plant_id', sourcePlantId\); return resp\(400,/);
+    // A malformed id must not reach Postgres: 22P02 falls through the catch as an opaque 500, which
+    // is the contract V4-AUTHZRESIDUE-001 closed everywhere else.
+    expect(src).toMatch(/UUID_RE\.test\(String\(sourcePlantId\)\)/);
+    expect(raw).toMatch(/const UUID_RE = /);
+    // Ordering: the reject must precede the write, not merely coexist with it in the file.
+    const gateIdx = src.indexOf("warnRejectedFk(userId, 'inventory_items', 'source_plant_id'");
+    const writeIdx = src.indexOf('SET source_plant_id = ${sourcePlantId}');
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(writeIdx).toBeGreaterThan(-1);
+    expect(gateIdx, 'the ownership gate must precede the UPDATE').toBeLessThan(writeIdx);
   });
 
   it('evidence-ingest gates a planting-typed entity_id through its planting_ref_id', () => {

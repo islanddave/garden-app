@@ -9,7 +9,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
-import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
+import { EnumSelect, Field, Input, Textarea, Button, PlantingSelect } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import { formatQty } from '../lib/format.js'
 
@@ -39,6 +39,22 @@ export default function InventoryDetail() {
   // hit. Re-baselining here is additive: nothing rendered reads it.
   const [baseline,     setBaseline]     = useState(null)
 
+  // ── V4-SEEDLINK-001 — seed-lot provenance ("Saved from") ───────────────────
+  // Its OWN state and its OWN write, deliberately outside form/baseline/buildChanges, for two
+  // independent reasons:
+  //   1. It saves the instant it is chosen, so it is never unsaved input. Folding it into `form`
+  //      would make the dirty guard hold a service-worker update for a value already on the server.
+  //   2. The wide PUT assigns every column it names unconditionally (`= ${body.x ?? null}`), so a
+  //      provenance link routed through buildChanges() would be NULLED by every later edit that did
+  //      not happen to round-trip it. PATCH /:id/source-plant exists precisely to dodge that.
+  const [sourcePlantId,   setSourcePlantId]   = useState('')
+  const [sourcePlantBusy, setSourcePlantBusy] = useState(false)
+  const [sourcePlantErr,  setSourcePlantErr]  = useState(null)
+  // BUG-PLANTFETCHSILENT-001 contract: the picker self-fetches, and a failed load must read as a
+  // failure rather than as "you have no plantings" — an unfillable field that looks legitimately
+  // empty. The host owns the copy; PutUp's PlantingField is the precedent.
+  const [sourcePlantLoadFailed, setSourcePlantLoadFailed] = useState(false)
+
   // ── Load item ──────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true
@@ -50,6 +66,8 @@ export default function InventoryDetail() {
         setItem(data)
         setForm(itemToForm(data))
         setBaseline(itemToForm(data))
+        // '' not null: PlantingSelect's `value` is a string and '' is its cleared state.
+        setSourcePlantId(data.source_plant_id ?? '')
         setLoading(false)
       })
       .catch(err => {
@@ -174,6 +192,34 @@ export default function InventoryDetail() {
     }
   }
 
+  // ── Save the parent plant (V4-SEEDLINK-001) ────────────────────────────────
+  // Writes on selection rather than behind the page's Save button: this is one field with one
+  // meaning, and a picker that looks chosen while the value sits unsent is the silent-failure shape
+  // BUG-SILENTFAILSWEEP-001 catalogued. Optimistic, then reverted on failure — showing a parent the
+  // server does not have is worse than showing none.
+  async function saveSourcePlant(nextId) {
+    const prev = sourcePlantId
+    if (nextId === prev) return
+    setSourcePlantId(nextId)
+    setSourcePlantBusy(true)
+    setSourcePlantErr(null)
+    try {
+      await fetch(`/api/inventory-items/${id}/source-plant`, {
+        method: 'PATCH',
+        // Explicit null, never an omitted key: the route reads this by PRESENCE, so omitting it is
+        // a 400 and sending null is the clear. That asymmetry is what makes "I don't know which
+        // plant" a recordable answer instead of an unreachable one.
+        body: JSON.stringify({ source_plant_id: nextId || null }),
+      })
+      show({ message: '✓ Saved' })
+    } catch (e) {
+      setSourcePlantId(prev)
+      setSourcePlantErr(e?.message ?? 'Could not save that.')
+    } finally {
+      setSourcePlantBusy(false)
+    }
+  }
+
   // ── Delete (soft) ──────────────────────────────────────────────────────────
   async function handleDelete() {
     setDeleting(true)
@@ -199,7 +245,8 @@ export default function InventoryDetail() {
   //
   // Nothing else on this page carries unsaved state. PhotoUpload posts the file the instant it is
   // chosen (there is no staged-file step, unlike EventNew's), `confirmDelete` is a transient
-  // confirmation, and the Plant-from-packet CTA is pure navigation.
+  // confirmation, the Plant-from-packet CTA is pure navigation, and the V4-SEEDLINK-001 "Saved
+  // from" picker PATCHes on selection — so its value is on the server before this could observe it.
   //
   // Declared above the loading/error early returns because hooks cannot live below them. `form` and
   // `baseline` are both null until the load resolves, which reads as clean — correct, there is
@@ -313,6 +360,61 @@ export default function InventoryDetail() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── V4-SEEDLINK-001 — "Saved from": which PLANT did this lot come from? ────────────────
+            plants.source_inventory_item_id already answers the reverse ("sown FROM this packet");
+            nothing answered this direction, and the only thing the app previously offered was the
+            /seeds/saved empty state telling Dave to log a `seed_saved` event — a dead end with 0
+            events ever logged and no side effect of any kind.
+
+            SEEDS ONLY, gated exactly like the Plant-from-packet CTA above. It never appears on
+            tools, media or containers.
+
+            THIS PAGE IS THE PLACEMENT THAT MATTERS. /seeds/saved only lists lots that carry a
+            seed_stage, and its "Track a lot" picker hard-codes `fermenting` — so attaching a parent
+            there would mean writing a false stage into seed_lot_stage_log for a dry-processed lot.
+            Every lot is reachable HERE, tracked or not.
+
+            OUTSIDE the <form> deliberately: it writes on selection, so it has no business in a
+            surface whose Save button implies unsaved state. */}
+        {item.category === 'seeds' && (
+          <div data-testid="seed-source-plant" style={{ ...card, marginBottom: 20 }}>
+            <div style={groupLabel}>Saved from</div>
+            <PlantingSelect
+              id="inv-source-plant"
+              value={sourcePlantId}
+              onChange={(pid) => saveSourcePlant(pid || '')}
+              // The lot's own cultivar pins the list exactly — every seed row carries a variety_id
+              // (chk_inventory_seed_requires_variety), so this collapses ~239 plantings to the one
+              // to three of that cultivar.
+              varietyId={item.variety_id}
+              // Succession disambiguation: three plantings of one cultivar are indistinguishable by
+              // name, and this is the case the multi-planting minority is made of.
+              labelFormat="wave"
+              // "Not recorded", not "you must choose" — the honest empty state for a bought packet
+              // and for a saved one whose parent Dave no longer remembers.
+              emptyMeaning="none"
+              // An already-set parent stays listed and selected even if it later falls out of scope.
+              retainOutOfScopeValue
+              required={false}
+              onLoadError={() => setSourcePlantLoadFailed(true)}
+              aria-label="Saved from which plant"
+              data-testid="source-plant-select"
+            />
+            <p data-testid="source-plant-help" style={{
+              margin: 0, color: sourcePlantErr ? P.terra : P.light,
+              fontSize: '0.78rem', lineHeight: 1.5,
+            }}>
+              {sourcePlantErr
+                ? sourcePlantErr
+                : sourcePlantLoadFailed
+                  ? "Couldn't load your plantings — the rest of this page still saves normally."
+                  : sourcePlantBusy
+                    ? 'Saving…'
+                    : 'The plant this seed was saved from. Leave it empty for bought seed.'}
+            </p>
           </div>
         )}
 
