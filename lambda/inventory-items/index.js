@@ -60,6 +60,11 @@ const VALID_UNITS = ['each','packet','oz','fl oz','lb','gal','qt','bag','roll','
 const VALID_CONDITIONS = ['excellent','good','fair','poor'];
 const VALID_STATUSES = ['active','depleted','retired','missing'];
 
+// How far ahead of server time a seed-lot stage entry may be dated. Not zero, and the reason is not
+// leniency — see the /seed-stage route, where the tolerance is derived from the local-noon shape the
+// client actually sends.
+const FUTURE_ENTERED_AT_TOLERANCE_MS = 48 * 60 * 60 * 1000;
+
 // BUG-INVMETADROP-001. Mirrors chk_inventory_metadata_size on inventory_items
 // (metadata IS NULL OR octet_length(metadata::text) < 8192) and packetToInventoryPayload's
 // METADATA_MAX_BYTES, so an oversized payload 400s with a field name instead of surfacing as
@@ -105,6 +110,11 @@ export function validateCreate(body) {
   if (body.unit != null && !VALID_UNITS.includes(body.unit)) return `unit must be one of: ${VALID_UNITS.join(', ')}`;
   if (body.variety_id != null && body.category !== 'seeds') return 'variety_id is only allowed when category is seeds';
   if (body.category === 'seeds' && body.variety_id == null) return 'variety_id is required for seeds';
+  // BUG-SEEDPOSTDROPSPARENT-001 — same shape, same reason as the variety_id line above. The
+  // /source-plant route's UPDATE carries `category = 'seeds'` in its WHERE, so without this the
+  // create path would be the one hole the edit path closes: a shovel could be born with a parent
+  // plant that no route could ever have attached to it afterwards.
+  if (body.source_plant_id != null && body.category !== 'seeds') return 'source_plant_id is only allowed when category is seeds';
   const merr = validateMetadata(body.metadata);
   if (merr) return merr;
   return null;
@@ -314,6 +324,28 @@ export const handler = async (event) => {
       // through its ferment and out to dry before any of this existed, and a stage history that can
       // only be written in the present tense cannot record what actually happened. Absent -> now().
       const enteredAt = body.entered_at ?? null;
+      // BACKDATABLE, NOT FORWARD-DATABLE (WAVE-2 S3d). The column is seed_lot_stage_log.entered_at,
+      // verified live — nothing on inventory_items — and it is the value /seeds/saved derives its
+      // whole queue from: the card's elapsed() reads stage_entered_at, so a lot entered with a
+      // mistyped year reads "0 days in drying" forever and quietly leaves the list of things that
+      // need checking, on the one page whose entire job is to produce that list.
+      //
+      // THE TOLERANCE IS LOAD-BEARING, NOT SLOP. SavedSeeds sends `${when}T12:00:00` — a local date
+      // pinned to noon with no zone, deliberately, so a date typed on a phone in Eastern does not
+      // land on the previous UTC day. Node parses a zoneless ISO string in the runtime's zone (UTC
+      // on Lambda), so a genuine "today" arrives AHEAD of server now for any user west of UTC — a
+      // strict `> Date.now()` would refuse Dave's own entry every morning before 08:00 Eastern.
+      // 48h clears the worst genuine lead (~26h, a UTC+14 midnight) and still refuses what this
+      // exists to refuse, which is wrong by months or years and never by hours.
+      if (enteredAt != null) {
+        const t = Date.parse(enteredAt);
+        // NaN is the malformed case, which today reaches Postgres, raises 22007 and falls through
+        // the catch as an opaque 500. A named 400 is the better answer and it is free here.
+        if (Number.isNaN(t)) return resp(400, { error: 'entered_at must be a valid date' });
+        if (t > Date.now() + FUTURE_ENTERED_AT_TOLERANCE_MS) {
+          return resp(400, { error: 'entered_at cannot be in the future' });
+        }
+      }
       const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null;
 
       // BUG-SEEDPROCFORCED-001 — the lot's PROCESS travels with the stage that opens it, because
@@ -807,6 +839,40 @@ export const handler = async (event) => {
         }
       }
 
+      // BUG-SEEDPOSTDROPSPARENT-001 — source_plant_id was named in NEITHER the INSERT column list
+      // NOR its VALUES, so a client that sent one got 201 Created with the field dropped and
+      // `RETURNING *` echoing null. That is strictly worse than a 400: a rejection tells the caller
+      // to retry, a 201 tells it the write landed. Identical failure to BUG-INVMETADROP-001 below,
+      // on the "save seed from this plant" path.
+      //
+      // The gate is the /source-plant route's, MIRRORED rather than re-derived — same garden_node
+      // predicate, same OWN-created_by arm, same UUID_RE short-circuit, same generic 400 with no
+      // existence oracle, same warnRejectedFk. Search `sourcePlantMatch` for why it is inline
+      // against the view instead of importing a loader (the L-081 join ratchet), why there is no
+      // liveness filter, and why the narrow ownership arm is the safe direction to differ in. Both
+      // copies must move together; sow-routes.test.js executes each one separately.
+      //
+      // ABSENCE IS NULL HERE, not the 400 the PATCH gives it. That route exists only to set this
+      // column, so a body that never mentions the key is malformed; POST creates every category of
+      // inventory and almost no row has a parent plant to name. Absent and explicit-null are the
+      // same write on a create — there is no prior value to distinguish them.
+      const sourcePlantId = body.source_plant_id ?? null;
+      if (sourcePlantId != null) {
+        const owned = UUID_RE.test(String(sourcePlantId))
+          ? await sql`
+              SELECT p.id
+                FROM public.garden_node p
+               WHERE p.id = ${sourcePlantId}
+                 AND p.created_by = ANY(${householdIds})
+                 AND p.deleted_at IS NULL
+            `
+          : [];
+        if (!owned.length) {
+          warnRejectedFk(userId, 'inventory_items', 'source_plant_id', sourcePlantId);
+          return resp(400, { error: 'source_plant_id does not match a planting you can use' });
+        }
+      }
+
       const isConsumable = body.type === 'consumable';
       const isDurable = body.type === 'durable';
       const tags = Array.isArray(body.tags) ? body.tags : [];
@@ -843,7 +909,7 @@ export const handler = async (event) => {
           quantity_on_hand, reorder_threshold, reorder_quantity,
           quantity, condition, brand, model,
           image_url, featured_image_id, variety_id, metadata,
-          seed_process, seed_stage
+          seed_process, seed_stage, source_plant_id
         ) VALUES (
           ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
@@ -858,7 +924,7 @@ export const handler = async (event) => {
           ${body.brand ?? null}, ${body.model ?? null},
           ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
           ${metadataJson}::jsonb,
-          ${body.seed_process ?? null}, ${body.seed_stage ?? null}
+          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${sourcePlantId}
         ) RETURNING *
       `;
       return resp(201, rows[0]);

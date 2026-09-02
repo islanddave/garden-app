@@ -22,7 +22,7 @@ import { useApiFetch } from '../lib/api.js'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { P } from '../lib/tokens.js'
 import { useToast } from '../context/ToastContext.jsx'
-import { Sheet, PlantingSelect } from '../components/forms'
+import { Sheet, PlantingSelect, Badge } from '../components/forms'
 import Icon from '../components/Icon.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
@@ -33,7 +33,10 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 const STAGES = ['fermenting', 'drying', 'stored']
 const STAGE_META = {
   fermenting: { label: 'Fermenting', sub: 'Wet-process seed sitting in its own juice' },
-  drying:     { label: 'Drying',     sub: 'Spread out to dry — screens, plates, a dehydrator' },
+  // "keep below 95°F" is not decoration. Seed viability falls off above roughly that point, and a
+  // dehydrator is the one drying surface here that can exceed it without looking like it is doing
+  // anything wrong — see the note placeholder below.
+  drying:     { label: 'Drying',     sub: 'Spread out to dry — screens, plates, a dehydrator; keep below 95°F' },
   stored:     { label: 'Stored',     sub: 'Dry, packeted and put away' },
 }
 const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
@@ -44,8 +47,14 @@ const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
 // Until now "Track a saved-seed lot" had exactly one action and it hard-coded `fermenting`, which
 // meant the surface FABRICATED a process record: the /seed-stage POST writes a permanent row into
 // seed_lot_stage_log, so a dry-cleaned lot could only be tracked by asserting a ferment that never
-// happened. Dave's founding case — a melon lot cleaned dry — is precisely that, and so are beans,
-// peas, lettuce and every brassica.
+// happened. Beans, peas, lettuce and every brassica are that case: seed threshed out of a pod that
+// dried on the plant, never wet, never fermented.
+//
+// MELON IS NOT ONE OF THEM, and this file said it was until 2026-09-02 (WAVE 2 S3c). Melon seed
+// comes out of a ripe wet fruit surrounded by pulp; it is a WET extraction and belongs on the wet
+// entry point. Calling it "cleaned dry" in the option copy taught the wrong process on the one
+// screen where the process is chosen, and the choice writes a permanent stage-log row. The same
+// error is in the migration comment that introduced seed_process — reported, not fixed here.
 //
 // The two keys are the WHOLE live vocabulary of inventory_items_seed_process_check, read from prod
 // (`seed_process IS NULL OR seed_process = ANY (ARRAY['wet','dry'])`) — not a third value invented
@@ -55,12 +64,12 @@ const PROCESS_ENTRY = {
   wet: {
     stage: 'fermenting',
     label: 'Wet — ferment first',
-    sub: 'Tomato, cucumber, squash: pulp fermented off the seed',
+    sub: 'Tomato, cucumber, squash, melon: seed washed or fermented out of wet pulp',
   },
   dry: {
     stage: 'drying',
     label: 'Dry — no ferment',
-    sub: 'Beans, peas, lettuce, brassicas, melon cleaned dry',
+    sub: 'Beans, peas, lettuce, brassicas: seed threshed from a pod dried on the plant',
   },
 }
 
@@ -69,15 +78,50 @@ const PROCESS_ENTRY = {
 // share ONE warm entry instead of each paying a round trip.
 const PICKER_PATH = '/api/plants?view=picker'
 
-// Elapsed whole days, floor. Same-day reads "today" rather than "0 days", because 0 of anything
-// looks like missing data.
-function elapsed(iso) {
+// Elapsed whole days, floor. Null when there is no timestamp or it does not parse. Split out of
+// elapsed() so the ferment thresholds below compare the SAME number the card renders — deriving it
+// twice is two places for the badge and the text to disagree.
+function elapsedDays(iso) {
   if (!iso) return null
   const then = new Date(iso)
   if (Number.isNaN(then.getTime())) return null
-  const days = Math.floor((Date.now() - then.getTime()) / 86400000)
+  return Math.floor((Date.now() - then.getTime()) / 86400000)
+}
+
+// Same-day reads "today" rather than "0 days", because 0 of anything looks like missing data.
+function elapsed(iso) {
+  const days = elapsedDays(iso)
+  if (days == null) return null
   if (days <= 0) return 'today'
   return days === 1 ? '1 day' : `${days} days`
+}
+
+// A ferment is DONE at two to four days. Past about five the seed germinates in the jar and the lot
+// is finished — not degraded, finished. Until now an eight-day ruined ferment rendered in the same
+// grey as a healthy two-day one, so the number was on screen and its meaning was not, on a page
+// whose entire job is to say what needs checking.
+//
+// `fermenting` ONLY. Drying has no equivalent cliff — a lot that has sat on a screen for three
+// weeks is dry, not spoiled — and firing this on every stage would make it background noise.
+const FERMENT_WARN_DAYS  = 4
+const FERMENT_ALARM_DAYS = 5
+const FERMENT_URGENCY = {
+  warn: {
+    tone: 'warn', ink: P.statusInkGold, border: P.warnBorder,
+    badge: 'Check the ferment', note: 'Most ferments are finished by day 4.',
+  },
+  alarm: {
+    tone: 'danger', ink: P.severityUrgent, border: P.alertBorder,
+    badge: 'Overdue', note: 'Past 5 days the seed can sprout in the jar.',
+  },
+}
+function fermentUrgency(item) {
+  if (item.seed_stage !== 'fermenting') return null
+  const days = elapsedDays(item.stage_entered_at)
+  if (days == null) return null
+  if (days >= FERMENT_ALARM_DAYS) return 'alarm'
+  if (days >= FERMENT_WARN_DAYS) return 'warn'
+  return null
 }
 
 export default function SavedSeeds() {
@@ -262,8 +306,14 @@ export default function SavedSeeds() {
             <p style={sectionSubStyle}>{STAGE_META[s].sub}</p>
             {list.map((item) => {
               const to = nextStage(item.seed_stage)
+              const urgencyKey = fermentUrgency(item)
+              const urgency = urgencyKey ? FERMENT_URGENCY[urgencyKey] : null
               return (
-                <div key={item.id} data-testid="seed-lot-card" style={cardStyle}>
+                <div
+                  key={item.id} data-testid="seed-lot-card"
+                  data-ferment={urgencyKey ?? undefined}
+                  style={urgency ? { ...cardStyle, borderColor: urgency.border } : cardStyle}
+                >
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Link to={`/inventory/${item.id}`} style={{ color: P.green, fontWeight: 600, textDecoration: 'none' }}>
                       {item.variety_name || item.name}
@@ -275,13 +325,31 @@ export default function SavedSeeds() {
                         The server derives stage_entered_at from the lot's latest seed_lot_stage_log
                         entry FOR ITS CURRENT STAGE, which is the fact this line claims to render.
                         No fallback to updated_at when it is absent, deliberately: a wrong duration
-                        is worse than none, and falling back would silently reinstate the bug. */}
-                    <div style={{ color: P.light, fontSize: '0.78rem', marginTop: 3 }}>
+                        is worse than none, and falling back would silently reinstate the bug.
+                        P.mid rather than P.light: #777 is 4.478:1 on this white card, under the
+                        AA floor, and this line is the one the page exists to be read for. Scoped
+                        to the seed path — repainting P.light app-wide is Dave's call. */}
+                    <div style={{ color: urgency ? urgency.ink : P.mid, fontSize: '0.78rem', marginTop: 3, fontWeight: urgency ? 600 : 400 }}>
                       {elapsed(item.stage_entered_at)
                         ? `${elapsed(item.stage_entered_at)} in ${STAGE_META[s].label.toLowerCase()}`
                         : `In ${STAGE_META[s].label.toLowerCase()}`}
                       {item.seed_process ? ` · ${item.seed_process} process` : ''}
                     </div>
+                    {/* The state, said out loud. Colour alone would carry this for a sighted user
+                        with good contrast conditions and nobody else, so the badge names it in
+                        words and the note says what the number MEANS — the whole defect was a
+                        duration rendered without its consequence. Badge is the frozen house
+                        primitive, warn/danger its existing tones; no new chrome is minted. */}
+                    {urgency && (
+                      <div style={{ marginTop: 5 }}>
+                        <Badge tone={urgency.tone} data-testid="ferment-urgency" style={{ whiteSpace: 'normal' }}>
+                          {urgency.badge}
+                        </Badge>
+                        <div style={{ color: urgency.ink, fontSize: '0.75rem', marginTop: 3 }}>
+                          {urgency.note}
+                        </div>
+                      </div>
+                    )}
                     {/* V4-SEEDLINK-001 — the parent, retroactively. Two states and no third: the
                         name when it is known, and a way in when it is not. Rendered only once the
                         name RESOLVES rather than falling back to "a plant" — a row that names
@@ -343,16 +411,26 @@ export default function SavedSeeds() {
           </p>
           <label style={fieldLabelStyle}>
             When
+            {/* Backdating is first-class here (see the file header) but FORWARD-dating is never
+                meaningful: a stage cannot have been entered on a day that has not happened. A lot
+                dated 2027 reads "today" forever on a page whose only job is to say what has sat
+                longest, so it does not merely look odd — it silently leaves the list. `max` is the
+                native picker's own guard and costs nothing; the server-side half is separate. */}
             <input
-              type="date" value={when} onChange={(e) => setWhen(e.target.value)}
+              type="date" value={when} max={todayLocalISO()} onChange={(e) => setWhen(e.target.value)}
               data-testid="stage-date" style={inputStyle}
             />
           </label>
           <label style={fieldLabelStyle}>
             Note <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
+            {/* The placeholder is an EXAMPLE, and on a teaching surface an example is an
+                instruction. It used to read "Dehydrator on low, 95°F" — but most dehydrators' low
+                setting runs 105-125°F, so following the example literally cooks the lot. Seed
+                viability falls off above roughly 95°F, so the example is now the safe surface and
+                the temperature named is one a shed actually holds. */}
             <input
               type="text" value={note} onChange={(e) => setNote(e.target.value)}
-              placeholder="Dehydrator on low, 95°F" data-testid="stage-note" style={inputStyle}
+              placeholder="Screen in the shed, 75°F, out of sun" data-testid="stage-note" style={inputStyle}
             />
           </label>
           {/* V4-SEEDLINK-001 — capture the parent at the moment Dave is actually holding the seed.
@@ -472,7 +550,11 @@ function Shell({ children }) {
 // surface reached with wet or dirty hands, which is the same argument that raised the Log Many
 // selection controls.
 const sectionHeadStyle = { margin: '0 0 2px', color: P.green, fontSize: '0.95rem', fontWeight: 700 }
-const sectionSubStyle  = { margin: '0 0 10px', color: P.light, fontSize: '0.78rem' }
+// P.mid, not P.light: this line now carries "keep below 95F", which is the difference between a
+// dried lot and a dead one. P.light is #777 — 4.478:1 on the white card, a WCAG 2.1 AA 1.4.3 failure
+// — and safety-critical copy is the wrong place to ship it. Seed-path-only, matching the elapsed
+// line; the app-wide P.light repaint stays Dave's call.
+const sectionSubStyle  = { margin: '0 0 10px', color: P.mid, fontSize: '0.78rem' }
 const cardStyle = {
   display: 'flex', alignItems: 'center', gap: 12, minHeight: 56,
   backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,

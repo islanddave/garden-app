@@ -204,6 +204,12 @@ describe('inventory-items Lambda — SEEDLINK ownership gate (executed against t
   };
 
   const UUID_DECL = (RAW.match(/^const UUID_RE = .*$/m) ?? [''])[0];
+  // TWO gates now carry this marker — BUG-SEEDPOSTDROPSPARENT-001 mirrored it into the POST arm so
+  // a create cannot link a plant the caller can't see. indexOf takes the FIRST, which is the PATCH
+  // route's copy (it precedes idMatch; the POST arm is the last branch in the handler), and that is
+  // the one these arms are written about. The arm below pins that, so a reorder that silently swaps
+  // which copy is under test fails here instead of leaving the PATCH gate untested.
+  // The POST copy is executed through the real handler in post-source-plant.test.js.
   const GATE = blockFrom(RAW, 'if (sourcePlantId != null) {');
 
   // Fake neon tagged template, same shape as lambda/authz-write-fk.test.js: records the SQL text
@@ -239,6 +245,16 @@ describe('inventory-items Lambda — SEEDLINK ownership gate (executed against t
     expect(GATE.length).toBeGreaterThan(80);
     expect(GATE).toContain('public.garden_node');
     expect(GATE).toContain('warnRejectedFk');
+  });
+
+  it('extracted the PATCH copy, not the POST one', () => {
+    // Without this, moving the POST arm above the sub-routes would point every case in this block
+    // at the create path and leave /source-plant's own gate with no executed coverage at all — a
+    // green file testing a different gate than the one it names.
+    const gateIdx = RAW.indexOf('if (sourcePlantId != null) {');
+    expect(gateIdx).toBeLessThan(RAW.indexOf('const idMatch = rawPath.match'));
+    // And both copies still exist: a "cleanup" that deletes the POST gate must not read as green.
+    expect(RAW.split('if (sourcePlantId != null) {')).toHaveLength(3);
   });
 
   it('REFUSES a plant id the household does not own — 400, and the write is never reached', async () => {
