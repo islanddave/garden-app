@@ -35,6 +35,8 @@ export const stubState = {
   // Emulates the exec role's actual permissions today: s3:DeleteObject yes, DeleteObjectVersion no.
   s3DeleteVersionDenied: false,
   presigns: [],
+  // CloudFront signed-URL requests (photo-access.js's PHOTO_CDN_ENABLED path).
+  cdnSigns: [],
 };
 
 export function resetStubs() {
@@ -61,6 +63,7 @@ export function resetStubs() {
   stubState.s3PutVersionId = 'VER-STUB-1';
   stubState.s3DeleteVersionDenied = false;
   stubState.presigns = [];
+  stubState.cdnSigns = [];
 }
 
 resetStubs();

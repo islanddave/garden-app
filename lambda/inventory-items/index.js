@@ -122,7 +122,25 @@ export function validateUpdate(body) {
   if (body.condition != null && !VALID_CONDITIONS.includes(body.condition)) return `condition must be one of: ${VALID_CONDITIONS.join(', ')}`;
   if (body.status != null && !VALID_STATUSES.includes(body.status)) return `status must be one of: ${VALID_STATUSES.join(', ')}`;
   if (body.variety_id != null && body.category != null && body.category !== 'seeds') return 'variety_id is only allowed when category is seeds';
-  if (body.category === 'seeds' && body.variety_id == null) return 'variety_id is required for seeds';
+  // BUG-INVSEEDPUT400-001. PRESENCE, not value — the same hasOwnProperty idiom the PUT's SET list
+  // already uses for featured_photo_id / seed_process / seed_stage, and here for the same reason.
+  // This ran on the RAW body with no merge against the stored row, so `category === 'seeds' &&
+  // variety_id == null` was true of any payload that named the category and left the variety alone.
+  // InventoryDetail's buildChanges() emits exactly that: it sends `category` and has never sent
+  // `variety_id` (the form neither renders the variety nor can change it), so the handler rejected
+  // the whole category='seeds' half of the table before a single statement ran.
+  //
+  // NOT DELETED, because the guard is real: chk_inventory_seed_requires_variety is
+  // `category <> 'seeds' OR variety_id IS NOT NULL`, and a client that deliberately sends a null
+  // variety for a seeds row deserves a named field back rather than a 23514 round trip. That is now
+  // exactly when it fires. Promoting a non-seed row TO seeds without supplying a variety is still
+  // caught, but by the CHECK rather than here — answering it in the handler would need a read of the
+  // stored row, and this validator is deliberately body-only.
+  if (body.category === 'seeds'
+      && Object.prototype.hasOwnProperty.call(body, 'variety_id')
+      && body.variety_id == null) {
+    return 'variety_id is required for seeds';
+  }
   return null;
 }
 
@@ -298,6 +316,24 @@ export const handler = async (event) => {
       const enteredAt = body.entered_at ?? null;
       const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null;
 
+      // BUG-SEEDPROCFORCED-001 — the lot's PROCESS travels with the stage that opens it, because
+      // the two facts are decided in the same breath and by the same evidence. /seeds/saved offered
+      // exactly one way to start tracking a lot and it hard-coded `fermenting`, so a dry-cleaned lot
+      // — Dave's founding melon case, and every bean, pea, lettuce and brassica — could only be
+      // recorded by writing a permanent, false `fermenting` row into seed_lot_stage_log. The stage
+      // is now chosen by the caller; this carries the matching process so the lot says WHY it
+      // started where it did instead of leaving that to be inferred.
+      //
+      // Presence, not truthiness, for the reason the PUT arm documents at length: `null` is a
+      // meaningful value (a process deliberately unrecorded), and an advance that simply does not
+      // mention the key must leave a process already set alone. Vocabulary mirrors
+      // inventory_items_seed_process_check, read from live prod: wet | dry, or NULL.
+      const SEED_PROCESSES = ['wet', 'dry'];
+      const hasSeedProcess = Object.prototype.hasOwnProperty.call(body, 'seed_process');
+      if (hasSeedProcess && body.seed_process != null && !SEED_PROCESSES.includes(body.seed_process)) {
+        return resp(400, { error: `seed_process must be one of ${SEED_PROCESSES.join(', ')}` });
+      }
+
       // ONE STATEMENT, so the two writes cannot separate. A stage log entry without the matching
       // seed_stage on the lot would show history the list view contradicts; the reverse would move
       // the lot with no record of when or why. A CTE gives atomicity without reaching for the
@@ -308,6 +344,10 @@ export const handler = async (event) => {
         WITH upd AS (
           UPDATE public.inventory_items
              SET seed_stage = ${body.stage},
+                 seed_process = CASE
+                   WHEN ${hasSeedProcess} THEN ${body.seed_process ?? null}
+                   ELSE seed_process
+                 END,
                  updated_at = NOW()
            WHERE id = ${itemId}
              AND created_by = ANY(${householdIds})
@@ -528,6 +568,12 @@ export const handler = async (event) => {
         // `body.seed_stage != null` check would make clearing a stage impossible.
         const hasSeedProcess = Object.prototype.hasOwnProperty.call(body, 'seed_process');
         const hasSeedStage   = Object.prototype.hasOwnProperty.call(body, 'seed_stage');
+        // BUG-INVSEEDPUT400-001 — the second half of that fix, and the half that would have been
+        // easy to skip. Relaxing validateUpdate alone would have converted a wrong 400 into SILENT
+        // DATA LOSS: `variety_id` was a bare assignment below, so the first edit from a caller that
+        // does not round-trip it would have NULLed the cultivar link on a seeds row. The 400 was
+        // masking that. Same guard, same reason as the two lines above.
+        const hasVariety     = Object.prototype.hasOwnProperty.call(body, 'variety_id');
         // Vocabulary is enforced by a DB CHECK, but a 400 here is a better answer than a 500 from a
         // constraint violation — and it names the legal values, which the constraint error does not.
         const SEED_PROCESSES = ['wet', 'dry'];
@@ -600,7 +646,6 @@ export const handler = async (event) => {
             name              = ${body.name ?? null},
             type              = ${body.type ?? null},
             category          = ${body.category ?? null},
-            variety_id        = ${body.variety_id ?? null},
             location_id       = ${body.location_id ?? null},
             location_text     = ${body.location_text ?? null},
             source            = ${body.source ?? null},
@@ -624,6 +669,15 @@ export const handler = async (event) => {
             featured_photo_id = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE featured_photo_id
+            END,
+            -- BUG-INVSEEDPUT400-001. Moved out of the bare-assignment block above for the reason
+            -- that block's own note gives: those are safe ONLY because the edit form renders and
+            -- returns every one of them, and it does not render the variety. A seeds row whose
+            -- variety_id is nulled also violates chk_inventory_seed_requires_variety, so the loss
+            -- would surface as a constraint 400 on an unrelated edit rather than as a bad value.
+            variety_id = CASE
+              WHEN ${hasVariety} THEN ${body.variety_id ?? null}
+              ELSE variety_id
             END,
             -- V4-SEEDSAVEFLOW-001. EXPLICIT-PRESENCE GUARDS, NOT BARE ASSIGNMENTS, and this is the
             -- difference between working and destroying data. Every other column above is a bare
@@ -671,20 +725,59 @@ export const handler = async (event) => {
       // V4-TREATLOG-001: optional ?category=a,b,c filter (comma-list). Absent → all items.
       const catParam = event.queryStringParameters?.category;
       const cats = catParam ? catParam.split(',').map(c => c.trim()).filter(Boolean) : null;
+      // BUG-SEEDELAPSEDUPDATED-001 — `stage_entered_at`, and why it is not `updated_at`.
+      //
+      // /seeds/saved leads every card with elapsed time ("4 days in drying") because that is the
+      // number that decides whether to go and check the jar. It read `inventory_items.updated_at`,
+      // and `set_updated_at` is a BEFORE UPDATE ROW trigger that fires on EVERY write to the row —
+      // so attaching a parent plant, or any later edit, reset a lot to "today" with no stage change
+      // at all. That column measures "last touched", which is a different question.
+      //
+      // The honest source is when the lot ENTERED its current stage, and seed_lot_stage_log already
+      // records it exactly (the /seed-stage CTE writes the log entry and the seed_stage in one
+      // statement, so they cannot drift). LATERAL rather than a second round trip from the client:
+      // the page fetches this list once and the index idx_seed_lot_stage_log_item
+      // (inventory_item_id, entered_at DESC) is built for this probe.
+      //
+      // NULLABLE ON PURPOSE — do NOT COALESCE it to updated_at. A lot whose stage was set some other
+      // way has no entry, and a fallback would silently restore the bug it is here to fix while
+      // looking correct. The client renders the stage without a duration instead.
+      //
+      // seed_lot_stage_log is already in this directory's L-081 Phase-4 relation set (the /seed-stage
+      // GET and POST both name it) and every column read here is already contracted in
+      // seed-stage-columns.test.js, so this adds no relation and needs no contract edit.
       const rows = cats && cats.length
         ? await sql`
-            SELECT i.*, pv.display_name AS variety_name
+            SELECT i.*, pv.display_name AS variety_name, se.entered_at AS stage_entered_at
             FROM inventory_items i
             LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
+            LEFT JOIN LATERAL (
+                   SELECT sl.entered_at
+                     FROM public.seed_lot_stage_log sl
+                    WHERE i.seed_stage IS NOT NULL
+                      AND sl.inventory_item_id = i.id
+                      AND sl.stage = i.seed_stage
+                    ORDER BY sl.entered_at DESC, sl.created_at DESC
+                    LIMIT 1
+                 ) se ON TRUE
             WHERE i.created_by = ANY(${householdIds})
               AND i.deleted_at IS NULL
               AND i.category = ANY(${cats})
             ORDER BY i.created_at DESC
           `
         : await sql`
-            SELECT i.*, pv.display_name AS variety_name
+            SELECT i.*, pv.display_name AS variety_name, se.entered_at AS stage_entered_at
             FROM inventory_items i
             LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
+            LEFT JOIN LATERAL (
+                   SELECT sl.entered_at
+                     FROM public.seed_lot_stage_log sl
+                    WHERE i.seed_stage IS NOT NULL
+                      AND sl.inventory_item_id = i.id
+                      AND sl.stage = i.seed_stage
+                    ORDER BY sl.entered_at DESC, sl.created_at DESC
+                    LIMIT 1
+                 ) se ON TRUE
             WHERE i.created_by = ANY(${householdIds})
               AND i.deleted_at IS NULL
             ORDER BY i.created_at DESC

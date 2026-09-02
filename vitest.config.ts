@@ -37,6 +37,10 @@ export default defineConfig({
       '@aws-sdk/client-secrets-manager': new URL('./lambda/_test-stubs/aws-secrets.js', import.meta.url).pathname,
       '@aws-sdk/client-s3': new URL('./lambda/_test-stubs/aws-s3.js', import.meta.url).pathname,
       '@aws-sdk/s3-request-presigner': new URL('./lambda/_test-stubs/s3-presigner.js', import.meta.url).pathname,
+      // Reached only through a dynamic `await import()` in photo-access.js, which does NOT exempt it:
+      // vite resolves dynamic specifiers at transform time, so without this line every handler that
+      // imports photo-access.js — inventory-items, plants, photos — still fails to collect.
+      '@aws-sdk/cloudfront-signer': new URL('./lambda/_test-stubs/cloudfront-signer.js', import.meta.url).pathname,
     },
   },
   test: {

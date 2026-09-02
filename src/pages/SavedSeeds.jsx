@@ -38,6 +38,32 @@ const STAGE_META = {
 }
 const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
 
+// BUG-SEEDPROCFORCED-001. The PROCESS decides where a lot enters the pipeline, so it is asked once,
+// at the only moment the answer is known, and the entry stage follows from it.
+//
+// Until now "Track a saved-seed lot" had exactly one action and it hard-coded `fermenting`, which
+// meant the surface FABRICATED a process record: the /seed-stage POST writes a permanent row into
+// seed_lot_stage_log, so a dry-cleaned lot could only be tracked by asserting a ferment that never
+// happened. Dave's founding case — a melon lot cleaned dry — is precisely that, and so are beans,
+// peas, lettuce and every brassica.
+//
+// The two keys are the WHOLE live vocabulary of inventory_items_seed_process_check, read from prod
+// (`seed_process IS NULL OR seed_process = ANY (ARRAY['wet','dry'])`) — not a third value invented
+// to fit the UI. `drying` is a legal entry point with no special-casing anywhere: nextStage('drying')
+// is 'stored', so a dry lot advances through the same machinery one step shorter.
+const PROCESS_ENTRY = {
+  wet: {
+    stage: 'fermenting',
+    label: 'Wet — ferment first',
+    sub: 'Tomato, cucumber, squash: pulp fermented off the seed',
+  },
+  dry: {
+    stage: 'drying',
+    label: 'Dry — no ferment',
+    sub: 'Beans, peas, lettuce, brassicas, melon cleaned dry',
+  },
+}
+
 // V4-SEEDLINK-001. Byte-identical to PlantingSelect's own unscoped self-fetch path, deliberately:
 // dataCache keys on the path, so the name lookup below and the picker inside the advance sheet
 // share ONE warm entry instead of each paying a round trip.
@@ -62,6 +88,10 @@ export default function SavedSeeds() {
   const [loadErr, setLoadErr] = useState(null)
   const [advancing, setAdvancing] = useState(null)   // the lot whose advance sheet is open
   const [starting, setStarting]   = useState(false)  // the "track a lot" picker sheet
+  // BUG-SEEDPROCFORCED-001 — the packet picked in step 1, waiting on its process in step 2. Held
+  // rather than passed straight to openAdvance because the entry stage is not known until the
+  // process is chosen, and the advance sheet is titled by that stage.
+  const [startItem, setStartItem] = useState(null)
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
   const [note, setNote]       = useState('')
@@ -107,13 +137,26 @@ export default function SavedSeeds() {
   const byStage = useMemo(() => {
     const m = Object.fromEntries(STAGES.map((s) => [s, []]))
     for (const i of tracked) m[i.seed_stage].push(i)
-    // Oldest first inside a stage: the lot that has sat longest is the one to check.
-    for (const s of STAGES) m[s].sort((a, b) => String(a.updated_at).localeCompare(String(b.updated_at)))
+    // Oldest first inside a stage: the lot that has sat longest is the one to check. Keyed on
+    // stage_entered_at for the same reason the card is (BUG-SEEDELAPSEDUPDATED-001) — sorting by
+    // updated_at ordered the list by "last edited", so touching a lot moved it to the bottom of a
+    // list whose entire job is to surface the one that has sat longest.
+    // A lot with no stage entry sorts LAST rather than first: its duration is unknown, and unknown
+    // must not outrank a measured one at the top of a "check this" list.
+    for (const s of STAGES) {
+      m[s].sort((a, b) => {
+        const A = a.stage_entered_at, B = b.stage_entered_at
+        if (!A && !B) return 0
+        if (!A) return 1
+        if (!B) return -1
+        return String(A).localeCompare(String(B))
+      })
+    }
     return m
   }, [tracked])
 
-  const openAdvance = (item, toStage) => {
-    setAdvancing({ item, toStage })
+  const openAdvance = (item, toStage, process = null) => {
+    setAdvancing({ item, toStage, process })
     setWhen(todayLocalISO())
     setNote('')
     setStagePlant('')
@@ -133,6 +176,11 @@ export default function SavedSeeds() {
           // events elsewhere in this app.
           entered_at: `${when}T12:00:00`,
           note: note.trim() || undefined,
+          // BUG-SEEDPROCFORCED-001 — set ONLY when this is the lot's first stage, where the process
+          // was just chosen. The key is omitted entirely on a plain advance, and the handler's
+          // presence guard leaves an existing process alone rather than clearing it; sending
+          // `null` here would wipe it on every subsequent move.
+          ...(advancing.process ? { seed_process: advancing.process } : {}),
         }),
       })
       // V4-SEEDLINK-001 — provenance rides along, but as its OWN request with its OWN failure.
@@ -151,7 +199,11 @@ export default function SavedSeeds() {
           linkErr = e?.message ?? 'Stage saved, but the parent plant did not.'
         }
       }
-      show({ message: linkErr ?? `✓ Moved to ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
+      // "Started in", not "Moved to", when this is the lot's first stage — `process` is set only on
+      // the start path (BUG-SEEDPROCFORCED-001). A dry lot's first entry IS drying, and calling that
+      // a move implies a fermenting step it never had.
+      const verb = advancing.process ? 'Started in' : 'Moved to'
+      show({ message: linkErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
       load()
     } catch (e) {
@@ -216,8 +268,18 @@ export default function SavedSeeds() {
                     <Link to={`/inventory/${item.id}`} style={{ color: P.green, fontWeight: 600, textDecoration: 'none' }}>
                       {item.variety_name || item.name}
                     </Link>
+                    {/* BUG-SEEDELAPSEDUPDATED-001 — elapsed from stage_entered_at, NOT updated_at.
+                        set_updated_at is a BEFORE UPDATE ROW trigger that fires on every write to
+                        the row, so "4 days in drying" reset to "today" the moment anything else on
+                        the lot was edited — attaching a parent plant did it — with no stage change.
+                        The server derives stage_entered_at from the lot's latest seed_lot_stage_log
+                        entry FOR ITS CURRENT STAGE, which is the fact this line claims to render.
+                        No fallback to updated_at when it is absent, deliberately: a wrong duration
+                        is worse than none, and falling back would silently reinstate the bug. */}
                     <div style={{ color: P.light, fontSize: '0.78rem', marginTop: 3 }}>
-                      {elapsed(item.updated_at)} in {STAGE_META[s].label.toLowerCase()}
+                      {elapsed(item.stage_entered_at)
+                        ? `${elapsed(item.stage_entered_at)} in ${STAGE_META[s].label.toLowerCase()}`
+                        : `In ${STAGE_META[s].label.toLowerCase()}`}
                       {item.seed_process ? ` · ${item.seed_process} process` : ''}
                     </div>
                     {/* V4-SEEDLINK-001 — the parent, retroactively. Two states and no third: the
@@ -272,7 +334,10 @@ export default function SavedSeeds() {
           outside-click, Escape and Android Back for every layer in this app; re-implementing a
           piece of that here would be a second, disagreeing answer to the same question. */}
       {advancing && (
-        <Sheet open busy={busy} onClose={() => setAdvancing(null)} title={`Move to ${STAGE_META[advancing.toStage].label.toLowerCase()}`}>
+        <Sheet
+          open busy={busy} onClose={() => setAdvancing(null)}
+          title={`${advancing.process ? 'Start in' : 'Move to'} ${STAGE_META[advancing.toStage].label.toLowerCase()}`}
+        >
           <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem' }}>
             {advancing.item.variety_name || advancing.item.name}
           </p>
@@ -326,26 +391,69 @@ export default function SavedSeeds() {
         </Sheet>
       )}
 
+      {/* BUG-SEEDPROCFORCED-001 — two steps in one sheet: pick the packet, then say how it was
+          processed. Two steps rather than a process control beside every row, because the question
+          is asked once per lot and a per-row control would ask it 260 times on a list whose job is
+          to be scanned. Closing the sheet clears both, so re-opening never lands mid-flow. */}
       {starting && (
-        <Sheet open onClose={() => setStarting(false)} title="Track a saved-seed lot">
-          <p style={{ margin: '0 0 12px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
-            Pick the seed packet to track. It will start in <strong>fermenting</strong>; move it on
-            from the list.
-          </p>
-          <div style={{ maxHeight: 340, overflowY: 'auto' }}>
-            {untracked.length === 0 && (
-              <p style={{ color: P.light, fontSize: '0.85rem' }}>No untracked seed packets.</p>
-            )}
-            {untracked.map((i) => (
+        <Sheet
+          open
+          onClose={() => { setStarting(false); setStartItem(null) }}
+          title={startItem ? 'How was it processed?' : 'Track a saved-seed lot'}
+        >
+          {startItem ? (
+            <div data-testid="start-process-step">
+              <p style={{ margin: '0 0 12px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
+                {startItem.variety_name || startItem.name} — this decides where the lot starts.
+              </p>
+              {Object.entries(PROCESS_ENTRY).map(([key, meta]) => (
+                <button
+                  key={key} type="button" data-testid={`start-process-${key}`}
+                  onClick={() => {
+                    setStarting(false)
+                    setStartItem(null)
+                    openAdvance(startItem, meta.stage, key)
+                  }}
+                  style={processRowStyle}
+                >
+                  <span style={{ fontWeight: 600 }}>{meta.label}</span>
+                  <span style={{ display: 'block', color: P.light, fontSize: '0.78rem', marginTop: 2 }}>
+                    {meta.sub}
+                  </span>
+                  <span style={{ display: 'block', color: P.light, fontSize: '0.78rem', marginTop: 4 }}>
+                    Starts in {STAGE_META[meta.stage].label.toLowerCase()}
+                  </span>
+                </button>
+              ))}
               <button
-                key={i.id} type="button" data-testid="track-candidate"
-                onClick={() => { setStarting(false); openAdvance(i, 'fermenting') }}
-                style={candidateRowStyle}
+                type="button" data-testid="start-process-back"
+                onClick={() => setStartItem(null)}
+                style={backBtnStyle}
               >
-                {i.variety_name || i.name}
+                ← Pick a different packet
               </button>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 12px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
+                Pick the seed packet to track, then say how it was processed.
+              </p>
+              <div style={{ maxHeight: 340, overflowY: 'auto' }}>
+                {untracked.length === 0 && (
+                  <p style={{ color: P.light, fontSize: '0.85rem' }}>No untracked seed packets.</p>
+                )}
+                {untracked.map((i) => (
+                  <button
+                    key={i.id} type="button" data-testid="track-candidate"
+                    onClick={() => setStartItem(i)}
+                    style={candidateRowStyle}
+                  >
+                    {i.variety_name || i.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </Sheet>
       )}
     </Shell>
@@ -400,4 +508,12 @@ const candidateRowStyle = {
   display: 'block', width: '100%', textAlign: 'left', minHeight: 48, padding: '10px 12px',
   marginBottom: 6, borderRadius: 8, border: `1px solid ${P.border}`,
   backgroundColor: P.white, color: P.green, fontSize: '0.9rem', cursor: 'pointer',
+}
+const processRowStyle = {
+  ...candidateRowStyle, minHeight: 64, padding: '12px', marginBottom: 10,
+}
+const backBtnStyle = {
+  display: 'block', width: '100%', minHeight: 48, marginTop: 4, borderRadius: 8,
+  border: 'none', backgroundColor: 'transparent', color: P.mid, fontSize: '0.84rem',
+  cursor: 'pointer',
 }
