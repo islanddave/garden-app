@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.92.0",
+    "date": "2026-09-01",
+    "highlights": [
+      "Record which plant a saved seed lot came from — a new Saved from field on seed packets, with the picker narrowed to that cultivar's own plantings",
+      "Only one microphone can listen at a time now; starting a new one stops the old one instead of leaving both live"
+    ]
+  },
+  {
     "version": "4.91.0",
     "date": "2026-09-01",
     "highlights": [
