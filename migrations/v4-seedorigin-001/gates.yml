@@ -1,0 +1,163 @@
+# gates.yml
+# V4-SEEDORIGIN-001 — inventory_items.source_kind, reusing preservation_log's shipped vocabulary.
+#
+# SCHEMA-SHAPE GATES, ENVIRONMENT-SYMMETRIC. Everything reads information_schema / pg_constraint, so
+# each gate means the same thing on staging as on prod and none can pass vacuously for want of a row.
+# No `env: prod` anywhere.
+#
+# POST GATES SELF-ARM on the receipt and are written in VIOLATION-COUNT shape (expect 0). That shape
+# is load-bearing, not stylistic: a "the good state is present" gate written as rowcount_eq=1 does
+# NOT go vacuously green where the migration is unapplied — the EXISTS arm returns 0 rows, which
+# reads as FAILURE, leaving it permanently red on every environment that has not applied it.
+# Asserting the VIOLATION gives all three states correctly: no receipt -> green; receipt + intact ->
+# green; receipt + reverted -> RED.
+#
+# COLUMNS THAT MAY NOT EXIST YET ARE READ THROUGH row_to_json, NEVER AS i.source_kind. Postgres
+# resolves column references at PARSE time, before any WHERE clause runs, so an EXISTS-on-the-receipt
+# guard cannot protect a direct reference — on an unapplied environment the gate raises 42703 and
+# ERRORS instead of passing vacuously. Same bug class the sibling gates.yml records for
+# ::regclass vs to_regclass. Learned there, applied here rather than rediscovered.
+
+pre:
+  - name: pre_source_kind_absent
+    note: >
+      The starting state — the column does not exist yet. Violation-count shape, so it is 0 before
+      the change and 1 after. continuous false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'source_kind'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_no_source_plant_on_non_seeds
+    note: >
+      CHECK 4 is added VALID, so it scans. If any non-seed row already carries a parent plant the
+      ALTER fails and the whole migration rolls back. This gate names that precondition explicitly
+      instead of letting it surface as an opaque 23514 mid-apply. Expected 0 — both write paths
+      already carry category='seeds', and 0 of 388 prod rows carry source_plant_id at all.
+    sql: |
+      SELECT 1 FROM public.inventory_items i
+       WHERE (row_to_json(i) ->> 'source_plant_id') IS NOT NULL
+         AND i.category <> 'seeds'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_source_kind_present
+    note: >
+      The column exists. Phrased as "receipt written but column missing" so it is vacuously green
+      before apply and red only if it was dropped after.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                            AND column_name = 'source_kind')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_source_kind_nullable_and_defaultless
+    note: >
+      Must stay nullable AND keep no default. NULL is the honest value for all 260 existing seed
+      rows — their origin was never recorded, and a default would assert one nobody chose. That is
+      exactly what grown_as DEFAULT 'annual' did to 362 of 413 cultivars before it was dropped on
+      2026-09-01. Both halves asserted together because either one alone reintroduces the defect.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'source_kind'
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL)
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_vocabulary_exact
+    note: >
+      THE DRIFT GATE, and the reason this migration reuses rather than mints. The regex pins the
+      array contents AND their order AND the closing bracket, so a ninth value cannot be appended
+      without reddening this, and a removed value cannot pass either. This is the DB third of the
+      three-place sync documented in lambda/preservation/provenance.js — the other two
+      (provenance.js and src/lib/dropdownRegistry.js) are asserted equal to each other by
+      src/__tests__/preservationProvenance.test.js. Together they mean a vocabulary drift reds CI
+      before it can reach a 23514 in prod. That schema already fragmented a provenance vocabulary
+      once (plants.source_type, 2026-07-07); this is the guard that stops the second time.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint
+                WHERE conname = 'chk_inventory_source_kind'
+                  AND pg_get_constraintdef(oid) ~ 'ARRAY\[''own_garden''::text, ''u_pick''::text, ''farm_stand''::text, ''csa''::text, ''store''::text, ''gift''::text, ''foraged''::text, ''other''::text\]'
+                  AND pg_get_constraintdef(oid) !~ 'NOT VALID')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_mutual_exclusion_constraint_intact
+    note: >
+      Asserted by DEFINITION, not by name. A name-only check would pass a constraint silently
+      weakened to something that admits a lot claiming both a shop origin and a parent plant. The
+      NOT VALID exclusion matters for the same reason as in the sibling — an unvalidated constraint
+      enforces new writes but was never checked against existing rows, so it is not the guarantee
+      post_no_conflicting_origin leans on.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint
+                WHERE conname = 'chk_inventory_seed_source_plant'
+                  AND pg_get_constraintdef(oid) ~ 'source_kind IS NULL'
+                  AND pg_get_constraintdef(oid) ~ 'own_garden'
+                  AND pg_get_constraintdef(oid) ~ 'source_plant_id IS NULL'
+                  AND pg_get_constraintdef(oid) !~ 'NOT VALID')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_seeds_only_constraints_present
+    note: >
+      Both category guards exist. Counted rather than named individually so the gate reds if either
+      is dropped. CHECK 4 in particular closes a rule the handlers already assert in two places, at
+      the one layer that cannot be bypassed by a future writer.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001')
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('chk_inventory_source_kind_seeds_only',
+                                 'chk_inventory_source_plant_seeds_only')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_conflicting_origin
+    note: >
+      Standing referential invariant. The CHECK should make this impossible, so a non-zero means the
+      constraint was dropped or added NOT VALID over pre-existing rows. Both columns read through
+      row_to_json so this is green on an environment that has applied neither migration.
+    sql: |
+      SELECT 1 FROM public.inventory_items i
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001')
+         AND (row_to_json(i) ->> 'source_kind') IS NOT NULL
+         AND (row_to_json(i) ->> 'source_kind') <> 'own_garden'
+         AND (row_to_json(i) ->> 'source_plant_id') IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_source_kind_outside_seeds
+    note: >
+      Standing invariant for CHECK 3. Same row_to_json discipline; same reasoning as above.
+    sql: |
+      SELECT 1 FROM public.inventory_items i
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001')
+         AND (row_to_json(i) ->> 'source_kind') IS NOT NULL
+         AND i.category <> 'seeds'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.94.0-seedorigin-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false

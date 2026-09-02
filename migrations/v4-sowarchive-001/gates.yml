@@ -89,7 +89,22 @@ post:
     expect: scalar_eq
     value: 2
 
+  # APPLY-WINDOW-ONLY as of V4-SOWSTAGE-001 (2026-09-02), which appended seed_stage + seed_process
+  # and took the view from 33 columns to 35.
+  #
+  # This is the straggler v4-maturitybasis-001's gates.yml already named: it flagged "the frozen
+  # view-column-count gates that each later view widen invalidates" as apply-window-only, asserted
+  # they carried the flag, and recorded that THIS ONE DID NOT. A frozen absolute column count on a
+  # view designed to be extended append-only is true for exactly as long as nobody extends it, so it
+  # belongs in the apply window with its two siblings (post_view_column_count_30 in
+  # v4-sowfirstyear-001, post_view_column_count in v4-maturitybasis-001) rather than being bumped to
+  # 35 for the next widening to break again.
+  #
+  # Nothing is weakened. This file's real intent — that the CREATE OR REPLACE did not drop the
+  # WHERE clause, and that the two sow_archive columns are present — is carried by
+  # post_view_filter_intact and the projection gate above, neither of which pins an absolute.
   - name: post_view_column_count_33
+    continuous: false
     sql: |
       SELECT count(*) FROM information_schema.columns
        WHERE table_schema='public' AND table_name='v_sow_candidates'

@@ -1,0 +1,106 @@
+# gates.yml
+# V4-SOWSTAGE-001 — v_sow_candidates gains seed_stage + seed_process (projection only).
+#
+# SCHEMA-SHAPE GATES, ENVIRONMENT-SYMMETRIC. Everything reads information_schema, so each gate means
+# the same thing on staging as on prod. No `env: prod` anywhere.
+#
+# POST GATES SELF-ARM on the receipt, in VIOLATION-COUNT shape (expect 0): green where unapplied,
+# green where applied and intact, RED only on a genuine revert.
+#
+# THE ROWCOUNT GATE BELOW IS THE POINT OF THIS FILE. Five continuous gates in three sibling
+# migrations already pin this view's rowcount to its unfiltered base join. This migration is
+# append-only precisely so it does not disturb them — and the gate here asserts that property
+# directly rather than trusting the author's intent, because "I only appended columns" is exactly
+# the claim a future edit will quietly break.
+
+pre:
+  - name: pre_seed_stage_not_projected
+    note: >
+      The starting state — the view does not project seed_stage. Violation-count shape, 0 before and
+      1 after. continuous false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'v_sow_candidates'
+         AND column_name = 'seed_stage'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_stage_columns_projected
+    note: >
+      Both columns are on the view. Phrased as "receipt written but a column missing" so it is
+      vacuously green before apply and red only if the view was replaced without them — which is the
+      realistic regression, since any future CREATE OR REPLACE that copies an older migration file
+      as its base would silently drop them again.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-sowstage-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'v_sow_candidates'
+                 AND column_name IN ('seed_stage', 'seed_process')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_append_only_not_reordered
+    note: >
+      The two new columns must be LAST. Postgres refuses a CREATE OR REPLACE that reorders existing
+      output columns, so a violation here means the view was dropped and recreated rather than
+      replaced — which silently breaks any client reading by position and is the thing append-only
+      exists to prevent. Asserted as "a stage column appears at or before the position of a column
+      that predates this migration".
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-sowstage-001')
+         AND EXISTS (
+               SELECT 1
+                 FROM information_schema.columns a, information_schema.columns b
+                WHERE a.table_schema = 'public' AND a.table_name = 'v_sow_candidates'
+                  AND b.table_schema = 'public' AND b.table_name = 'v_sow_candidates'
+                  AND a.column_name IN ('seed_stage', 'seed_process')
+                  AND b.column_name = 'sow_archived_at'
+                  AND a.ordinal_position < b.ordinal_position)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_rowcount_unchanged_by_projection
+    note: >
+      THE LOAD-BEARING ONE. This migration must not narrow the view — five continuous gates in
+      v4-sowfirstyear-001, v4-sowarchive-001 and v4-maturitybasis-001 pin this rowcount to the
+      unfiltered base join, and none of them carries continuous false. Asserted here directly
+      against the base join rather than against a constant, so it stays true as the population
+      changes and cannot score a perfect pass by measuring nothing.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-sowstage-001')
+         AND (SELECT count(*) FROM public.v_sow_candidates)
+           <> (SELECT count(*)
+                 FROM public.inventory_items i
+                 JOIN public.plant_varieties v ON v.id = i.variety_id
+                WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                  AND i.status = 'active' AND v.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stage_values_match_the_lot
+    note: >
+      The projected stage must be the lot's own, not a stale or mis-joined one. Cheap to assert and
+      it catches the realistic error — a future rewrite that joins seed_lot_stage_log for the stage
+      instead of reading the column, and picks the wrong row. Reads through row_to_json so it is
+      green on an environment where the view has not been widened.
+    sql: |
+      SELECT 1
+        FROM public.v_sow_candidates c
+        JOIN public.inventory_items i ON i.id = c.inventory_item_id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.94.0-sowstage-001')
+         AND (row_to_json(c) ->> 'seed_stage') IS DISTINCT FROM i.seed_stage
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.94.0-sowstage-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false

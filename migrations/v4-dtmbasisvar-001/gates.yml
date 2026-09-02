@@ -31,7 +31,15 @@ pre:
 
   # The view must already be at 33 columns, or CREATE OR REPLACE in 0a is being applied against a
   # definition this file did not capture and the column-position guarantee does not hold.
+  #
+  # continuous:false added 2026-09-02 by V4-SOWSTAGE-001, which appended seed_stage + seed_process
+  # and took the view to 35. This gate had been GREEN by coincidence rather than by design: it
+  # asserts the PRE state, and this migration did not change the column count, so pre and post both
+  # read 33 and the gate looked durable. It never was — it is a pre-condition for an apply that has
+  # long since happened, and the first later widening exposes that. Flagged rather than bumped, for
+  # the same reason as its post-side counterpart in v4-sowarchive-001.
   - name: pre_view_column_count_33
+    continuous: false
     sql: |
       SELECT count(*) FROM information_schema.columns
        WHERE table_schema='public' AND table_name='v_sow_candidates'
