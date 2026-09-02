@@ -13,6 +13,7 @@ import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
+import { chevronDataUri } from '../components/forms/formStyles.js'
 import { photoLoadErrorMessage } from '../components/PhotosWall.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 import PhotoDeleteConfirm from '../components/photo/PhotoDeleteConfirm.jsx'
@@ -1832,7 +1833,10 @@ const inputStyle = {
 const selectStyle = {
   ...inputStyle,
   appearance: 'none',
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23777' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+  // Shared builder, not a hardcoded hex: this chevron used to pin `stroke='%23777'`
+  // literally, so V4-INKCONTRAST-001's repaint of P.light missed it and left this one
+  // select a shade lighter than every other in the app. BUG-PHOTOLIBCHEVRON-001.
+  backgroundImage: chevronDataUri(P.light),
   backgroundRepeat: 'no-repeat',
   backgroundPosition: 'right 12px center',
   paddingRight: 36, cursor: 'pointer',

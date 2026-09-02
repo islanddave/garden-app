@@ -3460,8 +3460,9 @@ export default function EventNew() {
               style={{
                 flex: 1, minWidth: 0, textAlign: hand === 'left' ? 'right' : 'left',
                 background: 'none', border: 'none', padding: 0, cursor: frameLedger.live.length ? 'pointer' : 'default',
-                // P.mid, NOT P.light: `#777` on white measures 4.48:1, under the 4.5:1 AA floor at
-                // this size. That failure is live today on the `+N earlier` line this replaces.
+                // P.mid, NOT P.light: this is the line the control exists to surface, so it takes
+                // the stronger ink. The original reason (P.light was `#777`, 4.48:1 on white, under
+                // the AA floor) was retired by V4-INKCONTRAST-001 — P.light is #707070 / 4.95:1 now.
                 color: P.mid, fontFamily: 'inherit',
                 // The two lines are block children, so the button itself must not be a nowrap box.
                 // NO `overflow: hidden` here, and that is measured rather than tidy: with it, the

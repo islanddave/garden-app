@@ -611,9 +611,11 @@ export default function SavedSeeds() {
                         entry FOR ITS CURRENT STAGE, which is the fact this line claims to render.
                         No fallback to updated_at when it is absent, deliberately: a wrong duration
                         is worse than none, and falling back would silently reinstate the bug.
-                        P.mid rather than P.light: #777 is 4.478:1 on this white card, under the
-                        AA floor, and this line is the one the page exists to be read for. Scoped
-                        to the seed path — repainting P.light app-wide is Dave's call. */}
+                        P.mid rather than P.light: this line is the one the page exists to be
+                        read for, so it takes the stronger ink. (The original reason — P.light was
+                        #777 at 4.478:1, under the AA floor — was retired by V4-INKCONTRAST-001,
+                        which repainted P.light to #707070 at 4.952:1 on white. P.light now passes;
+                        P.mid is still right here on emphasis grounds, not contrast grounds.) */}
                     <div style={{ color: urgency ? urgency.ink : P.mid, fontSize: '0.78rem', marginTop: 3, fontWeight: urgency ? 600 : 400 }}>
                       {elapsed(item.stage_entered_at)
                         ? `${elapsed(item.stage_entered_at)} in ${STAGE_META[s].label.toLowerCase()}`
@@ -896,8 +898,9 @@ export default function SavedSeeds() {
                     style={candidateRowStyle}
                   >
                     <span style={{ display: 'block', fontWeight: 600 }}>{c.title}</span>
-                    {/* P.mid, not P.light, for the reason the elapsed line above gives: #777 is
-                        4.478:1 on this white row, and this line is now the one the choice turns on. */}
+                    {/* P.mid, not P.light, for the reason the elapsed line above gives: this line
+                        is the one the choice turns on, so it takes the stronger ink. Contrast is no
+                        longer the reason — see that comment, post-V4-INKCONTRAST-001. */}
                     {c.detail && (
                       <span data-testid="track-candidate-detail" style={{ display: 'block', color: P.mid, fontSize: '0.78rem', marginTop: 2 }}>
                         {c.detail}
@@ -934,9 +937,10 @@ function Shell({ children }) {
 // selection controls.
 const sectionHeadStyle = { margin: '0 0 2px', color: P.green, fontSize: '0.95rem', fontWeight: 700 }
 // P.mid, not P.light: this line now carries "keep below 95F", which is the difference between a
-// dried lot and a dead one. P.light is #777 — 4.478:1 on the white card, a WCAG 2.1 AA 1.4.3 failure
-// — and safety-critical copy is the wrong place to ship it. Seed-path-only, matching the elapsed
-// line; the app-wide P.light repaint stays Dave's call.
+// dried lot and a dead one, so safety-critical copy takes the strongest ink available.
+// (The original reason — P.light was #777, 4.478:1 on the white card, a WCAG 2.1 AA 1.4.3 failure —
+// was retired by V4-INKCONTRAST-001, which repainted P.light to #707070 at 4.952:1. It passes now.
+// P.mid stays here because of what this line says, not because P.light fails.)
 const sectionSubStyle  = { margin: '0 0 10px', color: P.mid, fontSize: '0.78rem' }
 const cardStyle = {
   display: 'flex', alignItems: 'center', gap: 12, minHeight: 56,
