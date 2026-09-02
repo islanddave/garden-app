@@ -36,7 +36,7 @@ const PARENT = {
 const lot = (over = {}) => ({
   id: 'inv-1', name: 'Green Flesh Honeydew', variety_name: 'Green Flesh Honeydew',
   category: 'seeds', variety_id: 'v-melon', seed_stage: 'drying', seed_process: null,
-  source_plant_id: null, updated_at: '2026-08-30T12:00:00Z', ...over,
+  status: 'active', source_plant_id: null, updated_at: '2026-08-30T12:00:00Z', ...over,
 })
 
 const mount = async (items) => {

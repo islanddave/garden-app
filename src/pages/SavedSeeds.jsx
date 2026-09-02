@@ -26,11 +26,20 @@ import { Sheet, PlantingSelect, Badge } from '../components/forms'
 import Icon from '../components/Icon.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
+import { SEED_STAGES } from '../components/seed/seedStages.js'
+import { looseIncludes } from '../lib/comboboxInput.js'
+import { formatQty, formatDate } from '../lib/format.js'
 
 // Process order, and it is an ORDER not a set: "advance" means one step right, and `stored` is
 // terminal. Kept in one place so the section list, the next-stage arrow and the advance button copy
 // can never disagree about what follows what.
-const STAGES = ['fermenting', 'drying', 'stored']
+//
+// IMPORTED, not redeclared, since V4-SEEDSTOREDQTY-001. This file used to spell the three values out
+// again, which made it the fourth declaration of one DB CHECK and left
+// src/__tests__/seedStageVocabulary.test.js scraping this page's source text to prove it still
+// agreed. seedStages.js is a leaf module with no imports of its own, so taking the array from there
+// costs nothing and removes the drift surface rather than guarding it.
+const STAGES = SEED_STAGES
 const STAGE_META = {
   fermenting: { label: 'Fermenting', sub: 'Wet-process seed sitting in its own juice' },
   // "keep below 95°F" is not decoration. Seed viability falls off above roughly that point, and a
@@ -78,6 +87,87 @@ const PROCESS_ENTRY = {
 // share ONE warm entry instead of each paying a round trip.
 const PICKER_PATH = '/api/plants?view=picker'
 
+// ── BUG-SEEDCANDIDATEAMBIG-001 — the untracked-packet picker ──────────────────────────────────────
+// Measured against prod: ~260 untracked seed rows, roughly 41 phone-screens of unbroken scroll, and
+// 51 of them across 24 groups rendering a BYTE-IDENTICAL label — because the row printed
+// `{i.variety_name || i.name}` and nothing else. Choosing the right packet was not hard, it was
+// UNDECIDABLE, and the choice writes a permanent seed_lot_stage_log row against whichever one the
+// thumb landed on.
+//
+// Three parts, and the third is the one that closes the defect:
+//   1. a filter over name / variety / source, using the same looseIncludes both shipped pickers use
+//      (VarietyPicker, PlantingSelect) rather than a third matching dialect;
+//   2. a cap with VISIBLE truncation — the matched -> visible -> hiddenCount idiom those two share,
+//      never a silent slice (VarietyPicker.jsx:49-52 records what a silent one cost);
+//   3. a second line of facts per row, with a last-resort ordinal when even those collide.
+//
+// 25 rather than those pickers' 200, deliberately. Their list is an anchored dropdown over a page
+// where 200 rows are a scrollport the user can abandon by looking away; this one IS the body of a
+// 340px sheet, and 200 rows here is 32 screens of the exact scroll this change exists to end. The
+// mechanism is identical, only the number is surface-specific.
+const MAX_CANDIDATES = 25
+
+// The row's first line: what the seed IS. Unchanged from the shipped behaviour.
+const candidateTitle = (i) => i.variety_name || i.name || ''
+
+// The second line, and the whole fix. Facts that actually separate two packets of one cultivar, in
+// the order they separate them: how much is in the jar, where it came from, when it was bought.
+// Absent facts are DROPPED rather than rendered as a dash — "Brandywine · — · —" is noise, and the
+// ordinal below is what covers a row with nothing left to say.
+function candidateFacts(i) {
+  const parts = []
+  const qty = formatQty(i.quantity_on_hand)
+  if (qty !== '') parts.push(i.unit ? `${qty} ${i.unit}` : qty)
+  if (i.source) parts.push(String(i.source))
+  const bought = formatDate(i.purchase_date)
+  if (bought) parts.push(bought)
+  return parts.join(' · ')
+}
+
+/**
+ * Decorate the rows about to be rendered so that NO TWO READ ALIKE. Exported for test.
+ *
+ * The facts line separates the real prod collisions, but nothing guarantees it separates ALL of
+ * them: two packets of one cultivar with the same count, the same vendor and the same purchase date
+ * are identical in everything a row records. The honest answer is to SAY so rather than print the
+ * same string twice, so a group that still collides gets an ordinal naming its size — the user
+ * learns the list is not repeating itself, which is the actual question a duplicated row raises.
+ *
+ * Computed over the RENDERED rows, not over the whole untracked set: the property being kept is
+ * "nothing on this screen reads the same", and it re-derives as the filter narrows.
+ *
+ * Two passes. The second exists because the first is not TOTAL — a vendor string that happened to
+ * read like the ordinal would re-collide — and a uniqueness rule with an exception is not one. The
+ * row id is the only thing guaranteed distinct, so it is the backstop, and only ever the backstop.
+ */
+export function labelCandidates(rows) {
+  const base = rows.map((i) => ({ item: i, title: candidateTitle(i), facts: candidateFacts(i) }))
+  const size = new Map()
+  for (const r of base) {
+    const k = `${r.title}\n${r.facts}`
+    size.set(k, (size.get(k) ?? 0) + 1)
+  }
+
+  const nth = new Map()
+  const labelled = base.map(({ item, title, facts }) => {
+    const k = `${title}\n${facts}`
+    const total = size.get(k)
+    if (total < 2) return { item, title, detail: facts }
+    const n = (nth.get(k) ?? 0) + 1
+    nth.set(k, n)
+    const ord = `${n} of ${total} with identical details`
+    return { item, title, detail: facts ? `${facts} · ${ord}` : ord }
+  })
+
+  const used = new Set()
+  return labelled.map((r) => {
+    const full = `${r.title}\n${r.detail}`
+    if (!used.has(full)) { used.add(full); return r }
+    const tail = `#${String(r.item.id ?? '')}`
+    return { ...r, detail: r.detail ? `${r.detail} · ${tail}` : tail }
+  })
+}
+
 // Elapsed whole days, floor. Null when there is no timestamp or it does not parse. Split out of
 // elapsed() so the ferment thresholds below compare the SAME number the card renders — deriving it
 // twice is two places for the badge and the text to disagree.
@@ -124,6 +214,42 @@ function fermentUrgency(item) {
   return null
 }
 
+// ── V4-SEEDSTOREDQTY-001 — writing a COUNT from this page ─────────────────────────────────────────
+// There is no narrow quantity route on the handler, so the count goes through PUT
+// /api/inventory-items/:id — which is the wide PUT, where every column in the SET list is assigned
+// unconditionally (`= ${body.x ?? null}`). A short body there is not a partial update, it is a wipe.
+// The complete row is therefore round-tripped, which is the same contract InventoryDetail's
+// putPayloadFrom() keeps for its stage write; the row available here is the LIST row, which is
+// `i.*` plus two derived columns.
+//
+// MIRRORS PUT_DERIVED_KEYS + PUT_PRESENCE_GUARDED_KEYS in src/pages/InventoryDetail.jsx, where the
+// per-key reasoning is spelled out. Duplicated rather than imported for the reason SaveSeedSheet.jsx
+// gives about PROCESS_ENTRY: a page importing from another page drags that page's whole module —
+// and PlantingSelect, PhotoUpload, useInventory behind it — into this chunk. The two lists are kept
+// in step by src/__tests__/SavedSeeds.storedCount.test.jsx, which reads both files' source text.
+//
+// `seed_stage` is the one that would BITE rather than merely leak. The list row carries the lot's
+// stage as it was BEFORE the advance, so echoing that key back would revert the stage the POST just
+// wrote — a 200 that silently undoes the action the sheet is titled for. Omitted, the handler's
+// presence guard leaves the freshly-written value alone.
+//
+// Two keys here that InventoryDetail's lists do not carry: `variety_name` and `stage_entered_at` are
+// projections the LIST query adds (a cultivar join and a LATERAL), not columns. Inert in the SET
+// list either way; stripped so the body is only ever columns.
+const LIST_ROW_PUT_STRIP = [
+  'variety_name', 'stage_entered_at', 'featured_photo_view_url', 'featured_is_explicit', 'germination',
+  'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage',
+]
+
+/** A complete wide-PUT body from a list row, with the count applied. Pure, exported for test. */
+export function countPayloadFrom(row, quantityOnHand) {
+  const out = { ...(row ?? {}) }
+  for (const k of LIST_ROW_PUT_STRIP) delete out[k]
+  // `type` rides through untouched and is load-bearing: the handler nulls quantity_on_hand outright
+  // unless body.type === 'consumable' (BUG-INVSEEDPUT400-001 is the same fact from the other side).
+  return { ...out, quantity_on_hand: quantityOnHand }
+}
+
 export default function SavedSeeds() {
   const { fetch } = useApiFetch()
   const { show } = useToast()
@@ -136,9 +262,15 @@ export default function SavedSeeds() {
   // rather than passed straight to openAdvance because the entry stage is not known until the
   // process is chosen, and the advance sheet is titled by that stage.
   const [startItem, setStartItem] = useState(null)
+  // BUG-SEEDCANDIDATEAMBIG-001 — the picker's filter box. Cleared whenever the sheet closes or the
+  // user steps back to it, so re-opening never lands on a stale query hiding the packet they came for.
+  const [candidateQuery, setCandidateQuery] = useState('')
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
   const [note, setNote]       = useState('')
+  // V4-SEEDSTOREDQTY-001 — the count, asked only on the move INTO `stored`. '' is "still don't know"
+  // and writes nothing; see the field for why that is a real answer rather than a skipped one.
+  const [storedQty, setStoredQty] = useState('')
   // V4-SEEDLINK-001 — the parent plant chosen inside the advance sheet, for a lot that has none.
   // '' is "not chosen"; the field is optional and a lot can always be linked later from
   // /inventory/:id, which is the canonical editor for this column.
@@ -162,10 +294,29 @@ export default function SavedSeeds() {
     () => (items ?? []).filter((i) => STAGES.includes(i.seed_stage)),
     [items],
   )
+  // Candidates for tracking: no stage yet, AND still active. The status filter is new
+  // (BUG-SEEDCANDIDATEAMBIG-001) and matches how the server already decides a packet is live —
+  // v_sow_candidates' predicate is a strict `i.status = 'active'`, so a retired or used-up packet is
+  // not offered here either. Strict equality for the same reason: `status` is NOT NULL on every real
+  // row, and a `?? 'active'` fallback would quietly re-admit exactly the rows this excludes.
   const untracked = useMemo(
-    () => (items ?? []).filter((i) => !STAGES.includes(i.seed_stage)),
+    () => (items ?? []).filter((i) => !STAGES.includes(i.seed_stage) && i.status === 'active'),
     [items],
   )
+  // matched -> visible -> hiddenCount, the VarietyPicker/PlantingSelect idiom. `matched` is the FULL
+  // result set and `visible` is what renders, so the footer can say how much is being held back
+  // instead of the list simply ending.
+  const matchedCandidates = useMemo(() => {
+    const q = candidateQuery.trim()
+    if (!q) return untracked
+    return untracked.filter((i) =>
+      looseIncludes(i.variety_name, q) || looseIncludes(i.name, q) || looseIncludes(i.source, q))
+  }, [untracked, candidateQuery])
+  const visibleCandidates = useMemo(
+    () => labelCandidates(matchedCandidates.slice(0, MAX_CANDIDATES)),
+    [matchedCandidates],
+  )
+  const hiddenCandidates = matchedCandidates.length - visibleCandidates.length
   // V4-SEEDLINK-001 — parent-plant NAMES for the cards. The list endpoint returns source_plant_id
   // (a uuid) and nothing else about the parent, so the name is resolved from the picker projection.
   // GATED on a lot actually carrying a link: with none — which is every lot today — the hook sits
@@ -205,6 +356,7 @@ export default function SavedSeeds() {
     setNote('')
     setStagePlant('')
     setStagePlantFailed(false)
+    setStoredQty('')
   }
 
   async function submitStage() {
@@ -243,11 +395,31 @@ export default function SavedSeeds() {
           linkErr = e?.message ?? 'Stage saved, but the parent plant did not.'
         }
       }
+      // V4-SEEDSTOREDQTY-001 — the count, on the same terms as the link above: its OWN request with
+      // its OWN failure, because a lot that reached `stored` reached it whether or not we also
+      // learned how much came out. Blank is not a skipped field, it is the answer "still don't know"
+      // — and the only honest thing to do with it is write nothing, leaving the lot at whatever it
+      // already held. Last of the three so the write order reads in order of importance.
+      let qtyErr = null
+      const typedQty = storedQty.trim()
+      if (advancing.toStage === 'stored' && typedQty !== '') {
+        const n = Number(typedQty)
+        if (Number.isFinite(n) && n >= 0) {
+          try {
+            await fetch(`/api/inventory-items/${advancing.item.id}`, {
+              method: 'PUT',
+              body: JSON.stringify(countPayloadFrom(advancing.item, n)),
+            })
+          } catch (e) {
+            qtyErr = e?.message ?? 'Stage saved, but the count did not.'
+          }
+        }
+      }
       // "Started in", not "Moved to", when this is the lot's first stage — `process` is set only on
       // the start path (BUG-SEEDPROCFORCED-001). A dry lot's first entry IS drying, and calling that
       // a move implies a fermenting step it never had.
       const verb = advancing.process ? 'Started in' : 'Moved to'
-      show({ message: linkErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
+      show({ message: linkErr ?? qtyErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
       load()
     } catch (e) {
@@ -463,6 +635,31 @@ export default function SavedSeeds() {
               )}
             </div>
           )}
+          {/* V4-SEEDSTOREDQTY-001 — THE COUNT IS ASKED HERE AND NOWHERE EARLIER. At "save seed" the
+              lot is still wet and unthreshed and the honest answer is that nobody knows; the first
+              moment anyone does is when the lot is packeted and put away, which is this transition.
+              So SaveSeedSheet creates at 0 and this field is where the number arrives.
+              `stored` only: asking on the way into fermenting or drying re-poses the unanswerable
+              question, and the terminal stage is the one that has an answer. */}
+          {advancing.toStage === 'stored' && (
+            <label style={fieldLabelStyle} data-testid="stored-count">
+              How much did you get? <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
+              <input
+                type="number" inputMode="decimal" min="0" step="1" value={storedQty}
+                onChange={(e) => setStoredQty(e.target.value)}
+                placeholder={advancing.item.unit ? `e.g. 2 ${advancing.item.unit}` : 'e.g. 2'}
+                data-testid="stored-count-input" style={inputStyle}
+              />
+              {/* The consequence, said out loud, because leaving this blank is not free. A lot at 0
+                  that is no longer in process reads as DEPLETED on Sow now (sowEngine's isDepleted
+                  diverts `<= 0`) — arguably correct, since there is no countable seed, but it is a
+                  visible outcome and the field that causes it is the place to say so. */}
+              <span style={{ display: 'block', marginTop: 6, color: P.mid, fontSize: '0.78rem', fontWeight: 400, lineHeight: 1.5 }}>
+                Leave it blank if you still haven&apos;t counted — the lot keeps the count it has, and
+                a lot on zero shows as empty on Sow now until you fill it in.
+              </span>
+            </label>
+          )}
           <button type="button" onClick={submitStage} disabled={busy} data-testid="stage-save" style={primaryBtnStyle}>
             {busy ? 'Saving…' : 'Save'}
           </button>
@@ -476,7 +673,7 @@ export default function SavedSeeds() {
       {starting && (
         <Sheet
           open
-          onClose={() => { setStarting(false); setStartItem(null) }}
+          onClose={() => { setStarting(false); setStartItem(null); setCandidateQuery('') }}
           title={startItem ? 'How was it processed?' : 'Track a saved-seed lot'}
         >
           {startItem ? (
@@ -516,19 +713,49 @@ export default function SavedSeeds() {
               <p style={{ margin: '0 0 12px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
                 Pick the seed packet to track, then say how it was processed.
               </p>
+              {/* type="search", not "text": Chrome on Android renders the clear affordance and a
+                  search-shaped keyboard for free, and this box is the whole answer to a 260-row list. */}
+              <input
+                type="search" value={candidateQuery}
+                onChange={(e) => setCandidateQuery(e.target.value)}
+                placeholder={`Search ${untracked.length} packet${untracked.length === 1 ? '' : 's'}…`}
+                aria-label="Search your untracked seed packets"
+                data-testid="candidate-filter" style={{ ...inputStyle, marginTop: 0, marginBottom: 10 }}
+              />
               <div style={{ maxHeight: 340, overflowY: 'auto' }}>
                 {untracked.length === 0 && (
-                  <p style={{ color: P.light, fontSize: '0.85rem' }}>No untracked seed packets.</p>
+                  <p style={{ color: P.mid, fontSize: '0.85rem' }}>No untracked seed packets.</p>
                 )}
-                {untracked.map((i) => (
+                {/* Two different emptinesses, and conflating them is how a filter teaches the wrong
+                    thing: "you have none" and "none match what you typed" send the user opposite ways. */}
+                {untracked.length > 0 && matchedCandidates.length === 0 && (
+                  <p data-testid="candidate-no-match" style={{ color: P.mid, fontSize: '0.85rem' }}>
+                    No packet matches “{candidateQuery.trim()}”.
+                  </p>
+                )}
+                {visibleCandidates.map((c) => (
                   <button
-                    key={i.id} type="button" data-testid="track-candidate"
-                    onClick={() => setStartItem(i)}
+                    key={c.item.id} type="button" data-testid="track-candidate"
+                    onClick={() => setStartItem(c.item)}
                     style={candidateRowStyle}
                   >
-                    {i.variety_name || i.name}
+                    <span style={{ display: 'block', fontWeight: 600 }}>{c.title}</span>
+                    {/* P.mid, not P.light, for the reason the elapsed line above gives: #777 is
+                        4.478:1 on this white row, and this line is now the one the choice turns on. */}
+                    {c.detail && (
+                      <span data-testid="track-candidate-detail" style={{ display: 'block', color: P.mid, fontSize: '0.78rem', marginTop: 2 }}>
+                        {c.detail}
+                      </span>
+                    )}
                   </button>
                 ))}
+                {/* Truncation is VISIBLE, never silent — the whole point of keeping `matched` beside
+                    `visible`. A list that simply stopped at 25 would read as "that is all of them". */}
+                {hiddenCandidates > 0 && (
+                  <p data-testid="candidate-truncation" style={{ margin: '2px 0 0', padding: '8px 2px', color: P.mid, fontSize: '0.78rem' }}>
+                    Showing {visibleCandidates.length} of {matchedCandidates.length} — keep typing to narrow.
+                  </p>
+                )}
               </div>
             </>
           )}

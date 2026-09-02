@@ -112,20 +112,42 @@ describe('V4-SAVESEEDBTN-001 — the POST payload', () => {
     expect(body.category).toBe('seeds')
     expect(body.type).toBe('consumable')
     expect(body.unit).toBe('packet')
-    expect(body.quantity_on_hand).toBe(1)
     expect(body.name).toMatch(/^Brandywine — saved \d{4}$/)
   })
 
-  it('sends the edited name and packet count, not the defaults', async () => {
+  it('creates the lot on ZERO — never null, and never a guessed count', async () => {
+    // V4-SEEDSTOREDQTY-001. This sheet used to offer a packet count defaulting to 1, which was a
+    // guess dressed as data: at "Save seed" the seed is still wet and unthreshed. Two halves, and
+    // both are load-bearing:
+    //   0 not null — the live CHECK consumable_requires_quantity_on_hand is
+    //     `type <> 'consumable' OR quantity_on_hand IS NOT NULL`, so null is refused outright.
+    //   0 not 1 — 1 is a fabricated count that survives into Sow now looking measured.
+    // Asserted with Object.is so a `0` cannot be satisfied by null/undefined coercion.
     apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
     openSheet()
-    fireEvent.change(screen.getByTestId('save-seed-name'), { target: { value: '  1884 tomato  ' } })
-    fireEvent.change(screen.getByTestId('save-seed-packets'), { target: { value: '4' } })
     fireEvent.click(screen.getByTestId('save-seed-submit'))
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
     const body = bodyOf(apiFetchSpy.mock.calls[0])
-    expect(body.name).toBe('1884 tomato')
-    expect(body.quantity_on_hand).toBe(4)
+    expect(Object.prototype.hasOwnProperty.call(body, 'quantity_on_hand')).toBe(true)
+    expect(body.quantity_on_hand).toBe(0)
+    expect(body.quantity_on_hand).not.toBeNull()
+  })
+
+  it('offers no count field at all, and says where the question went', async () => {
+    // Removing the field silently would read as a regression to anyone who used it; the sheet names
+    // the moment the question moved to instead.
+    openSheet()
+    expect(screen.queryByTestId('save-seed-packets')).toBeNull()
+    expect(screen.getByTestId('save-seed-count-note').textContent).toMatch(/stored/i)
+  })
+
+  it('sends the edited name, not the default', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.change(screen.getByTestId('save-seed-name'), { target: { value: '  1884 tomato  ' } })
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
+    expect(bodyOf(apiFetchSpy.mock.calls[0]).name).toBe('1884 tomato')
   })
 
   it('an overridden variety wins over the planting default', async () => {
@@ -170,11 +192,11 @@ describe('V4-SAVESEEDBTN-001 — a planting with no variety is handled, never PO
     expect(body.source_plant_id).toBe('pl2')
   })
 
-  it('a blank or zero packet count is refused the same way', () => {
+  it('a blank NAME is refused by the disabled control', () => {
+    // The count arm of this test went with the count field (V4-SEEDSTOREDQTY-001). The name arm
+    // stays: a disabled control is the conventional answer for a field the user can see is blank.
     openSheet()
-    fireEvent.change(screen.getByTestId('save-seed-packets'), { target: { value: '0' } })
-    expect(screen.getByTestId('save-seed-submit').disabled).toBe(true)
-    fireEvent.change(screen.getByTestId('save-seed-packets'), { target: { value: '' } })
+    fireEvent.change(screen.getByTestId('save-seed-name'), { target: { value: '   ' } })
     expect(screen.getByTestId('save-seed-submit').disabled).toBe(true)
     expect(apiFetchSpy).not.toHaveBeenCalled()
   })
@@ -264,6 +286,6 @@ describe('SaveSeedSheet mounts standalone (the sheet is not welded to QuickActio
   it('renders its own fields with a planting prop alone', () => {
     render(<MemoryRouter><SaveSeedSheet planting={PL} onClose={() => {}} /></MemoryRouter>)
     expect(screen.getByTestId('save-seed-name')).toBeTruthy()
-    expect(screen.getByTestId('save-seed-packets')).toBeTruthy()
+    expect(screen.getByTestId('save-seed-submit')).toBeTruthy()
   })
 })

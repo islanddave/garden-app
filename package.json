@@ -20,6 +20,8 @@
     "phototier-bytes:before": "node scripts/layout-gate/phototier-bytes.mjs --surface today --count 20 --tier none --max-bytes 4000000",
     "gate:iconwire4": "node scripts/layout-gate/iconwire4-shot.mjs --outdir artifacts/layout-gate",
     "gate:inventory-list": "node scripts/layout-gate/inventory-list-shot.mjs --out artifacts/layout-gate/inventory-list-390x844.png",
+    "gate:seeds-saved": "node scripts/layout-gate/seeds-saved-clearance.mjs",
+    "gate:seeds-saved:probe-nothing": "node scripts/layout-gate/seeds-saved-clearance.mjs --probe-nothing",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
     "lint": "eslint .",

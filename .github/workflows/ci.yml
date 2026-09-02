@@ -240,6 +240,43 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:inventory-list
 
+      - name: Saved-seeds layout and action clearance (V4-SEEDSAVEFLOW-001)
+        # The first observable /seeds/saved has ever had. The harness (tests/harness/seedssaved.*)
+        # shipped with the page in v4.90.0 and was wired to NOTHING — `rg "seedssaved|seeds-saved"`
+        # over .github/, package.json and scripts/ returned no output — so the page's stated defect
+        # had no instrument and no redesign of it could be shown to have fixed anything.
+        #
+        # Real Chrome at 390x844, plus 390x667 (keyboard up) for the two sheet states, across all
+        # four states the harness renders: empty / populated list / candidate picker / advance sheet.
+        # Asserts, as a census rather than a named list, that no visible button or form control is
+        # under T.tapMinHeight; that no seed-lot card overflows its box or clips its text column
+        # beside the advance button at the fixture's worst-case 44-char variety name; that the
+        # document does not scroll sideways; and that the sheet's primary action hit-tests to itself,
+        # fits the viewport, and is reachable rather than clipped out of a panel that cannot scroll.
+        # Hit-testing is asserted on the TOP layer only — a control behind an open modal correctly
+        # fails to hit-test, and asserting there would red this on the backdrop working as designed.
+        # Link heights are printed but NOT asserted: WCAG 2.5.8 exempts a link inline in a block of
+        # text, and freezing a number there would be this lane making a design call that is not its.
+        #
+        # Verified non-vacuous TWICE, because a layout gate that measures nothing scores a perfect
+        # pass and this repo has been bitten by exactly that:
+        #   1. `npm run gate:seeds-saved:probe-nothing` points every selector at a testid nothing
+        #      renders. Exit 0 -> 1, failing all six case/viewport pairs by name ("cards 0 != 4",
+        #      "0 candidates offered", "no stage-save control"). A selector that matched nothing is
+        #      a FAILURE here, never the quiet pass it is in a naive census.
+        #   2. Forcing every getBoundingClientRect() to zero — what an unrendered document, or a
+        #      jsdom-shaped one, actually looks like — reds it with "every one of 14 measured boxes
+        #      is 0px tall", on top of the tap floor. Element counts alone would have passed.
+        # It also caught a live fixture defect on its first run: the harness rows carried no
+        # `status`, which the candidate filter requires, so the picker rendered zero rows and would
+        # have measured an empty sheet. NO continue-on-error, per the policy note above.
+        #
+        # ~96 s locally: six page loads (four states, two of them at both viewports) behind one Vite
+        # boot. Placed here rather than last because gate:save-band-stability is still the slow one.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:seeds-saved
+
       - name: Icon wiring slice 4 — five rewired surfaces (V4-ICON-001)
         # Real Chrome at 390x844 across overwinter / inventory-type / water-depth / life-story /
         # notify. Asserts ZERO pictographic characters survive inside the rewired subtree, and that

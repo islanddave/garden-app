@@ -1,10 +1,15 @@
 // V4-SEEDHISTORY-001 — the drift guard for the seed-stage vocabulary.
 //
-// src/components/seed/seedStages.js is the FOURTH declaration of the same three values. The other
-// three are the DB CHECKs (two of them, on inventory_items and on seed_lot_stage_log), the Lambda
-// (twice — the /seed-stage route and the wide PUT), and SavedSeeds.jsx's module-local STAGES. None
-// of them can import from any other, so the only thing standing between them is a test that reads
-// all four and fails when one moves.
+// src/components/seed/seedStages.js is the THIRD declaration of the same three values. The other two
+// are the DB CHECKs (two of them, on inventory_items and on seed_lot_stage_log) and the Lambda
+// (twice — the /seed-stage route and the wide PUT). Neither can import from the other, so the only
+// thing standing between them is a test that reads all of them and fails when one moves.
+//
+// V4-SEEDSTOREDQTY-001 REMOVED THE FOURTH. src/pages/SavedSeeds.jsx used to redeclare the array, and
+// this file scraped that page's source text to prove the copy still agreed. It now imports
+// SEED_STAGES from seedStages.js instead, so that drift is structurally impossible rather than
+// merely guarded — and the assertion below changed accordingly: it pins the IMPORT, because a page
+// that quietly went back to its own literal would otherwise re-open the gap with nothing failing.
 //
 // This is the shape preservationProvenance.test.js uses for its own three-place vocabulary
 // (VALID_SOURCE_KINDS / the DB constraint / PUTUP_SOURCE_OPTIONS), and it is here for the same
@@ -69,9 +74,14 @@ describe('seed-stage vocabulary — one set, four declarations', () => {
     expect(jsArrayLiteral(handler, 'SEED_STAGES', 'lambda/inventory-items/index.js')).toEqual(SEED_STAGES)
   })
 
-  it('matches SavedSeeds.jsx, which cannot export its copy', () => {
+  it('SavedSeeds.jsx takes the vocabulary from here rather than restating it', () => {
+    // Two assertions, and the second is the one that bites: a page that went back to its own
+    // literal would keep the import line for some other symbol and pass on the first alone.
     const page = read('src/pages/SavedSeeds.jsx')
-    expect(jsArrayLiteral(page, 'STAGES', 'src/pages/SavedSeeds.jsx')).toEqual(SEED_STAGES)
+    expect(page, 'SavedSeeds.jsx no longer imports SEED_STAGES from components/seed/seedStages.js')
+      .toMatch(/import\s*\{[^}]*\bSEED_STAGES\b[^}]*\}\s*from\s*'\.\.\/components\/seed\/seedStages\.js'/)
+    expect(page, 'SavedSeeds.jsx redeclares the stage array instead of importing it')
+      .not.toMatch(/\bSTAGES\s*=\s*\[/)
   })
 
   it('labels every stage, and the option list keeps process order', () => {

@@ -81,6 +81,23 @@ export default function InventoryDetail() {
   const [seedStageBusy, setSeedStageBusy] = useState(false)
   const [seedStageErr,  setSeedStageErr]  = useState(null)
 
+  // ── V4-SEEDSTOREDQTY-001 — the count, asked on the way INTO `stored` ────────
+  // A seed lot is created at 0 (components/planting/SaveSeedSheet.jsx) because at "save seed" the
+  // seed is still wet and unthreshed and nobody knows how much there is. The first moment anyone
+  // DOES know is when the lot is packeted and put away, so every path that can set `stored` asks —
+  // and this select is one of the two that can (the other is the advance sheet on /seeds/saved).
+  // A path that reaches `stored` without asking leaves the lot on 0, where Sow now reads it as
+  // depleted; that is the defect this prompt closes.
+  //
+  // INLINE, not a <Sheet>. This page renders no sheet today and adding one would put it in
+  // src/__tests__/modalSurfaceFreeze.static.test.js's frozen set for a two-field question that has
+  // no business being a modal — the prompt appears in the card the choice was made in, which is
+  // also where the answer belongs.
+  const [countAsk,  setCountAsk]  = useState(false)
+  const [countVal,  setCountVal]  = useState('')
+  const [countBusy, setCountBusy] = useState(false)
+  const [countErr,  setCountErr]  = useState(null)
+
   // ── Load item ──────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true
@@ -310,11 +327,58 @@ export default function InventoryDetail() {
       // costs the row.
       if (updated?.id === id) setServerRow(updated)
       show({ message: '✓ Saved' })
+      // V4-SEEDSTOREDQTY-001 — ask only AFTER the stage write lands. Opening the prompt on the click
+      // would ask for a count against a stage that may not have saved, and this select is
+      // optimistic-with-revert precisely because that write can fail.
+      if (next === 'stored') {
+        setCountVal('')
+        setCountErr(null)
+        setCountAsk(true)
+      } else {
+        setCountAsk(false)
+      }
     } catch (e) {
       setSeedStage(prev)
       setSeedStageErr(e?.message ?? 'Could not save that.')
     } finally {
       setSeedStageBusy(false)
+    }
+  }
+
+  // ── Save the stored count (V4-SEEDSTOREDQTY-001) ───────────────────────────
+  // A SEPARATE write from the stage, on the same terms /seeds/saved uses: the lot reached `stored`
+  // whether or not the count also landed, so folding the two together would report a stage move that
+  // succeeded as failed. Same complete-row round trip as saveSeedStage — see putPayloadFrom for why
+  // a short body to the wide PUT is a wipe rather than a partial update — and deliberately NOT
+  // buildChanges(), which is the edit form's projection and would commit whatever is unsaved in it.
+  async function saveSeedCount() {
+    const typed = countVal.trim()
+    if (typed === '' || countBusy) return
+    const n = Number(typed)
+    if (!Number.isFinite(n) || n < 0) {
+      setCountErr('Enter a number — 0 or more.')
+      return
+    }
+    setCountBusy(true)
+    setCountErr(null)
+    try {
+      const updated = await fetch(`/api/inventory-items/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...putPayloadFrom(serverRow ?? item), quantity_on_hand: n }),
+      })
+      if (updated?.id === id) setServerRow(updated)
+      // The edit form below RENDERS quantity_on_hand and buildChanges() sends it unconditionally, so
+      // a form left holding the pre-count value would overwrite this the next time the user pressed
+      // Save changes — a silent revert of the number they just entered. `baseline` moves with it so
+      // the dirty guard does not read the re-sync as unsaved typing.
+      setForm(f => (f ? { ...f, quantity_on_hand: formatQty(n) } : f))
+      setBaseline(b => (b ? { ...b, quantity_on_hand: formatQty(n) } : b))
+      setCountAsk(false)
+      show({ message: '✓ Saved' })
+    } catch (e) {
+      setCountErr(e?.message ?? 'Could not save that.')
+    } finally {
+      setCountBusy(false)
     }
   }
 
@@ -347,6 +411,13 @@ export default function InventoryDetail() {
   // from" picker PATCHes on selection — so its value is on the server before this could observe it.
   // The V4-SEEDHISTORY-001 stage select is the same shape for the same reason: it PUTs on choice,
   // so there is never a moment where it looks set and is not saved.
+  //
+  // The V4-SEEDSTOREDQTY-001 count prompt is the ONE control here that does hold typed input before
+  // a write, and it is deliberately outside this guard. It is a transient question raised by an
+  // action that already succeeded — closer to `confirmDelete` than to the form — it carries its own
+  // Save and its own "haven't counted it yet" exit, and holding a service-worker update on an
+  // optional number nobody has committed to is exactly the over-firing this predicate was rewritten
+  // to stop. Abandoning it loses a number the user never asserted; the lot keeps the count it had.
   //
   // Declared above the loading/error early returns because hooks cannot live below them. `form` and
   // `baseline` are both null until the load resolves, which reads as clean — correct, there is
@@ -569,6 +640,58 @@ export default function InventoryDetail() {
                   ? 'Saving…'
                   : 'Corrects where this lot is now. It does not add a processing entry — advance a lot from Saved seeds to record one.'}
             </p>
+            {/* V4-SEEDSTOREDQTY-001 — the count prompt. Appears only after a stage write that landed
+                on `stored`, and it is DISMISSIBLE rather than blocking: "still haven't counted" is a
+                real answer, and forcing a number would get a made-up one. Its consequence is stated
+                because it is not free — a lot on 0 that is no longer in process reads as depleted on
+                Sow now (sowEngine's isDepleted diverts `<= 0`). */}
+            {countAsk && (
+              <div data-testid="seed-count-ask" style={{
+                padding: '12px 14px', borderRadius: 8,
+                border: `1px solid ${P.border}`, backgroundColor: P.cream,
+                display: 'flex', flexDirection: 'column', gap: 10,
+              }}>
+                <Field label="How much seed did you get?" htmlFor="inv-seed-count">
+                  <Input
+                    id="inv-seed-count"
+                    type="number" min="0" step="1" inputMode="decimal"
+                    value={countVal}
+                    onChange={e => { setCountVal(e.target.value); setCountErr(null) }}
+                    placeholder={item.unit ? `e.g. 2 ${item.unit}` : 'e.g. 2'}
+                    error={!!countErr}
+                    aria-describedby="inv-seed-count-help"
+                    data-testid="seed-count-input"
+                  />
+                </Field>
+                <p id="inv-seed-count-help" data-testid="seed-count-help" style={{
+                  margin: 0, color: countErr ? P.terra : P.mid, fontSize: '0.78rem', lineHeight: 1.5,
+                }}>
+                  {countErr
+                    ? countErr
+                    : 'A saved lot starts on zero because the seed is still wet when you save it. A lot left on zero shows as empty on Sow now.'}
+                </p>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <Button
+                    variant="primary" onClick={saveSeedCount}
+                    loading={countBusy} loadingLabel="Saving…"
+                    disabled={countVal.trim() === ''}
+                    data-testid="seed-count-save"
+                  >
+                    Save count
+                  </Button>
+                  <button
+                    type="button" onClick={() => { setCountAsk(false); setCountErr(null) }}
+                    data-testid="seed-count-skip"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: P.mid, fontSize: '0.82rem', textDecoration: 'underline', padding: 0,
+                    }}
+                  >
+                    Haven&apos;t counted it yet
+                  </button>
+                </div>
+              </div>
+            )}
             <SeedStageHistory
               itemId={item.id}
               // The optimistic value, not item.seed_stage: the control reverts on failure, so this

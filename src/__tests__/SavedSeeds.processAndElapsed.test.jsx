@@ -39,10 +39,12 @@ import { ToastProvider } from '../context/ToastContext.jsx'
 
 const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
 
+// `status` is on the fixture because it is on every real row and because the untracked-packet
+// picker now filters on it — V4-SEEDSTOREDQTY-001.
 const lot = (over = {}) => ({
   id: 'inv-1', name: 'Green Flesh Honeydew', variety_name: 'Green Flesh Honeydew',
   category: 'seeds', variety_id: 'v-melon', seed_stage: 'drying', seed_process: null,
-  source_plant_id: null,
+  status: 'active', source_plant_id: null,
   // The trigger's signature: the row was touched a moment ago, the STAGE was entered days ago.
   updated_at: daysAgo(0.01),
   stage_entered_at: daysAgo(4.2),

@@ -7,8 +7,15 @@
 //
 // The structural win of launching from a planting is that the parent is a PARAMETER, not a picker:
 // source_plant_id AND variety_id both come off the record this page already loaded, so the sheet
-// asks for a name and a count rather than for identity. That is also why there is no
-// <PlantingSelect> here — a picker on this surface asks a question we already know the answer to.
+// asks for a name rather than for identity. That is also why there is no <PlantingSelect> here — a
+// picker on this surface asks a question we already know the answer to.
+//
+// V4-SEEDSTOREDQTY-001 — AND IT DOES NOT ASK HOW MUCH. It used to offer a packet count defaulting to
+// 1, which was a guess dressed as data: at the moment you press "Save seed" the seed is still wet
+// and unthreshed and nobody knows the answer. Dave's call, and the shape of the whole flow follows
+// from it — the lot is created at 0 and the count is asked at the one moment it is knowable, on the
+// move into `stored` (src/pages/SavedSeeds.jsx's advance sheet, and the stage control on
+// src/pages/InventoryDetail.jsx).
 //
 // WRITE SHAPE (POST /api/inventory-items). Every key is load-bearing; see validateCreate and the
 // INSERT column list in lambda/inventory-items/index.js:
@@ -92,22 +99,19 @@ export default function SaveSeedSheet({ planting, onClose }) {
   // mount, so keeping it collapsed on the common path (the planting knows its cultivar) keeps the
   // whole happy path to zero reads.
   const [pickerOpen, setPickerOpen] = useState(!seeded)
-  const [packets, setPackets] = useState('1')
   const [seedProcess, setSeedProcess] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
   const varietyId = variety?.id ?? null
-  const qty = Number(packets)
-  const qtyOk = packets.trim() !== '' && Number.isFinite(qty) && qty > 0
   // The missing VARIETY is deliberately NOT in here, and that is the one interesting line in this
   // component. A disabled Save plus an in-writer guard would be two mechanisms enforcing one rule,
   // and a redundant mechanism cannot be tested: neutralise either half and the other keeps the
   // suite green, so neither is ever proven to work. One mechanism, and it is the one that can
   // SPEAK — a dead grey button is not an explanation, an inline sentence naming the missing field
-  // is. Name and count stay here because a disabled control is the conventional answer for a field
-  // the user can see is blank; the variety is the one that maps to a DB CHECK.
-  const canSave = !!name.trim() && qtyOk && !busy
+  // is. The name stays here because a disabled control is the conventional answer for a field the
+  // user can see is blank; the variety is the one that maps to a DB CHECK.
+  const canSave = !!name.trim() && !busy
 
   async function save() {
     if (busy) return
@@ -118,7 +122,7 @@ export default function SaveSeedSheet({ planting, onClose }) {
       setError('Pick the variety this seed came from — a seed lot has to name one.')
       return
     }
-    if (!name.trim() || !qtyOk) return
+    if (!name.trim()) return
     setBusy(true)
     setError(null)
     try {
@@ -129,7 +133,12 @@ export default function SaveSeedSheet({ planting, onClose }) {
           category: 'seeds',
           type: 'consumable',
           unit: 'packet',
-          quantity_on_hand: qty,
+          // ZERO, AND NEVER NULL. The lot has no countable seed yet — that is the fact — but the
+          // live CHECK consumable_requires_quantity_on_hand is
+          // `type <> 'consumable' OR quantity_on_hand IS NOT NULL`, so a consumable row with a null
+          // count is refused outright while 0 is accepted. 0 is therefore both the true value and
+          // the only expressible one; the real number arrives on the move into `stored`.
+          quantity_on_hand: 0,
           variety_id: varietyId,
           source_plant_id: planting.id,
         }),
@@ -210,14 +219,13 @@ export default function SaveSeedSheet({ planting, onClose }) {
         </div>
       )}
 
-      <label style={fieldLabelStyle}>
-        Packets
-        <input
-          type="number" inputMode="numeric" min="1" step="1" value={packets}
-          onChange={(e) => setPackets(e.target.value)}
-          data-testid="save-seed-packets" style={inputStyle}
-        />
-      </label>
+      {/* V4-SEEDSTOREDQTY-001 — where the count went, said on the screen it left. A field that
+          simply disappears reads as a regression to anyone who used the old one; naming the moment
+          it moved to also teaches the flow, since "stored" is the transition that now asks. */}
+      <p data-testid="save-seed-count-note" style={{ ...hintStyle, margin: '0 0 14px' }}>
+        The lot starts with no count — the seed is still wet and unthreshed. You&apos;ll be asked how
+        much you got when you mark it stored.
+      </p>
 
       {/* Optional, and DEFAULTED OFF. Choosing a process writes a permanent seed_lot_stage_log row,
           so the sheet must not pick one on the user's behalf — that is BUG-SEEDPROCFORCED-001 in a

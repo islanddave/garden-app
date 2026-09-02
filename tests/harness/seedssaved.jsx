@@ -31,17 +31,23 @@ const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
 
 // Real prod names. "Money Plant (self-saved, variety unrecorded)" is 44 chars — the longest
 // displayed name in the whole seed set, and the one that has to sit beside a "Drying →" button.
+//
+// `status: 'active'` is not decoration. `inventory_items.status` is NOT NULL on every real row, and
+// the candidate filter is a strict equality against it (SavedSeeds.jsx — "a `?? 'active'` fallback
+// would quietly re-admit exactly the rows this excludes"). A fixture row without it is a row no
+// real database can produce, and it silently emptied the picker: gate:seeds-saved caught it as
+// "0 candidates offered, expected >=1" rather than passing a sheet with nothing in it.
 const TRACKED = [
-  { id: 'i1', name: 'Money Plant packet',   variety_name: 'Money Plant (self-saved, variety unrecorded)', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(4) },
-  { id: 'i2', name: 'Cinderella packet',    variety_name: "Cinderella (Rouge Vif d'Etampes)",             seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(0) },
-  { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12) },
-  { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40) },
+  { id: 'i1', name: 'Money Plant packet',   variety_name: 'Money Plant (self-saved, variety unrecorded)', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(4) },
+  { id: 'i2', name: 'Cinderella packet',    variety_name: "Cinderella (Rouge Vif d'Etampes)",             status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(0) },
+  { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  status: 'active', seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12) },
+  { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40) },
 ]
 const UNTRACKED = [
-  { id: 'u1', name: 'Megatron packet',  variety_name: 'Megatron F1 (jumbo jalapeno)',  seed_stage: null, updated_at: daysAgo(9) },
-  { id: 'u2', name: 'Biquinho packet',  variety_name: 'Biquinho Red & Yellow Blend',   seed_stage: null, updated_at: daysAgo(9) },
-  { id: 'u3', name: 'Straightneck pkt', variety_name: 'Early Prolific Straightneck',   seed_stage: null, updated_at: daysAgo(9) },
-  { id: 'u4', name: '1884 tomato',      variety_name: '1884',                          seed_stage: null, updated_at: daysAgo(9) },
+  { id: 'u1', name: 'Megatron packet',  variety_name: 'Megatron F1 (jumbo jalapeno)',  status: 'active', seed_stage: null, updated_at: daysAgo(9) },
+  { id: 'u2', name: 'Biquinho packet',  variety_name: 'Biquinho Red & Yellow Blend',   status: 'active', seed_stage: null, updated_at: daysAgo(9) },
+  { id: 'u3', name: 'Straightneck pkt', variety_name: 'Early Prolific Straightneck',   status: 'active', seed_stage: null, updated_at: daysAgo(9) },
+  { id: 'u4', name: '1884 tomato',      variety_name: '1884',                          status: 'active', seed_stage: null, updated_at: daysAgo(9) },
 ]
 
 // V4-SEEDLINK-001 — candidates for the "Saved from" picker in the advance sheet. Deliberately

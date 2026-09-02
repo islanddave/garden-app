@@ -31,8 +31,10 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 
 const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
 
+// `status` is on the fixture because it is on every real row (NOT NULL, and v_sow_candidates keys
+// off it) and because the untracked-packet picker now filters on it — V4-SEEDSTOREDQTY-001.
 const ferment = (id, days, over = {}) => ({
-  id, name: id, variety_name: id, category: 'seeds', variety_id: 'v-tom',
+  id, name: id, variety_name: id, category: 'seeds', variety_id: 'v-tom', status: 'active',
   seed_stage: 'fermenting', seed_process: 'wet', source_plant_id: null,
   updated_at: daysAgo(0.01), stage_entered_at: days == null ? null : daysAgo(days),
   ...over,
