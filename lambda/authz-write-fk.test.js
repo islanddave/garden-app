@@ -308,6 +308,18 @@ const NOT_IN_SITES = [
   // read back off the database — the same two-arm shape plants/anchorCreate.js records, and the same
   // class as harvests::user_id.
   'daily-plan::plant_id',
+  // daily-plan-read::user_id — public.weather_cue_impression's FK, added by OPS-CUEINSTRUMENT-001
+  // (the Today weather-cue impression log). NOT body-settable, and the INSERT is the proof: the
+  // column is bound as ${userId}::text straight from the handler context, while the request body
+  // goes only through normalizeCueImpression(), which emits cue/form/model_version/
+  // plan_generated_at and nothing else. There is no path by which a body key named user_id reaches
+  // the statement. ctx.userId is the JWT subject — index.js sets `userId = payload.sub` and returns
+  // 401 before routing if it is falsy — so the value is the caller's own identity by construction.
+  // shown_on is likewise stamped from the server's ET clock, never the body. Same class as
+  // harvests::user_id and ready-impression's write, which is the route this one deliberately
+  // mirrors. A caller can only ever log an impression AS THEMSELVES, so there is no
+  // cross-household write to gate.
+  'daily-plan-read::user_id',
   // daily-plan::location_id and ::project_id — the rain event_log INSERT added by
   // V4-RAINAUTOLOG-001 part 2 (handler.js logRainEvents). Same argument as plant_id above, and the
   // SQL makes it checkable at a glance: both values come from `left join container ct on ct.id =

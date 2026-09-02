@@ -118,6 +118,24 @@ describe('matchCueImpressionRoute', () => {
 });
 
 describe('handleCueImpressionPost — the write', () => {
+  // BUG-AUTHZFKENUM-001. weather_cue_impression.user_id is registered in that guard's NOT_IN_SITES
+  // as "server-derived, never body-settable" — i.e. it is UNGATED, and the entire reason that is
+  // safe is the property asserted here. The guard is a static registry: once the entry exists it
+  // stops looking, so nothing there would notice if a future edit started reading user_id off the
+  // body. This test is what makes the registry entry enforceable rather than merely claimed.
+  it('IGNORES a user_id in the request body — the bind is always the JWT subject from ctx', async () => {
+    const sql = makeSql();
+    const hostile = { ...body({ cue: 'heat', form: 'check' }), user_id: 'user_someone_else' };
+    const out = await handleCueImpressionPost(ctx(sql, hostile));
+
+    expect(out).toEqual({ statusCode: 202, body: { accepted: 1 } });
+    expect(binds(sql.calls[0]).userId).toBe(USER);
+    // Not merely "not equal to USER" — the foreign id must appear NOWHERE in the statement, so a
+    // future refactor cannot smuggle it in through a different column or an interpolation.
+    expect(sql.calls[0].params).not.toContain('user_someone_else');
+    expect(sql.calls[0].text).not.toMatch(/user_someone_else/);
+  });
+
   it('binds the cue, the form and the model version, and stamps the day SERVER-side in ET', async () => {
     const sql = makeSql();
     const out = await handleCueImpressionPost(ctx(sql, body({ cue: 'heat', form: 'check' })));
