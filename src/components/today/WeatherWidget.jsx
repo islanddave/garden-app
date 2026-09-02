@@ -246,19 +246,30 @@ export default function WeatherWidget({
   const stationProv = (hydrology && typeof hydrology.station === 'object' && hydrology.station) || null
   const sourceLabel = stationProv ? hydrologySourceLabel(stationProv) : 'Open-Meteo'
 
+  // BUG-LIVEWEATHERNUMOR0-001 — the rain AMOUNT is nullable and is kept nullable to the point of use.
+  // src/lib/liveWeather.js used to coerce a missing precipitation_sum to 0, which put a confident
+  // `0.00″ rain expected` on the card precisely when the forecast was unavailable; a `?? 0` here
+  // would move that same fabrication one layer down instead of removing it. Unknown amount falls
+  // back to the pop-only sentence that already exists for the below-threshold case — "we know the
+  // chance, not the amount" is a thing the card can honestly say.
+  //
+  // POP is deliberately NOT changed: it has always preserved null upstream and been floored to 0 here,
+  // so that behaviour is untouched by this fix. The comparisons below read the same either way —
+  // `null > 0` and `null >= 50` are both false, exactly as `0` was.
   const rainSrc = live ? liveHydrology : hydrology
-  const todayIn = rainSrc.today_precip_in ?? 0
+  const todayIn = rainSrc.today_precip_in ?? null
   const todayPop = rainSrc.today_pop ?? 0
   const showToday = todayIn > 0 || ((uncertain || live) && todayPop >= 50)
-  const rainIn = showToday ? todayIn : (rainSrc.tomorrow_precip_in ?? rainSrc.upcoming_precip_in ?? 0)
+  const rainIn = showToday ? todayIn : (rainSrc.tomorrow_precip_in ?? rainSrc.upcoming_precip_in ?? null)
   const rainPop = showToday ? todayPop : (rainSrc.tomorrow_pop ?? 0)
   const rainWhen = showToday ? 'today' : 'tomorrow'
-  const rainAmtWeighted = round2(rainIn * rainPop / 100)
+  const rainAmtKnown = rainIn != null
+  const rainAmtWeighted = rainAmtKnown ? round2(rainIn * rainPop / 100) : null
   const rainNote = uncertain
-    ? (rainIn >= 0.1
+    ? (rainAmtKnown && rainIn >= 0.1
         ? `~${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% — could climb`
         : `${rainPop}% chance ${rainWhen} · little so far, could climb`)
-    : (rainPop < RAIN_POP_DISPLAY_THRESHOLD
+    : (!rainAmtKnown || rainPop < RAIN_POP_DISPLAY_THRESHOLD
         ? `${rainPop}% chance of rain ${rainWhen}`
         : `${rainAmtWeighted.toFixed(2)}″ rain expected ${rainWhen} · ${rainPop}%`)
 

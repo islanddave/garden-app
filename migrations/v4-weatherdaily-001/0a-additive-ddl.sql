@@ -52,13 +52,25 @@
 --
 -- The writer (lambda/daily-plan/handler.js writeWeatherDaily) upserts ON CONFLICT (space_id, date)
 -- and is deliberately NOT a blind overwrite: it COALESCEs each field so a later pass carrying nulls
--- cannot erase data an earlier pass established, and it refuses to downgrade precip_source from
--- 'gauge_merged' to a model source. The reason is concrete. The nightly run writes D-1 with the
--- gauge-merged number; the same run also re-writes D-2, for which the gauge buckets no longer exist
--- and the only available number is Open-Meteo's. Without the downgrade guard, every night would
--- overwrite yesterday's good gauge reading with the model's — the table would hold gauge data for
--- exactly 24 hours and then silently replace it, and the provenance column would faithfully record
--- the replacement while looking perfectly healthy.
+-- cannot erase data an earlier pass established, and it refuses to replace any measured value whose
+-- stored provenance OUTRANKS the incoming write's. The rank is
+-- openmeteo_archive < openmeteo_live < gauge_merged, with NULL and any out-of-domain string at 0.
+-- The reason is concrete. The nightly run writes D-1 with the gauge-merged number; the same run also
+-- re-writes D-2, for which the gauge buckets no longer exist and the only available number is
+-- Open-Meteo's. Without the guard, every night would overwrite yesterday's good gauge reading with
+-- the model's — the table would hold gauge data for exactly 24 hours and then silently replace it,
+-- and the provenance column would faithfully record the replacement while looking perfectly healthy.
+--
+-- AMENDED 2026-09-02 (BUG-WXWRITEOVERWRITE-001), AFTER THIS FILE WAS APPLIED. Until then the
+-- paragraph above described a protection the writer only had on precip_in: et0_in, tmax_f and tmin_f
+-- were COALESCE-only, i.e. last-writer-wins, so a better-sourced value in any of them survived
+-- exactly until the next pass over the same day. The guard is now per-field and rank-based in BOTH
+-- writers (the nightly Lambda and scripts/backfill-weather-daily.mjs), which is also what stops the
+-- ERA5 backfill from overwriting the live writer's numbers on every overlapping day. tmax_f/tmin_f
+-- rank on et0_source, which is the provenance of the payload they arrive in; a STATION temperature
+-- would need a temp_source column of its own before it could be protected, and nothing writes one.
+-- This file is NOT re-run by that change — the COMMENT ON statements below are the ones the live
+-- database holds, and they still read true, only narrower than the code now is.
 --
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- NO created_by COLUMN, DELIBERATELY. The V4-OWNERSHIP-001 transfer trigger fires on created_by
@@ -113,8 +125,15 @@ CREATE TABLE IF NOT EXISTS public.weather_daily (
 
   -- Domain pins. The writer is non-fatal by construction (a failed weather INSERT must never take
   -- down the nightly plan), so a CHECK violation drops ONE weather row and logs — it cannot fail a
-  -- run. That makes these cheap to hold and worth holding: an out-of-domain source string would
-  -- otherwise defeat the downgrade guard above by comparing unequal to 'gauge_merged' forever.
+  -- run. That makes these cheap to hold and worth holding: an out-of-domain source string ranks 0
+  -- against the guard above, which would let a model value quietly displace a gauge reading.
+  --
+  -- "drops ONE weather row" WAS FALSE WHEN WRITTEN and is true as of 2026-09-02
+  -- (BUG-WXWRITEOVERWRITE-001). The writer's try/catch wrapped the whole day loop, so a CHECK
+  -- violation on the first day it processed aborted every LATER day of that run, logging one line
+  -- that read exactly like a single failed write. The catch now sits around the single statement:
+  -- the bad row is skipped and counted, the remaining days still write, and only a missing relation
+  -- stops the loop (every remaining day would throw identically).
   CONSTRAINT weather_daily_precip_source_chk
     CHECK (precip_source IS NULL OR precip_source IN ('gauge_merged', 'openmeteo_live', 'openmeteo_archive')),
   CONSTRAINT weather_daily_et0_source_chk

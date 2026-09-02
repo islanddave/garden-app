@@ -73,6 +73,51 @@ const wdSelects = (pg) => wd(pg).filter((c) => /^\s*select/i.test(c.sql));
 const wdInserts = (pg) => wd(pg).filter((c) => /^\s*insert\s+into\s+weather_daily/i.test(c.sql));
 const planWrites = (pg) => pg.calls.filter((c) => /insert into daily_plan/.test(c.sql));
 
+// ── BUG-WXWRITEOVERWRITE-001 — reading the conflict policy back out of the emitted statement ──────
+// Strip SQL comments BEFORE collapsing whitespace: `--` runs to end of line, so the other order
+// swallows the rest of the statement.
+const normalizeSql = (sql) => sql.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+
+// The exact shape every guarded column must take. Anything that is not this — a bare COALESCE, a
+// reordered rank array, a guard reading one provenance column on the stored side and another on the
+// incoming side — either fails to match (and trips the anti-vacuity count below) or throws.
+const CONFLICT_ARM = new RegExp(
+  '(\\w+) = case when coalesce\\(array_position\\(array\\[([^\\]]*)\\], coalesce\\(weather_daily\\.(\\w+), \'\'\\)\\), 0\\)'
+  + ' > coalesce\\(array_position\\(array\\[([^\\]]*)\\], coalesce\\(excluded\\.(\\w+), \'\'\\)\\), 0\\)'
+  + ' then weather_daily\\.\\1'
+  + ' else coalesce\\(excluded\\.\\1, weather_daily\\.\\1\\) end', 'g');
+
+function parseConflictSet(sql) {
+  const set = normalizeSql(sql).split(/on conflict \(space_id, "date"\) do update set /i)[1];
+  if (!set) throw new Error('no ON CONFLICT (space_id, "date") DO UPDATE SET in the emitted statement');
+  const out = {};
+  for (const [, col, orderStored, storedSrc, orderIncoming, incomingSrc] of set.matchAll(CONFLICT_ARM)) {
+    if (storedSrc !== incomingSrc) throw new Error(`${col}: guard reads weather_daily.${storedSrc} but excluded.${incomingSrc}`);
+    if (orderStored !== orderIncoming) throw new Error(`${col}: the two rank arrays differ`);
+    out[col] = { guard: storedSrc, order: orderStored.split(',').map((s) => s.trim().replace(/^'|'$/g, '')) };
+  }
+  // ANTI-VACUITY. Every top-level assignment must be one this parser understood, plus updated_at. An
+  // arm the regex silently skipped is a column this test cannot see — which is precisely how one
+  // slips back to last-writer-wins with the suite still green.
+  const assigned = (set.match(/(?:^|, )(\w+) = /g) || []).map((s) => s.replace(/[,\s=]/g, ''));
+  const unparsed = assigned.filter((c) => c !== 'updated_at' && !(c in out));
+  if (unparsed.length) throw new Error(`unrecognised conflict arm(s), not rank-guarded: ${unparsed.join(', ')}`);
+  return out;
+}
+
+// Evaluate the parsed arms against a stored row and an incoming row. `array_position` is 1-based and
+// yields NULL when absent, which the SQL coalesces to 0 — indexOf + 1 is the same function.
+function applyConflictSet(sql, stored, incoming) {
+  const merged = { ...stored };
+  for (const [col, { guard, order }] of Object.entries(parseConflictSet(sql))) {
+    const rank = (v) => order.indexOf(v == null ? '' : v) + 1;
+    merged[col] = rank(stored[guard]) > rank(incoming[guard])
+      ? stored[col]
+      : (incoming[col] ?? stored[col]);
+  }
+  return merged;
+}
+
 const PLANTINGS = [{
   id: 'p1', name: 'Pepper p1', project_id: 'pj1', status: 'fruiting', container_type: 'pot',
   container_size: '5gal', rain_exposed: null, variety: 'pepper', genus: null, project: 'Garden',
@@ -218,21 +263,195 @@ describe('writeWeatherDaily — what reaches the database', () => {
     for (const n of [7, 8]) expect(sql).toMatch(new RegExp(`\\$${n}::text`));
   });
 
-  it('the emitted upsert refuses to downgrade a gauge reading to a model one', async () => {
+  it('the emitted upsert rank-guards EVERY measured column, not just precip_in', async () => {
     // Asserted on the SQL the driver actually received, not on the source file. The nightly run
     // rewrites D-2 as well as D-1, and by then the AmbientWeather buckets behind D-2's gauge figure
     // are gone — so without these arms every night would overwrite yesterday's measured rain with an
     // estimate, and precip_source would faithfully record the replacement while looking healthy.
+    // BUG-WXWRITEOVERWRITE-001: that protection covered precip_in ALONE. et0_in/tmax_f/tmin_f were
+    // `coalesce(excluded.x, weather_daily.x)`, which is last-writer-wins for every non-null value.
     const pg = recordingPg();
     await writeWeatherDaily(pg, SPACE, TODAY, hydrology(), {});
-    const sql = wdInserts(pg)[0].sql.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ');
-    expect(sql).toMatch(/on conflict \(space_id, "date"\) do update set/i);
-    expect(sql).toMatch(/precip_in = case when weather_daily\.precip_source = 'gauge_merged'/i);
-    expect(sql).toMatch(/precip_source = case when weather_daily\.precip_source = 'gauge_merged'/i);
-    // COALESCE on every field: a later pass carrying nulls must not erase what an earlier one set.
-    for (const col of ['et0_in', 'tmax_f', 'tmin_f', 'et0_source']) {
-      expect(sql).toMatch(new RegExp(`${col} = coalesce\\(excluded\\.${col}`, 'i'));
+    const sql = wdInserts(pg)[0].sql;
+    expect(normalizeSql(sql)).toMatch(/on conflict \(space_id, "date"\) do update set/i);
+    const policy = parseConflictSet(sql);
+    // ENUMERATED, not spot-checked. A column added to weather_daily and left off the SET list is
+    // silently last-writer-wins, which is the whole defect — so the assertion is on the exact set.
+    expect(Object.keys(policy).sort())
+      .toEqual(['et0_in', 'et0_source', 'precip_in', 'precip_source', 'tmax_f', 'tmin_f']);
+    // Each column is guarded by the provenance column that actually describes it. tmax_f/tmin_f have
+    // none of their own and ride on et0_source — the payload they arrive in. If that pairing ever
+    // changes, this is the line that has to change with it.
+    expect(policy.precip_in.guard).toBe('precip_source');
+    expect(policy.precip_source.guard).toBe('precip_source');
+    expect(policy.et0_in.guard).toBe('et0_source');
+    expect(policy.et0_source.guard).toBe('et0_source');
+    expect(policy.tmax_f.guard).toBe('et0_source');
+    expect(policy.tmin_f.guard).toBe('et0_source');
+    // And the ranking itself, in the emitted text: worst first, best last.
+    for (const col of Object.keys(policy)) {
+      expect(policy[col].order).toEqual(['openmeteo_archive', 'openmeteo_live', 'gauge_merged']);
     }
+    expect(normalizeSql(sql)).toContain('updated_at = now()');
+  });
+
+  // ── BUG-WXWRITEOVERWRITE-001, the behaviour half ────────────────────────────────────────────────
+  // WHAT THESE PROVE AND WHAT THEY DO NOT. There is no database in this suite (it is mock-sql), so
+  // nothing here can prove Postgres executes the statement as written. What applyConflictSet does is
+  // read the ON CONFLICT arms OUT OF THE EMITTED SQL — which column, which guard column, which rank
+  // order, which branch — and evaluate exactly those arms against a stored row and an incoming row.
+  // A statement that dropped a column, swapped a guard, reordered the rank array or replaced a CASE
+  // with a bare COALESCE fails to parse or evaluates differently, so the test is not a paraphrase of
+  // the policy: it is derived from the text the driver received. Real DB behaviour still needs the
+  // migration gates.
+  describe('the conflict policy, evaluated against the emitted SQL', () => {
+    const emitted = async () => {
+      const pg = recordingPg();
+      await writeWeatherDaily(pg, SPACE, TODAY, hydrology(), {});
+      return wdInserts(pg)[0].sql;
+    };
+
+    it('a gauge-sourced tmax_f SURVIVES a later model write — the 24-hour-lifetime defect', async () => {
+      const sql = await emitted();
+      // Stored: the on-site station's block. Incoming: tonight's Open-Meteo pass, which carries a
+      // different number for the same day. Before this fix tmax_f was `coalesce(excluded.tmax_f, ...)`
+      // and 84.2 replaced 79.9 every single night.
+      const merged = applyConflictSet(sql,
+        { tmax_f: 79.9, tmin_f: 51.4, et0_in: 0.171, et0_source: 'gauge_merged',
+          precip_in: 2.22, precip_source: 'gauge_merged' },
+        { tmax_f: 84.2, tmin_f: 55.0, et0_in: 0.201, et0_source: 'openmeteo_live',
+          precip_in: 4.63, precip_source: 'openmeteo_live' });
+      expect(merged.tmax_f).toBe(79.9);
+      expect(merged.tmin_f).toBe(51.4);
+      expect(merged.et0_in).toBe(0.171);
+      expect(merged.et0_source).toBe('gauge_merged');
+      // The pre-existing precip guard is unchanged by the generalisation — 2.22 is the real WS-2902
+      // reading Open-Meteo hindcast as 4.63 (BUG-RAINACTUAL-001).
+      expect(merged.precip_in).toBe(2.22);
+      expect(merged.precip_source).toBe('gauge_merged');
+    });
+
+    it('the ERA5 backfill can no longer overwrite a live value in ANY column', async () => {
+      const sql = await emitted();
+      const merged = applyConflictSet(sql,
+        { tmax_f: 84.2, tmin_f: 55.0, et0_in: 0.201, et0_source: 'openmeteo_live',
+          precip_in: 0.31, precip_source: 'openmeteo_live' },
+        { tmax_f: 92.4, tmin_f: 55.0, et0_in: 0.18, et0_source: 'openmeteo_archive',
+          precip_in: 0.9, precip_source: 'openmeteo_archive' });
+      expect(merged.tmax_f).toBe(84.2);   // ERA5-Land reads warm on this site; it is a gap-filler
+      expect(merged.et0_in).toBe(0.201);
+      expect(merged.precip_in).toBe(0.31);
+    });
+
+    it('an equal or better source still WINS — the guard is not a freeze', async () => {
+      const sql = await emitted();
+      // Same rank both sides (the ordinary nightly re-write of D-2): the new number lands.
+      const sameRank = applyConflictSet(sql,
+        { tmax_f: 84.2, et0_in: 0.201, et0_source: 'openmeteo_live', precip_in: 0.31, precip_source: 'openmeteo_live' },
+        { tmax_f: 85.1, et0_in: 0.205, et0_source: 'openmeteo_live', precip_in: 0.34, precip_source: 'openmeteo_live' });
+      expect(sameRank.tmax_f).toBe(85.1);
+      expect(sameRank.precip_in).toBe(0.34);
+      // Better source over a worse one (the gauge merge arriving on top of an archive row): lands.
+      const better = applyConflictSet(sql,
+        { tmax_f: 92.4, et0_in: 0.18, et0_source: 'openmeteo_archive', precip_in: 0.9, precip_source: 'openmeteo_archive' },
+        { tmax_f: 84.2, et0_in: 0.201, et0_source: 'openmeteo_live', precip_in: 2.22, precip_source: 'gauge_merged' });
+      expect(better.tmax_f).toBe(84.2);
+      expect(better.precip_source).toBe('gauge_merged');
+      // Nothing stored yet in a field: the incoming value lands whatever it is labelled.
+      const fresh = applyConflictSet(sql,
+        { tmax_f: null, et0_in: null, et0_source: null, precip_in: null, precip_source: null },
+        { tmax_f: 92.4, et0_in: 0.18, et0_source: 'openmeteo_archive', precip_in: 0.9, precip_source: 'openmeteo_archive' });
+      expect(fresh.tmax_f).toBe(92.4);
+      expect(fresh.precip_in).toBe(0.9);
+    });
+
+    it('a pass carrying NULL never erases what an earlier pass established', async () => {
+      const sql = await emitted();
+      // The COALESCE half, kept from the original policy. Same rank on both sides so the guard arm
+      // is NOT what is being measured here.
+      const merged = applyConflictSet(sql,
+        { tmax_f: 84.2, tmin_f: 55.0, et0_in: 0.201, et0_source: 'openmeteo_live', precip_in: 0.31, precip_source: 'openmeteo_live' },
+        { tmax_f: null, tmin_f: null, et0_in: null, et0_source: 'openmeteo_live', precip_in: null, precip_source: 'openmeteo_live' });
+      expect(merged.tmax_f).toBe(84.2);
+      expect(merged.tmin_f).toBe(55.0);
+      expect(merged.et0_in).toBe(0.201);
+      expect(merged.precip_in).toBe(0.31);
+    });
+
+    it('an out-of-domain source string cannot outrank a real one (the CHECK-constraint backstop)', async () => {
+      const sql = await emitted();
+      const merged = applyConflictSet(sql,
+        { precip_in: 2.22, precip_source: 'gauge_merged', tmax_f: 79.9, et0_source: 'gauge_merged' },
+        { precip_in: 4.63, precip_source: 'wunderground', tmax_f: 84.2, et0_source: 'wunderground' });
+      // Unrecognised ranks 0, so it loses to everything — including, deliberately, the case the old
+      // `<> 'gauge_merged'` test could not distinguish from a legitimate source.
+      expect(merged.precip_in).toBe(2.22);
+      expect(merged.tmax_f).toBe(79.9);
+    });
+  });
+
+  // ── BUG-WXWRITEOVERWRITE-001, the loop boundary ─────────────────────────────────────────────────
+  describe('one bad row does not take the rest of the run with it', () => {
+    // Three completed days, the MIDDLE one poisoned. Before the fix the try sat outside the loop, so
+    // 08-10 wrote, 08-09 threw, and 08-08 was never attempted — one warning, no count, and the run
+    // looked like a single failed write rather than a two-thirds capture loss.
+    const THREE = [
+      { date: '2026-08-08', et0_in: 0.181, tmax_f: 80.1, tmin_f: 57.2, precip_in: 0 },
+      { date: '2026-08-09', et0_in: -1, tmax_f: 81.0, tmin_f: 57.9, precip_in: 0 },
+      { date: '2026-08-10', et0_in: 0.186, tmax_f: 82.3, tmin_f: 58.0, precip_in: 0 },
+    ];
+    const poisonedPg = () => {
+      const pg = recordingPg();
+      const inner = pg.query;
+      pg.query = vi.fn(async (sql, params) => {
+        // A real CHECK violation, not a transport error: weather_daily_et0_nonneg_chk fires on the
+        // negative ET0 a unit or array-index bug upstream would produce. Recorded on pg.calls BEFORE
+        // it throws — a statement the database rejected is still a statement that was ATTEMPTED, and
+        // "was 08-10 attempted after 08-09 threw" is the entire question this block asks.
+        if (/insert into weather_daily/i.test(sql) && params[2] < 0) {
+          pg.calls.push({ sql, params });
+          const e = new Error('new row for relation "weather_daily" violates check constraint "weather_daily_et0_nonneg_chk"');
+          e.code = '23514';
+          throw e;
+        }
+        return inner(sql, params);
+      });
+      return pg;
+    };
+
+    it('skips the bad day, writes the good ones, and reports the count', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const pg = poisonedPg();
+      expect(await writeWeatherDaily(pg, SPACE, TODAY, hydrology({ settled_days: THREE }), {})).toBe(2);
+      // ALL THREE reached the driver — the point is that 08-10 was still ATTEMPTED after 08-09 threw.
+      expect(wdInserts(pg).map((c) => c.params[1])).toEqual(['2026-08-08', '2026-08-09', '2026-08-10']);
+      const skips = warn.mock.calls.map((c) => JSON.parse(c[0])).filter((l) => l.msg === 'weather_daily row skipped — plan unaffected');
+      expect(skips).toHaveLength(1);
+      expect(skips[0].date).toBe('2026-08-09');
+      expect(skips[0].error).toMatch(/weather_daily_et0_nonneg_chk/);
+    });
+
+    it('counts the skip on the observability line — a partial run used to log nothing at all', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await writeWeatherDaily(poisonedPg(), SPACE, TODAY, hydrology({ settled_days: THREE }), {});
+      const line = log.mock.calls.map((c) => JSON.parse(c[0])).find((l) => l.msg === 'weather-daily-write');
+      expect(line).toBeTruthy();
+      expect(line.rows).toBe(2);
+      expect(line.skipped).toBe(1);
+    });
+
+    it('a MISSING RELATION still stops the loop after one warning, not N identical ones', async () => {
+      // The seededgate posture is deliberately kept: every remaining day would throw identically, and
+      // N copies of the same line is how a genuine per-row defect gets lost in the noise later. It
+      // keeps the ORIGINAL wording too — this is not a bad row, the whole write failed.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const pg = recordingPg({ throwOnWeatherDaily: true });
+      expect(await writeWeatherDaily(pg, SPACE, TODAY, hydrology({ settled_days: THREE }), {})).toBe(0);
+      expect(wdInserts(pg)).toHaveLength(1);
+      const msgs = warn.mock.calls.map((c) => JSON.parse(c[0])).map((l) => l.msg);
+      expect(msgs).toEqual(['weather_daily write failed — plan unaffected']);
+    });
   });
 });
 
