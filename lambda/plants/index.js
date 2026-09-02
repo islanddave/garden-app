@@ -163,6 +163,10 @@ export const handler = async (event) => {
   // changes shape. PATCH-only, symmetric set/clear like /archive. The row it writes lives in
   // care_profile, NOT on the planting; see overwinterAttr.js for why it is not a PUT column.
   const overwinterMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/overwinter$/);
+  // V4-SEEDREVERSE-001: the reverse of inventory_items.source_plant_id — "which seed lots came from
+  // this plant?". New-endpoint-only and additive; idMatch's /([^/]+)$/ does not match the /seed-lots
+  // suffix, so no existing route changes shape. GET-only, read-only.
+  const seedLotsMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/seed-lots$/);
 
   try {
     // ── V4-RESTORESURFACE-001 — the recovery path for plantings (audit I9) ───────────────────────
@@ -448,6 +452,55 @@ export const handler = async (event) => {
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
       return resp(200, rows[0]);
+    }
+
+    // ── V4-SEEDREVERSE-001 — "did I already save seed from this one?" ────────────────────────────
+    //
+    // inventory_items.source_plant_id has been written since V4-SEEDLINK-001 and read by nothing:
+    // the packet knows its parent planting, the planting knew nothing about its packets. The index
+    // for this direction was built with the column and says so —
+    // migrations/v4-seedlink-001/0a-additive-ddl.sql:48, "It is also the index for 'which lots came
+    // from this plant?'" — and had no query behind it until now. A Save-seed control on planting
+    // detail makes this the immediately-obvious next question.
+    //
+    // OWNERSHIP IS THE IMPORTED CANONICAL PREDICATE, NOT A RESTATEMENT. loadOwnedPlantingRef is the
+    // by-id ownership form for this Lambda (authz-parents.js:117-146) — container-owned arm, plus
+    // the own-created_by arm with its load-bearing `project_id IS NULL` conjunct. Calling it rather
+    // than inlining a sixth copy also keeps this branch out of every statement-count contract in
+    // this directory: it adds no new SQL against plants/plant_projects, and its UUID guard means a
+    // malformed id answers 404 here instead of falling through to a 22P02 500.
+    //
+    // NO archived_at FILTER, deliberately, and it is the same call PATCH /source-plant made
+    // (lambda/inventory-items/index.js): an ARCHIVED planting is a MORE likely seed parent than a
+    // live one — you save seed at the end of a plant's life and then retire it. A liveness filter
+    // here would answer "no seed saved" for exactly the plantings most likely to have some.
+    //
+    // NO `category = 'seeds'` FILTER either, and that is not an oversight. source_plant_id is
+    // itself the seed-provenance column and is only settable on a seeds row (the /source-plant
+    // UPDATE carries `AND category = 'seeds'`), so the category test adds no precision — while
+    // category IS editable afterwards through the wide PUT, so filtering on it could silently drop
+    // a lot the user really did link. This surface's wrong answer must never be "nothing".
+    if (seedLotsMatch) {
+      const plantId = seedLotsMatch[1];
+      if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
+      const parent = await loadOwnedPlantingRef(sql, plantId, householdIds);
+      if (!parent) return resp(404, { error: 'Not found' });
+      // cultivar (the VIEW over plant_varieties, which renames name -> display_name) is how the
+      // lots list already resolves a packet's variety label, so the two reads cannot disagree
+      // about what "variety_name" means. LEFT JOIN: a seeds row must have a variety_id under
+      // chk_inventory_seed_requires_variety, but the join must not be what decides whether a lot
+      // is visible.
+      const rows = await sql`
+        SELECT i.id, i.name, i.seed_stage, i.quantity_on_hand, i.created_at,
+               pv.display_name AS variety_name
+          FROM public.inventory_items i
+          LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
+         WHERE i.source_plant_id = ${plantId}
+           AND i.created_by = ANY(${householdIds})
+           AND i.deleted_at IS NULL
+         ORDER BY i.created_at DESC, i.id DESC
+      `;
+      return resp(200, { plant_id: plantId, seed_lots: rows });
     }
 
     if (idMatch) {

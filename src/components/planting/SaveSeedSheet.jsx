@@ -35,6 +35,49 @@
 // /seed-stage writes the column and the log row in one statement, so the lot lands on that page
 // with a real clock on it. It also carries its own failure: the lot exists either way, and
 // reporting a landed create as failed because an optional stage did not land is the worse error.
+//
+// V4-SEEDEVENT-001 — AND A THIRD REQUEST: the act itself, on the planting's timeline. Saving seed
+// is a two-week ferment→dry→store commitment that paid back nothing — `seed_saved` has been a fully
+// declared event type since forever (src/lib/eventTypes.js:71/143/527, mirrored in
+// lambda/events/eventTypes.generated.js) and prod has ZERO of them, because nothing ever wrote one.
+// The lot alone is invisible from the plant it came off: /inventory/:id shows "Saved from", but the
+// planting's own Event log (src/pages/PlantingDetail.jsx §Event log — it renders event_type, date
+// and `notes` per row) shows nothing at all. The event is what closes that loop, and it is also the
+// only half of this that pays: seed_saved is NOT in NON_REWARD_EVENT_TYPES, so the write grants xp
+// and feeds the streak the same as a watering.
+//
+// THE PATH IS THE APP'S OWN, deliberately and with no shortcut. POST /api/events through the same
+// useApiFetch().fetch every other client writer uses — src/pages/EventNew.jsx:1769 and the two
+// one-tap loggers, QuickActions.handleWater/handleSprout. That Lambda's POST arm does a household
+// ownership gate on plant_id, derives the event's project from the PLANTING rather than the body
+// (deriveEventProjectId), stamps `source`, and upserts entity_memory in the same transaction. A
+// hand-rolled insert gets none of it.
+//
+// WHAT IS SENT, AND WHY THAT IS THE WHOLE LIST (checked against validatePostBody + the INSERT):
+//   plant_id      — the only anchor needed. validatePostBody wants `project_id OR plant_id`, and
+//                   seed_saved is in PLANTING_REQUIRED_TYPES, so this is the required one.
+//   project_id    — NOT SENT. With a plant_id present deriveEventProjectId ignores the body's value
+//                   entirely and writes the planting's own project, so sending one buys a second
+//                   ownership round trip and a new 400 branch in exchange for nothing.
+//   event_date    — todayLocalISO(), for BUG-GERMDATEBATCH-001's reason: omitting it falls through
+//                   to the Lambda's `new Date()`, which is UTC, so an evening save in Conway files
+//                   on tomorrow. normalizeEventDate anchors a bare YYYY-MM-DD at noon UTC.
+//   notes         — see seedSavedNote. Every clause is true at the instant it is written.
+//   quantity/unit — NEITHER IS SENT, and neither is required: event_log.quantity is nullable free
+//                   text (absent and null are the same value to the INSERT) and there is no unit
+//                   column on event_log at all — units live on harvest_log, behind event_type
+//                   'harvest'. Sending a count here would be the same fabrication the create
+//                   refuses at quantity_on_hand.
+//   metadata      — NOT SENT. A `seed_lot_id` key would be true and would be the only durable link
+//                   from event to lot (event_log has no inventory FK), but EventDetail renders any
+//                   unlabelled metadata key verbatim as monospace `key  value`, so it would ship a
+//                   raw uuid into the user-visible Details block. Withheld rather than guessed at.
+//
+// IT CANNOT FAIL THE SAVE. Same reasoning as the stage above, one step further: the user asked for
+// a lot, not for a timeline row, and the stage at least was something they explicitly chose here
+// ("Start tracking it?"), which is why ITS failure changes the toast. This one they never asked
+// for and could not act on, so its failure is swallowed and the flow finishes exactly as it would
+// have — lot created, toast shown, routed to /inventory/:id.
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sheet } from '../forms'
@@ -75,6 +118,28 @@ export function defaultLotName(planting, today = todayLocalISO()) {
   const base = planting?.variety_ref?.name || planting?.name || ''
   const year = String(today).slice(0, 4)
   return base ? `${base} — saved ${year}` : `Saved seed ${year}`
+}
+
+/**
+ * V4-SEEDEVENT-001 — the seed_saved note. Pure, exported for test.
+ *
+ * The Event log row already renders the type ("seed saved") and the date, so the note's whole job
+ * is the part the row cannot know: WHICH lot came off this plant, and why it carries no number.
+ *
+ * Every clause is checkable at the moment it is written, which is the constraint that shapes it:
+ *   • the lot NAME is what the create was called with, one statement earlier.
+ *   • `stage` is passed ONLY after POST /seed-stage has resolved — never from the user's radio
+ *     choice. The stage request has its own independent failure (see save()), and a note claiming
+ *     "fermenting" for a stage write that 500'd is a permanent false sentence on the timeline.
+ *     No process chosen, or the stage write failed, and the clause is simply absent — never
+ *     "unknown", which would assert something about a question that was not asked.
+ *   • "No count yet" is the literal state: quantity_on_hand is 0-because-unmeasured, and the count
+ *     is asked on the move into `stored` (V4-SEEDSTOREDQTY-001). It is the same sentence the sheet
+ *     puts on screen at save-seed-count-note, so the timeline does not contradict the form.
+ */
+export function seedSavedNote(lotName, stage = null) {
+  return `Seed lot "${String(lotName).trim()}"${stage ? `, ${stage}` : ''}.`
+    + " No count yet — recorded when it's marked stored."
 }
 
 /** The planting's own cultivar, in the shape VarietyPicker's `value` wants. Null when it has none. */
@@ -144,6 +209,9 @@ export default function SaveSeedSheet({ planting, onClose }) {
         }),
       })
       let stageFailed = false
+      // Set only AFTER the stage POST resolves, which is what makes it safe to put in the event's
+      // note: it records the stage that LANDED, not the one that was asked for.
+      let stageWritten = null
       if (seedProcess && lot?.id) {
         try {
           await fetch(`/api/inventory-items/${lot.id}/seed-stage`, {
@@ -153,9 +221,29 @@ export default function SaveSeedSheet({ planting, onClose }) {
             // guard against here — unlike the backdated advance on /seeds/saved.
             body: JSON.stringify({ stage: PROCESS_ENTRY[seedProcess].stage, seed_process: seedProcess }),
           })
+          stageWritten = PROCESS_ENTRY[seedProcess].stage
         } catch {
           stageFailed = true
         }
+      }
+      // V4-SEEDEVENT-001 — the trace, on the app's own event path. Full rationale for the payload
+      // and for the swallowed failure is in the header note. Reached only from here, after a create
+      // that RESOLVED, so it fires exactly once per lot and not at all for a create that threw or a
+      // sheet the user closed without saving.
+      try {
+        await fetch('/api/events', {
+          method: 'POST',
+          body: JSON.stringify({
+            plant_id: planting.id,
+            event_type: 'seed_saved',
+            event_date: todayLocalISO(),
+            notes: seedSavedNote(name.trim(), stageWritten),
+          }),
+        })
+      } catch {
+        // Deliberately nothing. The lot is what the user asked for and it exists; a message about a
+        // timeline row they never requested is noise they cannot act on, and re-raising here would
+        // report a landed create as a failed save.
       }
       toast.show(stageFailed
         ? { message: "Seed lot saved — couldn't start tracking it", tone: 'error' }

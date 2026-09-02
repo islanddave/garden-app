@@ -65,6 +65,7 @@ import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 import PhotoView from '../components/photo/PhotoView.jsx'
 import { TIER } from '../lib/photoModel.js'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
+import SeedLotsFromPlanting, { useSeedLotsFromPlanting, seedLotsWorthRendering } from '../components/planting/SeedLotsFromPlanting.jsx'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { plantingIsHarvestTracked } from '../lib/harvestTracked.js'
 import { formatBotanical } from '../lib/keyFact.js'
@@ -426,6 +427,12 @@ export default function PlantingDetail() {
     ),
     [harvests],
   )
+
+  // V4-SEEDREVERSE-001 — "did I already save seed from this one?". The hook lives up here with the
+  // other page-level reads because the SECTION HEADING depends on its answer: the section is not
+  // rendered at all on a planting with no saved seed, so the heading and the card chrome cannot be
+  // wrapped around a child that decides for itself. Self-fetching; does not widen /api/plants/:id.
+  const seedLots = useSeedLotsFromPlanting(plantingId, fetch)
 
   // Planting photos (V1 display-only). V4-PHOTOGALLERY-001: the gallery shows every photo ATTACHED to
   // this planting — directly via plant_id, OR through one of its events — no matter which container the
@@ -1081,6 +1088,24 @@ export default function PlantingDetail() {
       <SectionHeader>Put up</SectionHeader>
       <div style={cardStyle}>
         <PutUpFromPlanting planting={pl} fetch={fetch} />
+      </div>
+      </>)}
+
+      {/* ── Seed saved (V4-SEEDREVERSE-001) — the reverse of inventory_items.source_plant_id: the
+          lots this planting produced, each linking to its packet. UNLIKE Harvested and Put up this
+          section is CONDITIONAL, and deliberately so: those two earn an empty state because they
+          carry an affordance ("log a put-up from this planting"), and the save-seed control already
+          lives in Quick actions above — so an empty block here would be a heading over nothing on
+          every one of the plantings that has never had seed saved from it, which is nearly all of
+          them. NOT gated on plantingIsHarvestTracked: seed is saved from ornamentals and flowers
+          too, and the gate here is simply whether any lot exists.
+          The `failed` arm renders the section ON PURPOSE. A request that did not complete must not
+          be presented as "no seed saved" — that is a different claim, and it is the one that would
+          stop someone looking for a lot they actually have. ── */}
+      {seedLotsWorthRendering(seedLots) && (<>
+      <SectionHeader>Seed saved from this plant</SectionHeader>
+      <div style={cardStyle}>
+        <SeedLotsFromPlanting lots={seedLots.lots} failed={seedLots.failed} />
       </div>
       </>)}
 
