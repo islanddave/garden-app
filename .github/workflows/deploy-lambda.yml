@@ -635,7 +635,7 @@ jobs:
             echo "timeout=120 set on $FN"
           fi
 
-      - name: Set daily-plan DRY_RUN + OWNER_FALLBACK_SUB env on first deploy
+      - name: Set daily-plan DRY_RUN + OWNER_FALLBACK_SUB + RAIN_AUTOLOG_ENABLED env
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent
         run: |
@@ -657,6 +657,15 @@ jobs:
             echo "DRY_RUN=$CURRENT preserved; ensuring OWNER_FALLBACK_SUB present."
             UPDATED=$(echo "$EXISTING" | jq --arg o "$OWNER" 'if has("OWNER_FALLBACK_SUB") then . else . + {OWNER_FALLBACK_SUB:$o} end')
           fi
+          # BUG-RAINAUTOLOGCLIFF-001 — RAIN_AUTOLOG_ENABLED must exist as a VALUE, never be inferred
+          # from an absence. rainLog.js arms on anything that is not the exact string 'false', so the
+          # key being missing has meant ARMED all along; writing "true" states what prod already does
+          # and changes no behaviour. ADD-IF-MISSING, never overwrite: a deliberate live 'false' is
+          # the incident kill switch, and a deploy that silently re-arms it is not a kill switch.
+          # scripts/lambda-config-expected.json declares the key "true", and that assertion runs in
+          # verify-daily-plan AFTER this step, so a failure here (this step is continue-on-error)
+          # surfaces as a red config check rather than as silence.
+          UPDATED=$(echo "$UPDATED" | jq 'if has("RAIN_AUTOLOG_ENABLED") then . else . + {RAIN_AUTOLOG_ENABLED:"true"} end')
           echo "{\"Variables\": $UPDATED}" > /tmp/env-daily-plan.json
           aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-daily-plan.json >/dev/null
           aws lambda wait function-updated --function-name "$FN"

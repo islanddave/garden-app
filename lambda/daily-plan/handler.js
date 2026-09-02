@@ -771,9 +771,16 @@ const COVER_INHERIT_ARM = `
 // telemetry are NOT fired, because auto-logged rain is not a logging action Dave performed.
 async function logRainEvents(pg, { today, dryRun, event, etHour }) {
   const t0 = Date.now();
-  const say = (o) => console.log(JSON.stringify({ msg: 'rain-log', today, ...o, ms: Date.now() - t0 }));
+  // BUG-RAINAUTOLOGCLIFF-001: `flag` names WHERE the arming decision came from, and it rides EVERY
+  // exit path including the catch — so "the rain logger is on" and "the rain logger is on because
+  // nobody ever set the key" are separable from outside. Absence-arming was invisible for months
+  // precisely because no line anywhere said which of the two was true. Declared before the try so a
+  // throw before resolveRainRun still reports honestly rather than claiming a state it never read.
+  let flag = 'unresolved';
+  const say = (o) => console.log(JSON.stringify({ msg: 'rain-log', today, flag, ...o, ms: Date.now() - t0 }));
   try {
     const decisionRun = resolveRainRun(event, { etHour });
+    flag = decisionRun.flag;
     if (!decisionRun.log) return say({ logged: 0, skipped: decisionRun.reason, slot: decisionRun.slot });
 
     const day = previousDay(today);
@@ -884,7 +891,7 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     return say({ day, logged: inserted, cache_rows: cached, amount_in: d.amountIn, slot: decisionRun.slot });
   } catch (e) {
     // Fail-open: log and return. The plan is already written and must not be lost to this.
-    console.error(JSON.stringify({ msg: 'rain-log ERROR', today, error: e?.message ?? String(e) }));
+    console.error(JSON.stringify({ msg: 'rain-log ERROR', today, flag, error: e?.message ?? String(e) }));
     return null;
   }
 }

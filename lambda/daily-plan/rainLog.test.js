@@ -10,7 +10,7 @@
 // createRequire while vitest itself must be imported — mixing the two is what this preamble is for.
 import { describe, it, expect, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
-const { resolveRainRun, rainDecision, previousDay, rainMetadata, GAUGE_SOURCE } =
+const { resolveRainRun, rainAutologState, rainDecision, previousDay, rainMetadata, GAUGE_SOURCE } =
   createRequire(import.meta.url)('./rainLog.js');
 
 const gauge = (precip_in) => ({ precip_in, precip_source: GAUGE_SOURCE });
@@ -77,6 +77,67 @@ describe('resolveRainRun — which of the three daily runs may log', () => {
     it('outranks the event override — a forced run cannot bypass a deliberate disable', () => {
       process.env.RAIN_AUTOLOG_ENABLED = 'false';
       expect(resolveRainRun({ rainLog: true }, { etHour: 2 }).log).toBe(false);
+    });
+
+    // ── BUG-RAINAUTOLOGCLIFF-001 — the arming state must be readable from the VALUE ──────────────
+    // The four tests above pin BEHAVIOUR and none of them changed. These pin the thing that was
+    // actually broken: for months the live answer was "armed", the live config was "key absent",
+    // and nothing connected the two — so every investigation of this writer went to the wrong flag.
+    // A test that only asserts `.log` cannot tell an explicit decision from an unset variable, which
+    // is exactly how the gap survived a green suite.
+    describe('the arming state is reported, not inferred', () => {
+      it("'true' arms and says it was an explicit decision", () => {
+        process.env.RAIN_AUTOLOG_ENABLED = 'true';
+        expect(rainAutologState()).toEqual({ enabled: true, config: 'explicit_on' });
+        expect(resolveRainRun({}, { etHour: 2 })).toMatchObject({ log: true, flag: 'explicit_on' });
+      });
+
+      it("'false' disarms and says it was an explicit decision", () => {
+        process.env.RAIN_AUTOLOG_ENABLED = 'false';
+        expect(rainAutologState()).toEqual({ enabled: false, config: 'explicit_off' });
+        expect(resolveRainRun({}, { etHour: 2 })).toMatchObject({ log: false, reason: 'flag_off', flag: 'explicit_off' });
+      });
+
+      it('THE MISSING-KEY CASE: still arms — and is NOT reported as a decision', () => {
+        // Fail direction is OPEN, deliberately and at zero behaviour cost: the key is absent on the
+        // live Lambda today and this writer authors the latest water event for 217 of 239 live
+        // plantings, so failing closed here would silently stop ~217 rows/day the moment it shipped.
+        // What changes is that the absence now has a NAME.
+        delete process.env.RAIN_AUTOLOG_ENABLED;
+        expect(rainAutologState()).toEqual({ enabled: true, config: 'default_key_absent' });
+        expect(resolveRainRun({}, { etHour: 2 })).toMatchObject({ log: true, flag: 'default_key_absent' });
+      });
+
+      it('an unset key and an explicit ON are NOT the same report — the whole point', () => {
+        // Non-vacuity: if these two collapsed to one token the distinction would be decorative and
+        // recon would be no better off than it was with `!== 'false'`.
+        delete process.env.RAIN_AUTOLOG_ENABLED;
+        const absent = rainAutologState();
+        process.env.RAIN_AUTOLOG_ENABLED = 'true';
+        const explicit = rainAutologState();
+        expect(absent.enabled).toBe(explicit.enabled);
+        expect(absent.config).not.toBe(explicit.config);
+      });
+
+      it('a typo is armed AND flagged as unrecognised, never folded into the on-branch', () => {
+        for (const v of ['0', 'no', '', 'FALSE', 'off', 'ture']) {
+          process.env.RAIN_AUTOLOG_ENABLED = v;
+          expect(rainAutologState(), `value ${JSON.stringify(v)}`)
+            .toEqual({ enabled: true, config: 'default_unrecognised' });
+        }
+      });
+
+      it('every resolveRainRun exit carries the flag, not just the disabled one', () => {
+        // "the logger ran" and "the logger ran because nobody set the key" have to be separable from
+        // the outside, which means the tag must ride the paths that SUCCEED too, not only the veto.
+        delete process.env.RAIN_AUTOLOG_ENABLED;
+        for (const [event, opts] of [[{}, { etHour: 2 }], [{}, { etHour: 15 }], [{}, {}],
+          [{ rainLog: true }, { etHour: 15 }], [{ rainLog: false }, { etHour: 2 }]]) {
+          expect(resolveRainRun(event, opts).flag).toBe('default_key_absent');
+        }
+        process.env.RAIN_AUTOLOG_ENABLED = 'false';
+        expect(resolveRainRun({}, { etHour: 2 }).flag).toBe('explicit_off');
+      });
     });
   });
 });
