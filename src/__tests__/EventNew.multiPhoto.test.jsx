@@ -243,14 +243,24 @@ describe('EventNew multi-photo — flag ON', () => {
     expect(screen.queryAllByTestId('eventnew-photo-item')).toHaveLength(0)
   })
 
-  it('B8: removing one staged photo revokes exactly that URL', async () => {
+  // B8 AMENDED by BUG-PHOTOREMOVETRAP-001: this used to assert that removing revoked that URL in the
+  // same tick. That immediacy was the defect — a revoked blob cannot be re-created, so a mis-tap on
+  // the 22px control was unrecoverable in principle. The criterion B8 actually protects is "N
+  // revoked, not one," and it is unchanged; only the MOMENT moved, to the commit points. The
+  // deferral itself and all four commit points live in EventNew.photoRemoveTrap.test.jsx.
+  it('B8: removing one staged photo drops the tile and DEFERS its revoke to the commit', async () => {
     await renderForm('event_type=harvest&project=proj-1')
     await pickPhotos(['a.jpg', 'b.jpg', 'c.jpg'])
     expect(createdUrls).toHaveLength(3)
 
     await act(async () => { fireEvent.click(screen.getByLabelText('Remove photo 2')) })
     expect(screen.getAllByTestId('eventnew-photo-item')).toHaveLength(2)
-    expect(revokedUrls).toEqual([createdUrls[1]])
+    expect(revokedUrls).toEqual([])
+
+    // The reset is a commit point, so B8's real criterion still holds end to end: three in, three
+    // out — the two still staged plus the one parked for undo.
+    await save()
+    await waitFor(() => expect(new Set(revokedUrls)).toEqual(new Set(createdUrls)))
   })
 
   it('B8: the post-save reset revokes ALL N object URLs, not one', async () => {

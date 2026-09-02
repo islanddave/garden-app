@@ -836,6 +836,16 @@ export default function EventNew() {
   // opposite of what X1's byte-identical requirement is for: flag-off must be the SAME code carrying
   // exactly one item.
   const [photoItems, setPhotoItems] = useState([])
+  // BUG-PHOTOREMOVETRAP-001 — removal is DEFERRED, not destructive. The shipped remove revoked the
+  // object URL in the same tick, which put the blob beyond recovery IN PRINCIPLE: nothing in the app
+  // could re-create it, so one mis-tap on a 22px control (six of them across a strip) cost a trip
+  // back to the gallery. The removed item parks here — ONE slot, with the index it came from — and
+  // its URL is released only when the removal is COMMITTED: a newer removal, a fresh pick, the
+  // post-save reset, or unmount. `removedPhotoRef` mirrors it because the unmount cleanup below
+  // closes over the mount-time value; without the ref, deferring the revoke would trade a data-loss
+  // bug for a leak.
+  const [removedPhoto, setRemovedPhoto] = useState(null)
+  const removedPhotoRef = useRef(null)
   const [projects,     setProjects]     = useState([])
   const [locations,    setLocations]    = useState([])
   const [saving,       setSaving]       = useState(false)
@@ -1470,6 +1480,10 @@ export default function EventNew() {
     }
     if (!ok.length) return
 
+    // A fresh pick commits any parked removal (BUG-PHOTOREMOVETRAP-001): the user has moved on, and
+    // it is also what keeps undo from ever restoring past MAX_EVENT_PHOTOS — with the slot emptied
+    // here, an undoable removal can only exist against a list that is one item short of the cap.
+    commitRemovedPhoto()
     setPhotoItems(prev => {
       const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - prev.length) : 1
       const accepted = ok.slice(0, room)
@@ -1482,11 +1496,53 @@ export default function EventNew() {
     })
   }
 
+  // Releases whatever is parked in the undo slot. Called at every commit point, and it is the ONLY
+  // place the deferred URL dies — so "is the undo window over?" and "is the blob gone?" cannot
+  // disagree. Safe to call with an empty slot.
+  function commitRemovedPhoto() {
+    const parked = removedPhotoRef.current
+    if (parked) URL.revokeObjectURL(parked.item.url)
+    removedPhotoRef.current = null
+    setRemovedPhoto(null)
+  }
+
+  // Unmount is a commit point: leaving the form ends the undo window, so the parked blob is
+  // released rather than outliving the page. Cleanup-only effect, empty deps — the ref is read at
+  // teardown, so it sees the last parked value and not the mount-time null.
+  useEffect(() => () => {
+    const parked = removedPhotoRef.current
+    if (parked) URL.revokeObjectURL(parked.item.url)
+    removedPhotoRef.current = null
+  }, [])
+
+  // The index comes from the render closure rather than the updater's `prev` so that NOTHING with a
+  // side effect runs inside setPhotoItems — StrictMode double-invokes updaters, and a park-then-
+  // revoke-the-previous done in there would revoke the item it had just parked on the second pass.
   function removePhotoItem(id) {
+    const index = photoItems.findIndex(p => p.id === id)
+    if (index < 0) return
+    // One slot: parking a new removal commits the older one, which is exactly when it stops being
+    // undoable. No revoke here for the item being parked — that is the whole fix.
+    const prevParked = removedPhotoRef.current
+    if (prevParked) URL.revokeObjectURL(prevParked.item.url)
+    const entry = { item: photoItems[index], index }
+    removedPhotoRef.current = entry
+    setRemovedPhoto(entry)
+    setPhotoItems(prev => prev.filter(p => p.id !== id))
+  }
+
+  // Re-inserts at the original index, so undo restores the strip's order and not just its contents.
+  // Never revokes: the URL it is handing back is the one removal deliberately did not release.
+  function undoRemovePhoto() {
+    const parked = removedPhotoRef.current
+    if (!parked) return
+    removedPhotoRef.current = null
+    setRemovedPhoto(null)
     setPhotoItems(prev => {
-      const hit = prev.find(p => p.id === id)
-      if (hit) URL.revokeObjectURL(hit.url)
-      return prev.filter(p => p.id !== id)
+      if (prev.some(p => p.id === parked.item.id)) return prev
+      const next = prev.slice()
+      next.splice(Math.min(parked.index, next.length), 0, parked.item)
+      return next
     })
   }
 
@@ -1504,6 +1560,7 @@ export default function EventNew() {
   // call made from resetForNext (which runs in the same tick as other setState) can never revoke a
   // stale list and leak the current one.
   function clearPhoto() {
+    commitRemovedPhoto()
     setPhotoItems(prev => {
       for (const it of prev) URL.revokeObjectURL(it.url)
       return prev.length ? [] : prev
@@ -2189,9 +2246,12 @@ export default function EventNew() {
                           : { width: 96, height: 96, objectFit: 'cover', borderRadius: 8,
                               display: 'block', border: `1px solid ${P.border}` }}
                       />
+                      {/* BUG-PHOTOREMOVETRAP-001: the solo case goes through removePhotoItem too,
+                          so ONE photo is as recoverable as one of six. clearPhoto stays the reset
+                          path — it is the commit, not the remove. */}
                       <button
                         type="button"
-                        onClick={() => (solo ? clearPhoto() : removePhotoItem(item.id))}
+                        onClick={() => removePhotoItem(item.id)}
                         aria-label={solo ? 'Remove photo' : `Remove photo ${idx + 1}`}
                         style={{
                           position: 'absolute', top: solo ? 8 : 4, right: solo ? 8 : 4,
@@ -2201,7 +2261,22 @@ export default function EventNew() {
                           fontSize: '0.85rem',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}
-                      ><Icon name="action.remove" size={solo ? 14 : 11} decorative /></button>
+                      >
+                        <Icon name="action.remove" size={solo ? 14 : 11} decorative />
+                        {/* BUG-PHOTOREMOVETRAP-001 — WCAG 2.5.5 on a DESTRUCTIVE control, using
+                            MicBtn's idiom: a transparent child grows the hit area while the visible
+                            circle stays put (growing the button would move it off the corner it is
+                            pinned to). It grows DOWN and LEFT, into the photo — which is not itself
+                            interactive — because the strip tiles six across at gap 8, and an
+                            outward expansion would hang a destructive target over the NEIGHBOURING
+                            tile. Arithmetic, not a measurement (jsdom has no layout): solo
+                            28+8+8 = 44; strip 22+4+18 = 44, reaching exactly the tile corner. */}
+                        <span aria-hidden="true" style={{
+                          position: 'absolute',
+                          top: solo ? -8 : -4, right: solo ? -8 : -4,
+                          bottom: solo ? -8 : -18, left: solo ? -8 : -18,
+                        }} />
+                      </button>
                       {/* Save-to-device stays SOLO-ONLY: it is a per-file action, and six of them
                           tiled at 96px is six ways to mis-tap next to six removes. Flag-hidden
                           today anyway (SAVE_TO_DEVICE_HIDDEN). */}
@@ -2286,6 +2361,32 @@ export default function EventNew() {
                   onChange={handlePhotoChange}
                   style={{ display: 'none' }}
                 />
+              </div>
+            )}
+            {/* BUG-PHOTOREMOVETRAP-001 — the recovery half. Deliberately INLINE and ambient, under
+                the strip, rather than a toast or a confirm dialog: a confirm taxes every correct
+                removal to protect against the rare wrong one, and an overlay is not this app's
+                idiom. It renders in BOTH branches above (removing the only photo lands in the empty
+                one), and it withdraws itself the moment the removal is committed. Undo geometry is
+                PostSaveFeedback's verbatim — 44x44 visual, not hit-slop. */}
+            {removedPhoto && (
+              <div data-testid="eventnew-photo-undo"
+                   style={{ display: 'flex', alignItems: 'center', gap: 8,
+                            marginTop: 8, fontSize: '0.85rem', color: P.mid }}>
+                {/* The live region is the SENTENCE only. PostSaveFeedback made this call already:
+                    a button announced from inside role="status" leaves the user having heard about
+                    a control they then have to hunt for. */}
+                <span role="status">Photo removed.</span>
+                <button
+                  type="button"
+                  onClick={undoRemovePhoto}
+                  data-testid="eventnew-photo-undo-btn"
+                  style={{
+                    background: 'transparent', border: 'none', color: P.green, fontWeight: 600,
+                    fontSize: '0.88rem', cursor: 'pointer', minHeight: 44, minWidth: 44,
+                    padding: '10px 12px', fontFamily: 'inherit',
+                  }}
+                >Undo</button>
               </div>
             )}
           </Section>

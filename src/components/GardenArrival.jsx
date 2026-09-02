@@ -8,11 +8,22 @@
 //   • grass grows up the whole bottom edge and stands until the end,
 //   • the critter flies in on a smooth eased arc and settles, staying,
 //   • then the garden lingers several seconds and fades slowly.
-// ~6s. Ambient/in-context (no modal/sound/haptic). Caller skips this entirely under
-// prefers-reduced-motion. `flowers` is best-effort drawn from the user's live plantings; falls back
-// to a curated family mix (V?-PLANTSOURCE follow-up to wire plantings precisely).
+// ~6s. Ambient/in-context (no modal/sound/haptic).
+//
+// BUG-GARDENARRIVALMOTION-001: this comment used to say the CALLER skips the whole thing under
+// prefers-reduced-motion, and treat that as the component's compliance story. Collection.jsx does
+// hold a REDUCE_MOTION check, but it is a module-eval const on ONE call site — it made the claim
+// true of a caller, never of this component, and eight concurrent animations (several 6000ms
+// infinite, none pausable) shipped behind an assertion that nothing here enforced. It honours the
+// preference itself now: same garden, settled, with zero motion. Reducing is the only compliant
+// move here — this is a reward surface, so the Reward UX rule bars adding any signalling channel
+// (no modal, no interrupt, no sound, no haptic) to compensate.
+//
+// `flowers` is best-effort drawn from the user's live plantings; falls back to a curated family mix
+// (V?-PLANTSOURCE follow-up to wire plantings precisely).
 
 import React from 'react'
+import { prefersReducedMotion as detectReducedMotion } from '../lib/critterArt.js'
 
 // Family flower symbol ids (one bloom per plant family). DEFAULT_FLOWERS is the fallback mix.
 export const FLOWER_IDS = ['ga-tomflo', 'ga-pepflo', 'ga-cucflo', 'ga-alliflo', 'ga-herbflo',
@@ -55,6 +66,18 @@ function GardenSprite() {
   )
 }
 
+// BUG-GARDENARRIVALMOTION-001 — every animated class, listed ONCE. Two overrides are emitted from
+// it: a `.ga-reduced` descendant block (the JS-detected path, and what a test can assert) and a
+// `@media (prefers-reduced-motion: reduce)` block (reactive, and the mechanism when nothing
+// detected). Neutralising by animation:none + opacity:1 lands every element on its animation's
+// 100% frame — the settled garden — because each keyframe set ends at opacity 1 and an identity
+// transform, so the reduced rendering is the arrival's own resting state and not a second design.
+const ANIMATED = ['.ga-flier', '.ga-sun', '.ga-glow', '.ga-flourish', '.ga-veg', '.ga-pz', '.ga-grass', '.ga-blade']
+const STILL = 'animation:none!important;opacity:1!important'
+const REDUCED_RULES =
+  `${ANIMATED.map(s => `.ga-reduced ${s}`).join(',')}{${STILL}}\n` +
+  `@media (prefers-reduced-motion: reduce){${ANIMATED.join(',')}{${STILL}}}`
+
 const STYLE = `
 .ga-root{position:absolute;inset:0;pointer-events:none;z-index:8;}
 .ga-flier{position:absolute;left:50%;top:42%;width:64%;aspect-ratio:1/1;transform:translate(-50%,-50%);z-index:7;opacity:1;filter:drop-shadow(0 0 7px rgba(255,210,90,.85));will-change:transform;animation:ga-fly 6000ms cubic-bezier(.25,.6,.3,1) forwards;}
@@ -73,13 +96,19 @@ const STYLE = `
 @keyframes ga-pz{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}
 @keyframes ga-fade{0%,75%{opacity:1}100%{opacity:0}}
 @keyframes ga-grass{0%{opacity:0}10%{opacity:1}82%{opacity:1}100%{opacity:0}}
+${REDUCED_RULES}
 `
 
-export default function GardenArrival({ imageUrl, viewScale = 1, flowers }) {
+export default function GardenArrival({ imageUrl, viewScale = 1, flowers, prefersReducedMotion = null }) {
   const picks = (flowers && flowers.length ? flowers : DEFAULT_FLOWERS)
   const placed = SLOTS.map((s, i) => ({ ...s, sym: picks[i % picks.length] }))
+  // Prop first as a test seam, matching CritterSprite. Render-time detection is enough for a
+  // one-shot ~6s reveal; the media query in REDUCED_RULES is what covers a preference that flips
+  // while the arrival is on screen, and it is also the whole mechanism when this renders with no
+  // JS-side detection at all.
+  const reduced = prefersReducedMotion ?? detectReducedMotion()
   return (
-    <div className="ga-root" aria-hidden="true">
+    <div className={reduced ? 'ga-root ga-reduced' : 'ga-root'} aria-hidden="true">
       <GardenSprite />
       <style>{STYLE}</style>
       <div className="ga-glow" />
