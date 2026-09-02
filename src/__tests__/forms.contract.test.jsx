@@ -242,17 +242,24 @@ describe('Shell primitives — AsyncRegion / PageShell / ErrorBanner / Spinner /
 })
 
 describe('formStyles — every value composes from the palette P', () => {
-  it('chevronDataUri encodes the palette color (P.light → %23777), no hardcoded stroke', () => {
+  it('chevronDataUri encodes the palette color (P.light → %23…), no hardcoded stroke', () => {
     const uri = formStyles.chevronDataUri(P.light)
-    expect(uri).toContain('%23777')
-    expect(uri).not.toContain('%23777777')
+    // BY REFERENCE, not by hex. This pinned the literal `%23777` and hard-failed the moment
+    // P.light was repainted to #707070 (V4-INKCONTRAST-001) — a red on a palette change the
+    // contract does not actually govern. The contract is the ENCODING: whatever P.light is,
+    // its `#` becomes `%23` and the value lands verbatim in the stroke, neither expanded to
+    // six digits nor contracted to three.
+    expect(uri).toContain(`stroke='${P.light.replace('#', '%23')}'`)
+    expect(uri).not.toContain('#')
   })
   it('inputChrome flips the border to terra on error', () => {
     expect(formStyles.inputChrome(true).border).toContain(P.terra)
     expect(formStyles.inputChrome(false).border).toContain(P.border)
   })
   it('selectChrome composes the chevron from P.light', () => {
-    expect(formStyles.selectChrome().backgroundImage).toContain('%23777')
+    // Same repaint hazard as above, and the same fix: assert it IS chevronDataUri(P.light),
+    // which is stronger than a substring on one hex and cannot go stale.
+    expect(formStyles.selectChrome().backgroundImage).toBe(formStyles.chevronDataUri(P.light))
   })
   it('buttonChrome freezes minHeight 48 and the disabled convention', () => {
     expect(formStyles.buttonChrome('primary', false).minHeight).toBe(48)

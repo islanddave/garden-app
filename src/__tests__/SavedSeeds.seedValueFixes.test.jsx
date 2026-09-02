@@ -28,8 +28,18 @@ vi.mock('react-router-dom', () => ({
 import SavedSeeds from '../pages/SavedSeeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
+import { P } from '../lib/constants.js'
 
 const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
+
+// jsdom serialises style.color as `rgb(r, g, b)`, so a palette hex has to be converted to compare
+// against it. Shorthand-aware, because the palette has carried both forms.
+const hexToRgb = (hex) => {
+  const h = hex.replace('#', '')
+  const full = h.length === 3 ? [...h].map((c) => c + c).join('') : h
+  const n = parseInt(full, 16)
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`
+}
 
 // `status` is on the fixture because it is on every real row (NOT NULL, and v_sow_candidates keys
 // off it) and because the untracked-packet picker now filters on it — V4-SEEDSTOREDQTY-001.
@@ -94,13 +104,35 @@ describe('S3b — a ferment past its window does not look like a healthy one', (
     expect(border('alarmed')).not.toBe(border('warned'))
   })
 
-  it('leaves the elapsed line off P.light — #777 is 4.478:1 on the white card', async () => {
-    // Seed-path-only fix; repainting P.light app-wide is Dave's call. Pinned as "not #777" rather
-    // than as "is P.mid" so the guard is about the failure, not about one replacement value.
+  it('leaves the elapsed line off P.light — the lightest ink is not for text this small', async () => {
+    // RESOLVED. This started as a seed-path-only fix around a P.light that was #777 — 4.478:1 on
+    // the white card — with the app-wide repaint left open as Dave's call. That call was made:
+    // V4-INKCONTRAST-001 repainted P.light to #707070 (4.952:1 on white, 4.554:1 on cream), so
+    // the original AA failure is gone everywhere, not just here.
+    //
+    // The guard stays — the sizing rule it really governs still holds: this line is well under
+    // 14px, and the palette's lightest ink is not what small text gets, whatever its value. But it
+    // was rebuilt, because it was vacuous TWICE OVER and each hole hid the other:
+    //
+    //   1. It hardcoded `not.toBe('rgb(119, 119, 119)')`, so the repaint would have left it green
+    //      while asserting nothing — P.light is rgb(112,112,112) now. Fixed by reference.
+    //   2. Worse, and older: `querySelector('div > div')` returned the card's flex WRAPPER, not
+    //      the elapsed line. The wrapper carries no inline colour, so `style.color` was `''` and
+    //      the comparison had been passing against an empty string since the day it was written.
+    //      `textContent` matched anyway, because the wrapper CONTAINS the line — which is exactly
+    //      why the first assertion never exposed the second.
+    //
+    // So: select the div that OWNS the text rather than one that merely contains it, and assert
+    // the colour is non-empty before comparing it. Still pinned as "not P.light" rather than "is
+    // P.mid" — per the original intent, the guard is about the failure, not one replacement value.
     await mount([ferment('healthy', 2)])
-    const line = cardFor('healthy').querySelector('div > div')
-    expect(line.textContent).toContain('2 days in fermenting')
-    expect(line.style.color).not.toBe('rgb(119, 119, 119)')
+    const ownsText = (el, s) =>
+      [...el.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.includes(s))
+    const line = [...cardFor('healthy').querySelectorAll('div')]
+      .find((d) => ownsText(d, '2 days in fermenting'))
+    expect(line, 'elapsed line not found — the selector has drifted again').toBeTruthy()
+    expect(line.style.color, 'no inline colour: the selector is off the line again').toBeTruthy()
+    expect(line.style.color).not.toBe(hexToRgb(P.light))
   })
 
   it('does not fire on drying, however long it has sat', async () => {

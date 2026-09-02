@@ -31,6 +31,13 @@
 // note above did not fire, and NumberPad's `.`/backspace ordering (claim 1, the whole reason this
 // fixture outlived the wizard) is byte-identical either side of the regeneration.
 //
+// REGENERATED 2026-09-02 (V4-INKCONTRAST-001, the P.light AA repaint). The diff was read before the
+// write and is FOUR tokens, all the same substitution: `rgb(119, 119, 119)` → `rgb(112, 112, 112)`,
+// P.light moving #777 → #707070. No element, attribute, id or style PROPERTY changed — only that
+// one value — so both claims this file exists to make survive intact. Note this fixture is the
+// reason a "one-token palette change" is not one: nothing in the plan for that repaint predicted a
+// byte pin, and it is invisible to a grep for the token name.
+//
 // Two determinism hazards are handled rather than hoped away. (1) The When field defaults to today,
 // so the clock is frozen. (2) React's useId is rendered — Field.jsx:40 falls back to it for input
 // ids and PlantingSelect.jsx:432 builds listboxId from it — and useId derives from a fiber's
