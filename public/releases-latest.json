@@ -3,6 +3,8 @@
   "date": "2026-09-02",
   "highlights": [
     "Save seed straight from a planting — one tap on the planting page creates the lot, already linked to the plant it came from",
+    "Planting pages now show the seed you've already saved from that plant, so you can check before saving again",
+    "Saving seed is logged on the plant's timeline and counts toward your streak and XP",
     "Seed still fermenting or drying no longer shows up as ready to sow; it stays on the list, clearly marked, and becomes sowable when you mark it stored",
     "The seed picker now has a search box and shows quantity, source and date on each row, so two packets of the same variety are no longer identical lines",
     "You're asked how much seed you got when you mark a lot stored — not when you save it, when it's still wet and uncounted",
