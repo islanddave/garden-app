@@ -1,0 +1,119 @@
+# gates.yml
+# V5-HEATRESPONSEDISPLAY-001 / v5-heatrespcabbage-001 — NOT APPLIED. Gates written with the migration.
+#
+# WHAT IS BEING GUARDED. Two different things, and separating them is the point:
+#   (1) the CLAIM — no care_profile row may tell a reader that heat causes cabbage bolting;
+#   (2) the METHOD — the correction must be a single-key jsonb_set, never a whole-object rewrite.
+# (2) matters more than (1) over time. care_profile has no app write route, so every edit to it is a
+# hand-written statement, and the cheap way to write one is to paste a whole corrected object. That
+# silently drops any key the author did not re-type — provenance markers the seededgate view reads,
+# watering intervals, an overwintering key a later writer added. The post gates below therefore
+# assert what SURVIVED, not just what changed.
+#
+# Run on BOTH staging and prod. The post gates are self-armed on the 0a receipt, so they are
+# vacuously green before apply and real standing invariants after.
+
+pre:
+  - name: pre_cabbage_heat_bolting_claim_exists
+    note: >
+      The starting state. Three cultivar care_profile rows carry the exact wrong string, measured
+      read-only on prod 2026-09-02 (Cabbage (unknown), Copenhagen Market, Red Acre — all
+      crop_type_slug='cabbage', resolving to 3 live plantings). continuous:false: it is false by
+      design once 0a runs.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE scope = 'cultivar'
+         AND profile->>'heat_response' = '>85F daily; heat causes bolting; afternoon shade'
+    expect: rowcount_eq
+    value: 3
+    continuous: false
+
+  - name: pre_affected_rows_key_counts
+    note: >
+      The full-replace tripwire's before-reading, captured as a gate rather than as a comment so the
+      post side has something to be compared against. 13 keys on the seeded row, 14 on each backfill
+      row. APPLY-WINDOW ONLY (continuous:false) — a legitimate later widening of these profiles must
+      not be blocked by a frozen number, which is why the standing guard below is key-PRESENCE.
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+       WHERE cp.scope = 'cultivar'
+         AND cp.profile->>'heat_response' = '>85F daily; heat causes bolting; afternoon shade'
+         AND (SELECT count(*) FROM jsonb_object_keys(cp.profile)) BETWEEN 13 AND 14
+    expect: rowcount_eq
+    value: 3
+    continuous: false
+
+post:
+  - name: post_no_row_claims_heat_causes_cabbage_bolting
+    note: >
+      THE CLAIM GUARD. The exact superseded sentence must not exist on any care_profile row at any
+      scope. Goes red if 0a is half-applied, if care-cadence-001-seed.sql is re-run against a
+      corrected prod (it is a full-object upsert and would restore the string), or if a future
+      backfill reintroduces it. Violation-count shape, self-armed on the 0a receipt.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE profile->>'heat_response' = '>85F daily; heat causes bolting; afternoon shade'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-heatrespcabbage-20260902')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_cabbage_heat_response_attributes_bolting_to_heat
+    note: >
+      The same claim stated by MEANING rather than by literal string, so a paraphrase does not walk
+      through the gate above. Any cabbage cultivar profile whose heat_response mentions bolting
+      without also naming the cold/vernalization cause is a violation. Cabbage only — broccoli
+      ("may bolt/button") and the leafy greens genuinely do bolt in heat and are untouched by this
+      migration.
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+       JOIN public.plant_varieties pv ON pv.id = cp.scope_id
+       WHERE cp.scope = 'cultivar' AND pv.crop_type_slug = 'cabbage'
+         AND cp.profile->>'heat_response' ILIKE '%bolt%'
+         AND cp.profile->>'heat_response' NOT ILIKE '%cold%'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-heatrespcabbage-20260902')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_correction_was_single_key_not_a_full_replace
+    note: >
+      THE METHOD GUARD, and the one worth keeping. Each corrected row must still carry every
+      non-heat_response key it had before: crop, both watering intervals, the cold block, notes,
+      confidence, and its provenance marker (_seeded on the seeded row, _source on the two backfill
+      rows). A whole-object rewrite is exactly how those get dropped, and dropping the provenance
+      marker alone would take the row out of the seededgate resolver. Key-PRESENCE, not a key count,
+      so a later legitimate addition to these profiles does not turn this red.
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+       JOIN public.plant_varieties pv ON pv.id = cp.scope_id
+       WHERE cp.scope = 'cultivar' AND pv.crop_type_slug = 'cabbage'
+         AND cp.profile->>'heat_response' ILIKE '%vernalization%'
+         AND NOT (cp.profile ? 'crop'
+                  AND cp.profile ? 'water_interval_days_container'
+                  AND cp.profile ? 'water_interval_days_inground'
+                  AND cp.profile ? 'cold'
+                  AND cp.profile ? 'notes'
+                  AND cp.profile ? 'confidence'
+                  AND (cp.profile ? '_seeded' OR cp.profile ? '_source'))
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-heatrespcabbage-20260902')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_cabbage_still_resolves_a_watering_cadence
+    note: >
+      The blast-radius check. This migration must change nothing the watering engine reads. Every
+      live cabbage planting must still resolve a container watering interval through
+      v_resolved_care, exactly as it did before. Red means the correction disturbed cadence
+      resolution, which is a strictly larger failure than the wrong sentence it was fixing.
+    sql: |
+      SELECT 1 FROM public.plants p
+       JOIN public.plant_varieties pv ON pv.id = p.variety_id
+       JOIN public.v_resolved_care vc ON vc.leaf_id = p.id
+       WHERE p.deleted_at IS NULL AND pv.crop_type_slug = 'cabbage'
+         AND vc.resolved_profile->>'water_interval_days_container' IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-heatrespcabbage-20260902')
+    expect: rowcount_eq
+    value: 0

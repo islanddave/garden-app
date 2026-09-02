@@ -317,7 +317,7 @@
    "water_volume_note": "1.5 gal/plant/week; consistent prevents splitting",
    "soil_moisture_target": "evenly moist throughout",
    "drought_tolerance": "low",
-   "heat_response": ">85F daily; heat causes bolting; afternoon shade",
+   "heat_response": ">85F daily; heat loosens heads and worsens splitting; harvest promptly; afternoon shade; bolting here is cold-triggered (vernalization), not heat",
    "cold": {
     "tender": false,
     "protect_below_F": 26

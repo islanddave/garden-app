@@ -329,9 +329,17 @@ describe('plants Lambda — /overwinter route wiring', () => {
 
   // Mutation: point the read-back at v_resolved_care instead. An inherited cultivar-level value
   // would then render as this planting's setting, and Clear would appear to do nothing.
+  //
+  // NARROWED 2026-09-02 (V5-HEATRESPONSEDISPLAY-001). This asserted "the substring from the
+  // overwintering projection to `WHERE p.id =` contains no v_resolved_care" — a PROXIMITY window,
+  // which is a proxy for the claim rather than the claim. It has both failure directions: it fires
+  // on any unrelated column in that span that legitimately reads the resolved view (heat_response
+  // now does, deliberately — display prose that is MEANT to inherit), and it would have missed the
+  // real mutation had the resolved read been placed outside the window. Both arms below name the
+  // actual invariant instead: OVERWINTERING specifically is never read from a resolved profile,
+  // and `ow` is never rebound to the view. Verified to still kill the original mutation.
   it('the read-back is leaf-scoped, not the resolved profile', () => {
-    const start = SRC.indexOf("ow.profile -> 'overwintering'")
-    const block = SRC.slice(start, SRC.indexOf('WHERE p.id = ${plantId}', start))
-    expect(block).not.toMatch(/v_resolved_care/)
+    expect(SRC).not.toMatch(/resolved_profile\s*->>?\s*'overwintering'/)
+    expect(SRC).not.toMatch(/v_resolved_care\s+ow\b/)
   })
 })

@@ -61,6 +61,7 @@ import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
 import CropCard from '../components/planting/CropCard.jsx'
 import CareStatus from '../components/CareStatus.jsx'
 import OverwinterPrompt from '../components/planting/OverwinterPrompt.jsx'
+import HeatResponseNote from '../components/planting/HeatResponseNote.jsx'
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 import PhotoView from '../components/photo/PhotoView.jsx'
 import { TIER } from '../lib/photoModel.js'
@@ -970,6 +971,13 @@ export default function PlantingDetail() {
           last_watered_at rides in the same record load, so surfacing it here is free and lifts
           "when did I last water this" out of the Details fly-up's non-default Care tab. */}
       <CareStatus nextWaterAt={pl.next_water_at} lastWateredAt={pl.last_watered_at} locationType={pl.location_type} intervalDays={pl.watering_interval_days} />
+
+      {/* V5-HEATRESPONSEDISPLAY-001 — the curated heat prose for this cultivar, paired with the two
+          care controls it belongs beside: the watering band above and the winter setting below. On
+          the page rather than in the Details fly-up's non-default Care tab, which is five taps away
+          and which CareStatus's own header records as an unlearnable route. Always present, and it
+          says so when there is nothing recorded — see the component for why the silence is stated. */}
+      <HeatResponseNote planting={pl} />
 
       {/* V4-OVERWINTERCARE-001 — the writer for the overwintering care attribute, directly under the
           band it changes: marking a planting overwintering is what holds it OUT of water_due and
