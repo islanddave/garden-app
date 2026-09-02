@@ -2,9 +2,14 @@
 //
 // BUG-SEEDPROCFORCED-001 — "Track a saved-seed lot" offered exactly one action and it hard-coded
 // `fermenting`. The POST it fires writes a PERMANENT row into seed_lot_stage_log, so the only way to
-// track a dry-cleaned lot was to assert a ferment that never happened. Dave's founding case is a
-// melon lot cleaned dry; so are beans, peas, lettuce and every brassica. The process is now chosen,
-// and the entry stage follows from it.
+// track a lot that was never fermented was to assert a ferment that never happened. The dry cases
+// are beans, peas, lettuce and every brassica — seed threshed from a pod dried on the plant. The
+// process is now chosen, and the entry stage follows from it.
+//
+// CORRECTED 2026-09-02: this header used to name melon as the founding dry-cleaned case. Melon is a
+// WET extraction — the seed is washed out of the pulp — so it belonged on the other side of the very
+// distinction this test file exists to defend. The fixture below still uses a 'v-melon' variety id
+// with seed_stage 'drying', which is harmless as an opaque string but is not a horticultural claim.
 //
 // BUG-SEEDELAPSEDUPDATED-001 — the card led with elapsed(item.updated_at), and set_updated_at is a
 // BEFORE UPDATE ROW trigger that fires on EVERY write to the row. So attaching a parent plant reset

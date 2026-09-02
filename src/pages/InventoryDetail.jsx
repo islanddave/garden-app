@@ -124,6 +124,15 @@ export default function InventoryDetail() {
   function buildChanges() {
     const base = {
       name:          form.name.trim(),
+      // BUG-INVSEEDPUT400-001. `type` is NOT NULL on prod, but that is the smaller half: the wide
+      // PUT reads body.type into isConsumable/isDurable and those two gate SIX further SET-list
+      // expressions (unit, quantity_on_hand, reorder_threshold, reorder_quantity, quantity,
+      // condition). Omitting it does not merely fail the NOT NULL — it NULLS all six, which then
+      // trips consumable_requires_unit / consumable_requires_quantity_on_hand. The handler is
+      // body-only by design (validateUpdate's own comment says so), so the complete payload is the
+      // client's contract to keep. Masked in practice by updateItem's {...listRow, ...changes}
+      // merge, which is why this survived to ship: it only bites when the list has not loaded.
+      type:          form.type,
       category:      form.category,
       status:        form.status,
       notes:         form.notes.trim()         || null,

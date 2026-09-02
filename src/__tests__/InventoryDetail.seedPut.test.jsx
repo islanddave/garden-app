@@ -75,10 +75,19 @@ describe('BUG-INVSEEDPUT400-001 — the seed-packet PUT payload', () => {
     // The two halves of the rejection, together. This is buildChanges() reaching the wire raw,
     // which is what happens whenever updateItem has no list row to merge against.
     expect(body).not.toHaveProperty('variety_id')
-    // `type` is NOT NULL on prod (checked live, 2026-09-02) and buildChanges() does not send it
-    // either, so this same degraded payload ALSO trips 23502 once the variety guard stops firing.
-    // Pinned so that fixing one and calling the path healed is not possible without seeing this.
-    expect(body).not.toHaveProperty('type')
+    // PIN INVERTED 2026-09-02 (WAVE 2 S2), deliberately — this assertion used to read
+    // `expect(body).not.toHaveProperty('type')`. It was a tripwire, not a spec: it pinned the
+    // SECOND half of the degraded payload so that repairing variety_id alone could not be called a
+    // heal. buildChanges() now sends `type`, so that half is fixed and the tripwire has fired as
+    // designed. It is re-pointed rather than deleted, because the reason it existed has not gone
+    // away: `type` is the discriminator the wide PUT reads into isConsumable/isDurable, which gate
+    // six further SET-list expressions, so a future refactor that drops it again silently nulls
+    // unit / quantity_on_hand / reorder_threshold / reorder_quantity / quantity / condition. This
+    // is now the guard on the OTHER side of the same defect, on the same degraded-list path where
+    // no merge can supply it.
+    expect(body.type).toBe('consumable')
+    // variety_id remains unfixed here, and that is the point: this case is still broken, just no
+    // longer broken in two ways at once.
   })
 
   it('DOES carry variety_id when the list loaded — which is why prod has not been screaming', async () => {
@@ -86,10 +95,12 @@ describe('BUG-INVSEEDPUT400-001 — the seed-packet PUT payload', () => {
     await renderAndSave()
     const body = putBody()
     expect(body.category).toBe('seeds')
-    // updateItem's `{...current, ...changes}` merge supplies both of the fields buildChanges omits.
-    // That masking is the whole reason a handler guard that rejects every seed packet survived to
-    // ship: the ONE caller happens to repair the payload before it is sent.
+    // updateItem's `{...current, ...changes}` merge supplies variety_id, which buildChanges still
+    // omits. That masking is the whole reason a handler guard that rejects every seed packet
+    // survived to ship: the ONE caller happens to repair the payload before it is sent.
     expect(body.variety_id).toBe('var-green-flesh')
+    // `type` is no longer merge-dependent (WAVE 2 S2) — buildChanges sends it, so both cases now
+    // carry it and this assertion holds for the same reason in both.
     expect(body.type).toBe('consumable')
   })
 })
