@@ -1,8 +1,10 @@
 {
-  "version": "4.92.0",
+  "version": "4.93.0",
   "date": "2026-09-01",
   "highlights": [
-    "Record which plant a saved seed lot came from — a new Saved from field on seed packets, with the picker narrowed to that cultivar's own plantings",
-    "Only one microphone can listen at a time now; starting a new one stops the old one instead of leaving both live"
+    "Dictated notes no longer save a half-finished sentence — if the phone corrected itself mid-phrase, the corrected version is what gets stored",
+    "Saved seeds: choose how a lot was processed instead of every lot being recorded as fermented, and 'days in this stage' now counts from when the stage actually started",
+    "Seed packets can be edited again when the app is offline or the inventory list hasn't loaded",
+    "Security: 16 dependency advisories closed"
   ]
 }
