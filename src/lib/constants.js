@@ -13,7 +13,7 @@ export const P = {
   gold:        '#8a6e2a',  // darkened for WCAG AA contrast on cream (was #c9a84c)
   dark:        '#1a1a1a',
   mid:         '#4a4a4a',
-  light:       '#777',
+  light:       '#707070',  // V4-INKCONTRAST-001: darkened for WCAG AA (was #777 — 4.118:1 on cream, 4.478:1 on white, both under 4.5). #707070 is 4.554 / 4.952; #717171 is 4.488 on cream and fails, so this is the boundary, not a round number.
   border:      '#d4c9be',
   warn:        '#fff8e6',
   warnBorder:  '#c9a84c',

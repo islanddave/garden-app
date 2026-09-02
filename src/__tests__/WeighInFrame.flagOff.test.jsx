@@ -21,6 +21,11 @@
 // the write and is the same four tokens as its sibling weighInSessionBaseBytes: the session-lock's
 // `<span>` basket emoji became the registry's event.harvest `<svg>`. No wrapper, no style property
 // and no id changed, so the grid-refactor leak this file exists to catch is still fully pinned.
+//
+// REGENERATED 2026-09-02 (V4-INKCONTRAST-001, the P.light AA repaint). The diff was read before the
+// write and is FIVE tokens, all one substitution: `rgb(119, 119, 119)` → `rgb(112, 112, 112)`,
+// P.light moving #777 → #707070. No wrapper `<div>`, no added or removed style property, no id —
+// so the grid-refactor leak is still fully pinned and the rollback lever has not drifted.
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
