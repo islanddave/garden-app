@@ -40,6 +40,11 @@ pre:
        WHERE table_schema='public' AND table_name='weather_cue_impression'
     expect: rowcount_eq
     value: 0
+    # APPLY-WINDOW ONLY. `continuous` defaults TRUE, so as authored this gate went permanently red
+    # the instant the migration it guards was applied — and it would have redded the scheduled
+    # invariant sweep forever while looking like a real regression. A starting-state assertion is
+    # false by design after the apply; it is not an invariant.
+    continuous: false
 
   - name: pre_daily_plan_present
     note: >

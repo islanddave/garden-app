@@ -158,4 +158,18 @@ COMMENT ON COLUMN public.weather_cue_impression.form IS
 COMMENT ON COLUMN public.weather_cue_impression.plan_generated_at IS
   'daily_plan.generated_at of the plan the cue came from — which nightly run produced it. NULL when the client omitted it.';
 
+-- APPLY RECEIPT. Added 2026-09-02 during the apply, because the original file wrote none — which
+-- cost two things: there was no record IN THE DATABASE that this migration had run (the table's own
+-- existence is not a receipt; a hand-created table looks identical), and the post gates below had
+-- nothing to self-arm on, which is why they were all authored `continuous: false` and therefore
+-- never re-checked after the apply window. Idempotent, matching every other migration here.
+INSERT INTO public.schema_version (version, description, applied_at)
+VALUES ('5.0.0-cueinstrument-20260902',
+        'CUEINSTRUMENT: create public.weather_cue_impression, the impression log for the Today '
+        'weather cue (OPS-CUEINSTRUMENT-001). Precondition of V5-WXCALLOUTRENDER-001 - without a '
+        'row per rendered cue there is no denominator and the render is a test that cannot fail.',
+        now())
+ON CONFLICT (version) DO UPDATE
+  SET applied_at = now(), description = EXCLUDED.description;
+
 COMMIT;

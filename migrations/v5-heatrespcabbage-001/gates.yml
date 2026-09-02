@@ -20,10 +20,19 @@ pre:
       read-only on prod 2026-09-02 (Cabbage (unknown), Copenhagen Market, Red Acre — all
       crop_type_slug='cabbage', resolving to 3 live plantings). continuous:false: it is false by
       design once 0a runs.
+
+      env:prod — STAGING HAS ONE OF THE THREE, verified 2026-09-02. Only the seeded
+      Cabbage (unknown) row (48c55703) is there; Copenhagen Market (622ad02d) and Red Acre
+      (691c2afb) were written by the 2026-08-23 cadence backfill, which never ran against staging.
+      The value 3 is a measurement OF PROD, so asserting it on staging reds a correct migration —
+      the same reason v4-varietydedup-001 carries env:prod on its starting-state gates. 0a matches
+      on the old VALUE rather than on a count, so it still corrects staging's single row, and the
+      post gates below assert violation counts of ZERO, which hold in either environment.
     sql: |
       SELECT 1 FROM public.care_profile
        WHERE scope = 'cultivar'
          AND profile->>'heat_response' = '>85F daily; heat causes bolting; afternoon shade'
+    env: prod
     expect: rowcount_eq
     value: 3
     continuous: false
@@ -39,6 +48,7 @@ pre:
        WHERE cp.scope = 'cultivar'
          AND cp.profile->>'heat_response' = '>85F daily; heat causes bolting; afternoon shade'
          AND (SELECT count(*) FROM jsonb_object_keys(cp.profile)) BETWEEN 13 AND 14
+    env: prod
     expect: rowcount_eq
     value: 3
     continuous: false
