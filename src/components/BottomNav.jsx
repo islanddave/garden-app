@@ -5,6 +5,7 @@ import { readMarker } from '../lib/backNav.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
 import { CATCH_UP_EDITOR_SHIPPED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
@@ -177,6 +178,58 @@ function SectionLabel({ children }) {
     }}>
       {children}
     </div>
+  )
+}
+
+// V4-NAVACTIVESTATE-001 — the GLYPH's active-state channel, and the reason it is a shape.
+//
+// Before this, `active` reached only the LABEL: colour (P.green vs P.light) and fontWeight
+// (700 vs 400), both riding on a 0.62rem — 9.9px — string. The 22px glyph, the largest and
+// most salient thing in each tab, said nothing at all about where you are. So "which tab am
+// I on" was answerable only by reading 9.9px text, on an installed PWA held at arm's length.
+//
+// WHAT IT IS NOT, and why not:
+//   - NOT a re-tint of the glyph. The note at the tab's <Icon> below is right and stands: a
+//     multi-region colour glyph re-tinted by tab state collapses every region to one hue.
+//   - NOT a bigger label. design-designsys-icons-PLAN-V101 §6 records that the whole type
+//     ramp already sits below the floor adhd-style-guide.md declares, so widening downward
+//     (or upward) there is a legibility decision Dave owns, not a fix to make in passing.
+//   - NOT a third colour signal. The channel is the ENCLOSURE — present on the active tab,
+//     absent everywhere else. Presence-vs-absence of a shape survives greyscale and a
+//     peripheral glance, which is exactly what two colour-and-weight signals on 9.9px text
+//     do not.
+//
+// WHY A RING AROUND A PALE FILL rather than the solid pill the spec sketches: P.greenPale
+// #d8f3dc is 1.15:1 against this bar's white and would be near-invisible carrying the signal
+// alone, while a fill dark enough to read on its own (P.sage, 3.14:1) drops the glyph's own
+// authored regions under the 3:1 silhouette floor they were each measured against
+// (ICON_COLORS in lib/tokens.js; gated by iconColorNav.test.jsx). The green ring carries the
+// shape at ~6:1; the pale fill gives it body and leaves every tab-glyph region above 3:1
+// (the lowest, navRow #6f8a78, goes 3.46:1 on cream -> 3.21:1 on greenPale).
+//
+// ABSOLUTELY POSITIONED, so it costs zero layout: the glyph does not move, grow or reflow
+// when a tab becomes active, and switching tabs shifts nothing inside a 56px bar. That is
+// also why the wrapper renders unconditionally and only the indicator is conditional.
+const activeIndicatorStyle = {
+  position: 'absolute',
+  top: -T.space.xs, bottom: -T.space.xs, left: -T.space.sm, right: -T.space.sm,
+  borderRadius: T.radiusPill,
+  backgroundColor: P.greenPale,
+  border: `1px solid ${P.green}`,
+  pointerEvents: 'none',
+}
+
+// One glyph slot for every bottom-bar tab INCLUDING More, deliberately: More already takes
+// the same two label channels from `showMore` that the five destinations take from `active`,
+// and a tab that goes green-and-bold with no indicator reads as a bug rather than as a rule.
+// (On More the BottomNavDot sits above the indicator — later in DOM order, so it still paints
+// on top — and the sheet it belongs to is covering the bar anyway.)
+function TabGlyph({ iconName, variant, active }) {
+  return (
+    <span style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {active && <span data-testid="nav-active-indicator" aria-hidden="true" style={activeIndicatorStyle} />}
+      <Icon name={iconName} variant={variant} size={22} decorative style={{ position: 'relative' }} />
+    </span>
   )
 }
 
@@ -579,8 +632,10 @@ export default function BottomNav() {
                   two coloured tabs instead of levelling the rest up.
                   NO `style` colour here, deliberately: a colour glyph must not be re-tinted by tab
                   state or every region collapses back to one hue. Active/inactive is carried by the
-                  LABEL's colour and weight below, and by aria-current on the Link. */}
-              <Icon name={tab.iconName} variant="filled" size={22} decorative />
+                  LABEL's colour and weight below, by aria-current on the Link, and — since
+                  V4-NAVACTIVESTATE-001 — by the indicator TabGlyph draws behind the glyph, which is
+                  the one channel of the three that does not need 9.9px text or hue to be read. */}
+              <TabGlyph iconName={tab.iconName} variant="filled" active={active} />
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
             </Link>
           )
@@ -593,7 +648,7 @@ export default function BottomNav() {
             gap: 2, background: 'none', border: 'none', cursor: 'pointer',
             color: showMore ? P.green : P.light, padding: 0, minHeight: 44, position: 'relative',
           }}>
-          <Icon name="nav.more" size={22} decorative />
+          <TabGlyph iconName="nav.more" active={showMore} />
           <span style={{ fontSize: '0.62rem', fontWeight: showMore ? 700 : 400 }}>More</span>
           {/* Critter "new visitor" dot lives on More now that Critters is in the menu. */}
           <BottomNavDot getToken={getToken} />
