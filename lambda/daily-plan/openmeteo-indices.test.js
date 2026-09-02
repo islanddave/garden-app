@@ -269,13 +269,22 @@ describe('call site (3) — the archive backfill, a third positional surface', (
     expect(ARCHIVE).toMatch(/const apply = argv\.includes\('--apply'\)/);
   });
 
-  it('carries the SAME gauge-downgrade guard as the nightly writer', () => {
+  it('carries the SAME quality-rank guard as the nightly writer, on EVERY measured column', () => {
     // A backfill with a laxer conflict policy than the Lambda would undo the Lambda's work on every
-    // run — the two policies have to move together or not at all.
+    // run — the two policies have to move together or not at all. This asserts the shape is present
+    // here; whether the two texts are actually identical is weather-daily-conflict-sync.test.js,
+    // which is the only place that can answer it (this file never reads handler.js).
+    //
+    // BUG-WXWRITEOVERWRITE-001: this used to pin the precip-only `case when
+    // weather_daily.precip_source = 'gauge_merged'` form — which both files did carry, and which is
+    // why the drift went unnoticed. et0_in/tmax_f/tmin_f were bare COALESCE in both, so this script
+    // overwrote the nightly writer's better-sourced values on every overlapping day.
     const flat = ARCHIVE.replace(/\s+/g, ' ');
     expect(flat).toMatch(/on conflict \(space_id, "date"\) do update set/i);
-    expect(flat).toMatch(/precip_in = case when weather_daily\.precip_source = 'gauge_merged'/i);
-    expect(flat).toMatch(/precip_source = case when weather_daily\.precip_source = 'gauge_merged'/i);
+    for (const col of ['precip_in', 'precip_source', 'et0_in', 'et0_source', 'tmax_f', 'tmin_f']) {
+      expect(flat).toMatch(new RegExp(`${col} = case when coalesce\\(array_position\\(`, 'i'));
+      expect(flat).not.toMatch(new RegExp(`${col} = coalesce\\(excluded\\.${col}`, 'i'));
+    }
   });
 
   it('labels everything it writes as openmeteo_archive — it can never produce a gauge value', () => {

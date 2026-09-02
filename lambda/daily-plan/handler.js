@@ -149,11 +149,81 @@ async function backfillYesterdayActual(pg, userId, today, hy, prov) {
 //     comparison, one `--live --today 2026-07-01` would stamp this week's ET0 onto July rows and the
 //     corruption would be invisible — the values are plausible and the provenance column would say
 //     'openmeteo_live', which would be true and useless.
-//   * NON-FATAL, ALWAYS. Same fail-open posture as readPriorRuns and backfillYesterdayActual: this
-//     is substrate accumulation, and losing a night of it is a rounding error against losing the
-//     nightly plan. The catch is what makes the migration-lands-late window survivable at all.
+//   * NON-FATAL, ALWAYS, AND PER ROW. Same fail-open posture as readPriorRuns and
+//     backfillYesterdayActual: this is substrate accumulation, and losing a night of it is a rounding
+//     error against losing the nightly plan. The catch is what makes the migration-lands-late window
+//     survivable at all. The BOUNDARY is the row (BUG-WXWRITEOVERWRITE-001): it used to be the whole
+//     loop, so one row that violated a CHECK took every LATER day of the same run down with it —
+//     silently, since the outer catch logged one line that read like a single failed write.
 const WEATHER_DAILY_SOURCE_GAUGE = 'gauge_merged';
 const WEATHER_DAILY_SOURCE_LIVE = 'openmeteo_live';
+// 'openmeteo_archive' is the third domain value. This writer never emits it — only
+// scripts/backfill-weather-daily.mjs does — but the conflict policy below has to rank it, so it is
+// named here rather than only inside a SQL string.
+
+// The relation-missing case is the one error worth treating as terminal for the loop rather than as a
+// bad row: every remaining day would fail identically, and N identical warnings is how a real
+// per-row defect gets lost in the noise later. Matched on SQLSTATE where the driver supplies one and
+// on the message otherwise (the neon http driver does not always carry `code`).
+const isRelationMissing = (e) =>
+  e?.code === '42P01' || /relation .*does not exist/i.test(e?.message || '');
+
+// THE CONFLICT POLICY. Mirrored VERBATIM in scripts/backfill-weather-daily.mjs and pinned by
+// weather-daily-conflict-sync.test.js — a backfill with a laxer policy than the nightly writer would
+// undo the nightly writer's work every time it ran, and "keep these in step" written in a comment is
+// not a mechanism (that comment already existed and the two had drifted apart in everything but
+// precip). Edit one, edit both; the test compares the emitted text, not the intent.
+const WEATHER_DAILY_CONFLICT_SET =
+  `on conflict (space_id, "date") do update set
+           -- BUG-WXWRITEOVERWRITE-001 — QUALITY-RANKED, PER FIELD. This guard used to cover precip_in
+           -- alone; et0_in, tmax_f and tmin_f were last-writer-wins, so any better-sourced value in
+           -- them survived exactly until the next pass. RANK is the position of the provenance string
+           -- in the array below — openmeteo_archive (1) < openmeteo_live (2) < gauge_merged (3) — and
+           -- NULL, or anything the CHECK constraints do not know about, ranks 0 and can never outrank
+           -- a real source. A stored value is REPLACED only when the incoming write is at least as
+           -- well sourced as the one already there; otherwise the stored value stands. COALESCE is
+           -- the other half: a pass carrying NULL for a field must never erase what an earlier pass
+           -- established.
+           --
+           -- The original case this protects, unchanged: the nightly run rewrites D-2 as well as D-1,
+           -- and by the time a day is D-2 the AmbientWeather buckets behind its gauge figure are gone,
+           -- so the only value on offer is Open-Meteo's. Without the guard the table would hold real
+           -- gauge data for exactly 24 hours and precip_source would faithfully record the
+           -- replacement while looking entirely healthy. What is NEW is that the ERA5 archive can no
+           -- longer overwrite a live value either, in any column — it lags 2-8 days and reads warm on
+           -- this site's radiative-frost nights, so it is a fill-the-gaps source, not a corrector.
+           --
+           -- tmax_f/tmin_f rank on et0_source because they have no provenance column of their own. In
+           -- both writers that exist they arrive in the SAME Open-Meteo payload as et0_in, so
+           -- et0_source is their provenance too. The limit of that, stated rather than papered over:
+           -- a pass carrying temperatures but no ET0 is unlabelled, so it neither protects its own
+           -- temperatures nor displaces a labelled one. Protecting a STATION temperature would need a
+           -- dedicated temp_source column first; nothing writes one today.
+           precip_in = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.precip_source, '')), 0)
+                               > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.precip_source, '')), 0)
+                            then weather_daily.precip_in
+                            else coalesce(excluded.precip_in, weather_daily.precip_in) end,
+           precip_source = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.precip_source, '')), 0)
+                                   > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.precip_source, '')), 0)
+                                then weather_daily.precip_source
+                                else coalesce(excluded.precip_source, weather_daily.precip_source) end,
+           et0_in = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                            > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                         then weather_daily.et0_in
+                         else coalesce(excluded.et0_in, weather_daily.et0_in) end,
+           et0_source = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                             then weather_daily.et0_source
+                             else coalesce(excluded.et0_source, weather_daily.et0_source) end,
+           tmax_f = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                            > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                         then weather_daily.tmax_f
+                         else coalesce(excluded.tmax_f, weather_daily.tmax_f) end,
+           tmin_f = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                            > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                         then weather_daily.tmin_f
+                         else coalesce(excluded.tmin_f, weather_daily.tmin_f) end,
+           updated_at = now()`;
 
 // Upsert the completed days from one Space's hydrology bag. Returns the number of rows written; never
 // throws, never returns a rejected promise. `prov` is the Space's station provenance bag, which is the
@@ -171,6 +241,7 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
     const mergedYest = Number.isFinite(hy.yesterday_precip_actual_in) ? hy.yesterday_precip_actual_in : null;
     const yestIsGauge = !!(prov && prov.yesterday_actual_source === 'station');
     let written = 0;
+    let skipped = 0;
     for (const d of days) {
       if (!d || typeof d.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) continue;
       if (d.date >= today) continue;                       // the --today replay guard; ISO dates compare lexically
@@ -182,49 +253,53 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
         ? null
         : ((isYesterday && mergedYest != null && yestIsGauge) ? WEATHER_DAILY_SOURCE_GAUGE : WEATHER_DAILY_SOURCE_LIVE);
       const et0Source = d.et0_in == null ? null : WEATHER_DAILY_SOURCE_LIVE;
-      // Every parameter carries an explicit cast. Neon's driver cannot infer a type for a NULL bind
-      // and answers "could not determine data type of parameter" — which, in a try/catch this broad,
-      // would present as the weather substrate silently never populating.
-      await pg.query(
-        `insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source)
+      // ONE ROW, ONE TRY. The catch used to sit outside this loop, so a single row that tripped a
+      // CHECK (a negative precip out of a unit bug, an out-of-domain source string) aborted every
+      // LATER day of the run — and the one warning it logged was indistinguishable from a single
+      // failed write. The days are independent upserts; nothing here is transactional across them,
+      // so the correct boundary is the row.
+      try {
+        // Every parameter carries an explicit cast. Neon's driver cannot infer a type for a NULL bind
+        // and answers "could not determine data type of parameter" — which, inside a catch, would
+        // present as the weather substrate silently never populating.
+        await pg.query(
+          `insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source)
          values ($1::uuid, $2::date, $3::numeric, $4::numeric, $5::numeric, $6::numeric, $7::text, $8::text)
-         on conflict (space_id, "date") do update set
-           et0_in    = coalesce(excluded.et0_in,    weather_daily.et0_in),
-           tmax_f    = coalesce(excluded.tmax_f,    weather_daily.tmax_f),
-           tmin_f    = coalesce(excluded.tmin_f,    weather_daily.tmin_f),
-           -- NEVER downgrade a gauge reading to a model one. The nightly run rewrites D-2 as well as
-           -- D-1, and by the time a day is D-2 the AmbientWeather buckets that produced its gauge
-           -- figure are gone, so the only value on offer is Open-Meteo's. Without this guard every
-           -- night would overwrite yesterday's measured rain with the model's estimate — the table
-           -- would hold real gauge data for exactly 24 hours, and precip_source would faithfully
-           -- record the replacement while looking entirely healthy.
-           precip_in = case when weather_daily.precip_source = '${WEATHER_DAILY_SOURCE_GAUGE}'
-                             and coalesce(excluded.precip_source, '') <> '${WEATHER_DAILY_SOURCE_GAUGE}'
-                            then weather_daily.precip_in
-                            else coalesce(excluded.precip_in, weather_daily.precip_in) end,
-           precip_source = case when weather_daily.precip_source = '${WEATHER_DAILY_SOURCE_GAUGE}'
-                                 and coalesce(excluded.precip_source, '') <> '${WEATHER_DAILY_SOURCE_GAUGE}'
-                                then weather_daily.precip_source
-                                else coalesce(excluded.precip_source, weather_daily.precip_source) end,
-           et0_source = coalesce(excluded.et0_source, weather_daily.et0_source),
-           updated_at = now()`,
-        [spaceId, d.date, d.et0_in ?? null, d.tmax_f ?? null, d.tmin_f ?? null,
-         precip ?? null, precipSource, et0Source]);
-      written++;
+         ${WEATHER_DAILY_CONFLICT_SET}`,
+          [spaceId, d.date, d.et0_in ?? null, d.tmax_f ?? null, d.tmin_f ?? null,
+           precip ?? null, precipSource, et0Source]);
+        written++;
+      } catch (e) {
+        skipped++;
+        // The one error worth treating as terminal for the loop, and the one that is not a "bad
+        // row" at all. If the migration has not landed, every remaining day throws identically
+        // (BUG-SEEDEDGATE-001 at TABLE granularity), and N copies of the same warning is how a
+        // genuine per-row defect gets lost later. Stop, having left the nightly plan unaffected —
+        // and keep the original wording, because the whole write did fail.
+        if (isRelationMissing(e)) {
+          console.warn(JSON.stringify({ msg: 'weather_daily write failed — plan unaffected', space: spaceId, error: e?.message }));
+          break;
+        }
+        console.warn(JSON.stringify({ msg: 'weather_daily row skipped — plan unaffected',
+          space: spaceId, date: d.date, error: e?.message }));
+      }
     }
     // Design Part 4 asks for named soak observability rather than vibes: rows/day per space and the
     // null-rate, so a substrate that is quietly writing all-NULL rows is visible in CloudWatch before
-    // F2 ever reads it. An alarm threshold on this line is a pre-F2 task.
-    console.log(JSON.stringify({ msg: 'weather-daily-write', space: spaceId, rows: written,
+    // F2 ever reads it. `skipped` is new and is the half that was previously invisible: under the old
+    // loop-wide catch a partial run and a total failure both logged nothing at all. An alarm
+    // threshold on this line is a pre-F2 task (OPS-WXOBSERVABILITY-001) — as of this change nothing
+    // in the repo consumes this line: no metric filter, no alarm, no dashboard.
+    console.log(JSON.stringify({ msg: 'weather-daily-write', space: spaceId, rows: written, skipped,
       dates: days.map((d) => d && d.date).filter(Boolean),
       null_et0: days.filter((d) => d && d.et0_in == null).length,
       null_precip: days.filter((d) => d && d.precip_in == null).length,
       gauge_yesterday: yestIsGauge }));
     return written;
   } catch (e) {
-    // The named failure class: BUG-SEEDEDGATE-001 at TABLE granularity. If the migration has not
-    // landed, every statement above throws "relation weather_daily does not exist" — and it stops
-    // here, with a warning, leaving the nightly plan completely unaffected.
+    // Retained so the documented contract above ("never throws, never returns a rejected promise")
+    // survives anything the per-row catch cannot see — a malformed `days` bag reached by the log
+    // line, say. Per-STATEMENT failure is handled in the loop and no longer reaches here.
     console.warn(JSON.stringify({ msg: 'weather_daily write failed — plan unaffected', space: spaceId, error: e?.message }));
     return 0;
   }

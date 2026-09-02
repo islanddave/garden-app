@@ -173,7 +173,7 @@ if (!spaces.length) {
   process.exit(1);
 }
 
-let totalWould = 0, totalWrote = 0, totalSkippedGauge = 0;
+let totalWould = 0, totalWrote = 0, totalSkippedGauge = 0, totalSkippedBetterEt0 = 0;
 for (const s of spaces) {
   const rows = await fetchArchive(s.weather_lat, s.weather_lng, startDate, endDate);
   const usable = rows.filter((r) => r.date && r.date <= endDate
@@ -201,37 +201,79 @@ for (const s of spaces) {
   for (const r of usable) {
     // Byte-for-byte the same conflict policy as lambda/daily-plan/handler.js writeWeatherDaily, and
     // it must stay that way: a backfill with a laxer policy than the nightly writer would undo the
-    // nightly writer's work every time it ran. COALESCE keeps a value an earlier pass established
-    // when this pass has null for it; the CASE arms refuse to downgrade a measured gauge reading to
-    // this endpoint's model estimate.
+    // nightly writer's work every time it ran. That sentence was already here and was not true —
+    // only the precip arms matched; et0_in/tmax_f/tmin_f were last-writer-wins in both files, so
+    // this script overwrote the nightly writer's better-sourced values on every overlapping day.
+    // weather-daily-conflict-sync.test.js now compares the two texts, so the claim is enforced
+    // rather than asserted. Edit one, edit both.
     const out = await sql`
       insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source)
       values (${s.id}::uuid, ${r.date}::date, ${r.et0_in}::numeric, ${r.tmax_f}::numeric,
               ${r.tmin_f}::numeric, ${r.precip_in}::numeric,
               ${r.precip_in == null ? null : SOURCE}::text, ${r.et0_in == null ? null : SOURCE}::text)
       on conflict (space_id, "date") do update set
-        et0_in    = coalesce(excluded.et0_in,    weather_daily.et0_in),
-        tmax_f    = coalesce(excluded.tmax_f,    weather_daily.tmax_f),
-        tmin_f    = coalesce(excluded.tmin_f,    weather_daily.tmin_f),
-        precip_in = case when weather_daily.precip_source = 'gauge_merged'
-                          and coalesce(excluded.precip_source, '') <> 'gauge_merged'
-                         then weather_daily.precip_in
-                         else coalesce(excluded.precip_in, weather_daily.precip_in) end,
-        precip_source = case when weather_daily.precip_source = 'gauge_merged'
-                              and coalesce(excluded.precip_source, '') <> 'gauge_merged'
-                             then weather_daily.precip_source
-                             else coalesce(excluded.precip_source, weather_daily.precip_source) end,
-        et0_source = coalesce(excluded.et0_source, weather_daily.et0_source),
-        updated_at = now()
-      returning precip_source`;
+           -- BUG-WXWRITEOVERWRITE-001 — QUALITY-RANKED, PER FIELD. This guard used to cover precip_in
+           -- alone; et0_in, tmax_f and tmin_f were last-writer-wins, so any better-sourced value in
+           -- them survived exactly until the next pass. RANK is the position of the provenance string
+           -- in the array below — openmeteo_archive (1) < openmeteo_live (2) < gauge_merged (3) — and
+           -- NULL, or anything the CHECK constraints do not know about, ranks 0 and can never outrank
+           -- a real source. A stored value is REPLACED only when the incoming write is at least as
+           -- well sourced as the one already there; otherwise the stored value stands. COALESCE is
+           -- the other half: a pass carrying NULL for a field must never erase what an earlier pass
+           -- established.
+           --
+           -- The original case this protects, unchanged: the nightly run rewrites D-2 as well as D-1,
+           -- and by the time a day is D-2 the AmbientWeather buckets behind its gauge figure are gone,
+           -- so the only value on offer is Open-Meteo's. Without the guard the table would hold real
+           -- gauge data for exactly 24 hours and precip_source would faithfully record the
+           -- replacement while looking entirely healthy. What is NEW is that the ERA5 archive can no
+           -- longer overwrite a live value either, in any column — it lags 2-8 days and reads warm on
+           -- this site's radiative-frost nights, so it is a fill-the-gaps source, not a corrector.
+           --
+           -- tmax_f/tmin_f rank on et0_source because they have no provenance column of their own. In
+           -- both writers that exist they arrive in the SAME Open-Meteo payload as et0_in, so
+           -- et0_source is their provenance too. The limit of that, stated rather than papered over:
+           -- a pass carrying temperatures but no ET0 is unlabelled, so it neither protects its own
+           -- temperatures nor displaces a labelled one. Protecting a STATION temperature would need a
+           -- dedicated temp_source column first; nothing writes one today.
+           precip_in = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.precip_source, '')), 0)
+                               > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.precip_source, '')), 0)
+                            then weather_daily.precip_in
+                            else coalesce(excluded.precip_in, weather_daily.precip_in) end,
+           precip_source = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.precip_source, '')), 0)
+                                   > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.precip_source, '')), 0)
+                                then weather_daily.precip_source
+                                else coalesce(excluded.precip_source, weather_daily.precip_source) end,
+           et0_in = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                            > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                         then weather_daily.et0_in
+                         else coalesce(excluded.et0_in, weather_daily.et0_in) end,
+           et0_source = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                             then weather_daily.et0_source
+                             else coalesce(excluded.et0_source, weather_daily.et0_source) end,
+           tmax_f = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                            > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                         then weather_daily.tmax_f
+                         else coalesce(excluded.tmax_f, weather_daily.tmax_f) end,
+           tmin_f = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                            > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                         then weather_daily.tmin_f
+                         else coalesce(excluded.tmin_f, weather_daily.tmin_f) end,
+           updated_at = now()
+      returning precip_source, et0_source`;
     totalWrote++;
     if (out?.[0]?.precip_source === 'gauge_merged') totalSkippedGauge++;
+    // The archive can no longer displace a live value in ANY column, so the run summary has to
+    // report that too — otherwise "upserted N rows" reads as N rows changed when some were declined.
+    if (out?.[0]?.et0_source && out[0].et0_source !== SOURCE) totalSkippedBetterEt0++;
   }
   console.log(`  upserted ${usable.length} rows\n`);
 }
 
 if (apply) {
-  console.log(`DONE — ${totalWrote} rows upserted; ${totalSkippedGauge} kept an existing gauge_merged precip value.`);
+  console.log(`DONE — ${totalWrote} rows upserted; ${totalSkippedGauge} kept an existing gauge_merged precip value;`);
+  console.log(`       ${totalSkippedBetterEt0} kept a better-sourced et0/temperature block (BUG-WXWRITEOVERWRITE-001).`);
   console.log('Verify:  bash scripts/psql-ro.sh -c "select precip_source, et0_source, count(*), min(\\"date\\"), max(\\"date\\") from weather_daily group by 1,2 order by 1,2;"');
 } else {
   console.log(`DRY RUN COMPLETE — ${totalWould} rows would be upserted. Re-run with --apply to write.`);
