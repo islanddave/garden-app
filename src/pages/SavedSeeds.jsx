@@ -19,9 +19,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { P } from '../lib/tokens.js'
 import { useToast } from '../context/ToastContext.jsx'
-import { Sheet } from '../components/forms'
+import { Sheet, PlantingSelect } from '../components/forms'
 import Icon from '../components/Icon.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
@@ -36,6 +37,11 @@ const STAGE_META = {
   stored:     { label: 'Stored',     sub: 'Dry, packeted and put away' },
 }
 const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
+
+// V4-SEEDLINK-001. Byte-identical to PlantingSelect's own unscoped self-fetch path, deliberately:
+// dataCache keys on the path, so the name lookup below and the picker inside the advance sheet
+// share ONE warm entry instead of each paying a round trip.
+const PICKER_PATH = '/api/plants?view=picker'
 
 // Elapsed whole days, floor. Same-day reads "today" rather than "0 days", because 0 of anything
 // looks like missing data.
@@ -59,6 +65,11 @@ export default function SavedSeeds() {
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
   const [note, setNote]       = useState('')
+  // V4-SEEDLINK-001 — the parent plant chosen inside the advance sheet, for a lot that has none.
+  // '' is "not chosen"; the field is optional and a lot can always be linked later from
+  // /inventory/:id, which is the canonical editor for this column.
+  const [stagePlant, setStagePlant] = useState('')
+  const [stagePlantFailed, setStagePlantFailed] = useState(false)
 
   const load = useCallback(() => {
     setLoadErr(null)
@@ -81,6 +92,18 @@ export default function SavedSeeds() {
     () => (items ?? []).filter((i) => !STAGES.includes(i.seed_stage)),
     [items],
   )
+  // V4-SEEDLINK-001 — parent-plant NAMES for the cards. The list endpoint returns source_plant_id
+  // (a uuid) and nothing else about the parent, so the name is resolved from the picker projection.
+  // GATED on a lot actually carrying a link: with none — which is every lot today — the hook sits
+  // in its IDLE mode and no request goes out at all. When one does exist the entry is the same one
+  // the sheet's picker uses, so the second reader is free.
+  const anyLinked = useMemo(() => (items ?? []).some((i) => i.source_plant_id), [items])
+  const plantCache = useCachedFetch(anyLinked ? PICKER_PATH : null)
+  const plantNameById = useMemo(() => {
+    const rows = Array.isArray(plantCache.data) ? plantCache.data : []
+    return new Map(rows.map((p) => [String(p.id), p.name || p.variety_ref?.name || '']))
+  }, [plantCache.data])
+
   const byStage = useMemo(() => {
     const m = Object.fromEntries(STAGES.map((s) => [s, []]))
     for (const i of tracked) m[i.seed_stage].push(i)
@@ -93,6 +116,8 @@ export default function SavedSeeds() {
     setAdvancing({ item, toStage })
     setWhen(todayLocalISO())
     setNote('')
+    setStagePlant('')
+    setStagePlantFailed(false)
   }
 
   async function submitStage() {
@@ -110,7 +135,23 @@ export default function SavedSeeds() {
           note: note.trim() || undefined,
         }),
       })
-      show({ message: `✓ Moved to ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
+      // V4-SEEDLINK-001 — provenance rides along, but as its OWN request with its OWN failure.
+      // These are independent facts: a lot that moved to drying moved whether or not we also
+      // learned which plant it came from. Folding the link failure into the stage failure would
+      // report a write that succeeded as failed, and both halves are re-doable from /inventory/:id.
+      // Second, not first: the stage move is the action this sheet is titled for.
+      let linkErr = null
+      if (stagePlant) {
+        try {
+          await fetch(`/api/inventory-items/${advancing.item.id}/source-plant`, {
+            method: 'PATCH',
+            body: JSON.stringify({ source_plant_id: stagePlant }),
+          })
+        } catch (e) {
+          linkErr = e?.message ?? 'Stage saved, but the parent plant did not.'
+        }
+      }
+      show({ message: linkErr ?? `✓ Moved to ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
       load()
     } catch (e) {
@@ -145,9 +186,17 @@ export default function SavedSeeds() {
             When you save seed from a plant, track it here and this page will tell you what is
             fermenting, what is drying, and how long it has been that way.
           </p>
+          {/* V4-SEEDLINK-001 rewrote this paragraph. It used to send the user to log a
+              "Seed saved" EVENT on the planting — a dead end: that event type has never been
+              logged once in the app's history, has no side effect of any kind, and could not point
+              at a seed lot even if it had (event_log's only FK to inventory_items means "the
+              product I sprayed"). Provenance now has a real column and a real control, so the copy
+              points at it. Leaving the old sentence standing would be worse than never having
+              written it. */}
           <p style={{ margin: 0, color: P.light, fontSize: '0.8rem', lineHeight: 1.5 }}>
-            Provenance — which plant it came from — is best recorded as a <strong>Seed saved</strong>{' '}
-            event on that planting. This page tracks the lot itself.
+            Provenance — which plant a lot came from — is recorded on the packet itself: open it
+            from <Link to="/inventory" style={{ color: P.green }}>Inventory</Link> and use{' '}
+            <strong>Saved from</strong>. This page tracks the lot itself.
           </p>
         </div>
       )}
@@ -171,6 +220,29 @@ export default function SavedSeeds() {
                       {elapsed(item.updated_at)} in {STAGE_META[s].label.toLowerCase()}
                       {item.seed_process ? ` · ${item.seed_process} process` : ''}
                     </div>
+                    {/* V4-SEEDLINK-001 — the parent, retroactively. Two states and no third: the
+                        name when it is known, and a way in when it is not. Rendered only once the
+                        name RESOLVES rather than falling back to "a plant" — a row that names
+                        nothing is worse than no row, and the lookup is a cache read that lands in
+                        the same paint on a warm entry. Setting it happens on /inventory/:id rather
+                        than in a fourth sheet here: that page owns this column, is one tap away,
+                        and is the only surface that reaches an UNTRACKED lot (which is every lot
+                        that never gets a stage). */}
+                    {item.source_plant_id
+                      ? (plantNameById.get(String(item.source_plant_id)) && (
+                          <div data-testid="lot-source-plant" style={{ color: P.light, fontSize: '0.78rem', marginTop: 2 }}>
+                            Saved from {plantNameById.get(String(item.source_plant_id))}
+                          </div>
+                        ))
+                      : (
+                        <Link
+                          to={`/inventory/${item.id}`}
+                          data-testid="set-source-plant"
+                          style={{ display: 'inline-block', marginTop: 4, color: P.green, fontSize: '0.78rem' }}
+                        >
+                          Set parent plant →
+                        </Link>
+                      )}
                   </div>
                   {to && (
                     <button
@@ -218,6 +290,36 @@ export default function SavedSeeds() {
               placeholder="Dehydrator on low, 95°F" data-testid="stage-note" style={inputStyle}
             />
           </label>
+          {/* V4-SEEDLINK-001 — capture the parent at the moment Dave is actually holding the seed.
+              Shown ONLY while the lot has none: once it is recorded this sheet has nothing to ask,
+              and re-offering the field here would make the advance form the place provenance gets
+              edited, which it is not — /inventory/:id is. Optional throughout; a lot with no
+              remembered parent moves stages exactly as before. */}
+          {advancing.item.source_plant_id == null && (
+            <div data-testid="stage-source-plant" style={{ marginBottom: 14 }}>
+              <div style={fieldLabelStyle}>
+                Saved from <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
+              </div>
+              <PlantingSelect
+                id="ss-source-plant"
+                value={stagePlant}
+                onChange={(pid) => setStagePlant(pid || '')}
+                varietyId={advancing.item.variety_id}
+                labelFormat="wave"
+                emptyMeaning="none"
+                retainOutOfScopeValue
+                required={false}
+                onLoadError={() => setStagePlantFailed(true)}
+                aria-label="Saved from which plant"
+                data-testid="stage-source-plant-select"
+              />
+              {stagePlantFailed && (
+                <p style={{ margin: '6px 0 0', color: P.light, fontSize: '0.78rem' }}>
+                  Couldn&apos;t load your plantings — you can still save the stage without one.
+                </p>
+              )}
+            </div>
+          )}
           <button type="button" onClick={submitStage} disabled={busy} data-testid="stage-save" style={primaryBtnStyle}>
             {busy ? 'Saving…' : 'Save'}
           </button>

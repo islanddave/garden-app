@@ -77,6 +77,12 @@ const DURABLE = { id: 'item-2', name: 'Trowel', type: 'durable', category: 'tool
 
 beforeEach(() => {
   fetchSpy.mockReset()
+  // A DEFAULT under the per-test mockResolvedValueOnce chain. V4-SEEDLINK-001 mounts a
+  // PlantingSelect on seed packets, which self-fetches /api/plants?view=picker — a SECOND call this
+  // spy never saw before, and an unqueued `Once` returns undefined, so the component's `.then` blew
+  // up in a commit-phase error that failed four unrelated tests. The tests below are about the CTA,
+  // not the picker, so an empty list is the right answer; each still queues its own item first.
+  fetchSpy.mockResolvedValue([])
   navigateSpy.mockReset()
   paramsRef.current = { id: 'item-seed-1' }
 })

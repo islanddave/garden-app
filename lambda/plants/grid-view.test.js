@@ -396,6 +396,19 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     // was censused — the original auto-resolve omitted it, which would have attributed a put-up to
     // an archived planting and shown that guess to the user as a fact. Counting the fields is what
     // surfaced it, which is the point of this list.
+    //
+    // FIFTH CONSUMER ADDED 2026-09-02 — pages/SavedSeeds.jsx (V4-SEEDLINK-001). Same shape as PutUp:
+    // useCachedFetch on the byte-identical path PlantingSelect self-fetches, so the page's name
+    // lookup and the picker inside its advance sheet share ONE warm entry. Its field reads, counted:
+    //   id                -> the Map key, matched against inventory_items.source_plant_id
+    //   name              -> the "Saved from <name>" line on a lot card
+    //   variety_ref.name  -> the fallback when a planting carries no name of its own
+    // Nothing else, and nothing outside PICKER_KEYS — no widening. archived_at is deliberately NOT
+    // read here, and that is not the PutUp omission repeating itself: this consumer resolves a name
+    // for a link ALREADY RECORDED, it does not offer a choice. A parent archived after the fact is
+    // still the plant the seed came from, and blanking its name would hide a true record rather
+    // than prevent a wrong guess. The one surface that OFFERS plantings on this page is the sheet's
+    // PlantingSelect, which gets the filter from the Lambda projection itself.
     const CLIENT = resolve(__dirname, '..', '..', 'src');
     // --exclude-dir=__tests__: the census is of PRODUCTION call sites. Test files legitimately name
     // the URL in their assertions, and counting those would make this assertion self-satisfying —
@@ -404,7 +417,7 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
       .split('\n').filter(Boolean).map((p) => p.replace(`${CLIENT}/`, '')).sort();
     expect(hits).toEqual([
       'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/PutUp.jsx',
-      'pages/VoiceHarvest.jsx',
+      'pages/SavedSeeds.jsx', 'pages/VoiceHarvest.jsx',
     ]);
   });
 });

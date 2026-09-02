@@ -45,6 +45,15 @@ function resp(statusCode, body) {
   };
 }
 
+// V4-SEEDLINK-001. The /source-plant gate does its ownership check INLINE (see the route for why),
+// so it needs the same malformed-id short-circuit every shared loader carries (V4-AUTHZRESIDUE-001):
+// a non-uuid reaching Postgres raises 22P02, which falls through the catch as an opaque 500 — both a
+// worse client contract and a weak side channel (500 = "not even a uuid", 400 = "valid, not yours").
+// household.js keeps its own copy module-private and that file is held byte-identical across 19
+// Lambda dirs by household-copies-sync.test.js, so widening its export surface for one consumer is
+// not a local change. Same regex, declared where it is used.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const VALID_TYPES = ['consumable', 'durable'];
 const VALID_CATEGORIES = ['seeds','growing_media','lighting','shelving','tools','pest_control','containers','climate_control','nutrients_and_amendments','fertilizer','amendment','other'];
 const VALID_UNITS = ['each','packet','oz','fl oz','lb','gal','qt','bag','roll','sheet','other'];
@@ -313,6 +322,92 @@ export const handler = async (event) => {
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
       return resp(201, rows[0]);
+    }
+
+    // ── V4-SEEDLINK-001 — seed-lot provenance: which PLANT did this lot come from? ───────────────
+    // A DEDICATED SUB-ROUTE, NOT A COLUMN ON THE WIDE PUT, and that is structural rather than
+    // stylistic. Every assignment in the PUT's SET list is unconditional (`= ${body.x ?? null}`) and
+    // InventoryDetail's buildChanges() sends nothing seed-related, so a bare `source_plant_id =`
+    // there would silently NULL the provenance on every unrelated inventory edit and return 200 —
+    // the exact trap the seed_process/seed_stage CASE guards below document at length. Same shape as
+    // /sow-archive above: narrow, single-concern, method-checked, seeds-only.
+    const sourcePlantMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/source-plant$/);
+    if (sourcePlantMatch) {
+      const itemId = sourcePlantMatch[1];
+      if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+
+      // PRESENCE, not truthiness — the hasOwnProperty idiom the PUT already uses for seed_stage.
+      // `null` is a MEANINGFUL value here (a parent being cleared, or one Dave never knew), so a
+      // `body.source_plant_id != null` test would make "not recorded" unreachable rather than
+      // first-class. The 400 is for a body that never mentions the key at all.
+      if (!Object.prototype.hasOwnProperty.call(body, 'source_plant_id')) {
+        return resp(400, { error: 'source_plant_id is required (send null to clear)' });
+      }
+      const sourcePlantId = body.source_plant_id ?? null;
+
+      // AUTHZ (BUG-AUTHZFKENUM-001 / V4-AUTHZSWEEP-001). The plant id comes from the client and the
+      // DB FK proves only that the row EXISTS. Ungated, a caller could pin their own lot to another
+      // household's planting — a cross-household FK write AND a read leak through every surface that
+      // later joins the parent for its name. Generic 400 with no existence oracle, matching the
+      // featured_image_id / location_id gates in the PUT arm.
+      //
+      // INLINE, against public.garden_node, rather than importing loadOwnedPlantingRef: this
+      // directory has no authz-parents.js copy, and adding one would drag public.plants and
+      // public.plant_projects into its L-081 Phase-4 relation set and push the joined-relation
+      // ratchet (scripts/schema-audit-join-baseline.json, "may FALL, never RISE") past 48, failing
+      // schema-audit.yml on push to dev. garden_node is already in this dir's touched set and
+      // already contracted by garden-node-columns.test.js.
+      //
+      // The predicate is the OWN-created_by arm only, which is strictly NARROWER than the canonical
+      // two-arm one in authz-parents.js — it can refuse a planting a household member created inside
+      // a container owned elsewhere, it can never admit a foreign one. That is the safe direction to
+      // differ in, and it is also why the loose `gn.created_by OR pp.created_by` dialect is not
+      // reproduced here.
+      //
+      // NO archived_at / status predicate, deliberately. A seed saver works from a FINISHED plant by
+      // definition — the founding case is a `harvested` melon — so filtering on liveness would
+      // refuse the exact provenance this route exists to record.
+      //
+      // NOT parity with /api/plants?view=picker, and the difference is intentional rather than an
+      // oversight: the picker agrees on status (it does not filter it) but DOES exclude archived
+      // rows, so this route is deliberately the wider of the two. Archiving is how a finished
+      // planting is put away, which makes an archived plant a MORE likely seed parent than a live
+      // one, not a less likely one. The practical consequence is that the picker will not offer an
+      // archived planting for a NEW attachment — reachable via the API, or via the control's
+      // retainOutOfScopeValue once set — and if that gap ever bites, widen the picker rather than
+      // narrowing this predicate. Deleted stays excluded on both.
+      if (sourcePlantId != null) {
+        const owned = UUID_RE.test(String(sourcePlantId))
+          ? await sql`
+              SELECT p.id
+                FROM public.garden_node p
+               WHERE p.id = ${sourcePlantId}
+                 AND p.created_by = ANY(${householdIds})
+                 AND p.deleted_at IS NULL
+            `
+          : [];
+        if (!owned.length) {
+          warnRejectedFk(userId, 'inventory_items', 'source_plant_id', sourcePlantId);
+          return resp(400, { error: 'source_plant_id does not match a planting you can use' });
+        }
+      }
+
+      // Same predicate set as /sow-archive: household-scoped, live rows only, and category='seeds'
+      // asserted so this route cannot stamp a seed-only field onto a shovel. 404 on no match, so a
+      // foreign or non-seed item answers exactly as a missing one does.
+      const rows = await sql`
+        UPDATE public.inventory_items
+           SET source_plant_id = ${sourcePlantId},
+               updated_at = NOW()
+         WHERE id = ${itemId}
+           AND created_by = ANY(${householdIds})
+           AND deleted_at IS NULL
+           AND category = 'seeds'
+        RETURNING id, source_plant_id
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
     }
 
     const idMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)$/);

@@ -33,9 +33,19 @@ const decomment = (s) => s.split('\n')
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
-// The single sql`` template that touches garden_node. Isolated so an assertion about this query
-// cannot be satisfied by an identifier belonging to some other statement in the file.
-const GARDEN_NODE_SQL = (SRC.match(/sql`[^`]*garden_node[^`]*`/) ?? [''])[0];
+// EVERY sql`` template that touches garden_node — `matchAll`, not the non-global `.match` this
+// file shipped with. That returned only the FIRST such template, which was fine while there was
+// exactly one and silently wrong the moment there were two: V4-SEEDLINK-001's ownership gate sits
+// ABOVE the germination summary in index.js, so under the old form it would have BECOME
+// GARDEN_NODE_SQL and broken the isolation assertion, while a second query added BELOW would have
+// escaped the contract entirely. Neither is what this file intends — it intends "no column this
+// handler reads off garden_node is absent from garden_node", which is a claim about all of them.
+const GARDEN_NODE_SQLS = [...SRC.matchAll(/sql`[^`]*garden_node[^`]*`/g)].map((m) => m[0]);
+
+// The germination summary — the query BUG-SEEDDETAIL500-001 actually occurred in. Isolated by the
+// column only it selects, so the display_name assertions below cannot be satisfied by the
+// ownership gate's SQL (which selects no name at all) nor drift onto it if the order changes.
+const GERMINATION_SQL = GARDEN_NODE_SQLS.find((s) => /source_inventory_item_id/.test(s)) ?? '';
 
 // L-081 KEYED contract (Phase 1, keyed form added 2026-08-28). Verified present on
 // public.garden_node in prod 2026-08-28 via information_schema.
@@ -56,6 +66,9 @@ const AUDIT_COLUMNS = {
     'seeds_germinated',
     'source_inventory_item_id',
     'deleted_at',
+    // V4-SEEDLINK-001 — the /source-plant ownership gate's predicate column. Verified present on
+    // public.garden_node in prod 2026-09-02 via information_schema, like every entry above it.
+    'created_by',
   ],
 };
 
@@ -68,29 +81,39 @@ const GARDEN_NODE_COLUMNS = AUDIT_COLUMNS.garden_node;
 const NOT_ON_GARDEN_NODE = ['name', 'variety_id', 'quantity_on_hand', 'category'];
 
 describe('BUG-SEEDDETAIL500-001 — garden_node column contract', () => {
-  it('isolates the garden_node query, so the assertions below are not vacuous', () => {
-    expect(GARDEN_NODE_SQL).toMatch(/FROM public\.garden_node/);
-    expect(GARDEN_NODE_SQL).toMatch(/source_inventory_item_id/);
+  it('isolates the garden_node queries, so the assertions below are not vacuous', () => {
+    // Two of them since V4-SEEDLINK-001: the germination summary and the /source-plant ownership
+    // gate. A floor rather than an equality — a third garden_node query should be covered by the
+    // sweeps below on the day it lands, not fail this file until someone bumps a number.
+    expect(GARDEN_NODE_SQLS.length).toBeGreaterThanOrEqual(2);
+    for (const q of GARDEN_NODE_SQLS) expect(q).toMatch(/FROM public\.garden_node/);
+    expect(GERMINATION_SQL, 'the germination summary must still be findable').toBeTruthy();
   });
 
   it('selects display_name (aliased to name), never a bare p.name', () => {
-    expect(GARDEN_NODE_SQL).toMatch(/p\.display_name\s+AS\s+name/i);
+    expect(GERMINATION_SQL).toMatch(/p\.display_name\s+AS\s+name/i);
     // The regression itself. `p.name` does not exist on this table and 500s the whole endpoint.
-    expect(GARDEN_NODE_SQL).not.toMatch(/\bp\.name\b/);
+    // Asserted over EVERY garden_node query, not just the one it happened in: the column is absent
+    // from the table, so reaching for it anywhere is the same 500.
+    for (const q of GARDEN_NODE_SQLS) expect(q).not.toMatch(/\bp\.name\b/);
   });
 
   it('references no column that is absent from garden_node', () => {
-    // Every p.<ident> in the query must be a real column. This is the assertion that would have
-    // caught the original defect without anyone knowing to look for `name` specifically.
-    const referenced = [...GARDEN_NODE_SQL.matchAll(/\bp\.([a-z_][a-z0-9_]*)\b/gi)].map((m) => m[1]);
+    // Every p.<ident> in every garden_node query must be a real column. This is the assertion that
+    // would have caught the original defect without anyone knowing to look for `name` specifically.
+    const referenced = GARDEN_NODE_SQLS.flatMap(
+      (q) => [...q.matchAll(/\bp\.([a-z_][a-z0-9_]*)\b/gi)].map((m) => m[1]),
+    );
     expect(referenced.length).toBeGreaterThan(0);
     const unknown = [...new Set(referenced)].filter((c) => !GARDEN_NODE_COLUMNS.includes(c));
     expect(unknown).toEqual([]);
   });
 
   it('does not reach for columns that belong to the inventory_items side', () => {
-    for (const c of NOT_ON_GARDEN_NODE) {
-      expect(GARDEN_NODE_SQL).not.toMatch(new RegExp(`\\bp\\.${c}\\b`));
+    for (const q of GARDEN_NODE_SQLS) {
+      for (const c of NOT_ON_GARDEN_NODE) {
+        expect(q).not.toMatch(new RegExp(`\\bp\\.${c}\\b`));
+      }
     }
   });
 

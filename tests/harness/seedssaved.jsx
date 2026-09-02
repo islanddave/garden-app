@@ -44,6 +44,16 @@ const UNTRACKED = [
   { id: 'u4', name: '1884 tomato',      variety_name: '1884',                          seed_stage: null, updated_at: daysAgo(9) },
 ]
 
+// V4-SEEDLINK-001 — candidates for the "Saved from" picker in the advance sheet. Deliberately
+// UNSCOPED by variety: the fixture rows above carry no variety_id, so the picker's varietyId filter
+// is inert here and every row is offered. That is the wide case, which is the one worth measuring —
+// a one-row list would tell us nothing about how the panel sits over the date and note fields.
+const PLANTINGS = [
+  { id: 'p1', name: 'Money Plant', quantity: 1, variety_id: null, variety_ref: null, sown_at: null, succession_order: null },
+  { id: 'p2', name: 'Cinderella', quantity: 2, variety_id: null, variety_ref: null, sown_at: '2026-05-18', succession_order: 1 },
+  { id: 'p3', name: 'Red Mustard', quantity: 6, variety_id: null, variety_ref: null, sown_at: '2026-04-02', succession_order: null },
+]
+
 // Empty is the live prod state: 260 packets, none staged. The picker still has candidates, because
 // untracked is "everything without a stage" — which on that day is all 260.
 const ROWS = CASE === 'empty' ? UNTRACKED : [...TRACKED, ...UNTRACKED]
@@ -56,6 +66,11 @@ const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { stat
 window.fetch = (url, ...rest) => {
   const u = String(url)
   if (u.includes('/seed-stage')) return json({ ok: true })
+  if (u.includes('/source-plant')) return json({ ok: true })
+  // V4-SEEDLINK-001 put a PlantingSelect in the advance sheet, and it self-fetches this path. Left
+  // to fall through to realFetch it 404s against the harness server and the sheet renders its
+  // load-failure copy — which would read as a layout finding rather than as a missing stub.
+  if (u.includes('/api/plants')) return json(PLANTINGS)
   if (u.includes('inventory-items')) return json(ROWS)
   return realFetch(url, ...rest)
 }
