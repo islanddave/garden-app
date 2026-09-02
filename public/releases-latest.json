@@ -1,12 +1,14 @@
 {
-  "version": "4.95.0",
+  "version": "4.96.0",
   "date": "2026-09-02",
   "highlights": [
-    "Save seed: you can now enter a count at any point — when you save the lot, and at every stage after — instead of only when you mark it stored.",
-    "Marking a lot stored now asks for the count. Enter 0 if none of it was viable; the seed no longer goes missing from Sow now because the box was left blank.",
-    "A lot you have saved but not started processing shows under 'Still in process — not started yet' on Sow now, instead of being filed as already sown.",
-    "'Seed saved' in the event menu now opens the Save seed sheet, so it creates a real lot and still records the event on the plant's timeline.",
-    "Editing a saved-seed lot explains itself in plain words instead of showing a database constraint name.",
-    "Bigger tap targets on the Saved seeds page."
+    "Today now shows a weather line when the weather actually calls for something — at most one a day, and nothing at all on the days it has nothing useful to say.",
+    "Planting pages now show the heat and weather guidance recorded for that specific variety, and say plainly when there is none recorded rather than leaving the space blank.",
+    "Corrected the cabbage care note: it blamed heat for bolting, which is wrong — cabbage bolts from cold. Heat loosens the head and makes it split, so the answer to a hot spell is to cut it, not shade it.",
+    "Removing a photo you just added is no longer a trap: the button is a full-size tap target, and you can undo it. Before, a mis-tap destroyed the photo with no way back.",
+    "Meta text across the app is darker, so the smaller lines are readable in daylight.",
+    "The active tab in the bottom bar is now marked on the icon itself, not only by the colour of a 10px label.",
+    "Empty screens now look the same everywhere — seven pages had drifted into seven different designs.",
+    "The garden arrival animation now respects your phone's reduce-motion setting, which it previously claimed to do and did not."
   ]
 }
