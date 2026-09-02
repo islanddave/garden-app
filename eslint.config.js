@@ -14,6 +14,9 @@ import tsParser from '@typescript-eslint/parser'
 import globals from 'globals'
 import { relative, sep } from 'node:path'
 
+// Repo root, resolved from this file rather than from process.cwd() — see the DEFER_CAPS lookup.
+const CONFIG_DIR = import.meta.dirname
+
 const HEX_RE = /#[0-9a-fA-F]{3,8}\b/
 // BUG-EMOJIREGEX-001 — the icon-glyph class: pictographs, symbols, dingbats, misc-technical,
 // geometric shapes. Matches a glyph appearing literally in source — see the Literal /
@@ -160,9 +163,12 @@ const noRawDesignTokens = {
     // "stop looking", which is why ScopeChecklist.jsx could take on 32 more violations inside
     // the guarded scope without CI noticing.
     const deferred = { dimensional: 0, emoji: 0 }
+    // Relative to THIS FILE's directory, not to context.cwd. The caps are keyed by repo-relative
+    // path, and cwd is whatever ESLint was invoked from — `eslint .` at the root and an editor
+    // integration running per-file from a subdirectory would otherwise produce different keys,
+    // and a missed key is a hard deferUncapped error, not a quiet miss.
     const filename = context.filename ?? context.getFilename()
-    const cwd = context.cwd ?? context.getCwd()
-    const rel = relative(cwd, filename).split(sep).join('/')
+    const rel = relative(CONFIG_DIR, filename).split(sep).join('/')
 
     // One door for every emoji-class hit, so the deferred branch can never diverge from the
     // reported one — a counter that counts something other than what the rule would report is
