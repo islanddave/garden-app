@@ -192,6 +192,58 @@ const VESSEL_FLOOR = {
   ],
 };
 
+// ── BUG-PARITYGOLDENSBLIND-001 — the two temperature KNIFE EDGES.
+// Every temperature in the 21 pre-existing goldens sat clear of both thresholds: 78/79/80/82 well below,
+// 86 between them, 90/92 above both. Mutation-measured consequence — HOT_F anywhere in [87,90] and
+// BAG_HEAT_GATE_F anywhere in [80,86] left ALL 21 goldens BYTE-IDENTICAL, so the live temperature response
+// was retunable by three degrees against a fully green suite. Same failure shape as BUG-PARITYFLAGBLIND-001
+// (coverage that names a branch without straddling its boundary), one level down: these scenarios reached
+// the heat code, they just never reached its edge.
+//
+// Each input is captured on BOTH sides of one threshold, one degree apart, so the golden pair pins the
+// constant to a single value in both directions: drop it and the cooler golden moves, raise it and the
+// hotter one does. The two pairs are deliberately isolated from each other — the HEAT pair carries no
+// fabric bag and no rain, the BAG pair sits at 84/85 where `hot` is false either way — so a mutation of
+// one constant moves exactly one pair and the failure names its own cause.
+
+// HEAT_KNIFE: HOT_F (88), the drought-cadence accelerator. Dry window, rigid pots, no bag anywhere.
+//   hk1 — TOMATO, drought_tolerance 'low', wi 2, dW 2: the ONLY shape the accelerator acts on. At 87 it is
+//         due at interval 2 / overdue 0; at 88 `hot` walks wi to 1, so it reads interval 1 / overdue 1.
+//   hk2 — PEPPER, drought_tolerance 'medium', wi 3, dW 3: due at interval 3 on BOTH sides. Pins the
+//         drought-tolerance scoping — widening the accelerator to every crop moves this row, not hk1's.
+// The top-level `hot` boolean flips across the pair too, so even a future engine that retires the wi
+// decrement keeps a sensitive golden here.
+// NOTE (not a defect this fixture can fix): computeCallout tests `high >= 88` as a LITERAL, not HOT_F, so
+// the callout divergence across this pair is NOT evidence of HOT_F sensitivity — the wi/`hot` divergence is.
+const HEAT_KNIFE = {
+  today: '2026-07-15',
+  hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  ownerFallback: 'dave',
+  rainCreditEnabled: false,
+  plantings: [
+    P({ id: 'hk1', name: 'Knife Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'pot', container_size: '5 gal', substrate_start: '2026-04-01', transplant_at: '2026-04-01', last_water: '2026-07-13', covered: false, db_cadence: TOMATO }),
+    P({ id: 'hk2', name: 'Knife Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'pot', container_size: '5 gal', substrate_start: '2026-04-01', transplant_at: '2026-04-01', last_water: '2026-07-12', covered: false, db_cadence: PEPPER }),
+  ],
+};
+// BAG_KNIFE: BAG_HEAT_GATE_F (85), the fabric-bag rain-credit demotion. Flag ON (prod's live config) and
+// 0.30" in the window, the depth that clears the 0.20 IA of both tiers below and so earns a credit worth
+// demoting — with no credit earned the gate is a no-op and the golden would be blind again.
+//   bk1 — 5 gal fabric_bag, PEPPER wi 3, dW 3: fabric_ground, hold 3 -> credited_days 3 at 84; at 85 the
+//         gate cuts it to 1 and the reason string names the cut. 5 gal is deliberate (>= FABRIC_GROUND_MIN_GAL)
+//         — a sub-3-gal bag stays small_fast, never clears IA 0.35 at 0.30", and would water on both sides.
+//   bk2 — in_ground bed, INGROUND_TOMATO wi 4, dW 4: in_ground hold 3 -> credited_days 3 on BOTH sides.
+//         Pins the vessel scoping — a gate that stopped keying on fabric_bag moves this row.
+const BAG_KNIFE = {
+  today: '2026-07-15',
+  hydrology: { recent_precip_in: 0.30, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  ownerFallback: 'dave',
+  rainCreditEnabled: true,
+  plantings: [
+    P({ id: 'bk1', name: 'Knife Bag Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'fabric_bag', container_size: '5 gal', substrate_start: '2026-04-01', transplant_at: '2026-04-01', last_water: '2026-07-12', covered: false, db_cadence: PEPPER }),
+    P({ id: 'bk2', name: 'Knife Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'in_ground', container_size: null, substrate_start: '2026-04-01', transplant_at: '2026-04-01', last_water: '2026-07-11', covered: false, db_cadence: INGROUND_TOMATO }),
+  ],
+};
+
 // Helper to keep planting literals terse + uniform.
 //
 // BUG-NOLOCOUTDOOR-001: the handler no longer hands the engine a single `covered` boolean. It
@@ -423,6 +475,28 @@ export const scenarios = [
     name: 'fabric-bag-heat-gate-flagon',
     desc: '0.30" across a 5 gal / "3 in" / unsized fabric bag at 90F, flag ON: the 5 gal bag still earns fabric_ground credit but the >=85F gate CUTS it 3 -> 1 (credited_days 1, reason names the cut) instead of erasing it; at dW=3 vs a 3-day cadence that 1 day is what keeps it on rain_skipped. The other two never cleared small_fast IA 0.35, so they water with the SOAK-IN THRESHOLD note — the gate must not claim to have withheld a credit that was never earned. Compare rain-tier-fabric-flagon (same inputs, 79F, credited_days 3).',
     input: { ...RAIN_TIER_FABRIC, weather: { tonightLow: 70, highToday: 90, code: 0, short: 'Hot and sunny', unit: 'F' }, rainCreditEnabled: true },
+  },
+  {
+    // BUG-PARITYGOLDENSBLIND-001 — the knife pairs (see HEAT_KNIFE/BAG_KNIFE above for the verdict map).
+    // Not flag pairs: the only thing that differs inside each pair is one degree of highToday.
+    name: 'heat-knife-87',
+    desc: '87F, one degree UNDER HOT_F: `hot` false, so the drought-tolerance-low tomato keeps its full 2-day interval (due, overdue 0) and no heat callout fires. Lowering HOT_F to 87 or below moves this golden.',
+    input: { ...HEAT_KNIFE, weather: { tonightLow: 66, highToday: 87, code: 0, short: 'Hot and sunny', unit: 'F' } },
+  },
+  {
+    name: 'heat-knife-88',
+    desc: '88F, exactly ON HOT_F: `hot` true, the drought-tolerance-low tomato is accelerated to interval 1 (overdue 1) while the medium-tolerance pepper stays at 3. Raising HOT_F to 89 or above moves this golden.',
+    input: { ...HEAT_KNIFE, weather: { tonightLow: 66, highToday: 88, code: 0, short: 'Hot and sunny', unit: 'F' } },
+  },
+  {
+    name: 'bag-heat-knife-84',
+    desc: '0.30" on a 5 gal fabric bag + an in-ground bed at 84F, one degree UNDER BAG_HEAT_GATE_F, flag ON: no demotion, both rain_skipped with the full credited_days 3 and the plain rain reason. Lowering the gate to 84 or below moves this golden.',
+    input: { ...BAG_KNIFE, weather: { tonightLow: 66, highToday: 84, code: 0, short: 'Sunny', unit: 'F' } },
+  },
+  {
+    name: 'bag-heat-knife-85',
+    desc: '0.30" same input at 85F, exactly ON BAG_HEAT_GATE_F: the bag is cut 3 -> 1 with the heat reason while the bed keeps 3. Raising the gate to 86 or above moves this golden.',
+    input: { ...BAG_KNIFE, weather: { tonightLow: 66, highToday: 85, code: 0, short: 'Sunny', unit: 'F' } },
   },
   {
     name: 'vessel-floor',

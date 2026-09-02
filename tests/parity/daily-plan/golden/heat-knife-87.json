@@ -1,0 +1,126 @@
+{
+  "date": "2026-07-15",
+  "hot": false,
+  "hydrology": {
+    "rain_coming": false,
+    "rain_horizon": null,
+    "recent_precip_in": 0,
+    "status": {
+      "ok": true,
+      "uncertainty": {
+        "flag": false
+      }
+    },
+    "today_pop": 0,
+    "today_precip_in": 0,
+    "tomorrow_pop": 0,
+    "tomorrow_precip_in": 0,
+    "upcoming_precip_in": 0
+  },
+  "users": {
+    "dave": {
+      "counts": {
+        "cold": 0,
+        "dormancy_suppressed": 0,
+        "dormant": 0,
+        "fertilize": 2,
+        "no_history": 0,
+        "pest": 0,
+        "plantings": 2,
+        "rain_skipped": 0,
+        "water_due": 2
+      },
+      "substrate": {
+        "feeding_now": 0,
+        "fertilize_recs": 2,
+        "msg": "2 planting(s) past the MG feed window — feed per recommendation.",
+        "on_hold": false,
+        "phase_counts": {
+          "mg_tapering_13_24wk": 2
+        },
+        "water_note": "Hard water (high Ca/Mg/bicarbonate) slowly raises root-zone pH -> micronutrient (Fe/Mn) lockout, worst for acid-lovers (blueberry)."
+      },
+      "tasks": {
+        "cold": [],
+        "dormancy_suppressed": [],
+        "dormant": [],
+        "fertilize": [
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "tomato",
+            "id": "hk1",
+            "in_ground": false,
+            "interval": 14,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Knife Tomato",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          },
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "pepper",
+            "id": "hk2",
+            "in_ground": false,
+            "interval": 14,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Knife Pepper",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 15
+          }
+        ],
+        "no_history": [],
+        "pest": [],
+        "rain_skipped": [],
+        "water_due": [
+          {
+            "crop": "tomato",
+            "days_since": 2,
+            "id": "hk1",
+            "in_ground": false,
+            "interval": 2,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Knife Tomato",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          },
+          {
+            "crop": "pepper",
+            "days_since": 3,
+            "id": "hk2",
+            "in_ground": false,
+            "interval": 3,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Knife Pepper",
+            "never": false,
+            "overdue_by": 0,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          }
+        ]
+      }
+    }
+  },
+  "water_source": "well water (likely HARD)",
+  "weather": {
+    "callout": null,
+    "code": 0,
+    "highToday": 87,
+    "short": "Hot and sunny",
+    "tonightLow": 66,
+    "unit": "F"
+  }
+}
