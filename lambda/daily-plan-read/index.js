@@ -9,6 +9,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';  // V4-ASSIGNLENS-001 opt-in household widening (per-dir copy; bundle-safe)
 import { applyDone, planItemIds } from './doneEvents.js';  // V3-TODAYDONE-001 vocabulary + pure fold (per-dir copy; bundle-safe)
+import { matchCueImpressionRoute, handleCueImpressionPost } from './cue-impression.js';  // OPS-CUEINSTRUMENT-001 write path (dependency-free; CI-executable)
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const SCHEMA_VERSION = 1;       // API-response envelope version (client contract)
@@ -60,6 +61,19 @@ export const handler = async (event) => {
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/daily-plan';
+  // OPS-CUEINSTRUMENT-001 — the impression beacon rides this Lambda's existing prefix. Handled and
+  // RETURNED before the GET guard below, which is left byte-identical: this branch is reachable only
+  // on its own literal path, so the plan read cannot be affected by anything in it. The writer is
+  // fail-open (always 202) and its SQL lives in cue-impression.js, keeping this file's tagged-template
+  // ordering — which index.test.js indexes positionally — untouched.
+  const cueRoute = matchCueImpressionRoute(method, rawPath);
+  if (cueRoute) {
+    if (cueRoute.kind === 'method_not_allowed') return resp(405, { error: 'Method not allowed' });
+    let body = {};
+    try { body = event.body ? JSON.parse(event.body) : {}; } catch { body = {}; }
+    const out = await handleCueImpressionPost({ sql: neon(secrets.NEON_DATABASE_URL), userId, body });
+    return resp(out.statusCode, out.body);
+  }
   if (method !== 'GET' || rawPath !== '/api/daily-plan') {
     return resp(405, { error: 'Method not allowed' });
   }
