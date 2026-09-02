@@ -575,10 +575,40 @@ export const handler = async (event) => {
                  -- appear to do nothing, because clearing the leaf row cannot remove a cultivar
                  -- key. This column answers "what is set ON THIS PLANTING", which is the only
                  -- question the control can act on.
-                 ow.profile -> 'overwintering' AS overwintering
+                 ow.profile -> 'overwintering' AS overwintering,
+                 -- V5-HEATRESPONSEDISPLAY-001 — the curated per-cultivar heat prose, read for
+                 -- DISPLAY only. It answers Dave's own question ("does the heat change what this
+                 -- plant needs?") in his own vocabulary, and it is already materialised: 193 of 264
+                 -- care_profile rows carry it, covering 45 of 47 non-deleted tomato plantings.
+                 --
+                 -- RESOLVED SCOPE, NOT LEAF-ONLY — the deliberate opposite of the overwintering
+                 -- read directly above, so read that comment and then this one. Overwintering is an
+                 -- editable per-planting SETTING, so showing an inherited cultivar value would make
+                 -- its Clear button look broken. heat_response is read-only prose that is MEANT to
+                 -- be inherited: it is authored per cultivar and 262 of the 264 rows that carry it
+                 -- are cultivar-scoped. Reading the merged view is what makes it reach a planting
+                 -- at all.
+                 --
+                 -- Honest absence is a property of the data, not of a client fallback: the single
+                 -- system-scope row carries NO heat_response key (verified read-only on prod
+                 -- 2026-09-02), so resolved_profile->>'heat_response' is NULL exactly when neither
+                 -- this planting nor its cultivar has curated prose. Nothing generic is ever
+                 -- inherited, which is why the UI can say "nothing recorded" and be telling the
+                 -- truth. Do NOT add a heat_response to the system row: it would silently convert
+                 -- every uncovered plant's honest silence into a house guess.
+                 --
+                 -- DISPLAY ONLY. This value must never reach a watering or care threshold — see
+                 -- lambda/daily-plan/heat-response-not-an-engine-input.test.js for the standing
+                 -- guard and the evidence behind it.
+                 rc.resolved_profile ->> 'heat_response' AS heat_response
           FROM public.garden_node p
           LEFT JOIN public.container pp ON pp.id = p.container_id
           LEFT JOIN care_profile ow ON ow.scope = 'leaf'::care_scope AND ow.scope_id = p.id
+          -- V5-HEATRESPONSEDISPLAY-001. The shipped resolver view (system||cultivar||leaf, shallow
+          -- right-wins merge), joined rather than re-implemented so this read cannot drift from the
+          -- one the care engine resolves through. One row per plants row, keyed on the same id the
+          -- WHERE clause already pins, so it adds no fan-out.
+          LEFT JOIN public.v_resolved_care rc ON rc.leaf_id = p.id
           LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
           LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
           -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the
