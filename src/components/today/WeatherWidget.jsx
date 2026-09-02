@@ -1,7 +1,7 @@
 import React from 'react'
 import Icon from '../Icon.jsx'
 import { computeWateringScale, canRail, pillState } from '../../lib/wateringScale.js'
-import { P, tokens, ICON_COLORS } from '../../lib/tokens.js'
+import { P, tokens, ICON, ICON_COLORS } from '../../lib/tokens.js'
 
 // Weather widget — V200 Slice 6 reskin (V4-THEME-001). The watering-can scale
 // (computeWateringScale/canRail/pillState) is byte-identical to LOCKED v1, as are the
@@ -23,6 +23,17 @@ import { P, tokens, ICON_COLORS } from '../../lib/tokens.js'
 //           pause SHAPE = hold/skip (3-channel: count + text + color + shape). level>=0.5 -> sage "do",
 //           level 0 -> gold-tint "wait". Headline + rain note restate the guidance (WCAG 1.4.10).
 // Operational surface (Reward-UX V101 §7): semantic state color is appropriate; no reward-surface rules.
+//
+// V4-WEATHERWIDGETICONS-001 (2026-09-02) — icon debt. This file held ELEVEN hand-rolled SVGs with
+// seven off-token stroke widths on the post-login home screen. Five now render through the shared
+// <Icon>: the watering can (care.wateringCanFill), the hold shape (care.pause), the `clear`
+// condition and the day-high mini (care.sun), and the rain-note mini (care.rainPct). Six stay
+// inline and say why at their site — five of them because the whole ConditionIcon family occupies
+// ONE slot and must stay internally consistent, and the only twins for its cloud members are mono
+// LINE glyphs. Every surviving stroke is now an ICON token; fog's off-token 5 is gone entirely.
+// COLOUR IS NEVER FLATTENED HERE: the gold sun keeps its ICON_COLORS regions, and every mono glyph
+// is coloured by the CONSUMER (iconAnchors §6 — "the weather surface sets `color` per condition,
+// so hue is never baked"), which is the same blue/gold/grey it painted before.
 
 // V200 token surface — sage "do" family, gold-tint "wait" family, BLUE watering can (water != green).
 const PAL = {
@@ -44,88 +55,94 @@ const PAL = {
 const RAIN_POP_DISPLAY_THRESHOLD = 30 // percent; tunable display gate for the rain-amount figure
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100
 
-let _cid = 0
-function Can({ fill = 1, color, ghost }) {
-  const cid = `can-clip-${_cid++}`
-  const Outline = (
-    <g fill="none" stroke={ghost} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round">
-      <path d="M20 28 H46 L43 49 Q42.5 52 39 52 H27 Q23.5 52 23 49 Z" />
-      <path d="M23 28 L43 28 L41 23 L25 23 Z" />
-      <path d="M20 33 L8 22 L11 18 L23 28 Z" />
-      <path d="M5 25 L14 16" />
-      <path d="M26 23 Q33 9 46 21" />
-    </g>
-  )
-  const Solid = (
-    <g>
-      <path d="M20 28 H46 L43 49 Q42.5 52 39 52 H27 Q23.5 52 23 49 Z" fill={color} />
-      <path d="M23 28 L43 28 L41 23 L25 23 Z" fill={color} />
-      <path d="M20 33 L8 22 L11 18 L23 28 Z" fill={color} />
-      <path d="M5 25 L14 16" fill="none" stroke={color} strokeWidth="3.4" strokeLinecap="round" />
-      <path d="M26 23 Q33 9 46 21" fill="none" stroke={color} strokeWidth="3.6" strokeLinecap="round" />
-      <path d="M7 31 L4 35 M11 33 L9 38 M14 34 L13 39" fill="none" stroke={color}
-        strokeWidth="2.2" strokeLinecap="round" opacity="0.55" />
-    </g>
-  )
-  return (
-    <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
-      {fill === 0 ? Outline : fill >= 1 ? Solid : (
-        <>{Outline}<clipPath id={cid}><rect x="0" y="0" width="32" height="64" /></clipPath>
-          <g clipPath={`url(#${cid})`}>{Solid}</g></>
-      )}
-    </svg>
-  )
-}
+// One rail can. Was a 64-viewBox hand-roll with four off-token strokes (2.6/3.4/3.6/2.2), a
+// module-level mutable counter minting a per-instance clipPath id, and a partial state faked by
+// clipping the LEFT HALF of a solid can. care.wateringCanFill is the registry glyph drawn for
+// exactly this job — §9's "ONE parametric glyph, water level driven by a --fill CSS var", not N
+// pre-rendered assets — so a half can is now an actual half-full can. Colour stays on the consumer
+// per iconAnchors §6: blue once there is water in it, border-grey when there is not, which is the
+// same two hues and the same empty/filled read the hand-roll carried.
+const Can = ({ fill = 1, color, ghost }) => (
+  <Icon name="care.wateringCanFill" size={24} decorative
+    style={{ color: fill === 0 ? ghost : color, '--fill': `${Math.round(fill * 100)}%` }} />
+)
 
 const PotIcon = ({ color }) => <Icon name="care.containers" size={23} decorative style={{ color }} />
 const BedIcon = ({ color }) => <Icon name="care.inground" size={23} decorative style={{ color }} />
 // Pause SHAPE for level 0 — distinct glyph (not mere can-absence): 3-channel hold cue tinted to the gold-tint
 // wait family so the shape + the "Hold" text + the gold color all read the same verdict.
+// The two bars are care.pause now; the ring that gives the mark its mass against a 3-can rail is
+// CSS rather than a hand-drawn <circle>, so the visual is unmoved and the off-token 1.6 stroke
+// became the ICON.minStroke token it was already numerically equal to. aria-hidden, not labelled:
+// the lane above is role="img" with the full verdict in its name, so descendants are presentational
+// and the old aria-label="hold" never reached the a11y tree in the first place.
 const PauseIcon = ({ color }) => (
-  <svg width="24" height="24" viewBox="0 0 24 24" aria-label="hold" style={{ color }}>
-    <circle cx="12" cy="12" r="11" fill={PAL.warnBg} stroke="currentColor" strokeWidth="1.6" />
-    <rect x="8.4" y="7.6" width="2.8" height="8.8" rx="1" fill="currentColor" />
-    <rect x="12.8" y="7.6" width="2.8" height="8.8" rx="1" fill="currentColor" />
-  </svg>
+  <span aria-hidden="true" style={{
+    width: 24, height: 24, boxSizing: 'border-box', borderRadius: '50%',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: PAL.warnBg, border: `${ICON.minStroke}px solid ${color}`, color,
+  }}>
+    <Icon name="care.pause" size={20} decorative />
+  </span>
 )
 
+// The condition slot ships at 44px and its glyphs are authored in a 64 viewBox. Icon.jsx's rule for
+// size >= 32 is ICON.strokeHero DEVICE px, so the 64-space equivalent of that one token is the token
+// scaled by viewBox/size. Every stroke that survives in this family is this constant — it replaces
+// the hand-picked 4 (clear), 3 (partly cloudy), 3 (rain) and 5 (fog).
+const WX_VIEWBOX = 64, WX_SIZE = 44
+const WX_STROKE = +(ICON.strokeHero * WX_VIEWBOX / WX_SIZE).toFixed(2)
+
 // WMO weather code -> condition glyph (44px). Coarse buckets cover the Conway range; unknown -> overcast.
+//
+// V4-WEATHERWIDGETICONS-001 — `clear` routes to the registry, the other five deliberately do not,
+// and the reason is that this is ONE SLOT rendering one member per day. care.sun is a
+// color-candidate whose regions resolve to the very ICON_COLORS this file was already painting with,
+// so swapping it changes nothing a user could see. The only twins the cloud members have —
+// care.cloud and event.rain — are mono LINE glyphs, and rendered side by side against these solid
+// fills (measured, not assumed) they are markedly lighter. Routing one of six would put a solid
+// cloud in this slot on Tuesday and an outline cloud on Wednesday, which is worse than either
+// uniform choice; and rain/snow are TWO-hue (green cloud + blue water), which a single currentColor
+// cannot carry at all. Levelling these up properly means filled colour VARIANTS on care.cloud and
+// event.rain in the house data-region/colorFills pattern — a shared-registry change that belongs in
+// its own row, not a silent downgrade taken here because a mono twin happened to exist.
 function ConditionIcon({ code = 3 }) {
   const c = Number(code)
-  if (c === 0 || c === 1) return (
-    <svg width="44" height="44" viewBox="0 0 64 64" aria-label="clear">
-      <circle cx="32" cy="32" r="12" fill={ICON_COLORS.sunBody} />
-      <g stroke={ICON_COLORS.sunRays} strokeWidth="4" strokeLinecap="round">
-        <path d="M32 6v8M32 50v8M6 32h8M50 32h8M13 13l6 6M45 45l6 6M51 13l-6 6M19 45l-6 6" />
-      </g>
-    </svg>
-  )
+  if (c === 0 || c === 1) return <Icon name="care.sun" size={WX_SIZE} title="clear" />
   if (c === 2) return (
-    <svg width="44" height="44" viewBox="0 0 64 64" aria-label="partly cloudy">
+    <svg width={WX_SIZE} height={WX_SIZE} viewBox={`0 0 ${WX_VIEWBOX} ${WX_VIEWBOX}`} aria-label="partly cloudy">
       <circle cx="24" cy="24" r="9" fill={ICON_COLORS.sunBody} />
-      <g stroke={ICON_COLORS.sunRays} strokeWidth="3" strokeLinecap="round"><path d="M24 8v5M8 24h5M13 13l3 3" /></g>
+      <g stroke={ICON_COLORS.sunRays} strokeWidth={WX_STROKE} strokeLinecap="round"><path d="M24 8v5M8 24h5M13 13l3 3" /></g>
       <path d="M22 50 Q15 50 15 44 Q15 38 22 38 Q23 31 32 31 Q40 31 41 38 Q49 38 49 45 Q49 50 44 50 Z" fill={P.greenLight} />
     </svg>
   )
   if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82)) return (
-    <svg width="44" height="44" viewBox="0 0 64 64" aria-label="rain">
+    <svg width={WX_SIZE} height={WX_SIZE} viewBox={`0 0 ${WX_VIEWBOX} ${WX_VIEWBOX}`} aria-label="rain">
       <path d="M16 40 Q8 40 8 32 Q8 25 15 24 Q16 15 26 15 Q34 15 36 23 Q44 22 46 30 Q53 30 53 37 Q53 40 49 40 Z" fill={P.greenLight} />
-      <g stroke={ICON_COLORS.dropBody} strokeWidth="3" strokeLinecap="round"><path d="M20 46l-2 6M30 46l-2 6M40 46l-2 6" /></g>
+      <g stroke={ICON_COLORS.dropBody} strokeWidth={WX_STROKE} strokeLinecap="round"><path d="M20 46l-2 6M30 46l-2 6M40 46l-2 6" /></g>
     </svg>
   )
   if ((c >= 71 && c <= 77) || c === 85 || c === 86) return (
-    <svg width="44" height="44" viewBox="0 0 64 64" aria-label="snow">
+    <svg width={WX_SIZE} height={WX_SIZE} viewBox={`0 0 ${WX_VIEWBOX} ${WX_VIEWBOX}`} aria-label="snow">
       <path d="M16 40 Q8 40 8 32 Q8 25 15 24 Q16 15 26 15 Q34 15 36 23 Q44 22 46 30 Q53 30 53 37 Q53 40 49 40 Z" fill={P.greenLight} />
       <g fill={ICON_COLORS.dropBody}><circle cx="20" cy="50" r="2" /><circle cx="32" cy="52" r="2" /><circle cx="44" cy="50" r="2" /></g>
     </svg>
   )
+  // Fog's three bars were the one member drawn as STROKES, at an off-token 5. They were never a
+  // line read — they are this family's mass, the job every sibling does with a fill — so they are
+  // rects at the identical geometry rather than a stroke retuned to WX_STROKE, which would have
+  // thinned the only glyph here that has nothing else to carry it.
   if (c >= 45 && c <= 48) return (
-    <svg width="44" height="44" viewBox="0 0 64 64" aria-label="fog">
-      <g stroke={P.greenLight} strokeWidth="5" strokeLinecap="round"><path d="M12 26h40M10 36h44M14 46h36" /></g>
+    <svg width={WX_SIZE} height={WX_SIZE} viewBox={`0 0 ${WX_VIEWBOX} ${WX_VIEWBOX}`} aria-label="fog">
+      <g fill={P.greenLight}>
+        <rect x="9.5" y="23.5" width="45" height="5" rx="2.5" />
+        <rect x="7.5" y="33.5" width="49" height="5" rx="2.5" />
+        <rect x="11.5" y="43.5" width="41" height="5" rx="2.5" />
+      </g>
     </svg>
   )
   return (
-    <svg width="44" height="44" viewBox="0 0 64 64" aria-label="overcast">
+    <svg width={WX_SIZE} height={WX_SIZE} viewBox={`0 0 ${WX_VIEWBOX} ${WX_VIEWBOX}`} aria-label="overcast">
       <path d="M16 44 Q8 44 8 36 Q8 29 15 28 Q16 19 26 19 Q34 19 36 27 Q44 26 46 34 Q53 34 53 41 Q53 44 49 44 Z" fill={P.greenLight} />
       <path d="M22 50 Q15 50 15 44 Q15 38 22 38 Q23 31 32 31 Q40 31 41 38 Q49 38 49 45 Q49 50 44 50 Z" fill={P.greenLight} />
     </svg>
@@ -302,11 +319,25 @@ export default function WeatherWidget({
         <ConditionIcon code={weather.code} />
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 1, lineHeight: 1 }}>
           <span style={{ fontWeight: 800, letterSpacing: '-0.02em', fontSize: 36, color: PAL.tempHi }}>{weather.highToday}&deg;</span>
-          <svg width="13" height="13" viewBox="0 0 24 24" style={{ marginTop: 3 }} aria-label="day high"><circle cx="12" cy="12" r="5" fill={ICON_COLORS.sunBody} /><g stroke={ICON_COLORS.sunRays} strokeWidth="2" strokeLinecap="round"><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" /></g></svg>
+          {/* Same gold sun as the `clear` condition, so it is the same registry entry. The label now
+              actually reaches the a11y tree: <Icon title> emits role="img", where the hand-rolled
+              svg carried a bare aria-label that role=graphics-document cannot be named by — this
+              mini and its moon sibling had been silent, the WATERWHY blackout shape.
+              16, NOT the hand-roll's 13. The hand-roll inked its rays at 1.08 device px, which is
+              BELOW ICON.minStroke — normalising to the 2.0 floor at 13px closes the aperture between
+              disc and rays and the mark reads as an asterisk beside the numeral. Rendered at 13/14/
+              15/16/18/20 on cream before picking: 16 is the first size where it reads as a sun. The
+              moon opposite stays 11 — it is a single crescent with no counter-space to lose. */}
+          <Icon name="care.sun" size={16} title="day high" style={{ marginTop: 3 }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 1, lineHeight: 1, marginLeft: 2 }}>
           <span style={{ fontWeight: 600, letterSpacing: '-0.02em', fontSize: 23, color: PAL.tempLo }}>{weather.tonightLow}&deg;</span>
-          <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
+          {/* Crescent moon — the one glyph in this file with NO registry twin of any kind. care.tempLow
+              is the nearest key by meaning and it is a thermometer with a falling arrow, a different
+              object entirely, so pointing at it would be a redraw wearing a swap's clothes. Kept
+              inline as a genuine single-use mark; it is a bare fill, so there is no stroke here to
+              be off-token. Drawing a care.moon is the follow-up if the weather family ever grows. */}
+          <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} role="img" aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
         </div>
       </div>
 
@@ -337,7 +368,11 @@ export default function WeatherWidget({
 
       {(rainIn > 0 || uncertain || live) && (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a5 5 0 0 1 .5-9.9A6 6 0 0 1 19 8a4 4 0 0 1-.5 8Z" fill={ICON_COLORS.dropBody} opacity="0.55" /><g stroke={ICON_COLORS.dropBody} strokeWidth="2" strokeLinecap="round"><path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2" /></g></svg>
+          {/* care.rainPct is drawn for this exact line: its registry note calls it "the FORECAST twin
+              of event.rain … one drop under a raised cloud reads as 'some chance', three streaks read
+              as 'it is raining'", and every sentence this glyph sits beside is a forecast. Single-hue
+              blue before and after — the hand-roll's cloud was the same dropBody at 0.55 opacity. */}
+          <Icon name="care.rainPct" size={13} decorative style={{ color: ICON_COLORS.dropBody }} />
           {rainNote}
         </div>
       )}
