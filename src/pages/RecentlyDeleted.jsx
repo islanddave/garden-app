@@ -32,6 +32,7 @@ import { DELETED_ENTITY_KINDS, rowsFromResponse } from '../lib/deletedEntities.j
 import { invalidatePrefix } from '../lib/dataCache.js'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
+import SharedEmptyState from '../components/forms/EmptyState.jsx'
 import Button from '../components/forms/Button.jsx'
 import ErrorBanner from '../components/forms/ErrorBanner.jsx'
 import PhotoView from '../components/photo/PhotoView.jsx'
@@ -107,34 +108,34 @@ function PhotoRow({ photo, busy, onRestore }) {
 // automatically, so a household that has not deleted anything sees only this. It has to answer the
 // question the user arrived with ("where do deleted photos go?") rather than just report a count of
 // zero — otherwise the DD9 confirm's promise reads as unfulfilled the first time anyone checks it.
+// V4-EMPTYSTATE-001: chrome from the shared primitive. The Link below is UNCHANGED and stays at
+// this call site — its inline-flex + 44px minHeight is pinned by RecentlyDeleted.test.jsx and is
+// this page's own decision, not part of the shared chrome.
 export function EmptyState() {
   return (
-    <div style={{ textAlign: 'center', padding: '32px 8px', color: P.mid }}>
-      <div aria-hidden="true" style={{ fontSize: '2rem', marginBottom: 10 }}>🗑️</div>
-      <p style={{ margin: '0 0 8px', color: P.dark, fontSize: '0.95rem', fontWeight: 600 }}>
-        Nothing deleted
-      </p>
-      <p style={{ margin: '0 auto', maxWidth: 320, fontSize: '0.88rem', lineHeight: 1.5 }}>
-        Photos you delete land here and stay until you put them back. Nothing is ever removed
-        permanently.
-      </p>
-      <div style={{ marginTop: 12 }}>
-        {/* Measured at 104x17 in the layout harness before the inline-flex + minHeight — a 17px-tall
-            tap target on a 390px Android screen, and the ONLY way out of an otherwise blank page.
-            The breadcrumb above it is the app's existing small-link idiom and is left alone; this one
-            is a primary action in an empty state, which is a different thing. */}
-        <Link
-          to="/photos"
-          style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            minHeight: 44, padding: '0 12px',
-            color: P.green, fontWeight: 600, textDecoration: 'none',
-          }}
-        >
-          Back to Photos
-        </Link>
-      </div>
-    </div>
+    <SharedEmptyState
+      emoji="🗑️"
+      title="Nothing deleted"
+      body="Photos you delete land here and stay until you put them back. Nothing is ever removed permanently."
+      action={(
+        <>
+          {/* Measured at 104x17 in the layout harness before the inline-flex + minHeight — a 17px-tall
+              tap target on a 390px Android screen, and the ONLY way out of an otherwise blank page.
+              The breadcrumb above it is the app's existing small-link idiom and is left alone; this one
+              is a primary action in an empty state, which is a different thing. */}
+          <Link
+            to="/photos"
+            style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              minHeight: 44, padding: '0 12px',
+              color: P.green, fontWeight: 600, textDecoration: 'none',
+            }}
+          >
+            Back to Photos
+          </Link>
+        </>
+      )}
+    />
   )
 }
 

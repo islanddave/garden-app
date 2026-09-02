@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import Icon from '../components/Icon.jsx'
 import Badge from '../components/forms/Badge.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
+import SharedEmptyState from '../components/forms/EmptyState.jsx'
 import { selectChrome, T } from '../components/forms/formStyles.js'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
@@ -577,30 +578,16 @@ function DetailCell({ label, value }) {
   )
 }
 
+// V4-EMPTYSTATE-001: this page's tinted medallion is what the shared primitive generalised, so
+// the chrome moved wholesale — only the glyph, the copy and the CTA stay here.
 function EmptyState() {
   return (
-    <div style={{
-      textAlign: 'center', padding: '52px 20px',
-      backgroundColor: P.white, border: `1px solid ${P.border}`,
-      borderRadius: 12,
-    }}>
-      <span style={{
-        width: 66, height: 66, margin: '0 auto 14px', borderRadius: 18,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        backgroundColor: P.fTypeBg, border: `1px solid ${P.fTypeBorder}`, color: P.fTypeText,
-      }}>
-        <Icon name="nav.inventory" size={34} decorative />
-      </span>
-      <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
-        Nothing here yet
-      </p>
-      <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
-        Add your first item to start tracking seeds, supplies and tools.
-      </p>
-      <Link to="/inventory/add" style={addBtnStyle}>
-        + Add item
-      </Link>
-    </div>
+    <SharedEmptyState
+      iconName="nav.inventory"
+      title="Nothing here yet"
+      body="Add your first item to start tracking seeds, supplies and tools."
+      action={<Link to="/inventory/add" style={addBtnStyle}>+ Add item</Link>}
+    />
   )
 }
 

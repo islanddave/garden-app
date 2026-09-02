@@ -32,6 +32,7 @@ import { formatDate } from '../lib/format.js'
 import { invalidatePrefix } from '../lib/dataCache.js'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
+import SharedEmptyState from '../components/forms/EmptyState.jsx'
 import Button from '../components/forms/Button.jsx'
 import ErrorBanner from '../components/forms/ErrorBanner.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
@@ -79,12 +80,12 @@ export function rowSubtitle(row) {
   return parts.join(' · ')
 }
 
+// V4-EMPTYSTATE-001: chrome from the shared primitive. Body-only, and it gains the card this
+// page never had — the surrounding AsyncRegion renders emptyLabel bare, so before this the copy
+// floated on the page background with nothing marking it as a state rather than a load failure.
 function EmptyState() {
   return (
-    <div style={{ color: P.mid, fontSize: '0.9rem', lineHeight: 1.6 }}>
-      Nothing is archived. Archiving hides a planting from your garden without deleting it — anything
-      you archive shows up here, and you can bring it back any time.
-    </div>
+    <SharedEmptyState body="Nothing is archived. Archiving hides a planting from your garden without deleting it — anything you archive shows up here, and you can bring it back any time." />
   )
 }
 
