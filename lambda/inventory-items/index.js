@@ -6,6 +6,16 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } from './extract.js';
+// V4-SEEDORIGIN-001. A byte-identical per-dir COPY of lambda/preservation/provenance.js, following
+// the household.js precedent: each Lambda is zipped from its own directory, so a `../preservation/`
+// import 502s the deployed handler (caught 2026-05-20). lambda/provenance-copies-sync.test.js
+// asserts this copy stays byte-identical to the canonical module AND that the directory list is
+// derived from disk, so the next copy cannot drift unguarded the way daily-plan-read's did.
+//
+// The point of importing rather than re-typing the eight values: this is the SAME vocabulary
+// preservation_log uses, deliberately. Re-declaring it here as a literal would be a fourth place to
+// drift, which is exactly what the canonical module's own header warns about.
+import { VALID_SOURCE_KINDS } from './provenance.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -115,6 +125,7 @@ export function validateCreate(body) {
   // create path would be the one hole the edit path closes: a shovel could be born with a parent
   // plant that no route could ever have attached to it afterwards.
   if (body.source_plant_id != null && body.category !== 'seeds') return 'source_plant_id is only allowed when category is seeds';
+  if (body.source_kind != null && body.category !== 'seeds') return 'source_kind is only allowed when category is seeds';
   const merr = validateMetadata(body.metadata);
   if (merr) return merr;
   return null;
@@ -477,6 +488,65 @@ export const handler = async (event) => {
            AND deleted_at IS NULL
            AND category = 'seeds'
         RETURNING id, source_plant_id
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
+    }
+
+    // ── V4-SEEDORIGIN-001 — the OTHER half of provenance: where did this lot come from when it did
+    // NOT come from one of my plantings? Store-bought Reaper, gift packet, u-pick fruit.
+    //
+    // A DEDICATED SUB-ROUTE, for the same structural reason /source-plant is one and documented
+    // there at length: every assignment in the wide PUT's SET list is unconditional, so a bare
+    // `source_kind =` there would silently NULL the provenance on every unrelated inventory edit and
+    // return 200.
+    const sourceKindMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/source-kind$/);
+    if (sourceKindMatch) {
+      const itemId = sourceKindMatch[1];
+      if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+
+      // PRESENCE, not truthiness — same idiom as /source-plant. `null` is MEANINGFUL here: it is
+      // "not recorded", which is the honest state of all 260 existing seed rows and must stay
+      // reachable rather than being a value you can never get back to.
+      if (!Object.prototype.hasOwnProperty.call(body, 'source_kind')) {
+        return resp(400, { error: 'source_kind is required (send null to clear)' });
+      }
+      const sourceKind = body.source_kind ?? null;
+
+      if (sourceKind != null && !VALID_SOURCE_KINDS.includes(sourceKind)) {
+        return resp(400, { error: `source_kind must be one of ${VALID_SOURCE_KINDS.join(', ')}` });
+      }
+
+      // THE MUTUAL-EXCLUSION RULE, ENFORCED IN JS AS WELL AS IN THE DB CHECK — and that duplication
+      // is deliberate, not redundancy. chk_inventory_seed_source_plant would catch this too, but as
+      // an opaque 23514 mapped to "Constraint violation: chk_…", which tells a user nothing about
+      // what they did. provenance.js:92-95 makes exactly the same choice for preservation_log.
+      // A lot cannot claim it came from a shop AND from one of my plants.
+      if (sourceKind != null && sourceKind !== 'own_garden') {
+        const [existing] = await sql`
+          SELECT source_plant_id FROM public.inventory_items
+           WHERE id = ${itemId} AND created_by = ANY(${householdIds}) AND deleted_at IS NULL
+        `;
+        // Absent row -> fall through to the UPDATE, which 404s. Do not answer differently here, or
+        // this branch becomes an existence oracle the sibling route deliberately avoids.
+        if (existing && existing.source_plant_id != null) {
+          return resp(400, {
+            error: 'source_kind must be own_garden while a source plant is set (clear the source plant first)',
+          });
+        }
+      }
+
+      // Same predicate set as /source-plant: household-scoped, live rows only, seeds only.
+      const rows = await sql`
+        UPDATE public.inventory_items
+           SET source_kind = ${sourceKind},
+               updated_at = NOW()
+         WHERE id = ${itemId}
+           AND created_by = ANY(${householdIds})
+           AND deleted_at IS NULL
+           AND category = 'seeds'
+        RETURNING id, source_kind
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
       return resp(200, rows[0]);
@@ -873,6 +943,22 @@ export const handler = async (event) => {
         }
       }
 
+      // V4-SEEDORIGIN-001, same shape and same reasoning as the parent above: NAMED in the INSERT
+      // rather than left to default, because Postgres does not complain about a key the INSERT never
+      // mentions and the write would return 201 having silently dropped it. That is the defect this
+      // handler already carries a comment about for `metadata`, and the one source_plant_id shipped
+      // with until this morning.
+      //
+      // The mutual-exclusion rule needs no stored-row read here the way the PATCH does: on a create
+      // both values arrive in this one body, so they can simply be compared.
+      const sourceKind = body.source_kind ?? null;
+      if (sourceKind != null && !VALID_SOURCE_KINDS.includes(sourceKind)) {
+        return resp(400, { error: `source_kind must be one of ${VALID_SOURCE_KINDS.join(', ')}` });
+      }
+      if (sourceKind != null && sourceKind !== 'own_garden' && sourcePlantId != null) {
+        return resp(400, { error: 'source_kind must be own_garden when a source plant is set' });
+      }
+
       const isConsumable = body.type === 'consumable';
       const isDurable = body.type === 'durable';
       const tags = Array.isArray(body.tags) ? body.tags : [];
@@ -909,7 +995,7 @@ export const handler = async (event) => {
           quantity_on_hand, reorder_threshold, reorder_quantity,
           quantity, condition, brand, model,
           image_url, featured_image_id, variety_id, metadata,
-          seed_process, seed_stage, source_plant_id
+          seed_process, seed_stage, source_plant_id, source_kind
         ) VALUES (
           ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
@@ -924,7 +1010,7 @@ export const handler = async (event) => {
           ${body.brand ?? null}, ${body.model ?? null},
           ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
           ${metadataJson}::jsonb,
-          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${sourcePlantId}
+          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${sourcePlantId}, ${sourceKind}
         ) RETURNING *
       `;
       return resp(201, rows[0]);

@@ -360,6 +360,183 @@ describe('authz + CTE atomicity', () => {
 // nor the VALUES, so the route returns 201 and RETURNING * echoes null: a silent drop with no
 // retry signal, sitting directly on the "create a new seed" path.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// V4-SEEDORIGIN-001 — the non-planting origin. These execute the four CHECKs the migration added,
+// which is the only way to tell a constraint that is ARMED from one that is merely declared.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('source_kind — origin for seed that came from no planting of ours', () => {
+  it('PATCH /:id/source-kind records a store-bought origin (the Carolina Reaper case)', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const { status, body } = await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-kind`,
+      body: { source_kind: 'store' },
+    })
+    expect(status, `PATCH -> ${JSON.stringify(body)}`).toBe(200)
+    const [row] = await directSql`SELECT source_kind FROM inventory_items WHERE id = ${lot.id}`
+    expect(row.source_kind).toBe('store')
+  })
+
+  it('rejects a value outside the shipped vocabulary', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const { status, body } = await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-kind`,
+      body: { source_kind: 'plant_swap' },
+    })
+    expect(status).toBe(400)
+    expect(String(body.error)).toMatch(/must be one of/i)
+  })
+
+  it('null clears it — "not recorded" stays reachable', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-kind`, body: { source_kind: 'gift' },
+    })
+    const { status } = await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-kind`, body: { source_kind: null },
+    })
+    expect(status).toBe(200)
+    const [row] = await directSql`SELECT source_kind FROM inventory_items WHERE id = ${lot.id}`
+    expect(row.source_kind).toBeNull()
+  })
+
+  it('a body that never mentions the key is a 400, not a silent clear', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const { status } = await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-kind`, body: {},
+    })
+    expect(status).toBe(400)
+  })
+
+  it('MUTUAL EXCLUSION — a lot cannot claim a shop origin AND a parent plant', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-plant`,
+      body: { source_plant_id: parentPlantId },
+    })
+    const { status, body } = await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-kind`,
+      body: { source_kind: 'store' },
+    })
+    expect(status).toBe(400)
+    expect(String(body.error)).toMatch(/own_garden/i)
+    const [row] = await directSql`SELECT source_kind FROM inventory_items WHERE id = ${lot.id}`
+    expect(row.source_kind).toBeNull()
+    await directSql`UPDATE inventory_items SET source_plant_id = NULL WHERE id = ${lot.id}`
+  })
+
+  it('own_garden IS allowed alongside a parent plant', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-plant`,
+      body: { source_plant_id: parentPlantId },
+    })
+    const { status } = await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${lot.id}/source-kind`,
+      body: { source_kind: 'own_garden' },
+    })
+    expect(status).toBe(200)
+    await directSql`UPDATE inventory_items SET source_plant_id = NULL WHERE id = ${lot.id}`
+  })
+
+  it('chk_inventory_seed_source_plant is ARMED in the database, not merely declared', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    // Bypass the handler entirely — set both columns in one statement so no JS guard can intervene.
+    await expect(
+      directSql`UPDATE inventory_items
+                   SET source_kind = ${'store'}, source_plant_id = ${parentPlantId}
+                 WHERE id = ${lot.id}`
+    ).rejects.toThrow(/chk_inventory_seed_source_plant/i)
+  })
+
+  it('chk_inventory_source_kind_seeds_only is ARMED — a tool cannot carry an origin', async () => {
+    await expect(
+      directSql`UPDATE inventory_items SET source_kind = ${'store'} WHERE id = ${toolItemId}`
+    ).rejects.toThrow(/chk_inventory_source_kind_seeds_only/i)
+  })
+
+  it('source-kind on a NON-seed item 404s', async () => {
+    setTestUserId(USER)
+    const { status } = await callHandler(handler, {
+      method: 'PATCH', path: `/api/inventory-items/${toolItemId}/source-kind`,
+      body: { source_kind: 'store' },
+    })
+    expect(status).toBe(404)
+  })
+
+  it('POST persists source_kind rather than silently dropping it', async () => {
+    setTestUserId(USER)
+    const { status, body } = await createSeedLot({ source_kind: 'foraged' })
+    expect(status).toBe(201)
+    expect(body.source_kind).toBe('foraged')
+    const [row] = await directSql`SELECT source_kind FROM inventory_items WHERE id = ${body.id}`
+    expect(row.source_kind).toBe('foraged')
+  })
+
+  it('POST refuses a conflicting origin+parent pair up front', async () => {
+    setTestUserId(USER)
+    const { status } = await createSeedLot({ source_kind: 'store', source_plant_id: parentPlantId })
+    expect(status).toBe(400)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// V4-SOWSTAGE-001 — the sowability link. This is the defect that ran in BOTH directions.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('sowability tracks the seed stage', () => {
+  it('the view projects seed_stage and seed_process', async () => {
+    const cols = await directSql`
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'v_sow_candidates'
+         AND column_name IN ('seed_stage', 'seed_process')`
+    expect(cols).toHaveLength(2)
+  })
+
+  it('a fermenting lot is still LISTED as a candidate, carrying its stage', async () => {
+    // Deliberately not filtered out of the view: the diversion is client-side so an in-process lot
+    // stays visible and marked rather than vanishing for two weeks. What the view must do is carry
+    // the stage so the client CAN divert it — before this migration it did not, and a jar of wet
+    // seed was indistinguishable from a finished packet.
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    await callHandler(handler, {
+      method: 'POST', path: `/api/inventory-items/${lot.id}/seed-stage`,
+      body: { stage: 'fermenting', seed_process: 'wet' },
+    })
+    const [row] = await directSql`
+      SELECT seed_stage, seed_process FROM v_sow_candidates WHERE inventory_item_id = ${lot.id}`
+    expect(row).toBeTruthy()
+    expect(row.seed_stage).toBe('fermenting')
+    expect(row.seed_process).toBe('wet')
+  })
+
+  it('a never-staged packet carries a null stage, which reads as sowable', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const [row] = await directSql`
+      SELECT seed_stage FROM v_sow_candidates WHERE inventory_item_id = ${lot.id}`
+    expect(row.seed_stage).toBeNull()
+  })
+
+  it('the projection did not change which rows are candidates', async () => {
+    // The five continuous rowcount gates on this view pin it to the unfiltered base join. Asserted
+    // here too, self-differencing, so it stays true as the population changes.
+    const [n] = await directSql`
+      SELECT (SELECT count(*) FROM v_sow_candidates)
+           - (SELECT count(*) FROM inventory_items i
+                JOIN plant_varieties v ON v.id = i.variety_id
+               WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                 AND i.status = 'active' AND v.deleted_at IS NULL) AS diff`
+    expect(Number(n.diff)).toBe(0)
+  })
+})
+
 describe('POST must not silently drop source_plant_id', () => {
   it('POST with source_plant_id persists it', async () => {
     setTestUserId(USER)

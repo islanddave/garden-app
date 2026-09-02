@@ -1,10 +1,12 @@
 {
-  "version": "4.93.0",
-  "date": "2026-09-01",
+  "version": "4.94.0",
+  "date": "2026-09-02",
   "highlights": [
-    "Dictated notes no longer save a half-finished sentence — if the phone corrected itself mid-phrase, the corrected version is what gets stored",
-    "Saved seeds: choose how a lot was processed instead of every lot being recorded as fermented, and 'days in this stage' now counts from when the stage actually started",
-    "Seed packets can be edited again when the app is offline or the inventory list hasn't loaded",
-    "Security: 16 dependency advisories closed"
+    "Save seed straight from a planting — one tap on the planting page creates the lot, already linked to the plant it came from",
+    "Seed still fermenting or drying no longer shows up as ready to sow; it stays on the list, clearly marked, and becomes sowable when you mark it stored",
+    "Record where non-garden seed came from — store-bought, gift, u-pick, foraged",
+    "See a seed lot's full history on its own page, and fix a stage you tapped by mistake",
+    "Seed drying guidance corrected: the old example named a dehydrator temperature that kills the lot",
+    "Ferment now warns at day 4 and alarms at day 5, before the seed sprouts in the jar"
   ]
 }

@@ -88,6 +88,7 @@ const INVENTORY_ITEMS_COLUMNS = [
   // nulls it on every unrelated edit), and NOT in seed-stage-columns.test.js — this column belongs
   // to inventory_items, and that file pins seed_lot_stage_log's own relation on purpose.
   'source_plant_id',
+  'source_kind',
 ];
 
 describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
@@ -104,10 +105,10 @@ describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
 
   it('pins a non-trivial contract — an emptied array must fail, not silently pass', () => {
     // 31 -> 33 with V4-SEEDSAVEFLOW-001's two columns, 33 -> 34 with V4-SEEDLINK-001's
-    // source_plant_id. Ratcheting the floor for columns genuinely added to THIS relation is the
-    // normal move; what must never happen is folding a DIFFERENT relation's columns in to raise it,
-    // which is why seed_lot_stage_log got its own file.
-    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(34);
+    // source_plant_id, 34 -> 35 with V4-SEEDORIGIN-001's source_kind. Ratcheting the floor for
+    // columns genuinely added to THIS relation is the normal move; what must never happen is folding
+    // a DIFFERENT relation's columns in to raise it, which is why seed_lot_stage_log got its own file.
+    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(35);
   });
 
   it('queries inventory_items', () => {

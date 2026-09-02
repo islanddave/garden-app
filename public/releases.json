@@ -1,5 +1,17 @@
 [
   {
+    "version": "4.94.0",
+    "date": "2026-09-02",
+    "highlights": [
+      "Save seed straight from a planting — one tap on the planting page creates the lot, already linked to the plant it came from",
+      "Seed still fermenting or drying no longer shows up as ready to sow; it stays on the list, clearly marked, and becomes sowable when you mark it stored",
+      "Record where non-garden seed came from — store-bought, gift, u-pick, foraged",
+      "See a seed lot's full history on its own page, and fix a stage you tapped by mistake",
+      "Seed drying guidance corrected: the old example named a dehydrator temperature that kills the lot",
+      "Ferment now warns at day 4 and alarms at day 5, before the seed sprouts in the jar"
+    ]
+  },
+  {
     "version": "4.93.0",
     "date": "2026-09-01",
     "highlights": [
