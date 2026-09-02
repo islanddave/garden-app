@@ -367,8 +367,16 @@ export const handler = async (event) => {
       //
       // NO archived_at / status predicate, deliberately. A seed saver works from a FINISHED plant by
       // definition — the founding case is a `harvested` melon — so filtering on liveness would
-      // refuse the exact provenance this route exists to record. /api/plants?view=picker takes the
-      // same position: it excludes deleted and archived rows and does NOT filter on status.
+      // refuse the exact provenance this route exists to record.
+      //
+      // NOT parity with /api/plants?view=picker, and the difference is intentional rather than an
+      // oversight: the picker agrees on status (it does not filter it) but DOES exclude archived
+      // rows, so this route is deliberately the wider of the two. Archiving is how a finished
+      // planting is put away, which makes an archived plant a MORE likely seed parent than a live
+      // one, not a less likely one. The practical consequence is that the picker will not offer an
+      // archived planting for a NEW attachment — reachable via the API, or via the control's
+      // retainOutOfScopeValue once set — and if that gap ever bites, widen the picker rather than
+      // narrowing this predicate. Deleted stays excluded on both.
       if (sourcePlantId != null) {
         const owned = UUID_RE.test(String(sourcePlantId))
           ? await sql`
