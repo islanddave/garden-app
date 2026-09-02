@@ -14,10 +14,44 @@ import tsParser from '@typescript-eslint/parser'
 import globals from 'globals'
 
 const HEX_RE = /#[0-9a-fA-F]{3,8}\b/
-// Emoji ranges: pictographs, symbols, dingbats, arrows, misc-technical, variation
-// selectors. Matches a glyph appearing literally in source — see the Literal /
+// BUG-EMOJIREGEX-001 — the icon-glyph class: pictographs, symbols, dingbats, misc-technical,
+// geometric shapes. Matches a glyph appearing literally in source — see the Literal /
 // TemplateLiteral / JSXText / JSXAttribute visitors below.
-const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE0F}]/u
+//
+// The 2026-08-26 set was wrong in BOTH directions. Counts below are occurrences in the AST
+// positions this rule actually visits, across src non-test at dev ddf26b1 — comments are never
+// visited, so raw file-text greps overstate this corpus by roughly 10x (`→` is 440 in file text
+// and 41 in linted positions).
+//
+//   DROPPED, the Arrows block U+2190-U+21FF (62 occurrences). `→` alone was 41 of them across
+//   18 files — the single most frequent glyph the old class caught — and it is TYPOGRAPHY:
+//   `Sow → Harvest` is punctuation inside a sentence, not a mark with a registry twin. `← ↑ ↓
+//   ↔ ↩ ↗ ↘ ↳` came with it. U+2B00-U+2BFF is deliberately KEPT even though it also holds
+//   arrows: its members carry emoji presentation by default (⬅️⬆️⬇️ render as coloured emoji),
+//   which the Arrows block's do not.
+//
+//   DROPPED, U+FE0F on its own (15 occurrences). Variation-selector-16 never appears without a
+//   base character this class already matches (`⚠️` is U+26A0 + FE0F), so as a class member it
+//   changed no verdict and only inflated any global-match counter by one per glyph. U+20E3
+//   replaces it for the one family whose base is otherwise unmatched — the keycaps 0️⃣-9️⃣ #️⃣ *️⃣.
+//
+//   ADDED, U+00D7 and the Geometric Shapes block U+25A0-U+25FF (20 + 51 occurrences). These are
+//   the disclosure and dismiss marks: `▾` 28, `×` 20, `▸` 18, plus `▴ ▲ ▼ ▶ ○`. Their absence
+//   made the guard TEACH THE WRONG MIGRATION — `✕` (U+2715) was banned, so an author retyped it
+//   as `×` (U+00D7) and passed CI, while action.chevron sat at zero consumers.
+//
+// The two drops are not a new opinion: eventTypeIconWiring.test.jsx already ships the census
+// regex this slice was sized with, and it excludes FE0F and the arrows for the same two reasons
+// in the same words. That instrument and this one now agree; before today they did not.
+const EMOJI_RE = /[\u{00D7}\u{20E3}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{1F000}-\u{1FAFF}]/u
+
+// The reported glyph, so the message can name the character that is being rejected rather than
+// leaving the author to find it. Naming it is the whole point of the correction above: an author
+// who cannot see WHICH mark tripped the rule is the author who substitutes a lookalike.
+function firstGlyph(s) {
+  const m = String(s).match(EMOJI_RE)
+  return m ? m[0] : null
+}
 
 // §7's dimensional classes, keyed to the message that names the token surface to use.
 // Longhand corner/side forms are included: `paddingRight: 36` is the same drift as
@@ -88,7 +122,7 @@ const noRawDesignTokens = {
     }],
     messages: {
       rawHex: "Raw hex color '{{value}}' — import a token from lib/constants.js (P) or lib/tokens.js instead.",
-      rawEmoji: 'Raw emoji glyph — source it from lib/iconRegistry.js instead.',
+      rawEmoji: "Raw icon glyph '{{value}}' — source it from lib/iconRegistry.js instead. Substituting a lookalike (`×` for `✕`, `▾` for a chevron) is the drift this names, not a fix.",
       rawRadius: "Raw border-radius '{{value}}' on `{{prop}}` — use a T.radius* token from forms/formStyles.js.",
       rawSpace: "Raw spacing '{{value}}' on `{{prop}}` — use T.space / a named T pad token from forms/formStyles.js.",
       rawType: "Raw font-size '{{value}}' on `{{prop}}` — use the T.type ramp from forms/formStyles.js.",
@@ -108,8 +142,9 @@ const noRawDesignTokens = {
         if (HEX_RE.test(node.value)) {
           context.report({ node, messageId: 'rawHex', data: { value: node.value.match(HEX_RE)[0] } })
         }
-        if (emoji && EMOJI_RE.test(node.value)) {
-          context.report({ node, messageId: 'rawEmoji' })
+        const glyph = emoji && firstGlyph(node.value)
+        if (glyph) {
+          context.report({ node, messageId: 'rawEmoji', data: { value: glyph } })
         }
       },
       // (b) raw emoji in a template literal's fixed chunks (`🌱 ${name}`). Tests `cooked`,
@@ -117,20 +152,28 @@ const noRawDesignTokens = {
       // and slips through. cooked is the decoded string and covers both spellings; it is
       // null only for an invalid escape in a tagged template, hence the fallback.
       TemplateLiteral(node) {
-        if (emoji && node.quasis.some(q => EMOJI_RE.test(q.value.cooked ?? q.value.raw))) {
-          context.report({ node, messageId: 'rawEmoji' })
+        if (!emoji) return
+        for (const q of node.quasis) {
+          const glyph = firstGlyph(q.value.cooked ?? q.value.raw)
+          if (glyph) {
+            context.report({ node, messageId: 'rawEmoji', data: { value: glyph } })
+            return
+          }
         }
       },
       JSXText(node) {
-        if (emoji && EMOJI_RE.test(node.value)) {
-          context.report({ node, messageId: 'rawEmoji' })
+        const glyph = emoji && firstGlyph(node.value)
+        if (glyph) {
+          context.report({ node, messageId: 'rawEmoji', data: { value: glyph } })
         }
       },
       JSXAttribute(node) {
         if (!emoji) return
         const v = node.value
-        if (v && v.type === 'Literal' && typeof v.value === 'string' && EMOJI_RE.test(v.value)) {
-          context.report({ node: v, messageId: 'rawEmoji' })
+        if (!v || v.type !== 'Literal' || typeof v.value !== 'string') return
+        const glyph = firstGlyph(v.value)
+        if (glyph) {
+          context.report({ node: v, messageId: 'rawEmoji', data: { value: glyph } })
         }
       },
       // (c/d/e) raw radius / padding+margin / font-size. Keyed on the CSS property NAME, so
@@ -229,7 +272,6 @@ export default [
       'src/components/forms/Sheet.jsx',
       'src/components/forms/TileGrid.jsx',
       'src/components/forms/Card.jsx',
-      'src/components/forms/FilterChipRow.jsx',
       'src/components/forms/PageShell.jsx',
       'src/components/forms/PlantForm.jsx',
       'src/components/forms/Spinner.jsx',
@@ -239,20 +281,53 @@ export default [
     plugins: { designsys: designsysPlugin },
     rules: { 'designsys/no-raw-design-tokens': ['error', { defer: ['dimensional'] }] },
   },
-  // Same register, plus an emoji deferral: these six hold raw glyphs that §5 says belong in
+  // Same register, plus an emoji deferral: these seven hold raw glyphs that §5 says belong in
   // iconRegistry.js. Routing them is a behaviour-adjacent change in files this lane does
   // not own, so it is deferred WITH the count recorded rather than silently un-guarded.
+  //
+  //   FilterChipRow.jsx moved up from the dimensional-only block on 2026-09-02 for its
+  //   `More ▾` / `Less ▴` toggle — see the icon-glyph block below for why two carets that
+  //   were green yesterday are debt today.
   {
     files: [
       'src/components/forms/AsyncRegion.jsx',
       'src/components/forms/ChoiceGrid.jsx',
       'src/components/forms/EventTypePicker.jsx',
       'src/components/forms/Field.jsx',
+      'src/components/forms/FilterChipRow.jsx',
       'src/components/forms/PlantingSelect.jsx',
       'src/components/forms/ScopeChecklist.jsx',
     ],
     plugins: { designsys: designsysPlugin },
     rules: { 'designsys/no-raw-design-tokens': ['error', { defer: ['dimensional', 'emoji'] }] },
+  },
+  // ── ICON-GLYPH DEFERRALS — dated 2026-09-02, BUG-EMOJIREGEX-001 ───────────────────────
+  // Widening EMOJI_RE to see `× ▾ ▸ ▴ ○` (see the class definition at the top of this file)
+  // turned six sites across four files from green to red in one edit. Three of those files
+  // had NOTHING deferred, so they land here rather than in the register above:
+  //
+  //     PhotoUpload.jsx:446      `×`      photo-remove control
+  //     FacetGroupHeader.jsx:26  `▸` `▾`  collapse chevron
+  //     TagChip.jsx:37           `×`      chip dismiss
+  //     FilterChipRow.jsx:136    `▴` `▾`  More/Less toggle (moved into the block above)
+  //
+  // Deferred, not routed. Every one of them is a rendered mark on a shipped surface, and
+  // swapping it for `<Icon name="action.chevron">` is a visual change in four files this lane
+  // does not own during a nine-lane concurrent window — the same reasoning the 2026-08-26
+  // register applied to its own six. The alternative was leaving `eslint .` red, and a guard
+  // fix that freezes the promote is a worse outcome than the bug it fixes.
+  //
+  // ONLY the emoji class is deferred. Hex is non-deferrable by schema and dimensional stays
+  // enforced on all three — PhotoUpload in particular is the file whose off-palette #b14a3c
+  // reached prod, and nothing about a caret earns it an exemption from that.
+  {
+    files: [
+      'src/components/PhotoUpload.jsx',
+      'src/components/forms/FacetGroupHeader.jsx',
+      'src/components/forms/TagChip.jsx',
+    ],
+    plugins: { designsys: designsysPlugin },
+    rules: { 'designsys/no-raw-design-tokens': ['error', { defer: ['emoji'] }] },
   },
   // OPS-SETUPTSUNLINTED-001 — TypeScript files matched NO config object above, so ESLint
   // skipped all five of them outright: `eslint src/__tests__/setup.ts` reported "File ignored
