@@ -77,7 +77,7 @@ post:
        WHERE table_schema='public' AND table_name='weather_cue_impression'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_all_columns_present
     sql: |
@@ -87,7 +87,7 @@ post:
                              'plan_generated_at','created_at')
     expect: rowcount_eq
     value: 8
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_no_extra_columns
     note: >
@@ -98,7 +98,7 @@ post:
        WHERE table_schema='public' AND table_name='weather_cue_impression'
     expect: rowcount_eq
     value: 8
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_no_created_by_column
     note: >
@@ -112,7 +112,7 @@ post:
          AND column_name='created_by'
     expect: rowcount_eq
     value: 0
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_shown_on_is_date_not_timestamp
     note: >
@@ -125,7 +125,7 @@ post:
          AND column_name='shown_on' AND data_type='date'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_plan_generated_at_is_timestamptz
     note: >
@@ -138,7 +138,7 @@ post:
          AND column_name='plan_generated_at' AND data_type='timestamp with time zone'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_check_constraints_present
     note: >
@@ -151,7 +151,7 @@ post:
          AND conname IN ('weather_cue_impression_cue_chk','weather_cue_impression_form_chk')
     expect: rowcount_eq
     value: 2
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_cue_check_carries_all_five_rules
     note: >
@@ -169,7 +169,7 @@ post:
          AND pg_get_constraintdef(oid) LIKE '%wet%'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_no_foreign_keys
     note: >
@@ -180,7 +180,7 @@ post:
        WHERE conrelid='public.weather_cue_impression'::regclass AND contype='f'
     expect: rowcount_eq
     value: 0
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_unique_guard_columns
     note: >
@@ -199,7 +199,7 @@ post:
          AND a.attname IN ('user_id','shown_on','cue')
     expect: rowcount_eq
     value: 3
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_unique_guard_has_exactly_three_columns
     note: >
@@ -214,7 +214,7 @@ post:
          AND c.conname='uq_weather_cue_impression_day'
     expect: rowcount_eq
     value: 3
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_cue_day_index_present
     note: >
@@ -227,7 +227,7 @@ post:
          AND indexname='idx_weather_cue_impression_cue_day'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_starts_empty
     note: >
