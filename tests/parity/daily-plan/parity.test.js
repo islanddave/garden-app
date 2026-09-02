@@ -44,7 +44,10 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
       // BUG-CADENCESIZE-001: the vessel floor. Without this the gate carries no trough, no whiskey_barrel
       // and no rigid pot >= largeMinGal, so dailyFloorFor could be deleted without moving a golden.
       // NOT a flag pair, deliberately — see the divergence loop below.
-      'vessel-floor']) {
+      'vessel-floor',
+      // BUG-PARITYGOLDENSBLIND-001: the two temperature knife edges. Without them every golden sat clear of
+      // both thresholds, so HOT_F ∈ [87,90] and BAG_HEAT_GATE_F ∈ [80,86] left all 21 byte-identical.
+      'heat-knife-87', 'heat-knife-88', 'bag-heat-knife-84', 'bag-heat-knife-85']) {
       expect(names).toContain(required);
     }
   });
@@ -73,6 +76,24 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
       const on = canonicalJSON(canonicalize(planFor(`${base}-flagon`)));
       expect(on, `${base}: flag ON produced the flag-OFF plan`).not.toBe(off);
     }
+  });
+
+  // BUG-PARITYGOLDENSBLIND-001 — the knife pairs, guarded the same way the flag pairs are. A pair whose two
+  // halves agree is a pair on paper only, and that is precisely how the temperature thresholds went unguarded:
+  // the goldens named the heat branches, they just never straddled a boundary. Asserting on the FIELD each
+  // constant owns (not merely "the plans differ") also survives the callout, which tests a literal 88 rather
+  // than HOT_F and would otherwise make the heat pair look sensitive when it was not.
+  it('each temperature knife pair diverges on the field its constant owns', () => {
+    const row = (name, bucket, id) => planFor(name).users.dave.tasks[bucket].find((r) => r.id === id);
+    expect(planFor('heat-knife-87').hot, 'heat-knife-87 must sit BELOW HOT_F').toBe(false);
+    expect(planFor('heat-knife-88').hot, 'heat-knife-88 must sit AT/ABOVE HOT_F').toBe(true);
+    expect(row('heat-knife-87', 'water_due', 'hk1').interval).toBe(2);   // accelerator idle
+    expect(row('heat-knife-88', 'water_due', 'hk1').interval).toBe(1);   // accelerator fired
+    expect(row('heat-knife-88', 'water_due', 'hk2').interval).toBe(3);   // and stayed drought-tolerance-scoped
+    expect(row('bag-heat-knife-84', 'rain_skipped', 'bk1').credited_days).toBe(3); // gate idle
+    expect(row('bag-heat-knife-85', 'rain_skipped', 'bk1').credited_days).toBe(1); // gate demoted
+    for (const n of ['bag-heat-knife-84', 'bag-heat-knife-85'])
+      expect(row(n, 'rain_skipped', 'bk2').credited_days, `${n}: the gate must stay fabric-scoped`).toBe(3);
   });
 
   for (const s of scenarios) {
