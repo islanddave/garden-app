@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
+import WeatherCueLine from '../components/today/WeatherCueLine.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
@@ -103,6 +104,13 @@ export default function Today() {
           {plan.weather && (
             <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} />
           )}
+
+          {/* V5-WXCALLOUTRENDER-001 — the engine's one-cue-per-day weather callout, which has had
+              zero client consumers since it was written. Renders nothing on the 56% of days the
+              engine is silent, and writes an impression row (OPS-CUEINSTRUMENT-001) on the days it
+              is not. Directly under the weather card because it is a weather statement; deliberately
+              NOT in the gold/warn family — see the component header. */}
+          <WeatherCueLine callout={plan.weather?.callout} generatedAt={data?.generated_at} planDate={data?.plan_date} />
 
           {/* V4-TODAYHOLD-001 — Today is an ACTION surface: show the substrate/feeding note only
               when it is actionable. `substrate.on_hold` is true exactly when there are zero feed
