@@ -19,6 +19,15 @@
 //   2. every explicitly-named path, in the scope block AND in the register blocks, still exists;
 //   3. the blocks actually attach the rule, and hex is not deferrable on any of them.
 //
+// BUG-SCOPESTALEVACUOUS-001 (fixed 2026-09-02). Assertion 3 was VACUOUS in the direction that
+// mattered most. It read `SRC.slice(SRC.indexOf(block))` — from a block's start to the END OF THE
+// FILE — so a LATER block's `'error'` satisfied the assertion for an EARLIER one. Setting the
+// full-strength scope block to `'off'` therefore left all 28 assertions green: the one test
+// protecting the guard could not detect the guard being disabled, and `eslint .` exits 0 with the
+// rule off, so nothing else caught it either. Each block is now bounded at the next `files: [`,
+// and `regions hold exactly one rule attachment each` is the assertion that keeps the bounding
+// honest — if the slice ever runs to EOF again, the first region holds four and that test reds.
+//
 // Read as text rather than imported. Importing eslint.config.js would execute it and pull in
 // @eslint/js — resolvable here and in CI, but the value of this test is a statement about the FILE,
 // and parsing the literal blocks keeps it honest about what a reader of that file would see.
@@ -33,26 +42,42 @@ const SRC = readFileSync(resolve(ROOT, 'eslint.config.js'), 'utf8')
 
 const FORMS_GLOB = 'src/components/forms/**/*.{js,jsx}'
 
-// Every block that attaches the designsys rule — the full-strength scope AND both deferral blocks.
-// Anchored on the rule name rather than on position, so reordering the config cannot silently
-// retarget this test at the permissive base block, which would make every assertion below pass
-// while checking nothing.
+const RULE = "'designsys/no-raw-design-tokens'"
+
+// Comments are stripped before any severity assertion. A block's region necessarily swallows the
+// prose that introduces the NEXT block, and this file's register is heavily commented — without
+// this, writing the rule name and `'error'` inside a comment would satisfy the assertion for a
+// block that no longer attaches it.
+const stripComments = (s) => s.split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+
+// Every block that attaches the designsys rule — the full-strength scope AND all three deferral
+// blocks. Anchored on the rule name rather than on position, so reordering the config cannot
+// silently retarget this test at the permissive base block, which would make every assertion
+// below pass while checking nothing.
+//
+// `region` is bounded at the NEXT `files: [` (or EOF for the last one), so a block's assertions
+// can only ever be satisfied by that block's OWN text. That bound is the whole of the fix for
+// BUG-SCOPESTALEVACUOUS-001 described in the header.
 function designsysBlocks(src) {
+  const starts = []
+  for (let i = src.indexOf('files: ['); i >= 0; i = src.indexOf('files: [', i + 1)) starts.push(i)
   const out = []
   let from = 0
   for (;;) {
-    const ruleAt = src.indexOf("'designsys/no-raw-design-tokens'", from)
+    const ruleAt = src.indexOf(RULE, from)
     if (ruleAt < 0) break
     from = ruleAt + 1
-    const start = src.lastIndexOf('files: [', ruleAt)
-    if (start < 0) continue
+    const start = starts.filter(s => s < ruleAt).pop()
+    if (start === undefined) continue
+    const end = starts.find(s => s > start) ?? src.length
     const close = src.indexOf(']', start)
-    if (close > start) out.push(src.slice(start, close))
+    out.push({ files: close > start ? src.slice(start, close) : '', region: src.slice(start, end) })
   }
   return out
 }
 
-const blocks = designsysBlocks(SRC)
+const parsed = designsysBlocks(SRC)
+const blocks = parsed.map(b => b.files)
 // Quoted paths that look like real files. The forms glob ends in `}` and is deliberately excluded
 // here — it is asserted separately, because "does this path exist" is the wrong question for a glob.
 const listed = [...new Set(
@@ -89,13 +114,39 @@ describe('eslint frozen-primitives scope does not silently go stale', () => {
     expect(existsSync(resolve(ROOT, rel)), `${rel} is named in eslint.config.js for the frozen-primitives lint rule but does not exist — either restore it or update eslint.config.js`).toBe(true)
   })
 
+  // VACUITY FLOOR for the bounding itself. Each region must hold EXACTLY ONE rule attachment.
+  // If the region ever runs past its own block again — the BUG-SCOPESTALEVACUOUS-001 defect —
+  // the first region holds all four and this reds immediately, before any severity assertion has
+  // a chance to be answered by a neighbour's text.
+  it('block regions are disjoint — one rule attachment each', () => {
+    expect(parsed.length).toBeGreaterThanOrEqual(3)
+    for (const { region } of parsed) {
+      const n = region.split(RULE).length - 1
+      expect(n, `a block region holds ${n} rule attachments — the region bound has regressed and every severity assertion below is answerable by a NEIGHBOURING block`).toBe(1)
+    }
+  })
+
+  // MUTATION: set any block's rule to 'off' (or 'warn', which does not fail `eslint .`) -> RED.
   // MUTATION: drop the plugin registration while leaving the files list -> RED.
-  // A files list with no rule attached is the same silent no-op wearing different clothes.
-  it('every block attaches the rule, not just a file list', () => {
-    for (const b of blocks) {
-      const after = SRC.slice(SRC.indexOf(b))
-      expect(after).toMatch(/plugins:\s*\{\s*designsys:/)
-      expect(after).toMatch(/'designsys\/no-raw-design-tokens':\s*(?:'error'|\['error')/)
+  // A files list with no rule attached is the same silent no-op wearing different clothes, and
+  // until 2026-09-02 the first of those two mutations was undetectable here.
+  it('every block attaches the rule at error severity, not just a file list', () => {
+    for (const { files, region } of parsed) {
+      const code = stripComments(region)
+      const first = files.split('\n')[1]?.trim() ?? files.slice(0, 60)
+      expect(code, `block starting ${first} registers no designsys plugin`).toMatch(/plugins:\s*\{\s*designsys:/)
+      expect(code, `block starting ${first} does not attach designsys/no-raw-design-tokens at 'error' — 'off' and 'warn' both leave \`eslint .\` exiting 0, which is the guard silently not guarding`)
+        .toMatch(/'designsys\/no-raw-design-tokens':\s*(?:'error'|\['error')/)
+    }
+  })
+
+  // MUTATION: drop `caps: DEFER_CAPS` from a deferral block -> RED here, and rawUncapped at lint
+  // time. A deferral with no ceiling is the unbounded one OPS-DEFERCEILING-001 exists to stop.
+  it('every deferring block passes the recorded ceilings', () => {
+    const deferring = parsed.filter(({ region }) => /defer:\s*\[/.test(stripComments(region)))
+    expect(deferring.length, 'no deferral block found — the register parse has broken').toBeGreaterThanOrEqual(1)
+    for (const { region } of deferring) {
+      expect(stripComments(region)).toMatch(/caps:\s*DEFER_CAPS/)
     }
   })
 
