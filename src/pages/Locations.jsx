@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
 import { Field, Input, Select, Button, ErrorBanner } from '../components/forms'
+import SharedEmptyState from '../components/forms/EmptyState.jsx'
 import Icon from '../components/Icon.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
@@ -693,10 +694,10 @@ function Shell({ children }) {
   )
 }
 
+// V4-EMPTYSTATE-001: chrome from the shared primitive. Body-only — this page has no glyph and
+// its one instruction ("use the form above") is not a title/body pair.
 function EmptyState() {
   return (
-    <div style={{ textAlign: 'center', color: P.light, padding: '40px 16px', fontSize: '0.875rem', background: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
-      No zones yet. Use the form above to add your first zone (e.g. Stable, Deck, Pasture, Steps, House), then add child areas under it.
-    </div>
+    <SharedEmptyState body="No zones yet. Use the form above to add your first zone (e.g. Stable, Deck, Pasture, Steps, House), then add child areas under it." />
   )
 }

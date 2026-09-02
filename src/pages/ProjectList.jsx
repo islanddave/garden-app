@@ -6,6 +6,7 @@ import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import { buildDisplayList, loadSortOrder, saveSortOrder } from '../lib/projectTree.js'
 import SortToggle from '../components/SortToggle.jsx'
+import EmptyState from '../components/forms/EmptyState.jsx'
 
 // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS now sourced from
 // src/lib/status.js. The inline map here only covered {planning,active,harvested,ended},
@@ -146,23 +147,16 @@ function Shell({ children }) {
 function Spinner() { return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div> }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 
+// V4-EMPTYSTATE-001: chrome from the shared primitive; the 🌿 now sits in the same tinted
+// medallion an <Icon> surface gets, so this page and Garden read as siblings.
 function ProjectsEmptyState() {
   return (
-    <div style={{
-      textAlign: 'center', padding: '48px 24px',
-      backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8,
-    }}>
-      <div style={{ fontSize: '3rem', marginBottom: 12 }}>🌿</div>
-      <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
-        No projects yet
-      </p>
-      <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
-        Each project tracks a plant or crop from start to harvest.
-      </p>
-      <Link to="/projects/new" style={btnLink}>
-        Create your first project
-      </Link>
-    </div>
+    <EmptyState
+      emoji="🌿"
+      title="No projects yet"
+      body="Each project tracks a plant or crop from start to harvest."
+      action={<Link to="/projects/new" style={btnLink}>Create your first project</Link>}
+    />
   )
 }
 

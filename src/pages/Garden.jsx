@@ -27,6 +27,7 @@ import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
+import SharedEmptyState from '../components/forms/EmptyState.jsx'
 import PhotoView from '../components/photo/PhotoView.jsx'
 import { TIER } from '../lib/photoModel.js'
 import { useMembers } from '../hooks/useMembers.js'
@@ -1241,31 +1242,21 @@ function EmptyState() {
   // V4-PROJHIDE-001: when projects are hidden the empty state is planting-forward (no "create a
   // project" CTA). The {search:'?add=1'} link keeps the current pathname and opens the add-planting
   // editor via Garden's existing ?add handler. Flag OFF keeps the original project-forward version.
-  if (PROJECTS_HIDDEN) {
-    return (
-      <div style={{ textAlign: 'center', padding: '48px 24px', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
-        <div style={{ marginBottom: 12, color: P.greenLight, display: 'flex', justifyContent: 'center' }}>
-          <Icon name="nav.garden" size={48} decorative />
-        </div>
-        <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>Nothing growing yet</p>
-        <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
-          Add your first planting — everything you grow lives here.
-        </p>
-        <Link to={{ search: '?add=1' }} style={btnLink}>Add your first planting</Link>
-      </div>
-    )
-  }
-  return (
-    <div style={{ textAlign: 'center', padding: '48px 24px', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
-      <div style={{ marginBottom: 12, color: P.greenLight, display: 'flex', justifyContent: 'center' }}>
-        <Icon name="nav.garden" size={48} decorative />
-      </div>
-      <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>Your garden is empty</p>
-      <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
-        Start a project, then add plantings to it. Everything you grow lives here.
-      </p>
-      <Link to="/projects/new" style={btnLink}>Create your first project</Link>
-    </div>
+  // V4-EMPTYSTATE-001: the chrome moved to the shared primitive; the fork is copy + link only.
+  return PROJECTS_HIDDEN ? (
+    <SharedEmptyState
+      iconName="nav.garden"
+      title="Nothing growing yet"
+      body="Add your first planting — everything you grow lives here."
+      action={<Link to={{ search: '?add=1' }} style={btnLink}>Add your first planting</Link>}
+    />
+  ) : (
+    <SharedEmptyState
+      iconName="nav.garden"
+      title="Your garden is empty"
+      body="Start a project, then add plantings to it. Everything you grow lives here."
+      action={<Link to="/projects/new" style={btnLink}>Create your first project</Link>}
+    />
   )
 }
 

@@ -5,6 +5,7 @@ import { T } from '../lib/tokens.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
+import EmptyState from '../components/forms/EmptyState.jsx'
 import QualityDots from '../components/QualityDots.jsx'
 import StatTile from '../components/StatTile.jsx'
 import Sparkline from '../components/Sparkline.jsx'
@@ -1040,15 +1041,8 @@ function TotalsWeight({ weight }) {
 
 
 // ── Shared states ──────────────────────────────────────────────────────────────────────────────────
-function EmptyState({ emoji, title, body }) {
-  return (
-    <div style={{ textAlign: 'center', padding: '48px 20px', color: P.light }}>
-      <div style={{ fontSize: '2.4rem', marginBottom: T.space.sm }} aria-hidden="true">{emoji}</div>
-      <p style={{ margin: '0 0 6px', fontSize: '0.98rem', fontWeight: 700, color: P.mid }}>{title}</p>
-      <p style={{ margin: 0, fontSize: '0.85rem', lineHeight: 1.5 }}>{body}</p>
-    </div>
-  )
-}
+// V4-EMPTYSTATE-001: EmptyState is now the shared primitive (imported above) — the local copy's
+// props were already `emoji / title / body`, so both call sites are unchanged.
 
 function ErrorState({ message, onRetry }) {
   return <AsyncRegion error={message} errorTitle="Couldn’t load your harvests" onRetry={onRetry} />
