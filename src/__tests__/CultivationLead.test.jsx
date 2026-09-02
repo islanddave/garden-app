@@ -206,4 +206,49 @@ describe('CultivationLead component', () => {
     expect(region.textContent).not.toMatch(/Winter Density/)
     expect(region.getAttribute('href')).toBe('/sow')
   })
+
+  // ── The seed-diversion buckets, from Today's side ──────────────────────────────────────────────
+  //
+  // WHY THESE EXIST, and it is a coverage gap rather than a bug report. The pre-promote blast-radius
+  // pass on v4.94.0 (_lane_reports/prepromote-impact-20260902.md, IMPORTANT #2 and #3) found that
+  // bucketize had gained an 11th bucket, `in_process`, which diverts candidates AHEAD of the
+  // depletion divert — and that this component was the ONE bucketize consumer the change did not
+  // touch. It reads `buckets.window_closing` alone, so anything newly diverted silently stops
+  // appearing on Today. `grep -c "seed_stage|in_process|fermenting|drying"` over this file returned
+  // 0: the engine's divert was well covered in isolation, and the one existing consumer that was not
+  // rewritten had no test for it at all. That is the green-tests-broken-prod shape exactly.
+  //
+  // The behaviour is INTENDED — an unfinished lot should not put an imperative on Today — so these
+  // pin it rather than reporting it. Both diversions are covered, because they arrive by different
+  // routes: seed_stage for a lot being processed, provenance-plus-zero for one never started.
+
+  it('a lot still drying does not put an imperative on Today', async () => {
+    fetchMock.mockResolvedValue({ items: [lettuce({ seed_stage: 'drying' })] })
+    renderLead({ todayISO: TODAY })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
+    const region = screen.getByTestId('cultivation-lead')
+    expect(region.textContent).toBe('Sow now')
+    expect(region.textContent, 'Today told Dave to sow seed that is still on a screen in the shed')
+      .not.toMatch(/Winter Density/)
+  })
+
+  it('BUG-SEEDZEROSOWABLE-001 — nor does a lot saved today and not yet started', async () => {
+    fetchMock.mockResolvedValue({
+      items: [lettuce({ quantity_on_hand: 0, seed_stage: null, source_plant_id: 'pl-1' })],
+    })
+    renderLead({ todayISO: TODAY })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
+    expect(screen.getByTestId('cultivation-lead').textContent).toBe('Sow now')
+  })
+
+  it('but a STORED lot with seed in it is back on Today — the divert is not a one-way door', async () => {
+    // The forward half, and the reason the two above are not simply "seed lots never appear". A lot
+    // that finished the process and has a count is ordinary sowable seed again.
+    fetchMock.mockResolvedValue({
+      items: [lettuce({ seed_stage: 'stored', quantity_on_hand: 20, source_plant_id: 'pl-1' })],
+    })
+    renderLead({ todayISO: TODAY })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
+    expect(screen.getByTestId('cultivation-lead').textContent).toMatch(/Sow Winter Density by Aug 18/)
+  })
 })

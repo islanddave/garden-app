@@ -978,6 +978,56 @@ export function isInProcess(candidate) {
 }
 
 /**
+ * BUG-SEEDZEROSOWABLE-001 — a lot you saved yourself and have not started processing.
+ *
+ * THE DEFECT, and it fires at the moment of saving. "Save seed" creates the lot at
+ * quantity_on_hand 0 (the seed is wet and uncounted; the CHECK refuses NULL for a consumable) and
+ * the process control defaults to "Not yet — just save the lot", which writes no seed_stage on
+ * purpose so that no false ferment lands in seed_lot_stage_log. So the row is (qty 0, stage NULL):
+ * isInProcess is false, isDepleted(0) is TRUE, and Sow Now files a lot saved five seconds ago under
+ * "Sowed previously — none of these left". It has not been sown. It is being made.
+ *
+ * Dave 2026-09-02, choosing between three options: it belongs in "Still in process", marked "Not
+ * started yet". Which is what the row actually says — the user told the app the process has not
+ * begun, and that stays true however the count later moves.
+ *
+ * WHY IT NEEDS source_plant_id AND WHY THAT COST A MIGRATION. "stage NULL and qty 0" is NOT unique
+ * to a just-saved lot: a purchased packet used down to zero is byte-identical on the row, and all
+ * 260 live seed packets have seed_stage NULL because only home-saved lots are ever staged. Measured
+ * on prod 2026-09-02, exactly one active row was (stage NULL, qty 0) and it was an empty bought
+ * packet — one row today, but the population grows on both sides from here. source_plant_id is the
+ * fact that separates them, SaveSeedSheet sends it on every create, and v4-sowprovenance-001 appends
+ * it to v_sow_candidates for this. `own_garden` is the second arm for the lot whose origin is
+ * recorded on the lot page afterwards rather than at creation, which source_plant_id does not reach.
+ *
+ * GATED ON isDepleted, so this only ever re-homes a lot that would otherwise read as empty. A saved
+ * lot with a real count is sowable and belongs in its timing bucket, untouched.
+ *
+ * READS PROVENANCE, WHICH isInProcess DELIBERATELY DOES NOT — the two are separate functions for
+ * that reason rather than one widened predicate. isInProcess answers "is this seed physically not
+ * seed yet", from seed_stage alone; this answers "did its owner make it and never start", which is
+ * a different question with a different consequence downstream: SowNow withholds `Sow anyway` for
+ * the first and keeps it for the second (an unstarted lot may be perfectly dry — nobody said
+ * otherwise — whereas a fermenting one is in a jar of pulp).
+ *
+ * Absent columns read as false, so this is inert on an environment where the view has not been
+ * widened: the lot falls back to `sowed_previously`, which is the pre-fix behaviour rather than a
+ * new failure. That is what makes the migration and the code independently deployable.
+ */
+export function isUnstartedSave(candidate) {
+  const fromPlant = candidate?.source_plant_id;
+  const kind = candidate?.source_kind;
+  const ownSeed = (fromPlant != null && fromPlant !== '')
+    || (kind != null && String(kind).trim().toLowerCase() === 'own_garden');
+  if (!ownSeed) return false;
+  const stage = candidate?.seed_stage;
+  // Any stage at all means the process was started — including `stored`, where a 0 is now an
+  // explicitly answered count (SavedSeeds.jsx parseCountInput) and depletion is the right reading.
+  if (stage != null && stage !== '') return false;
+  return isDepleted(candidate);
+}
+
+/**
  * Bucket v_sow_candidates rows for a given day.
  * @param {Array<object>} candidates v_sow_candidates-shaped rows
  * @param {string} todayISO 'YYYY-MM-DD'; anchors resolve against its year
@@ -1046,11 +1096,20 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     // the seed wins; depletion decides among the rest; archive still diverts out of whichever home
     // those two chose. Written as a chain rather than a nested ternary because each arm now has to
     // stamp its own provenance key, which is what the card reads back as "From: …".
+    //
+    // BUG-SEEDZEROSOWABLE-001 adds a SECOND arm to that same divert, ahead of depletion for the
+    // identical reason: a lot its owner saved and has not started processing is not a packet that
+    // was sown, it is one that is being made. It carries `unstartedSave` so the card can label it
+    // "Not started yet" rather than naming a stage it does not have, and so SowNow can keep the
+    // `Sow anyway` override that a genuinely fermenting lot is denied.
     let home = bucket;
     let homeEntry = entry;
     if (isInProcess(candidate)) {
       home = 'in_process';
       homeEntry = { ...entry, inProcessFrom: bucket };
+    } else if (isUnstartedSave(candidate)) {
+      home = 'in_process';
+      homeEntry = { ...entry, inProcessFrom: bucket, unstartedSave: true };
     } else if (isDepleted(candidate)) {
       home = 'sowed_previously';
       homeEntry = { ...entry, depletedFrom: bucket };

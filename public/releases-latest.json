@@ -1,16 +1,12 @@
 {
-  "version": "4.94.0",
+  "version": "4.95.0",
   "date": "2026-09-02",
   "highlights": [
-    "Save seed straight from a planting — one tap on the planting page creates the lot, already linked to the plant it came from",
-    "Planting pages now show the seed you've already saved from that plant, so you can check before saving again",
-    "Saving seed is logged on the plant's timeline and counts toward your streak and XP",
-    "Seed still fermenting or drying no longer shows up as ready to sow; it stays on the list, clearly marked, and becomes sowable when you mark it stored",
-    "The seed picker now has a search box and shows quantity, source and date on each row, so two packets of the same variety are no longer identical lines",
-    "You're asked how much seed you got when you mark a lot stored — not when you save it, when it's still wet and uncounted",
-    "Record where non-garden seed came from — store-bought, gift, u-pick, foraged",
-    "See a seed lot's full history on its own page, and fix a stage you tapped by mistake",
-    "Seed drying guidance corrected: the old example named a dehydrator temperature that kills the lot",
-    "Ferment now warns at day 4 and alarms at day 5, before the seed sprouts in the jar"
+    "Save seed: you can now enter a count at any point — when you save the lot, and at every stage after — instead of only when you mark it stored.",
+    "Marking a lot stored now asks for the count. Enter 0 if none of it was viable; the seed no longer goes missing from Sow now because the box was left blank.",
+    "A lot you have saved but not started processing shows under 'Still in process — not started yet' on Sow now, instead of being filed as already sown.",
+    "'Seed saved' in the event menu now opens the Save seed sheet, so it creates a real lot and still records the event on the plant's timeline.",
+    "Editing a saved-seed lot explains itself in plain words instead of showing a database constraint name.",
+    "Bigger tap targets on the Saved seeds page."
   ]
 }

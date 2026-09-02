@@ -655,6 +655,11 @@ describe('SowNow — seed still in process', () => {
   it('NO override on a wet lot — the gated bought packet beside it keeps its own', async () => {
     // The one place this page withholds "Sow anyway" on purpose: a gate is a judgement Dave may know
     // better than, but wet seed in a jar is a physical fact and no tap makes it sowable today.
+    //
+    // STILL TRUE AFTER BUG-SEEDZEROSOWABLE-001 (2026-09-02), which added ONE documented exception to
+    // this rule — see the `unstartedSave` test below. This assertion is deliberately left standing
+    // rather than loosened: the exception turns on a claim the app never made about an unstarted
+    // lot, and it must not leak to a lot the app HAS called fermenting.
     routeFetch({ candidates: [FLAT_OF_ITALY, WET_ONION] })
     await renderSowNow()
     await screen.findByText('Still in process')
@@ -663,6 +668,62 @@ describe('SowNow — seed still in process', () => {
     expect(screen.queryByLabelText('Sow Flat of Italy (saved) anyway')).toBeNull()
     expect(screen.queryByLabelText('Sow Flat of Italy (saved)')).toBeNull()
     expect(screen.getAllByLabelText(/anyway$/)).toHaveLength(1)
+  })
+
+  // BUG-SEEDZEROSOWABLE-001 — a lot saved off a plant, uncounted, process never started.
+  const JUST_SAVED_ONION = {
+    ...FLAT_OF_ITALY,
+    inventory_item_id: 'inv-flatitaly-justsaved',
+    variety_name: 'Flat of Italy (just saved)',
+    quantity_on_hand: '0',
+    seed_stage: null,
+    source_plant_id: 'pl-onion',
+  }
+
+  it('a just-saved lot is marked "Not started yet", NOT filed as sowed previously', async () => {
+    // The whole defect in one render: before this, a lot created seconds earlier appeared under
+    // "Sowed previously — none of these left".
+    routeFetch({ candidates: [JUST_SAVED_ONION] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Still in process')).toBeDefined()
+    const chip = screen.getByTestId('seed-stage-chip')
+    expect(chip.textContent).toMatch(/Not started yet/)
+    // NOT "not ready to sow": that is a claim about wet seed, and this lot keeps its override. The
+    // page must not offer a Sow anyway button beside a chip saying the lot cannot be sown.
+    expect(chip.textContent).toMatch(/no count recorded/)
+    expect(chip.textContent).not.toMatch(/not ready to sow/)
+    expect(screen.queryByText('Sowed previously')).toBeNull()
+  })
+
+  it('the wet lot keeps "not ready to sow" — the physical claim still gets made where it is true', async () => {
+    routeFetch({ candidates: [WET_ONION] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+    expect(screen.getByTestId('seed-stage-chip').textContent).toMatch(/Fermenting — not ready to sow/)
+  })
+
+  it('KEEPS its override, unlike the wet lot — the carve-out, asserted in one render', async () => {
+    // Both lots sit in the same bucket and are told apart only by whether the app has ever asserted
+    // anything about the seed's physical state. Rendered together so the two halves cannot drift:
+    // a change that granted the wet lot an override, or took the unstarted one's away, reds here.
+    routeFetch({ candidates: [WET_ONION, JUST_SAVED_ONION] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+
+    expect(screen.getByLabelText('Sow Flat of Italy (just saved) anyway')).toBeDefined()
+    expect(screen.queryByLabelText('Sow Flat of Italy (saved) anyway')).toBeNull()
+    expect(screen.getAllByLabelText(/anyway$/)).toHaveLength(1)
+  })
+
+  it('a bought packet on zero still reads as sowed previously — provenance is the discriminator', async () => {
+    // The row this fix must NOT catch, and the reason it needed a migration rather than a rule about
+    // stage and quantity. Identical to JUST_SAVED_ONION except that nobody saved it.
+    routeFetch({ candidates: [{ ...JUST_SAVED_ONION, source_plant_id: null }] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Sowed previously')).toBeDefined()
+    expect(screen.queryByText('Not started yet')).toBeNull()
   })
 
   it('THE FORWARD HALF: advancing to stored puts the lot back on the working list', async () => {

@@ -1,5 +1,17 @@
 [
   {
+    "version": "4.95.0",
+    "date": "2026-09-02",
+    "highlights": [
+      "Save seed: you can now enter a count at any point — when you save the lot, and at every stage after — instead of only when you mark it stored.",
+      "Marking a lot stored now asks for the count. Enter 0 if none of it was viable; the seed no longer goes missing from Sow now because the box was left blank.",
+      "A lot you have saved but not started processing shows under 'Still in process — not started yet' on Sow now, instead of being filed as already sown.",
+      "'Seed saved' in the event menu now opens the Save seed sheet, so it creates a real lot and still records the event on the plant's timeline.",
+      "Editing a saved-seed lot explains itself in plain words instead of showing a database constraint name.",
+      "Bigger tap targets on the Saved seeds page."
+    ]
+  },
+  {
     "version": "4.94.0",
     "date": "2026-09-02",
     "highlights": [

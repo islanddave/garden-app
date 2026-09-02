@@ -728,11 +728,20 @@ export default function InventoryDetail() {
                   ? 'Saving…'
                   : 'Corrects where this lot is now. It does not add a processing entry — advance a lot from Saved seeds to record one.'}
             </p>
-            {/* V4-SEEDSTOREDQTY-001 — the count prompt. Appears only after a stage write that landed
-                on `stored`, and it is DISMISSIBLE rather than blocking: "still haven't counted" is a
-                real answer, and forcing a number would get a made-up one. Its consequence is stated
-                because it is not free — a lot on 0 that is no longer in process reads as depleted on
-                Sow now (sowEngine's isDepleted diverts `<= 0`). */}
+            {/* V4-SEEDSTOREDQTY-001 — the count prompt, appearing after a stage write that landed on
+                `stored`.
+                BUG-SEEDZEROSOWABLE-001 — STILL DISMISSIBLE HERE, and deliberately, even though the
+                /seeds/saved advance sheet now REFUSES a blank on the same transition
+                (SavedSeeds.jsx parseCountInput). The asymmetry is not an oversight; making this one
+                blocking too was tried and reverted.
+                There, the count is demanded BEFORE the stage write, so the lot never reaches
+                `stored` unanswered and the rule costs nothing. Here the stage write has already
+                landed by the time this panel appears, so "required" could only mean nagging until
+                satisfied — and the row cannot express the difference between an answered 0 ("none of
+                it was viable", a real and expected outcome) and an unanswered one. A persistent
+                prompt would therefore nag forever on exactly the lots whose owner did answer.
+                This is the REPAIR door, not the normal one: the Qty on hand field sits a few inches
+                below and takes the number directly. */}
             {countAsk && (
               <div data-testid="seed-count-ask" style={{
                 padding: '12px 14px', borderRadius: 8,
@@ -756,7 +765,7 @@ export default function InventoryDetail() {
                 }}>
                   {countErr
                     ? countErr
-                    : 'A saved lot starts on zero because the seed is still wet when you save it. A lot left on zero shows as empty on Sow now.'}
+                    : 'The seed is dry and countable now. Enter 0 if none of it was viable — a lot left on zero shows as empty on Sow now.'}
                 </p>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                   <Button
@@ -1090,7 +1099,17 @@ const PUT_DERIVED_KEYS = ['germination', 'featured_photo_view_url', 'variety_nam
 //                       value straight back and the write would look like it worked; stripped, it
 //                       is absent instead, which the handler reads as "leave the stage alone" —
 //                       still wrong, but wrong in the direction that changes nothing.
-const PUT_PRESENCE_GUARDED_KEYS = ['featured_photo_id', 'variety_id', 'seed_process', 'seed_stage']
+//   source_plant_id   — pre-promote MINOR #1, and it is a DELAY FUSE rather than a live defect.
+//   source_kind         Both lists here are DENYLISTS, so a column the handler does not name in its
+//                       PUT SET list rides through harmlessly today: provenance is written only by
+//                       the dedicated PATCH sub-routes and the POST INSERT, so the wide PUT ignores
+//                       these two. The day either is added to that SET list — the obvious tidy-up,
+//                       since the columns already exist on the row — every stale round-trip starts
+//                       NULLing the parent plant off a saved lot with a 200 on it. Stripped now,
+//                       while it costs nothing, for the same reason featured_photo_id is: the fix
+//                       is free before the fuse is lit and is a data-loss incident after.
+const PUT_PRESENCE_GUARDED_KEYS = ['featured_photo_id', 'variety_id', 'seed_process', 'seed_stage',
+  'source_plant_id', 'source_kind']
 function putPayloadFrom(row) {
   const out = { ...(row ?? {}) }
   for (const k of [...PUT_DERIVED_KEYS, ...PUT_PRESENCE_GUARDED_KEYS]) delete out[k]

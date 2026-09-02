@@ -88,12 +88,21 @@ describe('SavedSeeds — provenance (V4-SEEDLINK-001)', () => {
     fireEvent.focus(screen.getByTestId('stage-source-plant-select'))
     await waitFor(() => expect(screen.getByTestId(`ps-opt-${PARENT.id}`)).toBeTruthy())
     await act(async () => { fireEvent.click(screen.getByTestId(`ps-opt-${PARENT.id}`)) })
+    // BUG-SEEDZEROSOWABLE-001 (2026-09-02): this fixture's lot advances into `stored`, which now
+    // refuses a blank count before any request goes out. Typed here so the ORDERING this test is
+    // about — stage first, provenance second, each with its own failure — is still what is asserted.
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('seed-count-input'), { target: { value: '12' } })
+    })
     await act(async () => { fireEvent.click(screen.getByTestId('stage-save')) })
 
     const writes = fetchSpy.mock.calls.filter(([, o]) => o?.method)
+    // The count PUT is third, after both of the writes this test is about — see submitStage's
+    // ordering comment: stage, then provenance, then count, in order of importance.
     expect(writes.map(([p, o]) => `${o.method} ${p}`)).toEqual([
       'POST /api/inventory-items/inv-1/seed-stage',
       'PATCH /api/inventory-items/inv-1/source-plant',
+      'PUT /api/inventory-items/inv-1',
     ])
     expect(JSON.parse(writes[1][1].body)).toEqual({ source_plant_id: 'pl-melon' })
   })

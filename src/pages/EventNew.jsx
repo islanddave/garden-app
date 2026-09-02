@@ -12,6 +12,9 @@ import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, statusLabel } from '../lib/c
 import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_IN_FRAME_ENABLED } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
+// POI-SEEDDOORMENU-001 — the create-a-lot sheet, shared with the planting page's Save seed button so
+// both doors run one flow. See its render site near the foot of this component.
+import SaveSeedSheet from '../components/planting/SaveSeedSheet.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
 
@@ -3483,11 +3486,45 @@ export default function EventNew() {
     )
   )
 
+  // POI-SEEDDOORMENU-001 — the planting whose Save-seed sheet should be open, or null.
+  // Derived rather than held in state: the two inputs are already form state, and a second copy
+  // would need clearing on every path that changes either. Null unless the chosen type is
+  // seed_saved AND the planting resolves in the loaded list — see the render site for why an
+  // unresolved planting must fall through to the ordinary form rather than open a picker.
+  const seedSaveTarget = form.event_type === 'seed_saved' && form.plant_id
+    ? (plantsForProject.find(p => p.id === form.plant_id) ?? null)
+    : null
+
   return (
-    /* V4-WEIGHFRAME-001: `height` + `overflow: hidden`, not `minHeight`. The frame's entire claim is
+    <>
+    {/* POI-SEEDDOORMENU-001 — THE MENU DOOR, and it opens onto the same room as the button.
+        Dave's instruction was "Planting pages should have a Save Seed option button to trigger this
+        flow, as well as the menu item." The button shipped in v4.94.0 and QuickActions was its only
+        renderer, so the create-a-lot flow was reachable from a planting page and nowhere else.
+        Picking "Seed saved" out of the More-event-types disclosure — the route he originally went
+        looking down — still did the OLD thing: wrote a bare timeline note and created no seed lot at
+        all. Two doors, the same name, different outcomes.
+        Dave 2026-09-02: "ensure that going from the menu rather than the planting also logs the
+        event into the planting's event history. Same behavior in every surface." Both halves come
+        free by opening the REAL sheet rather than reimplementing it — SaveSeedSheet's own
+        V4-SEEDEVENT-001 POST is what writes the seed_saved row, so the timeline entry the old menu
+        route produced still happens, and now the lot exists too.
+        GATED ON A RESOLVED PLANTING, not merely on the type. seed_saved is in
+        PLANTING_REQUIRED_TYPES so the form asks for one anyway; until it is answered the ordinary
+        form renders and this is null. The sheet's whole advantage is that the parent is a PARAMETER
+        rather than a picker, so opening it without one would throw that away and ask the question
+        twice. Closing without saving clears the type, so the user lands back on the chooser instead
+        of behind a dismissed sheet. */}
+    {seedSaveTarget && (
+      <SaveSeedSheet
+        planting={seedSaveTarget}
+        onClose={() => setForm(f => ({ ...f, event_type: '' }))}
+      />
+    )}
+    {/* V4-WEIGHFRAME-001: `height` + `overflow: hidden`, not `minHeight`. The frame's entire claim is
        that the document cannot scroll, so there is nothing for a scroll anchor to fight. A minHeight
        would leave the document scrollable the moment content exceeded it and quietly restore every
-       behaviour the frame deletes. */
+       behaviour the frame deletes. */}
     <div style={sessionFrame
       ? { height: FRAME_HEIGHT, overflow: 'hidden', backgroundColor: P.cream }
       : { minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -3945,6 +3982,7 @@ export default function EventNew() {
         />
       </div>
     </div>
+    </>
   )
 }
 

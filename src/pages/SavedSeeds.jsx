@@ -26,6 +26,7 @@ import { Sheet, PlantingSelect, Badge } from '../components/forms'
 import Icon from '../components/Icon.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
+import { T } from '../components/forms/formStyles.js'
 import { SEED_STAGES } from '../components/seed/seedStages.js'
 import { looseIncludes } from '../lib/comboboxInput.js'
 import { formatQty, formatDate } from '../lib/format.js'
@@ -49,6 +50,53 @@ const STAGE_META = {
   stored:     { label: 'Stored',     sub: 'Dry, packeted and put away' },
 }
 const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
+
+// ── BUG-SEEDZEROSOWABLE-001 — the count, asked at EVERY stage ─────────────────────────────────────
+// Dave 2026-09-02, verbatim: "ensure I can enter/update the count along the entire process. I might
+// save 10 seeds and know it from the first moment, or I might have saved dozens/hundreds and not
+// know how many potentially viable ones I'll save in the end. Each step needs to be able to
+// set/update that count."
+//
+// SUPERSEDES V4-SEEDSTOREDQTY-001's stored-only placement, and it is NOT a revert of it. That change
+// removed a count field DEFAULTING TO 1 — a guess dressed as data — and concluded the only knowable
+// moment was `stored`. The first half stands: every field below is blank-by-default and nothing is
+// ever fabricated. The second half was too strong. A count is knowable whenever the gardener happens
+// to know it, which is a fact about the gardener and not about the stage, so the field is offered at
+// every step and the ANSWER stays optional — everywhere except the one place its absence is
+// load-bearing.
+//
+// REQUIRED AT `stored`, and that arm is the whole fix for the silent half of the defect. Reaching
+// `stored` with the count skipped left the lot at 0, which sowEngine.isDepleted() reads as "none
+// left" — so a lot that completed the entire ferment→dry→store process was filed under "Sowed
+// previously" on Sow Now. The seed was finished, packeted and on the shelf, and the app said there
+// was none. Nothing on the row distinguished never-counted-0 from counted-and-gone-0, and no column
+// could be added to tell them apart retroactively.
+//
+// Requiring the answer at the terminal stage resolves it at the SOURCE instead: from here on, a
+// seeds lot at `stored` is one whose count was explicitly answered, so 0 there genuinely means zero
+// and depletion is the right reading. That invariant holds from day one rather than needing a
+// backfill — prod carries ZERO lots with any seed_stage today (the surface shipped this morning),
+// so there is no legacy population that reached `stored` unanswered.
+//
+// Zero stays fully expressible: the input accepts 0 and the help text names it as a real answer.
+// "Required" here means an answer is required, never that the answer must be non-zero.
+const COUNT_ASK = {
+  fermenting: {
+    label: 'How many are in the jar?',
+    help: 'Optional — a rough count is fine, and you can change it at every step.',
+  },
+  drying: {
+    label: 'How many are drying?',
+    help: 'Optional — update it as you thresh and clean, right up to putting them away.',
+  },
+  stored: {
+    label: 'How much did you get?',
+    // The consequence of 0, said out loud at the one place it is now deliberately chosen rather
+    // than fallen into. Same sentence the sheet used to carry for a BLANK answer, moved onto the
+    // answer that now actually causes it.
+    help: 'Needed now that the seed is dry and countable. Enter 0 if none of it was viable — a lot on zero shows as empty on Sow now.',
+  },
+}
 
 // BUG-SEEDPROCFORCED-001. The PROCESS decides where a lot enters the pipeline, so it is asked once,
 // at the only moment the answer is known, and the entry stage follows from it.
@@ -236,9 +284,15 @@ function fermentUrgency(item) {
 // Two keys here that InventoryDetail's lists do not carry: `variety_name` and `stage_entered_at` are
 // projections the LIST query adds (a cultivar join and a LATERAL), not columns. Inert in the SET
 // list either way; stripped so the body is only ever columns.
+//
+// `source_plant_id` / `source_kind` (pre-promote MINOR #1) are the delay-fuse pair — see the note on
+// PUT_PRESENCE_GUARDED_KEYS in InventoryDetail.jsx. Neither is in the handler's PUT SET list today,
+// so both ride through harmlessly; the day either is added, a stale round-trip from this page would
+// null the parent plant off the very lot the count belongs to. The subset test below is what
+// forced them in here rather than only there, which is the seam working as intended.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'featured_photo_view_url', 'featured_is_explicit', 'germination',
-  'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage',
+  'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id', 'source_kind',
 ]
 
 /** A complete wide-PUT body from a list row, with the count applied. Pure, exported for test. */
@@ -248,6 +302,38 @@ export function countPayloadFrom(row, quantityOnHand) {
   // `type` rides through untouched and is load-bearing: the handler nulls quantity_on_hand outright
   // unless body.type === 'consumable' (BUG-INVSEEDPUT400-001 is the same fact from the other side).
   return { ...out, quantity_on_hand: quantityOnHand }
+}
+
+/**
+ * BUG-SEEDZEROSOWABLE-001 — read the count field for a move into `toStage`. Pure, exported for test.
+ *
+ * @returns {{value: number|null, error: null}|{value: null, error: string}}
+ *   `value` is the number to PUT, or null meaning "write nothing and leave the lot's count alone".
+ *   `error` is a refusal — the submit must not proceed.
+ *
+ * THE ONE ASYMMETRY IS DELIBERATE. Blank is a legitimate answer on `fermenting` and `drying` ("I
+ * haven't counted") and is refused on `stored`, because that is the stage whose 0 is unreadable
+ * afterwards: sowEngine.isDepleted() cannot tell a lot nobody counted from a lot that is genuinely
+ * empty, and `stored` is terminal so there is no later step to correct it at.
+ *
+ * A blank on an in-flight stage writes NOTHING rather than 0 — the lot keeps whatever it holds. That
+ * distinction is load-bearing: writing 0 for "don't know" would manufacture the exact ambiguous
+ * value this whole change exists to eliminate, one stage earlier.
+ *
+ * Rejects negatives and non-numbers rather than coercing. Number('') is 0 and Number('abc') is NaN,
+ * so a bare Number() here would turn a blank into a hard zero and a typo into a silent no-op.
+ */
+export function parseCountInput(raw, toStage) {
+  const typed = String(raw ?? '').trim()
+  if (typed === '') {
+    return toStage === 'stored'
+      ? { value: null, error: 'Enter how much you got — 0 is a real answer if none of it was viable.' }
+      : { value: null, error: null }
+  }
+  const n = Number(typed)
+  if (!Number.isFinite(n)) return { value: null, error: 'That is not a number.' }
+  if (n < 0) return { value: null, error: 'A count cannot be negative.' }
+  return { value: n, error: null }
 }
 
 export default function SavedSeeds() {
@@ -268,9 +354,13 @@ export default function SavedSeeds() {
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
   const [note, setNote]       = useState('')
-  // V4-SEEDSTOREDQTY-001 — the count, asked only on the move INTO `stored`. '' is "still don't know"
-  // and writes nothing; see the field for why that is a real answer rather than a skipped one.
-  const [storedQty, setStoredQty] = useState('')
+  // BUG-SEEDZEROSOWABLE-001 — the count, now asked on EVERY move (see COUNT_ASK). '' still writes
+  // nothing, which keeps "I don't know yet" a real answer on the two in-flight stages; at `stored`
+  // an empty value is refused before the request goes out, so the ambiguous 0 can no longer be
+  // reached by omission. Prefilled from the lot on open so the field reads as UPDATE rather than
+  // re-enter — the count is a running number now, not a one-time capture.
+  const [qtyInput, setQtyInput] = useState('')
+  const [qtyErr, setQtyErr]     = useState(null)
   // V4-SEEDLINK-001 — the parent plant chosen inside the advance sheet, for a lot that has none.
   // '' is "not chosen"; the field is optional and a lot can always be linked later from
   // /inventory/:id, which is the canonical editor for this column.
@@ -356,11 +446,26 @@ export default function SavedSeeds() {
     setNote('')
     setStagePlant('')
     setStagePlantFailed(false)
-    setStoredQty('')
+    // BUG-SEEDZEROSOWABLE-001 — seed the field with what the lot already holds so the gardener is
+    // amending a running count rather than being asked the same question from scratch at every step.
+    // A 0 prefills as BLANK, not as "0": 0 is the create-time placeholder for "nobody has counted
+    // this yet", and rendering it as an answer would let a `stored` move satisfy its own required
+    // field with a number no human ever typed — the exact ambiguity this change exists to end.
+    const held = Number(item?.quantity_on_hand)
+    setQtyInput(Number.isFinite(held) && held > 0 ? String(held) : '')
+    setQtyErr(null)
   }
+
+  const readCount = () => parseCountInput(qtyInput, advancing?.toStage)
 
   async function submitStage() {
     if (!advancing) return
+    // Refuse BEFORE any request. The stage POST is not undoable from this page — seed_lot_stage_log
+    // has no DELETE and the InventoryDetail control is the only repair — so a submit that would
+    // land the stage and then reject the count is the one ordering that cannot be backed out.
+    const count = readCount()
+    if (count.error) { setQtyErr(count.error); return }
+    setQtyErr(null)
     setBusy(true)
     try {
       await fetch(`/api/inventory-items/${advancing.item.id}/seed-stage`, {
@@ -400,26 +505,22 @@ export default function SavedSeeds() {
       // learned how much came out. Blank is not a skipped field, it is the answer "still don't know"
       // — and the only honest thing to do with it is write nothing, leaving the lot at whatever it
       // already held. Last of the three so the write order reads in order of importance.
-      let qtyErr = null
-      const typedQty = storedQty.trim()
-      if (advancing.toStage === 'stored' && typedQty !== '') {
-        const n = Number(typedQty)
-        if (Number.isFinite(n) && n >= 0) {
-          try {
-            await fetch(`/api/inventory-items/${advancing.item.id}`, {
-              method: 'PUT',
-              body: JSON.stringify(countPayloadFrom(advancing.item, n)),
-            })
-          } catch (e) {
-            qtyErr = e?.message ?? 'Stage saved, but the count did not.'
-          }
+      let qtyWriteErr = null
+      if (count.value != null) {
+        try {
+          await fetch(`/api/inventory-items/${advancing.item.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(countPayloadFrom(advancing.item, count.value)),
+          })
+        } catch (e) {
+          qtyWriteErr = e?.message ?? 'Stage saved, but the count did not.'
         }
       }
       // "Started in", not "Moved to", when this is the lot's first stage — `process` is set only on
       // the start path (BUG-SEEDPROCFORCED-001). A dry lot's first entry IS drying, and calling that
       // a move implies a fermenting step it never had.
       const verb = advancing.process ? 'Started in' : 'Moved to'
-      show({ message: linkErr ?? qtyErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
+      show({ message: linkErr ?? qtyWriteErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
       load()
     } catch (e) {
@@ -434,11 +535,23 @@ export default function SavedSeeds() {
 
   return (
     <Shell>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+      {/* BUG-SEEDTAPTARGET-001 — `center`, not `baseline`. The cross-link below is now a 44px box
+          rather than a 16px line of text, and baseline alignment would hang that box off the
+          heading's baseline instead of centring it against the heading. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, flex: 1 }}>
           Saved seeds
         </h1>
-        <Link to="/sow" style={{ color: P.green, fontSize: '0.85rem' }}>Sow now →</Link>
+        <Link
+          to="/sow"
+          data-testid="sow-now-link"
+          style={{
+            display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+            paddingLeft: 8, color: P.green, fontSize: '0.85rem', flexShrink: 0,
+          }}
+        >
+          Sow now →
+        </Link>
       </div>
       <p style={{ margin: '0 0 20px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
         Seed you saved yourself, and where each lot has got to.
@@ -537,10 +650,22 @@ export default function SavedSeeds() {
                           </div>
                         ))
                       : (
+                        // BUG-SEEDTAPTARGET-001 — 44px, measured not assumed. The layout gate's tap
+                        // census reported this anchor at FIFTEEN pixels tall at 390x844, four of
+                        // them on a populated list, and it REPORTED rather than ASSERTED because
+                        // WCAG 2.5.8 exempts inline links. That exemption does not apply here: this
+                        // is not a link inside a sentence, it is the card's second action, sitting
+                        // beside a 48px advance button, on a page reached in a shed with wet hands.
+                        // inline-flex + minHeight rather than padding alone so the box is the target
+                        // and the text stays vertically centred in it.
                         <Link
                           to={`/inventory/${item.id}`}
                           data-testid="set-source-plant"
-                          style={{ display: 'inline-block', marginTop: 4, color: P.green, fontSize: '0.78rem' }}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center',
+                            minHeight: T.tapMinHeight, marginTop: 2, paddingRight: 8,
+                            color: P.green, fontSize: '0.78rem',
+                          }}
                         >
                           Set parent plant →
                         </Link>
@@ -635,31 +760,51 @@ export default function SavedSeeds() {
               )}
             </div>
           )}
-          {/* V4-SEEDSTOREDQTY-001 — THE COUNT IS ASKED HERE AND NOWHERE EARLIER. At "save seed" the
-              lot is still wet and unthreshed and the honest answer is that nobody knows; the first
-              moment anyone does is when the lot is packeted and put away, which is this transition.
-              So SaveSeedSheet creates at 0 and this field is where the number arrives.
-              `stored` only: asking on the way into fermenting or drying re-poses the unanswerable
-              question, and the terminal stage is the one that has an answer. */}
-          {advancing.toStage === 'stored' && (
-            <label style={fieldLabelStyle} data-testid="stored-count">
-              How much did you get? <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
-              <input
-                type="number" inputMode="decimal" min="0" step="1" value={storedQty}
-                onChange={(e) => setStoredQty(e.target.value)}
-                placeholder={advancing.item.unit ? `e.g. 2 ${advancing.item.unit}` : 'e.g. 2'}
-                data-testid="stored-count-input" style={inputStyle}
-              />
-              {/* The consequence, said out loud, because leaving this blank is not free. A lot at 0
-                  that is no longer in process reads as DEPLETED on Sow now (sowEngine's isDepleted
-                  diverts `<= 0`) — arguably correct, since there is no countable seed, but it is a
-                  visible outcome and the field that causes it is the place to say so. */}
-              <span style={{ display: 'block', marginTop: 6, color: P.mid, fontSize: '0.78rem', fontWeight: 400, lineHeight: 1.5 }}>
-                Leave it blank if you still haven&apos;t counted — the lot keeps the count it has, and
-                a lot on zero shows as empty on Sow now until you fill it in.
-              </span>
-            </label>
-          )}
+          {/* BUG-SEEDZEROSOWABLE-001 — THE COUNT, AT EVERY STAGE. See COUNT_ASK at the top of this
+              file for why this moved off `stored`-only and why `stored` alone refuses a blank. The
+              wording, the optional/required chip and the help line all come from that one table, so
+              the three can never disagree about which stages demand an answer. */}
+          {(() => {
+            const ask = COUNT_ASK[advancing.toStage]
+            const required = advancing.toStage === 'stored'
+            return (
+              <label style={fieldLabelStyle} data-testid="seed-count">
+                {ask.label}{' '}
+                {required
+                  ? <span data-testid="seed-count-required" style={{ color: P.severityUrgent, fontWeight: 600 }}>(required)</span>
+                  : <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>}
+                <input
+                  type="number" inputMode="decimal" min="0" step="1" value={qtyInput}
+                  onChange={(e) => { setQtyInput(e.target.value); if (qtyErr) setQtyErr(null) }}
+                  placeholder={advancing.item.unit ? `e.g. 2 ${advancing.item.unit}` : 'e.g. 2'}
+                  aria-invalid={qtyErr ? 'true' : undefined}
+                  aria-describedby="ss-count-help"
+                  data-testid="seed-count-input"
+                  style={qtyErr ? { ...inputStyle, borderColor: P.alertBorder } : inputStyle}
+                />
+                {/* The refusal replaces the help rather than stacking under it: two lines of small
+                    print under a field the user is being blocked by is where the actionable one gets
+                    lost. role=alert so it is announced, not just painted. */}
+                {qtyErr
+                  ? (
+                    <span
+                      id="ss-count-help" role="alert" data-testid="seed-count-error"
+                      style={{ display: 'block', marginTop: 6, color: P.severityUrgent, fontSize: '0.78rem', fontWeight: 600, lineHeight: 1.5 }}
+                    >
+                      {qtyErr}
+                    </span>
+                  )
+                  : (
+                    <span
+                      id="ss-count-help"
+                      style={{ display: 'block', marginTop: 6, color: P.mid, fontSize: '0.78rem', fontWeight: 400, lineHeight: 1.5 }}
+                    >
+                      {ask.help}
+                    </span>
+                  )}
+              </label>
+            )
+          })()}
           <button type="button" onClick={submitStage} disabled={busy} data-testid="stage-save" style={primaryBtnStyle}>
             {busy ? 'Saving…' : 'Save'}
           </button>

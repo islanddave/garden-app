@@ -10,7 +10,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { bucketize, isInProcess } from '../lib/sowEngine.js'
+import { bucketize, isInProcess, isUnstartedSave } from '../lib/sowEngine.js'
 import { P } from '../lib/tokens.js'
 import { formatDate } from '../lib/format.js'
 import { useToast } from '../context/ToastContext.jsx'
@@ -355,9 +355,23 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     // lot into the archived section too — an archived jar of wet seed is still a jar of wet seed.
     // Falls back rather than rendering an empty chip if a stage ever arrives with no label (pinned
     // by test, but a blank marker on a real surface is worse than a vague one).
+    // BUG-SEEDZEROSOWABLE-001 — the second marker, and it is NOT a stage name. An unstarted save has
+    // no seed_stage by design (choosing a process writes a permanent seed_lot_stage_log row, so the
+    // sheet must not choose one on the user's behalf), and SEED_STAGE_LABEL would fall through to
+    // the generic "Still in process" — which is exactly what the section heading already says, so
+    // the chip would add nothing. "Not started yet" names the state and, with it, the way out.
+    // Read off the CANDIDATE for the same reason as the line above: the marker travels into the
+    // archived section with the lot.
+    // The chip is a LABEL plus a consequence, and the consequence differs between the two markers.
+    // "not ready to sow" is a claim about the seed's physical state and is only true of a lot the
+    // app has been told is fermenting or drying. An unstarted lot is diverted for its COUNT, it
+    // keeps its `Sow anyway` override, and telling the user it cannot be sown while offering them a
+    // button to sow it would be the page contradicting itself.
     const stageLabel = isInProcess(c)
       ? (SEED_STAGE_LABEL[String(c.seed_stage).trim().toLowerCase()] ?? 'Still in process')
-      : null
+      : isUnstartedSave(c) ? 'Not started yet'
+        : null
+    const stageNote = isInProcess(c) ? 'not ready to sow' : 'no count recorded yet'
     return (
       <div key={c.inventory_item_id} style={cardStyle}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -376,8 +390,8 @@ export default function SowNow({ todayISO = localTodayISO() }) {
                 fails on. whiteSpace overridden because Badge is nowrap by default and this string is
                 long enough to overflow the title column on a 360px phone. */}
             {stageLabel && (
-              <Badge tone="warn" style={{ whiteSpace: 'normal' }}>
-                {stageLabel} — not ready to sow
+              <Badge tone="warn" data-testid="seed-stage-chip" style={{ whiteSpace: 'normal' }}>
+                {stageLabel} — {stageNote}
               </Badge>
             )}
           </div>
@@ -424,7 +438,17 @@ export default function SowNow({ todayISO = localTodayISO() }) {
             seed — it is wet, in a jar, in pulp — and there is no override that makes it sowable
             today. A "Sow anyway" here would offer the exact mis-sow this whole guard exists to
             prevent. The lot is still fully on the page and still one tap from Inventory. */}
-        {!ACTIONABLE.has(bucketKey) && bucketKey !== 'in_process' && entry.gated && (
+        {/* BUG-SEEDZEROSOWABLE-001 CARVE-OUT, and it is narrower than it looks. The withholding
+            above is kept for every lot whose seed is physically not seed yet; `unstartedSave` is
+            the one member of this bucket where that is not the claim being made. Nobody said an
+            unstarted lot is wet — the user declined to say ANYTHING about its process, which is a
+            different fact from "it is fermenting", and a dry-shelled bean saved this morning is
+            sowable this afternoon. The rationale the withholding rests on ("it is wet, in a jar, in
+            pulp") does not reach it, so applying the rule here would deny an override on the
+            strength of an assertion the app never made. The lot is diverted for its COUNT, and a
+            count is exactly the kind of engine judgement Dave may know better than — which is the
+            general rule this bucket was carved out of in the first place. */}
+        {!ACTIONABLE.has(bucketKey) && (bucketKey !== 'in_process' || entry.unstartedSave) && entry.gated && (
           sown ? (
             <span style={sownChip} role="status">Sown &#10003;</span>
           ) : (

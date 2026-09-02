@@ -82,6 +82,34 @@ const FUTURE_ENTERED_AT_TOLERANCE_MS = 48 * 60 * 60 * 1000;
 // the generic 23514 "Constraint violation" string the catch block emits.
 export const METADATA_MAX_BYTES = 8192;
 
+// BUG-INVUPDATESEEDGUARD-001 — human sentences for the seed CHECKs that a user can actually reach.
+//
+// The catch block's generic arm answers a 23514 with the constraint's own name, which is a fact
+// about the schema and tells the person holding the phone nothing about what to do. These four are
+// the seed-provenance constraints armed by v4-seedorigin-001, and every one of them is reachable
+// from the Category <select> on /inventory/:id the moment a lot carries provenance — which is any
+// lot created by "Save seed".
+//
+// Each sentence names the rule and the way out, and none of them names a column: `source_plant_id`
+// is not a thing the user has ever seen, "the plant it was saved from" is. Exported so the test can
+// assert the KEYS against pg_constraint rather than against this literal — a renamed constraint
+// would otherwise silently fall back to the opaque arm with every test still green.
+export const SEED_CONSTRAINT_MESSAGES = {
+  chk_inventory_source_plant_seeds_only:
+    'This lot records the plant it was saved from, so it has to stay in Seeds. Clear "Saved from" first if you want to move it to another category.',
+  chk_inventory_source_kind_seeds_only:
+    'This lot records where the seed came from, so it has to stay in Seeds. Clear "Source" first if you want to move it to another category.',
+  // MUTUAL EXCLUSION, not a both-required rule. The live expression is
+  // `source_kind IS NULL OR source_kind = 'own_garden' OR source_plant_id IS NULL`, read from
+  // migrations/v4-seedorigin-001/0a-additive-ddl.sql. Worth stating, because the pre-promote report
+  // paraphrased this one as "requires source_kind non-NULL" and a message written from that summary
+  // told the user to supply the very field they need to clear.
+  chk_inventory_seed_source_plant:
+    'This lot names the plant it was saved from, so it cannot also say it came from a shop, a gift or a farm stand. Clear one of the two.',
+  chk_inventory_seed_requires_variety:
+    'A seed lot has to name a variety. Pick one before saving.',
+};
+
 // A plain JSON object, not an array and not a scalar. jsonb would happily store `"abc"` or `[1]`,
 // and every reader here (AddSeeds' provenance, packetToInventoryPayload) does key lookups — a
 // scalar would be stored without error and then read as undefined at every call site.
@@ -162,6 +190,31 @@ export function validateUpdate(body) {
       && Object.prototype.hasOwnProperty.call(body, 'variety_id')
       && body.variety_id == null) {
     return 'variety_id is required for seeds';
+  }
+  // BUG-INVUPDATESEEDGUARD-001. validateCreate refuses both of these on a non-seeds category and
+  // validateUpdate never gained the pair, so the PUT path had no answer for them at all. The wide
+  // PUT assigns `category` unconditionally and Category is a user-editable <select>
+  // (src/pages/InventoryDetail.jsx), while both wide-PUT body builders are DENYLISTS — so a
+  // round-tripped edit carries source_plant_id / source_kind straight through. Changing a saved-seed
+  // lot's category away from `seeds` therefore reached the database and came back as
+  // `400 Constraint violation: chk_inventory_source_plant_seeds_only` (index.js:1024 maps 23514),
+  // naming a constraint rather than a field.
+  //
+  // The row was never at risk — the write is REJECTED, not mangled — so this is legibility, not
+  // integrity. It was unreachable when v4.94.0 shipped (live prod: 0 rows with either column) and
+  // becomes reachable with the first lot Dave saves, which is why it is worth fixing before the
+  // population exists rather than after.
+  //
+  // `body.category != null` is what makes these body-only, matching the variety_id line above: this
+  // validator never reads the stored row, so a payload that omits `category` says nothing about
+  // whether the lot is seeds and must not be second-guessed. Promoting a row TO a non-seeds category
+  // while it still holds provenance is caught here; the reverse (a payload that names neither) still
+  // falls to the CHECK, deliberately.
+  if (body.source_plant_id != null && body.category != null && body.category !== 'seeds') {
+    return 'source_plant_id is only allowed when category is seeds';
+  }
+  if (body.source_kind != null && body.category != null && body.category !== 'seeds') {
+    return 'source_kind is only allowed when category is seeds';
   }
   return null;
 }
@@ -1021,7 +1074,19 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('inventory-items lambda error', err);
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
+    if (err.code === '23514') {
+      // BUG-INVUPDATESEEDGUARD-001 — the COMPLETE half of that fix. validateUpdate's new seeds-only
+      // guards catch this before the query, but only when the body happens to carry the provenance
+      // column: that validator is body-only by design, and the PUT body is whatever the client
+      // round-tripped. On a deep link the list has not loaded, updateItem's {...listRow, ...changes}
+      // merge contributes nothing, and the body is the edit form's projection alone — which names
+      // `category` and not `source_plant_id`. The guard cannot fire on that path and the constraint
+      // does, so the two together are what actually close it.
+      //
+      // Keyed on the CONSTRAINT NAME, which is the only thing postgres gives us that identifies the
+      // rule rather than the row. The generic arm below is unchanged for every other constraint.
+      return resp(400, { error: SEED_CONSTRAINT_MESSAGES[err.constraint] ?? `Constraint violation: ${err.constraint ?? err.message}` });
+    }
     if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
     if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
     return resp(500, { error: 'Internal server error' });

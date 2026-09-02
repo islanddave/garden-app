@@ -1,0 +1,124 @@
+# gates.yml
+# V4-SOWPROVENANCE-001 — v_sow_candidates gains source_plant_id + source_kind (projection only).
+#
+# SCHEMA-SHAPE GATES, ENVIRONMENT-SYMMETRIC. Everything reads information_schema or counts against
+# the base join, so each gate means the same thing on staging as on prod. No `env: prod` anywhere.
+#
+# POST GATES SELF-ARM on the receipt, in VIOLATION-COUNT shape (expect 0): green where unapplied,
+# green where applied and intact, RED only on a genuine revert. The one exception is
+# post_receipt_written, which is an apply record rather than a standing invariant and carries
+# `continuous: false` — see gate-invariants self-arming.
+#
+# THE ROWCOUNT GATE IS THE POINT OF THIS FILE, exactly as it was for the sibling v4-sowstage-001.
+# Five continuous gates in three other migrations already pin this view's rowcount to its unfiltered
+# base join. This migration is append-only precisely so it does not disturb them, and the gate here
+# asserts that property directly rather than trusting the author's intent.
+
+pre:
+  - name: pre_source_plant_not_projected
+    note: >
+      The starting state — the view does not project source_plant_id. Violation-count shape, 0
+      before and 1 after. continuous false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'v_sow_candidates'
+         AND column_name = 'source_plant_id'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_source_columns_exist_on_the_table
+    note: >
+      Both columns must already exist on inventory_items, or the CREATE OR REPLACE below fails
+      outright. source_kind is v4-seedorigin-001's; source_plant_id predates it. Asserted as a
+      violation count of "missing", so this is 0 whenever the apply can succeed.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                 AND column_name IN ('source_plant_id', 'source_kind')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_provenance_columns_projected
+    note: >
+      Both columns are on the view. Phrased as "receipt written but a column missing" so it is
+      vacuously green before apply and red only if the view was replaced without them — the
+      realistic regression, since any future CREATE OR REPLACE that copies an older migration file
+      as its base would silently drop them again. That has a precedent: this migration exists partly
+      because v4-sowstage-001 had to re-state 33 columns verbatim to add two.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.95.0-sowprovenance-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'v_sow_candidates'
+                 AND column_name IN ('source_plant_id', 'source_kind')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_append_only_not_reordered
+    note: >
+      The two new columns must be LAST — after seed_stage/seed_process, which v4-sowstage-001 put at
+      34/35. Postgres refuses a CREATE OR REPLACE that reorders existing output columns, so a
+      violation here means the view was dropped and recreated rather than replaced, which silently
+      breaks any client reading by position. Anchored on seed_process rather than on sow_archived_at
+      so it also catches a recreate that preserved the pre-sowstage tail but lost the ordering of
+      the two migrations relative to each other.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.95.0-sowprovenance-001')
+         AND EXISTS (
+               SELECT 1
+                 FROM information_schema.columns a, information_schema.columns b
+                WHERE a.table_schema = 'public' AND a.table_name = 'v_sow_candidates'
+                  AND b.table_schema = 'public' AND b.table_name = 'v_sow_candidates'
+                  AND a.column_name IN ('source_plant_id', 'source_kind')
+                  AND b.column_name = 'seed_process'
+                  AND a.ordinal_position < b.ordinal_position)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_rowcount_unchanged_by_projection
+    note: >
+      THE LOAD-BEARING ONE. This migration must not narrow the view — five continuous gates in
+      v4-sowfirstyear-001, v4-sowarchive-001 and v4-maturitybasis-001 pin this rowcount to the
+      unfiltered base join, and none of them carries continuous false. Asserted here directly
+      against the base join rather than against a constant, so it stays true as the population
+      changes and cannot score a perfect pass by measuring nothing.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.95.0-sowprovenance-001')
+         AND (SELECT count(*) FROM public.v_sow_candidates)
+           <> (SELECT count(*)
+                 FROM public.inventory_items i
+                 JOIN public.plant_varieties v ON v.id = i.variety_id
+                WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                  AND i.status = 'active' AND v.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_provenance_values_match_the_lot
+    note: >
+      The projected provenance must be the lot's own, not a stale or mis-joined one. This is the
+      gate that would catch the failure the whole change turns on: sowEngine routes a lot to "Still
+      in process" on the strength of source_plant_id, so a mis-joined value would put the WRONG
+      packets there. Reads through row_to_json so it is green on an environment where the view has
+      not yet been widened.
+    sql: |
+      SELECT 1
+        FROM public.v_sow_candidates c
+        JOIN public.inventory_items i ON i.id = c.inventory_item_id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.95.0-sowprovenance-001')
+         AND ((row_to_json(c) ->> 'source_plant_id') IS DISTINCT FROM i.source_plant_id::text
+           OR (row_to_json(c) ->> 'source_kind')     IS DISTINCT FROM i.source_kind)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.95.0-sowprovenance-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false

@@ -22,6 +22,7 @@ import {
   isArchivedForSeason,
   isDepleted,
   isInProcess,
+  isUnstartedSave,
   IN_PROCESS_STAGES,
   FALL_HARDY_CROPS,
 } from '../lib/sowEngine.js';
@@ -1615,6 +1616,101 @@ describe('V4-SEEDSAVEFLOW-001 in-process seed lots', () => {
     expect(buckets.direct_sow_now).toHaveLength(0); // spinach was the only one
     expect(buckets.window_closing).toHaveLength(1);
     expect(buckets.hold).toHaveLength(1);
+  });
+});
+
+describe('BUG-SEEDZEROSOWABLE-001 — the lot you just saved and have not started', () => {
+  // THE ROW: quantity_on_hand 0 (the seed is wet and uncounted at save time; the CHECK refuses NULL
+  // for a consumable), seed_stage NULL (the process control defaults to "Not yet", and choosing one
+  // writes a permanent seed_lot_stage_log row so the sheet must not choose on the user's behalf),
+  // source_plant_id set (SaveSeedSheet always launches FROM a planting). Before this fix that row
+  // was diverted as DEPLETED and filed under "Sowed previously — none of these left", five seconds
+  // after being created.
+  const justSaved = (over = {}) => toCandidate(PACKETS.cucumberSpacemaster, {
+    quantity_on_hand: 0, seed_stage: null, source_plant_id: 'pl-1', ...over,
+  });
+  const SEASON = 2026; // == the year TODAY ('2026-07-10') resolves to; scoped per describe block
+
+  it('isUnstartedSave: a saved lot with no stage and no count', () => {
+    expect(isUnstartedSave(justSaved())).toBe(true);
+    // The `own_garden` arm, for a lot whose origin is recorded on the lot page rather than at
+    // creation — Dave's Carolina Reaper case, which source_plant_id alone does not reach.
+    expect(isUnstartedSave(justSaved({ source_plant_id: null, source_kind: 'own_garden' }))).toBe(true);
+  });
+
+  it('isUnstartedSave: a BOUGHT packet used down to zero is NOT one, though the row looks alike', () => {
+    // The reason this needed a migration. "stage NULL and qty 0" is byte-identical between a lot
+    // saved this morning and a packet finished last spring; provenance is the only thing that tells
+    // them apart, and exactly one such row was live on prod when this was written.
+    expect(isUnstartedSave(justSaved({ source_plant_id: null }))).toBe(false);
+    expect(isUnstartedSave(justSaved({ source_plant_id: null, source_kind: 'store' }))).toBe(false);
+    expect(isUnstartedSave(justSaved({ source_plant_id: null, source_kind: 'gift' }))).toBe(false);
+  });
+
+  it('isUnstartedSave: any stage at all means the process was started', () => {
+    for (const seed_stage of ['fermenting', 'drying', 'stored']) {
+      expect(isUnstartedSave(justSaved({ seed_stage })), seed_stage).toBe(false);
+    }
+    // `stored` in particular: a 0 there is now an explicitly ANSWERED count
+    // (SavedSeeds.jsx parseCountInput refuses a blank on that transition), so depletion is the
+    // right reading and this must not re-home it.
+    expect(isUnstartedSave(justSaved({ seed_stage: 'stored' }))).toBe(false);
+  });
+
+  it('isUnstartedSave: a saved lot with a real count is ordinary sowable seed', () => {
+    // Gated on isDepleted, so this only ever re-homes a lot that would otherwise read as empty.
+    expect(isUnstartedSave(justSaved({ quantity_on_hand: 12 }))).toBe(false);
+    // NULL is not depleted either (isDepleted spares it deliberately), so it is not one of these.
+    expect(isUnstartedSave(justSaved({ quantity_on_hand: null }))).toBe(false);
+  });
+
+  it('isUnstartedSave: inert where the view has not been widened', () => {
+    // v4-sowprovenance-001 appends the two columns; until it runs they arrive undefined and the lot
+    // falls back to `sowed_previously` — the PRE-FIX behaviour, not a new failure. That is what
+    // makes the migration and the code independently deployable, so it is asserted rather than
+    // assumed.
+    const preMigration = toCandidate(PACKETS.cucumberSpacemaster, {
+      quantity_on_hand: 0, seed_stage: null,
+    });
+    expect(isUnstartedSave(preMigration)).toBe(false);
+    expect(bucketize([preMigration], TODAY).sowed_previously).toHaveLength(1);
+    expect(isUnstartedSave(undefined)).toBe(false);
+    expect(isUnstartedSave({})).toBe(false);
+  });
+
+  it('THE DEFECT: it lands in in_process, not in sowed_previously', () => {
+    const buckets = bucketize([justSaved()], TODAY);
+    expect(buckets.sowed_previously, 'a lot saved today read as already sown').toHaveLength(0);
+    expect(buckets.in_process).toHaveLength(1);
+    expect(buckets.in_process[0].inProcessFrom).toBe('window_closing');
+  });
+
+  it('carries `unstartedSave`, which is what separates it from a wet lot downstream', () => {
+    // SowNow reads this key for two decisions: the chip says "Not started yet" rather than naming a
+    // stage the lot does not have, and the `Sow anyway` override is KEPT (a fermenting jar is denied
+    // one). A wet lot must not carry it, or it would acquire an override it is denied on purpose.
+    const unstarted = bucketize([justSaved()], TODAY).in_process[0];
+    expect(unstarted.unstartedSave).toBe(true);
+    const wet = bucketize(
+      [toCandidate(PACKETS.cucumberSpacemaster, { seed_stage: 'fermenting', quantity_on_hand: 0 })],
+      TODAY,
+    ).in_process[0];
+    expect(wet.unstartedSave, 'a wet lot must not claim the override carve-out').toBeUndefined();
+  });
+
+  it('keeps its window label and columns, same as any other in-process lot', () => {
+    const plain = run(toCandidate(PACKETS.cucumberSpacemaster), TODAY);
+    const unstarted = bucketize([justSaved()], TODAY).in_process[0];
+    expect(unstarted.windowLabel).toBe(plain.entry.windowLabel);
+    expect(unstarted.windowLabel).toBeTruthy();
+  });
+
+  it('COMPOSES WITH ARCHIVE the same way a wet lot does', () => {
+    const buckets = bucketize([justSaved({ sow_archived_season: SEASON })], TODAY);
+    expect(buckets.in_process).toHaveLength(0);
+    expect(buckets.archived).toHaveLength(1);
+    expect(buckets.archived[0].archivedFrom).toBe('in_process');
+    expect(buckets.archived[0].unstartedSave).toBe(true);
   });
 });
 

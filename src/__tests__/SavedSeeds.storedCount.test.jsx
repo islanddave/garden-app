@@ -1,11 +1,33 @@
-// V4-SEEDSTOREDQTY-001 — the count is asked when the lot is STORED, not when it is saved.
+// V4-SEEDSTOREDQTY-001 — the count on the /seeds/saved advance sheet.
+// BUG-SEEDZEROSOWABLE-001 (2026-09-02) — WIDENED to every stage, and made REQUIRED at `stored`.
 //
-// THE DECISION. At "Save seed" the seed is still wet and unthreshed; nobody knows how much there is,
-// and the packet-count field that used to sit on that sheet collected a guess and stored it as
-// though it were measured. The first moment anyone knows is when the lot is packeted and put away.
-// So SaveSeedSheet creates the lot on 0 and every path INTO `stored` asks. This file covers the
-// /seeds/saved half — the advance sheet; the /inventory/:id half is
-// src/__tests__/InventoryDetail.storedCount.test.jsx.
+// THE ORIGINAL DECISION, and the half of it that stands. At "Save seed" the seed is still wet and
+// unthreshed; the packet-count field that used to sit on that sheet DEFAULTED TO 1 and stored a
+// guess as though it were measured. Removing it was right, and nothing below fabricates a count:
+// every field is blank-by-default and a blank still writes nothing.
+//
+// THE HALF THAT DID NOT STAND, and why these assertions were re-authored rather than deleted. The
+// original concluded that because the count is unknowable at save time it is knowable ONLY at
+// `stored`, so it asked there and nowhere else. Dave 2026-09-02: "I might save 10 seeds and know it
+// from the first moment, or I might have saved dozens/hundreds and not know how many potentially
+// viable ones I'll save in the end. Each step needs to be able to set/update that count." Knowing is
+// a fact about the gardener, not about the stage. So the field is offered at every stage and the
+// ANSWER stays optional — except at `stored`.
+//
+// `stored` REFUSES A BLANK, which is the fix for the silent half of BUG-SEEDZEROSOWABLE-001: a lot
+// that completed the whole process with the count skipped sat at 0, and sowEngine.isDepleted()
+// cannot distinguish that from genuinely empty, so a finished packet on the shelf was filed under
+// "Sowed previously — none of these left". `stored` is terminal, so nothing later asks again. The
+// answer is therefore demanded BEFORE the stage write lands, which is what makes the rule free:
+// no lot can reach `stored` unanswered, so from here on a 0 there genuinely means zero. Prod
+// carries no lots at any seed_stage today, so the invariant holds with no backfill.
+//
+// The /inventory/:id half is src/__tests__/InventoryDetail.storedCount.test.jsx, and it is
+// DELIBERATELY ASYMMETRIC — dismissible there. That panel appears only AFTER its stage write has
+// landed, so "required" could only mean nagging until satisfied, and the row cannot tell an
+// answered 0 ("none of it was viable") from an unanswered one. It would nag forever on exactly the
+// lots whose owner did answer. That asymmetry was implemented, reverted, and is recorded here so it
+// is not re-attempted as an oversight.
 //
 // THE PAYLOAD IS THE SUBJECT, not the click, and for the same reason InventoryDetail's stage tests
 // give: there is no narrow quantity route, so the count rides PUT /api/inventory-items/:id — the
@@ -31,7 +53,7 @@ vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
 }))
 
-import SavedSeeds, { countPayloadFrom } from '../pages/SavedSeeds.jsx'
+import SavedSeeds, { countPayloadFrom, parseCountInput } from '../pages/SavedSeeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 // A DRYING lot exactly as the list endpoint returns it: every inventory_items column, plus the two
@@ -66,7 +88,7 @@ const click = async (testId) => {
   await act(async () => { fireEvent.click(screen.getByTestId(testId)) })
 }
 const typeCount = async (v) => {
-  await act(async () => { fireEvent.change(screen.getByTestId('stored-count-input'), { target: { value: v } }) })
+  await act(async () => { fireEvent.change(screen.getByTestId('seed-count-input'), { target: { value: v } }) })
 }
 const writes = () => fetchSpy.mock.calls.filter(([, o]) => o?.method)
 const putBody = () => {
@@ -77,32 +99,82 @@ const putBody = () => {
 
 beforeEach(() => { fetchSpy.mockReset() })
 
-describe('V4-SEEDSTOREDQTY-001 — the advance sheet asks on the way into stored', () => {
-  it('shows the count field for stored and for no other stage', async () => {
-    // A ferment or a dry has the same unanswerable question the create sheet just stopped asking;
-    // re-posing it there would collect the same guess one screen later.
+describe('BUG-SEEDZEROSOWABLE-001 — the advance sheet asks at every stage', () => {
+  // RE-AUTHORED 2026-09-02, inverting the assertion this file opened with ("shows the count field
+  // for stored and for no other stage"). That pin was correct for V4-SEEDSTOREDQTY-001's reading and
+  // is wrong under Dave's — see the file header. Kept as a live assertion of the NEW rule rather
+  // than deleted, so the widening stays covered in both directions.
+  it('shows the count field on an in-flight stage too, marked optional', async () => {
     await mount([{ ...LOT, seed_stage: 'fermenting' }])
     await click('advance-stage')       // fermenting -> drying
-    expect(screen.queryByTestId('stored-count')).toBeNull()
+    expect(screen.getByTestId('seed-count')).toBeTruthy()
+    expect(screen.queryByTestId('seed-count-required'), 'drying must not demand a count').toBeNull()
   })
 
-  it('shows it on drying -> stored', async () => {
+  it('shows it on drying -> stored, marked required', async () => {
     await mount()
     await click('advance-stage')       // drying -> stored
-    expect(screen.getByTestId('stored-count')).toBeTruthy()
+    expect(screen.getByTestId('seed-count')).toBeTruthy()
+    expect(screen.getByTestId('seed-count-required')).toBeTruthy()
     // The consequence, on the field that causes it: a lot left on 0 reads as depleted on Sow now.
-    expect(screen.getByTestId('stored-count').textContent).toMatch(/Sow now/i)
+    expect(screen.getByTestId('seed-count').textContent).toMatch(/Sow now/i)
   })
 
-  it('writes NOTHING extra when the count is left blank', async () => {
-    // "Still haven't counted" is a real answer, not a skipped field. Writing 0 (or anything) for it
-    // would fabricate a measurement, which is the defect this whole change exists to remove.
-    await mount()
-    await click('advance-stage')
+  it('writes NOTHING extra when an IN-FLIGHT stage is left blank', async () => {
+    // "Still haven't counted" is a real answer on fermenting/drying, not a skipped field. Writing 0
+    // for it would manufacture the exact ambiguous value this change exists to eliminate, one stage
+    // early — a 0 nobody typed is indistinguishable afterwards from a 0 somebody measured.
+    await mount([{ ...LOT, seed_stage: 'fermenting' }])
+    await click('advance-stage')       // fermenting -> drying
     await click('stage-save')
     expect(writes()).toHaveLength(1)
     expect(`${writes()[0][1].method} ${writes()[0][0]}`)
       .toBe('POST /api/inventory-items/inv-1/seed-stage')
+  })
+
+  it('REFUSES the move into stored when the count is blank, before any request', async () => {
+    // The ordering is the point, not just the refusal. seed_lot_stage_log has no DELETE route and
+    // this page cannot repair a stage, so a submit that landed the stage and then rejected the count
+    // would leave the lot somewhere it cannot be moved back from. Nothing may go out.
+    await mount()
+    await click('advance-stage')       // drying -> stored
+    await click('stage-save')
+    expect(writes(), 'a request went out despite the refusal').toHaveLength(0)
+    expect(screen.getByTestId('seed-count-error')).toBeTruthy()
+    // The sheet stays open on the field that blocked it.
+    expect(screen.getByTestId('stage-save')).toBeTruthy()
+  })
+
+  it('clears the refusal and goes through once a number is typed', async () => {
+    await mount()
+    await click('advance-stage')
+    await click('stage-save')
+    expect(screen.getByTestId('seed-count-error')).toBeTruthy()
+    await typeCount('9')
+    expect(screen.queryByTestId('seed-count-error'), 'stale refusal left on screen').toBeNull()
+    await click('stage-save')
+    expect(writes().map(([p, o]) => `${o.method} ${p}`)).toEqual([
+      'POST /api/inventory-items/inv-1/seed-stage',
+      'PUT /api/inventory-items/inv-1',
+    ])
+  })
+
+  it('prefills from the count the lot already holds, so the field is an UPDATE', async () => {
+    // Dave: "Each step needs to be able to set/update that count." Re-asking from blank each time
+    // would make a running number look like a fresh capture, and the likeliest edit — nudging 40 to
+    // 38 after cleaning — would mean retyping it.
+    await mount([{ ...LOT, seed_stage: 'fermenting', quantity_on_hand: 40 }])
+    await click('advance-stage')
+    expect(screen.getByTestId('seed-count-input').value).toBe('40')
+  })
+
+  it('prefills BLANK from a zero, so a stored move cannot satisfy itself', async () => {
+    // 0 is the create-time placeholder for "nobody has counted this yet". Rendering it as an answer
+    // would let the required field at `stored` be satisfied by a number no human typed — which is
+    // the whole defect, reintroduced through the prefill.
+    await mount()                      // LOT.quantity_on_hand is 0
+    await click('advance-stage')
+    expect(screen.getByTestId('seed-count-input').value).toBe('')
   })
 
   it('writes the count as a SECOND request once one is entered', async () => {
@@ -196,7 +268,46 @@ describe('V4-SEEDSTOREDQTY-001 — the advance sheet asks on the way into stored
     await typeCount('14')
     await act(async () => { fireEvent.click(screen.getByLabelText('Close')) })
     await act(async () => { fireEvent.click(advanceButtons()[1]) })
-    expect(screen.getByTestId('stored-count-input').value).toBe('')
+    expect(screen.getByTestId('seed-count-input').value).toBe('')
+  })
+})
+
+describe('parseCountInput — the rule the whole fix turns on', () => {
+  // The asymmetry between stages IS the fix, so it is asserted directly rather than only through
+  // the sheet: the rendered tests above can only reach one stage per mount.
+  it('lets a blank through on an in-flight stage, writing nothing', () => {
+    for (const stage of ['fermenting', 'drying']) {
+      expect(parseCountInput('', stage)).toEqual({ value: null, error: null })
+      expect(parseCountInput('   ', stage)).toEqual({ value: null, error: null })
+    }
+  })
+
+  it('refuses a blank on stored', () => {
+    const out = parseCountInput('', 'stored')
+    expect(out.value).toBeNull()
+    expect(out.error).toBeTruthy()
+    // The refusal has to name zero as the way out, or it reads as "you must have some seed" and the
+    // honest answer to a failed lot becomes unreachable.
+    expect(out.error).toMatch(/\b0\b/)
+  })
+
+  it('accepts an explicit zero on stored — the answer the blank was hiding', () => {
+    expect(parseCountInput('0', 'stored')).toEqual({ value: 0, error: null })
+  })
+
+  it('refuses negatives and non-numbers rather than coercing them', () => {
+    // Number('') is 0 and Number('abc') is NaN, so a bare Number() here would turn a blank into a
+    // hard zero and a typo into a silent no-op — on the one field that decides sowability.
+    for (const stage of ['drying', 'stored']) {
+      expect(parseCountInput('-1', stage).error).toBeTruthy()
+      expect(parseCountInput('abc', stage).error).toBeTruthy()
+      expect(parseCountInput('-1', stage).value).toBeNull()
+      expect(parseCountInput('abc', stage).value).toBeNull()
+    }
+  })
+
+  it('takes a fraction as given — seed is not always counted in whole units', () => {
+    expect(parseCountInput('0.5', 'stored')).toEqual({ value: 0.5, error: null })
   })
 })
 

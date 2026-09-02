@@ -143,11 +143,20 @@ describe('BUG-SEEDPROCFORCED-001 — starting a lot no longer asserts a ferment'
     // must be absent, not null — `toEqual(expect.not.objectContaining)` would pass on null.
     await mount([lot({ seed_process: 'dry' })])
     await click('advance-stage')
+    // BUG-SEEDZEROSOWABLE-001 (2026-09-02): this fixture advances drying -> stored, and that
+    // transition now REFUSES a blank count before issuing any request. The count is typed here so
+    // the assertion below still exercises what it is about — the shape of the stage POST — rather
+    // than silently becoming a test that nothing is sent at all.
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('seed-count-input'), { target: { value: '12' } })
+    })
     await click('stage-save')
 
     const w = writes()
-    expect(w).toHaveLength(1)
+    // Two writes now: the stage POST, then the count PUT the typed number triggers.
+    expect(w).toHaveLength(2)
     const body = JSON.parse(w[0][1].body)
+    expect(w[0][1].method).toBe('POST')
     expect(Object.prototype.hasOwnProperty.call(body, 'seed_process')).toBe(false)
     expect(body.stage).toBe('stored')
   })

@@ -142,6 +142,34 @@ export function seedSavedNote(lotName, stage = null) {
     + " No count yet — recorded when it's marked stored."
 }
 
+/**
+ * BUG-SEEDZEROSOWABLE-001 — the opening count. Pure, exported for test.
+ * Blank -> 0, which is the create-time "nobody has counted this yet" placeholder and the only value
+ * consumable_requires_quantity_on_hand accepts in place of one. A typed number is taken as given.
+ * Rejects negatives and non-numbers rather than coercing: Number('') is 0 and Number('abc') is NaN,
+ * so a bare Number() would turn a typo into a silent zero on the one field that decides whether the
+ * lot is sowable.
+ *
+ * WHY THIS FIELD IS BACK. V4-SEEDSTOREDQTY-001 removed a packet count from this sheet and moved the
+ * question to the move into `stored`. It removed the right thing for the right reason — that field
+ * DEFAULTED TO 1, a guess dressed as data — but it drew too general a conclusion from it, that the
+ * count is unknowable until the lot is packeted. Dave 2026-09-02: "I might save 10 seeds and know it
+ * from the first moment, or I might have saved dozens/hundreds and not know how many potentially
+ * viable ones I'll save in the end. Each step needs to be able to set/update that count."
+ *
+ * So the field returns BLANK-BY-DEFAULT and optional. Nothing is fabricated, nothing is defaulted to
+ * a number no one typed, and the stage sheets on /seeds/saved carry the same field for the same
+ * reason (src/pages/SavedSeeds.jsx COUNT_ASK).
+ */
+export function parseOpeningCount(raw) {
+  const typed = String(raw ?? '').trim()
+  if (typed === '') return { value: 0, error: null }
+  const n = Number(typed)
+  if (!Number.isFinite(n)) return { value: null, error: 'That is not a number.' }
+  if (n < 0) return { value: null, error: 'A count cannot be negative.' }
+  return { value: n, error: null }
+}
+
 /** The planting's own cultivar, in the shape VarietyPicker's `value` wants. Null when it has none. */
 function plantingVariety(planting) {
   const ref = planting?.variety_ref
@@ -165,6 +193,8 @@ export default function SaveSeedSheet({ planting, onClose }) {
   // whole happy path to zero reads.
   const [pickerOpen, setPickerOpen] = useState(!seeded)
   const [seedProcess, setSeedProcess] = useState(null)
+  // BUG-SEEDZEROSOWABLE-001 — blank means "haven't counted"; see parseOpeningCount.
+  const [count, setCount] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -188,6 +218,13 @@ export default function SaveSeedSheet({ planting, onClose }) {
       return
     }
     if (!name.trim()) return
+    // BUG-SEEDZEROSOWABLE-001 — same shape as the variety guard above: answered here rather than
+    // after a round trip, because a negative or unparseable count is something the client can see.
+    const opening = parseOpeningCount(count)
+    if (opening.error) {
+      setError(opening.error)
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -198,12 +235,13 @@ export default function SaveSeedSheet({ planting, onClose }) {
           category: 'seeds',
           type: 'consumable',
           unit: 'packet',
-          // ZERO, AND NEVER NULL. The lot has no countable seed yet — that is the fact — but the
-          // live CHECK consumable_requires_quantity_on_hand is
-          // `type <> 'consumable' OR quantity_on_hand IS NOT NULL`, so a consumable row with a null
-          // count is refused outright while 0 is accepted. 0 is therefore both the true value and
-          // the only expressible one; the real number arrives on the move into `stored`.
-          quantity_on_hand: 0,
+          // NEVER NULL, whatever the user typed. The live CHECK
+          // consumable_requires_quantity_on_hand is `type <> 'consumable' OR quantity_on_hand IS NOT
+          // NULL`, so a consumable row with a null count is refused outright while 0 is accepted.
+          // BUG-SEEDZEROSOWABLE-001: 0 is now the value for a BLANK field only — "nobody has counted
+          // this yet" — and a gardener who already knows the number says so here instead of waiting
+          // for the move into `stored`. See parseOpeningCount.
+          quantity_on_hand: opening.value,
           variety_id: varietyId,
           source_plant_id: planting.id,
         }),
@@ -307,12 +345,23 @@ export default function SaveSeedSheet({ planting, onClose }) {
         </div>
       )}
 
-      {/* V4-SEEDSTOREDQTY-001 — where the count went, said on the screen it left. A field that
-          simply disappears reads as a regression to anyone who used the old one; naming the moment
-          it moved to also teaches the flow, since "stored" is the transition that now asks. */}
-      <p data-testid="save-seed-count-note" style={{ ...hintStyle, margin: '0 0 14px' }}>
-        The lot starts with no count — the seed is still wet and unthreshed. You&apos;ll be asked how
-        much you got when you mark it stored.
+      {/* BUG-SEEDZEROSOWABLE-001 — the count, offered at the FIRST step rather than only the last.
+          Blank-by-default and never pre-filled with a number: see parseOpeningCount for why that
+          distinction is the whole difference between this field and the one V4-SEEDSTOREDQTY-001
+          correctly removed. */}
+      <label style={fieldLabelStyle}>
+        How many? <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
+        <input
+          type="number" inputMode="decimal" min="0" step="1" value={count}
+          onChange={(e) => setCount(e.target.value)}
+          placeholder="e.g. 20"
+          aria-describedby="save-seed-count-note"
+          data-testid="save-seed-count" style={inputStyle}
+        />
+      </label>
+      <p id="save-seed-count-note" data-testid="save-seed-count-note" style={{ ...hintStyle, margin: '0 0 14px' }}>
+        Leave it blank if the seed is still wet and unthreshed. You can set or change the count at
+        every step, and you&apos;ll be asked for a final one when you mark the lot stored.
       </p>
 
       {/* Optional, and DEFAULTED OFF. Choosing a process writes a permanent seed_lot_stage_log row,
