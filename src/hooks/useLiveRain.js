@@ -2,6 +2,9 @@
 // precip once and returns { liveHydrology, refreshedAt, loading }. No coords -> no fetch (returns nulls).
 // Never throws; a failed/absent refresh yields null liveHydrology and the widget falls back to the nightly
 // snapshot. The watering recommendation is NOT recomputed from this — it stays the server's nightly plan.
+// EVERY precip field on liveHydrology is NULLABLE and null means NOT KNOWN, never 0 — see
+// BUG-LIVEWEATHERNUMOR0-001 in ../lib/liveWeather.js. A consumer that defaults one to 0 re-creates the
+// defect: a cue on that path fires hardest exactly when the forecast is unavailable.
 import { useState, useEffect } from 'react'
 import { fetchLiveRain } from '../lib/liveWeather.js'
 

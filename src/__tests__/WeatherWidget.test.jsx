@@ -139,6 +139,63 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
     expect(screen.getByText(/5% chance of rain/i)).toBeTruthy()
     expect(screen.queryByText(/rain expected/i)).toBeNull()
   })
+
+  // ── BUG-LIVEWEATHERNUMOR0-001, the consumer half ────────────────────────────────────────────────
+  // src/lib/liveWeather.js no longer coerces a missing precipitation_sum to 0, so every precip field
+  // on liveHydrology is now nullable. This widget is its ONLY consumer (useLiveRain -> Today.jsx ->
+  // here), and it is where a `?? 0` would have quietly restored the fabrication one layer down.
+  describe('a live payload with an unknown amount', () => {
+    it('shows the chance, never a fabricated "0.00″ rain expected"', () => {
+      // A real partial payload: D0 came back as 0.00 (so the live overlay legitimately engages) and
+      // the forecast tail is missing, which under the old mapper made D1 a confident 0.00 too. pop 63
+      // is above the display threshold — exactly the branch that used to print an amount. With the
+      // amount unknown there is nothing honest to weight, so the pop-only sentence (already the copy
+      // for the below-threshold case) is what renders.
+      const liveNoAmount = { recent_precip_in: null, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: null, upcoming_precip_in: null, tomorrow_pop: 63 }
+      render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={liveNoAmount}
+        refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+      expect(screen.getByText(/63% chance of rain tomorrow/i)).toBeTruthy()
+      expect(screen.queryByText(/rain expected/i)).toBeNull()
+      expect(screen.queryByText(/0\.00/)).toBeNull()
+    })
+
+    it('a payload with NO usable amount at all does not engage the live overlay at all', () => {
+      // The `live` gate already required a non-null precip figure — it was simply unreachable while
+      // the mapper fabricated zeros. With absence preserved, an unusable payload now correctly falls
+      // back to the nightly snapshot, caveats and stamp included, instead of overlaying zeros on it.
+      const unusable = { recent_precip_in: null, today_precip_in: null, tomorrow_precip_in: null, upcoming_precip_in: null, today_pop: null, tomorrow_pop: null }
+      render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={unusable}
+        refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+      expect(screen.queryByText(/· live/i)).toBeNull()
+      expect(screen.getByText(/As of/i)).toBeTruthy()
+      expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
+    })
+
+    it('a known amount still renders exactly as before — the fix is not a suppression', () => {
+      render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={live}
+        refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+      expect(screen.getByText(/0\.56/)).toBeTruthy()
+    })
+
+    it('on the NIGHTLY path an unknown amount renders no rain line at all — CHARACTERIZED, not fixed here', () => {
+      // The nightly hydrology reaches the identical lines, so it is worth stating what it does. It
+      // never reaches the `!rainAmtKnown` branch: the rain line renders only when `rainIn > 0 ||
+      // uncertain || live`, and an unknown amount satisfies none of those without a live overlay. So
+      // the unknown-amount guard is reachable ONLY on the live path — which is the one this fix is
+      // about. Recorded so a later reader does not mistake the guard for dead code.
+      const nightlyNoAmount = { recent_precip_in: null, today_precip_in: null, today_pop: 10, tomorrow_precip_in: null, tomorrow_pop: 63 }
+      const { unmount } = render(<WeatherWidget weather={weather} hydrology={nightlyNoAmount}
+        generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+      expect(screen.queryByText(/chance of rain/i)).toBeNull()
+      expect(screen.queryByText(/rain expected/i)).toBeNull()
+      unmount()
+      // ANTI-VACUITY: the same queries DO find a line when the amount is known, so the nulls above
+      // are the widget's behaviour and not a query that matches nothing.
+      render(<WeatherWidget weather={weather} hydrology={{ ...nightlyNoAmount, tomorrow_precip_in: 0.84 }}
+        generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+      expect(screen.getByText(/0\.53″ rain expected tomorrow · 63%/)).toBeTruthy()
+    })
+  })
 })
 
 
