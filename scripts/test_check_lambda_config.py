@@ -114,6 +114,38 @@ def test_daily_plan_water_ledger_flags_are_declared_absent():
     assert env["CARE_RAIN_MAXDAYS_ENABLED"] is None
     assert env["CARE_RAIN_CREDIT_ENABLED"] == "true"
 
+def test_rain_autolog_flag_is_declared_present_and_explicit():
+    """BUG-RAINAUTOLOGCLIFF-001 — the inverse of the test above, and the harder case.
+
+    logRainEvents is armed by the ABSENCE of RAIN_AUTOLOG_ENABLED, and has been authoring the latest
+    water event for 217 of 239 live plantings that way. Absence-arming is invisible to recon: you
+    cannot grep for a variable nobody set, so every prior investigation of this writer went to
+    CARE_WATER_LEDGER_ENABLED instead. Declaring the exact value prod already behaves as makes the
+    switch auditable without changing what it does — and a `null` here would put it straight back.
+    """
+    env = clc.load_manifest()["garden-daily-plan"]["env"]
+    assert env["RAIN_AUTOLOG_ENABLED"] == "true", \
+        "the arming state must be readable from a VALUE; null re-creates the absence-armed defect"
+
+
+def test_deploy_workflow_sets_the_rain_autolog_key_the_manifest_declares():
+    """The two config surfaces have to agree, and only one of them can WRITE.
+
+    check-lambda-config.py ignores a live key the manifest omits but hard-reds a declared key the
+    live account lacks, so a declaration with no setter behind it reds every promote — which is what
+    AWN_STATIONS_JSON did on 2026-08-27. This asserts the deploy job's daily-plan env merge actually
+    adds the key, on the executable lines only: a mention in a comment is not a setter.
+    """
+    wf = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", "deploy-lambda.yml")
+    with open(wf) as fh:
+        code = "\n".join(l for l in fh.read().splitlines() if not l.strip().startswith("#"))
+    assert 'RAIN_AUTOLOG_ENABLED:"true"' in code.replace(" ", ""), \
+        "manifest declares RAIN_AUTOLOG_ENABLED but no deploy step ensures it — every promote reds"
+    # ADD-IF-MISSING, not overwrite: a deliberate live 'false' is the incident kill switch.
+    assert 'ifhas("RAIN_AUTOLOG_ENABLED")then.else' in code.replace(" ", ""), \
+        "the merge must preserve an existing value — a deploy that re-arms a kill switch is not one"
+
+
 def test_manifest_declares_every_env_var_daily_plan_reads():
     """The daily-plan flag set is declared EXHAUSTIVELY — a read-but-undeclared var is how
     CARE_WATER_LEDGER_ENABLED stayed invisible. Adding a process.env read must add a declaration."""

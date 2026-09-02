@@ -61,7 +61,7 @@
   "garden-daily-plan": {
     "memory": 256,
     "timeout": 120,
-    "_note": "memory INTENTIONALLY 256 \u2014 DRG-NIGHTLYTIMEOUT-001 proved I/O wait, not CPU. env below is the COMPLETE set of vars lambda/daily-plan reads, so every flag is declared present-or-absent.",
+    "_note": "memory INTENTIONALLY 256 \u2014 DRG-NIGHTLYTIMEOUT-001 proved I/O wait, not CPU. env below is the COMPLETE set of vars lambda/daily-plan reads, so every flag is declared present-or-absent. RAIN_AUTOLOG_ENABLED moved null -> 'true' on 2026-09-02 (BUG-RAINAUTOLOGCLIFF-001) and this is NOT a flag flip: logRainEvents was already ARMED, by the ABSENCE of the key, and has authored the latest water event for 217 of 239 live plantings that way. rainLog.js arms on anything that is not the exact string 'false', so declaring the value it already behaves as changes nothing at runtime and everything about who can audit it \u2014 every prior investigation of this writer aimed at CARE_WATER_LEDGER_ENABLED because you cannot grep for a variable nobody set. ORDERING: the live key must be SET BEFORE this line ships (scripts/lambda-env-set.sh garden-daily-plan RAIN_AUTOLOG_ENABLED true), because check-lambda-config.py ignores a live key the manifest omits but HARD-REDS a declared key the live account lacks; deploy-lambda.yml's daily-plan env merge also adds it if-absent, but that step is continue-on-error and, on the promote that ships this, may be loaded from the pre-change workflow. Declared as the EXACT string, not the present-any-value sentinel, so a live disarm is a reviewable repo change like every other kill switch here.",
     "env": {
       "DRY_RUN": "false",
       "SYSTEM_CLERK_SUB": true,
@@ -88,7 +88,7 @@
       "AWN_FRESHNESS_MAX_MIN": null,
       "AWN_RAIN_MIN_DAILY_IN": null,
       "AWN_RAIN_MAX_DAILY_IN": null,
-      "RAIN_AUTOLOG_ENABLED": null,
+      "RAIN_AUTOLOG_ENABLED": "true",
       "RAIN_LOG_THRESHOLD_IN": null,
       "RAIN_RUN_END_HOUR": null
     },

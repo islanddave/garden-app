@@ -56,8 +56,11 @@
 // it re-introduces exactly that defect.
 
 // All three env vars this module reads — RAIN_AUTOLOG_ENABLED, RAIN_LOG_THRESHOLD_IN and
-// RAIN_RUN_END_HOUR — are declared in scripts/lambda-config-expected.json as expected-ABSENT (null),
-// i.e. the defaults below are the shipped behaviour. That declaration is not optional bookkeeping:
+// RAIN_RUN_END_HOUR — are declared in scripts/lambda-config-expected.json. The two numeric ones are
+// declared expected-ABSENT (null), i.e. the defaults below are the shipped behaviour; the arming
+// flag is declared PRESENT and "true" as of BUG-RAINAUTOLOGCLIFF-001, because a switch whose live
+// state can only be read off an absence is a switch nobody can audit. That declaration is not
+// optional bookkeeping:
 // scripts/test_check_lambda_config.py walks this directory for process.env reads and fails CI on any
 // that are undeclared, because "a read-but-undeclared var is how CARE_WATER_LEDGER_ENABLED stayed
 // invisible". Note its regex only matches the dotted static form (process dot env dot THE_NAME), so
@@ -103,21 +106,66 @@ function finite(v) {
 // staying off; this one guards a fail-open write that runs after the plan is durable, so it fails
 // safe by staying on. A typo in the env should not silently stop rain being logged for months —
 // which is the precise shape of the bug this whole ticket exists to fix.
+//
+// ── BUG-RAINAUTOLOGCLIFF-001: ARMED BY A VALUE, NEVER BY AN ABSENCE ──────────────────────────────
+// The polarity above is right and is unchanged. What was wrong is that it used to be readable ONLY
+// as `!== 'false'`, so the live prod state — key ABSENT — armed the writer that authors the latest
+// water event for 217 of 239 live plantings, and NOTHING anywhere said so. Every prior discussion of
+// this defect aimed at CARE_WATER_LEDGER_ENABLED instead, because absence-arming is invisible to
+// recon: you cannot grep for a variable that is not set, the manifest declared it deliberately
+// ABSENT, and a reader who found the gate read `!== 'false'` against nothing and moved on.
+//
+// So the state is now resolved into a NAMED config source, and the source is carried out through
+// resolveRainRun into handler.js's structured `rain-log` line. Absence still ARMS — that is the whole
+// point of shipping this at zero behaviour cost, see the fail-direction note — but it arms as
+// 'default_key_absent', which is a thing you can see in CloudWatch, assert in a test, and tell apart
+// from a deliberate 'explicit_on'. The defect was never the default; it was that the default was
+// indistinguishable from a decision.
+//
+// FAIL DIRECTION: OPEN. A missing or unrecognised value ARMS. Failing closed here would silently
+// stop ~217 event rows/day the moment this shipped, which is a behaviour change disguised as a
+// safety improvement — the exact trade this ticket exists to refuse. The key is declared PRESENT
+// ("true") in scripts/lambda-config-expected.json and ensured present by deploy-lambda.yml's
+// daily-plan env merge, so once that has run the absence branch is unreachable in prod and any
+// future reader gets an explicit value. Until it has run, absence is still correct AND still loud.
+const AUTOLOG_DEFAULT = true;
+
+// Returns { enabled, config } — `config` names WHERE the answer came from, which is the half that
+// was missing. Deliberately NOT a widened truthiness parse: '0', 'no', 'off' and '' all still ARM,
+// exactly as before, because a typo must not disarm a fail-open writer (rainLog.test.js pins that).
+// They are reported as 'default_unrecognised' rather than silently folded into the on-branch.
+//
+// Read through the DOTTED static form on purpose, not through numEnv's bracket lookup: that is the
+// only form scripts/test_check_lambda_config.py's scanner can see, and a bracket read here would
+// drop this key out of the "daily-plan declares every env var it reads" guard — which is the same
+// class of invisibility this ticket is closing.
+function rainAutologState() {
+  const raw = process.env.RAIN_AUTOLOG_ENABLED;
+  if (raw === 'true') return { enabled: true, config: 'explicit_on' };
+  if (raw === 'false') return { enabled: false, config: 'explicit_off' };
+  if (raw === undefined) return { enabled: AUTOLOG_DEFAULT, config: 'default_key_absent' };
+  return { enabled: AUTOLOG_DEFAULT, config: 'default_unrecognised' };
+}
+
 function rainAutologEnabled() {
-  return process.env.RAIN_AUTOLOG_ENABLED !== 'false';
+  return rainAutologState().enabled;
 }
 
 function resolveRainRun(event, { etHour } = {}) {
-  if (!rainAutologEnabled()) return { log: false, slot: 'disabled', reason: 'flag_off' };
-  if (event && event.rainLog === true) return { log: true, slot: 'forced', reason: 'event_override' };
-  if (event && event.rainLog === false) return { log: false, slot: 'suppressed', reason: 'event_override' };
+  // `flag` rides on EVERY return, not just the disabled one: "the writer ran" and "the writer ran
+  // because nobody had set the key" are different facts and only one of them is a decision.
+  const { enabled, config: flag } = rainAutologState();
+  if (!enabled) return { log: false, slot: 'disabled', reason: 'flag_off', flag };
+  if (event && event.rainLog === true) return { log: true, slot: 'forced', reason: 'event_override', flag };
+  if (event && event.rainLog === false) return { log: false, slot: 'suppressed', reason: 'event_override', flag };
   const h = finite(etHour);
-  if (h == null) return { log: false, slot: 'unknown', reason: 'no_et_hour' };
+  if (h == null) return { log: false, slot: 'unknown', reason: 'no_et_hour', flag };
   const inWindow = h <= RAIN_RUN_END_HOUR;
   return {
     log: inWindow,
     slot: inWindow ? 'nightly' : 'other',
     reason: inWindow ? 'nightly_window' : 'outside_nightly_window',
+    flag,
   };
 }
 
@@ -171,6 +219,7 @@ function rainMetadata(amountIn, { backfilled = false } = {}) {
 }
 
 module.exports = {
+  rainAutologState,
   rainAutologEnabled,
   resolveRainRun,
   rainDecision,
