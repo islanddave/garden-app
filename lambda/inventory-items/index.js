@@ -91,9 +91,16 @@ export const METADATA_MAX_BYTES = 8192;
 // lot created by "Save seed".
 //
 // Each sentence names the rule and the way out, and none of them names a column: `source_plant_id`
-// is not a thing the user has ever seen, "the plant it was saved from" is. Exported so the test can
-// assert the KEYS against pg_constraint rather than against this literal — a renamed constraint
-// would otherwise silently fall back to the opaque arm with every test still green.
+// is not a thing the user has ever seen, "the plant it was saved from" is.
+//
+// Exported so the test can check the KEYS against something other than this literal — every other
+// assertion in put-seed-provenance-guard.test.js supplies the constraint name itself, so all of them
+// would stay green against a table keyed on names that do not exist. That check reads the
+// `ADD CONSTRAINT` statements in `migrations/`, NOT `pg_constraint`: unit tests open no database.
+// The residual gap is therefore a constraint renamed in the live schema but not in the migration
+// files, which would leave this map silently dead with the suite green. All four names were
+// verified against live prod `pg_constraint` on 2026-09-02 (pre-promote pass MIN-2); re-verify there
+// rather than trusting the unit test if this map ever stops firing.
 export const SEED_CONSTRAINT_MESSAGES = {
   chk_inventory_source_plant_seeds_only:
     'This lot records the plant it was saved from, so it has to stay in Seeds. Clear "Saved from" first if you want to move it to another category.',

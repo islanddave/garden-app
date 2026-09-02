@@ -1069,6 +1069,21 @@ export default function EventNew() {
     if (!draft || !draft.form) return
     const picked = {}
     for (const k of DRAFT_FORM_FIELDS) if (k in draft.form) picked[k] = draft.form[k]
+    // POI-SEEDDOORMENU-001 / pre-promote IMP-1 — `seed_saved` is DROPPED from a restore, and this is
+    // the same refuse-rather-than-coerce call the harvest predicate above makes, for a sharper
+    // reason: this type no longer renders a form, it renders a SHEET.
+    //
+    // MEASURED, not theorised (three probes, pre-promote pass 2026-09-02). `DRAFT_FORM_FIELDS`
+    // carries both `event_type` and `plant_id`; PROJECTS_HIDDEN makes plantsForProject the unscoped
+    // list, so a restored plant_id always resolves; and SaveSeedSheet's save path navigates away
+    // without clearing the stash. So after ONE trip through the menu door, every later bare tap on
+    // "Log an event" re-derived seedSaveTarget and opened the Save-seed sheet with no user action —
+    // on the app's most-tapped surface, in an installed PWA where that session outlives the day.
+    //
+    // Only the TYPE is dropped, not the draft: a half-typed note and the chosen planting still come
+    // back, which is what the stash exists for. The user lands on the chooser with their text intact
+    // and picks a type — including this one, deliberately, if that is what they meant.
+    if (picked.event_type === 'seed_saved') picked.event_type = ''
     setForm(f => ({ ...f, ...picked }))
     if (typeof draft.showPrivate === 'boolean') setShowPrivate(draft.showPrivate)
     if (typeof draft.showAddDetails === 'boolean') setShowAddDetails(draft.showAddDetails)

@@ -765,7 +765,18 @@ export default function SavedSeeds() {
               wording, the optional/required chip and the help line all come from that one table, so
               the three can never disagree about which stages demand an answer. */}
           {(() => {
-            const ask = COUNT_ASK[advancing.toStage]
+            // Pre-promote MIN-1 — the fallback is NOT reachable today and is here anyway. Every
+            // producer of `toStage` is enumerable: nextStage() over SEED_STAGES, and
+            // PROCESS_ENTRY[*].stage, all three of which have a COUNT_ASK entry. But the previous
+            // shape of this block was gated on `=== 'stored'`, so an unknown stage rendered NOTHING;
+            // this one dereferences `ask.label`, so the same unknown stage would throw and
+            // white-screen the whole advance sheet — turning "a fourth stage was added upstream"
+            // from a missing field into a dead page. The generic wording is deliberately answerable
+            // at any stage, and `required` stays pinned to `stored` alone.
+            const ask = COUNT_ASK[advancing.toStage] ?? {
+              label: 'How many?',
+              help: 'Optional — you can set or change the count at every step.',
+            }
             const required = advancing.toStage === 'stored'
             return (
               <label style={fieldLabelStyle} data-testid="seed-count">
