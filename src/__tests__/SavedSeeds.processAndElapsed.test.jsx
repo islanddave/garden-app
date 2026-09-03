@@ -82,17 +82,41 @@ describe('BUG-SEEDPROCFORCED-001 — starting a lot no longer asserts a ferment'
     expect(screen.queryByTestId('stage-save')).toBeNull()
   })
 
-  it('offers exactly the live seed_process vocabulary — wet and dry, nothing invented', async () => {
-    // inventory_items_seed_process_check on prod, read 2026-09-02:
-    //   seed_process IS NULL OR seed_process = ANY (ARRAY['wet','dry'])
-    // A third option here would 400 at the handler and 23514 at the DB.
+  it('RENDERS exactly the declared seed_process vocabulary, in order — nothing dropped, nothing invented', async () => {
+    // THE MATCHER MUST STAY OPEN. This assertion previously read
+    //   getAllByTestId(/^start-process-(wet|dry)$/) ... toHaveLength(2)
+    // and it went silently vacuous the moment `fresh` was added to PROCESS_ENTRY: the alternation
+    // could not see `start-process-fresh`, so the length stayed 2, the toEqual stayed satisfied, and
+    // the test kept passing with THREE buttons on screen under a title claiming there were two. A
+    // filtering regex cannot detect the thing it filters out. `/^start-process-/` can.
+    //
+    // This test owns exactly one link in the chain: RENDER matches DECLARATION. It deliberately does
+    // not re-check the declaration against the database — seedFreshProcess.test.js already pins
+    // PROCESS_ENTRY to both Lambda SEED_PROCESSES copies and to the migration's widened CHECK by
+    // source-text scrape, and pins this same wet -> fresh -> dry order in both mirrors. But every one
+    // of those reads source text and none of them renders, so nothing there would notice if the
+    // chooser at SavedSeeds.jsx:961 started filtering or slicing what it maps. That gap is this test.
+    //
+    // Order is asserted, not just the set: it reads wettest to driest, which is the sequence a
+    // gardener scans. A set comparison would let the two mirrors drift in order invisibly.
     await mount([untracked])
     await click('track-a-lot')
     await click('track-candidate')
-    const opts = screen.getAllByTestId(/^start-process-(wet|dry)$/)
-    expect(opts).toHaveLength(2)
-    expect(opts.map((b) => b.getAttribute('data-testid')))
-      .toEqual(['start-process-wet', 'start-process-dry'])
+
+    // Two testids under this prefix are STRUCTURE, not vocabulary: the step container (a div) and
+    // the back button. They are named here rather than pattern-excluded so that a THIRD structural
+    // testid lands in `options` below and reds this test — noisy, but the safe polarity. The failure
+    // that must never recur is the silent one, where a new value slips past the matcher unseen.
+    const STRUCTURAL = ['start-process-step', 'start-process-back']
+    const rendered = screen.getAllByTestId(/^start-process-/).map((el) => el.getAttribute('data-testid'))
+
+    // Instrument check FIRST. Without it every assertion below is satisfiable by a sheet that
+    // rendered nothing at all — `[].filter(...)` deep-equals `[]`, and an empty page would pass a
+    // bare set comparison silently. This is the same guard candidatePicker.test.jsx:88-92 uses.
+    for (const id of STRUCTURAL) expect(rendered, `sheet did not render ${id}`).toContain(id)
+
+    const options = rendered.filter((id) => !STRUCTURAL.includes(id))
+    expect(options).toEqual(['start-process-wet', 'start-process-fresh', 'start-process-dry'])
   })
 
   it('a DRY lot enters at drying and records the dry process — never a fermenting row', async () => {
