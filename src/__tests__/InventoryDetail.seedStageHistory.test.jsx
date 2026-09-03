@@ -156,6 +156,44 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(screen.queryAllByTestId('seed-stage-entry-current')).toHaveLength(0)
   })
 
+  it('says so when the current stage is LOGGED but not the newest entry — the corrected-backwards case', async () => {
+    // BUG-SEEDSTAGEHEADSHIP-001. The case above uses a ONE-ROW history, where "is the current stage
+    // anywhere in the log" (membership) and "is it the newest entry" (headship) always agree — so it
+    // passes under either predicate and cannot tell a working detector from a broken one.
+    //
+    // This is the fixture that separates them. Full history [stored, drying, fermenting] with the lot
+    // corrected back to `drying`: the stage IS in the log at index 1, so the shipped `currentIdx ===
+    // -1` test found no divergence and rendered nothing — leaving a CURRENT badge on the middle row
+    // with a newer `stored` entry above it and no explanation. Correcting a pointer BACKWARDS is the
+    // commonest thing the repair control does, so this was the detector's own central case.
+    //
+    // Mutation that must turn this red: `stageBehindLog = currentIdx > 0` → `= false`, or reverting
+    // stageOffLog to `stageNotLogged` alone. Both leave every other test in this file green.
+    itemRef.current = { ...LOT, seed_stage: 'drying' }
+    historyRef.current = HISTORY
+    await renderPage()
+    await waitFor(() => expect(screen.getByTestId('seed-stage-off-log')).toBeTruthy())
+    const notice = screen.getByTestId('seed-stage-off-log').textContent
+    // The wording has to distinguish the two facts: this history goes FURTHER than the lot does,
+    // which is the opposite complaint from "there is no entry for it".
+    expect(notice).toContain('Drying')
+    expect(notice).toContain('later entry')
+    expect(notice).not.toContain('no processing entry')
+    // The badge still marks where the lot actually is — the notice explains it, it does not replace it.
+    expect(screen.getAllByTestId('seed-stage-entry-current')).toHaveLength(1)
+    expect(entries()[1].textContent).toContain('current')
+  })
+
+  it('stays silent when the current stage IS the newest entry — the ordinary case', async () => {
+    // The negative half. Without it, `stageOffLog = true` unconditionally would satisfy every
+    // positive assertion in this file, and a notice that always fires is noise, not a detector.
+    itemRef.current = { ...LOT, seed_stage: 'stored' }   // index 0, the head
+    historyRef.current = HISTORY
+    await renderPage()
+    await waitFor(() => expect(screen.getByTestId('seed-stage-entries')).toBeTruthy())
+    expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
+  })
+
   it('says "none recorded yet" for a lot that was never staged', async () => {
     historyRef.current = []
     await renderPage()

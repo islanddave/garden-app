@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.108.0",
+    "date": "2026-09-03",
+    "highlights": [
+      "Seed lot history now says when a stage was set back to an earlier one — before, the notice only fired if the stage was missing from the history entirely, so a corrected-backwards lot showed a 'current' badge under a newer entry with no explanation"
+    ]
+  },
+  {
     "version": "4.107.0",
     "date": "2026-09-03",
     "highlights": [

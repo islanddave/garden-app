@@ -83,7 +83,24 @@ export default function SeedStageHistory({
   // therefore genuinely allowed to differ, and when they do the user is told so below rather than
   // left to notice.
   const currentIdx = currentStage ? rows.findIndex(r => r.stage === currentStage) : -1
-  const stageOffLog = Boolean(currentStage) && currentIdx === -1 && rows.length > 0
+
+  // BUG-SEEDSTAGEHEADSHIP-001 — MEMBERSHIP IS THE WRONG PREDICATE, and the difference is the whole
+  // point of this notice. `currentIdx === -1` asks "is the current stage ANYWHERE in the history".
+  // The invariant this panel exists to report is "is the current stage the HEAD of the history" —
+  // and the two disagree on precisely the case the repair control creates most often, because
+  // correcting a pointer BACKWARDS lands it on a stage that is already logged.
+  //
+  // Worked: log (newest first) [stored, drying, fermenting], lot corrected back to `drying`.
+  // currentIdx is 1, membership says "no divergence", nothing renders — and the reader sees the
+  // CURRENT badge painted on a middle row with a NEWER `stored` entry sitting above it, unexplained.
+  // That is the exact confusion the notice was written to prevent, and it was silent on it.
+  //
+  // The shipped test could not tell the two predicates apart: its fixture is a SINGLE row, where
+  // `=== -1` and `!== 0` always agree. Adding a three-row fixture is what makes this a detector
+  // rather than a decoration.
+  const stageNotLogged = Boolean(currentStage) && currentIdx === -1 && rows.length > 0
+  const stageBehindLog = currentIdx > 0
+  const stageOffLog = stageNotLogged || stageBehindLog
 
   return (
     <AsyncRegion
@@ -120,9 +137,15 @@ export default function SeedStageHistory({
         </ol>
       )}
 
+      {/* Two different facts, so two different sentences. "No entry for it" tells the reader the
+          history simply does not cover where the lot is. "A later entry above" tells them the
+          history goes FURTHER than the lot does — the pointer was moved back — which is the case
+          that otherwise renders as a current badge stranded mid-list under a newer row. */}
       {stageOffLog && (
         <p data-testid="seed-stage-off-log" style={noteInk}>
-          Set to {seedStageLabel(currentStage)} here — there’s no processing entry for it.
+          {stageBehindLog
+            ? `Set back to ${seedStageLabel(currentStage)} here — there’s a later entry above it.`
+            : `Set to ${seedStageLabel(currentStage)} here — there’s no processing entry for it.`}
         </p>
       )}
 

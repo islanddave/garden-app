@@ -1181,11 +1181,20 @@ export const IN_PROCESS_STAGES = Object.freeze(['fermenting', 'drying']);
  *
  * NULL IS SOWABLE — same conclusion as isDepleted's NULL decision, reached from the opposite
  * direction. There NULL was RARE ("nobody counted this"; 0 of 259 prod candidates) and the argument
- * had to be made on cost asymmetry alone. Here NULL is the NORMAL state and structurally always will
- * be: seed_stage is nullable with no default and is written only by POST /seed-stage, a route that
- * exists solely for home-saved lots, so every packet ever bought is NULL. NULL means "never
- * tracked", which is not "unfinished" — and treating it as in-process would divert the entire sow
- * list into "not ready yet", which is the wrong-late direction at full scale.
+ * had to be made on cost asymmetry alone. Here NULL is the NORMAL state: seed_stage is nullable with
+ * no default and is only ever set on a lot somebody deliberately tracked, so every packet ever bought
+ * is NULL — measured 2026-09-03, 313 of 316 live seed lots. NULL means "never tracked", which is not
+ * "unfinished", and treating it as in-process would divert the entire sow list into "not ready yet",
+ * the wrong-late direction at full scale.
+ *
+ * CORRECTED 2026-09-03 (BUG-SEEDSTAGEHEADSHIP-001). This paragraph used to say seed_stage "is written
+ * only by POST /seed-stage" and called that structural. It is not true and had not been true since
+ * V4-SEEDHISTORY-001: there are THREE writers — the /seed-stage CTE (lambda/inventory-items/index.js
+ * :447-466), the wide PUT's presence-guarded arm (:858-860, which InventoryDetail's stage control
+ * drives), and the create INSERT (:1075-1090). Only the first appends to seed_lot_stage_log. The
+ * CONCLUSION above survives — a bought packet is still never staged by any of the three — but the
+ * ground it stood on did not, and an assumption that lives in a comment is invisible to CI when a
+ * second writer arrives. Stated as a measurement now rather than as an architectural guarantee.
  *
  * seed_process (`wet | dry`) is deliberately NOT read: it says HOW a lot is being processed, never
  * WHETHER it still is. Stage alone decides. Trimmed/lower-cased before the membership test and
