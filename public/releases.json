@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.100.1",
+    "date": "2026-09-03",
+    "highlights": [
+      "Harvest colour window restored for the Gong Bao pepper, which lost its picking guidance when the planting was re-identified",
+      "Corrected an unsupported habanero-class heat note behind a per-pod weight estimate"
+    ]
+  },
+  {
     "version": "4.100.0",
     "date": "2026-09-03",
     "highlights": [

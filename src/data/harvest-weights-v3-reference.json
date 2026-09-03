@@ -2813,7 +2813,7 @@
    },
    "source": "catalog",
    "confidence": "medium",
-   "note": ""
+   "note": "Catalog figure. One measured 2026 pod came in at 3 g against this 6 g; CAL-1 holds that as provisional (sample_n=1) and will supersede this once a second weighing lands."
   },
   {
    "crop_type_slug": "pepper",
@@ -3077,7 +3077,7 @@
    },
    "source": "estimate",
    "confidence": "low",
-   "note": "Read as habanero-class; confirm."
+   "note": "Derived from a habanero-class heat read that is NOT supported: Baker Creek publishes no SHU for this cultivar and contradicts itself on species. No Palmetto Punch was ever grown here - the 2026 planting under that name was re-identified as a Gong Bao on 2026-09-02 - so this figure has never been checked against a real pod. Unverified."
   },
   {
    "crop_type_slug": "pepper",

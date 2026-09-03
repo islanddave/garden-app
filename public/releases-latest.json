@@ -1,7 +1,8 @@
 {
-  "version": "4.100.0",
+  "version": "4.100.1",
   "date": "2026-09-03",
   "highlights": [
-    "Two more seed packets get a real sowing window: those whose instructions mention a fall crop or fall harvest without naming a month — Red Mustard and Long Island Improved brussels sprouts. The app works the date back from your first frost using each variety's own days-to-maturity, rather than applying one calendar window to everything"
+    "Harvest colour window restored for the Gong Bao pepper, which lost its picking guidance when the planting was re-identified",
+    "Corrected an unsupported habanero-class heat note behind a per-pod weight estimate"
   ]
 }

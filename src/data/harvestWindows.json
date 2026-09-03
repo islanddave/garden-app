@@ -549,6 +549,52 @@
       "display_name": "1884",
       "crop": "tomato"
     },
+    "gongbao": {
+      "window_label": "mature green → bright scarlet",
+      "window": [
+        {
+          "at": "mature green",
+          "look": "full length - about 4-4.5 in on the 2026 plant - and glossy dark green, firm but noticeably light in the hand; this is a thin-walled chile and never feels meaty the way a jalapeno does",
+          "gives": "a crisp, grassy, moderately hot pod for stir-frying fresh. Take it here only if you specifically want it green - the variety is grown for its red stage"
+        },
+        {
+          "at": "bright scarlet",
+          "look": "colour runs from the TIP UPWARD - the tip reddens first and the shoulder finishes last, so a pod red below and still green under the calyx is not done. Ripe is an even, clear scarlet over the whole pod, skin taut and glossy with fine shallow longitudinal ribbing",
+          "gives": "the stage the variety is for: drying whole for stir-fry chiles and flakes, and Sichuan-style cooking. Thin walls air-dry readily without splitting. Around 9,000 SHU - between a jalapeno and a serrano, no gloves needed"
+        }
+      ],
+      "ripe_vs_unripe": "Because it colours tip-first, partial redness is the normal mid-state and not a signal to pick - wait until no green remains under the calyx. The first ripe pod of 2026 measured 4-4.5 in and weighed 3 g; a pod much heavier than that is probably a different plant.",
+      "source": "Reimer Seeds (Gong Bao Pepper) and Specialty Produce (Kung Pao chile), plus direct observation of the 2026 Trough planting",
+      "source_url": "https://www.reimerseeds.com/gong-bao-pepper-seeds",
+      "confidence": "medium",
+      "asserted_on": "2026-09-03",
+      "caveat": "Ripening pattern, endpoint colour, pod length and pod weight are observed directly on the 2026 planting rather than taken from a vendor page; heat is Dave's taste impression (between jalapeno and serrano) against Reimer's published 9,000 SHU and Specialty Produce's 7,000-12,000. This planting carried the name 'Palmetto Punch' until 2026-09-02, so any window guidance dated before then under that name described the wrong cultivar.",
+      "display_name": "Gong Bao (Kung Pao)",
+      "crop": "pepper"
+    },
+    "gongbaokungpao": {
+      "window_label": "mature green → bright scarlet",
+      "window": [
+        {
+          "at": "mature green",
+          "look": "full length - about 4-4.5 in on the 2026 plant - and glossy dark green, firm but noticeably light in the hand; this is a thin-walled chile and never feels meaty the way a jalapeno does",
+          "gives": "a crisp, grassy, moderately hot pod for stir-frying fresh. Take it here only if you specifically want it green - the variety is grown for its red stage"
+        },
+        {
+          "at": "bright scarlet",
+          "look": "colour runs from the TIP UPWARD - the tip reddens first and the shoulder finishes last, so a pod red below and still green under the calyx is not done. Ripe is an even, clear scarlet over the whole pod, skin taut and glossy with fine shallow longitudinal ribbing",
+          "gives": "the stage the variety is for: drying whole for stir-fry chiles and flakes, and Sichuan-style cooking. Thin walls air-dry readily without splitting. Around 9,000 SHU - between a jalapeno and a serrano, no gloves needed"
+        }
+      ],
+      "ripe_vs_unripe": "Because it colours tip-first, partial redness is the normal mid-state and not a signal to pick - wait until no green remains under the calyx. The first ripe pod of 2026 measured 4-4.5 in and weighed 3 g; a pod much heavier than that is probably a different plant.",
+      "source": "Reimer Seeds (Gong Bao Pepper) and Specialty Produce (Kung Pao chile), plus direct observation of the 2026 Trough planting",
+      "source_url": "https://www.reimerseeds.com/gong-bao-pepper-seeds",
+      "confidence": "medium",
+      "asserted_on": "2026-09-03",
+      "caveat": "Ripening pattern, endpoint colour, pod length and pod weight are observed directly on the 2026 planting rather than taken from a vendor page; heat is Dave's taste impression (between jalapeno and serrano) against Reimer's published 9,000 SHU and Specialty Produce's 7,000-12,000. This planting carried the name 'Palmetto Punch' until 2026-09-02, so any window guidance dated before then under that name described the wrong cultivar.",
+      "display_name": "Gong Bao (Kung Pao)",
+      "crop": "pepper"
+    },
     "jalapeno": {
       "window_label": "mature dark green → full red",
       "window": [
