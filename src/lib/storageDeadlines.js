@@ -42,10 +42,14 @@
 //    and it still stands — but derived the new date from FROST_ANCHORS.firstFallFrost, landing on
 //    09-25 (anchor - 3d).
 //  • 1.2.0 (same day, 8-seat crucible) reverted the DATE to 10-10 and kept the mechanism. The anchor is
-//    a conservative SOWING-safety margin, not an observed frost date: 11 years of 2m minima at this
-//    exact site put the first <=32F night between 10-10 and 11-08, median 10-29, with zero September
-//    nights below 38.2F. 09-25 therefore fired 15-44 days before frost had ever occurred here, trading
-//    a certain annual loss of the fastest bulking weeks against a hazard with no September tail.
+//    a conservative SOWING-safety margin, not an observed frost date — that reasoning stands. Its
+//    NUMBERS did not: 1.2.0 cited 11 years of ERA5 2m minima putting first frost between 10-10 and
+//    11-08, median 10-29, with no September tail. BUG-FROSTANCHORERA5-001 (2026-09-03) replaced that
+//    instrument with a 3-station GHCN composite: 09-21 to 10-31, median 10-15, and September does have
+//    a tail (2020, 1 season in 11). 09-25 therefore fired ahead of frost in 10 of 11 seasons rather
+//    than all 11 — still the wrong trade, by a smaller margin than 1.2.0 claimed. The DATE is
+//    unchanged at 10-10 and its ground has moved; storageDeadlines.json's sweet_potato `notes` records
+//    what is now open about it.
 // THE STANDING RULE: no deadline in this file may be derived from FROST_ANCHORS, in either direction.
 // Two sessions did it, on opposite readings, and both were wrong. The dataset's `frost_anchor_warning`
 // carries the argument and every dated record now carries a reproducible `measured_basis`;

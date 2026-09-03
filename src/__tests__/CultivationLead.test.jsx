@@ -27,24 +27,28 @@ const renderLead = (props = {}) => render(
   <MemoryRouter><CultivationLead {...props} /></MemoryRouter>
 )
 
-// 2026 anchors: FF (sowing-safety margin) = 09-28, FFobs (measured median first frost) = 10-29.
+// 2026 anchors: FF (sowing-safety margin) = 09-28, FFobs (measured median first frost) = 10-15.
 // Lettuce is fall-hardy (V4-HARDYSET-001), so a cool + annual DIRECT sow closes at FFobs - dtm:
-// dtm 72 -> Aug 18 (6 days from the fixed TODAY, inside the 10-day closing window); dtm 75 -> Aug
-// 15; dtm 77 -> Aug 13. The fall INDOOR pass is a SEPARATE clamp and now sits on the same anchor for
-// hardy crops — FFobs - dtm - FALL_SLOWDOWN 14 — so the indoor fixture takes dtm 58 for the same
-// Aug 18. (It carried 55 while that pass was still on FF + 28 - dtm - 14.)
+// dtm 58 -> Aug 18 (6 days from the fixed TODAY, inside the 10-day closing window); dtm 61 -> Aug
+// 15; dtm 63 -> Aug 13. The fall INDOOR pass is a SEPARATE clamp and now sits on the same anchor for
+// hardy crops — FFobs - dtm - FALL_SLOWDOWN 14 — so the indoor fixture takes dtm 44 for the same
+// Aug 18. (It carried 55 while that pass was still on FF + 28 - dtm - 14, then 58.)
 //
 // The dtm figures were raised by 14 to hold these dates when lettuce gained the hardy grace
 // (V4-HARDYSET-001), then by a further 3 when BUG-FROSTANCHORWRONG-001 moved the hardy DIRECT clamp
 // off the safety margin onto the measured anchor, and the indoor fixture by 3 when
-// V4-FALLINDOORHARDY-001 did the same to the INDOOR pass. Every EXPECTED string below is unchanged
-// across all three, deliberately: the contract under test is the lead line's wording, cap and
-// ordering, and none of that moved — only the shared clamps that decide which packets are closing.
-// Retuning the input rather than the assertions keeps that visible.
+// V4-FALLINDOORHARDY-001 did the same to the INDOOR pass. BUG-FROSTANCHORERA5-001 then LOWERED every
+// one of them by 14, because correcting FFobs from ERA5's 10-29 to the station composite's 10-15
+// moves the clamp 14 days earlier and the dtm has to come down by the same amount to keep the same
+// close date. Every EXPECTED string below is unchanged across all four, deliberately: the contract
+// under test is the lead line's wording, cap and ordering, and none of that moved — only the shared
+// clamps that decide which packets are closing. Retuning the input rather than the assertions keeps
+// that visible, and it is why a 14-day anchor correction produces a zero-line diff in the expected
+// output of this file.
 const TODAY = '2026-08-12'
 const lettuce = (over = {}) => ({
   variety_name: 'Winter Density', item_name: 'Lettuce packet', crop_type_slug: 'lettuce',
-  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 72, days_to_maturity_min: null,
+  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 58, days_to_maturity_min: null,
   // Class B ("after last frost"), NOT class C. This fixture carried
   // 'as soon as the soil can be worked' until 2026-09-01, when BUG-SOWCLASSC-001 moved class C's
   // close onto a SPRING bound — because a spring clause producing an August sow date was the
@@ -73,7 +77,7 @@ describe('cultivationLines (pure, real engine)', () => {
 
   it('uses the indoor verb when the closing window is an indoor start', () => {
     const basil = lettuce({
-      variety_name: 'Genovese Basil', direct_sow_timing: null, days_to_maturity_max: 58,
+      variety_name: 'Genovese Basil', direct_sow_timing: null, days_to_maturity_max: 44,
       start_method: 'start_indoors', start_indoor_weeks_min: 4, start_indoor_weeks_max: 4,
     })
     expect(cultivationLines([basil], TODAY)).toEqual(['Start Genovese Basil indoors by Aug 18.'])
@@ -82,15 +86,15 @@ describe('cultivationLines (pure, real engine)', () => {
   it('caps at 2, most urgent first — never a third orient decision', () => {
     expect(CULTIVATION_LEAD_CAP).toBe(2)
     const lines = cultivationLines([
-      lettuce({ variety_name: 'A', days_to_maturity_max: 72 }), // Aug 18
-      lettuce({ variety_name: 'B', days_to_maturity_max: 77 }), // Aug 13
-      lettuce({ variety_name: 'C', days_to_maturity_max: 75 }), // Aug 15
+      lettuce({ variety_name: 'A', days_to_maturity_max: 58 }), // Aug 18
+      lettuce({ variety_name: 'B', days_to_maturity_max: 63 }), // Aug 13
+      lettuce({ variety_name: 'C', days_to_maturity_max: 61 }), // Aug 15
     ], TODAY)
     expect(lines).toEqual(['Sow B by Aug 13.', 'Sow C by Aug 15.'])
   })
 
   it('yields nothing when no window is closing — an open-but-not-closing window is /sow business', () => {
-    // dtm 30 -> close Sep 29, 48 days out: open, not closing.
+    // dtm 30 -> close Sep 15, 34 days out: open, not closing.
     expect(cultivationLines([lettuce({ days_to_maturity_max: 30 })], TODAY)).toEqual([])
   })
 
@@ -123,9 +127,9 @@ describe('cultivationLines (pure, real engine)', () => {
 
   it('drops only the empty packet from a mixed list, keeping order and cap', () => {
     const lines = cultivationLines([
-      lettuce({ variety_name: 'A', days_to_maturity_max: 72 }),                       // Aug 18
-      lettuce({ variety_name: 'B', days_to_maturity_max: 77, quantity_on_hand: 0 }),  // Aug 13, empty
-      lettuce({ variety_name: 'C', days_to_maturity_max: 75 }),                       // Aug 15
+      lettuce({ variety_name: 'A', days_to_maturity_max: 58 }),                       // Aug 18
+      lettuce({ variety_name: 'B', days_to_maturity_max: 63, quantity_on_hand: 0 }),  // Aug 13, empty
+      lettuce({ variety_name: 'C', days_to_maturity_max: 61 }),                       // Aug 15
     ], TODAY)
     // Without the filter B would take the first slot and evict A under the cap of 2 — so this
     // pins that an empty packet cannot crowd out a real one, not just that it goes unnamed.

@@ -185,6 +185,32 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
     expect(screen.queryByLabelText('Sow Chile Biquinho')).toBeNull()
   })
 
+  // BUG-FROSTANCHORERA5-001. The subtitle is the condition the frost-anchor correction shipped
+  // under, so it is pinned rather than left to a snapshot. Correcting the measured anchor from 10-29
+  // to 10-15 pushes 7 of 12 fall-hardy crops into this bucket, and this section is where Dave goes
+  // looking when a crop he was about to sow is not on the working list. The engine is right to close
+  // those windows and the copy is what stops a right answer reading as a broken list.
+  //
+  // Both halves are asserted. The PRESENCE, because deleting the subtitle is a one-token edit that
+  // no other test would notice. The ABSENCE while collapsed, because this section renders its
+  // subtitle INSIDE the disclosure (SowNow.jsx renderSection) — hoisting it above the toggle would
+  // put a paragraph of frost explanation permanently at the bottom of every /sow page, which is the
+  // opposite of what a collapsed section is for.
+  it('the too_late section explains itself once opened, and says nothing while collapsed', async () => {
+    routeFetch()
+    await renderSowNow()
+
+    const disclosure = await screen.findByRole('button', { name: /Too late this year/ })
+    const subtitle = /Frost-hardy crops like spinach, kale and chard are not killed by frost/
+    expect(screen.queryByText(subtitle)).toBeNull()
+
+    fireEvent.click(disclosure)
+    expect(screen.getByText(subtitle)).toBeDefined()
+    // The load-bearing clause: what the date MEANS, not merely that the crops are hardy.
+    expect(screen.getByText(/reach full size before frost — not whether it will survive one/))
+      .toBeDefined()
+  })
+
   it('needs_profile card CTA navigates to the inventory item', async () => {
     routeFetch()
     await renderSowNow()
