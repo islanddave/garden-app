@@ -17,7 +17,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 
-const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
+const { fetchSpy, navigateSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn(), navigateSpy: vi.fn() }))
 
 // No override — the REAL module, so this asserts the value that actually ships. A pinned `false`
 // here would pass forever even if the flag were flipped true in source, which is the one failure
@@ -27,7 +27,7 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('react-router-dom', () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateSpy,
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
 
@@ -38,6 +38,7 @@ import { SEED_BULK_EXTRACT_ENABLED } from '../lib/featureFlags.js'
 beforeEach(() => {
   fetchSpy.mockReset()
   fetchSpy.mockResolvedValue({})
+  navigateSpy.mockReset()
 })
 
 const renderPage = async () => {
@@ -57,12 +58,33 @@ describe('BUG-SEEDEXTRACTOR-001 — bulk intake tiles are hidden while unprovisi
     expect(screen.queryByText('Paste an order')).toBeNull()
   })
 
-  it('still offers the one intake path that DOES work', async () => {
-    // The half that makes this a gate rather than a removal. Hiding the broken tiles must not take
-    // the working one with them — "One item" is genuinely how seeds get added today, and a chooser
-    // with nothing in it would be a worse dead end than the one being fixed.
+  it('goes STRAIGHT to the one intake path, preselected, instead of asking', async () => {
+    // The half that makes this a gate rather than a removal: hiding the broken tiles must not take
+    // the working one with them. But it must not leave an interstitial either. Dave, 2026-09-03,
+    // arriving here from the Add seeds chip: "it should preselect consumable + type (seed) or not
+    // exist at all." With one tile there is nothing to choose, so the page forwards.
+    //
+    // THIS ASSERTION REPLACES `getByText('One item')`, WHICH HAD GONE QUIETLY VACUOUS. useNavigate
+    // is a mock here, so a redirect does not unmount anything — the chooser still renders in jsdom
+    // and the old assertion kept passing against a screen no user can reach in production. Asserting
+    // the NAVIGATION is the only way to see the behaviour from inside a test that stubs the router.
     await renderPage()
-    expect(screen.getByText('One item')).toBeTruthy()
+    expect(navigateSpy).toHaveBeenCalledWith(
+      '/inventory/add?type=consumable&category=seeds', { replace: true })
+  })
+
+  it('replaces itself in history, so Back does not bounce off the redirect', async () => {
+    // Without `replace`, Back from the add form lands here, which immediately forwards again — the
+    // user is trapped one tap from where they started.
+    await renderPage()
+    expect(navigateSpy.mock.calls[0][1]).toEqual({ replace: true })
+  })
+
+  it('forwards ONCE, not on every render', async () => {
+    // The ref guard. A redirect effect that re-fires on each render stacks history entries and can
+    // loop; asserting the count is what proves the guard is load-bearing rather than decorative.
+    await renderPage()
+    expect(navigateSpy).toHaveBeenCalledTimes(1)
   })
 
   it('never reaches the extractor endpoint on load', async () => {

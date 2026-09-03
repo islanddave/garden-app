@@ -185,6 +185,26 @@ export default function AddSeeds() {
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, hasUnsavedInput])
 
+  // "PRESELECT IT OR DO NOT EXIST AT ALL" — Dave, 2026-09-03, on landing here from the Add seeds
+  // chip and being handed a chooser. The preselect half shipped in v4.106.0; this is the other half.
+  //
+  // With SEED_BULK_EXTRACT_ENABLED off, the grid below renders exactly ONE tile, and a chooser with
+  // one option is not a choice — it is a screen whose only function is to make you tap again to get
+  // where the link already said you were going. So when there is nothing to choose between, this
+  // page forwards straight through to the destination that one tile points at, preselected, and
+  // replaces itself in history so Back returns to Inventory rather than bouncing off this redirect.
+  //
+  // Gated on the flag rather than on a tile count, deliberately: the day the extractor key exists
+  // the flag flips, three real options appear, and the chooser becomes a chooser again with no code
+  // change here. The page does not cease to exist; it declines to interrupt when it has nothing
+  // to ask.
+  const navigatedThrough = useRef(false)
+  useEffect(() => {
+    if (SEED_BULK_EXTRACT_ENABLED || rows || navigatedThrough.current) return
+    navigatedThrough.current = true
+    navigate('/inventory/add?type=consumable&category=seeds', { replace: true })
+  }, [rows, navigate])
+
   // Exact case-insensitive variety-name index for auto-match chips.
   const varietyByLowerName = useMemo(() => {
     const m = new Map()

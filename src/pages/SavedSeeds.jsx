@@ -363,6 +363,33 @@ const LIST_ROW_PUT_STRIP = [
 ]
 
 /** A complete wide-PUT body from a list row, with the count applied. Pure, exported for test. */
+/**
+ * V5-SEEDYEARHARVESTED-001 — the harvest year a saved lot already knows and never records.
+ *
+ * `year_harvested` is the right time axis for seed: germination decays with age, so how old a lot is
+ * decides whether it is worth sowing. The column exists and carries FOUR rows out of 263 — 1.5% —
+ * while every lot Dave saves knows its own year at the moment it is stored.
+ *
+ * ONLY on the move to `stored`, and ONLY into a null. Two separate guards, both load-bearing:
+ *  · `stored` is when the seed is finished and put away, so that is when the year is a fact rather
+ *    than a forecast. A lot still fermenting may not finish this year.
+ *  · NEVER OVERWRITE. Those four existing rows are curated and irreplaceable — one is Jen's 1986
+ *    Edelweiss from Austria — and this write travels through the WIDE PUT, where every key in the
+ *    body is assigned unconditionally. Sending `year_harvested` on a lot that already has one would
+ *    replace a hand-entered 1986 with the current year, silently, in the same request that saves a
+ *    count. Absent from the body is the only safe way to say "leave it alone".
+ *
+ * The year comes from the stage date the user actually entered, not from `now`: backdating a lot to
+ * last autumn is a supported thing to do on this sheet, and reading the clock instead would file it
+ * under the wrong season. Pure, exported for test.
+ */
+export function yearHarvestedPatch(row, toStage, whenISO) {
+  if (toStage !== 'stored') return {}
+  if (row?.year_harvested != null) return {}
+  const y = Number(String(whenISO ?? '').slice(0, 4))
+  return Number.isInteger(y) && y > 1900 && y < 2200 ? { year_harvested: y } : {}
+}
+
 export function countPayloadFrom(row, quantityOnHand) {
   const out = { ...(row ?? {}) }
   for (const k of LIST_ROW_PUT_STRIP) delete out[k]
@@ -682,7 +709,14 @@ export default function SavedSeeds() {
         try {
           await fetch(`/api/inventory-items/${advancing.item.id}`, {
             method: 'PUT',
-            body: JSON.stringify(countPayloadFrom(advancing.item, count.value)),
+            body: JSON.stringify({
+              ...countPayloadFrom(advancing.item, count.value),
+              // V5-SEEDYEARHARVESTED-001 — rides along on the count PUT rather than issuing a second
+              // request: it is the same row, the same moment, and a separate write would be a second
+              // thing that can fail half-way. Spread LAST so it is unambiguous which key wins, and it
+              // contributes nothing at all unless this is a move to `stored` on a lot with no year.
+              ...yearHarvestedPatch(advancing.item, advancing.toStage, when),
+            }),
           })
         } catch (e) {
           qtyWriteErr = e?.message ?? 'Stage saved, but the count did not.'

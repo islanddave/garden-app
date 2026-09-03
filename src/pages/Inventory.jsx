@@ -85,12 +85,35 @@ export default function Inventory() {
   })
 
   // ── Sort (applied WITHIN each category section) ──
+  //
+  // BUG-INVSORTNULLDATE-001 — NULLS LAST, IN EVERY DIRECTION, ALWAYS. A missing value is "nobody
+  // recorded this": it is not a small number, not a large one, and not an old date, so it belongs at
+  // the bottom of every ordering rather than at whichever end its sentinel happens to fall.
+  //
+  // What this replaces was a live defect, not an inconsistency. `date_desc` coerced a missing date to
+  // '' and '' sorts FIRST under a descending compare — so on the page holding the whole seed
+  // collection, "Newest first" led with the packets that have no date at all. Measured when it was
+  // found: 97 of 263 seed rows. The control's own label made a false claim about the data.
+  //
+  // One line away, `qty_asc` used `?? Infinity` and got the same question RIGHT — but only because
+  // ascending was its only direction. The two idioms were opposite in POLARITY and identical in
+  // outcome, which is why nothing caught it: add a `date_asc` reusing the `?? ''` idiom and nulls
+  // silently flip to first on that axis too. Hence a single shared helper rather than a fix to the
+  // one arm that was visibly wrong.
+  const nullsLast = (a, b, cmp) => {
+    const aM = a == null || a === '', bM = b == null || b === ''
+    if (aM && bM) return 0
+    if (aM) return 1          // a is unknown -> after b, whichever way the axis runs
+    if (bM) return -1
+    return cmp(a, b)
+  }
+  const byText = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
   const sortItems = arr => [...arr].sort((a, b) => {
     switch (sortBy) {
-      case 'name_asc':   return a.name.localeCompare(b.name)
-      case 'name_desc':  return b.name.localeCompare(a.name)
-      case 'date_desc':  return (b.purchase_date ?? '').localeCompare(a.purchase_date ?? '')
-      case 'qty_asc':    return (a.quantity_on_hand ?? Infinity) - (b.quantity_on_hand ?? Infinity)
+      case 'name_asc':   return nullsLast(a.name, b.name, (x, y) => byText.compare(x, y))
+      case 'name_desc':  return nullsLast(a.name, b.name, (x, y) => byText.compare(y, x))
+      case 'date_desc':  return nullsLast(a.purchase_date, b.purchase_date, (x, y) => String(y).localeCompare(String(x)))
+      case 'qty_asc':    return nullsLast(a.quantity_on_hand, b.quantity_on_hand, (x, y) => x - y)
       default:           return 0
     }
   })

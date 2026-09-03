@@ -314,3 +314,36 @@ describe('V5-SEEDSAVEDFILTER-001 — the crop filter on the page itself', () => 
     expect(screen.queryByTestId('saved-seeds-empty')).toBeNull()
   })
 })
+
+// ── V5-SEEDYEARHARVESTED-001 — the harvest year a lot already knows ──────────────────────────────
+import { yearHarvestedPatch } from '../pages/SavedSeeds.jsx'
+
+describe('V5-SEEDYEARHARVESTED-001 — year_harvested on the move to stored', () => {
+  it('records the year from the entered date, not from the clock', () => {
+    // Backdating a lot to last autumn is supported on this sheet. Reading `now` would file a lot
+    // stored in January under the wrong season, which is precisely the mistake the column exists to
+    // let you avoid.
+    expect(yearHarvestedPatch({ year_harvested: null }, 'stored', '2025-10-04'))
+      .toEqual({ year_harvested: 2025 })
+  })
+
+  it('NEVER overwrites a year that is already there', () => {
+    // THE LANDMINE. Four prod rows carry a curated year, one of them Jen's 1986 Edelweiss from
+    // Austria, and this patch travels through the WIDE PUT where every key present is assigned
+    // unconditionally. Returning {} is the only way to say "leave it alone" — a null or the current
+    // year would both destroy it.
+    expect(yearHarvestedPatch({ year_harvested: 1986 }, 'stored', '2026-09-03')).toEqual({})
+  })
+
+  it('writes nothing on the in-flight stages', () => {
+    // A lot still fermenting has no harvest year yet — it may not finish this year at all.
+    expect(yearHarvestedPatch({ year_harvested: null }, 'fermenting', '2026-09-03')).toEqual({})
+    expect(yearHarvestedPatch({ year_harvested: null }, 'drying', '2026-09-03')).toEqual({})
+  })
+
+  it('writes nothing rather than a wrong number when the date is unusable', () => {
+    for (const bad of ['', null, undefined, 'not-a-date', '0042-01-01']) {
+      expect(yearHarvestedPatch({ year_harvested: null }, 'stored', bad)).toEqual({})
+    }
+  })
+})
