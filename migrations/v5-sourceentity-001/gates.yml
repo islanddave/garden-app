@@ -1,0 +1,439 @@
+# gates.yml
+# V5-SOURCEENTITY-001 — public.source, the first-class supplier/origin entity, plus two nullable
+# FK columns on each of plants and inventory_items.
+#
+# STATUS (2026-09-03): NOT APPLIED ANYWHERE. No DDL has run against staging or prod from this lane.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING
+#
+#   staging apply -> rehearse 0r-rollback -> re-apply to staging -> PROD apply -> dev push -> promote
+#
+# The DDL must reach STAGING BEFORE THE DEV PUSH: CI's integration job branches off staging and does
+# NOT apply migrations, so a missing relation there presents as an infra flake, gets retried green,
+# and stays hidden. It must reach PROD before the promote of any build carrying a reader or writer
+# of these columns.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# ENVIRONMENT SYMMETRY — NO `env:` KEY APPEARS ANYWHERE IN THIS FILE.
+#
+# gate_runner.py defaults `env` to "both", so every gate below runs against staging AND prod. That
+# is not incidental: every gate here reads information_schema / pg_catalog, or reads data through
+# row_to_json, so each one MEANS THE SAME THING on both environments and none can pass vacuously for
+# want of a row. There is no assertion in this migration that is true of prod and false of staging.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# POST GATES SELF-ARM, AND ARE WRITTEN IN VIOLATION-COUNT SHAPE (expect rowcount_eq 0).
+#
+# That shape is load-bearing, not stylistic. A "the good state is present" gate written as
+# rowcount_eq 1 does NOT go vacuously green where the migration is unapplied — the EXISTS arm
+# returns 0 rows, which reads as FAILURE, leaving it permanently red on every environment that has
+# not applied it yet. Asserting the VIOLATION gives all three states correctly:
+#   no apply         -> arm is false -> 0 rows -> GREEN (vacuous, correct)
+#   applied + intact -> arm true, fact true    -> 0 rows -> GREEN
+#   applied + reverted/weakened                -> 1 row  -> RED
+# So every post gate below arms itself the instant 0a lands, with NO human flip. The exceptions are
+# marked `continuous: false` and explained individually.
+#
+# ARMING CONJUNCT: to_regclass('public.source') IS NOT NULL, or the schema_version receipt where the
+# assertion is about the apply rather than the shape.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# TWO PARSE-TIME TRAPS THIS FILE AVOIDS. Both were learned in sibling migrations, not rediscovered.
+#
+#   1. COLUMNS THAT MAY NOT EXIST YET ARE READ THROUGH row_to_json, NEVER AS p.source_id. Postgres
+#      resolves column references at PARSE time, before any WHERE clause runs, so an EXISTS-on-the-
+#      receipt guard cannot protect a direct reference — on an unapplied environment the gate raises
+#      42703 and ERRORS instead of passing vacuously.
+#   2. RELATIONS THAT MAY NOT EXIST YET ARE RESOLVED WITH to_regclass, NEVER 'public.source'::regclass.
+#      The cast RAISES on a missing relation; to_regclass returns NULL. Every pg_constraint,
+#      pg_index and pg_trigger lookup below joins on to_regclass for this reason.
+
+pre:
+  - name: pre_source_table_absent
+    note: >
+      Greenfield. If this returns a row, someone already applied 0a — stop and diff before
+      re-running. continuous false by design: it is false forever once 0a lands.
+    sql: |
+      SELECT 1 WHERE to_regclass('public.source') IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_fk_columns_absent
+    note: >
+      None of the four new columns exists yet. Counted rather than named individually so a partial
+      prior apply (two of four) also reds this. continuous false — false forever after 0a.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name IN ('plants', 'inventory_items')
+         AND column_name IN ('source_id', 'acquired_from_source_id')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_parent_tables_present
+    note: >
+      Both parents exist before ALTER. Stated rather than assumed so a wrong-database connection
+      fails here with a named gate instead of an opaque 42P01 mid-apply.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name IN ('plants', 'inventory_items')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_set_updated_at_function_present
+    note: >
+      0a attaches a set_updated_at trigger to public.source using the same function inventory_items
+      already uses. Reads pg_proc, NOT information_schema.routines — that view is privilege-filtered
+      and returns zero rows for garden_ro while the function sits there healthy (measured live
+      2026-08-12, v4-weatherdaily-001 note; same reason v5-voicealias-001 reads pg_class for its PK).
+    sql: |
+      SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'set_updated_at'
+    expect: rowcount_gte
+    value: 1
+
+  - name: pre_gen_random_uuid_available
+    note: >
+      public.source.id defaults to gen_random_uuid(). Core in PG13+, but pgcrypto also provides it,
+      so this asserts the FUNCTION rather than either source of it — the assertion 0a actually needs.
+    sql: |
+      SELECT 1 FROM pg_proc WHERE proname = 'gen_random_uuid'
+    expect: rowcount_gte
+    value: 1
+
+  - name: pre_schema_version_readable
+    note: >
+      0a writes its receipt here and every post gate arms off it, so a schema_version that cannot be
+      read makes this whole file vacuously green — the exact failure mode found live on 2026-09-01,
+      when RLS was enabled on schema_version with zero policies and silently returned zero rows to
+      the read-only role instead of a permission error (v4-roschemaversion-001). If this gate reds
+      or returns nothing, FIX THAT FIRST; do not proceed on the assumption the gates are meaningful.
+    sql: |
+      SELECT 1 FROM public.schema_version LIMIT 1
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: sweep_no_conflicting_source_pointers
+    note: >
+      L-058 discipline: every predicate a CHECK is about to enforce must already hold. Here that is
+      chk_plants_source_distinct / chk_inventory_source_distinct — no row may name the same source
+      as both originator and shop.
+      HONEST ABOUT ITS OWN VACUITY: both columns are CREATED by 0a, so before the apply this is
+      necessarily 0 and the gate proves nothing. It is written anyway, and read through row_to_json
+      rather than directly, precisely so it KEEPS RUNNING after the apply — at which point it stops
+      being vacuous and becomes the standing data invariant behind those two CHECKs. Left
+      `continuous` (default true) for that second life.
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE (row_to_json(p) ->> 'source_id') IS NOT NULL
+         AND (row_to_json(p) ->> 'source_id') = (row_to_json(p) ->> 'acquired_from_source_id')
+      UNION ALL
+      SELECT 1 FROM public.inventory_items i
+       WHERE (row_to_json(i) ->> 'source_id') IS NOT NULL
+         AND (row_to_json(i) ->> 'source_id') = (row_to_json(i) ->> 'acquired_from_source_id')
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_free_text_provenance_still_populated
+    note: >
+      The count of rows carrying free-text provenance BEFORE the apply, so a later reader can tell
+      whether a backfill-and-cleanup ever emptied them. 182 plants.source_ref + 385
+      inventory_items.source = 567, measured on prod 2026-09-03; staging may legitimately differ,
+      which is why this is rowcount_gte 1 and NOT a frozen count. A frozen number here would go red
+      the first time Dave adds a plant, and a gate that reds on normal use trains everyone to ignore
+      the runner.
+    sql: |
+      SELECT 1 FROM public.plants WHERE source_ref IS NOT NULL
+      UNION ALL
+      SELECT 1 FROM public.inventory_items WHERE source IS NOT NULL
+    expect: rowcount_gte
+    value: 1
+
+post:
+  - name: post_source_table_present
+    note: >
+      Armed on the RECEIPT rather than on the table, because arming a table-exists assert on
+      table-existence is tautological and can never fail. Phrased as "receipt written but table
+      missing": vacuously green before apply, red only if someone dropped it afterwards.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourceentity-001')
+         AND to_regclass('public.source') IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_source_columns_present
+    note: >
+      All eleven declared columns exist. Counted, so the gate reds if ANY one is dropped rather than
+      only the one a named check happened to pick.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source') IS NOT NULL
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'source'
+                 AND column_name IN ('id','name','kind','locality','address','website_url','notes',
+                                     'match_key','created_by','created_at','updated_at','deleted_at')
+             ) <> 12
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_kind_vocabulary_exact
+    note: >
+      THE DRIFT GATE, and the reason this migration can claim it does not fork a vocabulary. The
+      regex pins the array CONTENTS, their ORDER, and the closing bracket, so a thirteenth value
+      cannot be appended and an existing one cannot be removed without reddening this. It is the
+      mechanism that stops source.kind repeating what happened to plants.source_type, which lost its
+      CHECK entirely on 2026-07-07 (v4-source-freetext) and is now unconstrained free text.
+      The `!~ NOT VALID` arm matters for the usual reason: an unvalidated constraint enforces new
+      writes but was never checked against existing rows, so it is not the guarantee the standing
+      data gates lean on.
+      If Dave revises the kind set after reviewing dedupe-mapping.csv, the CHECK in 0a and this
+      regex change together, in one commit. That is the intended cost.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source') IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint
+                WHERE conrelid = to_regclass('public.source')
+                  AND conname = 'chk_source_kind'
+                  AND pg_get_constraintdef(oid) ~ 'ARRAY\[''seed_company''::text, ''nursery''::text, ''garden_center''::text, ''farm_stand''::text, ''market''::text, ''retail''::text, ''plant_swap''::text, ''person''::text, ''organization''::text, ''brand''::text, ''own_garden''::text, ''other''::text\]'
+                  AND pg_get_constraintdef(oid) !~ 'NOT VALID')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_kind_nullable_and_defaultless
+    note: >
+      kind must stay nullable AND keep no default. NULL means "not yet classified", which is the
+      honest state of every unreviewed source. A default would assert a classification nobody chose
+      — exactly what grown_as DEFAULT 'annual' did to 362 of 413 cultivars before it was dropped on
+      2026-09-01. Both halves asserted together because either alone reintroduces the defect.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'source' AND column_name = 'kind'
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_match_key_is_generated
+    note: >
+      match_key must remain a GENERATED STORED column computing exactly the documented fold. If it
+      were ever converted to a plain column "so we can override it", the uniqueness guard would stop
+      tracking name and duplicates would return SILENTLY — the failure would present as the dedupe
+      feature simply not working, which is the hardest kind to notice. Asserts both the generation
+      status and the expression.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source') IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'source'
+                  AND column_name = 'match_key'
+                  AND is_generated = 'ALWAYS'
+                  AND generation_expression ~ 'regexp_replace'
+                  AND generation_expression ~ 'lower'
+                  AND generation_expression ~ '\[\^a-z0-9\]')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_unique_name_index_live_scoped
+    note: >
+      The duplicate guard exists, is UNIQUE, and is scoped to live rows. Asserted by DEFINITION, not
+      by name: a name-only check would pass an index silently rebuilt without its partial predicate,
+      which would make soft-deleting a source poison its name forever rather than freeing it — the
+      house idiom every sibling uses (uq_plant_varieties_name_species, idx_photos_content_hash_uniq).
+      Dropping the index entirely also reds this, which is the point.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source') IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_indexes
+                WHERE schemaname = 'public' AND tablename = 'source'
+                  AND indexname = 'uq_source_match_key_live'
+                  AND indexdef ~ 'CREATE UNIQUE INDEX'
+                  AND indexdef ~ 'match_key'
+                  AND indexdef ~ 'deleted_at IS NULL')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_rls_off_or_policied
+    note: >
+      THE SILENT-DENY GUARD. public.source ships with RLS OFF, matching plant_varieties. This gate
+      does not forbid enabling it — it forbids enabling it with ZERO POLICIES, which is deny-all for
+      every non-owner role and fails by returning no rows rather than a permission error. Found live
+      on public.schema_version on 2026-09-01, where it had been blinding the read-only role for an
+      unknown period. Violation shape: RLS on AND no policy.
+    sql: |
+      SELECT 1 FROM pg_class c
+       WHERE c.oid = to_regclass('public.source')
+         AND c.relrowsecurity
+         AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_ownership_trigger_not_installed
+    note: >
+      prevent_ownership_transfer is installed on 9 tables and reads a NULL -> value write on
+      created_by as an ownership transfer. public.source is a shared catalogue with no owner —
+      created_by records who first typed the row, not who owns the place — so the trigger must NOT
+      be added here "for consistency". Installing it would block the ordinary correction of a
+      mistyped created_by and would block a future merge tool rewriting catalogue rows. This gate
+      makes the prohibition in 0a's header enforceable instead of advisory.
+    sql: |
+      SELECT 1 FROM pg_trigger t
+       WHERE t.tgrelid = to_regclass('public.source')
+         AND NOT t.tgisinternal
+         AND t.tgname = 'prevent_ownership_transfer'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_fk_columns_present_and_nullable
+    note: >
+      All four pointer columns exist on their parents, and NONE has acquired NOT NULL or a default.
+      Nullable is the whole design: this migration backfills nothing, so every existing row is NULL,
+      and a NOT NULL added later would make every INSERT that does not know its provenance fail.
+      Counts the columns that are correctly shaped and reds if that is not exactly 4.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source') IS NOT NULL
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name IN ('plants', 'inventory_items')
+                 AND column_name IN ('source_id', 'acquired_from_source_id')
+                 AND data_type = 'uuid'
+                 AND is_nullable = 'YES'
+                 AND column_default IS NULL) <> 4
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_fk_constraints_target_source_with_no_action
+    note: >
+      All four foreign keys point at public.source AND use NO ACTION on delete (confdeltype 'a').
+      This is the gate that matters most to Dave's stated requirement that provenance not be lost.
+      ON DELETE SET NULL ('n') would silently erase the pointer when a vendor row is tidied up;
+      CASCADE ('c') would delete the PLANT. Both are one-word edits away and neither would fail any
+      test. Asserted by catalogue value rather than by constraint name, so a drop-and-recreate with
+      different semantics cannot pass.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source') IS NOT NULL
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE contype = 'f'
+                 AND confrelid = to_regclass('public.source')
+                 AND conrelid IN (to_regclass('public.plants'),
+                                  to_regclass('public.inventory_items'))
+                 AND confdeltype = 'a') <> 4
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_distinctness_checks_intact
+    note: >
+      Both distinctness CHECKs exist and are VALID. Asserted by DEFINITION, not by name — a
+      name-only check would pass a constraint silently weakened to something that admits a row
+      naming the same place as both originator and shop.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source') IS NOT NULL
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('chk_plants_source_distinct', 'chk_inventory_source_distinct')
+                 AND pg_get_constraintdef(oid) ~ 'acquired_from_source_id'
+                 AND pg_get_constraintdef(oid) ~ 'source_id IS NULL'
+                 AND pg_get_constraintdef(oid) !~ 'NOT VALID') <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_free_text_columns_not_dropped
+    note: >
+      THE KEYSTONE PROMISE OF THIS MIGRATION, made enforceable. plants.source_ref and
+      inventory_items.source must still exist. They are the only record of provenance until a
+      reviewed backfill lands, and for some rows the only home of a fact with nowhere else to go —
+      "originally Lake Valley Seed, item #233", "(HOMESTEAD discount)", order numbers, receipt
+      dates. This gate stands after the backfill too: dropping them is a separate, later, argued
+      decision and must not be able to ride along in an unrelated migration. Armed on this
+      migration's receipt so it is vacuously green on an environment that never applied it.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourceentity-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND ((table_name = 'plants' AND column_name = 'source_ref')
+                   OR (table_name = 'inventory_items' AND column_name = 'source'))) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_row_names_same_source_twice
+    note: >
+      Standing data invariant behind the two distinctness CHECKs. The constraints should make this
+      impossible, so a non-zero means one was dropped or re-added NOT VALID over existing rows. Both
+      columns read through row_to_json, so this is green on an environment that has not applied 0a.
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE (row_to_json(p) ->> 'source_id') IS NOT NULL
+         AND (row_to_json(p) ->> 'source_id') = (row_to_json(p) ->> 'acquired_from_source_id')
+      UNION ALL
+      SELECT 1 FROM public.inventory_items i
+       WHERE (row_to_json(i) ->> 'source_id') IS NOT NULL
+         AND (row_to_json(i) ->> 'source_id') = (row_to_json(i) ->> 'acquired_from_source_id')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_substrate_only_no_pointers_backfilled
+    note: >
+      APPLY-WINDOW ONLY — `continuous: false`, and NEVER flip it. Immediately after 0a no parent row
+      points at anything, which is the proof that this migration is substrate and that
+      dedupe-mapping.csv is still a PROPOSAL rather than an applied decision. The moment Dave
+      approves the mapping and the backfill runs, this gate becomes false BY DESIGN — the same
+      permanently window-scoped shape as v5-voicealias-001's post_starts_empty. Both columns read
+      through row_to_json, so it is safe (not merely green) on an environment that has not applied
+      0a; the companion gate below covers the catalogue itself.
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE (row_to_json(p) ->> 'source_id') IS NOT NULL
+          OR (row_to_json(p) ->> 'acquired_from_source_id') IS NOT NULL
+      UNION ALL
+      SELECT 1 FROM public.inventory_items i
+       WHERE (row_to_json(i) ->> 'source_id') IS NOT NULL
+          OR (row_to_json(i) ->> 'acquired_from_source_id') IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_substrate_only_catalogue_empty
+    note: >
+      APPLY-WINDOW ONLY, and the ONE gate in this file that names public.source directly rather than
+      through to_regclass. That is deliberate and it is why `continuous: false` is not optional here:
+      RUN THIS ONLY AFTER 0a. Before 0a it raises 42P01, which is the correct and loud answer to
+      "has this been applied" — the runner's house rule is loud error over silent skip, and a gate
+      asserting a brand-new table is empty has no meaningful reading on a database that lacks the
+      table. There is no to_regclass formulation of "this relation has no rows", because Postgres
+      resolves the relation at parse time; pg_class.reltuples is a stale planner estimate and would
+      make the gate lie. Splitting it out keeps every OTHER gate in this file safe to sweep.
+      Becomes false by design the moment the reviewed backfill seeds the catalogue.
+    sql: |
+      SELECT 1 FROM public.source
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourceentity-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_dedupe_mapping_reviewed_by_dave
+    note: >
+      MANUAL, and it gates the BACKFILL, not this migration. dedupe-mapping.csv proposes a canonical
+      source for all 73 free-text spellings; 14 rows are flagged confidence=low or review with a
+      stated reason, including "Hatfield Plant Swap" vs "Hatley Plant Swap" (two towns two days
+      apart — may be one event or two) and whether "Whatley Plant Swap" and "Whatley Giving Garden"
+      are the same thing. A wrong merge destroys a distinction Dave cares about and is not
+      recoverable from the merged data alone. Do not write the backfill until he has ruled on every
+      flagged row and on the 12-value kind set.
+    manual: true
