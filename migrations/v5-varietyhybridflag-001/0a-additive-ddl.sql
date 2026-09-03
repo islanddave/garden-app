@@ -206,13 +206,26 @@ SELECT id,
     variety_rank
    FROM plant_varieties;
 
--- Re-grant explicitly. CREATE OR REPLACE preserves grants, so this is belt-and-braces for the
--- CREATE OR REPLACE path — but the ROLLBACK narrows the view and therefore needs DROP + CREATE,
--- which does not. Prod does carry a pg_default_acl row granting garden_ro SELECT on new public
--- relations (measured 2026-09-03 by a rolled-back probe), so the grant would auto-restore; that
--- default ACL does NOT cover garden_export_ro, and STAGING HAS NEITHER ROLE, so staging can never
--- test either behaviour. Explicit is the only form that is correct on both.
-GRANT SELECT ON public.cultivar TO garden_ro;
+-- Re-grant explicitly, GUARDED ON THE ROLE EXISTING.
+--
+-- CREATE OR REPLACE preserves grants, so this is belt-and-braces here — but the ROLLBACK narrows
+-- the view and therefore needs DROP + CREATE, which does not. Prod carries a pg_default_acl row
+-- granting garden_ro SELECT on new public relations (measured 2026-09-03 on a prod fork, by a bare
+-- recreate with no explicit grant), so it would auto-restore anyway; that default ACL does NOT
+-- cover garden_export_ro, so the explicit form stays.
+--
+-- THE GUARD IS NOT DEFENSIVE PADDING — an unguarded GRANT here FAILED THE STAGING APPLY on
+-- 2026-09-03 with `role "garden_ro" does not exist` and rolled the whole transaction back. Staging
+-- has neither garden_ro nor garden_export_ro. The prod-fork rehearsal could not have caught this
+-- and did not: a fork of prod HAS the role. This is precisely what the staging-first rule is for,
+-- and it is the inverse of the hazard the rollback file documents — staging is blind to a grant
+-- being LOST, and is the only place a grant statement being IMPOSSIBLE shows up.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'garden_ro') THEN
+    EXECUTE 'GRANT SELECT ON public.cultivar TO garden_ro';
+  END IF;
+END $$;
 
 INSERT INTO public.schema_version (version, description, applied_at)
 VALUES ('4.101.0-varietyhybridflag-001',

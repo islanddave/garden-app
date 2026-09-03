@@ -73,7 +73,16 @@ SELECT id,
    FROM plant_varieties;
 
 -- 2. Restore the grant DROP VIEW just revoked. See the header.
-GRANT SELECT ON public.cultivar TO garden_ro;
+-- GUARDED ON THE ROLE EXISTING, for the same reason 0a's copy is: staging has no garden_ro, and an
+-- unguarded GRANT there fails the statement and rolls back the whole rollback — which would leave
+-- a rehearsal unable to complete on the one environment the Migration Authoring Rule says to
+-- rehearse on first. Found the hard way on 0a, 2026-09-03.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'garden_ro') THEN
+    EXECUTE 'GRANT SELECT ON public.cultivar TO garden_ro';
+  END IF;
+END $$;
 
 -- 3. Drop the constraints, then the columns.
 ALTER TABLE public.plant_varieties
