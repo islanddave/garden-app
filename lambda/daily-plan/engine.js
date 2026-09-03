@@ -538,8 +538,28 @@ function fertilizeRec(p, c, fm, today){
   // and suppressing it would be the dangerous direction (silence about a plant that needs feeding).
   if(dF!=null && iv!=null && dF<iv) return null;
   const due = (dF!=null && iv!=null && dF>=iv);
+  // BUG-FEEDCARDSZERO-001 — "never fed" is a qualifying reason in its OWN right.
+  //
+  // The recency gate above deliberately lets dF==null fall through, on the stated grounds that the
+  // no-history case "is exactly what [the branches below] exist for". It was not: every disjunct on
+  // the next line is unsatisfiable for a never-fed planting that is not a heavy feeder in flower or
+  // fruit. `due` needs a last-feed date by construction, and needs_feed_24wk_plus needs 24 weeks of
+  // substrate history the database does not yet have — the oldest substrate_start on prod is
+  // 2026-05-12, its own inception, so that arm was unreachable for EVERY row until 2026-10-27. The
+  // passthrough opened onto a closed door: measured on prod 2026-09-03, all 46 never-fed live
+  // plantings produced no card, and forward-simulating that same set to 2026-10-01 and 2026-10-20
+  // produced none either. Silence about a plant that has never been fed is the exact direction
+  // :539's comment calls the dangerous one.
+  //
+  // Scoped by what has already run above, not by a new condition: anything reaching this line
+  // cleared the phase gate at :522, so it is in mg_tapering_13_24wk or beyond — past the window in
+  // which the mix is doing the feeding, which is the phase fertilization-model.json marks
+  // `feed: begin_light`. It cannot become a nag either, because the card clears on the CADENCE axis
+  // (feed's axis, deliberately not water's day axis): the moment a feed is logged dF stops being
+  // null, `never` goes false, and :539 holds the card down for the next `iv` days.
+  const never = (dF==null);
   const heavy=isHeavyFeeder(c.crop);
-  if(!(due || (heavy && ['flowering','fruiting'].includes(p.status)) || (phase==='needs_feed_24wk_plus'))) return null;
+  if(!(due || never || (heavy && ['flowering','fruiting'].includes(p.status)) || (phase==='needs_feed_24wk_plus'))) return null;
   if(isMedHerb(c.crop)) return null;            // Mediterranean herbs: never force-feed
   // pick amendment by crop/stage
   let rec;
@@ -569,7 +589,11 @@ function fertilizeRec(p, c, fm, today){
   // term deleted. If you ever add a 1-day feed cadence, or widen isDailyCadence past `=== 1`, reason
   // (2) dies and only (1) is holding — so check overdueBy against a feed row that actually carries
   // `overdue_by` before assuming the suite would have told you.
-  return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,interval:iv,...rec};
+  // `never` on the item for the same reason the water rows carry one: an overdue card and a
+  // never-fed card are the same shape and mean different things, and only the engine can still tell
+  // them apart. Additive key, so PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers select
+  // named keys; doneEvents.fedWithinInterval reads only `id` and `interval` and is untouched).
+  return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,interval:iv,never,...rec};
 }
 
 function coldFor(p, cad, low){
