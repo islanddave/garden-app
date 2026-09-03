@@ -248,3 +248,103 @@ describe('computeDerivedTags — bean end-to-end', () => {
     ]);
   });
 });
+
+// ── BUG-DERIVEDLIFECYCLE-001 — the chip reports BOTANICAL lifespan, and must keep doing so ───────
+//
+// CHARACTERIZATION, not coverage. These pin a decision that was measured and taken, not a gap left
+// open: the obvious "fix" for this bug is to route the chip through plant_varieties.grown_as, and
+// that fix is WRONG. It is wrong on evidence, not on taste.
+//
+// Measured read-only on prod, 2026-09-02, 444 live cultivars:
+//   · grown_as carried a value the column's old DEFAULT 'annual' could not have manufactured on
+//     exactly 14 rows — and all 14 already agree with lifecycle ?? default_lifecycle. Net-new
+//     information available from grown_as: ZERO cultivars.
+//   · Preferring it would flip 245 chips, every single one to Annual: 186 tender_perennial (the
+//     peppers/tomatoes/eggplant band), 33 perennial, 26 biennial. Zero flips in the other direction.
+//   · Provenance: 72/72 May and 120/120 June rows read 'annual' with not one NULL and not one other
+//     value. That is a column default, not curation. The DEFAULT has since been dropped so new rows
+//     are clean, but the 358 'annual' values it already wrote stay indistinguishable from curated
+//     ones — there is no predicate that separates them.
+//
+// The honest conclusion is that NO field, and no combination of the fields that exist, answers
+// "will this come back here". first_year_harvest is the orthogonal axis (a bunching onion is
+// perennial AND first-year; asparagus is perennial and is not) and cannot stand in. An as-grown
+// chip needs a curated column that has not been created. Until it is, the chip answers the question
+// it CAN answer, and these tests fail the moment someone makes it answer a different one badly.
+//
+// Fixtures are the real prod rows, not invented ones — each `grown_as: 'annual'` below is the value
+// live in plant_varieties today, written by the default.
+describe('computeDerivedTags — grown_as must not reach the lifecycle chip (BUG-DERIVEDLIFECYCLE-001)', () => {
+  // Measured 2026-09-02 from public.crop_types. NOTE garlic: default_lifecycle is 'annual' in prod
+  // (corrected by v4-garlicannual-001) — the CROP_TYPES fixture at the top of this file still says
+  // 'perennial' and is stale against prod. Kept separate rather than edited, so this block's claims
+  // stand on measured values without moving ground under the tests above.
+  const PROD = {
+    japanese_maple: { slug: 'japanese_maple', display_name: 'Japanese Maple', default_lifecycle: 'perennial' },
+    blueberry:      { slug: 'blueberry',      display_name: 'Blueberry',      default_lifecycle: 'perennial' },
+    hosta:          { slug: 'hosta',          display_name: 'Hosta',          default_lifecycle: 'perennial' },
+    jade:           { slug: 'jade',           display_name: 'Jade',           default_lifecycle: 'perennial' },
+    rose:           { slug: 'rose',           display_name: 'Rose',           default_lifecycle: 'perennial' },
+    pepper:         { slug: 'pepper',         display_name: 'Pepper',         default_lifecycle: 'tender_perennial' },
+    beet:           { slug: 'beet',           display_name: 'Beet',           default_lifecycle: 'biennial' },
+    garlic:         { slug: 'garlic',         display_name: 'Garlic',         default_lifecycle: 'annual' },
+  };
+  const chip = (cultivar) => computeDerivedTags(cultivar, PROD).find(t => t.facet === 'lifecycle');
+
+  // The 33-row perennial band, named. A tree, a shrub, an ornamental, a houseplant and a rose are
+  // not annuals under any reading, and each carries grown_as='annual' in prod right now.
+  const WOODY_AND_HOUSEPLANT = [
+    ['Japanese Maple',  'japanese_maple'],
+    ['High Bush',       'blueberry'],
+    ['Hosta',           'hosta'],
+    ['Crassula ovata',  'jade'],
+    ['Red Rose',        'rose'],
+  ];
+  it.each(WOODY_AND_HOUSEPLANT)('%s keeps its Perennial chip despite grown_as=annual', (_name, slug) => {
+    expect(chip({ crop_type_slug: slug, lifecycle: 'perennial', grown_as: 'annual' }))
+      .toEqual({ facet: 'lifecycle', slug: 'perennial', label: 'Perennial' });
+  });
+
+  it('a pepper keeps Tender Perennial — the 186-row band grown_as would erase', () => {
+    expect(chip({ crop_type_slug: 'pepper', lifecycle: 'tender_perennial', grown_as: 'annual' }))
+      .toEqual({ facet: 'lifecycle', slug: 'tender_perennial', label: 'Tender Perennial' });
+  });
+
+  it('a beet keeps Biennial — the 26-row band', () => {
+    expect(chip({ crop_type_slug: 'beet', lifecycle: 'biennial', grown_as: 'annual' }))
+      .toEqual({ facet: 'lifecycle', slug: 'biennial', label: 'Biennial' });
+  });
+
+  // The general form. Not five worked examples plus a hope: grown_as is inert across its ENTIRE
+  // vocabulary, so a mutation that consults it only for some values is caught too. Swept over three
+  // bases whose botanical answers differ, because a single base cannot detect the one grown_as value
+  // that happens to MATCH it — a blueberry with grown_as='perennial' reads identically whether the
+  // column is consulted or ignored, and that case would sit in the family scoring a free pass.
+  const BASES = [['blueberry', 'perennial'], ['beet', 'biennial'], ['pepper', 'tender_perennial']];
+  it.each(VALID_LIFECYCLE)('grown_as=%s changes nothing — the column is inert here', (ga) => {
+    for (const [slug, botanical] of BASES) {
+      const withGrownAs = computeDerivedTags({ crop_type_slug: slug, lifecycle: botanical, grown_as: ga }, PROD);
+      const without     = computeDerivedTags({ crop_type_slug: slug, lifecycle: botanical }, PROD);
+      expect(withGrownAs, `grown_as=${ga} altered the ${slug} chip`).toEqual(without);
+    }
+  });
+
+  it('grown_as alone cannot conjure a chip where the botanical chain has none', () => {
+    // Belt and braces on the fallback arm: an unknown crop type with no lifecycle emits no chip,
+    // and a grown_as sitting on the row must not fill that hole either.
+    expect(chip({ crop_type_slug: 'nonesuch', lifecycle: null, grown_as: 'perennial' })).toBeUndefined();
+  });
+
+  // Why the garlic card reads Perennial, located precisely: NOT here. The engine honours the
+  // corrected crop default the moment the cultivar's own lifecycle is null; the live garlic row
+  // carries a frozen lifecycle='perennial' that shadows it. That is a data defect in a sibling
+  // ledger row, and no change to this function fixes it.
+  it('garlic inherits the corrected crop default when the cultivar lifecycle is null', () => {
+    expect(chip({ crop_type_slug: 'garlic', lifecycle: null, grown_as: 'annual' }))
+      .toEqual({ facet: 'lifecycle', slug: 'annual', label: 'Annual' });
+  });
+  it('a frozen cultivar lifecycle shadows the crop default — the live garlic row, reproduced', () => {
+    expect(chip({ crop_type_slug: 'garlic', lifecycle: 'perennial', grown_as: 'annual' }))
+      .toEqual({ facet: 'lifecycle', slug: 'perennial', label: 'Perennial' });
+  });
+});
