@@ -68,10 +68,25 @@
 //                   column on event_log at all — units live on harvest_log, behind event_type
 //                   'harvest'. Sending a count here would be the same fabrication the create
 //                   refuses at quantity_on_hand.
-//   metadata      — NOT SENT. A `seed_lot_id` key would be true and would be the only durable link
-//                   from event to lot (event_log has no inventory FK), but EventDetail renders any
-//                   unlabelled metadata key verbatim as monospace `key  value`, so it would ship a
-//                   raw uuid into the user-visible Details block. Withheld rather than guessed at.
+//   metadata      — NOW SENT as `{ seed_lot_id }`, guarded on the lot id. This note previously said
+//                   NOT SENT, on two grounds; one was false and the other was not what it claimed.
+//                   * FALSE: "event_log has no inventory FK". It does — `treatment_product_id`
+//                     REFERENCES inventory_items(id), verified in prod pg_constraint. There is no
+//                     seed-lot-specific column, which is the true statement, and that FK is also a
+//                     house precedent for a typed column here if this is ever promoted out of jsonb.
+//                   * TRUE BUT NOT DECISIVE: EventDetail does render unlabelled metadata keys as raw
+//                     monospace `key value`. But that is not a NEW risk this key would introduce —
+//                     it is already shipped behaviour on 27 of the 35 live metadata keys, including
+//                     `batch_id`, a bare uuid rendering on 12,920 prod events today. Withholding the
+//                     only durable event→lot link to avoid becoming the 28th instance was protecting
+//                     the wrong thing.
+//                   The raw-uuid half is closed properly instead: `seed_lot_id` is in
+//                   METADATA_HIDDEN_KEYS, the same treatment as `water_depth_source` — machine
+//                   provenance, stored and queryable, never rendered as a detail row.
+//                   GUARDED on `lot?.id` because `JSON.stringify({ seed_lot_id: undefined })` yields
+//                   `{}`, which passes isPlainMetadataObject and would persist an empty jsonb object
+//                   instead of NULL. No Lambda change was needed: validateEventMetadata has no key
+//                   allowlist and seed_lot_id is not in REDUCTION_KEYS.
 //
 // IT CANNOT FAIL THE SAVE. Same reasoning as the stage above, one step further: the user asked for
 // a lot, not for a timeline row, and the stage at least was something they explicitly chose here
@@ -276,6 +291,10 @@ export default function SaveSeedSheet({ planting, onClose }) {
             event_type: 'seed_saved',
             event_date: todayLocalISO(),
             notes: seedSavedNote(name.trim(), stageWritten),
+            // Spread, not a bare key: an unguarded `{ seed_lot_id: undefined }` serialises to `{}`,
+            // which is a valid plain object to the validator and persists an empty jsonb instead of
+            // NULL — a row that looks linked and is not.
+            ...(lot?.id ? { metadata: { seed_lot_id: lot.id } } : {}),
           }),
         })
       } catch {

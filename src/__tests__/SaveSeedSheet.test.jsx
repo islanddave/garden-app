@@ -312,6 +312,33 @@ describe('V4-SEEDEVENT-001 — the event payload', () => {
     expect(body.event_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 
+  it('carries the durable event -> lot link in metadata', async () => {
+    // The ONLY link from a seed_saved event to the lot it created: event_log has no seed-lot column
+    // (it does have treatment_product_id -> inventory_items, so "no inventory FK" was never true,
+    // but that is a different column). Withheld until 2026-09-03 out of a raw-uuid-rendering concern
+    // that measurement dissolved — 27 of 35 live metadata keys already render raw, batch_id among
+    // them on 12,920 events, so this key was never the novel risk. It is hidden at the render site
+    // instead; see the sibling assertion below.
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(eventCalls()).toHaveLength(1))
+    expect(eventBody().metadata).toEqual({ seed_lot_id: 'inv-9' })
+  })
+
+  it('sends NO metadata key at all when the create returned no id', async () => {
+    // The guard that makes the spread a spread. `{ seed_lot_id: undefined }` serialises to `{}`,
+    // which passes the Lambda's isPlainMetadataObject and persists an empty jsonb — a row that reads
+    // as linked and is not. Absent must stay absent, not become empty.
+    // MUTATION: change the `...(lot?.id ? {...} : {})` spread to a bare `metadata: {seed_lot_id:
+    // lot?.id}` and this goes red while every other assertion in this file still passes.
+    apiFetchSpy.mockResolvedValue({})
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(eventCalls()).toHaveLength(1))
+    expect(Object.prototype.hasOwnProperty.call(eventBody(), 'metadata')).toBe(false)
+  })
+
   it('is a real declared type that requires the planting it was given', () => {
     // Cheap, and it is the half that would have caught the whole gap: the type has been declared and
     // inert. If it is ever renamed or loses its planting requirement, this flow's payload is wrong.

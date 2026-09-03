@@ -81,7 +81,19 @@ const METADATA_LABELS = {
 
 // Metadata keys that are MACHINE provenance rather than user-entered detail. Filtered out of the
 // rendered Details block (see METADATA_LABELS above for why).
-const METADATA_HIDDEN_KEYS = new Set(['water_depth_source'])
+//
+// `seed_lot_id` (V4-SEEDEVENT-001) is the durable event→lot link written by SaveSeedSheet. It is a
+// uuid: stored and queryable, never a detail row. Added here in the same change that starts writing
+// it, so the key has never rendered raw even once.
+//
+// MEASURED 2026-09-03, and it says this denylist is far too short: of the 35 distinct metadata keys
+// live in prod, 7 are labelled and ONE is hidden — the remaining 27 render as raw monospace
+// `key value` pairs today. `batch_id` is a bare uuid on 12,920 events and `batch_v` a schema integer
+// on the same 12,920. Both are machine provenance by the same test applied to `water_depth_source`
+// and neither is actionable by a user. Deliberately NOT fixed here: this change owns one key, and
+// silently altering what 12,920 existing events display is a separate decision with its own blast
+// radius. Filed as BUG-EVTMETARAWKEYS-001 with the full census.
+const METADATA_HIDDEN_KEYS = new Set(['water_depth_source', 'seed_lot_id'])
 
 // V4-EVTDELCONFIRM-001 — coverFor for the confirm sheet: the union of every photo's cover_for
 // entries, deduped by entity (one planting covered by two of the event's photos must be named
