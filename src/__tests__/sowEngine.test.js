@@ -1716,6 +1716,21 @@ describe('BUG-SOWPROSEUNREAD-001 — unreadable timing is UNKNOWN, not "too late
     // is arguably the same unfounded claim in a second costume. It is deliberately OUT of scope —
     // it is a different input class with a different remedy, and widening the exit to cover it would
     // move cards this change has no measurement for. Filed as an observation, not fixed here.
+    //
+    // MEASURED 2026-09-02, and the observation above does NOT survive it — the shape is SYNTHETIC.
+    // Live prod: 255 sow candidates, 141 with no prose, but only 6 with no prose AND no dtm, and
+    // ZERO with that combination plus start_method='direct_sow' — i.e. no user can reach the state
+    // this fixture is in. Of the 6, the two carrying genuinely nothing (Alaska Mix nasturtium,
+    // Armenian cucumber; season/method both NULL) route to needs_profile on EVERY date swept from
+    // March to November, which is already the right answer. The other four (Pacific Giants
+    // delphinium, Biquinho, Tepin, Chiltepin) do read too_late from mid-April on, but FOUNDED, not
+    // as a fallthrough: each carries start_indoor_weeks_before_lastfrost (6/8/10/10) and sow_notes,
+    // so the engine derives a real indoor window closing Mar 11-25. "Sowing window passed for 2026"
+    // in September is correct for a pepper that had to be started indoors in March.
+    // KEEP THIS TEST — it is a valid regression pin on the clauses.length > 0 requirement. But do
+    // NOT re-file the too_late half as a defect: it is the BUG-SOWFYHNULL-001 pattern, a state that
+    // exists in the type system and not in the data. Re-measure before reopening; the population,
+    // not the possibility, is what decides. Harness: scripts/measure-noprose-toolate.mjs.
     const buckets = bucketize([unreadable({ direct_sow_timing: null })], TODAY);
     expect(buckets.needs_profile, 'the unreadable-prose exit fired without any prose').toHaveLength(0);
     expect(buckets.too_late, 'pre-existing routing for a no-prose packet changed').toHaveLength(1);
