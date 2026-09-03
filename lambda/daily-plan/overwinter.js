@@ -96,6 +96,18 @@ const MANUAL_EXIT_LAG_DAYS = 28;
 //                        one that can actually be executed in the dark on a leafless pot: LIFT IT.
 //                        Weight integrates the whole root ball; a finger reads the top inch only, and
 //                        on a quiescent pot the top inch is dry long before the core is.
+//                        V4-DRYDOWNCHANNELLING-001: weight is also the only honest STOP condition, and
+//                        the copy had no stop condition at all. A peat mix whose wetting agent died
+//                        months ago is water-repellent, and the root ball shrinks off the wall as it
+//                        dries — so a winter re-water runs down that gap and out the drain hole in
+//                        seconds while the core stays dry. It READS AS WATERED. Naming only rot as the
+//                        kill mode compounds it: the gardener who fears rot reads a fast drain as
+//                        "plenty" and stops. So the guidance now names DESICCATION as the second kill
+//                        mode, gives the tell (fast drain, unchanged weight) and the fix (small
+//                        repeated doses, or a brief stand in water). "only until it feels HEAVIER"
+//                        does both jobs in one clause: it cannot be satisfied by a channelled
+//                        watering, and it still caps the volume, which is what keeps the rot bound
+//                        the previous wording carried as "only enough to take the lightness off".
 //  field_hardy           garlic, unprotected mache, established perennials. Rain and snowmelt supply
 //                        nearly everything. NOT a skip: a snowless dry cold snap desiccates crowns and
 //                        heaves shallow roots, which is a real and locally common loss mode. 21d is
@@ -120,7 +132,7 @@ const OVERWINTER_REGIMES = {
   protected_productive: { check_interval_days: 14, protected: true,  harvestable: true,  auto_exit: true,
     guidance: 'Under cover — the cover sheds rain, so check the soil on a thaw day and water only if it is dry below the top inch. Vent on a sunny day above freezing. Harvest at midday, never at dawn while the leaves are frozen.' },
   protected_quiescent:  { check_interval_days: 30, protected: true,  harvestable: false, auto_exit: false,
-    guidance: 'Cold and quiescent — one rule: LIFT THE POT. Water only if it feels light, and then only enough to take the lightness off; wet plus cold is what rots these. Keep it dark and cold; do not feed.' },
+    guidance: 'Cold and quiescent — one rule: LIFT THE POT. Water only if it feels light, and only until it feels HEAVIER — water that drains in seconds has run down the pot wall, not through the roots. Small doses, or stand it in water briefly, then drain. Wet plus cold is what rots these; a dry root ball kills them just as dead. Keep it dark and cold; do not feed.' },
   field_hardy:          { check_interval_days: 21, protected: false, harvestable: false, auto_exit: true,
     guidance: 'Hardy in the ground — rain and snowmelt do the work. Check only during a snowless dry cold snap: desiccation and frost heave, not cold, are what take these. Do not feed until spring.' },
   tender_indoors:       { check_interval_days: 7,  protected: true,  harvestable: false, auto_exit: false,

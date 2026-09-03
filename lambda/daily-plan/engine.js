@@ -744,14 +744,24 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       const _actOw = _dueOw && _ow.regime==='field_hardy' ? ow.fieldHardyActionable(weather,hydrology) : null;
       if(_dueOw && _actOw && !_actOw.actionable){ overwinterDeferred++; }
       else if(_dueOw){
+        // V4-DRYDOWNCHANNELLING-001. The moisture TEST is regime-specific and `reason` is the ONLY place
+        // the user reads one: `note` carries the full per-regime guidance but no surface renders it —
+        // buildCareNeeded does not copy it onto the row — so a test stated only there is a test nobody
+        // sees. protected_quiescent reads the pot's WEIGHT at both ends, not the top inch. The top inch
+        // on a leafless pot is dry long before the core is (overwinter.js regime table), and on a peat
+        // mix that has dried past its wetting agent a re-water runs down the shrinkage gap at the wall
+        // and out the hole in seconds — it drains fast, reads as watered, and leaves the core dry.
+        // "only until it feels heavier" is the stop condition a channelled watering cannot satisfy.
+        const _testOw = _ow.regime==='protected_quiescent'
+          ? 'lift the pot: water only if it feels light, and only until it feels heavier' : null;
         overwintering.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,
           regime:_ow.regime,interval:_wiOw,days_since:_dOw,overdue_by:_dOw==null?null:_dOw-_wiOw,
           never:_dOw==null,exit_due:false,harvestable:_ow.harvestable,window_until:_ow.until,
           moisture:(p.db_cadence&&p.db_cadence.soil_moisture_target)||c.soil_moisture_target||null,
           note:_ow.guidance,
           reason:_dOw==null
-            ? 'Overwintering — never checked; feel the soil, water only if dry below the top inch'
-            : `Overwintering — soil check due (${_dOw}d since last water/check); water only if dry below the top inch`});
+            ? `Overwintering — never checked; ${_testOw||'feel the soil, water only if dry below the top inch'}`
+            : `Overwintering — soil check due (${_dOw}d since last water/check); ${_testOw||'water only if dry below the top inch'}`});
       }
     } else {
     // CARE-PROFILES-001: select inground or container cadence based on container_type.

@@ -280,6 +280,33 @@ describe('protected_quiescent states exactly one moisture rule', () => {
   it('keeps the reason the rule is a floor and not a target', () => {
     expect(OVERWINTER_REGIMES.protected_quiescent.guidance).toMatch(/wet plus cold/i);
   });
+
+  // V4-DRYDOWNCHANNELLING-001. Weight is the trigger AND the stop condition. Without a stop condition a
+  // re-water on a hydrophobic peat mix runs down the shrinkage gap at the pot wall, drains in seconds and
+  // reads as watered while the core stays dry. Mutation: drop the "until it feels heavier" clause — the
+  // pre-change wording ("only enough to take the lightness off") states a volume, not a measurement, and
+  // a channelled watering satisfies it. This goes red.
+  it('makes weight the stop condition, not just the trigger', () => {
+    expect(OVERWINTER_REGIMES.protected_quiescent.guidance).toMatch(/until it feels heavier/i);
+  });
+
+  // Both kill modes, or the gardener is warned off the wrong failure: someone who has been told only
+  // about rot reads a fast drain as "plenty" and stops. Mutation: delete either the drainage tell or the
+  // dry-root-ball clause and this goes red.
+  it('names desiccation alongside rot, and gives the tell that separates them', () => {
+    const g = OVERWINTER_REGIMES.protected_quiescent.guidance;
+    expect(g).toMatch(/drains in seconds/i);       // the observation that lies
+    expect(g).toMatch(/down the pot wall/i);       // why it lies
+    expect(g).toMatch(/dry root ball kills/i);     // the kill mode the old copy never named
+  });
+
+  // The remedy has to be bounded in the ROT direction too — "stand it in water" with no end is how a fix
+  // for desiccation becomes a fix that rots the plant instead. Mutation: drop "then drain" and this goes red.
+  it('bounds the rewetting remedy so it does not become the rot path', () => {
+    const g = OVERWINTER_REGIMES.protected_quiescent.guidance;
+    expect(g).toMatch(/small doses/i);
+    expect(g).toMatch(/stand it in water briefly, then drain/i);
+  });
 });
 
 describe('the window and the exit', () => {

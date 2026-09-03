@@ -378,3 +378,56 @@ describe('handler supplies last_moisture_check', () => {
     expect(line).toMatch(/e\.event_type\s+in\s*\('watering',\s*'rain'\)/);
   });
 });
+
+// ── V4-DRYDOWNCHANNELLING-001 — the moisture test the card actually states ────────────────────────
+// `note` carries the full per-regime guidance, but buildCareNeeded does not copy it onto the row, so
+// `reason` is the ONLY overwintering text a user ever reads. It stated one test — the top inch — for
+// all four regimes, which is the finger test protected_quiescent was deliberately moved OFF: on a
+// leafless pot the top inch is dry long before the core is, and on a peat mix past its wetting agent
+// the resulting re-water runs down the shrinkage gap at the wall and out in seconds while the core
+// stays dry. The card said "water only if dry below the top inch" and the guidance said "lift the
+// pot" — the two rendered surfaces disagreed, and the rendered one was the wrong one.
+describe('the card states the regime\'s own moisture test', () => {
+  const fig = (o) => P({ id: 'f2', name: 'Garage Fig', status: 'vegetative', last_water: '2026-11-16',
+    covered: true, container_type: 'pot',
+    db_cadence: { ...KALE, overwintering: { regime: 'protected_quiescent' } }, ...o });
+
+  // Mutation: delete the `_testOw` regime branch in engine.js and the row falls back to the top-inch
+  // string for every regime — both assertions go red.
+  it('gives a quiescent pot the weight test, never the top inch', () => {
+    const r = owRows(planFor([fig()]))[0];
+    expect(r.regime).toBe('protected_quiescent');
+    expect(r.reason).toMatch(/lift the pot/i);
+    expect(r.reason).toMatch(/only until it feels heavier/i);
+    expect(r.reason).not.toMatch(/top inch/i);
+  });
+
+  // The never-checked variant is a separate string and regressed independently before this.
+  // Mutation: revert either arm of the reason ternary and one of these goes red.
+  it('states the same test on the never-checked variant', () => {
+    const r = owRows(planFor([fig({ last_water: null, last_hand_water: null })]))[0];
+    expect(r.never).toBe(true);
+    expect(r.reason).toMatch(/lift the pot/i);
+    expect(r.reason).not.toMatch(/feel the soil/i);
+  });
+
+  // REGIME-SCOPED, not blanket. The top inch is the RIGHT test for a tunnel bed — swapping every regime
+  // to the pot-weight test would be a new defect in the other direction, since a raised bed cannot be
+  // lifted. Mutation: drop the regime condition from `_testOw` and this goes red.
+  it('leaves the in-ground regimes on the soil test', () => {
+    const kale = P({ id: 'k9', name: 'Tunnel Kale', status: 'vegetative', last_water: '2026-11-16',
+      last_hand_water: '2026-11-16', db_cadence: { ...KALE, overwintering: { regime: 'protected_productive' } } });
+    const r = owRows(planFor([kale]))[0];
+    expect(r.reason).toMatch(/dry below the top inch/i);
+    expect(r.reason).not.toMatch(/lift the pot/i);
+  });
+
+  // The rendered card and the canonical guidance must state ONE rule between them — the disagreement
+  // above is exactly the failure. Mutation: change either surface alone and this goes red.
+  it('agrees with the guidance the same row carries', () => {
+    const r = owRows(planFor([fig()]))[0];
+    expect(r.note).toMatch(/lift the pot/i);
+    expect(r.note).toMatch(/until it feels heavier/i);
+    expect(r.reason).toMatch(/until it feels heavier/i);
+  });
+});
