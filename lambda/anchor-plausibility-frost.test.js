@@ -15,6 +15,26 @@
 //   2. the SHAPE — that the file holds no hardcoded calendar date at all. A value pin alone would
 //      have passed on the original file the day it was written and gone stale by January.
 //
+// ── BUG-FROSTANCHORERA5-001 (2026-09-03): ONE OF THOSE PINS IS NOW HISTORICAL ────────
+// `latestMonthDay` moved '11-08' -> '10-31' when the ERA5 record was replaced with a station
+// composite. 0b-backfill.sql still says '11-08' and MUST — it is APPLIED, and the
+// `plausibility = 'post_frost_impossible'` stamps it wrote to live prod are PERMANENT (see the note
+// above: two separate consumers exclude marked rows on purpose). Editing an applied migration
+// changes nothing in the database; it only destroys the record of what was believed when the rows
+// were stamped. So the value pin below is re-authored from a LOCKSTEP into a HISTORICAL pin plus a
+// direction guard, and it is worth stating what the direction buys:
+//
+//   the arm stamps when `anchor_date + dtm_min > observed_first_fall_frost`, so a LATER bound stamps
+//   FEWER rows. The applied stamps were made against 11-08, the corrected bound is 10-31 — eight days
+//   earlier — so every row already stamped would still be stamped today (maturity past 11-08 implies
+//   maturity past 10-31). The inconsistency introduced by the correction is entirely one of
+//   OMISSION: a row whose earliest maturity falls in (10-31, 11-08] is unstamped and would now
+//   qualify. Unstamped is the fail-safe state — the row stays in the watch band and stays eligible
+//   for the nightly re-derive — so nothing is silently hidden by leaving this alone.
+//
+// Whether to run a corrective DML pass over that band is a decision for Dave, not for a test; this
+// file's job is to make sure the divergence is deliberate and cannot widen unnoticed.
+//
 // Static-source (L-072), DB-free: asserts the text of the migration, not a database.
 
 import { describe, it, expect } from 'vitest';
@@ -48,6 +68,11 @@ const FROSTED_CTE = (BACKFILL.match(/frosted AS \([\s\S]*?\n\)/) ?? [''])[0];
 
 const toMs = (md) => Date.parse(`2026-${md}T00:00:00Z`);
 
+// = OBSERVED_FIRST_FALL_FROST.latestMonthDay AS OF the day 0b-backfill.sql was applied, when the
+// measured record was ERA5. Named rather than inlined so a reader cannot mistake it for a live
+// constant that has drifted. See the header for why it is frozen.
+const APPLIED_LATEST_MONTH_DAY = '11-08';
+
 describe('BUG-ANCHORSQLFROST-001 — 0b-backfill.sql frost anchor', () => {
   it('names BOTH anchors, in lockstep with src/lib/sowEngine.js', () => {
     // The SQL cannot import sowEngine.js at any point in its life, so these are copies. A TEST can
@@ -55,12 +80,31 @@ describe('BUG-ANCHORSQLFROST-001 — 0b-backfill.sql frost anchor', () => {
     // divergence the day either anchor is retuned.
     // MUTATION: change either literal in the params CTE and the matching line goes red.
     expect(mmdd('sowing_safety_margin_mmdd')).toBe(FROST_ANCHORS.firstFallFrost);
-    expect(mmdd('observed_first_fall_frost_mmdd')).toBe(OBSERVED_FIRST_FALL_FROST.latestMonthDay);
+    // Frozen, NOT lockstepped — see the header. This was `.toBe(OBSERVED_FIRST_FALL_FROST
+    // .latestMonthDay)` until BUG-FROSTANCHORERA5-001 moved that constant to '10-31', at which point
+    // the only way to keep the equality would have been to edit an applied migration and re-stamp
+    // history. The literal is still pinned; it is pinned to the value the stamps were made under.
+    expect(mmdd('observed_first_fall_frost_mmdd')).toBe(APPLIED_LATEST_MONTH_DAY);
     // The two anchors must stay two. MUTATION: collapse them (point either at the other's value) and
     // this reds — without it the pins above would pass on a one-anchor world, which is the world the
     // bug shipped in.
     expect(toMs(mmdd('sowing_safety_margin_mmdd')))
       .toBeLessThan(toMs(mmdd('observed_first_fall_frost_mmdd')));
+  });
+
+  it('the frozen bound is no EARLIER than the live one, so no applied stamp is now wrong', () => {
+    // ADDED by BUG-FROSTANCHORERA5-001, and it is the assertion that makes freezing the literal above
+    // safe rather than merely convenient. The arm stamps when maturity > the bound, so a later bound
+    // stamps fewer rows. As long as the applied bound is >= the live one, every stamp already written
+    // to prod would still be written today and the divergence is pure omission — rows in the
+    // (live, applied] band that go unstamped, which leaves them IN the watch band. That is the
+    // fail-safe direction and it is why no corrective DML is forced by this change.
+    //
+    // MUTATION: move OBSERVED_FIRST_FALL_FROST.latestMonthDay later than 11-08 and this reds — which
+    // is the case that WOULD force a decision, because then prod carries stamps the live constant no
+    // longer justifies. The test names the band so whoever hits it knows what to query.
+    expect(toMs(APPLIED_LATEST_MONTH_DAY))
+      .toBeGreaterThanOrEqual(toMs(OBSERVED_FIRST_FALL_FROST.latestMonthDay));
   });
 
   it('takes the TAIL BOUND of the measured distribution, not its median', () => {
@@ -69,13 +113,18 @@ describe('BUG-ANCHORSQLFROST-001 — 0b-backfill.sql frost anchor', () => {
     // nightly re-derive sweep, while the false NEGATIVE it trades against is already caught at read
     // time by watch.js condition 3. Frost arrived later than the median in 5 of the 11 measured
     // years, so the median makes "impossible" a coin flip.
-    // MUTATION: point the params constant at OBSERVED_FIRST_FALL_FROST.medianMonthDay ('10-29') —
-    // the obvious "simplification" — and this reds. On live prod today that mutation re-escalates
-    // one row (San Marzano rescue, maturity 2026-10-30) from rescue_suspect to a permanent
-    // post_frost_impossible.
-    expect(mmdd('observed_first_fall_frost_mmdd')).toBe(OBSERVED_FIRST_FALL_FROST.latestMonthDay);
+    // MUTATION: point the params constant at OBSERVED_FIRST_FALL_FROST.medianMonthDay — the obvious
+    // "simplification" — and this reds. When that mutation was measured against live prod it
+    // re-escalated one row (San Marzano rescue, maturity 2026-10-30) from rescue_suspect to a
+    // permanent post_frost_impossible; the median was '10-29' then and is '10-15' now, so the
+    // mutation is strictly worse than when it was priced, not better.
+    expect(mmdd('observed_first_fall_frost_mmdd')).toBe(APPLIED_LATEST_MONTH_DAY);
+    // The tail-vs-median relation holds against BOTH the frozen bound and the live constant, so this
+    // decision survives the correction rather than depending on which record is in force.
     expect(toMs(OBSERVED_FIRST_FALL_FROST.medianMonthDay))
       .toBeLessThan(toMs(mmdd('observed_first_fall_frost_mmdd')));
+    expect(toMs(OBSERVED_FIRST_FALL_FROST.medianMonthDay))
+      .toBeLessThan(toMs(OBSERVED_FIRST_FALL_FROST.latestMonthDay));
   });
 
   it('stamps post_frost_impossible off the MEASURED anchor and never the margin', () => {

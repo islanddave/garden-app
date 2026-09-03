@@ -21,10 +21,14 @@ import CultivationLead from '../../src/components/today/CultivationLead.jsx'
 const TODAY = '2026-08-12'
 const CLOSING = [{
   variety_name: 'Winter Density', item_name: 'Lettuce packet', crop_type_slug: 'lettuce',
-  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 72, days_to_maturity_min: null,
+  // dtm retuned 72 -> 58 by BUG-FROSTANCHORERA5-001, which moved FFobs 10-29 -> 10-15: the close is
+  // FFobs - dtm, so holding the same Aug 18 close (6 days from TODAY, inside the 10-day closing
+  // window) costs the same 14 days off dtm. Same convention the CultivationLead unit tests use —
+  // retune the input, keep the case the harness is showing.
+  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 58, days_to_maturity_min: null,
   direct_sow_timing: 'as soon as the soil can be worked', start_method: null,
 }]
-// dtm 30 -> closes Sep 29, 48 days out: open, NOT closing. The engine yields no line, which is the
+// dtm 30 -> closes Sep 15, 34 days out: open, NOT closing. The engine yields no line, which is the
 // empty case — reached through the real engine rather than by passing it an empty array, so the
 // harness shows the state Dave actually gets rather than a degenerate one.
 const NOT_CLOSING = [{ ...CLOSING[0], variety_name: 'Buttercrunch', days_to_maturity_max: 30 }]

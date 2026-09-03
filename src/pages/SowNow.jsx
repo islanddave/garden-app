@@ -48,7 +48,18 @@ const BUCKET_META = [
   // unable to mis-sow it, and a lot behind a ▸ toggle is not something you can see coming.
   ['in_process',         'Still in process', 'Seed you are saving that is not finished yet. It stays on the list so you can see it coming — but it cannot be sown until it is dry and stored.'],
   ['needs_profile',      'Needs a sow profile'],
-  ['too_late',           'Too late this year'],
+  // BUG-FROSTANCHORERA5-001 gave this section its subtitle, and the subtitle is the condition the
+  // correction shipped under rather than a nicety. Correcting the measured frost anchor from 10-29 to
+  // 10-15 moves 7 of 12 fall-hardy crops into this bucket — spinach, lettuce, kale, beet, turnip, bok
+  // choy, chard — on the day the fall sowing decision is live. The engine is right to close their
+  // windows: it is answering "can this reach full size before frost", and 14 of those days were an
+  // instrument error that had been quietly promising a fortnight nobody had. But a list that silently
+  // withdraws most of the hardy set teaches Dave to distrust the list, and the crop he is most likely
+  // to sow anyway is exactly the one this bucket looks most wrong about. So the section says what the
+  // date means and what it does not: for a crop frost does not kill, past the date is a smaller cut,
+  // not a dead planting, and that is his call to make rather than the app's to hide.
+  ['too_late',           'Too late this year',
+    'These dates ask whether a sowing can reach full size before frost — not whether it will survive one. Frost-hardy crops like spinach, kale and chard are not killed by frost, so sowing one late still gives you a smaller cut; it just will not make a full one.'],
   // V4-SEEDZEROVIEW-001. The packets there is none of left. Dave: "I want to keep zero counts in our
   // records, viewable as 'sowed previously' so i can review … zero counts can be filtered out of sow
   // now and other used surfaces, but a view/filter of them would be useful." Collapsed and near the

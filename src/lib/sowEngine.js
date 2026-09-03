@@ -21,11 +21,21 @@ import { DTM_BASIS_TRANSPLANT } from './plantingMaturity.js';
 //   FROST_ANCHORS.firstFallFrost ('09-28')  = a CONSERVATIVE SOWING-SAFETY MARGIN.
 //   OBSERVED_FIRST_FALL_FROST               = the MEASURED frost distribution at this site.
 //
-// They are 31 days apart at the median and that gap is deliberate, not error: '09-28' is the date
+// They are 17 days apart at the median and that gap is deliberate, not error: '09-28' is the date
 // past which a sowing decision should stop assuming it has a season, and being early on a sowing
 // decision costs one forfeited sowing while being late costs the whole planting. Nothing about it is
-// a claim that frost arrives on 09-28 — measurement says it never has, in 11 years (see
-// OBSERVED_FIRST_FALL_FROST below).
+// a claim that frost arrives on 09-28.
+//
+// BUG-FROSTANCHORERA5-001 SHRANK THAT GAP FROM 31 TO 17 AND INVALIDATED ONE SENTENCE THAT USED TO
+// SIT HERE. The old text said frost "never has" occurred as early as 09-28, in 11 years. That was
+// true of ERA5 and is FALSE of the station record: 1 of the 11 seasons (2020, 09-21) had its first
+// <=32F night before the margin. The margin is NOT re-derived here and stays at '09-28' — it is a
+// margin, not a measurement, its job is to sit ahead of frost rather than on it, and it still does
+// so in 10 of 11 seasons (the 34-season composite puts p10 at 09-20). Moving it is a separate
+// decision with its own consumers, and it would be the two-anchor conflation this block exists to
+// prevent to load the correction into it. What DID have to change is the justification: sowEngine
+// .test.js now pins the margin's exposure (seasons earlier than it) as a number, so the day it
+// stops being conservative enough nobody has to notice it in prose.
 //
 // THE RULE: a consumer asking "is it too late to START something that frost will kill?" takes
 // FROST_ANCHORS. A consumer asking "when will frost actually happen?" takes
@@ -49,27 +59,55 @@ export const FROST_ANCHORS = Object.freeze({
 // at; `earliestMonthDay` is the backstop for a year nobody watched the forecast; `latestMonthDay`
 // bounds the tail. None of the three is a forecast, and the forecast path
 // (lambda/daily-plan/frostClass.js) beats all of them when it exists.
+//
+// ── BUG-FROSTANCHORERA5-001: THE INSTRUMENT WAS WRONG, NOT THE RECORDING ────────────
+// Every value below was replaced on 2026-09-03. The previous block was ERA5 reanalysis presented as
+// a site measurement, and it was reproduced byte-for-byte from its own stated query — the recording
+// was honest. The INSTRUMENT is what failed: ERA5-Land misses ~62% of real frost nights here and
+// runs ~+8F warm on sub-32F minima, because a ~9km grid cell cannot hold a radiational frost. Its
+// median came out 10-29 against a station median of 10-15.
+//
+// WHY 10-15 AND NOT 10-10 — read this before "fixing" one to match the other. Both numbers are
+// right; they answer different questions. 10-15 is the 3-station composite over the SAME 11 seasons
+// (2015-2025) the ERA5 block used, so replacing one with the other changes exactly one variable —
+// the instrument — and makes the 14-day correction attributable. 10-10 is the same composite over 34
+// seasons (1991-2025); it is equally defensible, it is what the site knowledge library carries, and
+// the 5 days between them are a real warming signal plus a window choice that nobody had argued for.
+// The full 19-day gap from the ERA5 figure decomposes as 14 days instrument + 5 days window. This
+// constant corrects ONLY the instrument. Dave's call, 2026-09-02. If the window is ever widened to
+// 34 seasons that is a separate, deliberate decision — not a reconciliation of two numbers that
+// disagree, because they do not disagree.
+//
+// A COINCIDENCE OF QUANTITIES, NOT A CONFIRMATION. The independently measured temperature growth
+// stop for hardy greens at this site also lands ~Oct 15. That is two routes to the same date and it
+// is why ~10-15 is well supported, but neither measured the other and nothing here should be read as
+// though one did: FFobs on the hardy branch is used as a GROWTH-STOP PROXY, while this constant is a
+// FROST MEDIAN. They are different quantities that happen to share a value this year.
+//
+// `latestMonthDay` MOVED 11-08 -> 10-31 AND THAT ONE HAS A FROZEN COPY. migrations/v4-anchorbase-001
+// /0b-backfill.sql is applied and hardcodes '11-08' — deliberately NOT updated, see
+// lambda/anchor-plausibility-frost.test.js for why the pin there is now historical rather than live.
 export const OBSERVED_FIRST_FALL_FROST = Object.freeze({
-  medianMonthDay: '10-29',
-  earliestMonthDay: '10-10',
-  latestMonthDay: '11-08',
+  medianMonthDay: '10-15',
+  earliestMonthDay: '09-21',
+  latestMonthDay: '10-31',
   measured_basis: Object.freeze({
     what: 'First fall night at or below 32F at this site — the event that ends a frost-tender crop.',
-    query: 'GET https://archive-api.open-meteo.com/v1/archive?latitude=42.5087&longitude=-72.6471&start_date=2015-09-01&end_date=2025-11-30&daily=temperature_2m_min&temperature_unit=fahrenheit&timezone=America%2FNew_York — then, per year, the first date with temperature_2m_min <= 32.',
-    source: 'Open-Meteo historical reanalysis archive (ERA5), 2m minimum air temperature',
-    source_url: 'https://archive-api.open-meteo.com/v1/archive',
+    query: 'GET https://www.ncei.noaa.gov/access/services/data/v1?dataset=daily-summaries&stations=USC00190120,USC00193229,USC00194154&dataTypes=TMIN&startDate=2015-01-01&endDate=2025-12-31&format=json&units=standard — then, per station per year, the first date on or after Jul 1 with TMIN <= 32; then per year the MEDIAN across whichever stations passed QC. QC runs before any statistic: drop a season with fewer than 70 of the 76 days Sep 1 - Nov 15 (coverage), and drop a TMIN 15F or more below BOTH neighbouring days (spike). The three stations stand in for the site at latitude=42.5087 longitude=-72.6471 — they are 8.1 to 16.3 km away, so this is a composite, not an on-site reading.',
+    source: 'NOAA GHCN-Daily 3-station composite, TMIN: USC00190120 Amherst (44 m, 16.3 km), USC00193229 Greenfield #3 (40 m, 8.1 km), USC00194154 Leverett #2 (96 m, 11.8 km). 3 stations per season except 2018 (n=2 — Leverett dropped by coverage QC).',
+    source_url: 'https://www.ncei.noaa.gov/access/services/data/v1',
     years: 11,
-    first_frost_earliest_month_day: '10-10',
-    first_frost_median_month_day: '10-29',
-    first_frost_latest_month_day: '11-08',
+    first_frost_earliest_month_day: '09-21',
+    first_frost_median_month_day: '10-15',
+    first_frost_latest_month_day: '10-31',
     first_frost_by_year: Object.freeze({
-      2015: '10-18', 2016: '10-27', 2017: '11-08', 2018: '10-22',
-      2019: '11-02', 2020: '10-30', 2021: '11-04', 2022: '10-29',
-      2023: '11-01', 2024: '10-17', 2025: '10-10',
+      2015: '10-16', 2016: '10-11', 2017: '10-17', 2018: '10-19',
+      2019: '10-05', 2020: '09-21', 2021: '10-24', 2022: '10-09',
+      2023: '10-31', 2024: '10-15', 2025: '10-10',
     }),
-    september_bounds: "ZERO September nights <=36F in 11 years, and zero <=32F. Coldest September night in the whole record is 38.2F (2019-09-19). Only 4 September nights <=40F across all 11 years (38.2, 38.2, 38.5, 40.0), none earlier than 09-19. The first-frost distribution's left tail does not reach September at all, which is what falsified the 1.1.0 date of 09-25.",
-    instrument_limits: 'ERA5 is a ~9km grid and does not resolve a 518ft hilltop; canopy surface temperature on calm radiational nights runs 3-5F below 2m air. Applying a full 5F cold offset to the coldest September on record still yields ~33F, on 4 nights in 11 years, none before 09-19 — so the offset does not move the conclusion.',
-    reproduced_by: 'horticulture-planning-analyst seat, then boss-technical, then this implementation lane — three independent re-runs, identical row for row (2026-08-17).',
+    september_bounds: "The left tail DOES reach September: 2020 first-frosted on 09-21, 1 season in 11. This REPLACES the ERA5 block's claim that it does not — that claim was the instrument, not the site, and it is what let 09-25 be called impossible. It is still a thin tail (1 of 11, and the next earliest is 10-05, a fortnight later), so a September frost is a live possibility to watch a forecast for rather than a date to plan against.",
+    instrument_limits: 'A station composite, not an on-site reading. All three stations are valley-floor or basin positions and the site is a drained shoulder, which is worth ~0-2 days on a MEDIAN (the quantity set here) though ~+8.5 days on a mean — do not bank the mean. n=11 is noisy: order statistics 5/6/7 are 10-11, 10-15, 10-16, so one revised season moves this several days. That noise is deliberately NOT absorbed as safety margin here — FROST_ANCHORS.firstFallFrost is the constant that carries conservatism, and loading more into a measured value is the two-anchor conflation BUG-FROSTANCHORWRONG-001 exists to prevent.',
+    reproduced_by: 'BUG-FROSTANCHORERA5-001 (2026-09-03). Two crucible seats reproduced the station composite independently and matched row for row; a third reproduced the superseded ERA5 figure byte-for-byte from its own query, which is how the failure was localised to the instrument. The era-matched median was self-corrected mid-panel from 10-16 to 10-15 after a leap-year bug in the first pass.',
   }),
 });
 
@@ -84,6 +122,13 @@ export const FALL_SLOWDOWN_DAYS = 14;
  * and the honest value is probably FALL_GRACE_COOL's 14, matching the direct-sow branch. NOT changed
  * here: that is a calibration decision with no measurement behind it either way, and this item is the
  * anchor re-key. Filed rather than guessed.
+ *
+ * BUG-FROSTANCHORERA5-001 SHARPENED THAT, WITHOUT CHANGING THE VALUE. Oct 26 used to sit 3 days
+ * BEFORE the (ERA5) median first frost, so "loose" was the whole complaint. Against the corrected
+ * median it sits 11 days AFTER it — this arm aims a FROST-KILLED crop's maturity past the date frost
+ * typically arrives. Still not changed here, for the same reason as before and one more: this item is
+ * a measurement correction, and retuning a calibration constant inside it would make the two
+ * unattributable. It is now a real defect rather than looseness, and it wants its own decision.
  */
 export const FALL_GRACE_DAYS = Object.freeze({ cool: 28, cool_warm: 14 });
 
@@ -234,10 +279,12 @@ export const FALL_HARDY_CROPS = new Set([
 // derived, and the copy only looked right because it was cancelling an anchor that sat 31 days early:
 // FROST_ANCHORS + 28 = Oct 26, which is a plausible latest-maturity date reached by adding a made-up
 // number to a number that means something else. Carrying the 28 onto the measured anchor would aim a
-// hardy sowing at Nov 26 — 17 days past the site's own 10-hour Persephone wall (2026-11-09, computed
-// independently in lambda/daily-plan/overwinter.js), i.e. at growth that cannot happen. The hardy
-// branch now consumes OBSERVED_FIRST_FALL_FROST.medianMonthDay with NO grace, which is bounded below
-// by the measurement and above by that wall; sowEngine.test.js asserts both bounds.
+// hardy sowing past the site's own 10-hour Persephone wall (2026-11-09, computed independently in
+// lambda/daily-plan/overwinter.js), i.e. at growth that cannot happen — Nov 26 under the ERA5 median
+// this argument was first written against, Nov 12 under BUG-FROSTANCHORERA5-001's corrected one. The
+// correction narrows the margin of the argument and does not touch its direction. The hardy branch
+// consumes OBSERVED_FIRST_FALL_FROST.medianMonthDay with NO grace, which is bounded below by the
+// measurement and above by that wall; sowEngine.test.js asserts both bounds.
 const FALL_GRACE_COOL = 14;
 
 /** Split direct_sow_timing into clauses on ';' and ' or ' (case-insensitive). */

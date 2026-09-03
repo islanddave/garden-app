@@ -7,6 +7,11 @@
 // over the real candidate rows under both anchors and diffs the buckets, so the answer is measured
 // rather than argued.
 //
+// The correction this was built to measure has LANDED (BUG-FROSTANCHORERA5-001, 10-29 -> 10-15), so
+// the bare-run default now reads the other way: `from` is the shipped value and `to` is the
+// superseded ERA5 one, i.e. it shows what the correction did rather than what it would do. Pass both
+// month-days explicitly for any other comparison.
+//
 // Usage: node scripts/frost-anchor-delta.mjs <candidates.json> [todayISO] [fromMonthDay] [toMonthDay]
 import { readFileSync } from 'node:fs'
 import { bucketize, OBSERVED_FIRST_FALL_FROST } from '../src/lib/sowEngine.js'
@@ -14,7 +19,7 @@ import { bucketize, OBSERVED_FIRST_FALL_FROST } from '../src/lib/sowEngine.js'
 const [, , path, todayArg, fromArg, toArg] = process.argv
 const today = todayArg || new Date().toISOString().slice(0, 10)
 const from = fromArg || OBSERVED_FIRST_FALL_FROST.medianMonthDay
-const to = toArg || '10-10'
+const to = toArg || '10-29' // the superseded ERA5 median
 
 const rows = JSON.parse(readFileSync(path, 'utf8'))
 if (!Array.isArray(rows)) throw new Error('expected a JSON array of v_sow_candidates rows')

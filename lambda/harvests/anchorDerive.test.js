@@ -497,8 +497,10 @@ describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
     // MUTATION: drop 'kale' from DERIVED_FROST_HARDY_SLUGS, or point the hardy arm at any other
     // mm-dd, and the hardy November case goes red at 2027-09-28 / 2027-10-10 respectively.
     expect(firstFallFrostFor('2026-11-15')).toBe('2027-09-28');
-    expect(firstFallFrostFor('2026-11-15', 'kale')).toBe('2027-10-29');
-    expect(firstFallFrostFor('2026-08-12', 'kale')).toBe('2026-10-29');
+    // 10-29 -> 10-15 with BUG-FROSTANCHORERA5-001 (ERA5 replaced by the station composite). The
+    // grow-year roll under test is unaffected by the value; only the month-day it carries moved.
+    expect(firstFallFrostFor('2026-11-15', 'kale')).toBe('2027-10-15');
+    expect(firstFallFrostFor('2026-08-12', 'kale')).toBe('2026-10-15');
     expect(firstFallFrostFor(null, 'kale')).toBeNull();
   });
 
@@ -507,7 +509,7 @@ describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
     // calling a crop hardy opens a row inviting Dave to walk out to a dead plant, while wrongly
     // calling it tender only preserves today's behaviour. Matches frostClass's UNKNOWN_BAND='tender'.
     // MUTATION: invert the ternary in firstFallFrostFor (hardy set selects the margin) and every
-    // line here goes red at 2026-10-29.
+    // line here goes red at 2026-10-15.
     expect(firstFallFrostFor('2026-08-12', 'sedum')).toBe('2026-09-28');   // deliberately unbanded
     expect(firstFallFrostFor('2026-08-12', null)).toBe('2026-09-28');
     expect(firstFallFrostFor('2026-08-12', undefined)).toBe('2026-09-28');
@@ -561,19 +563,24 @@ describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
     expect(resolveWatchAnchor({ ...BASE, derived_anchor_date: '2026-08-19' }, ON)).toBeNull();
   });
 
-  it('pins the HARDY cutoff from both sides, 31 days later than the tender one', () => {
-    // cutoff = 2026-10-29 - 10 = 2026-10-19; anchor 2026-09-18 -> check_from 2026-10-18.
-    // MUTATION: point the hardy arm at earliestMonthDay ('10-10') instead of the median and the
-    // first assertion goes red — the guard pins WHICH measured statistic, not merely "a later one".
-    expect(resolveWatchAnchor({ ...BASE, ...HARDY, derived_anchor_date: '2026-09-18' }, ON).check_from)
-      .toBe('2026-10-18');
-    expect(resolveWatchAnchor({ ...BASE, ...HARDY, derived_anchor_date: '2026-09-19' }, ON)).toBeNull();
+  it('pins the HARDY cutoff from both sides, 17 days later than the tender one', () => {
+    // cutoff = 2026-10-15 - 10 = 2026-10-05; anchor 2026-09-04 -> check_from 2026-10-04 (the fixture
+    // carries a +30d offset). Both anchor dates moved back 14 days with BUG-FROSTANCHORERA5-001, from
+    // 09-18/09-19 against the ERA5 median: the cutoff is FFobs - 10, so it tracks the correction
+    // one-for-one. MUTATION: point the hardy arm at earliestMonthDay ('09-21') instead of the median
+    // and the first assertion goes red — the guard pins WHICH measured statistic, not merely "a later
+    // one". (That mutation used to be '10-10'; the correction moved earliest as well as median, and
+    // it still discriminates because the two are 24 days apart.)
+    expect(resolveWatchAnchor({ ...BASE, ...HARDY, derived_anchor_date: '2026-09-04' }, ON).check_from)
+      .toBe('2026-10-04');
+    expect(resolveWatchAnchor({ ...BASE, ...HARDY, derived_anchor_date: '2026-09-05' }, ON)).toBeNull();
     // The gap between the two cutoffs is the gap between the two anchors — computed from the live
-    // constants, never asserted as a literal beside them, so it dies the moment either moves.
+    // constants, never asserted as a literal beside them, so it dies the moment either moves. It was
+    // 31 while the measured anchor was ERA5; the margin did not move, the measurement did.
     const day = 86400000;
     const gap = (Date.parse(`2026-${DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD}T00:00:00Z`)
       - Date.parse(`2026-${DERIVED_FIRST_FALL_FROST_MMDD}T00:00:00Z`)) / day;
-    expect(gap).toBe(31);
+    expect(gap).toBe(17);
   });
 
   it('hardiness moves ONLY the frost window — not the habit, status or coexistence gates', () => {
