@@ -154,13 +154,12 @@ m(P, "Long River Market, Deerfield, MA, USA", "Long River Produce Market", "mark
   "Same business with the address welded into the name - exactly the pattern Dave asked to stop. "
   "The town moves to source.locality.",
   residue="nothing - 'Deerfield, MA, USA' becomes source.locality")
-m(P, "Long River", "Long River Produce Market", "market", "Deerfield, MA", "", "medium", "REVIEW",
-  "Almost certainly the same market shortened. FLAGGED because this row's source_type is "
-  "'volunteer', not 'rescued' like the other 27 - a volunteer seedling attributed to a shop is odd "
-  "and may mean something else entirely (a place, a river, a plant that came up in a Long River "
-  "purchase). One row, 2026-06-07, 'Romaine Roots'.")
-
-# ── Greenfield: co-op vs market is the trap ──────────────────────────────────────────────────────
+m(P, "Long River", "Long River Produce Market", "market", "Deerfield, MA", "", "high", "merge",
+  "DAVE RULED 2026-09-03: 'Long River is Long River Produce Market: alias for it.' Merged into the "
+  "26-row canonical spelling. The design flagged it because this row's source_type is 'volunteer' "
+  "rather than 'rescued' like the others, and a volunteer seedling credited to a shop reads oddly - "
+  "but source_type is a separate axis this migration does not touch, so the oddity stays visible on "
+  "the row where it belongs instead of being resolved by a guess about the place.")
 m(P, "Greenfield Co-op", "Greenfield Farmers Co-op", "market", "Greenfield, MA", "", "high",
   "merge", "Shortening of the row below; both source_type='rescued'. Also appears in inventory.")
 m(I, "Greenfield Co-op", "Greenfield Farmers Co-op", "market", "Greenfield, MA", "", "high",
@@ -168,12 +167,17 @@ m(I, "Greenfield Co-op", "Greenfield Farmers Co-op", "market", "Greenfield, MA",
 m(P, "Greenfield Farmers Co-op", "Greenfield Farmers Co-op", "market", "Greenfield, MA", "",
   "high", "new", "The fuller name; adopted as canonical.")
 m(P, "Greenfield Farmers Market", "Greenfield Farmers Market", "market", "Greenfield, MA", "",
-  "medium", "REVIEW",
-  "*** DELIBERATELY NOT MERGED with the co-op, and Dave should confirm. *** A farmers market and a "
-  "co-op store are different places that happen to share two words. This is precisely the kind of "
-  "near-name a careless pass would fuse. Different source_type too (nursery_transplant vs rescued).")
-
-# ── The Shawski / Skawski trio ───────────────────────────────────────────────────────────────────
+  "high", "new",
+  "DAVE RULED 2026-09-03: 'GFM - different.' Confirmed distinct from the Greenfield co-op; the "
+  "design's refusal to fuse two near-names was right. He then stated the requirement the market "
+  "makes concrete, verbatim: 'I need to be able to record Dave\'s Natural Garden or Bostrom Farms "
+  "(vendor) and also provide Greenfield Farmers Market (where they were - vendors move around AND "
+  "often have their own brick and mortar stores/shops/stands where I might buy something).' "
+  "VERIFIED SUPPORTED, not assumed: both source_id and acquired_from_source_id REFERENCE "
+  "public.source(id) (0a-additive-ddl.sql:280-281, 284-285), so one source row can be the vendor on "
+  "one purchase and the venue on another, and because the venue sits on the PARENT row rather than "
+  "on the vendor, a vendor who trades at several markets needs no duplicate rows. A market is a "
+  "venue that hosts vendors; the vendor is who grew it.")
 m(P, "Shawski Farms", "Shawski Farms", "farm_stand", "", "", "high", "new",
   "Majority spelling (2 of 4 rows) adopted as the label. SEE THE SPELLING FLAG on 'Skawski Farms'.")
 m(P, "Shawski Farm", "Shawski Farms", "farm_stand", "", "", "high", "merge",
@@ -225,16 +229,16 @@ m(I, "Gardens at Mathews", "Own garden", "own_garden", "", "", "high", "merge",
   "name on his own site). The design read it as an unidentified business because nothing in the "
   "data says otherwise; the answer was outside the data. Merged into the same 'Own garden' source "
   "as the home-saved row.")
-m(P, "Class Grass Garden Canter", "Class Grass Garden Center", "nursery", "", "", "medium",
-  "REVIEW",
-  "PARTLY RULED 2026-09-03: Dave confirmed 'garden canter = garden center', so the second half is "
-  "settled and applied. THE FIRST HALF IS NOT: 'Class Grass' was never put to him separately and is "
-  "still an unverified transcription of the same voice entry that produced 'Canter'. A mishearing "
-  "that corrupted one word of a name is not evidence the other words survived - and half-correcting "
-  "a garbled name is how a wrong name acquires a false air of having been checked. Still REVIEW "
-  "until he confirms the business name; one row, nothing blocked by waiting.")
-
-# ── General retail ───────────────────────────────────────────────────────────────────────────────
+m(P, "Class Grass Garden Canter", "Class Grass Garden Center", "nursery", "Granby, MA", "",
+  "high", "new",
+  "DAVE SUPPLIED THE ANSWER 2026-09-03 with a screenshot of the business's own site: CLASS GRASS "
+  "GARDEN CENTER, Granby MA, (413) 467-7979. So 'Class Grass' was never garbled - only 'Canter' was, "
+  "and it is 'Center'. Worth recording WHY the caution was still right: after he confirmed the "
+  "Canter->Center half, the remaining words were an unverified transcription from the same voice "
+  "entry, and there was no way from inside the data to tell a real name from a second mishearing. "
+  "Waiting cost one row's delay; guessing 'Class Grass' wrong would have created a business that "
+  "does not exist and looked checked.",
+  residue="phone (413) 467-7979 - no column for it in this migration; belongs in notes")
 m(P, "Home Depot", "Home Depot", "retail", "", "", "high", "merge",
   "Same retailer as the 15 inventory rows - one of the 9 shared places.")
 m(I, "Home Depot", "Home Depot", "retail", "", "", "high", "new", "15 rows across 4 item categories.")
@@ -281,10 +285,11 @@ m(I, "Mary's Heirloom Seeds online order (HOMESTEAD discount); July 2026 intake.
           "no column anywhere and must stay")
 m(I, "Gurney's Seed & Nursery Co.", "Gurney's Seed & Nursery Co.", "seed_company", "", "", "high",
   "new", "One row; metadata.vendor matches the string exactly.")
-m(I, "Livingston packet", "Livingston Seed", "seed_company", "", "", "medium", "REVIEW",
-  "metadata.vendor reads bare 'Livingston'. Expanding it to 'Livingston Seed' is an inference from "
-  "the name - flagged rather than assumed.",
-  residue="nothing")
+m(I, "Livingston packet", "Livingston Seed", "seed_company", "", "", "high", "new",
+  "DAVE RULED 2026-09-03: 'expand livingston'. metadata.vendor reads bare 'Livingston', read off a "
+  "PHOTO of the physical packet (metadata.origin='physical-packet-photo-2026-06-05'). One row: the "
+  "Alpine strawberry, which he says was bought in spring 2026 and never planted out.",
+  residue="nothing - 'packet' is the item format, already implied by category='seeds'")
 m(I, "Hillfolk Seed Collective", "Hillfolk Seed Collective", "seed_company", "", "", "high", "new",
   "2 rows; metadata.vendor matches exactly. A small collective rather than a catalogue company, but "
   "the kind is the same.")
