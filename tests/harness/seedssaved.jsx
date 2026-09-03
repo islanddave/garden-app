@@ -37,11 +37,15 @@ const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
 // would quietly re-admit exactly the rows this excludes"). A fixture row without it is a row no
 // real database can produce, and it silently emptied the picker: gate:seeds-saved caught it as
 // "0 candidates offered, expected >=1" rather than passing a sheet with nothing in it.
+// `crop_slug` on the TRACKED rows too, and for the same reason it went on the untracked ones:
+// the PAGE-level crop filter renders only when the lots span more than one crop, so without
+// these the layout gate would never render the control it is supposed to be measuring. Four
+// lots across three crops keeps the filter live while leaving the pinned counts unambiguous.
 const TRACKED = [
-  { id: 'i1', name: 'Money Plant packet',   variety_name: 'Money Plant (self-saved, variety unrecorded)', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(4) },
-  { id: 'i2', name: 'Cinderella packet',    variety_name: "Cinderella (Rouge Vif d'Etampes)",             status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(0) },
-  { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  status: 'active', seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12) },
-  { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40) },
+  { id: 'i1', name: 'Money Plant packet',   variety_name: 'Money Plant (self-saved, variety unrecorded)', crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(4) },
+  { id: 'i2', name: 'Cinderella packet',    variety_name: "Cinderella (Rouge Vif d'Etampes)",             crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(0) },
+  { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  crop_slug: 'mustard', status: 'active', seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12) },
+  { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 crop_slug: 'summer_squash', status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40) },
 ]
 // `crop_slug` is the `pv.crop_type_slug` alias the list query added for V5-SEEDSAVEDFILTER-001, and
 // it is on these rows so the crop facet actually RENDERS under the gate. It would otherwise be

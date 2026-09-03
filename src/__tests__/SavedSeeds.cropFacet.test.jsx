@@ -241,3 +241,76 @@ describe('V5-SEEDSAVEDFILTER-001 — crop facet on the packet picker', () => {
     expect(shows('Leaf 0'), 'reopening must not land on a stale crop narrowing').toBe(true)
   })
 })
+
+// ── The PAGE-level crop filter (second pass) ─────────────────────────────────────────────────────
+// Dave looked for a filter on the page twice and did not find it, because the first pass put it only
+// inside the track-a-lot sheet. His rule: "there is no point in having to click to get to a
+// search/sort/filter." These cover the inline control AND the one row it must never hide.
+const lot = (over = {}) => packet({
+  seed_stage: 'stored', seed_process: 'dry', stage_entered_at: daysAgo(30), ...over,
+})
+const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
+
+describe('V5-SEEDSAVEDFILTER-001 — the crop filter on the page itself', () => {
+  const TOM_A = lot({ id: 'l-tom-a', name: '1884', variety_name: '1884', crop_slug: 'tomato' })
+  const TOM_B = lot({ id: 'l-tom-b', name: 'Ukrainian Purple', variety_name: 'Ukrainian Purple', crop_slug: 'tomato' })
+  const MELON = lot({ id: 'l-melon', name: 'Sugar Baby', variety_name: 'Sugar Baby', crop_slug: 'watermelon' })
+  // Dave's real prod shape on 2026-09-03: tomato x2 + watermelon x1, all stored.
+  const LOTS = [TOM_A, TOM_B, MELON]
+
+  const cardText = () =>
+    screen.queryAllByTestId('seed-lot-card').map((c) => c.textContent)
+  const cardShows = (n) => cardText().some((t) => t.includes(n))
+
+  it('renders INLINE, with no tap to reach it', async () => {
+    await mount(LOTS)
+    // The control is present on first paint — not after opening a sheet, which is the whole point.
+    expect(screen.queryByTestId('tracked-crop-filter'), 'filter must be on the page, not behind a tap')
+      .toBeTruthy()
+    expect(cardText().length, 'instrument: the lots rendered').toBe(3)
+  })
+
+  it('is absent when it could not change the answer', async () => {
+    // One crop across every lot: a chip row here can only ever be furniture.
+    await mount([TOM_A, TOM_B])
+    expect(cardText().length, 'instrument: the lots rendered').toBe(2)
+    expect(screen.queryByTestId('tracked-crop-filter')).toBeNull()
+  })
+
+  it('narrows the lots, and the negative is a lot of a different crop', async () => {
+    await mount(LOTS)
+    expect(cardShows('Sugar Baby'), 'instrument: the row we exclude is there first').toBe(true)
+    await clickText('Tomato')
+    expect(cardShows('1884')).toBe(true)
+    expect(cardShows('Ukrainian Purple')).toBe(true)
+    expect(cardShows('Sugar Baby'), 'a watermelon must not survive a tomato filter').toBe(false)
+  })
+
+  it('NEVER hides an overdue ferment, and says why it is still there', async () => {
+    // THE SAFETY TEST. fermentUrgency alarms at 5 days and this page carries the only overdue-ferment
+    // warning in the app — past that point the seed sprouts in the jar and the lot is finished. A
+    // filter that hides it is doing exactly what was asked and costing a lot.
+    const ALARM = lot({
+      id: 'l-alarm', name: 'Gong Bao', variety_name: 'Gong Bao', crop_slug: 'pepper',
+      seed_stage: 'fermenting', seed_process: 'wet', stage_entered_at: daysAgo(7),
+    })
+    await mount([...LOTS, ALARM])
+    expect(cardShows('Gong Bao'), 'instrument: the alarming lot rendered').toBe(true)
+
+    await clickText('Tomato')
+    expect(cardShows('Sugar Baby'), 'the ordinary non-match is gone').toBe(false)
+    expect(cardShows('Gong Bao'), 'an alarming ferment must survive its own exclusion').toBe(true)
+    expect(screen.getByTestId('tracked-urgent-kept').textContent)
+      .toContain('outside this filter')
+  })
+
+  it('tells "no lots match" apart from "you have no lots"', async () => {
+    await mount(LOTS)
+    await clickText('Watermelon')
+    expect(cardShows('Sugar Baby')).toBe(true)
+    expect(cardShows('1884')).toBe(false)
+    // And the teaching empty state must NOT appear — it answers "how do I start", which is the wrong
+    // question for someone who has three lots and a filter on.
+    expect(screen.queryByTestId('saved-seeds-empty')).toBeNull()
+  })
+})

@@ -430,6 +430,11 @@ export default function SavedSeeds() {
   // types, re-anchoring the list under a moving thumb; gating on `untracked` alone would still
   // re-evaluate mid-session if a row changed underneath. Snapshot at open, hold for the sheet's life.
   const [cropFacetOn, setCropFacetOn] = useState(false)
+  // The PAGE-level crop filter's selection (V5-SEEDSAVEDFILTER-001 second pass). Separate state from
+  // `cropSel` above, deliberately: that one narrows the packets you might START tracking, this one
+  // narrows the lots you ARE tracking. Sharing one Set would make choosing a crop in the sheet
+  // silently reorder the page behind it — two different questions wearing the same control.
+  const [trackedCropSel, setTrackedCropSel] = useState(() => new Set())
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
   const [note, setNote]       = useState('')
@@ -546,9 +551,49 @@ export default function SavedSeeds() {
     return new Map(rows.map((p) => [String(p.id), p.name || p.variety_ref?.name || '']))
   }, [plantCache.data])
 
+  // ── V5-SEEDSAVEDFILTER-001 (second pass) — the crop filter on the PAGE, not behind a tap ────────
+  // The first pass put this only inside the "Track a saved-seed lot" sheet, and Dave went looking for
+  // it twice on the page itself and did not find it. His rule, verbatim: "there is no point in having
+  // to click to get to a search/sort/filter." A control you have to open something to reach is not a
+  // filter, it is a preference buried in a menu — so it renders inline, above the stage sections.
+  //
+  // I argued against this originally on the grounds that the list held three rows. That reasoning was
+  // measured and still wrong in the way that matters: the same release added the door that makes the
+  // list grow, and a filter that only appears once the list is already unmanageable is a filter that
+  // arrives late. It renders whenever it can actually DO something (more than one crop among the
+  // lots) and is otherwise absent — which is a statement about capability, not about a tap budget.
+  const trackedCropOptions = useMemo(() => {
+    const counts = new Map()
+    for (const i of tracked) {
+      if (!i.crop_slug) continue
+      counts.set(i.crop_slug, (counts.get(i.crop_slug) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([slug]) => ({ value: slug, label: cropLabelBySlug.get(slug) || prettySlug(slug) }))
+  }, [tracked, cropLabelBySlug])
+  const trackedCropPinned = useMemo(
+    () => trackedCropOptions.slice(0, 2).map((o) => o.value), [trackedCropOptions])
+
+  // THE ONE ROW A FILTER MAY NEVER HIDE. `fermentUrgency` is the only overdue-ferment warning in the
+  // app — past day 5 the seed sprouts in the jar and the lot is finished — and it is computed per
+  // rendered row, so a row filtered out takes its own alarm with it. Silently. The filter would be
+  // doing exactly what the user asked, and the cost would be a dead lot rather than a missed row.
+  // So an alarming lot survives its own exclusion and is COUNTED, so the page can say why it is
+  // there. This is the R-9 rule from the regression review, implemented rather than noted.
+  const visibleTracked = useMemo(() => {
+    if (!trackedCropSel.size) return tracked
+    return tracked.filter((i) => trackedCropSel.has(i.crop_slug) || fermentUrgency(i))
+  }, [tracked, trackedCropSel])
+  const keptUrgent = useMemo(
+    () => (trackedCropSel.size
+      ? visibleTracked.filter((i) => !trackedCropSel.has(i.crop_slug) && fermentUrgency(i)).length
+      : 0),
+    [visibleTracked, trackedCropSel])
+
   const byStage = useMemo(() => {
     const m = Object.fromEntries(STAGES.map((s) => [s, []]))
-    for (const i of tracked) m[i.seed_stage].push(i)
+    for (const i of visibleTracked) m[i.seed_stage].push(i)
     // Oldest first inside a stage: the lot that has sat longest is the one to check. Keyed on
     // stage_entered_at for the same reason the card is (BUG-SEEDELAPSEDUPDATED-001) — sorting by
     // updated_at ordered the list by "last edited", so touching a lot moved it to the bottom of a
@@ -565,7 +610,7 @@ export default function SavedSeeds() {
       })
     }
     return m
-  }, [tracked])
+  }, [visibleTracked])
 
   const openAdvance = (item, toStage, process = null) => {
     setAdvancing({ item, toStage, process })
@@ -761,6 +806,49 @@ export default function SavedSeeds() {
             Add the packet →
           </Link>
         </div>
+      )}
+
+      {/* THE FILTER, INLINE — no tap to reach it. Rendered above the stage sections rather than
+          inside any sheet, and only when there is more than one crop among the lots, because a chip
+          row that cannot change the answer is furniture. Selection defaults to EMPTY (show all),
+          which is not a style choice: scripts/layout-gate/seeds-saved-clearance.mjs pins the
+          rendered card and section counts EXACTLY, so a default-on filter would red the gate. */}
+      {trackedCropOptions.length > 1 && (
+        <div style={{ marginBottom: 16 }}>
+          <FilterChipRow
+            options={trackedCropOptions}
+            selected={trackedCropSel}
+            pinned={trackedCropPinned}
+            trayMaxHeight={180}
+            onToggle={(v) => setTrackedCropSel((prev) => {
+              const next = new Set(prev)
+              if (next.has(v)) next.delete(v); else next.add(v)
+              return next
+            })}
+            onClear={() => setTrackedCropSel(new Set())}
+            aria-label="Filter your saved lots by crop"
+            data-testid="tracked-crop-filter"
+          />
+          {/* An overdue ferment is never hidden, so say so rather than letting the count look like a
+              filter that does not work. Ambient text, not a toast or a badge — the Reward UX rule
+              puts interrupts out of scope, and this is an operational note either way. */}
+          {keptUrgent > 0 && (
+            <p data-testid="tracked-urgent-kept"
+               style={{ margin: '8px 0 0', color: P.statusInkGold, fontSize: '0.78rem', lineHeight: 1.5 }}>
+              Still showing {keptUrgent} lot{keptUrgent === 1 ? '' : 's'} outside this filter —
+              {keptUrgent === 1 ? ' its ferment needs checking.' : ' their ferments need checking.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Two emptinesses on this list too, and the teaching empty state above answers only the first.
+          Without this branch, filtering to a crop you have no lots of would render the whole
+          "here is how to save seed" panel at someone who has already saved seed. */}
+      {tracked.length > 0 && visibleTracked.length === 0 && (
+        <p data-testid="tracked-no-match" style={{ color: P.mid, fontSize: '0.85rem', marginBottom: 16 }}>
+          No saved lots match this filter.
+        </p>
       )}
 
       {STAGES.map((s) => {

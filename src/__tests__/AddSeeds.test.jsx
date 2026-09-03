@@ -149,11 +149,21 @@ describe('AddSeeds — chooser', () => {
     expect(screen.getByRole('radio', { name: 'Photo of packets' }).querySelector('svg')).not.toBeNull()
   })
 
-  it('One item navigates to the single-item add form', async () => {
+  it('One item navigates to the add form WITH seeds preselected', async () => {
+    // UPDATED 2026-09-03. This previously asserted a bare `/inventory/add`, which is what the code
+    // did and is not what it should have done: the route is reached only from a page titled "Add
+    // seeds", so landing on an unfilled generic form asks the user to re-state what they already
+    // said. Dave hit it and reported it. The destination has always read these two params
+    // (InventoryAdd.jsx:39-40) and the sibling caller on /seeds/saved has always passed them, so
+    // this caller was the odd one out rather than the params being new.
+    //
+    // The old assertion was a characterization test — it encoded the behaviour faithfully, which is
+    // why it went red on the fix rather than catching the defect. Asserted as the exact string
+    // rather than a substring so a future caller cannot drop one param and stay green.
     routeFetch()
     await renderAddSeeds()
     fireEvent.click(screen.getByRole('radio', { name: 'One item' }))
-    expect(navigateSpy).toHaveBeenCalledWith('/inventory/add')
+    expect(navigateSpy).toHaveBeenCalledWith('/inventory/add?type=consumable&category=seeds')
   })
 })
 

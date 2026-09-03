@@ -226,7 +226,17 @@ export default function AddSeeds() {
     setMode(value)
     setBanner(null)
     if (value === 'one_item') {
-      navigate('/inventory/add')
+      // PRESELECTED, and it always should have been. This route is reached only from a page titled
+      // "Add seeds", so arriving at a blank generic form and being asked to choose "consumable" and
+      // "seeds" by hand makes the user re-state what they already said — Dave, 2026-09-03: "Add
+      // Seeds takes me to a generic inventory form — it should preselect consumable + type (seed) or
+      // not exist at all."
+      //
+      // The params are not new and the destination already honours them: InventoryAdd reads `type`
+      // and `category` from the query string (InventoryAdd.jsx:39-40), and the sibling caller on
+      // /seeds/saved has always passed them (SavedSeeds.jsx ADD_PACKET_HREF). One destination, two
+      // callers, and only one of them said what it wanted. That is the whole defect.
+      navigate('/inventory/add?type=consumable&category=seeds')
       return
     }
     if (value === 'photo') {
