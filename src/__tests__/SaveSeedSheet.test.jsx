@@ -258,6 +258,52 @@ describe('V4-SAVESEEDBTN-001 — the success path has an end', () => {
     }
   })
 
+  // V5-SEEDSAVEDFILTER-001 — a lot that joined a QUEUE lands on the queue, not on its own page.
+  // The three tests below are one decision seen from three sides, and each is worthless without the
+  // other two: the first alone is satisfied by navigating to /seeds/saved unconditionally, and the
+  // untracked case at :216 above is what stops that.
+  it('a TRACKED lot lands on /seeds/saved — the queue it just joined', async () => {
+    // Why this is not cosmetic routing. /seeds/saved holds the only overdue-ferment warning in the
+    // app (past day 5 the seed sprouts in the jar and the lot is finished), and before this change
+    // NOTHING navigated there — the page had one inbound link in the whole frontend, a row in the
+    // collapsed More sheet. A user who saved seed was told the lot existed and then shown a
+    // different page, so the queue with a clock running on their lot was never seen.
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-process-wet'))
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(navigateSpy.mock.calls[0][0]).toBe('/seeds/saved')
+    // One argument, same reason as the lot route: /seeds/saved is not registered overlayable.
+    expect(navigateSpy.mock.calls[0][1]).toBeUndefined()
+  })
+
+  it('an UNTRACKED lot still lands on its own page — it has no row in the queue', async () => {
+    // The negative that stops the rule collapsing into "always go to /seeds/saved". A lot with no
+    // stage does not appear on that page at all, so sending the user there would land them looking
+    // at a list that does not mention the thing they just saved.
+    apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/inv-9')
+  })
+
+  it('a lot whose STAGE WRITE FAILED lands on its own page, not the queue', async () => {
+    // The toast already says tracking did not start. Dropping the user into a queue their lot is
+    // NOT in would contradict it — they would scan the list for a row that was never written and
+    // conclude the save failed too.
+    apiFetchSpy.mockImplementation((path) =>
+      String(path).includes('/seed-stage')
+        ? Promise.reject(new Error('stage write failed'))
+        : Promise.resolve({ id: 'inv-9' }))
+    openSheet()
+    fireEvent.click(screen.getByTestId('save-seed-process-wet'))
+    fireEvent.click(screen.getByTestId('save-seed-submit'))
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/inv-9')
+  })
+
   it('surfaces a create failure and does NOT route anywhere', async () => {
     apiFetchSpy.mockRejectedValue(Object.assign(new Error('variety_id is required for seeds'), { status: 400 }))
     openSheet()

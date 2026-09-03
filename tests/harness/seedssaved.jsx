@@ -43,11 +43,28 @@ const TRACKED = [
   { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  status: 'active', seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12) },
   { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40) },
 ]
+// `crop_slug` is the `pv.crop_type_slug` alias the list query added for V5-SEEDSAVEDFILTER-001, and
+// it is on these rows so the crop facet actually RENDERS under the gate. It would otherwise be
+// measured by nothing: the facet needs more than MAX_CANDIDATES (25) untracked rows AND at least two
+// distinct crops, and this fixture had four rows and no crop at all — so CI would have reported
+// "narrowing control present" about the search box while the chip row it was added to check went
+// unseen. A control the layout gate never renders is a control whose tap targets were never measured.
+//
+// COUNTS ARE THE PROD SHAPE, not padding: pepper dominant, tomato second, a small tail. The pinned
+// chips are DERIVED from those counts (the top two), so a fixture with a flat or tied distribution
+// silently pins the wrong crops and stops exercising the collapsed `More ▾` tray.
+const bulk = (prefix, crop, n, label) => Array.from({ length: n }, (_, i) => ({
+  id: `${prefix}${i}`, name: `${label} ${i + 1} packet`, variety_name: `${label} ${i + 1}`,
+  status: 'active', seed_stage: null, crop_slug: crop, updated_at: daysAgo(9),
+}))
 const UNTRACKED = [
-  { id: 'u1', name: 'Megatron packet',  variety_name: 'Megatron F1 (jumbo jalapeno)',  status: 'active', seed_stage: null, updated_at: daysAgo(9) },
-  { id: 'u2', name: 'Biquinho packet',  variety_name: 'Biquinho Red & Yellow Blend',   status: 'active', seed_stage: null, updated_at: daysAgo(9) },
-  { id: 'u3', name: 'Straightneck pkt', variety_name: 'Early Prolific Straightneck',   status: 'active', seed_stage: null, updated_at: daysAgo(9) },
-  { id: 'u4', name: '1884 tomato',      variety_name: '1884',                          status: 'active', seed_stage: null, updated_at: daysAgo(9) },
+  { id: 'u1', name: 'Megatron packet',  variety_name: 'Megatron F1 (jumbo jalapeno)',  status: 'active', seed_stage: null, crop_slug: 'pepper',        updated_at: daysAgo(9) },
+  { id: 'u2', name: 'Biquinho packet',  variety_name: 'Biquinho Red & Yellow Blend',   status: 'active', seed_stage: null, crop_slug: 'pepper',        updated_at: daysAgo(9) },
+  { id: 'u3', name: 'Straightneck pkt', variety_name: 'Early Prolific Straightneck',   status: 'active', seed_stage: null, crop_slug: 'summer_squash', updated_at: daysAgo(9) },
+  { id: 'u4', name: '1884 tomato',      variety_name: '1884',                          status: 'active', seed_stage: null, crop_slug: 'tomato',        updated_at: daysAgo(9) },
+  ...bulk('up', 'pepper', 12, 'Chile'),
+  ...bulk('ut', 'tomato', 7, 'Slicer'),
+  ...bulk('ul', 'lettuce', 4, 'Leaf'),
 ]
 
 // V4-SEEDLINK-001 — candidates for the "Saved from" picker in the advance sheet. Deliberately

@@ -909,9 +909,24 @@ export const handler = async (event) => {
       // seed_lot_stage_log is already in this directory's L-081 Phase-4 relation set (the /seed-stage
       // GET and POST both name it) and every column read here is already contracted in
       // seed-stage-columns.test.js, so this adds no relation and needs no contract edit.
+      //
+      // V5-SEEDSAVEDFILTER-001 — `crop_type_slug` is projected as `crop_slug` so the Saved Seeds
+      // packet picker can filter by crop. It is the ONLY fully-populated axis on that page
+      // (263/263 on prod) and the only one a gardener names the thing by; every other candidate was
+      // measured and rejected. Aliased rather than passed through bare because `i.*` already floods
+      // this row shape and a name that says which side it came from is worth the four characters.
+      //
+      // `cultivar` is ALREADY joined immediately below, so this adds no relation and does not trip
+      // the L-081 join ratchet — but it DOES add a column to a contracted table, so
+      // AUDIT_COLUMNS.cultivar in cultivar-columns.test.js moves in this same commit or CI reds in
+      // both directions. Verified on live prod before writing this: `crop_type_slug` IS projected by
+      // the `cultivar` VIEW, not merely present on the `plant_varieties` base table — the distinction
+      // that made unit_weights/weight_confidence a runtime 500 (BUG-SEEDDETAIL500-001) with nothing
+      // failing at deploy time.
       const rows = cats && cats.length
         ? await sql`
-            SELECT i.*, pv.display_name AS variety_name, se.entered_at AS stage_entered_at
+            SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
+                   se.entered_at AS stage_entered_at
             FROM inventory_items i
             LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
             LEFT JOIN LATERAL (
@@ -929,7 +944,8 @@ export const handler = async (event) => {
             ORDER BY i.created_at DESC
           `
         : await sql`
-            SELECT i.*, pv.display_name AS variety_name, se.entered_at AS stage_entered_at
+            SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
+                   se.entered_at AS stage_entered_at
             FROM inventory_items i
             LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
             LEFT JOIN LATERAL (

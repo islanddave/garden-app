@@ -380,11 +380,27 @@ export default function SaveSeedSheet({ planting, onClose }) {
         ? { message: "Seed lot saved — couldn't start tracking it", tone: 'error' }
         : { message: 'Seed lot saved', tone: 'success' })
       if (onClose) onClose()
-      // The action needs an end, and the lot's own page is it: /inventory/:id is where "Saved from"
-      // renders, so the user lands looking at the provenance they just created. A PLAIN navigate,
-      // not useOverlayNavigate — /inventory/:id is not registered `overlayable`, so a background in
-      // route state would leave the page tree on this planting and render nothing at all.
-      if (lot?.id) navigate(`/inventory/${lot.id}`)
+      // WHERE THE ACTION ENDS — and it now depends on whether the lot joined a QUEUE.
+      //
+      // Until V5-SEEDSAVEDFILTER-001 this always went to /inventory/:id, with a good reason: that is
+      // where "Saved from" renders, so the user lands looking at the provenance they just created.
+      // The reason is still good, but it only covers the lot that has no stage. A lot that DID get a
+      // process is now sitting in the fermenting or drying queue on /seeds/saved with a clock
+      // running on it — and that page had no entry point from anywhere the user had just been. It
+      // holds the only overdue-ferment warning in the app (past day 5 the seed sprouts in the jar and
+      // the lot is finished), so the queue is exactly what a freshly-tracked lot should be shown, and
+      // showing it once here is what teaches the page exists at all.
+      //
+      // Split rather than switched wholesale: an untracked lot has no row on /seeds/saved, so sending
+      // it there would land the user on a page that does not mention the thing they just saved.
+      //
+      // `stageFailed` deliberately routes to the lot page too. The toast already says tracking did
+      // not start; dropping the user into a queue their lot is NOT in would contradict it.
+      //
+      // A PLAIN navigate, not useOverlayNavigate — neither route is registered `overlayable`, so a
+      // background in route state would leave the page tree on this planting and render nothing.
+      if (stageWritten && !stageFailed) navigate('/seeds/saved')
+      else if (lot?.id) navigate(`/inventory/${lot.id}`)
     } catch (err) {
       setError(err?.message || "Couldn't save the seed lot")
     } finally {

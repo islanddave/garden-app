@@ -1,8 +1,9 @@
 {
-  "version": "4.104.0",
+  "version": "4.105.0",
   "date": "2026-09-03",
   "highlights": [
-    "Saving pepper seed now has an option that fits it. \"Fresh — rinse and dry\" covers seed scraped out of a ripe fruit that needs no fermenting: peppers, squash. Previously neither choice was true — one would have filed your peppers as fermenting",
-    "A lot that went into drying wet now says so on the card, with a note about airflow and expecting days rather than hours. It only appears where it applies"
+    "Saving seed now lands you on the Saved Seeds page, where the lot you just started is sitting with its clock running. Before this it dropped you on the packet's own page, and the queue — the only place that warns you a ferment has gone too long — was never shown",
+    "Inventory has a \"Saved seeds\" chip in the header now, so the page is reachable from where your seed actually lives instead of only from a row inside the More menu",
+    "The packet picker can filter by crop. Your two biggest crops sit on the row and the rest are one tap away — and it finds packets whose names never mention the crop, which typing the crop name cannot"
   ]
 }

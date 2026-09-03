@@ -23,6 +23,8 @@ import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { P } from '../lib/tokens.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { Sheet, PlantingSelect, Badge } from '../components/forms'
+import FilterChipRow from '../components/forms/FilterChipRow.jsx'
+import { useCropTypes } from '../hooks/useCropTypes.js'
 import Icon from '../components/Icon.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
@@ -203,6 +205,16 @@ const ADD_PACKET_HREF = '/inventory/add?type=consumable&category=seeds&return=%2
 // mechanism is identical, only the number is surface-specific.
 const MAX_CANDIDATES = 25
 
+// Last-resort chip label when the crop-type vocabulary has no row for a slug the packets DO carry.
+// Reachable in two real ways, so it is not defensive padding: useCropTypes resolves to an empty list
+// on any fetch failure (documented, non-fatal), and a variety can be typed to a crop_type that was
+// later renamed or scoped out of the 'garden' vocabulary. A raw `winter_squash` on a chip is worse
+// than an imperfect "Winter squash", and an unlabelled chip is worse than both.
+const prettySlug = (s) => {
+  const t = String(s ?? '').replace(/_/g, ' ').trim()
+  return t ? t[0].toUpperCase() + t.slice(1) : ''
+}
+
 // The row's first line: what the seed IS. Unchanged from the shipped behaviour.
 const candidateTitle = (i) => i.variety_name || i.name || ''
 
@@ -338,9 +350,16 @@ function fermentUrgency(item) {
 // so both ride through harmlessly; the day either is added, a stale round-trip from this page would
 // null the parent plant off the very lot the count belongs to. The subset test below is what
 // forced them in here rather than only there, which is the seam working as intended.
+// `crop_slug` joins `variety_name` and `stage_entered_at` as the THIRD list-only projection — added
+// with the crop facet (V5-SEEDSAVEDFILTER-001). It is a `pv.crop_type_slug` alias, not a column on
+// inventory_items, so echoing it back would put a key in the wide PUT body that names no column.
+// It rides harmlessly today only because the handler's SET list does not mention it — exactly the
+// delay fuse described above for source_plant_id/source_kind, and the reason this list is a strip
+// rather than a whitelist. Stripping it now costs nothing and removes the fuse.
 const LIST_ROW_PUT_STRIP = [
-  'variety_name', 'stage_entered_at', 'featured_photo_view_url', 'featured_is_explicit', 'germination',
-  'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id', 'source_kind',
+  'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
+  'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
+  'source_kind',
 ]
 
 /** A complete wide-PUT body from a list row, with the count applied. Pure, exported for test. */
@@ -399,6 +418,18 @@ export default function SavedSeeds() {
   // BUG-SEEDCANDIDATEAMBIG-001 — the picker's filter box. Cleared whenever the sheet closes or the
   // user steps back to it, so re-opening never lands on a stale query hiding the packet they came for.
   const [candidateQuery, setCandidateQuery] = useState('')
+  // V5-SEEDSAVEDFILTER-001 — the crop facet's selection. A Set, because FilterChipRow is multi-select
+  // OR and pepper+tomato together are 51% of the collection; single-select would make the two most
+  // common answers mutually exclusive. Component-local and cleared with the query on every close,
+  // for the reason the line above gives about a stale query — and MORE so for a chip than for text,
+  // because typed text is visibly sitting in the box while a selected chip is easy to scroll past.
+  // FilterChipRow's own contract already declares its selection session-ephemeral (FROZEN.md).
+  const [cropSel, setCropSel] = useState(() => new Set())
+  // Whether the facet renders at all, decided ONCE when the sheet opens rather than derived per
+  // render. Gating on the live match count would make the control appear and vanish as the user
+  // types, re-anchoring the list under a moving thumb; gating on `untracked` alone would still
+  // re-evaluate mid-session if a row changed underneath. Snapshot at open, hold for the sheet's life.
+  const [cropFacetOn, setCropFacetOn] = useState(false)
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
   const [note, setNote]       = useState('')
@@ -442,15 +473,62 @@ export default function SavedSeeds() {
     () => (items ?? []).filter((i) => !STAGES.includes(i.seed_stage) && i.status === 'active'),
     [items],
   )
+  // ── V5-SEEDSAVEDFILTER-001 — the crop facet ─────────────────────────────────────────────────────
+  // Options come from the ROWS, not from the crop-type vocabulary: a chip that matches nothing is a
+  // control that can only disappoint, and 62 of the app's crop types have no packet here at all.
+  // Ordered by packet count DESCENDING, deliberately, not alphabetically. Measured on prod: pepper 95
+  // and tomato 40 are 51% of 263 rows, and 30 slugs hold exactly one. Alphabetical would bury
+  // `tomato` two-thirds down the tray behind beet, broccoli, carrot and columbine — frequency order
+  // puts the reachable answers where the thumb already is. FilterChipRow's pinned-first re-sort is
+  // stable, so this order survives into the tray (FilterChipRow.jsx:55-63).
+  //
+  // Labels come from useCropTypes, the app's controlled vocabulary, rather than a slug prettifier
+  // written here: a second naming authority for crop names is how two surfaces start disagreeing
+  // about what a crop is called. The hook is non-fatal by design and resolves to an empty list on
+  // any failure, so the fallback below is its documented degrade path, not a guess.
+  const { cropTypes } = useCropTypes()
+  const cropLabelBySlug = useMemo(() => {
+    const m = new Map()
+    for (const t of cropTypes ?? []) if (t?.slug) m.set(t.slug, t.display_name || prettySlug(t.slug))
+    return m
+  }, [cropTypes])
+  const cropOptions = useMemo(() => {
+    const counts = new Map()
+    for (const i of untracked) {
+      if (!i.crop_slug) continue
+      counts.set(i.crop_slug, (counts.get(i.crop_slug) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([slug]) => ({ value: slug, label: cropLabelBySlug.get(slug) || prettySlug(slug) }))
+  }, [untracked, cropLabelBySlug])
+  // DERIVED, not the literal ['pepper','tomato'] the measurement suggests. Those two are 51% of the
+  // collection TODAY; hardcoding them would freeze a fact about one September into the source, and
+  // this page exists to serve a collection that is actively growing — the whole point of the autumn
+  // seed-save is that these counts move. Because cropOptions is already count-descending, the top
+  // two ARE the two worth pinning, whatever they turn out to be next year.
+  const cropPinned = useMemo(() => cropOptions.slice(0, 2).map((o) => o.value), [cropOptions])
+
   // matched -> visible -> hiddenCount, the VarietyPicker/PlantingSelect idiom. `matched` is the FULL
   // result set and `visible` is what renders, so the footer can say how much is being held back
   // instead of the list simply ending.
+  //
+  // The two predicates are ANDed and they match DIFFERENT OBJECTS, which is worth stating because it
+  // will look like a bug the first time they disagree: the text box matches row TEXT — variety_name,
+  // name, and the free-text `source`, which on prod holds whole intake sentences carrying order
+  // numbers and receipt dates — while a chip matches the joined `crop_type_slug`. So typing "pepper"
+  // and tapping Pepper are not the same query and will not return the same set. Measured on prod:
+  // 232 of 263 rows contain their own crop word somewhere in that text, so the chip's real work is
+  // the remaining ~31 — including 12 tomato packets whose names never say "tomato".
   const matchedCandidates = useMemo(() => {
     const q = candidateQuery.trim()
-    if (!q) return untracked
-    return untracked.filter((i) =>
+    const byCrop = cropSel.size
+      ? untracked.filter((i) => cropSel.has(i.crop_slug))
+      : untracked
+    if (!q) return byCrop
+    return byCrop.filter((i) =>
       looseIncludes(i.variety_name, q) || looseIncludes(i.name, q) || looseIncludes(i.source, q))
-  }, [untracked, candidateQuery])
+  }, [untracked, candidateQuery, cropSel])
   const visibleCandidates = useMemo(
     () => labelCandidates(matchedCandidates.slice(0, MAX_CANDIDATES)),
     [matchedCandidates],
@@ -812,7 +890,18 @@ export default function SavedSeeds() {
       {/* Start tracking. Deliberately at the BOTTOM and deliberately not a floating button: it is
           the once-per-lot action, while advancing is the repeated one, and the page's job on a
           normal visit is to answer "what needs checking" rather than to invite data entry. */}
-      <button type="button" data-testid="track-a-lot" onClick={() => setStarting(true)} style={trackBtnStyle}>
+      <button
+        type="button" data-testid="track-a-lot"
+        onClick={() => {
+          // The facet earns its 56px only when the list is long enough to need narrowing. Same
+          // threshold as the truncation cap, so the control appears exactly when the list starts
+          // hiding rows from you — below it, every packet is already on screen and a filter would
+          // be furniture over a list you can simply read.
+          setCropFacetOn(untracked.length > MAX_CANDIDATES)
+          setStarting(true)
+        }}
+        style={trackBtnStyle}
+      >
         <Icon name="event.seed_saved" size={20} decorative /> Track a saved-seed lot
       </button>
 
@@ -950,7 +1039,9 @@ export default function SavedSeeds() {
       {starting && (
         <Sheet
           open
-          onClose={() => { setStarting(false); setStartItem(null); setCandidateQuery('') }}
+          onClose={() => {
+            setStarting(false); setStartItem(null); setCandidateQuery(''); setCropSel(new Set())
+          }}
           title={startItem ? 'How was it processed?' : 'Track a saved-seed lot'}
         >
           {startItem ? (
@@ -999,15 +1090,53 @@ export default function SavedSeeds() {
                 aria-label="Search your untracked seed packets"
                 data-testid="candidate-filter" style={{ ...inputStyle, marginTop: 0, marginBottom: 10 }}
               />
+              {/* Search first, chips second, deliberately: the common case is that you are holding a
+                  packet and know its cultivar, and the box answers that in one gesture. The chips are
+                  the browse fallback — and sitting directly above the list, the row reads as a visible
+                  qualifier on what is beneath it rather than as a separate mode. Pinning is by
+                  measured share, not taste: pepper and tomato are 51% of the collection, so they stay
+                  on the collapsed row and the other ~24 crops expand IN PLACE via `More ▾` (no nested
+                  sheet — FilterChipRow's contract forbids a third modal layer, which is also why the
+                  Harvests FilterPill+PickerSheet pattern was not reused here). */}
+              {cropFacetOn && cropOptions.length > 1 && (
+                <FilterChipRow
+                  options={cropOptions}
+                  selected={cropSel}
+                  pinned={cropPinned}
+                  trayMaxHeight={180}
+                  onToggle={(v) => setCropSel((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(v)) next.delete(v); else next.add(v)
+                    return next
+                  })}
+                  onClear={() => setCropSel(new Set())}
+                  aria-label="Filter packets by crop"
+                  data-testid="candidate-crop-filter"
+                  style={{ marginBottom: 10 }}
+                />
+              )}
               <div style={{ maxHeight: 340, overflowY: 'auto' }}>
                 {untracked.length === 0 && (
                   <p style={{ color: P.mid, fontSize: '0.85rem' }}>No untracked seed packets.</p>
                 )}
                 {/* Two different emptinesses, and conflating them is how a filter teaches the wrong
-                    thing: "you have none" and "none match what you typed" send the user opposite ways. */}
+                    thing: "you have none" and "none match what you typed" send the user opposite ways.
+                    The crop facet makes it THREE, and adding it naively is a real regression rather
+                    than a missed nicety: before the chips, this branch was unreachable with an empty
+                    box, because a blank query short-circuits to the full set. A chip can empty the
+                    list with nothing typed, and the old copy would then have read the literal
+                    `No packet matches ""` — a sentence naming neither the cause nor the way out. */}
                 {untracked.length > 0 && matchedCandidates.length === 0 && (
                   <p data-testid="candidate-no-match" style={{ color: P.mid, fontSize: '0.85rem' }}>
-                    No packet matches “{candidateQuery.trim()}”.
+                    {(() => {
+                      const q = candidateQuery.trim()
+                      const crops = [...cropSel]
+                        .map((s) => cropLabelBySlug.get(s) || prettySlug(s))
+                        .join(' or ')
+                      if (q && crops) return `No ${crops} packet matches “${q}”.`
+                      if (crops) return `No untracked ${crops} packets.`
+                      return `No packet matches “${q}”.`
+                    })()}
                   </p>
                 )}
                 {visibleCandidates.map((c) => (

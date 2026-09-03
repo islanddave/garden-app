@@ -128,10 +128,24 @@ export default function Inventory() {
             Inventory
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* V4-SEEDINV-001 / DRG-SOWNOW-001 entry points — compact icon chips, all three kept. */}
+            {/* V4-SEEDINV-001 / DRG-SOWNOW-001 entry points — compact icon chips, all three kept.
+                V5-SEEDSAVEDFILTER-001 adds the fourth, and the ORDER is the seed's life: acquire it,
+                save your own, sow it. Before this, /seeds/saved had exactly ONE inbound link in the
+                whole frontend — a row inside BottomNav's collapsed More sheet — so nothing in the app
+                predicted the page existed, least of all the page holding all 263 seed rows. The icon
+                is the one the destination uses on its own primary action, so the chip and the button
+                it leads to read as the same thing.
+                This makes four chips in a row that wraps at 390px. Accepted deliberately: a second
+                line of chips costs a few pixels, and the alternative costs the discoverability this
+                change exists to buy. Unconditional, NOT gated on having saved lots — gating
+                discovery on prior use is backwards. */}
             <Link to="/inventory/add-seeds" style={chipActionStyle}>
               <Icon name="status.seed" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />
               Add seeds
+            </Link>
+            <Link to="/seeds/saved" style={chipActionStyle} data-testid="inv-saved-seeds-link">
+              <Icon name="event.seed_saved" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />
+              Saved seeds
             </Link>
             <Link to="/sow" style={chipActionStyle}>
               <Icon name="event.sowing" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />

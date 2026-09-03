@@ -49,8 +49,14 @@ const HANDLERS = readdirSync(__dirname)
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
+// `crop_type_slug` added 2026-09-03 for V5-SEEDSAVEDFILTER-001 (the Saved Seeds crop facet).
+// VERIFIED THE WAY THIS FILE REQUIRES, not the cheap way: read from `information_schema.columns`
+// WHERE table_name='cultivar' against live prod, so it is confirmed on the VIEW rather than on the
+// `plant_varieties` base table underneath it. That is the whole point of this contract — a column
+// that exists on the base table and not on the view is a runtime 500 that nothing catches at deploy
+// (BUG-SEEDDETAIL500-001, whose three columns are named at the bottom of this file).
 const AUDIT_COLUMNS = {
-  cultivar: ['display_name', 'id'],
+  cultivar: ['crop_type_slug', 'display_name', 'id'],
 };
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;
