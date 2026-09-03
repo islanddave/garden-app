@@ -301,7 +301,17 @@ const MONTH_TOKENS = [
 ];
 
 const WEEKS_BEFORE_FF_RE = /(\d+)\s*[-–—]\s*(\d+)\s*w(?:ee)?ks?\s+before\s+first(?:\s+fall)?\s+frost/i;
-const WEEKS_BEFORE_LF_RE = /(\d+)(?:\s*[-–—]\s*(\d+))?\s*w(?:ee)?ks?\s+before\s+last\s+frost/i;
+// `before <filler> last frost`: packet copy interposes a qualifier between "before" and the anchor and
+// the clause was dropped ENTIRELY over it — Dill 'Bouquet' writes "1-2 weeks before AVERAGE last frost"
+// and Javelin "2-3 wks before TO AROUND last frost". Both name their own week count; both scored cls
+// null and rendered no window. The filler set is CLOSED (to/around/average/approximately/the), not a
+// `\w+{0,2}` wildcard: a wildcard would also swallow a negation or a different anchor's adjective and
+// silently attach the week count to the wrong date. VERIFIED, not asserted: the real classifier was run
+// over all 198 live prod clauses before and after (scripts/snapshot-clause-classes.mjs, pointed at a
+// git-show copy of the pre-change engine so both sides use one harness). Exactly 11 clauses moved,
+// every one NULL -> a class; ZERO moved between existing classes, which was the actual risk of widening
+// a mid-chain branch above D and F. Unclassified went 19 -> 8.
+const WEEKS_BEFORE_LF_RE = /(\d+)(?:\s*[-–—]\s*(\d+))?\s*w(?:ee)?ks?\s+before\s+(?:to\s+)?(?:around\s+|approximately\s+)?(?:the\s+)?(?:average\s+)?last\s+frost/i;
 const WEEKS_AFTER_LF_RE = /(\d+)(?:\s*[-–—]\s*(\d+))?\s*w(?:ee)?ks?\s+after\s+last\s+frost/i;
 const SOIL_TEMP_RE = /(?:[≥>]=?\s*)?(\d{2,3})(?:\s*[-–—]\s*\d{2,3})?\s*°\s*F/;
 
@@ -344,13 +354,32 @@ export function classifyClause(clause) {
     info.cls = 'A';
     info.weeksMin = parseInt(m[1], 10);
     info.weeksMax = m[2] != null ? parseInt(m[2], 10) : parseInt(m[1], 10);
-  } else if (/after\s+last\s+frost/i.test(c)) {
+  // `after all frost` / `after all danger of frost has passed` are the same instruction as `after last
+  // frost` said in plainer words, and both live clauses carrying them ALSO name the date in their own
+  // parenthetical — Common Milkweed "(late May in zone 5b/6a)", Quincy "Zone 5b: late May to mid-June" —
+  // and were dropped anyway. Kept as a separate alternation rather than loosening `last`: matching a bare
+  // /after\s+.*frost/ would also capture "after FIRST frost", which is the opposite end of the season.
+  } else if (/after\s+last\s+frost/i.test(c) || /after\s+all\s+(?:danger\s+of\s+)?frost/i.test(c)) {
     info.cls = 'B';
     if ((m = c.match(WEEKS_AFTER_LF_RE))) {
       info.weeksMin = parseInt(m[1], 10);
       info.weeksMax = m[2] != null ? parseInt(m[2], 10) : parseInt(m[1], 10);
     }
-  } else if (/as\s+soon\s+as\s+(?:the\s+)?soil\s+can\s+be\s+worked/i.test(c)) {
+  // Class C widened on two fronts, both measured against live prose:
+  //   (1) `soil IS WORKABLE` — the same instruction as `soil CAN BE WORKED`, differing by wording only
+  //       (Althaea, Red Mustard). Pure phrasing loss.
+  //   (2) bare `early spring` with no month and no frost anchor (both columbines, Hummingbird Haven,
+  //       Edelweiss, Column Blend). DAVE'S CALL 2026-09-02: "early spring when soil is cold" IS the
+  //       earliest-workable-soil window, not a narrower one — every packet carrying the phrase here is
+  //       cold-tolerant or cold-REQUIRING seed (columbine and edelweiss need cold soil to germinate), so
+  //       the earliest workable date is horticulturally correct for them rather than merely convenient.
+  //       Recorded as a decision, not a guess: without it the engine would have to invent a date range.
+  // Position matters and is unchanged: C sits BELOW A/B/E/G/H/J/L, so a clause that also carries a week
+  // count or a frost anchor still classes on that stronger signal — "early spring, 2 wks before last
+  // frost" stays A. It sits ABOVE D and F, so verify by snapshot rather than by reading: widening a
+  // middle-of-chain branch can steal clauses from every branch below it.
+  } else if (/as\s+soon\s+as\s+(?:the\s+)?soil\s+(?:can\s+be\s+worked|is\s+workable)/i.test(c)
+             || /\bearly\s+spring\b/i.test(c)) {
     info.cls = 'C';
   } else if (/succession/i.test(c)) {
     info.cls = 'D';

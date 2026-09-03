@@ -201,19 +201,25 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
   // offered "Add sow details", and showed the gardener nothing — while the packet itself said
   // something perfectly actionable.
   //
-  // The fixture string is VERBATIM from live prod (Quincy), not invented. It is unreadable for a
-  // specific reason worth preserving in a test: the semicolon sits INSIDE the parenthetical, which
-  // used to make splitClauses cut the sentence into two unbalanced fragments
-  // (BUG-SOWCLAUSEPARENSPLIT-001, fixed alongside this). The split is correct now and the clause is
-  // still unclassified — which is exactly the state this surfacing exists for, and why an invented
-  // "unparseable" string would not have reproduced it.
-  const QUINCY_PROSE = 'Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May to mid-June.'
+  // FIXTURE RE-POINTED 2026-09-02 — the old one stopped being unreadable. It was Quincy ('Direct sow
+  // after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May
+  // to mid-June.'), picked because a semicolon inside its parenthetical had once made splitClauses emit
+  // unbalanced fragments. Widening class B to accept "after all frost" made that string classify as B,
+  // so this block was rendering a candidate that no longer lands in needs_profile at all. Quincy's
+  // paren-split property is NOT lost — BUG-SOWCLAUSEPARENSPLIT-001 in sowEngine.test.js owns it.
+  //
+  // Replacement is VERBATIM from live prod (Zebrune shallot) and picked for STABILITY under future
+  // widening, not merely for being unreadable today: it is an INDOOR-START instruction, which no
+  // widening of a DIRECT-sow classifier should ever turn into a direct-sow window. Mirrors the fixture
+  // in sowEngine.test.js deliberately — the engine test asserts the ROUTING and this one asserts the
+  // RENDER, and they should fail together rather than drift apart.
+  const UNREADABLE_PROSE = 'Indoor start strongly preferred in Zone 5b to mature before Sep 26 frost'
   const UNREADABLE = {
     ...MYSTERY,
-    inventory_item_id: 'inv-quincy',
-    item_name: 'Quincy Seeds',
-    variety_name: 'Quincy',
-    direct_sow_timing: QUINCY_PROSE,
+    inventory_item_id: 'inv-zebrune',
+    item_name: 'Zebrune Shallot Onion Seeds',
+    variety_name: 'Zebrune',
+    direct_sow_timing: UNREADABLE_PROSE,
   }
 
   it('shows the packet’s own words when the engine could not read them', async () => {
@@ -222,7 +228,7 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
     await screen.findByText('Needs a sow profile')
 
     const prose = screen.getByTestId('sow-prose')
-    expect(prose.textContent).toContain('Zone 5b: late May to mid-June')
+    expect(prose.textContent).toContain('Indoor start strongly preferred in Zone 5b')
     // Labelled as the packet talking, never as an engine verdict — the app did not derive this.
     expect(prose.textContent).toMatch(/packet says/i)
   })
@@ -230,7 +236,7 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
   it('still offers the CTA — reading the prose is not a substitute for a real profile', async () => {
     routeFetch({ candidates: [UNREADABLE] })
     await renderSowNow()
-    expect(await screen.findByLabelText('Add sow details for Quincy')).toBeDefined()
+    expect(await screen.findByLabelText('Add sow details for Zebrune')).toBeDefined()
   })
 
   it('a packet with NO timing shows no prose line at all', async () => {

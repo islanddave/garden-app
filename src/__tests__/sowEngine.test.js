@@ -196,13 +196,23 @@ describe('classifyClause — classes A-L against real dataset strings', () => {
     // ...but the "for (early) spring germination|bloom" tail is still REQUIRED. Real Althaea copy
     // offers fall-sowing only as an alternate to a spring primary, so it must NOT become class G
     // (that would surface a spring-primary packet as a fall-only recommendation).
-    ['Direct sow in very early spring as soon as soil is workable, or fall-sow to let winter cold stratify the seed (a good Zone 5b option).', null],
+    // 2026-09-02: now class C, and THE DECISION ABOVE IS INTACT — C is the SPRING primary this very
+    // comment names ("Direct sow in very early spring as soon as soil is workable"), reached through
+    // the widened class-C soil test, NOT through class G. The guard being asserted is "not fall-only",
+    // and C is not fall. It was `null` before only because no branch matched at all, which meant the
+    // packet's spring instruction was dropped silently — the drop was never the decision.
+    ['Direct sow in very early spring as soon as soil is workable, or fall-sow to let winter cold stratify the seed (a good Zone 5b option).', 'C'],
     ['in summer for next-year bloom', 'H'],
     ['mid-summer for blooming next spring', 'H'], // H beats F
     ['grow indoors year-round', 'J'],
     ['self-seeds freely once established', 'L'],
     ['self-sows freely', 'L'],
-    ['early spring when soil is cold', null], // unclassifiable -> ignored
+    // Was `null` with the note "unclassifiable -> ignored" — a description of the old regexes, not a
+    // decision. DAVE'S CALL 2026-09-02: "early spring when soil is cold" IS the earliest-workable-soil
+    // window (class C), because every live packet carrying the phrase is cold-tolerant or
+    // cold-REQUIRING seed. Both columbines, Hummingbird Haven, Edelweiss and Column Blend were losing
+    // this clause entirely. "Ignored" was the cost of having no branch, never an intended outcome.
+    ['early spring when soil is cold', 'C'],
   ])('%j -> class %j', (clause, cls) => {
     expect(classifyClause(clause).cls).toBe(cls);
   });
@@ -1620,14 +1630,25 @@ describe('V4-SEEDSAVEFLOW-001 in-process seed lots', () => {
 });
 
 describe('BUG-SOWPROSEUNREAD-001 — unreadable timing is UNKNOWN, not "too late"', () => {
-  // VERBATIM from live prod (Quincy). Unreadable for a reason worth keeping in the fixture: the
-  // semicolon sits inside the parenthetical, which used to make splitClauses cut the sentence into
-  // two unbalanced fragments (BUG-SOWCLAUSEPARENSPLIT-001). That split is correct now and the clause
-  // is STILL unclassified, which is exactly the state this exit exists for. An invented
-  // "unparseable" string would not have reproduced it.
-  const QUINCY = 'Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May to mid-June.';
+  // FIXTURE RE-POINTED 2026-09-02, because the old one stopped being unreadable. It was Quincy
+  // ('Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F).
+  // Zone 5b: late May to mid-June.'), chosen because a semicolon inside its parenthetical had once
+  // made splitClauses emit unbalanced fragments. Widening class B to accept "after all frost" made
+  // that string classify as B, so this describe block was asserting needs_profile routing against a
+  // candidate that no longer reaches it. It failed loudly rather than passing vacuously, which is the
+  // only reason it was caught — but a guard whose fixture drifts out from under it is worth a note.
+  // Quincy's paren-split property is NOT lost: BUG-SOWCLAUSEPARENSPLIT-001 below owns that string and
+  // that assertion.
+  //
+  // The replacement is also VERBATIM from live prod (Zebrune shallot), and is chosen to be stable
+  // under future widening rather than merely unreadable today: it is an INDOOR-START instruction, and
+  // no widening of a DIRECT-sow classifier should ever turn it into a direct-sow window. That keeps
+  // this block testing what it is named for — the routing of unreadable prose — instead of tracking
+  // the classifier's current coverage. It is one of the 8 clauses still unclassified on prod after the
+  // 2026-09-02 widening (was 19; measured with scripts/snapshot-clause-classes.mjs).
+  const UNREADABLE_PROSE = 'Indoor start strongly preferred in Zone 5b to mature before Sep 26 frost';
   const unreadable = (over = {}) => toCandidate(PACKETS.cucumberSpacemaster, {
-    direct_sow_timing: QUINCY, start_method: 'direct_sow',
+    direct_sow_timing: UNREADABLE_PROSE, start_method: 'direct_sow',
     days_to_maturity_min: null, days_to_maturity_max: null,
     lifecycle: null, grown_as: null, sow_season: null, ...over,
   });
