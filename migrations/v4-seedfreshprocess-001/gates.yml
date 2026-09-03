@@ -1,12 +1,27 @@
 # gates.yml
 # V4-SEEDFRESHPROCESS-001 — inventory_items.seed_process gains 'fresh'.
 #
-# ENVIRONMENT-SYMMETRIC. Every gate reads pg_constraint or counts rows against the base table, so
-# each one means the same thing on staging as on prod. No `env: prod` anywhere.
+# MOSTLY ENVIRONMENT-SYMMETRIC, with ONE deliberate exception. Every gate but one reads pg_constraint
+# or counts rows against the base table, so it means the same thing on staging as on prod. The
+# exception is post_prod_population_intact, which carries `env: prod` because its 200-row floor is a
+# fact about prod's seed collection (267) and not about staging's (66) — two different populations,
+# not one at two scales.
+#   CORRECTED 2026-09-03: this header previously said "No `env: prod` anywhere" while
+#   post_rowcount_undisturbed hardcoded a prod-scaled 200 with no scoping. The claim and the file
+#   disagreed, and the file was wrong — that gate could never pass on staging.
 #
 # POST GATES SELF-ARM, in VIOLATION-COUNT shape (expect 0): green where unapplied, green where
 # applied and intact, RED only on a genuine revert. post_check_accepts_fresh is the exception and
 # carries `continuous: false` — it is an apply record, not a standing invariant.
+#   THEY ARM OFF pg_constraint, NOT off schema_version, and that distinction was misread once so it
+#   is worth stating. post_check_still_guards and post_no_invalid_process_values are green on an
+#   unmigrated database by construction: the OLD check already names wet and dry and already forbids
+#   anything outside the vocabulary. Neither needs a ledger row to know whether to fire, which makes
+#   the catalogue a strictly better instrument here than `WHERE EXISTS (SELECT 1 FROM schema_version
+#   WHERE version = ...)` — it observes the thing itself rather than a claim that the thing was done.
+#   The missing schema_version INSERT (added to 0a on 2026-09-03) was a real defect for a different
+#   reason — no durable apply record, and no `pre_not_already_applied` guard is writable without one —
+#   but it was never why a gate here went red. That was post_rowcount_undisturbed's 200, on staging.
 #
 # WHAT THIS FILE IS ACTUALLY GUARDING. The dangerous property of a CHECK migration is not the apply,
 # it is the WIDTH: a widen is safe on live data by construction, a narrow can refuse or orphan. So
@@ -83,10 +98,35 @@ post:
 
   - name: post_rowcount_undisturbed
     note: >
-      A CHECK change must not touch data. The seeds population is asserted as a non-zero floor rather
-      than a frozen number, deliberately: a frozen count breaks the first time Dave adds a packet,
-      which trains people to bump the number instead of reading the gate. This catches the failure
-      that actually matters — a migration that deleted or mass-updated rows.
+      A CHECK change must not touch data, and this is the environment-agnostic half of that check:
+      the seeds population must not be empty. It is deliberately NOT a frozen number — a frozen count
+      breaks the first time Dave adds a packet, which trains people to bump the number instead of
+      reading the gate.
+      CORRECTED 2026-09-03. This gate previously asserted `< 200` with a note claiming it was "a
+      non-zero floor" — the note described this rule and the SQL implemented a different, prod-scaled
+      one. Measured the day it was caught: prod 267 seed rows, STAGING 66. So the gate could never
+      pass on staging, and carrying neither `env: prod` nor `continuous: false` it would have redded
+      `gate-invariants.yml`'s staging leg on every `migrations/**` push, permanently, for a database
+      that was correctly migrated. A gate that cannot pass is not a strict gate; it is noise that
+      teaches people to skim the gate run. Found by a peer session during the prod apply.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM public.inventory_items
+               WHERE category = 'seeds' AND deleted_at IS NULL) = 0
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_prod_population_intact
+    env: prod
+    note: >
+      The prod-scaled half, split out of post_rowcount_undisturbed rather than deleted with it. A
+      non-zero floor alone would survive a migration that deleted four fifths of the seed rows, and
+      on prod there IS a defensible order of magnitude to assert: the collection has stood in the
+      200s all season (267 on 2026-09-03). 200 is a floor with real headroom beneath today's count,
+      not a frozen equality, so ordinary additions and the occasional soft-delete never touch it.
+      `env: prod` because the number is a fact about prod's collection and nothing else — staging
+      holds 66 rows and is a different population, not a smaller copy of the same one. Scoping it is
+      the honest fix; scaling one number to satisfy two unrelated datasets would not be.
     sql: |
       SELECT 1
        WHERE (SELECT count(*) FROM public.inventory_items
