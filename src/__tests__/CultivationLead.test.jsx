@@ -48,7 +48,7 @@ const renderLead = (props = {}) => render(
 const TODAY = '2026-08-12'
 const lettuce = (over = {}) => ({
   variety_name: 'Winter Density', item_name: 'Lettuce packet', crop_type_slug: 'lettuce',
-  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 58, days_to_maturity_min: null,
+  lifecycle: 'annual', sow_season: 'cool', days_to_maturity_max: 67, days_to_maturity_min: null,
   // Class B ("after last frost"), NOT class C. This fixture carried
   // 'as soon as the soil can be worked' until 2026-09-01, when BUG-SOWCLASSC-001 moved class C's
   // close onto a SPRING bound — because a spring clause producing an August sow date was the
@@ -64,6 +64,18 @@ const lettuce = (over = {}) => ({
   // It also demonstrates the thing worth being sure of: the August FALL sowing is still reachable.
   // BUG-SOWCLASSC-001 removed a spring clause's ability to masquerade as a fall window; it did not
   // remove fall windows.
+  //
+  // RETUNED A FOURTH TIME by BUG-SOWHARDYANCHOR-001, same convention — but with TWO offsets, not one.
+  // Lettuce is a FALL_HARDY_CROPS slug, so its close left the frost anchor for growth-stop.
+  //   * DIRECT arm: GS (11-07) - (dtm + FALL_SLOWDOWN_DAYS 14), was FFobs (10-15) - dtm. It gained
+  //     the slowdown term it had always been missing, so the net move is +9 (58->67, 63->72, 61->70).
+  //   * INDOOR arm: GS - (dtm + 14 + nursery), was FFobs - (dtm + 14 + nursery). It ALREADY spent the
+  //     slowdown, so it moves by the full anchor gap, +23 (basil 44->67).
+  // Assuming one offset for both is what made the basil fixture wrong on the first attempt; the two
+  // arms differ by exactly the slowdown term, which is the asymmetry this item also fixed.
+  // EVERY expected string, the cap, and the ordering are untouched — which is the point of retuning
+  // the input: the contract under test is the lead's wording and ranking, not the engine's arithmetic.
+  // The dtm figures are now high for real lettuce; they are dials for placing a date, not agronomy.
   direct_sow_timing: 'after last frost', start_method: null,
   ...over,
 })
@@ -77,7 +89,7 @@ describe('cultivationLines (pure, real engine)', () => {
 
   it('uses the indoor verb when the closing window is an indoor start', () => {
     const basil = lettuce({
-      variety_name: 'Genovese Basil', direct_sow_timing: null, days_to_maturity_max: 44,
+      variety_name: 'Genovese Basil', direct_sow_timing: null, days_to_maturity_max: 67,
       start_method: 'start_indoors', start_indoor_weeks_min: 4, start_indoor_weeks_max: 4,
     })
     expect(cultivationLines([basil], TODAY)).toEqual(['Start Genovese Basil indoors by Aug 18.'])
@@ -86,9 +98,9 @@ describe('cultivationLines (pure, real engine)', () => {
   it('caps at 2, most urgent first — never a third orient decision', () => {
     expect(CULTIVATION_LEAD_CAP).toBe(2)
     const lines = cultivationLines([
-      lettuce({ variety_name: 'A', days_to_maturity_max: 58 }), // Aug 18
-      lettuce({ variety_name: 'B', days_to_maturity_max: 63 }), // Aug 13
-      lettuce({ variety_name: 'C', days_to_maturity_max: 61 }), // Aug 15
+      lettuce({ variety_name: 'A', days_to_maturity_max: 67 }), // Aug 18
+      lettuce({ variety_name: 'B', days_to_maturity_max: 72 }), // Aug 13
+      lettuce({ variety_name: 'C', days_to_maturity_max: 70 }), // Aug 15
     ], TODAY)
     expect(lines).toEqual(['Sow B by Aug 13.', 'Sow C by Aug 15.'])
   })
@@ -127,9 +139,9 @@ describe('cultivationLines (pure, real engine)', () => {
 
   it('drops only the empty packet from a mixed list, keeping order and cap', () => {
     const lines = cultivationLines([
-      lettuce({ variety_name: 'A', days_to_maturity_max: 58 }),                       // Aug 18
-      lettuce({ variety_name: 'B', days_to_maturity_max: 63, quantity_on_hand: 0 }),  // Aug 13, empty
-      lettuce({ variety_name: 'C', days_to_maturity_max: 61 }),                       // Aug 15
+      lettuce({ variety_name: 'A', days_to_maturity_max: 67 }),                       // Aug 18
+      lettuce({ variety_name: 'B', days_to_maturity_max: 72, quantity_on_hand: 0 }),  // Aug 13, empty
+      lettuce({ variety_name: 'C', days_to_maturity_max: 70 }),                       // Aug 15
     ], TODAY)
     // Without the filter B would take the first slot and evict A under the cap of 2 — so this
     // pins that an empty packet cannot crowd out a real one, not just that it goes unnamed.

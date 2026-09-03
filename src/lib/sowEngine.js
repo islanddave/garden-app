@@ -114,6 +114,36 @@ export const OBSERVED_FIRST_FALL_FROST = Object.freeze({
 /** Days shaved off fall math for slowing autumn growth. */
 export const FALL_SLOWDOWN_DAYS = 14;
 
+/**
+ * BUG-SOWHARDYANCHOR-001 — what actually ends a FALL_HARDY_CROPS sowing.
+ *
+ * NOT a frost date. A hardy slug is by definition "unharmed or improved by frost", so first frost
+ * cannot be the event that ends it — latestSafeMs said exactly that in its own comment and then
+ * anchored to first frost anyway. The real limit is the 10-hour daylength ("Persephone") wall, below
+ * which cool-season growth effectively stops: a crop that is MATURE by then holds in the field and
+ * can be picked through winter; one that is not, sits undersized until spring.
+ *
+ * DAVE DECISION 2026-09-02, asked in plain terms and answered "daylength, with a margin".
+ *
+ * THE MARGIN IS ZERO AT THE ANCHOR, AND THAT IS DELIBERATE — the target IS the wall. No new constant
+ * is introduced here, which is the whole point: a fabricated margin is what produced the retired
+ * FALL_GRACE_HARDY = 28 (its own comment records it as COPIED from FALL_GRACE_DAYS.cool, never
+ * derived, and "right" only because it cancelled an anchor 31 days early). Dave has never tried a
+ * late-season hardy harvest here, so there is no site experience to calibrate a margin from and one
+ * is not being guessed. The slow-growth allowance rides on the DTM via FALL_SLOWDOWN_DAYS — that
+ * constant's DOCUMENTED job ("corrects the DTM for shortening days, NOT the anchor"), and already
+ * how the fall indoor pass spends it.
+ *
+ * RESTATED, NOT IMPORTED: src/lib may not import a Lambda, so this duplicates
+ * lambda/daily-plan/overwinter.js's persephoneDates(SITE_LAT). sowEngine.test.js pins the two in
+ * lockstep — the same pattern the frost basis and watch.js's restated anchor already use. The value
+ * is solar, so it does not drift year to year (11-07 for 2025/2026/2027). Note the pre-existing
+ * comments in this file cite 11-09; the function returns 11-07 and the test binds to the FUNCTION.
+ *
+ * REVISIT after a season of on-site observation — this is a model, not a measurement.
+ */
+export const HARDY_GROWTH_STOP_MONTH_DAY = '11-07';
+
 /** Fall indoor-pass grace days by season (warm gets no fall pass).
  * V4-FALLINDOORHARDY-001 NARROWED WHAT `cool` MEANS HERE without changing its value. The fall indoor
  * pass now routes FALL_HARDY_CROPS onto ctx.FFobs with NO grace, so `cool` is consumed only by
@@ -546,7 +576,15 @@ function latestSafeMs(candidate, dtm, ctx) {
     // frost" (frostClass.js's hardy band — this set is its edible subset), so first frost is not the
     // thing that ends it and the safety margin has no job here. The question this branch actually
     // asks is "when does frost arrive", which is a measurement, so it consumes ctx.FFobs.
-    if (FALL_HARDY_CROPS.has(candidate.crop_type_slug)) return ctx.FFobs - dtm * DAY_MS;
+    // BUG-SOWHARDYANCHOR-001 — anchor moved FFobs -> GS (see HARDY_GROWTH_STOP_MONTH_DAY). The
+    // sentence above already argued frost is not what ends a hardy crop; this stops contradicting it.
+    // FALL_SLOWDOWN_DAYS IS NEW ON THIS BRANCH and is a defect fix in its own right: the fall INDOOR
+    // pass has always spent it on the identical crop set, so the same packet's DTM was
+    // slowdown-corrected on one path and raw on the other. Both hardy paths now aim maturity at GS and
+    // differ ONLY by the nursery period, which is the whole of their real difference.
+    if (FALL_HARDY_CROPS.has(candidate.crop_type_slug)) {
+      return ctx.GS - (dtm + FALL_SLOWDOWN_DAYS) * DAY_MS;
+    }
     return ctx.FF + (FALL_GRACE_COOL - dtm) * DAY_MS;
   }
   return null;
@@ -788,8 +826,11 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
     // candidates it most affects now sit on the measured anchor, so a refit measures the nursery gap
     // instead of absorbing 31 days of anchor error into it.
     const fallHardy = candidate.sow_season === 'cool' && FALL_HARDY_CROPS.has(candidate.crop_type_slug);
+    // BUG-SOWHARDYANCHOR-001 — anchor moved FFobs -> GS, matching latestSafeMs's hardy branch. The
+    // FALL_SLOWDOWN_DAYS and nursery terms are UNCHANGED; only the anchor moves, so this arm and the
+    // direct one now derive from one statement (mature by growth-stop) instead of two.
     const latest = fallHardy
-      ? ctx.FFobs - (dtm + FALL_SLOWDOWN_DAYS + nurseryDays) * DAY_MS
+      ? ctx.GS - (dtm + FALL_SLOWDOWN_DAYS + nurseryDays) * DAY_MS
       : ctx.FF + (grace - dtm - FALL_SLOWDOWN_DAYS - nurseryDays) * DAY_MS;
     windows.push({
       open: latest - 28 * DAY_MS,
@@ -1187,6 +1228,7 @@ export function bucketize(candidates, todayISO, anchors = {}) {
   const cfg = {
     ...FROST_ANCHORS,
     observedFirstFallFrost: OBSERVED_FIRST_FALL_FROST.medianMonthDay,
+    hardyGrowthStop: HARDY_GROWTH_STOP_MONTH_DAY,
     ...anchors,
   };
   const today = isoToMs(todayISO);
@@ -1200,11 +1242,18 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     // at FROST_ANCHORS. Overridable on the same `anchors` argument so a test (or a second site) can
     // move it, and so an override of `firstFallFrost` provably does NOT move the hardy branch.
     FFobs: anchorToMs(cfg.observedFirstFallFrost, year),
+    // BUG-SOWHARDYANCHOR-001 — the growth-stop anchor the two FALL_HARDY_CROPS branches consume.
+    // A THIRD anchor deliberately, not a replacement: FF answers "will frost kill this", FFobs
+    // answers "when does frost arrive", and GS answers "when does growth stop" — the only one of the
+    // three that bounds a crop frost does not kill. Overridable on the same `anchors` argument, so a
+    // test can prove an override of either frost anchor does NOT move the hardy branches.
+    GS: anchorToMs(cfg.hardyGrowthStop, year),
     closingDays: cfg.windowClosingDays,
     // mm-dd anchors kept on ctx so the gated-allium hold can rebuild windows against year+1.
     lastSpringFrost: cfg.lastSpringFrost,
     firstFallFrost: cfg.firstFallFrost,
     observedFirstFallFrost: cfg.observedFirstFallFrost,
+    hardyGrowthStop: cfg.hardyGrowthStop,
   };
   // EVERY bucket key bucketOne can return MUST appear here — `buckets[bucket].push(entry)` below
   // throws on a missing key, which propagates out of the SowNow useMemo and white-screens /sow.
