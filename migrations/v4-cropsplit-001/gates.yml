@@ -113,7 +113,17 @@ post:
     value: 0
 
   # Catches an over-broad predicate having swept extra cultivars along.
+  #
+  # continuous: false ADDED 2026-09-03. A frozen ten-UUID allowlist cannot survive the crop growing:
+  # every winter_squash cultivar added AFTER the split is "not in the list" by construction and reads
+  # as a stray move. Table Queen, Spookie and Small Sugar were all created 2026-09-03 and took this to
+  # [FAIL] with 3 on prod. The durable intent was only ever "0b-redrive moved the ten and moved nothing
+  # else" — an apply-window fact — so this takes continuous: false like its three siblings below rather
+  # than a widened list, which would only re-arm the same trap for whoever adds the next squash.
+  # `env:` was deliberately NOT used, for the same reason given on post_parents_retained_expected_cultivars:
+  # that would relabel a rotted apply receipt as a durable prod-only invariant, which it is not.
   - name: post_no_stray_moves
+    continuous: false
     sql: |
       SELECT count(*) FROM public.plant_varieties
        WHERE crop_type_slug IN ('winter_squash', 'bunching_onion', 'rat_tail_radish')
