@@ -21,7 +21,11 @@
       "Meta text across the app is darker, so the smaller lines are readable in daylight.",
       "The active tab in the bottom bar is now marked on the icon itself, not only by the colour of a 10px label.",
       "Empty screens now look the same everywhere — seven pages had drifted into seven different designs.",
-      "The garden arrival animation now respects your phone's reduce-motion setting, which it previously claimed to do and did not."
+      "The garden arrival animation now respects your phone's reduce-motion setting, which it previously claimed to do and did not.",
+      "Saving seed asks for a count at every stage, not only at the end — required when you mark a lot stored, 0 accepted, and always blank by default so a number is never filled in on your behalf",
+      "Seed you have saved but not yet started processing now appears on the sow list, with a Sow anyway override",
+      "One Save-seed door — the Seed saved item on the event menu opens the real Save-seed sheet and still records the event on the plant's timeline",
+      "Opening the log screen no longer springs a Save-seed sheet on you from a draft left over from an earlier visit"
     ]
   },
   {
