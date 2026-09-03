@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.103.0",
+    "date": "2026-09-03",
+    "highlights": [
+      "Save seed from anywhere. The Saved Seeds page now has a \"+ Save seed\" button at the top that is always there, and the form asks where the seed came from instead of assuming you started on a planting page",
+      "Seed that did not come off one of your own plants now has a home — pick the variety and say whether it was a shop, a gift, u-pick or foraged. The Carolina Reaper case",
+      "Starting from one of your plants still works exactly as before, and now you can pick the plant from inside the form rather than having to navigate to it first"
+    ]
+  },
+  {
     "version": "4.102.0",
     "date": "2026-09-03",
     "highlights": [

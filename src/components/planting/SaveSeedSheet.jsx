@@ -7,8 +7,14 @@
 //
 // The structural win of launching from a planting is that the parent is a PARAMETER, not a picker:
 // source_plant_id AND variety_id both come off the record this page already loaded, so the sheet
-// asks for a name rather than for identity. That is also why there is no <PlantingSelect> here — a
-// picker on this surface asks a question we already know the answer to.
+// asks for a name rather than for identity.
+//
+// V4-SEEDINTAKEAGNOSTIC-001 CORRECTED THE SENTENCE THAT USED TO FOLLOW. It read: "That is also why
+// there is no <PlantingSelect> here — a picker on this surface asks a question we already know the
+// answer to." True of the planting page, and it quietly became the reason the flow had no other
+// entrance: every OTHER surface had to already know the answer too, so /seeds/saved could only point
+// at the plant list and say "go and start from there". There IS a PlantingSelect here now, rendered
+// only when the caller could not answer — the parameter stays a parameter where it is known.
 //
 // V4-SEEDSTOREDQTY-001 — AND IT DOES NOT ASK HOW MUCH. It used to offer a packet count defaulting to
 // 1, which was a guess dressed as data: at the moment you press "Save seed" the seed is still wet
@@ -95,12 +101,14 @@
 // have — lot created, toast shown, routed to /inventory/:id.
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sheet } from '../forms'
+import { Sheet, PlantingSelect } from '../forms'
 import VarietyPicker from '../VarietyPicker.jsx'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
 import { todayLocalISO } from '../../lib/dateLocal.js'
 import { P } from '../../lib/constants.js'
+import { PUTUP_SOURCE_OPTIONS } from '../../lib/dropdownRegistry.js'
+
 
 // MIRRORS src/pages/SavedSeeds.jsx's PROCESS_ENTRY, deliberately rather than importing it: that is
 // a page, and a component reaching into a page for a constant inverts the dependency. Both copies
@@ -195,12 +203,52 @@ function plantingVariety(planting) {
   return null
 }
 
+// V4-SEEDINTAKEAGNOSTIC-001 — the eight source kinds, straight from the shipped registry rather than
+// a fourth hand-typed copy. That vocabulary is synchronised across four homes (this registry,
+// lambda/preservation/provenance.js, lambda/inventory-items/source-kinds.js and the DB CHECK
+// chk_inventory_source_kind) and is pinned by preservationProvenance.test.js; typing a fifth list
+// here is exactly how the fifth home drifts.
+const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== 'own_garden')
+
+/**
+ * `planting` is OPTIONAL as of V4-SEEDINTAKEAGNOSTIC-001.
+ *
+ * WHEN IT IS PASSED (the planting page, the event menu) nothing about this sheet changes: the parent
+ * is a parameter, the variety is seeded from the record the page already loaded, and the whole happy
+ * path is still zero reads.
+ *
+ * WHEN IT IS ABSENT the sheet asks the one question the caller could not answer — where did this seed
+ * come from — and offers both real answers. Dave, 2026-09-03: "I still cannot find an easy way to
+ * start a saved seed path anywhere... I need an agnostic intake form which can either select from a
+ * planting or create a no-planting parent."
+ *
+ * He is the THIRD person to walk into this, and the previous two fixes both stopped short at the same
+ * wall: the empty-state copy said "open that planting and tap Save seed", and its own comment
+ * conceded why — "the Save-seed sheet needs a planting as a parameter, so the honest route is pick
+ * the plant, then Save seed on its page". That parameter WAS the defect. A door that only opens from
+ * somewhere else is not a door.
+ *
+ * The no-planting arm writes `source_kind` and no `source_plant_id`, which is the shape the schema
+ * already expects: chk_inventory_source_provenance is `source_kind IS NULL OR source_kind =
+ * 'own_garden' OR source_plant_id IS NULL`. It writes NO timeline event either — there is no plant to
+ * hang one on, and inventing a placeholder planting to carry it would put plants in the garden that
+ * were never planted.
+ */
 export default function SaveSeedSheet({ planting, onClose }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const navigate = useNavigate()
 
-  const seeded = plantingVariety(planting)
+  // The planting this save is FOR: the prop when the caller knew it, otherwise whatever the user
+  // picks below. Every downstream read goes through this, never through `planting` directly.
+  const [picked, setPicked] = useState(null)
+  const parent = planting ?? picked
+  // null until answered, and only asked when the caller did not already know. 'plant' | 'other'.
+  const [origin, setOrigin] = useState(planting ? 'plant' : null)
+  const [sourceKind, setSourceKind] = useState('')
+
+
+  const seeded = plantingVariety(parent)
   const [name, setName] = useState(() => defaultLotName(planting))
   const [variety, setVariety] = useState(seeded)
   // Open by default ONLY when there is nothing to show. The picker's hook fetches /api/varieties on
@@ -258,7 +306,15 @@ export default function SaveSeedSheet({ planting, onClose }) {
           // for the move into `stored`. See parseOpeningCount.
           quantity_on_hand: opening.value,
           variety_id: varietyId,
-          source_plant_id: planting.id,
+          // V4-SEEDINTAKEAGNOSTIC-001 — `parent`, not `planting`: the prop when the caller knew it,
+          // the picked planting when the user chose one, and NULL for seed that came from no plant
+          // of ours. The two keys below are mutually exclusive by DB CHECK
+          // (chk_inventory_source_provenance: source_kind IS NULL OR source_kind = 'own_garden' OR
+          // source_plant_id IS NULL), so sending both a parent and a non-garden kind would be a 400.
+          // Spread rather than a null, for the same reason the event metadata is spread: the route
+          // reads source_kind by PRESENCE, so an explicit null and an absent key are different.
+          source_plant_id: parent?.id ?? null,
+          ...(!parent && sourceKind ? { source_kind: sourceKind } : {}),
         }),
       })
       let stageFailed = false
@@ -283,11 +339,19 @@ export default function SaveSeedSheet({ planting, onClose }) {
       // and for the swallowed failure is in the header note. Reached only from here, after a create
       // that RESOLVED, so it fires exactly once per lot and not at all for a create that threw or a
       // sheet the user closed without saving.
-      try {
+      //
+      // V4-SEEDINTAKEAGNOSTIC-001 — GATED ON A PARENT, and this is a real branch rather than a
+      // defensive `?.`. `plant_id` is REQUIRED for this event type (seed_saved is in
+      // PLANTING_REQUIRED_TYPES and validatePostBody wants project_id OR plant_id), so a no-planting
+      // lot has nowhere to put a timeline row: there is no plant whose timeline it would appear on.
+      // Skipping the POST is the honest outcome. The alternative — inventing a placeholder planting
+      // to carry the event — would put plants in the garden that were never planted, which is a
+      // worse lie than a missing row.
+      if (parent) try {
         await fetch('/api/events', {
           method: 'POST',
           body: JSON.stringify({
-            plant_id: planting.id,
+            plant_id: parent.id,
             event_type: 'seed_saved',
             event_date: todayLocalISO(),
             notes: seedSavedNote(name.trim(), stageWritten),
@@ -332,9 +396,85 @@ export default function SaveSeedSheet({ planting, onClose }) {
   // closes the sheet, a second leaves /log.
   return (
     <Sheet open busy={busy} armsBack onClose={onClose} title="Save seed">
-      <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
-        From {planting?.name || 'this planting'} — the lot remembers which plant it came off.
-      </p>
+      {/* V4-SEEDINTAKEAGNOSTIC-001 — the origin block. Rendered ONLY when the caller could not
+          answer it: from a planting page or the event menu this whole section is absent and the
+          sheet is byte-identical to what shipped. */}
+      {parent ? (
+        <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
+          From {parent?.name || 'this planting'} — the lot remembers which plant it came off.
+        </p>
+      ) : origin === null ? (
+        <div style={{ margin: '0 0 14px' }}>
+          <p style={{ margin: '0 0 10px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
+            Where did this seed come from?
+          </p>
+          {/* Block targets at the full tap minimum, not inline links. This is the primary action of
+              the sheet, on the first screen, reached with seedy hands — the same reason
+              BUG-SEEDTAPTARGET-001 raised the card anchors off 15px. */}
+          {[
+            ['plant', 'One of my plants', 'Pick the planting it came off'],
+            ['other', 'Somewhere else', 'Shop, gift, u-pick, foraged…'],
+          ].map(([val, label, hint]) => (
+            <button
+              key={val} type="button" onClick={() => setOrigin(val)}
+              data-testid={`seed-origin-${val}`}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', marginBottom: 8,
+                minHeight: 56, padding: '10px 12px', borderRadius: 10,
+                border: `1px solid ${P.border}`, background: '#fff', cursor: 'pointer',
+              }}
+            >
+              <span style={{ display: 'block', fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>{label}</span>
+              <span style={{ display: 'block', color: P.mid, fontSize: '0.78rem', marginTop: 2 }}>{hint}</span>
+            </button>
+          ))}
+        </div>
+      ) : origin === 'plant' ? (
+        <div style={{ margin: '0 0 14px' }}>
+          {/* PlantingSelect, NOT a hand-rolled list. It self-fetches, sorts, formats the label and
+              carries the row through onChange so this sheet never needs its own id->row lookup — and
+              it is already the picker every other surface uses. The first draft of this block DID
+              hand-roll a search box and a capped list, which would have been a third matching
+              dialect in a codebase that has spent real effort collapsing them to two. */}
+          <label style={fieldLabelStyle}>
+            Which plant?
+            <PlantingSelect
+              value={picked?.id ?? ''}
+              onChange={(_id, row) => setPicked(row)}
+              labelFormat="qtyVariety"
+              data-testid="seed-plant-select"
+            />
+          </label>
+          <button
+            type="button" onClick={() => setOrigin(null)}
+            style={{ marginTop: 8, background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: '0.82rem', padding: '8px 0' }}
+          >
+            ← Not from one of my plants
+          </button>
+        </div>
+      ) : (
+        <div style={{ margin: '0 0 14px' }}>
+          <label style={fieldLabelStyle}>
+            Where did it come from?
+            <select
+              value={sourceKind} onChange={(e) => setSourceKind(e.target.value)}
+              data-testid="seed-source-kind" style={inputStyle}
+            >
+              <option value="">Choose…</option>
+              {NON_GARDEN_KINDS.map((o) => {
+                const v = o.value ?? o
+                return <option key={v} value={v}>{o.label ?? v}</option>
+              })}
+            </select>
+          </label>
+          <button
+            type="button" onClick={() => setOrigin(null)}
+            style={{ marginTop: 8, background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: '0.82rem', padding: '8px 0' }}
+          >
+            ← It did come off one of my plants
+          </button>
+        </div>
+      )}
 
       <label style={fieldLabelStyle}>
         Lot name

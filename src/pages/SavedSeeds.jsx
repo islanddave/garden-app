@@ -28,6 +28,7 @@ import Spinner from '../components/forms/Spinner.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { T } from '../components/forms/formStyles.js'
 import { SEED_STAGES } from '../components/seed/seedStages.js'
+import SaveSeedSheet from '../components/planting/SaveSeedSheet.jsx'
 import { looseIncludes } from '../lib/comboboxInput.js'
 import { formatQty, formatDate } from '../lib/format.js'
 
@@ -382,6 +383,7 @@ export default function SavedSeeds() {
   const [stagePlant, setStagePlant] = useState('')
   const [stagePlantFailed, setStagePlantFailed] = useState(false)
 
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const load = useCallback(() => {
     setLoadErr(null)
     // ?category=seeds is a server-side filter (V4-TREATLOG-001), so the 260-row seed set arrives
@@ -568,9 +570,34 @@ export default function SavedSeeds() {
           Sow now →
         </Link>
       </div>
-      <p style={{ margin: '0 0 20px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
+      <p style={{ margin: '0 0 12px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
         Seed you saved yourself, and where each lot has got to.
       </p>
+
+      {/* V4-SEEDINTAKEAGNOSTIC-001 — the door this page never had.
+          Dave, 2026-09-03: "I still cannot find an easy way to start a saved seed path anywhere."
+          He was right, and the page was worse than he described: BOTH previous doors were
+          CONDITIONAL. One lived in the empty state, so it vanished the moment a single lot existed;
+          the other was buried inside the tracking picker's scroll. Neither started a seed lot — both
+          linked to the generic /inventory/add form, which makes a packet with no parent.
+          ALWAYS RENDERED, above the fold, before any conditional branch. A primary action that only
+          appears when the page is empty is not a primary action. */}
+      <button
+        type="button"
+        onClick={() => setIntakeOpen(true)}
+        data-testid="save-seed-open"
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          width: '100%', minHeight: T.tapMinHeight, marginBottom: 20,
+          borderRadius: 10, border: 'none', background: P.green, color: '#fff',
+          fontSize: '0.95rem', fontWeight: 700, cursor: 'pointer',
+        }}
+      >
+        + Save seed
+      </button>
+      {/* Opened with NO planting, which is the whole point — the sheet asks where the seed came from
+          and offers both answers, instead of requiring the caller to already know. */}
+      {intakeOpen && <SaveSeedSheet onClose={() => { setIntakeOpen(false); load() }} />}
 
       {tracked.length === 0 && (
         // The empty state does the teaching, because on the day this ships EVERY visit is empty —
