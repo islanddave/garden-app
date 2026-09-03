@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.107.0",
+    "date": "2026-09-03",
+    "highlights": [
+      "Fixed put-up items showing as past their use-by date from 8pm the evening before — the check compared a calendar date against a clock instant, so every jar read as expired for four hours a night",
+      "Added the first tests for the use-by window, which had none"
+    ]
+  },
+  {
     "version": "4.106.0",
     "date": "2026-09-03",
     "highlights": [

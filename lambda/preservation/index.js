@@ -9,6 +9,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { householdScope, loadOwnedPhoto } from './household.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, validateProvenance, normalizeSourceLabel } from './provenance.js';
+import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -112,9 +113,6 @@ const SHELF_LIFE_MONTHS = {
   other:          { default: null },
 };
 
-// "use soon" occupies the final USE_SOON_FRACTION of the preserved_at→use_by_target span (L6: ~15–20%).
-const USE_SOON_FRACTION = 0.175;
-
 function shelfLifeMonths(method, kind) {
   const m = SHELF_LIFE_MONTHS[method];
   if (!m) return null;
@@ -142,26 +140,12 @@ export function defaultUseByTarget(method, kind, preservedAt) {
   return addMonths(preservedAt, months);
 }
 
-// UTC-midnight epoch ms for a Date OR a YYYY-MM-DD / ISO string. The neon driver returns date/
-// timestamptz columns as JS Date objects, so String(v).slice(0,10) is NOT safe — normalize both.
-function dayMs(v) {
-  const d = v instanceof Date ? v : new Date(v);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
-
-// Classify a row's freshness against its STORED use_by_target (L6 window, server-side).
-// Returns 'past_use_by' | 'use_soon' | 'ok'; null when there is no use_by_target (no expiry).
-export function classifyUseBy(preservedAt, useByTarget, now = new Date()) {
-  if (!useByTarget) return null;
-  const preserved = dayMs(preservedAt);
-  const useBy = dayMs(useByTarget);
-  const nowMs = now.getTime();
-  if (nowMs > useBy) return 'past_use_by';
-  const span = useBy - preserved;
-  if (span <= 0) return 'use_soon'; // degenerate/zero span already at expiry
-  const threshold = useBy - span * USE_SOON_FRACTION;
-  return nowMs >= threshold ? 'use_soon' : 'ok';
-}
+// dayMs and classifyUseBy MOVED to ./useBy.js under BUG-USEBYDAYBOUNDARY-001 — imported above with
+// the other local modules, and re-exported here so any existing importer of this file keeps
+// resolving. The definitions live in a module with no @neondatabase / @clerk / @aws-sdk imports,
+// which is the whole point: THIS file cannot be imported by vitest at all, so a date boundary
+// defined in it can only ever be asserted by spelling. See useBy.js's header and useBy.test.js.
+export { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ };
 
 function validateCommon(body) {
   if (!body || typeof body !== 'object') return 'body required';

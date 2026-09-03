@@ -1,8 +1,8 @@
 {
-  "version": "4.106.0",
+  "version": "4.107.0",
   "date": "2026-09-03",
   "highlights": [
-    "The crop filter is on the Saved Seeds page itself now, not hidden inside a sheet. Tap a crop to narrow your saved lots — and a lot whose ferment is overdue stays on screen even when the filter would hide it, with a line saying why",
-    "Add seeds → One item now opens the form with consumable and seeds already chosen, instead of a blank generic inventory form"
+    "Fixed put-up items showing as past their use-by date from 8pm the evening before — the check compared a calendar date against a clock instant, so every jar read as expired for four hours a night",
+    "Added the first tests for the use-by window, which had none"
   ]
 }
