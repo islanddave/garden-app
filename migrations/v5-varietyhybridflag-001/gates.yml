@@ -1,0 +1,220 @@
+# gates.yml
+# V5-VARIETYHYBRIDFLAG-001 — breeding_system / _source / _confidence / variety_rank on
+# plant_varieties, plus the public.cultivar widen 42 -> 46.
+#
+# SEQUENCING: staging apply -> gates -> rehearse 0r -> re-apply -> deploy-staging -> prod apply ->
+# gates -> promote. The DDL must land in prod BEFORE the promote.
+#
+# FAILURE MODE IF THE DDL DOES NOT LAND FIRST — asymmetric, and the hard direction is the reason
+# for the ordering above:
+#   * New Lambda + old schema = HARD. The varieties Lambda's SET list and SELECT blocks name the
+#     four columns; a missing column 500s every varieties read and write.
+#   * Old Lambda + new schema = INERT, and safely so. The varieties PUT is an ALLOWLIST at both
+#     ends — a fixed 32-column SET list in the Lambda and a declared FIELDS list in
+#     VarietyEditor.buildVarietyPatch — so the old writer cannot touch the new columns.
+#     NOTE this is the OPPOSITE of inventory_items, where putPayloadFrom (InventoryDetail.jsx:1113)
+#     spreads the whole row minus a DENYLIST and a new column rides into the next PUT with no
+#     deploy at all. That difference is why V1 puts nothing on inventory_items.
+#
+# COUNT DISCIPLINE — binding on every gate in this file. Every predicate over plant_varieties
+# states `deleted_at IS NULL` explicitly, even where today's data makes it a no-op, because the
+# filter IS the assertion's scope statement. The table is 466 rows total / 444 live / 22
+# soft-deleted; a gate written without the filter reads 466 where the app reads 444 and then passes
+# or fails for the wrong reason. This rule exists because the coordinator of this session made
+# exactly that error and put it in a panel brief labelled "verified"
+# (learning/error-log.md E-garden-seedvault-20260903-001).
+#
+# No gate here is a prod-derived absolute. Staging carries materially fewer cultivars than prod, and
+# the Migration Authoring Rule applies to staging first.
+
+pre:
+  - name: pre_plant_varieties_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name IN ('breeding_system','breeding_source','breeding_confidence','variety_rank')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.101.0-varietyhybridflag-001'
+    expect: rowcount_eq
+    value: 0
+
+  # The view must be at exactly the 42 columns 0a captured from prod pg_get_viewdef, or the
+  # CREATE OR REPLACE in 0a is being applied against a definition this file did not capture and the
+  # column-name/type/position guarantee does not hold.
+  #
+  # continuous:false, DELIBERATELY AND PERMANENTLY. This is a pre-condition for an apply, not a
+  # standing invariant — the apply itself takes the view to 46, so leaving it continuous makes it
+  # self-falsifying the moment it succeeds. The sibling v4-dtmbasisvar-001 learned this the hard
+  # way in the other direction: its pre_view_column_count_33 was green by coincidence (that
+  # migration did not change the count) and went red the first time a later slice widened the view.
+  # Per memory `frozen-count-gates-break-on-widening`: mark apply-window-only, never bump the number.
+  - name: pre_cultivar_view_column_count_42
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar'
+    expect: scalar_eq
+    value: 42
+
+sweep:
+  # L-058 requires that every predicate a CHECK will enforce already holds before the CHECK is
+  # armed. Here it holds VACUOUSLY — the columns do not exist yet, so there are no rows to violate
+  # anything and 0a's CHECKs are created VALIDATED against an all-NULL population.
+  # Stated as a gate rather than left inferred, because "it is obviously fine" is how an unchecked
+  # assumption ships. This asserts the cheap case is genuinely the case.
+  - name: sweep_no_preexisting_violators_possible
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name IN ('breeding_system','breeding_source','breeding_confidence','variety_rank')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.101.0-varietyhybridflag-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_four_columns_exist
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name IN ('breeding_system','breeding_source','breeding_confidence','variety_rank')
+    expect: scalar_eq
+    value: 4
+
+  # THE GATE THAT WOULD HAVE CAUGHT THE OUTAGE, in this migration's own terms.
+  # lambda/varieties reads AND writes through public.cultivar and lambda/plants builds
+  # planting.variety_ref from it. An explicit-column-list view does not inherit new base columns, so
+  # without the widen in 0a the four columns are invisible to every app surface and this slice ships
+  # four inert columns. Three independent crucible seats found this omission in the sibling heirloom
+  # design; this gate is the mechanical check that it did not happen here.
+  - name: post_cultivar_view_carries_all_four
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar'
+         AND column_name IN ('breeding_system','breeding_source','breeding_confidence','variety_rank')
+    expect: scalar_eq
+    value: 4
+
+  - name: post_cultivar_view_column_count_46
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar'
+    expect: scalar_eq
+    value: 46
+
+  # The view must stay AUTO-UPDATABLE or lambda/varieties' `INSERT INTO public.cultivar` and
+  # `UPDATE public.cultivar` both break. Appending plain pass-through columns preserves this;
+  # anything computed would not.
+  - name: post_cultivar_view_still_auto_updatable
+    continuous: false
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema='public' AND table_name='cultivar' AND is_updatable='YES'
+    expect: rowcount_eq
+    value: 1
+
+  # Prod-only: staging has no garden_ro role at all, so this cannot run there. See 0r's header —
+  # the DROP VIEW in the rollback is the path that does not preserve grants, and staging is
+  # structurally blind to it.
+  - name: post_garden_ro_can_still_read_cultivar
+    env: prod
+    sql: |
+      SELECT 1 FROM information_schema.role_table_grants
+       WHERE table_name='cultivar' AND grantee='garden_ro' AND privilege_type='SELECT'
+    expect: rowcount_eq
+    value: 1
+
+  # All six CHECKs must exist AND be VALIDATED. The second half is the point: 0a deliberately
+  # creates them validated rather than NOT VALID, because all 16 pre-existing CHECKs on this table
+  # are convalidated and a NOT VALID constraint still blocks writes — it defers nothing and only
+  # leaves a permanent flag a later reader cannot distinguish from "known violators exist".
+  # Asserting convalidated pins that decision so it cannot drift back unnoticed.
+  - name: post_six_checks_exist_and_are_validated
+    continuous: false
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE contype = 'c' AND convalidated
+         AND conname IN ('chk_plant_varieties_breeding_system',
+                         'chk_plant_varieties_breeding_source',
+                         'chk_plant_varieties_breeding_confidence',
+                         'chk_plant_varieties_variety_rank',
+                         'chk_plant_varieties_breeding_sourced',
+                         'chk_plant_varieties_op_requires_cultivar')
+    expect: scalar_eq
+    value: 6
+
+  # ── STANDING INVARIANTS, SELF-ARMING ────────────────────────────────────────────────────────
+  # Both are wrapped in `WHERE EXISTS (schema_version = this migration)`, so before the apply they
+  # are VACUOUSLY TRUE (the invariant is not yet claimed) and after it they assert for real,
+  # permanently, with no follow-up edit.
+  #
+  # This is not decoration. gate-invariants.yml runs `--phase post --continuous-only` against prod
+  # AND staging and it also fires on pushes touching `migrations/**` — so a NON-self-arming post
+  # gate goes red the moment this directory reaches dev and stays red until the apply, which is how
+  # an invariant suite decays into noise people scroll past. The named sibling
+  # v4-dtmbasisvar-001 does NOT demonstrate this pattern; v4-cachemissingrow-001 does, and this
+  # follows it.
+
+  # ANTI-GROWN_AS, as a standing assertion rather than only a CHECK. The CHECK enforces it on write;
+  # this proves it has never been circumvented by a direct load. `grown_as` became worthless because
+  # a bulk default set 'annual' on 362 of 413 cultivars with no source — this is the gate that would
+  # have caught that.
+  - name: post_no_breeding_call_stands_unsourced
+    sql: |
+      SELECT v.id FROM public.plant_varieties v
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.101.0-varietyhybridflag-001')
+         AND v.deleted_at IS NULL
+         AND v.breeding_system IS NOT NULL
+         AND v.breeding_source IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  # THE FORCING FUNCTION as a standing assertion: no positive "safe to save" claim may stand on a
+  # row whose name is a market class. "Serrano is open-pollinated" is the shape this forbids —
+  # Serrano covers many cultivars with different answers, so the claim would tell you seed comes
+  # true when it may not.
+  - name: post_no_op_claim_without_cultivar_rank
+    sql: |
+      SELECT v.id FROM public.plant_varieties v
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.101.0-varietyhybridflag-001')
+         AND v.deleted_at IS NULL
+         AND v.breeding_system = 'open_pollinated'
+         AND v.variety_rank IS DISTINCT FROM 'cultivar'
+    expect: rowcount_eq
+    value: 0
+
+  # Soft-deleted rows are NOT exempt from the CHECKs — a CHECK does not know about deleted_at — so
+  # if one ever violated, the constraint would already have refused the write. This asserts the
+  # whole-table population separately from the live-row gates above, which is the only way to tell
+  # "clean because correct" from "clean because filtered".
+  - name: post_invariants_hold_for_soft_deleted_rows_too
+    sql: |
+      SELECT v.id FROM public.plant_varieties v
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.101.0-varietyhybridflag-001')
+         AND v.deleted_at IS NOT NULL
+         AND (   (v.breeding_system IS NOT NULL AND v.breeding_source IS NULL)
+              OR (v.breeding_system = 'open_pollinated' AND v.variety_rank IS DISTINCT FROM 'cultivar'))
+    expect: rowcount_eq
+    value: 0
