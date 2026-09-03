@@ -149,9 +149,14 @@ describe('V5-HARVESTONEDOOR-001 legacy urls', () => {
     expect(screen.getByTestId('probe').textContent).toBe('/log/harvest')
   })
 
-  it('/log?session=harvest redirects to the combined page on MANUAL — the session it used to open', () => {
+  // Lands on the DEFAULT mode, not on the manual session this url used to open. That is deliberate
+  // and it is the opposite of the first implementation — see LegacyHarvestRedirect.jsx for why.
+  // Short version: the only remaining caller is a launcher-cached home-screen tile, so a faithful
+  // mapping would have kept Dave's main door on manual for days and then flipped it to voice with
+  // no deploy, when Chrome finally re-read the manifest.
+  it('/log?session=harvest redirects to the combined page on the DEFAULT mode, not manual', () => {
     redirectProbe('/log?session=harvest', <HarvestSessionRedirect><Probe /></HarvestSessionRedirect>)
-    expect(screen.getByTestId('probe').textContent).toBe('/log/harvest?mode=manual')
+    expect(screen.getByTestId('probe').textContent).toBe('/log/harvest')
   })
 
   // Deep-link scope must survive the hop. ?plant= and ?project= are real state EventNew reads, and
@@ -161,10 +166,12 @@ describe('V5-HARVESTONEDOOR-001 legacy urls', () => {
     redirectProbe('/log?session=harvest&plant=p1&project=proj-1', <HarvestSessionRedirect><Probe /></HarvestSessionRedirect>)
     const url = new URL(screen.getByTestId('probe').textContent, 'https://garden.futureishere.net')
     expect(url.pathname).toBe('/log/harvest')
-    expect(url.searchParams.get('mode')).toBe('manual')
     expect(url.searchParams.get('plant')).toBe('p1')
     expect(url.searchParams.get('project')).toBe('proj-1')
+    // The retired discriminator must not survive the hop, or /log would intercept it again.
     expect(url.searchParams.get('session')).toBeNull()
+    // And no mode is forced — a scoped arrival gets the default like every other arrival.
+    expect(url.searchParams.get('mode')).toBeNull()
   })
 
   // THE NON-VACUITY CONTROL, and the one that protects the ordinary Log-an-event form. The wrapper

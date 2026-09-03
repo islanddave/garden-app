@@ -328,9 +328,14 @@ const TONE = {
 
 // V5-HARVESTONEDOOR-001 — `embedded` is set only by HarvestLog, the combined harvest page, which
 // supplies its own title and the voice/manual selector. It suppresses this page's own <h1> and
-// intro paragraph and nothing else: every behaviour below is identical in both postures, so there
-// is no embedded-only code path to test separately. Default false keeps the standalone /log/voice
-// route (now a redirect, but still reachable in tests and from a stale bookmark) byte-identical.
+// swaps one sentence of help text. Default false keeps the standalone /log/voice route (now a
+// redirect, but still reachable in tests and from a stale bookmark) byte-identical.
+//
+// It DOES branch — two places, `{!embedded && (` on the heading and a ternary in the help text —
+// and both are covered by VoiceHarvest.embedded.test.jsx. An earlier version of this comment
+// claimed "there is no embedded-only code path to test separately", which was false eight lines
+// after it was written and would have talked the next reader out of testing the branch. A comment
+// asserting its own untestability is the one kind that has to be checked.
 export default function VoiceHarvest({ embedded = false } = {}) {
   const { fetch: apiFetch } = useApiFetch()
 
