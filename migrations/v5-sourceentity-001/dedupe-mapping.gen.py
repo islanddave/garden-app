@@ -197,17 +197,14 @@ m(P, "Hart Farm trust stand", "Hart Farm", "farm_stand", "", "", "high", "new",
   "'trust stand' is the KIND (honour-system), not part of the name - it moves to source.kind.",
   residue="nothing")
 m(P, "Sunderland - trust stand", "Sunderland trust stand", "farm_stand", "Sunderland, MA", "",
-  "medium", "REVIEW",
-  "An UNNAMED stand identified only by its town. Kept separate from the other three stands - they "
-  "are in different towns and are certainly different stands. Dave may know the farm's actual name.")
+  "high", "new",
+  "DAVE RULED 2026-09-03: he is unsure whether he knows the farm, and directed that partial knowledge is enough - 'this should be a fill-in system where I provide as many details as I know... any entry, even unknown, should become an entity with a record and log.' So this becomes a real source row on what IS known: the town and that it was a trust stand. Detail can be added later without a migration; every column but name is nullable by design. Not a placeholder and not a deferral. ")
 m(P, "Trust Stand Greenfield -Upper Road", "Trust stand, Upper Road", "farm_stand",
-  "Greenfield, MA", "", "medium", "REVIEW",
-  "Another unnamed stand, identified by town + road. Street detail moves to source.address "
-  "('Upper Road'). Dave may know the farm's name.")
-m(P, "Trust stand in Hadley", "Trust stand, Hadley", "farm_stand", "Hadley, MA", "", "medium",
-  "REVIEW",
-  "Third unnamed stand. NOT merged with the other two - three towns, three stands. Note this row's "
-  "source_type is NULL, the only plants spelling besides the Long River address row with no type.")
+  "Greenfield, MA", "", "high", "new",
+  "DAVE RULED 2026-09-03: he is unsure whether he knows the farm, and directed that partial knowledge is enough - 'this should be a fill-in system where I provide as many details as I know... any entry, even unknown, should become an entity with a record and log.' So this becomes a real source row on what IS known: the town and that it was a trust stand. Detail can be added later without a migration; every column but name is nullable by design. Not a placeholder and not a deferral. ")
+m(P, "Trust stand in Hadley", "Trust stand, Hadley", "farm_stand", "Hadley, MA", "", "high",
+  "new",
+  "DAVE RULED 2026-09-03: he is unsure whether he knows the farm, and directed that partial knowledge is enough - 'this should be a fill-in system where I provide as many details as I know... any entry, even unknown, should become an entity with a record and log.' So this becomes a real source row on what IS known: the town and that it was a trust stand. Detail can be added later without a migration; every column but name is nullable by design. Not a placeholder and not a deferral. ")
 
 # ── Nurseries, farms, garden centres ─────────────────────────────────────────────────────────────
 m(P, "Chapley Gardens - 397 Greenfield Rd Deerfield MA", "Chapley Gardens", "nursery",
@@ -223,9 +220,11 @@ m(P, "Bostrom Farms", "Bostrom Farms", "farm_stand", "", "", "medium", "new",
 m(P, "Nettlepoint Farm", "Nettlepoint Farm", "farm_stand", "", "", "medium", "new",
   "One row, source_type=gift. A farm that gave rather than sold; the gift is the transaction "
   "(plants.source_type) and the farm is the place.")
-m(I, "Gardens at Mathews", "Gardens at Mathews", "nursery", "", "", "low", "REVIEW",
-  "*** UNIDENTIFIED. *** One seeds row. Reads like a nursery or a private garden; could be a person's "
-  "garden, a public garden, or a business. Kind is a guess and Dave should set it.")
+m(I, "Gardens at Mathews", "Own garden", "own_garden", "", "", "high", "merge",
+  "DAVE CONFIRMED 2026-09-03. Not a nursery - it is Dave's OWN garden, recorded by its name (the "
+  "name on his own site). The design read it as an unidentified business because nothing in the "
+  "data says otherwise; the answer was outside the data. Merged into the same 'Own garden' source "
+  "as the home-saved row.")
 m(P, "Class Grass Garden Canter", "Class Grass Garden Center", "nursery", "", "", "medium",
   "REVIEW",
   "PARTLY RULED 2026-09-03: Dave confirmed 'garden canter = garden center', so the second half is "
@@ -304,25 +303,34 @@ m(P, "Imogen", "Imogen", "person", "", "", "high", "new",
 m(P, "Emma Daley 2026.06.13", "Emma Daley", "person", "", "", "high", "new",
   "The date is the day of the gift, not part of her name.",
   residue="'2026.06.13' - the gift date; no column for it here")
-m(I, "Jen's uncle", "Jen's uncle", "person", "", "", "medium", "REVIEW",
-  "A relationship, not a name. Kept verbatim rather than invented. Dave may want to name him, or to "
-  "record this as a gift from Jen instead.")
-m(P, "Jen from Four Phantoms", "Jen from Four Phantoms", "person", "", "", "low", "REVIEW",
-  "*** DAVE MUST RULE, AND IT MAY BE TWO FACTS. *** 12 rows, the fourth-largest spelling. Reads as "
-  "a person (Jen) associated with a place (Four Phantoms). If Four Phantoms is a farm or nursery, "
-  "this should split into person + acquired_from exactly like the via-shop rows. It is ALSO unclear "
-  "whether this Jen is Dave's partner. Left as ONE verbatim row so no wrong split is baked in.")
+m(I, "Jen's uncle", "Jen's uncle", "person", "", "", "high", "new",
+  "DAVE RULED 2026-09-03: 'Jen's uncle is the person, keep it that way. no proper name.' So the "
+  "relationship IS the identifier here and stands as the source name - not a placeholder awaiting a "
+  "real name, and not to be rewritten as a gift from Jen. He is the person the seed came from.")
+m(P, "Jen from Four Phantoms", "Jen", "person", "Greenfield, MA", "Four Phantoms Brewing Company",
+  "high", "split",
+  "DAVE CONFIRMED 2026-09-03. TWO FACTS, and the answer came from session notes rather than the "
+  "data: Four Phantoms is Four Phantoms Brewing Company, 301 Wells St, Greenfield MA, and the Jen "
+  "named is a CO-OWNER OF THE BREWERY - not Dave's partner Jen, and not a farm or nursery, of which "
+  "there is none by that name. Dave collected the plants himself. 12 rows, the fourth-largest "
+  "spelling. Weight this one: it is the batch whose pot labels Dave says he mixed up, so the source "
+  "is the only field on these twelve plants still known to be right.",
+  residue="the brewery's street address, 301 Wells St - belongs on source.address once the shop row exists")
 m(P, "Ojos de Luna", "Ojos de Luna", "person", "", "", "high", "new",
   "DAVE RULED 2026-09-03: 'ojos is a person, name her so' - a woman, recorded under this name. The "
   "design had `person` as a placeholder among four readings; it is now the answer. All 4 rows are "
   "gifts from her, which is consistent.")
 
 # ── Own garden ───────────────────────────────────────────────────────────────────────────────────
-m(I, "Home-saved (source not recorded)", "Own garden", "own_garden", "", "", "medium", "REVIEW",
+m(I, "Home-saved (source not recorded)", "Own garden", "own_garden", "", "", "high", "merge",
   "Seed saved from Dave and Jen's own plants. NOTE THE OVERLAP: inventory_items.source_plant_id and "
   "source_kind='own_garden' (V4-SEEDLINK-001 / V4-SEEDORIGIN-001) are the PURPOSE-BUILT home for "
   "this, and are richer - they can name the parent plant. Dave should decide whether this row wants "
-  "a source_id at all, or belongs entirely on those columns.",
+  "a source_id at all, or belongs entirely on those columns.\n"
+  "DAVE RULED 2026-09-03: 'more or less, yes' - it belongs on the parent-plant link and the "
+  "own_garden origin, which can name the actual plant. His condition, and it is a REQUIREMENT not a "
+  "footnote: 'there may be some rare cases where I don't know where a seed may have come from, so "
+  "so long as I can use Unknown in general, this works for me.' Filed as its own item.",
   residue="'(source not recorded)' - the honest admission that the parent plant is unknown")
 
 # ── Genuinely other ──────────────────────────────────────────────────────────────────────────────
