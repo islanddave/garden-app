@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.102.0",
+    "date": "2026-09-03",
+    "highlights": [
+      "Harvest logging is one screen now. Tap the basket in the header and you land on voice — say the crop, the count, the weight, then \"next\". The weigh-in session with the number pad is one tap away on the selector at the top, instead of being a different page reached from somewhere else.",
+      "The Harvest shortcut on your home screen, the basket in the header and the button on the Harvests page all go to the same place now. Whichever one you use, you get the same screen and the same choice.",
+      "Harvest by voice has left the ＋ menu — it was the fifth item there and it is now behind the header basket, which is one tap from anywhere instead of two."
+    ]
+  },
+  {
     "version": "4.101.0",
     "date": "2026-09-03",
     "highlights": [

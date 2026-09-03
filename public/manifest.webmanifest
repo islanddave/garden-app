@@ -13,8 +13,8 @@
     {
       "name": "Log a harvest",
       "short_name": "Harvest",
-      "description": "Open the weigh-in session — pick a planting, weigh, save, repeat",
-      "url": "/log?session=harvest",
+      "description": "Say it hands-free, or switch to the weigh-in session",
+      "url": "/log/harvest",
       "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {

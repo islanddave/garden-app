@@ -125,15 +125,21 @@ function entryPoints() {
 const ENTRY_POINTS = entryPoints()
 
 describe('BUG-SESSIONDRAFTRESTORE-001 entry points — all three reach the same predicate', () => {
-  it.each(ENTRY_POINTS)('%s carries ?session=harvest and NO other seed param', (_name, url) => {
+  // V5-HARVESTONEDOOR-001: all three now point at the combined harvest page. The `?session=harvest`
+  // param is gone — HarvestLog passes that state to EventNew as the `harvestSession` PROP — so what
+  // is asserted is the pathname plus the same seed-absence property. The property is what this
+  // describe was always about: every one of those params is a `hasSeed` term, and their absence is
+  // WHY the draft-restore refusal fires on this path and not on ?event_type=harvest. That reasoning
+  // is unchanged; only the string carrying it moved.
+  it.each(ENTRY_POINTS)('%s points at /log/harvest and carries NO seed param', (_name, url) => {
     const parsed = new URL(url, 'https://garden.futureishere.net')
-    expect(parsed.pathname).toBe('/log')
-    expect(parsed.searchParams.get('session')).toBe('harvest')
-    // Every one of these is a hasSeed term. That all three are absent is WHY the restore fires here
-    // and not on ?event_type=harvest — the property that makes this one fix cover all three.
+    expect(parsed.pathname).toBe('/log/harvest')
     for (const seed of ['project', 'event_type', 'plant', 'resolve', 'fromquick']) {
       expect(parsed.searchParams.get(seed), `${_name} carries ?${seed}=`).toBeNull()
     }
+    // The retired spelling must not come back on any of the three: it would route to the plain
+    // single-event form via the /log route and skip the selector entirely.
+    expect(parsed.searchParams.get('session'), `${_name} still carries ?session=`).toBeNull()
   })
 })
 
@@ -169,12 +175,22 @@ const HARVEST_DRAFT = {
   harvest: { quantity: '7', weight: '', quality_rating: null, disposition: null, unit: 'cup', weight_unit: 'g', unitTouched: true },
 }
 
-async function mountAt(url, { overlaySurface = false } = {}) {
-  const tree = <ToastProvider><EventNew /></ToastProvider>
+// V5-HARVESTONEDOOR-001: the three entry points now land on /log/harvest, and the session state
+// arrives as the `harvestSession` PROP rather than a query param — which is exactly how HarvestLog
+// mounts the Manual half. Mounting EventNew the way the real combined page does is the point: a
+// mount that kept passing ?session=harvest would still go green while the shipped door was broken.
+// `harvestSession` defaults TRUE because every entry-point case below arrives through the combined
+// page's Manual half, which is where the prop comes from. The control cases that must NOT engage
+// the session pass it false and keep using a /log url — both routes are registered so one helper
+// serves both shapes.
+async function mountAt(url, { overlaySurface = false, harvestSession = true } = {}) {
+  const tree = <ToastProvider><EventNew harvestSession={harvestSession} /></ToastProvider>
+  const el = overlaySurface ? <OverlaySurfaceProvider>{tree}</OverlaySurfaceProvider> : tree
   const utils = render(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
-        <Route path="/log" element={overlaySurface ? <OverlaySurfaceProvider>{tree}</OverlaySurfaceProvider> : tree} />
+        <Route path="/log/harvest" element={el} />
+        <Route path="/log" element={el} />
       </Routes>
     </MemoryRouter>
   )
@@ -251,7 +267,7 @@ describe.each(ENTRY_POINTS)('BUG-SESSIONDRAFTRESTORE-001 — parked HARVEST draf
 describe('BUG-SESSIONDRAFTRESTORE-001 controls — the draft stash is untouched off the session', () => {
   it('a bare /log still restores the parked non-harvest draft', async () => {
     writeDraft(EVENTNEW_DRAFT_KEY, WATERING_DRAFT)
-    await mountAt('/log')
+    await mountAt('/log', { harvestSession: false })
     expect(screen.queryByTestId('harvest-session-lock')).toBeNull()
     await saveWith()
     expect(postCalls.length).toBe(1)
@@ -261,7 +277,7 @@ describe('BUG-SESSIONDRAFTRESTORE-001 controls — the draft stash is untouched 
 
   it('a bare /log still restores the parked harvest weight', async () => {
     writeDraft(EVENTNEW_DRAFT_KEY, HARVEST_DRAFT)
-    await mountAt('/log')
+    await mountAt('/log', { harvestSession: false })
     expect(screen.getByLabelText('Harvest quantity').value).toBe('7')
   })
 
@@ -285,9 +301,12 @@ describe('BUG-SESSIONDRAFTRESTORE-001 controls — the draft stash is untouched 
     expect(screen.getByLabelText('Harvest quantity')).toBeTruthy()
   })
 
+  // harvestSession:false is what makes this a control rather than a contradiction — it is the plain
+  // /log form, reached without the combined page, which is the posture a stray ?session= value
+  // actually arrives in.
   it('an unrelated ?session= value is not a seed — the restore still fires', async () => {
     writeDraft(EVENTNEW_DRAFT_KEY, WATERING_DRAFT)
-    await mountAt('/log?session=watering')
+    await mountAt('/log?session=watering', { harvestSession: false })
     expect(screen.queryByTestId('harvest-session-lock')).toBeNull()
     await saveWith()
     expect(postCalls[0].notes).toBe('half a can on the peppers')
@@ -312,7 +331,7 @@ describe('BUG-SESSIONDRAFTRESTORE-001 — the save reaches the SHIPPED frame led
     const { ToastProvider: FreshToastProvider } = await import('../context/ToastContext.jsx')
     const utils = render(
       <MemoryRouter initialEntries={[url]}>
-        <Routes><Route path="/log" element={<FreshToastProvider><EventNewFrame /></FreshToastProvider>} /></Routes>
+        <Routes><Route path="/log/harvest" element={<FreshToastProvider><EventNewFrame harvestSession /></FreshToastProvider>} /></Routes>
       </MemoryRouter>
     )
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))

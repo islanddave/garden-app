@@ -257,13 +257,21 @@ export default function Harvests() {
           >
             Export
           </button>
+          {/* V5-HARVESTONEDOOR-001: retargeted to the combined harvest page, and RELABELLED with it.
+              The label had to move: this button said "Weigh-in" with a scales glyph because it
+              opened the weigh-in session specifically, and the combined page opens on VOICE by
+              default. Pointing the old label at the new target would have made the button lie on
+              every tap. It reads "Harvest" now — the door, not one of the two things behind it —
+              and the weigh-in is one tap away on the selector.
+              The testid is kept verbatim so the existing coverage keeps pointing at this element
+              rather than silently passing against nothing. */}
           <Link
-            to="/log?session=harvest"
+            to="/log/harvest"
             data-testid="weigh-in-session-link"
             style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: T.tapMinHeight, padding: '0 12px', border: `1px solid ${P.green}`, borderRadius: T.radiusButton, color: P.white, fontWeight: 700, fontSize: T.type.sm, textDecoration: 'none', backgroundColor: P.green }}
           >
-            <span aria-hidden="true">⚖️</span>
-            <span>Weigh-in</span>
+            <span aria-hidden="true">🧺</span>
+            <span>Harvest</span>
           </Link>
         </div>
 

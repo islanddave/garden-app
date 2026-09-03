@@ -1,3 +1,10 @@
+// V5-HARVESTONEDOOR-001 UPDATE: the header action now opens the COMBINED harvest page
+// (/log/harvest), which is voice by default with the weigh-in session one tap away on its selector.
+// Everything below still holds and still matters — the page must arrive as a PAGE and not an
+// overlay, because the Manual half IS the weigh-in session and EventNew gates it on
+// `harvestSessionParam && !inOverlay`. The target string changed; the posture requirement did not,
+// and it is now load-bearing for one of two modes rather than for the whole surface.
+//
 // V4-WEIGHINCTA-001 (CHECKIN PLAN B5) — the global header Harvest action opens the WEIGH-IN SESSION.
 //
 // Why this file exists separately from TopChrome.test.jsx: that suite asserts hrefs, and an href
@@ -40,12 +47,12 @@ function renderAt(path) {
 
 beforeEach(() => { mockUser = { id: 'u1' } })
 
-describe('TopChrome (V4-WEIGHINCTA-001) — header Harvest = the weigh-in session, full page', () => {
-  it('lands on /log?session=harvest as a PAGE, not an overlay', () => {
+describe('TopChrome (V4-WEIGHINCTA-001 / V5-HARVESTONEDOOR-001) — header Harvest = the combined harvest page, full page', () => {
+  it('lands on /log/harvest as a PAGE, not an overlay', () => {
     renderAt('/today')
     expect(screen.getByTestId('probe').textContent).toBe('/today|page')
     fireEvent.click(screen.getByTestId('topchrome-harvest'))
-    expect(screen.getByTestId('probe').textContent).toBe('/log?session=harvest|page')
+    expect(screen.getByTestId('probe').textContent).toBe('/log/harvest|page')
   })
 
   // Non-vacuity control for the assertion above: same probe, same click mechanism, an action that IS
@@ -64,7 +71,7 @@ describe('TopChrome (V4-WEIGHINCTA-001) — header Harvest = the weigh-in sessio
       cleanup()
       renderAt(path)
       fireEvent.click(screen.getByTestId('topchrome-harvest'))
-      expect(screen.getByTestId('probe').textContent, `from ${path}`).toBe('/log?session=harvest|page')
+      expect(screen.getByTestId('probe').textContent, `from ${path}`).toBe('/log/harvest|page')
     }
   })
 })

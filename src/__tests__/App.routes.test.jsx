@@ -71,8 +71,12 @@ describe('App route table (single source of truth)', () => {
     // 56 -> 57: V4-SEEDSAVEFLOW-001 adds /seeds/saved, the saved-seed lot surface. A PAGE, not
     // `overlayable`, for the same reason /sow is one: it is a destination reached from the More
     // sheet and worked in, not a task flyover launched over whatever was already open.
-    expect(paths).toHaveLength(57)
-    expect(new Set(paths).size).toBe(57)
+    // 57 -> 58: V5-HARVESTONEDOOR-001 adds /log/harvest, the combined harvest page (voice by
+    // default, weigh-in session behind its selector). /log/voice is NOT removed — it stays in the
+    // table as a redirect, because the installed PWA caches its manifest in the launcher for days
+    // and a bookmark or restored tab can name it indefinitely. So this is +1, not a swap.
+    expect(paths).toHaveLength(58)
+    expect(new Set(paths).size).toBe(58)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {
