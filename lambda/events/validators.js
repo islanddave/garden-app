@@ -572,17 +572,15 @@ export function normalizeScopeIds(scope) {
 // committed sibling eventTypes.generated.js by scripts/gen-lambda-event-types.mjs, and
 // CI (`npm run check:event-types`) fails on any drift. The deployed Lambda is a standalone
 // zip with no bundler, so it imports the generated SIBLING (not src/lib/) at runtime.
-// Excluded by design (see BATCH_EXCLUDED_TYPES in eventTypes.js):
-//   - harvest                 — requires quantity+unit (dual-write to harvest_log)
-//   - first_harvest           — MILESTONE only: carries NO quantity, writes NO harvest_log row.
-//                               validateEventBody above REJECTS harvest fields on it (400), and
-//                               index.js gates the harvest_log CTE on eventType === 'harvest'.
-//                               Excluded from batch for per-plant-entry reasons, NOT for quantity.
-//                               See the long note in src/lib/eventTypes.js for why this matters to
-//                               evidence-only surfaces that INNER JOIN harvest_log.
-//   - photo                   — requires a file upload (no bulk semantics)
-//   - divided / cutting_taken — HS-1: spawn child plantings (lineage/transaction risk)
-//   - hand_pollinated / fruit_set — HS-1: single-plant events, no bulk semantics
+// WHAT IS EXCLUDED, AND WHY, LIVES IN ONE PLACE: the BATCH_EXCLUDED_TYPES block in
+// src/lib/eventTypes.js, which carries a per-entry rationale keyed to the ticket that added it.
+// This comment deliberately does NOT restate the list. The copy that used to sit here drifted:
+// it still named `fruit_set` as excluded after V4-EVENTSEL-002 un-excluded it (2026-07-07), and it
+// never gained `moisture_check`, `failed`, `given_away` or `seed_saved`. A hand-maintained mirror
+// of a derived list is exactly the drift `npm run check:event-types` exists to prevent, so the
+// mirror is gone rather than refreshed. The shared shape across every entry is that the event
+// either needs per-plant data the batch body cannot carry, or writes a child record that only the
+// single path writes — so a bulk row would assert something no evidence surface can corroborate.
 import { BATCH_EVENT_TYPES } from './eventTypes.generated.js';
 export { BATCH_EVENT_TYPES };
 

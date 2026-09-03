@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.97.1",
+    "date": "2026-09-02",
+    "highlights": [
+      "Log Many no longer offers \"Seed saved\" — saving seed creates a real seed lot, and only the Save seed button on a planting does that. Bulk-logging it wrote the event onto every planting in the scope while creating no lots at all."
+    ]
+  },
+  {
     "version": "4.97.0",
     "date": "2026-09-02",
     "highlights": [

@@ -1,11 +1,7 @@
 {
-  "version": "4.97.0",
+  "version": "4.97.1",
   "date": "2026-09-02",
   "highlights": [
-    "Eleven more seed packets now give you a real sowing window — instructions like \"early spring when soil is cold\" or \"1-2 weeks before average last frost\" were being ignored completely",
-    "Packets the app genuinely cannot read no longer claim \"Too late this year\" on every date of the season — they now say a sow profile is needed, and show you the packet's own words",
-    "Save seed that did not come from one of your plantings — store-bought, a gift, foraged — without having to find a planting first",
-    "Changing a seed quantity twice in quick succession no longer lets the older change overwrite the newer one",
-    "Android's Back button closes the Save-seed sheet instead of navigating away from the page underneath it"
+    "Log Many no longer offers \"Seed saved\" — saving seed creates a real seed lot, and only the Save seed button on a planting does that. Bulk-logging it wrote the event onto every planting in the scope while creating no lots at all."
   ]
 }

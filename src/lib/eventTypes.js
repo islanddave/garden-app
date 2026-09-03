@@ -226,6 +226,22 @@ export const PRIMARY_EVENT_TYPES = [
 //                             500-planting scope would decrement 500 plantings by 3 each and accrue
 //                             1500 to qty_lost. Bulk attrition is not a real gesture anyway — you
 //                             count what a pest actually took on the planting in front of you.
+//   BUG-SEEDSAVEDBATCHXP-001:
+//     seed_saved            — the SAME evidence asymmetry as `harvest`, in the same direction. The
+//                             single path (SaveSeedSheet) writes three requests: it creates an
+//                             inventory_items seed LOT, stages it via POST /seed-stage (which writes
+//                             the seed_lot_stage_log row /seeds/saved sorts on), and only then posts
+//                             the event. The batch path posts the event ALONE — so a bulk seed_saved
+//                             asserts on N plantings' timelines that seed was saved while creating
+//                             zero lots, and /seeds/saved, which is the only surface that would show
+//                             the claim was empty, stays empty.
+//                             The multiplier is the reason this is worth excluding rather than just
+//                             discouraging: seed_saved is deliberately NOT in NON_REWARD_EVENT_TYPES
+//                             (V4-SEEDEVENT-001 chose that — a two-week ferment→dry→store commitment
+//                             should pay like a watering, and that stays true), so one tap over a
+//                             500-planting scope is 500 events and 500 xp grants for one gesture that
+//                             produced nothing. Same shape as `divided`/`cutting_taken` above: the
+//                             real act spawns a child record, and only the single path spawns it.
 export const BATCH_EXCLUDED_TYPES = [
   'harvest',
   'first_harvest',
@@ -236,6 +252,7 @@ export const BATCH_EXCLUDED_TYPES = [
   'moisture_check',
   'failed',
   'given_away',
+  'seed_saved',
 ]
 
 // ── Reward-bearing partition (V4-WATERMATH-001 F0) ──────────────────

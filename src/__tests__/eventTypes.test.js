@@ -71,16 +71,22 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
     );
   });
 
-  it('excludes exactly the 9 expected types (3 needs-input + 3 HS-1 + 1 non-reward + 2 reduction)', () => {
+  it('excludes exactly the 10 expected types (3 needs-input + 3 HS-1 + 1 non-reward + 2 reduction + 1 single-path artifact)', () => {
     // V4-WATERMATH-001 F0 added moisture_check: a per-plant JUDGEMENT ("this one is still damp"),
     // the opposite of a scope-wide assertion. Bulk-logging "none of these 500 need water" without
     // touching them fabricates an observation and lets one tap suppress the whole water bar.
     // V4-LOSSEVENT-001 added failed + given_away: each carries a PER-PLANTING quantity (harvest's
     // disqualifier) and, worse, an invisible side effect — one "lost 3" across a 500-planting scope
     // would decrement 500 plantings and accrue 1500 to qty_lost.
+    // BUG-SEEDSAVEDBATCHXP-001 added seed_saved: the single path (SaveSeedSheet) creates an
+    // inventory_items LOT and its seed_lot_stage_log row, and the batch path has no lot-creating
+    // arm at all — so a bulk seed_saved asserts on N timelines that seed was saved while creating
+    // zero lots, and /seeds/saved stays empty. Same evidence asymmetry as harvest/harvest_log.
+    // It is deliberately still reward-bearing (V4-SEEDEVENT-001), which is what made the batch
+    // multiplier worth closing: 500 plantings was 500 events and 500 xp for one empty gesture.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
       ['cutting_taken', 'divided', 'failed', 'first_harvest', 'given_away', 'hand_pollinated',
-        'harvest', 'moisture_check', 'photo'],
+        'harvest', 'moisture_check', 'photo', 'seed_saved'],
     );
   });
 

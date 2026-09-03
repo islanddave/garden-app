@@ -92,7 +92,7 @@ describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
     BATCH_EVENT_TYPES.forEach(t => expect(master.has(t), t).toBe(true));
   });
 
-  it('excludes exactly the 9 expected types (3 needs-input + 3 HS-1 + 1 non-reward + 2 reduction)', () => {
+  it('excludes exactly the 10 expected types (3 needs-input + 3 HS-1 + 1 non-reward + 2 reduction + 1 single-path artifact)', () => {
     // V4-WATERMATH-001 F0 added moisture_check — see the same guard in src/__tests__/eventTypes.js
     // and the exclusion rationale in src/lib/eventTypes.js. This is the LAMBDA-side mirror: it
     // reads the GENERATED copy, so it also proves codegen carried the exclusion across the
@@ -101,9 +101,14 @@ describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
     // for any earlier entry: the batch INSERT writes no plants counters, so a reduction type that
     // leaked into the Lambda's allowlist would fan ledger rows across a whole scope while
     // decrementing nothing — a loss recorded on 500 plantings that never lost anything.
+    // BUG-SEEDSAVEDBATCHXP-001 added seed_saved, and the same argument applies with a second
+    // multiplier on it: the batch INSERT writes no inventory_items row, so a leaked seed_saved
+    // fans "seed saved" across a scope while creating zero lots AND granting xp per row, because
+    // seed_saved is deliberately reward-bearing (V4-SEEDEVENT-001). The server arm is the one that
+    // matters here — a stale PWA bundle still holding the old allowlist reaches this validator.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
       ['cutting_taken', 'divided', 'failed', 'first_harvest', 'given_away', 'hand_pollinated',
-        'harvest', 'moisture_check', 'photo'],
+        'harvest', 'moisture_check', 'photo', 'seed_saved'],
     );
   });
 });
