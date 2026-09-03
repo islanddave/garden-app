@@ -132,19 +132,74 @@ post:
          AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.35.0-harvhabitgap-001')
          AND c.slug NOT IN (
            'aloe','althaea','apple','apricot','artichoke','avocado','begonia','blackberry_lily',
-           'bok_choy','borage','bread','brussels_sprouts','butter','cactus','calibrachoa',
-           'carnation','carrot','celery','cheese','cherry','christmas_cactus','chrysanthemum',
-           'cobaea','coleus','columbine','cranberry','crown_of_thorns','delphinium','dogwood',
+           'blanketflower','bok_choy','borage','bread','brussels_sprouts','butter','cactus',
+           'calibrachoa','carnation','carrot','celery','chamomile','cheese','cherry',
+           'christmas_cactus','chrysanthemum',
+           'cobaea','coleus','columbine','corn','cosmos','cranberry','crown_of_thorns','delphinium',
+           'dianthus','dogwood',
            'dracaena','echeveria','edelweiss','elderberry','fish','fittonia','flower_mix',
            'four_o_clock','foxglove','geranium','ginger','goldenrod','grape','haworthia','helichrysum',
            'hibiscus','hollyhock','hosta','hoya','jade','japanese_maple','lantana','lithops','luffa',
            'marigold','meat','milk','milkweed','money_plant','morning_glory','mustard',
            'nectarine','parsnip','pear','perilla','petunia','pineapple','plum','poppy','pothos',
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
-           'spinach','stock','succulent','sunflower','thunbergia','torenia','tradescantia','tweedia',
+           'spinach','stock','succulent','summer_savory','sunflower','thunbergia','torenia',
+           'tradescantia','turnip','tweedia',
            'vietnamese_coriander','viola','yarrow','yogurt')
     expect: scalar_eq
     value: 0
+
+  # THE HANDBACK (added 2026-09-03, OPS-FROZENALLOWLISTGATES-001). unseeded_vocabulary's own note has
+  # always said "Left NULL rather than guessed; seed them when something is actually planted" — and
+  # until now NOTHING WATCHED FOR THAT MOMENT. The list records a deferral with no mechanism to end
+  # it, so the deferral could only be discharged by somebody remembering, months later, that a slug
+  # they planted had once been parked. Dave's condition when he approved parking seven more slugs on
+  # 2026-09-03 was exactly this: fine to defer, as long as he does not have to remember to come back.
+  # This gate is that guarantee. The instant a parked slug acquires a live planting while its habit is
+  # still NULL, it goes red and names it.
+  #
+  # NOT a frozen allowlist, and deliberately not the same shape as the rotted receipts elsewhere in
+  # this corpus: the list here is not a pinned population that legitimate growth invalidates, it is
+  # the written decision record itself, and it is bound to src/data/harvest-attributes-v1.json by
+  # harvestNullHabitCoverage.test.js exactly as the gate above is. Growth is the TRIGGER, not the
+  # false positive. Widening it is how a decision gets recorded; it is never how a red gets cleared.
+  #
+  # SELF-ARMING on this migration's schema_version, same as the gate above — inert before the apply,
+  # a real invariant the instant it lands.
+  #
+  # INSTRUMENT CHECK, measured against live prod at authoring time rather than argued:
+  #   * as written it returns 0 — it is not born red, so its first red will be a real event;
+  #   * drop the live-planting clause and it returns 26 — the slug arm is doing work, not matching
+  #     an empty set, so this is not vacuously green;
+  #   * carrot, luffa and spinach ARE on the list AND do have live plantings, and are excluded only
+  #     by the `harvest_habit IS NULL` arm because all three were seeded at some point. That is the
+  #     gate's own success case already present in the data, and it is why the habit arm is load-
+  #     bearing rather than decorative. (Those three being stale on the list is a known, separately
+  #     recorded item in unseeded_vocabulary's note — this gate does not fix it and does not need to.)
+  - name: post_no_unseeded_slug_has_a_live_planting
+    sql: |
+      SELECT count(*) FROM public.crop_types c
+       WHERE c.deleted_at IS NULL
+         AND c.harvest_habit IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.35.0-harvhabitgap-001')
+         AND c.slug IN (
+           'althaea','apple','apricot','artichoke','bok_choy','borage','brussels_sprouts','carrot',
+           'celery','chamomile','cherry','corn','cranberry','elderberry','grape','luffa','mustard',
+           'nectarine','parsnip','pear','perilla','plum','radish','raspberry','rhubarb',
+           'sour_cherry','spinach','summer_savory','turnip','vietnamese_coriander')
+         AND EXISTS (
+           SELECT 1 FROM public.plants p
+             JOIN public.plant_varieties v ON v.id = p.variety_id
+            WHERE v.crop_type_slug = c.slug
+              AND p.deleted_at IS NULL AND v.deleted_at IS NULL)
+    expect: scalar_eq
+    value: 0
+    note: |
+      Red here is NOT a defect to be silenced — it is the handback firing. The remedy is to decide
+      the slug: seed it into by_crop_type with a real harvest_habit (it is planted now, so there is
+      finally something to check the value against), or move it to establishing_not_yet_harvestable
+      if it is planted but genuinely not yet pickable. Removing the slug from unseeded_vocabulary to
+      clear the red, without deciding it, re-creates the exact gap this gate closes.
 
   # env:prod, and scripted. On prod the row exists, so this is the only gate that can tell an applied
   # migration from one that matched nothing — post_bee_balm_is_cut_and_come_again_14 shares its slug

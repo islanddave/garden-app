@@ -28,6 +28,13 @@ const GATES_PATH = join(repoRoot, 'migrations', 'v4-harvhabitgap-001', 'gates.ym
 
 const GATE_NAME = 'post_every_null_habit_is_a_recorded_decision'
 
+// The handback gate, added 2026-09-03 (OPS-FROZENALLOWLISTGATES-001). unseeded_vocabulary parks a
+// slug with the promise "seed them when something is actually planted", and until that gate existed
+// nothing watched for the moment the promise came due. It carries unseeded_vocabulary.slugs inline
+// and so needs the same anti-drift binding this file already gives the gate above — an inline list
+// nothing binds is exactly how the original three omissions happened.
+const UNSEEDED_GATE_NAME = 'post_no_unseeded_slug_has_a_live_planting'
+
 // Version string is byte-identical to the INSERT in 0a-data.sql. The gate is self-arming on it —
 // inert until this migration is applied, a real invariant the instant it is — so a typo here or
 // there silently disarms the gate forever.
@@ -107,5 +114,51 @@ describe('every deliberately-NULL harvest_habit is a recorded decision', () => {
       expect(isSeeded || isRecorded, `contested '${slug}' is on no list and in no seed`).toBe(true)
       expect(isSeeded && isRecorded, `contested '${slug}' is both seeded and recorded NULL`).toBe(false)
     }
+  })
+})
+
+// Pulls the quoted slugs out of a positive `slug IN (...)` clause. Anchored to `c.slug IN` rather
+// than a bare `IN` so the self-arm subquery cannot contribute its schema_version literal, mirroring
+// why gateSlugs above anchors to NOT IN.
+function positiveGateSlugs(sql, gateName) {
+  const from = sql.indexOf('c.slug IN')
+  expect(from, `${gateName} must scope its slugs with c.slug IN`).toBeGreaterThan(-1)
+  const close = sql.indexOf(')', from)
+  expect(close, `${gateName}'s IN list must be closed`).toBeGreaterThan(from)
+  return sql.slice(from, close).match(/'([a-z0-9_]+)'/g).map(s => s.slice(1, -1))
+}
+
+describe('a parked (unseeded) slug hands itself back when it is actually planted', () => {
+  const doc = JSON.parse(readFileSync(JSON_PATH, 'utf8'))
+  const gates = yaml.load(readFileSync(GATES_PATH, 'utf8'))
+  const gate = (gates.post || []).find(g => g.name === UNSEEDED_GATE_NAME)
+
+  it('the handback gate is present under the name this test binds', () => {
+    // Same anti-vacuity guard as the sibling above: without this, deleting the gate would silently
+    // remove the only mechanism that ends a deferral, and the suite would stay green.
+    expect(gate, `${UNSEEDED_GATE_NAME} must exist in ${GATES_PATH}`).toBeDefined()
+    expect(gate.expect).toBe('scalar_eq')
+    expect(gate.value).toBe(0)
+    // The whole point is that it runs forever. continuous: false would demote it to an apply-window
+    // check, which is precisely the rot this ledger item was opened to clean up.
+    expect(gate.continuous, `${UNSEEDED_GATE_NAME} must stay continuous`).toBeUndefined()
+    expect(gate.sql).toContain(SCHEMA_VERSION_TAG)
+  })
+
+  it('it still requires BOTH a live planting and a NULL habit', () => {
+    // Either arm alone makes the gate meaningless: without the planting clause it duplicates the
+    // coverage gate and is red on every parked slug; without the habit clause it fires on carrot,
+    // luffa and spinach, which are planted AND already seeded. Measured on prod 2026-09-03:
+    // 0 violations as written, 26 with the planting clause removed.
+    expect(gate.sql).toMatch(/harvest_habit IS NULL/)
+    expect(gate.sql).toMatch(/FROM public\.plants p/)
+    expect(gate.sql).toMatch(/p\.deleted_at IS NULL/)
+  })
+
+  it('the handback list is exactly unseeded_vocabulary.slugs', () => {
+    const inGate = [...new Set(positiveGateSlugs(gate.sql, UNSEEDED_GATE_NAME))].sort()
+    const inJson = [...new Set(doc.unseeded_vocabulary.slugs)].sort()
+    expect(inJson.filter(s => !inGate.includes(s)), 'parked in the JSON but unwatched by the gate').toEqual([])
+    expect(inGate.filter(s => !inJson.includes(s)), 'watched by the gate but parked on no JSON list').toEqual([])
   })
 })

@@ -44,9 +44,11 @@
 //
 // Sorted, so a diff against the JSON is readable and an insertion lands somewhere obvious.
 export const NOT_HARVEST_TRACKED_SLUGS = Object.freeze([
-  'aloe', 'avocado', 'begonia', 'blackberry_lily', 'bread', 'butter', 'cactus', 'calibrachoa',
+  'aloe', 'avocado', 'begonia', 'blackberry_lily', 'blanketflower', 'bread', 'butter', 'cactus',
+  'calibrachoa',
   'carnation', 'cheese', 'christmas_cactus', 'chrysanthemum', 'cobaea', 'coleus', 'columbine',
-  'crown_of_thorns', 'delphinium', 'dogwood', 'dracaena', 'echeveria', 'edelweiss', 'fish',
+  'cosmos',
+  'crown_of_thorns', 'delphinium', 'dianthus', 'dogwood', 'dracaena', 'echeveria', 'edelweiss', 'fish',
   'fittonia', 'flower_mix', 'four_o_clock', 'foxglove', 'geranium', 'goldenrod', 'haworthia',
   'helichrysum', 'hibiscus', 'hollyhock', 'hosta', 'hoya', 'jade', 'japanese_maple', 'lantana',
   'lithops', 'marigold',
