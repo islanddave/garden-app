@@ -432,7 +432,7 @@ export const handler = async (event) => {
       // meaningful value (a process deliberately unrecorded), and an advance that simply does not
       // mention the key must leave a process already set alone. Vocabulary mirrors
       // inventory_items_seed_process_check, read from live prod: wet | dry, or NULL.
-      const SEED_PROCESSES = ['wet', 'dry'];
+      const SEED_PROCESSES = ['wet', 'dry', 'fresh'];
       const hasSeedProcess = Object.prototype.hasOwnProperty.call(body, 'seed_process');
       if (hasSeedProcess && body.seed_process != null && !SEED_PROCESSES.includes(body.seed_process)) {
         return resp(400, { error: `seed_process must be one of ${SEED_PROCESSES.join(', ')}` });
@@ -739,7 +739,7 @@ export const handler = async (event) => {
         const hasVariety     = Object.prototype.hasOwnProperty.call(body, 'variety_id');
         // Vocabulary is enforced by a DB CHECK, but a 400 here is a better answer than a 500 from a
         // constraint violation — and it names the legal values, which the constraint error does not.
-        const SEED_PROCESSES = ['wet', 'dry'];
+        const SEED_PROCESSES = ['wet', 'dry', 'fresh'];
         const SEED_STAGES    = ['fermenting', 'drying', 'stored'];
         if (hasSeedProcess && body.seed_process != null && !SEED_PROCESSES.includes(body.seed_process)) {
           return resp(400, { error: `seed_process must be one of ${SEED_PROCESSES.join(', ')}` });

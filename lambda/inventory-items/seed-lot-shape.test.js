@@ -82,10 +82,16 @@ describe('BUG-SEEDPROCFORCED-001 — POST /:id/seed-stage carries the process', 
   });
 
   it('rejects a process outside the live CHECK vocabulary, before any SQL runs', async () => {
-    // inventory_items_seed_process_check on prod: seed_process IS NULL OR ANY (ARRAY['wet','dry']).
+    // inventory_items_seed_process_check on prod, widened by V4-SEEDFRESHPROCESS-001:
+    // seed_process IS NULL OR ANY (ARRAY['wet','dry','fresh']).
+    //
+    // 'fermented' is still the right probe and is deliberately NOT changed to a real value: it is a
+    // plausible-looking word that is NOT in the vocabulary, which is exactly what this guard is for.
+    // Note it is close enough to 'fermenting' — a real STAGE — to catch a future edit that confuses
+    // the two lists, and that confusion is the original BUG-SEEDPROCFORCED-001 shape.
     const { status, body } = parse(await handler(stagePost({ stage: 'drying', seed_process: 'fermented' })));
     expect(status).toBe(400);
-    expect(body.error).toBe('seed_process must be one of wet, dry');
+    expect(body.error).toBe('seed_process must be one of wet, dry, fresh');
     expect(stubState.sqlCalls).toHaveLength(0);
   });
 

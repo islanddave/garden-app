@@ -1,0 +1,95 @@
+# gates.yml
+# V4-SEEDFRESHPROCESS-001 — inventory_items.seed_process gains 'fresh'.
+#
+# ENVIRONMENT-SYMMETRIC. Every gate reads pg_constraint or counts rows against the base table, so
+# each one means the same thing on staging as on prod. No `env: prod` anywhere.
+#
+# POST GATES SELF-ARM, in VIOLATION-COUNT shape (expect 0): green where unapplied, green where
+# applied and intact, RED only on a genuine revert. post_check_accepts_fresh is the exception and
+# carries `continuous: false` — it is an apply record, not a standing invariant.
+#
+# WHAT THIS FILE IS ACTUALLY GUARDING. The dangerous property of a CHECK migration is not the apply,
+# it is the WIDTH: a widen is safe on live data by construction, a narrow can refuse or orphan. So
+# the post gates assert the constraint accepts all THREE values and still refuses a fourth — the
+# second half matters, because "widened" and "removed" look identical if you only test acceptance.
+
+pre:
+  - name: pre_seed_process_check_exists
+    note: >
+      The constraint must exist to be replaced. Violation-count shape: 0 when present, 1 when
+      missing, so this is 0 whenever the apply can succeed.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM pg_constraint
+               WHERE conname = 'inventory_items_seed_process_check') <> 1
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_fresh_rows_yet
+    note: >
+      Nothing can already be 'fresh' — the old CHECK forbids it. Asserted rather than assumed
+      because a non-zero here would mean the constraint was already dropped by something else, and
+      this migration would then be widening a table that is currently unguarded.
+    sql: |
+      SELECT 1 FROM public.inventory_items WHERE seed_process = 'fresh'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_check_accepts_fresh
+    note: >
+      The apply record. The constraint definition must now name all three values. Read from
+      pg_get_constraintdef rather than by attempting an INSERT, so the gate has no side effect on
+      live data. continuous false — this is what the migration DID, not a standing invariant.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM pg_constraint
+               WHERE conname = 'inventory_items_seed_process_check'
+                 AND pg_get_constraintdef(oid) LIKE '%fresh%') <> 1
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_check_still_guards
+    note: >
+      SELF-ARMING, and the half that stops a widen being mistaken for a removal. A constraint that
+      was DROPPED and never re-added would pass any "does it accept 'fresh'" test, because an absent
+      constraint accepts everything. This asserts the constraint still EXISTS and still names the two
+      original values, so the only way to be green is to have widened it rather than deleted it.
+      Violation count 0 whether or not this migration has run — before, it names wet+dry; after, it
+      names wet+dry+fresh. RED only if someone drops or narrows it.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM pg_constraint
+               WHERE conname = 'inventory_items_seed_process_check'
+                 AND pg_get_constraintdef(oid) LIKE '%wet%'
+                 AND pg_get_constraintdef(oid) LIKE '%dry%') <> 1
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_invalid_process_values
+    note: >
+      SELF-ARMING data gate, and it is the one that would catch a constraint dropped in prod by hand.
+      Counts rows whose seed_process is outside the whole vocabulary. 0 before this migration (the
+      old CHECK enforced it), 0 after (the new one does), and non-zero only if the column is being
+      written without a guard.
+    sql: |
+      SELECT 1 FROM public.inventory_items
+       WHERE seed_process IS NOT NULL
+         AND seed_process NOT IN ('wet', 'dry', 'fresh')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_rowcount_undisturbed
+    note: >
+      A CHECK change must not touch data. The seeds population is asserted as a non-zero floor rather
+      than a frozen number, deliberately: a frozen count breaks the first time Dave adds a packet,
+      which trains people to bump the number instead of reading the gate. This catches the failure
+      that actually matters — a migration that deleted or mass-updated rows.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM public.inventory_items
+               WHERE category = 'seeds' AND deleted_at IS NULL) < 200
+    expect: rowcount_eq
+    value: 0

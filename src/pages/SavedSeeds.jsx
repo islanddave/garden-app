@@ -48,6 +48,13 @@ const STAGE_META = {
   // dehydrator is the one drying surface here that can exceed it without looking like it is doing
   // anything wrong — see the note placeholder below.
   drying:     { label: 'Drying',     sub: 'Spread out to dry — screens, plates, a dehydrator; keep below 95°F' },
+  // V4-SEEDFRESHPROCESS-001 — Dave asked for this half explicitly: warn when the seed went in WET.
+  // Two lots in `drying` are not in the same condition. Seed that arrived by the `fresh` route was
+  // scraped out of a ripe fruit hours ago and is genuinely wet; seed that arrived by `dry` was
+  // threshed from a pod that dried on the plant and is nearly there already. The wet one is the one
+  // that moulds, and it needs airflow and days rather than hours. Keyed on the lot's own
+  // seed_process so it appears only where it is true — a blanket warning on every drying lot would
+  // be noise on the majority and would stop being read by the time it mattered.
   stored:     { label: 'Stored',     sub: 'Dry, packeted and put away' },
 }
 const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
@@ -118,16 +125,41 @@ const COUNT_ASK = {
 // (`seed_process IS NULL OR seed_process = ANY (ARRAY['wet','dry'])`) — not a third value invented
 // to fit the UI. `drying` is a legal entry point with no special-casing anywhere: nextStage('drying')
 // is 'stored', so a dry lot advances through the same machinery one step shorter.
+// V4-SEEDFRESHPROCESS-001 — 'fresh' added, and BOTH existing labels were wrong at the edges.
+// Dave, 2026-09-03: "wet / dry don't give any option for peppers, which just goes from fresh plant
+// to drying for a few days then saved. None of these two options works here."
+//
+// He is right, and the copy failed him in both directions at once:
+//   * `wet` advertised "seed WASHED or fermented out of wet pulp" while routing to `fermenting`.
+//     A user who read "washed" and picked it would get peppers filed in the ferment queue AND a
+//     permanent seed_lot_stage_log row asserting a ferment that never happened. The word "washed"
+//     is removed from this option for that reason — it belongs to 'fresh' now.
+//   * `dry` said "threshed from a pod dried ON THE PLANT", which a fresh pepper also is not.
+// So peppers fell into the gap between two labels, on this garden's LARGEST seed crop (36 Capsicum
+// cultivars, ~175 plants).
+//
+// 'fresh' enters at the SAME `drying` stage 'dry' does — the distinction is PROVENANCE, not routing.
+// It is worth a vocabulary widening rather than a copy tweak precisely because seed_process is a
+// permanent record of how a lot was handled, and "threshed from a dried pod" would be false on every
+// pepper lot Dave saves.
+//
+// The DB CHECK is the authority and it was widened FIRST (migrations/v4-seedfreshprocess-001), then
+// the two Lambda SEED_PROCESSES arrays, then this. Shipping this file ahead of either is a 400.
 const PROCESS_ENTRY = {
   wet: {
     stage: 'fermenting',
     label: 'Wet — ferment first',
-    sub: 'Tomato, cucumber, squash, melon: seed washed or fermented out of wet pulp',
+    sub: 'Tomato, cucumber, melon: seed sits in its own pulp for a few days first',
+  },
+  fresh: {
+    stage: 'drying',
+    label: 'Fresh — rinse and dry',
+    sub: 'Pepper, squash: seed scraped from a ripe fruit, no ferment — straight onto a plate or screen',
   },
   dry: {
     stage: 'drying',
-    label: 'Dry — no ferment',
-    sub: 'Beans, peas, lettuce, brassicas: seed threshed from a pod dried on the plant',
+    label: 'Dry — threshed from a dried pod',
+    sub: 'Beans, peas, lettuce, brassicas: pod dried on the plant before you opened it',
   },
 }
 
@@ -693,6 +725,22 @@ export default function SavedSeeds() {
                         : `In ${STAGE_META[s].label.toLowerCase()}`}
                       {item.seed_process ? ` · ${item.seed_process} process` : ''}
                     </div>
+                    {/* V4-SEEDFRESHPROCESS-001 — the wet-seed drying warning, per Dave's ask.
+                        Shown ONLY for a `fresh` lot that is currently drying: that seed came out of
+                        a ripe fruit and is genuinely wet, unlike a `dry` lot threshed from a pod
+                        that dried on the plant. Same stage, materially different risk, and this one
+                        is the one that moulds. Gated on both facts rather than on the stage alone,
+                        because a warning that appears on every drying lot is noise on the majority
+                        and stops being read before it matters. */}
+                    {s === 'drying' && item.seed_process === 'fresh' && (
+                      <div
+                        data-testid="fresh-drying-note"
+                        style={{ color: P.mid, fontSize: '0.75rem', marginTop: 3, lineHeight: 1.45 }}
+                      >
+                        Went in wet — give it airflow and a single layer, and expect days rather than
+                        hours. Seed that feels dry outside can still be damp inside.
+                      </div>
+                    )}
                     {/* The state, said out loud. Colour alone would carry this for a sighted user
                         with good contrast conditions and nobody else, so the badge names it in
                         words and the note says what the number MEANS — the whole defect was a

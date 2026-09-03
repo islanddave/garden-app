@@ -1,9 +1,8 @@
 {
-  "version": "4.103.0",
+  "version": "4.104.0",
   "date": "2026-09-03",
   "highlights": [
-    "Save seed from anywhere. The Saved Seeds page now has a \"+ Save seed\" button at the top that is always there, and the form asks where the seed came from instead of assuming you started on a planting page",
-    "Seed that did not come off one of your own plants now has a home — pick the variety and say whether it was a shop, a gift, u-pick or foraged. The Carolina Reaper case",
-    "Starting from one of your plants still works exactly as before, and now you can pick the plant from inside the form rather than having to navigate to it first"
+    "Saving pepper seed now has an option that fits it. \"Fresh — rinse and dry\" covers seed scraped out of a ripe fruit that needs no fermenting: peppers, squash. Previously neither choice was true — one would have filed your peppers as fermenting",
+    "A lot that went into drying wet now says so on the card, with a note about airflow and expecting days rather than hours. It only appears where it applies"
   ]
 }

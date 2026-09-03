@@ -113,20 +113,30 @@ import { PUTUP_SOURCE_OPTIONS } from '../../lib/dropdownRegistry.js'
 // MIRRORS src/pages/SavedSeeds.jsx's PROCESS_ENTRY, deliberately rather than importing it: that is
 // a page, and a component reaching into a page for a constant inverts the dependency. Both copies
 // are the live vocabulary of the two DB CHECKs, not UI invention —
-// inventory_items_seed_process_check is `wet | dry` and inventory_items_seed_stage_check is
+// inventory_items_seed_process_check is `wet | dry | fresh` and inventory_items_seed_stage_check is
 // `fermenting | drying | stored`. The wet/dry split is BUG-SEEDPROCFORCED-001: beans, peas, lettuce
 // and every brassica are threshed from a pod that dried on the plant and never fermented, so a
 // hard-coded `fermenting` entry writes a permanent false row into seed_lot_stage_log.
+//
+// V4-SEEDFRESHPROCESS-001 added the third value for the SAME class of error one step further out.
+// Dave 2026-09-03: peppers go "from fresh plant to drying for a few days then saved", and neither
+// label covered it — `wet` said "washed or fermented" but routed to `fermenting`, and `dry` said
+// "dried on the plant". Full rationale lives beside the SavedSeeds copy; keep the two in step.
 const PROCESS_ENTRY = {
   wet: {
     stage: 'fermenting',
     label: 'Wet — ferment first',
-    sub: 'Tomato, cucumber, squash, melon: seed washed or fermented out of wet pulp',
+    sub: 'Tomato, cucumber, melon: seed sits in its own pulp for a few days first',
+  },
+  fresh: {
+    stage: 'drying',
+    label: 'Fresh — rinse and dry',
+    sub: 'Pepper, squash: seed scraped from a ripe fruit, no ferment — straight onto a plate or screen',
   },
   dry: {
     stage: 'drying',
-    label: 'Dry — no ferment',
-    sub: 'Beans, peas, lettuce, brassicas: seed threshed from a pod dried on the plant',
+    label: 'Dry — threshed from a dried pod',
+    sub: 'Beans, peas, lettuce, brassicas: pod dried on the plant before you opened it',
   },
 }
 
