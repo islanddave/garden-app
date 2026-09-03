@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest'
 import {
   classify, parseNumber, normalise, collapseAdjacentDupes, COMMANDS, COMMAND_PHRASES, UNIT_ALIASES,
   COMMAND_NEAR_MISSES, foldNumberWords, classifyPartial, buildValue, segmentCandidates,
+  splitTrailingCommand, parseValueSequence,
 } from '../lib/voiceHarvestGrammar.js'
 import { HARVEST_UNITS, WEIGHT_UNITS } from '../lib/harvest-constants.js'
 
@@ -528,5 +529,79 @@ describe('V5-VOICEONEBREATH-001 — candidate splits of a one-breath sentence', 
       'super sweet one hundred three count']) {
       for (const c of segmentCandidates(t)) expect(c.name.length, t).toBeGreaterThan(0)
     }
+  })
+})
+
+
+// ── V5-VOICEONEBREATH-002 — the whole record in ONE breath, command included ─────────────────────
+//
+// Dave, 2026-09-02, verbatim: "I want to speak planting, brief pause, count, brief pause, weight,
+// next all as one breath rather than three. Also, 'next' is often misheard or not heard at all."
+//
+// Those turned out to be ONE defect, and it was destructive rather than inert. Measured on the
+// pre-fix grammar: "cucumber three count 231 grams" segmented correctly, and appending "next"
+// flipped classify() to `search` with zero segments — so the app searched for the literal sentence
+// and discarded the count and the weight in silence. Repeating "next" more clearly could never fix
+// that, which is exactly what "not heard at all" felt like from the outside.
+describe("V5-VOICEONEBREATH-002 — Dave's one-breath cadence", () => {
+  it("splits the trailing command off the record he actually speaks", () => {
+    const r = splitTrailingCommand('cucumber three count 231 grams next')
+    expect(r).toBeTruthy()
+    expect(r.head).toBe('cucumber three count 231 grams')
+    expect(r.command).toBe('save_and_advance')
+    // And the head still reads as the record it was before the command was appended.
+    const [cand] = segmentCandidates(r.head)
+    expect(cand.name).toBe('cucumber')
+    expect(cand.values.map((v) => `${v.value}${v.unit}`)).toEqual(['3count', '231g'])
+  })
+
+  it('splits a trailing command off a bare amount, and off a nameless pair', () => {
+    expect(splitTrailingCommand('231 grams next').head).toBe('231 grams')
+    expect(splitTrailingCommand('three count 231 grams next').head).toBe('three count 231 grams')
+    expect(splitTrailingCommand('two count done').command).toBe('finish')
+    // Longest phrase first, so this is not read as a bare trailing "next".
+    expect(splitTrailingCommand('231 grams save and next').head).toBe('231 grams')
+  })
+
+  // THE SAFETY HALF. classify()'s whole-utterance rule exists so a SEARCH TERM can never trigger a
+  // save; these are the cases that rule was written for and they must still refuse.
+  it('REFUSES to split when the head is not already a record', () => {
+    expect(splitTrailingCommand('cucumber next'), 'a search term must not conjure a save').toBeNull()
+    expect(splitTrailingCommand('big boy next')).toBeNull()
+    expect(splitTrailingCommand('next to the fence'), 'prose ending in a non-command').toBeNull()
+    // A whole-utterance command stays classify()'s, not the splitter's.
+    expect(splitTrailingCommand('next')).toBeNull()
+    expect(splitTrailingCommand('save and next')).toBeNull()
+    // "sage" is one edit from "save" and is a crop Dave grows — it must never split or command.
+    expect(splitTrailingCommand('sage')).toBeNull()
+    expect(classify('sage').kind).toBe('search')
+  })
+
+  it('a trailing MISHEARD command keeps the amount and refuses the save', () => {
+    const r = splitTrailingCommand('231 grams text')
+    expect(r.head).toBe('231 grams')
+    expect(r.command, 'a near-miss must never commit').toBeNull()
+    expect(r.nearCommand).toBe(true)
+  })
+
+  // The nameless pair had NO reader before this: segmentCandidates refuses a run with no name, so
+  // classify returned `unparsed: ambiguous-number` and both values were lost. This is the shape
+  // Chrome produces when it ends the session at Dave's pause after the crop name.
+  it('reads both amounts when the planting was already chosen', () => {
+    const v = parseValueSequence('three count 231 grams')
+    expect(v.map((x) => `${x.value}${x.unit}`)).toEqual(['3count', '231g'])
+    expect(parseValueSequence('two count fifteen grams').map((x) => x.kind)).toEqual(['quantity', 'weight'])
+  })
+
+  it('refuses a value sequence that is ambiguous, partial, or two of one axis', () => {
+    // A name in front means segmentCandidates owns it — this reader must not guess a split point.
+    expect(parseValueSequence('cucumber three count 231 grams')).toBeNull()
+    // One group is classify()'s branch and must stay there so its warnings are not duplicated.
+    expect(parseValueSequence('231 grams')).toBeNull()
+    // Two of the same axis is a badly-spoken correction, not two readings; keeping the last would
+    // commit a number Dave never meant to be final.
+    expect(parseValueSequence('two count three count')).toBeNull()
+    // Trailing prose after the final unit is not a record.
+    expect(parseValueSequence('three count 231 grams please')).toBeNull()
   })
 })

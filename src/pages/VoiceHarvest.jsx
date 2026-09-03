@@ -55,6 +55,7 @@ import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
 import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
 import {
   buildValue, classify, classifyPartial, foldNumberWords, normalise, segmentCandidates,
+  splitTrailingCommand, parseValueSequence,
 } from '../lib/voiceHarvestGrammar.js'
 import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
@@ -698,7 +699,7 @@ export default function VoiceHarvest() {
   }, [apiFetch, cue, rows, say])
 
   // ── one settled utterance ───────────────────────────────────────────────────────────────────────
-  const applyCommitted = useCallback((raw, meta) => {
+  const applyOneUtterance = useCallback((raw, meta) => {
     let result = resolveCommandCollision(raw, plantingsRef.current)
 
     // ── BUG-VOICECOUNTSPLIT-001: rejoin a value Chrome split across two utterances ────────────────
@@ -795,6 +796,31 @@ export default function VoiceHarvest() {
         // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
         // words did not settle, so Dave sees the reading it picked before "next" commits it.
         say(implausible || dropped != null ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}`)
+        return
+      }
+
+      // BOTH AMOUNTS, NO NAME — "three count, two thirty one grams" with the planting already
+      // chosen. segmentCandidates() refuses a nameless run by design, so this shape had no reader
+      // at all and lost BOTH values. It is Dave's common case rather than an edge one: he says the
+      // crop, pauses, then says the numbers together, and Chrome ends the session at that pause.
+      //
+      // GATED ON A PLANTING BEING SELECTED. Without one there is nothing to attach the values to,
+      // and a bare number before a plant is chosen may legitimately be a search — the same rule
+      // the grammar states at the search branch and BUG-VOICEBARENUMNOSEL-001 documents.
+      const seq = selectedRef.current ? parseValueSequence(result.transcript) : null
+      if (seq && seq.length) {
+        for (const v of seq) {
+          const next = { value: v.value, unit: v.unit }
+          if (v.kind === 'weight') { setWeight(next); weightRef.current = next }
+          else { setQty(next); qtyRef.current = next }
+        }
+        const said = seq.map((v) => `${v.value} ${v.unit}`).join(' · ')
+        const implausible = seq.some((v) => v.implausible)
+        cue(hapticDigitAccepted)
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `value-sequence ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
+        // Read back both axes: the utterance set two fields at once, so a mishearing of either is
+        // only visible if both are spoken back before "next" commits them.
+        say(implausible || dropped != null ? 'warn' : 'ok', `${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}`)
         return
       }
     }
@@ -950,6 +976,50 @@ export default function VoiceHarvest() {
     // alone asks him to remember which of forty utterances it was.
     noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
   }, [clearRecord, cue, noteMiss, saveRecord, say])
+
+  // ── V5-VOICEONEBREATH-002: a trailing command rides on the record it follows ────────────────────
+  //
+  // "cucumber, three count, two thirty one grams, next" in ONE breath, which is how Dave asked for
+  // it and how he already speaks. Before this, appending "next" did not merely fail to save — it
+  // flipped classify() from `unparsed` to `search`, which skipped the one-breath reader entirely and
+  // ran a planting search for the whole literal sentence. The count and the weight were discarded in
+  // silence. That is the real answer to "next is often not heard at all": in that shape it was never
+  // a recogniser miss, so repeating it more clearly could never help.
+  //
+  // The split is refused unless the head is ALREADY a record on its own terms, so "cucumber next"
+  // and "next to the fence" still cannot conjure a save — see splitTrailingCommand for the gate.
+  // A trailing MISHEARD command ("231 grams text") applies the record and refuses the save: the
+  // values were spoken clearly and dropping them is the lost-log failure this page exists around,
+  // while committing on a near-miss is the silent-wrong-write it exists around even harder.
+  const applyCommitted = useCallback((raw, meta) => {
+    // The debouncer hands us a CLASSIFIED RESULT, not a string — it calls classify() itself to
+    // decide the commit path. So the split reads `transcript`, and the head is re-classified before
+    // it goes downstream, because applyOneUtterance's whole contract is "a result object".
+    const heard = typeof raw === 'string' ? raw : String(raw?.transcript ?? '')
+    const split = splitTrailingCommand(heard)
+    if (!split) { applyOneUtterance(raw, meta); return }
+
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision',
+      `trailing-command ${split.command ?? 'near-miss'} <- ${JSON.stringify(heard)}`)
+    // The head runs through the ORDINARY path, so every announcement, haptic, implausibility warning
+    // and debug row is the one that utterance would have produced on its own. A second copy of that
+    // logic here is a second thing to drift.
+    applyOneUtterance(classify(split.head), { ...(meta ?? {}), fromTrailingSplit: true })
+
+    if (split.nearCommand) {
+      cue(hapticDigitRejected)
+      say('warn', 'Kept that. Didn\'t catch the last word — say "next" again.')
+      noteMiss(`Kept the amount; didn't catch the command — heard “${heard}”.`)
+      return
+    }
+    if (split.command === 'save_and_advance' || split.command === 'save') { saveRecord(meta?.atMs); return }
+    if (split.command === 'clear_field') { cue(hapticDigitAccepted); clearRecord(); say('warn', 'Cleared. Say a crop to start the next one.'); return }
+    if (split.command === 'finish') {
+      stopRef.current = true
+      try { recRef.current?.stop() } catch { /* already stopping */ }
+      say('warn', 'Stopped listening.')
+    }
+  }, [applyOneUtterance, clearRecord, cue, noteMiss, saveRecord, say])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
   const scheduleTickRef = useRef(null)

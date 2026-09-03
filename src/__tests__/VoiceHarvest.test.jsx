@@ -171,6 +171,69 @@ describe('resolveCommandCollision — a planting can be named after a command wo
 })
 
 describe('VoiceHarvest — the spoken record', () => {
+  // ── V5-VOICEONEBREATH-002 ──────────────────────────────────────────────────────────────────────
+  //
+  // Dave, 2026-09-02: "I want to speak planting, brief pause, count, brief pause, weight, next all
+  // as ONE breath rather than three." The four-utterance test below is the same record spoken the
+  // old way; these two are the same record spoken the way he actually wants to speak it, and they
+  // must produce a byte-identical POST.
+  it('ONE BREATH: the whole record plus "next" in a single utterance posts the same harvest', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long three count 231 grams next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    const posts = harvestPosts()
+    expect(posts, 'one breath must still write exactly one row').toHaveLength(1)
+    const body = JSON.parse(posts[0][1].body)
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    vi.useRealTimers()
+  })
+
+  // The shape Chrome actually produces when it ends the session at his pause after the crop name:
+  // the amounts and the command arrive together, with no name. Before the fix this classified as a
+  // SEARCH for the whole literal string and lost both values in silence.
+  it('ONE BREATH, split by Chrome: the nameless pair plus "next" still posts the record', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three count 231 grams next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    const posts = harvestPosts()
+    expect(posts).toHaveLength(1)
+    expect(JSON.parse(posts[0][1].body).harvest)
+      .toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    vi.useRealTimers()
+  })
+
+  // A DUPLICATE FINAL MUST NOT DOUBLE-WRITE. The one-breath utterance classifies as `search`, not
+  // `command`, so before the debouncer was taught to read its trailing command it held no cooldown
+  // slot at all while performing exactly the write a bare "next" performs. This repo has five
+  // recorded duplicate-final recurrences (BUG-VOICEDUPE-001..005), so this is a live shape, not a
+  // hypothetical: unprotected it writes two harvests and skips a planting Dave never sees.
+  it('a REPEATED one-breath final writes ONE harvest, not two', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long three count 231 grams next')
+    await speak(rec, 'Suyo Long three count 231 grams next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(harvestPosts(), 'the write cooldown must cover the one-breath path').toHaveLength(1)
+    vi.useRealTimers()
+  })
+
+  // THE SAFETY CASE, at the UI level rather than the grammar level: a trailing command may never
+  // conjure a save out of a search term. "Suyo Long next" selects and does NOT write.
+  it('a search term with a trailing command does NOT save', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(harvestPosts(), 'no amounts were spoken — nothing may be written').toHaveLength(0)
+    vi.useRealTimers()
+  })
+
   it('a full spoken record posts ONE harvest with the values that were said', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()

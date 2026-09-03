@@ -51,7 +51,7 @@
 // real inter-event gaps, with no fake timers and no flake — the fixture IS the evidence. A
 // production host would own the timer and call `tick()`; `dueAt()` tells it when. That host is
 // deliberately NOT built (BD-068: "do not ship a half-flow off this row").
-import { classify, normalise } from './voiceHarvestGrammar.js'
+import { classify, normalise, splitTrailingCommand } from './voiceHarvestGrammar.js'
 
 // Settle window. The observed supersede gaps were 195 ms and 353 ms, so 500 ms clears both with
 // margin. It is the single latency/safety dial: shorter feels quicker and risks committing a prefix,
@@ -120,7 +120,18 @@ export function createCommitDebouncer({
     // COOLDOWN KEYS ON THE WRITE CLASS, NOT THE COMMAND STRING. Measured defect: `next` and `save`
     // are different strings that both WRITE, so "next" at t and "save" at t+300 both committed —
     // one spoken word heard two ways double-writes. Every verb that mutates shares one slot.
-    const klass = result.kind === 'command' ? WRITE_CLASS[result.command] : null
+    // V5-VOICEONEBREATH-002 — A ONE-BREATH UTTERANCE WRITES, SO IT MUST HOLD THE SAME SLOT.
+    // "cucumber three count 231 grams next" classifies as `search`, not `command`, because the
+    // command is not the whole utterance — so on the rule above it took klass=null and got NO
+    // cooldown at all, while performing exactly the write a bare "next" performs. That is the one
+    // defence this file says it has against a duplicate final, and this repo has FIVE recorded
+    // duplicate-final recurrences (BUG-VOICEDUPE-001..005). Unprotected, a repeated final would
+    // write two harvest rows and skip a planting Dave never sees — the precise cost the comment
+    // above weighs and rejects. So the trailing command claims the slot too.
+    const trailing = result.kind === 'command' ? null : splitTrailingCommand(result.transcript)
+    const klass = result.kind === 'command'
+      ? WRITE_CLASS[result.command]
+      : (trailing?.command ? WRITE_CLASS[trailing.command] : null)
     if (klass) {
       if (lastWrite && lastWrite.klass === klass && (atMs - lastWrite.atMs) < commandCooldownMs) {
         stats.suppressedCommands += 1

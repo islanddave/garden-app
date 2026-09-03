@@ -627,3 +627,119 @@ export function classify(raw) {
   // wrong command or a wrong number is committed silently.
   return { kind: 'search', text, transcript }
 }
+
+// ── V5-VOICEONEBREATH-002 / BUG-VOICETRAILCMD-001 ────────────────────────────────────────────────
+//
+// SPLIT A TRAILING COMMAND OFF A COMPLETE RECORD. Dave's actual cadence is one breath —
+// "cucumber, three count, two thirty one grams, next" — and until now that sentence did not merely
+// fail to save, it was DESTRUCTIVE. Measured on this file before the fix:
+//
+//   "cucumber three count 231 grams"       -> segmentCandidates: name=cucumber, 3 count, 231 g  ✓
+//   "cucumber three count 231 grams next"  -> classify: SEARCH, segmentCandidates: NONE          ✗
+//   "231 grams next"                       -> classify: SEARCH                                   ✗
+//
+// The one-breath reader in VoiceHarvest is hooked on `unparsed`, so appending "next" flipped the
+// classification to `search`, skipped the reader entirely, and ran a planting search for the literal
+// string "cucumber three count 231 grams next". The count and the weight were silently discarded.
+// That is why "next" reads as "not heard at all" — it is not a recogniser problem in that case, and
+// no amount of re-speaking it helps, because the phrase is being consumed by the search branch.
+//
+// WHY THIS DOES NOT REOPEN THE HOLE classify() CLOSES. classify()'s whole-utterance rule exists so a
+// SEARCH TERM can never trigger a save — its examples are "next to the fence" and "cucumber next".
+// Both still refuse here, because the split is gated on the HEAD ALREADY BEING A RECORD:
+//   - "next to the fence" — trailing token is "fence", not a command. No split.
+//   - "cucumber next"     — head "cucumber" carries no value, so it is a search, not a record. No split.
+// Only a head that independently parses as name+values or as a bare quantity/weight may carry a
+// trailing command. A save still cannot be conjured out of prose.
+//
+// A TRAILING NEAR-MISS APPLIES THE RECORD AND REFUSES THE COMMAND. "231 grams text" (the measured
+// 1-in-9 Android mishear of "next") returns the head with `command: null`. The values are kept —
+// they were spoken clearly and throwing them away is the lost-log failure this page exists to
+// prevent — while the save is refused, which is the same asymmetry COMMAND_NEAR_MISSES already
+// encodes: a wrong search is visible and correctable, a wrong commit is silent.
+export function splitTrailingCommand(raw) {
+  const text = normalise(raw)
+  if (!text) return null
+  // A whole-utterance command is not a split: classify() owns it and must keep owning it.
+  if (Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, text)) return null
+  if (Object.prototype.hasOwnProperty.call(COMMANDS, text)) return null
+  if (COMMAND_NEAR_MISSES.has(text)) return null
+
+  const tokens = text.split(' ').filter(Boolean)
+  if (tokens.length < 2) return null
+
+  // Longest trailing phrase first, so "save and next" is not read as a bare trailing "next".
+  let head = null
+  let command
+  let nearCommand = false
+  for (let take = 3; take >= 1; take--) {
+    if (take >= tokens.length) continue
+    const tail = tokens.slice(tokens.length - take).join(' ')
+    if (take > 1 && Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, tail)) {
+      head = tokens.slice(0, tokens.length - take).join(' '); command = COMMAND_PHRASES[tail]; break
+    }
+    if (take === 1 && Object.prototype.hasOwnProperty.call(COMMANDS, tail)) {
+      head = tokens.slice(0, tokens.length - 1).join(' '); command = COMMANDS[tail]; break
+    }
+    if (take === 1 && COMMAND_NEAR_MISSES.has(tail)) {
+      head = tokens.slice(0, tokens.length - 1).join(' '); command = null; nearCommand = true; break
+    }
+  }
+  if (head == null || !head) return null
+
+  // THE GATE. The head must already be a record on its own terms — never a search, never prose.
+  const headKind = classify(head).kind
+  const isRecord = headKind === 'quantity' || headKind === 'weight'
+    || segmentCandidates(head).length > 0
+    || parseValueSequence(head) != null
+  if (!isRecord) return null
+
+  return { head, command, nearCommand, transcript: String(raw ?? '') }
+}
+
+// ── V5-VOICEONEBREATH-002 — the NAMELESS value sequence ──────────────────────────────────────────
+//
+// "three count, two thirty one grams" with a planting ALREADY SELECTED. This is the exact complement
+// of segmentCandidates(): that function refuses a run with no name in front of it, deliberately and
+// for a measured reason (without the guard it offered a name of "two hundred thirty" carrying 1 g).
+// So the nameless case had no reader at all and classify() returned `unparsed: ambiguous-number` —
+// meaning that even WITHOUT a trailing "next", saying the count and the weight in one breath lost
+// both. Dave's cadence makes this the common case, not the edge one: he says the crop, pauses, then
+// says the two numbers together, and Chrome ends the session at the pause — so the utterance that
+// reaches us is routinely the nameless one.
+//
+// The parse is unambiguous precisely BECAUSE there is no name: every unit closes a group, and every
+// group's number run is exactly what lies between the previous unit and this one. Nothing is being
+// guessed. Refuse the whole utterance if any group fails, for the same reason segmentCandidates
+// does — a partially-understood sentence must not become a partial record.
+export function parseValueSequence(raw) {
+  const text = normalise(raw)
+  if (!text) return null
+  const tokens = collapseAdjacentDupes(text.split(' ').filter(Boolean))
+  const unitAt = []
+  for (let i = 0; i < tokens.length; i++) {
+    if (Object.prototype.hasOwnProperty.call(UNIT_ALIASES, tokens[i])) unitAt.push(i)
+  }
+  // Two or more groups only. A single group is classify()'s quantity/weight branch and must stay
+  // there so its implausibility warning, haptic and announcement are not duplicated here.
+  if (unitAt.length < 2) return null
+  if (unitAt[unitAt.length - 1] !== tokens.length - 1) return null
+  // NO NAME is the precondition, not an accident: the run before the first unit must itself be a
+  // clean cardinal. If it is not, a name is present and segmentCandidates owns the utterance.
+  if (parseNumber(tokens.slice(0, unitAt[0])) == null) return null
+
+  const values = []
+  let from = 0
+  for (const to of unitAt) {
+    const value = parseNumber(tokens.slice(from, to))
+    if (value == null || !(value > 0)) return null
+    const built = buildValue(value, UNIT_ALIASES[tokens[to]], text)
+    if (!built) return null
+    values.push(built)
+    from = to + 1
+  }
+  // One value per axis. "two count three count" is a correction spoken badly, not two quantities,
+  // and silently keeping the last would commit a number Dave did not mean to be final.
+  if (new Set(values.map((v) => v.kind)).size !== values.length) return null
+  return values
+}
