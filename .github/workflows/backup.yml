@@ -14,22 +14,59 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install postgresql-client-17 (from pgdg apt repo)
-        # Neon runs PostgreSQL 17. pg_dump enforces strict major-version match
-        # since pg-15+, so pg-16 client cannot dump from pg-17 server (proven
-        # 2026-05-05: failed with "server version: 17.8; pg_dump version: 16.13").
-        # Pull pg17 client from the PostgreSQL Apt Repository (apt.postgresql.org)
-        # until Ubuntu runners ship pg17 in default repos.
+      - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
+        # OPS-SCHEMACHECKAPT-001. See the fetch step below for why this file no longer
+        # apt-installs postgresql-client-17. This one prep step is common to every site
+        # that needs it: /usr/lib is root-owned, so both the cache-restore extraction
+        # and the docker cp fallback need somewhere writable to land the binaries before
+        # either can run.
         run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
-          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-17
-          # Use explicit path: /usr/bin/pg_dump on this runner image still resolves
-          # to pg16 even after pg17 install (both client versions coexist; the
-          # default wrapper picks pg16). Step 4 also overrides PATH to fix this.
-          /usr/lib/postgresql/17/bin/pg_dump --version
+          sudo mkdir -p /usr/lib/postgresql/17/bin
+          sudo chown -R "$(id -u):$(id -g)" /usr/lib/postgresql/17
+
+      - name: pg17 client cache
+        # Restores here; on a miss the next step fetches and this action's own post-job
+        # hook saves the result back under the same key (only if the job succeeds), so
+        # later runs -- on this workflow or any of the other OPS-SCHEMACHECKAPT-001 sites
+        # sharing this key -- get a hit instead of a fetch. This runs daily (07:00 UTC),
+        # so it is what keeps the shared key warm for the less-frequent sites.
+        id: pg17-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/lib/postgresql/17/bin
+          key: pg17-client-postgres17-image-v1
+
+      - name: Fetch pg17 client from the postgres:17 image (cache miss only)
+        # Cache-miss fallback -- deliberately NOT apt.postgresql.org (PGDG). PGDG was
+        # the single third-party mirror behind two real incidents on 2026-08-18: it hung
+        # 46 minutes on this exact kind of install inside promote-gate (after main had
+        # already fast-forwarded, stranding it at 437164e with prod still on 4.35.0 and
+        # no version tag), and separately cancelled deploy-staging's db-schema-check the
+        # same day. pg_dump/pg_restore enforce a strict major-version match against
+        # Neon's PG 17 (proven 2026-05-05: "server version: 17.8; pg_dump version:
+        # 16.13"), and GitHub's ubuntu-24.04/26.04 runners ship 16.14/18.4 on PATH --
+        # neither satisfies that match, so this can't just fall back to the runner's
+        # built-in client the way a psql-only job can (see harvest-weight-ratchet.yml).
+        # `postgres:17`, the same official Docker image restore-verify.yml already runs
+        # as a service container, ships matching pg_dump/pg_restore/psql/pg_dumpall
+        # alongside the server -- `docker cp` them off a throwaway, never-started
+        # container instead of touching PGDG. This is still a network fetch (Docker Hub,
+        # not a fully offline fix), but it's a different, much larger and more redundant
+        # mirror than PGDG, and this repo already depends on it unconditionally today via
+        # restore-verify.yml's `services:` block with no reported incident -- this reuses
+        # a dependency already proven in this exact repo rather than adding a new one.
+        if: steps.pg17-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cid=$(docker create postgres:17)
+          docker cp "$cid:/usr/lib/postgresql/17/bin/." /usr/lib/postgresql/17/bin/
+          docker rm -f "$cid" >/dev/null
+
+      - name: Verify pg17 client
+        # Explicit path, not bare `pg_dump`: /usr/bin/pg_dump on this runner image would
+        # still resolve to pg16 via the postgresql-client-common wrapper even with pg17
+        # present (both client versions coexist). Step 4 below also overrides PATH.
+        run: /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0

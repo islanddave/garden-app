@@ -105,7 +105,8 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     services:
       # The genuinely-EMPTY restore target (Gate 0.2). postgres:17 tracks the
-      # latest 17.x — matches Neon (PG 17) and the PGDG pg17 client below.
+      # latest 17.x — matches Neon (PG 17) and the pg17 client fetched below
+      # (OPS-SCHEMACHECKAPT-001 — docker cp off the same image, not PGDG apt).
       # POSTGRES_PASSWORD is a throwaway for a job-lifetime loopback container,
       # not a secret.
       postgres:
@@ -123,17 +124,35 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install postgresql-client-17 (pgdg)
-        # Neon + the service container run PG 17; pg_restore enforces a strict
-        # major-version match and ubuntu-latest ships a pg16 client. Same PGDG
-        # install pattern as backup.yml.
+      - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
         run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
-          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-17
-          /usr/lib/postgresql/17/bin/pg_restore --version
+          sudo mkdir -p /usr/lib/postgresql/17/bin
+          sudo chown -R "$(id -u):$(id -g)" /usr/lib/postgresql/17
+
+      - name: pg17 client cache
+        id: pg17-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/lib/postgresql/17/bin
+          key: pg17-client-postgres17-image-v1
+
+      - name: Fetch pg17 client from the postgres:17 image (cache miss only)
+        # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml for
+        # the full incident writeup. Neon + the `services.postgres` container above both
+        # run PG 17; pg_restore enforces a strict major-version match and ubuntu-latest
+        # ships a pg16 client, so this job still needs a pg17 client of its own -- but
+        # `postgres:17` is already the image the services container above pulls, so this
+        # throwaway `docker create` reuses the same locally-cached layers rather than
+        # adding a second image dependency.
+        if: steps.pg17-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cid=$(docker create postgres:17)
+          docker cp "$cid:/usr/lib/postgresql/17/bin/." /usr/lib/postgresql/17/bin/
+          docker rm -f "$cid" >/dev/null
+
+      - name: Verify pg17 client
+        run: /usr/lib/postgresql/17/bin/pg_restore --version
 
       - name: Configure AWS credentials (restore-verify role, OIDC)
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
