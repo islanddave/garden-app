@@ -1,11 +1,7 @@
 {
-  "version": "4.98.0",
-  "date": "2026-09-02",
+  "version": "4.98.1",
+  "date": "2026-09-03",
   "highlights": [
-    "Log a harvest in one breath: say the planting, the count, the weight and \"next\" as a single sentence, instead of waiting for the app between each one. The old one-at-a-time way still works exactly as before.",
-    "Fixed the reason \"next\" often seemed unheard. Said in the same breath as the weight, it was not being misheard at all — the whole sentence was being read as a search, and the count and weight were quietly thrown away. Repeating it more clearly could never have helped.",
-    "Your first frost date was about two weeks late. It now reads mid-October instead of late October, which moves the sowing list, your storage deadlines, and the harvest watch. Where something has become too late to sow, the list now says why rather than just closing the door.",
-    "Forty-six plantings had never been fed and could never have produced a feed reminder — not late, not snoozed, structurally unable to appear. They can now.",
-    "Overwintering advice now warns about drying out, not only rot. A pot whose compost has dried hard can take a full watering that runs straight down the inside of the pot and out the bottom in seconds while the roots stay dry — so the guidance now tells you to judge by the pot's weight, which is the only thing that actually reveals it."
+    "The variety editor can now be opened. Tap \"Edit variety\" next to the variety name on any planting — the page has existed for months with nothing linking to it, so it was unreachable in the app."
   ]
 }

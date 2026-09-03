@@ -640,7 +640,35 @@ export default function PlantingDetail() {
   // [label, value]; only rows with a value render. Per-tab empty -> "Nothing recorded yet.";
   // whole-set empty -> the legacy "No additional details recorded yet." copy. ───────────────
   const basicsRows = [
-    ['Variety', variety],
+    // BUG-VARIETYEDITUNREACHABLE-001 — the ONLY door to /varieties/:id/edit in the whole app.
+    // That route has existed since V4-EDITCOMPLETE-001 (App.jsx registers it, VarietyEdit renders,
+    // its tests pass) and NOTHING has ever linked to it: a repo-wide search for the path found the
+    // route registration, two comments and two `source_url` strings, and no `to=`/`navigate(`/`href=`
+    // anywhere. On an installed PWA with no address bar that is not "hard to find", it is
+    // unreachable — the same state DebugMenu.jsx's header describes for the surfaces it exists to
+    // rescue ("'unlinked' has meant 'unreachable' for every one of them").
+    //
+    // It goes HERE, next to the variety line, because a cultivar is reached THROUGH a planting —
+    // there is no variety list or variety detail page to hang it off, and building one to host a
+    // link would be net-new surface for a defect that a link closes.
+    //
+    // Rendered only when variety_ref.id is present: `id` is the first key of the by-id GET's
+    // variety_ref jsonb_build_object (lambda/plants/index.js:537), so it is there whenever a variety
+    // is joined at all, and the row itself already only renders when `variety` is truthy.
+    ['Variety', variety
+      ? <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: T.space.sm, flexWrap: 'wrap' }}>
+          <span>{variety}</span>
+          {pl.variety_ref?.id && (
+            <Link
+              to={`/varieties/${pl.variety_ref.id}/edit`}
+              data-testid="planting-variety-edit-link"
+              style={{ color: P.green, textDecoration: 'none', fontSize: T.type.xs, fontWeight: 700 }}
+            >
+              Edit variety
+            </Link>
+          )}
+        </span>
+      : null],
     ['Botanical', botanical ? (botanical.italic ? <i>{botanical.text}</i> : botanical.text) : null],
     ['Location', pl.location_path
       ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: T.space.xs }}>
