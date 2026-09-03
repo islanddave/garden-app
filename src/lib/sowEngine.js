@@ -472,6 +472,22 @@ export function classifyClause(clause) {
     if (windows.length) {
       info.cls = 'F';
       info.monthWindows = windows;
+    } else if (/\bfall\s+(?:crop|harvest)\b/i.test(c)) {
+      // Class M — BUG-SOWFALLCROPCLAUSE-001. A clause that names a fall crop/harvest with NO month
+      // token and no frost anchor: "also good as a fall crop", "…for a fall harvest". Dave's call
+      // 2026-09-02 was to count back from first frost by the variety's days-to-maturity rather than
+      // invent a calendar window — and latestSafeMs ALREADY IS that count-back, so class M needs no
+      // new math, no new anchor and no new constant. It only needs a name.
+      //
+      // PLACEMENT IS THE WHOLE FIX AND IT IS LOAD-BEARING. This sits at the BOTTOM of the chain, as
+      // the `else` of the class-F month-token loop, so it fires ONLY when nothing else matched.
+      // MEASURED, both ways: here it moves exactly 2 clauses, NULL -> M, with zero clauses moving
+      // between existing classes. The intuitive placement — a sibling `else if` up beside class E,
+      // where the other frost-relative patterns live — STEALS 20 correctly-classified clauses and
+      // reds 4 pinned tests, because "fall crop" appears inside prose that class D, E and F already
+      // read correctly ("late summer for fall crop" is class F and must stay class F). Do not
+      // promote this branch up the chain.
+      info.cls = 'M';
     }
   }
   return info;
@@ -649,6 +665,23 @@ function buildDirectWindows(candidate, dtm, ctx, gated = false) {
         // rewrite, null here means an annual with no dtm: genuinely unknown, so emit no window
         // rather than a confident wrong one.
         if (latestSafe == null) { unknownClamp = true; continue; }
+        close = latestSafe;
+        break;
+      case 'M':
+        // Class M takes class B's exact shape for a reason: the question "when is it too late to sow
+        // this for a fall crop" is already answered by latestSafeMs, which counts back from the
+        // frost anchor (or growth-stop, for a hardy slug) by dtm. So the CLOSE is that clamp,
+        // unchanged, and the same null guard applies — a clause the engine cannot clamp emits no
+        // window rather than a confident wrong one.
+        //
+        // THE OPEN IS THE ONE THING DAVE'S DECISION DID NOT SPECIFY. It names the latest sow date
+        // and is silent on the earliest. 28 days is the fall INDOOR pass's existing lead (:836) —
+        // reused rather than invented. The tempting alternative, class D's "open from the earliest
+        // other window", was measured and REJECTED: for Red Mustard it yields Apr 8 – Aug 7, one
+        // season-long band overlapping its own class-C spring window, which re-creates the exact
+        // symptom BUG-SOWCLASSC-001 was filed to remove.
+        if (latestSafe == null) { unknownClamp = true; continue; }
+        open = latestSafe - 28 * DAY_MS;
         close = latestSafe;
         break;
       case 'C':

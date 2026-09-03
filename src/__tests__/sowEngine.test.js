@@ -214,6 +214,19 @@ describe('classifyClause — classes A-L against real dataset strings', () => {
     // cold-REQUIRING seed. Both columbines, Hummingbird Haven, Edelweiss and Column Blend were losing
     // this clause entirely. "Ignored" was the cost of having no branch, never an intended outcome.
     ['early spring when soil is cold', 'C'],
+    // Class M — BUG-SOWFALLCROPCLAUSE-001. A fall crop/harvest named with NO month token and no
+    // frost anchor. Both strings are verbatim live prod prose.
+    ['also good as a fall crop', 'M'],
+    ['sow indoors/out in late spring to early summer for a fall harvest', 'M'],
+    // THE PLACEMENT GUARD, and it is the assertion that matters most in this block. Class M lives at
+    // the BOTTOM of classifyClause, as the `else` of the month-token loop, so it fires only when
+    // nothing else matched. `['late summer for fall crop', 'F']` above is the counterexample that
+    // proves it: that clause CONTAINS "fall crop" and must stay class F, because "late summer" is a
+    // real month window and a real window always beats a bare seasonal noun. Measured: moving the M
+    // branch up beside class E steals 20 correctly-classified clauses and reds 4 pinned tests.
+    // MUTATION: hoist the `fall (crop|harvest)` test above the MONTH_TOKENS loop and the F row above
+    // goes red while these two still pass — which is exactly why both directions are pinned here.
+    ['again in Aug-Sep for fall', 'F'],
   ])('%j -> class %j', (clause, cls) => {
     expect(classifyClause(clause).cls).toBe(cls);
   });
