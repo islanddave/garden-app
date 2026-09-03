@@ -195,6 +195,16 @@ export function computeDerivedTags(cultivar, cropTypesBySlug) {
   if (cropSlug && ct) {
     out.push({ facet: 'type', slug: cropSlug, label: ct.display_name || cropSlug });
   }
+  // BOTANICAL, and deliberately so. This chip does NOT answer "will it come back in this garden"
+  // (BUG-DERIVEDLIFECYCLE-001) — no field in the schema does, and plant_varieties.grown_as is not the
+  // one that could. Measured on prod 2026-09-02, 444 live cultivars: grown_as carried a value the
+  // column's old DEFAULT 'annual' could not have manufactured on exactly 14 rows, and all 14 already
+  // agree with this chain. So preferring grown_as improves ZERO chips and flips 245 — 186
+  // tender_perennial, 33 perennial, 26 biennial, every one to Annual on the strength of a Postgres
+  // default. Japanese Maple, Blueberry, Hosta, Jade, Christmas Cactus and Red Rose are in the 33.
+  // (The DEFAULT has since been dropped, so new rows are clean; the 358 'annual' values it already
+  // wrote are not, and are indistinguishable from curated ones.) A real as-grown axis needs a curated
+  // column that does not exist yet — see the ledger row. Pinned by crop-derive.test.js.
   const lifecycle = cultivar.lifecycle ?? (ct ? ct.default_lifecycle : null);
   if (lifecycle && VALID_LIFECYCLE.includes(lifecycle)) {
     out.push({ facet: 'lifecycle', slug: lifecycle, label: humanizeLifecycle(lifecycle) });

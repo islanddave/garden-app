@@ -543,6 +543,14 @@ describe('useInventory — adjustQuantity out-of-order responses (BUG-INVPUTREOR
   it('sequences are PER ITEM — a write to one item cannot supersede a write to another', async () => {
     // The counter is keyed by id. A single global sequence would make any second tap anywhere
     // silently discard an in-flight response for an unrelated row.
+    //
+    // The server numbers below deliberately DIFFER from what the client predicted. A response that
+    // merely confirms the optimistic value proves nothing here: applied and dropped both leave 11 on
+    // screen, so the assertion passes under a global counter too — measured, this test survived a
+    // get('G')/set('G') mutation until the responses were made distinguishable. Only a server row the
+    // client could not have guessed can tell "the response was applied" from "the response was
+    // discarded as stale", and the server IS the authority on the stored number (numeric(N,3),
+    // reconciled against whatever else has touched the row).
     fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE, SAMPLE_DURABLE])
     const { result } = renderHook(() => useInventory())
     await waitFor(() => expect(result.current.loading).toBe(false))
@@ -552,14 +560,15 @@ describe('useInventory — adjustQuantity out-of-order responses (BUG-INVPUTREOR
     fetchSpy.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise)
 
     let pa, pb
-    act(() => { pa = result.current.adjustQuantity('item-1', 1) })   // consumable 10 -> 11
-    act(() => { pb = result.current.adjustQuantity('item-2', 1) })   // durable    1  -> 2
+    act(() => { pa = result.current.adjustQuantity('item-1', 1) })   // consumable 10 -> 11 optimistic
+    act(() => { pb = result.current.adjustQuantity('item-2', 1) })   // durable    1  -> 2  optimistic
 
     // item-2 answers first; item-1's response is later but is NOT superseded — different item.
-    await act(async () => { b.resolve({ ...SAMPLE_DURABLE, quantity: 2 }); await pb })
-    await act(async () => { a.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11 }); await pa })
+    await act(async () => { b.resolve({ ...SAMPLE_DURABLE, quantity: 2.5 }); await pb })
+    await act(async () => { a.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11.5 }); await pa })
 
-    expect(result.current.items.find(i => i.id === 'item-1').quantity_on_hand).toBe(11)
-    expect(result.current.items.find(i => i.id === 'item-2').quantity).toBe(2)
+    expect(result.current.items.find(i => i.id === 'item-1').quantity_on_hand,
+      'item-1 kept its optimistic 11 — its response was discarded by an unrelated item\'s write').toBe(11.5)
+    expect(result.current.items.find(i => i.id === 'item-2').quantity).toBe(2.5)
   })
 })
