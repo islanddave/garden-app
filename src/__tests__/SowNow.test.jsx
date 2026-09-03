@@ -194,6 +194,69 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
     expect(navigateSpy).toHaveBeenCalledWith('/inventory/inv-mystery')
   })
 
+  // ── BUG-SOWPROSEUNREAD-001 — "Needs a sow profile" when the profile EXISTS ────────────────────
+  //
+  // A packet with no timing at all genuinely needs one, and MYSTERY above is that packet. The defect
+  // is the other kind: prose the classifier cannot parse. The card claimed the profile was missing,
+  // offered "Add sow details", and showed the gardener nothing — while the packet itself said
+  // something perfectly actionable.
+  //
+  // FIXTURE RE-POINTED 2026-09-02 — the old one stopped being unreadable. It was Quincy ('Direct sow
+  // after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May
+  // to mid-June.'), picked because a semicolon inside its parenthetical had once made splitClauses emit
+  // unbalanced fragments. Widening class B to accept "after all frost" made that string classify as B,
+  // so this block was rendering a candidate that no longer lands in needs_profile at all. Quincy's
+  // paren-split property is NOT lost — BUG-SOWCLAUSEPARENSPLIT-001 in sowEngine.test.js owns it.
+  //
+  // Replacement is VERBATIM from live prod (Zebrune shallot) and picked for STABILITY under future
+  // widening, not merely for being unreadable today: it is an INDOOR-START instruction, which no
+  // widening of a DIRECT-sow classifier should ever turn into a direct-sow window. Mirrors the fixture
+  // in sowEngine.test.js deliberately — the engine test asserts the ROUTING and this one asserts the
+  // RENDER, and they should fail together rather than drift apart.
+  const UNREADABLE_PROSE = 'Indoor start strongly preferred in Zone 5b to mature before Sep 26 frost'
+  const UNREADABLE = {
+    ...MYSTERY,
+    inventory_item_id: 'inv-zebrune',
+    item_name: 'Zebrune Shallot Onion Seeds',
+    variety_name: 'Zebrune',
+    direct_sow_timing: UNREADABLE_PROSE,
+  }
+
+  it('shows the packet’s own words when the engine could not read them', async () => {
+    routeFetch({ candidates: [UNREADABLE] })
+    await renderSowNow()
+    await screen.findByText('Needs a sow profile')
+
+    const prose = screen.getByTestId('sow-prose')
+    expect(prose.textContent).toContain('Indoor start strongly preferred in Zone 5b')
+    // Labelled as the packet talking, never as an engine verdict — the app did not derive this.
+    expect(prose.textContent).toMatch(/packet says/i)
+  })
+
+  it('still offers the CTA — reading the prose is not a substitute for a real profile', async () => {
+    routeFetch({ candidates: [UNREADABLE] })
+    await renderSowNow()
+    expect(await screen.findByLabelText('Add sow details for Zebrune')).toBeDefined()
+  })
+
+  it('a packet with NO timing shows no prose line at all', async () => {
+    // MYSTERY carries direct_sow_timing: null and sow_notes: null. An empty "The packet says:" label
+    // would be worse than the dead end it replaces.
+    routeFetch()
+    await renderSowNow()
+    await screen.findByText('Needs a sow profile')
+    expect(screen.queryByTestId('sow-prose')).toBeNull()
+  })
+
+  it('does NOT appear on a card the engine DID understand', async () => {
+    // Everywhere else the engine parsed the timing and its own window label is the better answer;
+    // echoing the raw prose beside a computed date would invite the reader to arbitrate between them.
+    routeFetch({ candidates: [CUCUMBER] })
+    await renderSowNow()
+    await screen.findByText('Window closing')
+    expect(screen.queryByTestId('sow-prose')).toBeNull()
+  })
+
   it('shows the empty state when there are no candidates', async () => {
     routeFetch({ candidates: [] })
     await renderSowNow()

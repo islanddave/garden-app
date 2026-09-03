@@ -241,11 +241,49 @@ export const FALL_HARDY_CROPS = new Set([
 const FALL_GRACE_COOL = 14;
 
 /** Split direct_sow_timing into clauses on ';' and ' or ' (case-insensitive). */
+/**
+ * BUG-SOWCLAUSEPARENSPLIT-001 — split on a separator only at PAREN DEPTH ZERO.
+ *
+ * THE DEFECT, measured on live prod rather than imagined. Packet prose puts qualifying detail in
+ * parentheses and that detail contains separators:
+ *
+ *   Quincy: "Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below
+ *            55-60F). Zone 5b: late May to mid-June."
+ *
+ * A bare `.split(';')` cuts inside the parenthetical and yields two fragments, neither of which is a
+ * sentence: `…reliably warm (optimal 75-95F` and `never below 55-60F). Zone 5b: late May to
+ * mid-June`. classifyClause returns null for both, they are dropped SILENTLY, and a live variety
+ * ends up with no parsed sow window at all — from a semicolon, not from anything about the crop.
+ *
+ * Depth-aware for ` or ` too, and for the same reason: "(spring or fall)" is one qualifier, not two
+ * clauses. Nesting is counted rather than flagged, so `((a; b); c)` behaves; an UNBALANCED prose
+ * paren cannot make the scanner lose a separator forever because depth is clamped at 0 — a stray
+ * `)` returns to top level rather than going negative and swallowing the rest of the string.
+ *
+ * This is the same class of bug as splitting SQL on a bare `;` — a separator that is only a
+ * separator outside its quoting context.
+ */
 export function splitClauses(timing) {
   if (!timing) return [];
-  return String(timing)
-    .split(';')
-    .flatMap((part) => part.split(/\s+or\s+/i))
+  const src = String(timing);
+  const parts = [];
+  let buf = '';
+  let depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '(' || ch === '[') { depth++; buf += ch; continue; }
+    if (ch === ')' || ch === ']') { depth = Math.max(0, depth - 1); buf += ch; continue; }
+    if (depth === 0) {
+      if (ch === ';') { parts.push(buf); buf = ''; continue; }
+      // ` or ` — whitespace-delimited on both sides, matching the previous /\s+or\s+/i split, so
+      // "colorful" and "or" as part of a word are untouched.
+      const m = /^\s+or\s+/i.exec(src.slice(i));
+      if (m) { parts.push(buf); buf = ''; i += m[0].length - 1; continue; }
+    }
+    buf += ch;
+  }
+  parts.push(buf);
+  return parts
     .map((part) => part.trim().replace(/^[,.]+|[,.]+$/g, '').trim())
     .filter(Boolean);
 }
@@ -263,7 +301,17 @@ const MONTH_TOKENS = [
 ];
 
 const WEEKS_BEFORE_FF_RE = /(\d+)\s*[-–—]\s*(\d+)\s*w(?:ee)?ks?\s+before\s+first(?:\s+fall)?\s+frost/i;
-const WEEKS_BEFORE_LF_RE = /(\d+)(?:\s*[-–—]\s*(\d+))?\s*w(?:ee)?ks?\s+before\s+last\s+frost/i;
+// `before <filler> last frost`: packet copy interposes a qualifier between "before" and the anchor and
+// the clause was dropped ENTIRELY over it — Dill 'Bouquet' writes "1-2 weeks before AVERAGE last frost"
+// and Javelin "2-3 wks before TO AROUND last frost". Both name their own week count; both scored cls
+// null and rendered no window. The filler set is CLOSED (to/around/average/approximately/the), not a
+// `\w+{0,2}` wildcard: a wildcard would also swallow a negation or a different anchor's adjective and
+// silently attach the week count to the wrong date. VERIFIED, not asserted: the real classifier was run
+// over all 198 live prod clauses before and after (scripts/snapshot-clause-classes.mjs, pointed at a
+// git-show copy of the pre-change engine so both sides use one harness). Exactly 11 clauses moved,
+// every one NULL -> a class; ZERO moved between existing classes, which was the actual risk of widening
+// a mid-chain branch above D and F. Unclassified went 19 -> 8.
+const WEEKS_BEFORE_LF_RE = /(\d+)(?:\s*[-–—]\s*(\d+))?\s*w(?:ee)?ks?\s+before\s+(?:to\s+)?(?:around\s+|approximately\s+)?(?:the\s+)?(?:average\s+)?last\s+frost/i;
 const WEEKS_AFTER_LF_RE = /(\d+)(?:\s*[-–—]\s*(\d+))?\s*w(?:ee)?ks?\s+after\s+last\s+frost/i;
 const SOIL_TEMP_RE = /(?:[≥>]=?\s*)?(\d{2,3})(?:\s*[-–—]\s*\d{2,3})?\s*°\s*F/;
 
@@ -306,13 +354,32 @@ export function classifyClause(clause) {
     info.cls = 'A';
     info.weeksMin = parseInt(m[1], 10);
     info.weeksMax = m[2] != null ? parseInt(m[2], 10) : parseInt(m[1], 10);
-  } else if (/after\s+last\s+frost/i.test(c)) {
+  // `after all frost` / `after all danger of frost has passed` are the same instruction as `after last
+  // frost` said in plainer words, and both live clauses carrying them ALSO name the date in their own
+  // parenthetical — Common Milkweed "(late May in zone 5b/6a)", Quincy "Zone 5b: late May to mid-June" —
+  // and were dropped anyway. Kept as a separate alternation rather than loosening `last`: matching a bare
+  // /after\s+.*frost/ would also capture "after FIRST frost", which is the opposite end of the season.
+  } else if (/after\s+last\s+frost/i.test(c) || /after\s+all\s+(?:danger\s+of\s+)?frost/i.test(c)) {
     info.cls = 'B';
     if ((m = c.match(WEEKS_AFTER_LF_RE))) {
       info.weeksMin = parseInt(m[1], 10);
       info.weeksMax = m[2] != null ? parseInt(m[2], 10) : parseInt(m[1], 10);
     }
-  } else if (/as\s+soon\s+as\s+(?:the\s+)?soil\s+can\s+be\s+worked/i.test(c)) {
+  // Class C widened on two fronts, both measured against live prose:
+  //   (1) `soil IS WORKABLE` — the same instruction as `soil CAN BE WORKED`, differing by wording only
+  //       (Althaea, Red Mustard). Pure phrasing loss.
+  //   (2) bare `early spring` with no month and no frost anchor (both columbines, Hummingbird Haven,
+  //       Edelweiss, Column Blend). DAVE'S CALL 2026-09-02: "early spring when soil is cold" IS the
+  //       earliest-workable-soil window, not a narrower one — every packet carrying the phrase here is
+  //       cold-tolerant or cold-REQUIRING seed (columbine and edelweiss need cold soil to germinate), so
+  //       the earliest workable date is horticulturally correct for them rather than merely convenient.
+  //       Recorded as a decision, not a guess: without it the engine would have to invent a date range.
+  // Position matters and is unchanged: C sits BELOW A/B/E/G/H/J/L, so a clause that also carries a week
+  // count or a frost anchor still classes on that stronger signal — "early spring, 2 wks before last
+  // frost" stays A. It sits ABOVE D and F, so verify by snapshot rather than by reading: widening a
+  // middle-of-chain branch can steal clauses from every branch below it.
+  } else if (/as\s+soon\s+as\s+(?:the\s+)?soil\s+(?:can\s+be\s+worked|is\s+workable)/i.test(c)
+             || /\bearly\s+spring\b/i.test(c)) {
     info.cls = 'C';
   } else if (/succession/i.test(c)) {
     info.cls = 'D';
@@ -444,6 +511,17 @@ function methodIncludesIndoor(method) {
 
 function buildDirectWindows(candidate, dtm, ctx, gated = false) {
   const clauses = splitClauses(candidate.direct_sow_timing).map(classifyClause);
+  // BUG-SOWPROSEUNREAD-001 — the packet SAID something about timing and we understood none of it.
+  //
+  // Measured on the ORIGINAL clause list rather than on `kept` below, and the distinction is the
+  // whole point: `kept` is narrowed on purpose (the gated-allium filter drops classes deliberately),
+  // and a deliberate drop is knowledge, not ignorance. This flag is only ever set when the
+  // CLASSIFIER failed — every clause the packet carries came back `cls: null`.
+  //
+  // Live prod, 2026-09-02: 114 varieties carry direct-sow prose and NINE are read this way — Quincy,
+  // Javelin, Common Milkweed, Long Island Improved, Red Mustard, Zebrune, Yellow Granex PRR,
+  // Althaea officinalis, Column Blend. See bucketOne's exit for what it is used for.
+  const unreadableProse = clauses.length > 0 && clauses.every((cl) => cl.cls == null);
   // Class K: zone-conditional — keep the 5b/6a clause, drop mild-climate ones.
   const hasZoneClause = clauses.some((cl) => cl.zone5b6a);
   let kept = hasZoneClause ? clauses.filter((cl) => !cl.mildClimates) : clauses;
@@ -567,7 +645,7 @@ function buildDirectWindows(candidate, dtm, ctx, gated = false) {
     pushDirect(windows, cl, open, latestSafe, latestSafe, true, ctx, 'this_season');
   }
 
-  return { windows, anyJ, neverTooLate, unknownClamp };
+  return { windows, anyJ, neverTooLate, unknownClamp, unreadableProse };
 }
 
 function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon = 'this_season') {
@@ -694,7 +772,7 @@ function bucketOne(candidate, ctx) {
     ? { gated: true, gateReason: GATE_REASONS[candidate.crop_type_slug] ?? GATE_REASONS.onion }
     : null;
   const indoorWindows = buildIndoorWindows(candidate, dtm, ctx, gated);
-  const { windows: directWindows, anyJ, neverTooLate, unknownClamp } =
+  const { windows: directWindows, anyJ, neverTooLate, unknownClamp, unreadableProse } =
     buildDirectWindows(candidate, dtm, ctx, gated);
   const all = [...indoorWindows, ...directWindows];
 
@@ -854,6 +932,28 @@ function bucketOne(candidate, ctx) {
     return {
       bucket: 'needs_profile',
       entry: { candidate, action: null, windowLabel: 'Add days to maturity to place this' },
+    };
+  }
+
+  // BUG-SOWPROSEUNREAD-001 — the SAME rule as unknownClamp above, applied to the other way this
+  // engine can be ignorant. There the clause was understood and its clamp was missing; here the
+  // clause was never understood at all, and falling through asserts "Sowing window passed" about
+  // timing nobody read.
+  //
+  // MEASURED, and it is not a near-miss: Quincy's packet says "Zone 5b: late May to mid-June" and
+  // this exit filed it under "Too late this year" on every date tested across the whole season —
+  // 1 March included. A claim that is wrong in March is not a timing verdict, it is a fallthrough
+  // wearing one. Nine live varieties sit here.
+  //
+  // Placed AFTER unknownClamp deliberately: that branch names a specific, actionable fix ("add days
+  // to maturity"), and a packet can be in both states. The more specific instruction wins.
+  //
+  // The label does not pretend to a verdict and does not blame the packet — the prose is usually
+  // perfectly clear to a human, which is why SowNow renders it verbatim underneath (`sow-prose`).
+  if (unreadableProse) {
+    return {
+      bucket: 'needs_profile',
+      entry: { candidate, action: null, windowLabel: "Couldn't read this packet's sow timing" },
     };
   }
 

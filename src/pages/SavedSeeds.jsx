@@ -135,6 +135,21 @@ const PROCESS_ENTRY = {
 // share ONE warm entry instead of each paying a round trip.
 const PICKER_PATH = '/api/plants?view=picker'
 
+// ── V4-SEEDNOPLANTING-001 — the door for seed that came from no planting ──────────────────────────
+// Dave, 2026-09-02, hours after the create-a-lot flow shipped: "i don't see where to go right now to
+// add seeds into this flow when not from a planting - is that just adding a seed item to inventory?"
+//
+// It is. The path already worked end to end — add a seeds item, then track it here, then set "Or
+// where did it come from?" on the lot for the non-garden origin. Nothing was broken. But NOTHING
+// POINTED AT IT: "Track a saved-seed lot" only offers packets that already exist, and the empty
+// state taught provenance rather than the first step. A working path nobody can find is not a
+// working path, and he is the second person to walk into this after the session that built it.
+//
+// The params carry the two facts the general Add-item form would otherwise make him re-derive (a
+// seed packet is a `consumable` in category `seeds`) plus a return leg, so saving lands him back
+// HERE — where the tracking control is — instead of on the Inventory list.
+const ADD_PACKET_HREF = '/inventory/add?type=consumable&category=seeds&return=%2Fseeds%2Fsaved'
+
 // ── BUG-SEEDCANDIDATEAMBIG-001 — the untracked-packet picker ──────────────────────────────────────
 // Measured against prod: ~260 untracked seed rows, roughly 41 phone-screens of unbroken scroll, and
 // 51 of them across 24 groups rendering a BYTE-IDENTICAL label — because the row printed
@@ -574,11 +589,40 @@ export default function SavedSeeds() {
               product I sprayed"). Provenance now has a real column and a real control, so the copy
               points at it. Leaving the old sentence standing would be worse than never having
               written it. */}
-          <p style={{ margin: 0, color: P.light, fontSize: '0.8rem', lineHeight: 1.5 }}>
-            Provenance — which plant a lot came from — is recorded on the packet itself: open it
-            from <Link to="/inventory" style={{ color: P.green }}>Inventory</Link> and use{' '}
-            <strong>Saved from</strong>. This page tracks the lot itself.
+          {/* V4-SEEDNOPLANTING-001 rewrote this paragraph, for the reason the version before it
+              records about its own predecessor: it answered a question the visitor is not asking
+              yet. "Where does provenance live" matters once a lot exists; on an EMPTY page the only
+              question is "I am holding seed — where do I start", and the previous copy sent the
+              reader to Inventory to look for a control on a packet that may not exist.
+              Both doors, named by where the seed came from, because that is the fork the user is
+              actually standing at. The planting one is a Link to the plant list rather than to a
+              sheet: the Save-seed sheet needs a planting as a parameter, so the honest route is
+              "pick the plant, then Save seed on its page". */}
+          <p style={{ margin: '0 0 4px', color: P.mid, fontSize: '0.8rem', lineHeight: 1.6 }}>
+            Saved seed from one of your plants? Open that planting and tap{' '}
+            <strong>Save seed</strong> — it remembers the parent for you.
           </p>
+          <p style={{ margin: '0 0 8px', color: P.mid, fontSize: '0.8rem', lineHeight: 1.6 }}>
+            From something else — a shop pepper, a gift, a u-pick?
+          </p>
+          {/* A BLOCK TARGET, not a link inside the sentence. The layout gate's tap census measured
+              the inline version of this at FIFTEEN pixels, which is the same defect
+              BUG-SEEDTAPTARGET-001 just fixed on the card anchors — reintroduced by me one paragraph
+              later, and caught only because the census counts every link rather than a named list.
+              WCAG 2.5.8's inline-link exemption does not cover it: this is the primary action of an
+              empty state, on the first screen a new user sees, reached with wet hands. */}
+          <Link
+            to={ADD_PACKET_HREF}
+            data-testid="empty-add-packet"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              minHeight: T.tapMinHeight, borderRadius: 8,
+              border: `1px dashed ${P.border}`, color: P.green,
+              fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none',
+            }}
+          >
+            Add the packet →
+          </Link>
         </div>
       )}
 
@@ -916,6 +960,24 @@ export default function SavedSeeds() {
                   </p>
                 )}
               </div>
+              {/* V4-SEEDNOPLANTING-001 — the way out of this list when the packet is not in it.
+                  BELOW the scrollport, not inside it: a row appended to a 25-item scrolling list is
+                  a row nobody reaches, and this is the answer to "none of these are mine", which is
+                  exactly the moment the list has failed to help. Always present rather than shown
+                  only on an empty result — the seed in hand is new, so the packet is missing on the
+                  FIRST visit too, before any search has been typed. */}
+              <Link
+                to={ADD_PACKET_HREF}
+                data-testid="add-seed-packet"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  minHeight: T.tapMinHeight, marginTop: 10, borderRadius: 8,
+                  border: `1px dashed ${P.border}`, color: P.green,
+                  fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none',
+                }}
+              >
+                Seed not in the list? Add the packet →
+              </Link>
             </>
           )}
         </Sheet>

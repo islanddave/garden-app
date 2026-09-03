@@ -372,6 +372,11 @@ export default function SowNow({ todayISO = localTodayISO() }) {
       : isUnstartedSave(c) ? 'Not started yet'
         : null
     const stageNote = isInProcess(c) ? 'not ready to sow' : 'no count recorded yet'
+    // BUG-SOWPROSEUNREAD-001 — what the packet says about timing, trimmed, or '' when it says
+    // nothing. direct_sow_timing first because it is the field the engine itself reads; sow_notes is
+    // the fallback for a packet that carries only the looser note. Both are already projected on
+    // v_sow_candidates, so this costs no new query.
+    const sowProse = String(c.direct_sow_timing || c.sow_notes || '').trim()
     return (
       <div key={c.inventory_item_id} style={cardStyle}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -413,6 +418,24 @@ export default function SowNow({ todayISO = localTodayISO() }) {
               Dave put it back to find out. */}
           {divertedFrom && BUCKET_LABEL[divertedFrom] && (
             <div style={gateReasonLine}>From: {BUCKET_LABEL[divertedFrom]}</div>
+          )}
+          {/* BUG-SOWPROSEUNREAD-001 — the packet's own words, when the engine could not read them.
+              "Needs a sow profile" is true of a packet with NO timing at all. It is MISLEADING for a
+              packet that has timing prose the classifier simply does not parse: the profile exists,
+              the card claims it is missing, and the gardener is handed nothing to act on. Measured
+              on live prod: of 114 varieties carrying timing prose, NINE have zero readable clauses —
+              Quincy, Javelin, Common Milkweed, Long Island Improved, Red Mustard, Zebrune, Yellow
+              Granex PRR, Althaea officinalis, Column Blend. Each says something useful and each
+              currently shows a dead end.
+              Rendering the raw string is strictly more information than rendering nothing, and it
+              invents no policy — the classifier is not being taught a new pattern here, and no date
+              is being derived from prose nobody parsed. It is the packet talking, labelled as such
+              so it never reads as an engine verdict. `needs_profile` ONLY: everywhere else the
+              engine DID understand the timing and its own window label is the better answer. */}
+          {bucketKey === 'needs_profile' && sowProse && (
+            <div data-testid="sow-prose" style={{ fontSize: '0.78rem', color: P.mid, marginTop: 6, lineHeight: 1.5 }}>
+              <span style={{ color: P.light }}>The packet says: </span>{sowProse}
+            </div>
           )}
         </div>
         <div style={cardActions}>

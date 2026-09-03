@@ -299,8 +299,20 @@ export default function SaveSeedSheet({ planting, onClose }) {
     }
   }
 
+  // BUG-SEEDSHEETBACK-001 (pre-promote MIN-3) — `armsBack` below is a per-render-site decision,
+  // exactly as Sheet's own contract requires. The arming defaults OFF because one useDismissable
+  // call serves every Sheet, and enrolling them all would orphan a pushed entry on BottomNav's
+  // navigate-and-close rows. This sheet is the other category — the close-in-place kind the prop
+  // exists for: closing it returns you to the page underneath and navigates nowhere.
+  //
+  // WHY IT MATTERS MORE HERE THAN ELSEWHERE. Dave is Android-only in an installed PWA, where Back is
+  // a system gesture rather than a chrome button. Unarmed, no marker is registered, so Back fell
+  // through to a plain history pop — and reached from the /log menu door this sheet sits INSIDE the
+  // overlayable /log route, so ONE Back unwound the whole route and took the half-typed lot name,
+  // count and process choice with it. Armed, decideBack dismisses the topmost layer only: one Back
+  // closes the sheet, a second leaves /log.
   return (
-    <Sheet open busy={busy} onClose={onClose} title="Save seed">
+    <Sheet open busy={busy} armsBack onClose={onClose} title="Save seed">
       <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
         From {planting?.name || 'this planting'} — the lot remembers which plant it came off.
       </p>

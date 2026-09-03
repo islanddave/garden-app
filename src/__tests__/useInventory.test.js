@@ -430,3 +430,136 @@ describe('useInventory — toast', () => {
     expect(result.current.toast).toBeNull()
   })
 })
+
+// ── BUG-INVPUTREORDER-001 — the response that is allowed to win ─────────────────────────────────
+//
+// Every OPTIMISTIC path here was already correct: commitItems assigns itemsRef synchronously, so two
+// taps landing in one commit compound properly (BUG-INVUNDOQTY-001's fix). What was never guarded is
+// the RESPONSE. Two + taps issue PUT(11) then PUT(12); nothing about HTTP guarantees they come back
+// in that order, and the handler applied whichever landed last — so a late PUT(11) response wrote
+// the older server row over the newer one and the display settled on 11. No error, no revert, and
+// the toast named the wrong number.
+//
+// These tests CONTROL the resolution order with deferred promises rather than hoping for a race.
+// A test that fired two adjustments and awaited them would resolve in issue order and prove nothing:
+// the defect only appears when the FIRST request finishes LAST.
+describe('useInventory — adjustQuantity out-of-order responses (BUG-INVPUTREORDER-001)', () => {
+  const deferred = () => {
+    let resolve, reject
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej })
+    return { promise, resolve, reject }
+  }
+
+  it('an EARLIER response landing last does not clobber the later value', async () => {
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    const first = deferred()
+    const second = deferred()
+    fetchSpy.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    // Two taps, neither settled. Not awaited — awaiting the first would serialise them and remove
+    // the very interleaving under test.
+    let p1, p2
+    act(() => { p1 = result.current.adjustQuantity('item-1', 1) })   // 10 -> 11
+    act(() => { p2 = result.current.adjustQuantity('item-1', 1) })   // 11 -> 12
+    expect(result.current.items[0].quantity_on_hand).toBe(12)
+
+    // The LATER request answers first — the realistic shape of the race.
+    await act(async () => {
+      second.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 12 })
+      await p2
+    })
+    expect(result.current.items[0].quantity_on_hand).toBe(12)
+
+    // ...and the EARLIER one answers afterwards, carrying the stale row. It must be dropped.
+    await act(async () => {
+      first.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11 })
+      await p1
+    })
+    expect(result.current.items[0].quantity_on_hand, 'a superseded response overwrote the newer value').toBe(12)
+  })
+
+  it('the superseded response does not fire a toast naming its own number', async () => {
+    // The toast is not cosmetic here: its undo closure reverses THIS request's delta, so a toast
+    // from a superseded write offers to undo a change that is no longer on screen.
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    const first = deferred()
+    const second = deferred()
+    fetchSpy.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    let p1, p2
+    act(() => { p1 = result.current.adjustQuantity('item-1', 1) })
+    act(() => { p2 = result.current.adjustQuantity('item-1', 1) })
+
+    await act(async () => { second.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 12 }); await p2 })
+    await act(async () => { first.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11 }); await p1 })
+
+    expect(result.current.toast?.msg).toContain('12')
+    expect(result.current.toast?.msg).not.toContain('11')
+  })
+
+  it('a superseded FAILURE does not revert a change the user can still see', async () => {
+    // The more damaging half. `prevValue` inside the first call is 10 — its own pre-tap number — so
+    // an unguarded revert would discard the second tap entirely and land on 10 while the second
+    // request was still in flight and would go on to succeed.
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    const first = deferred()
+    const second = deferred()
+    fetchSpy.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    let p1, p2
+    act(() => { p1 = result.current.adjustQuantity('item-1', 1) })   // 10 -> 11
+    act(() => { p2 = result.current.adjustQuantity('item-1', 1) })   // 11 -> 12
+
+    await act(async () => { first.reject(new Error('500 Server Error')); await p1 })
+    expect(result.current.items[0].quantity_on_hand, 'a superseded failure reverted past a live change').toBe(12)
+    expect(result.current.toast?.msg ?? '').not.toMatch(/couldn't save/i)
+
+    await act(async () => { second.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 12 }); await p2 })
+    expect(result.current.items[0].quantity_on_hand).toBe(12)
+  })
+
+  it('the LATEST request still reverts on its own failure', async () => {
+    // The guard must not swallow real errors — only superseded ones. With nothing issued after it,
+    // a failing write is still the latest and must revert and say so.
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    fetchSpy.mockRejectedValueOnce(new Error('500 Server Error'))
+    await act(async () => { await result.current.adjustQuantity('item-1', 1) })
+    expect(result.current.items[0].quantity_on_hand).toBe(10)
+    expect(result.current.toast?.msg).toMatch(/couldn't save/i)
+  })
+
+  it('sequences are PER ITEM — a write to one item cannot supersede a write to another', async () => {
+    // The counter is keyed by id. A single global sequence would make any second tap anywhere
+    // silently discard an in-flight response for an unrelated row.
+    fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE, SAMPLE_DURABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    const a = deferred()
+    const b = deferred()
+    fetchSpy.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise)
+
+    let pa, pb
+    act(() => { pa = result.current.adjustQuantity('item-1', 1) })   // consumable 10 -> 11
+    act(() => { pb = result.current.adjustQuantity('item-2', 1) })   // durable    1  -> 2
+
+    // item-2 answers first; item-1's response is later but is NOT superseded — different item.
+    await act(async () => { b.resolve({ ...SAMPLE_DURABLE, quantity: 2 }); await pb })
+    await act(async () => { a.resolve({ ...SAMPLE_CONSUMABLE, quantity_on_hand: 11 }); await pa })
+
+    expect(result.current.items.find(i => i.id === 'item-1').quantity_on_hand).toBe(11)
+    expect(result.current.items.find(i => i.id === 'item-2').quantity).toBe(2)
+  })
+})

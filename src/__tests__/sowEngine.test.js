@@ -196,13 +196,23 @@ describe('classifyClause — classes A-L against real dataset strings', () => {
     // ...but the "for (early) spring germination|bloom" tail is still REQUIRED. Real Althaea copy
     // offers fall-sowing only as an alternate to a spring primary, so it must NOT become class G
     // (that would surface a spring-primary packet as a fall-only recommendation).
-    ['Direct sow in very early spring as soon as soil is workable, or fall-sow to let winter cold stratify the seed (a good Zone 5b option).', null],
+    // 2026-09-02: now class C, and THE DECISION ABOVE IS INTACT — C is the SPRING primary this very
+    // comment names ("Direct sow in very early spring as soon as soil is workable"), reached through
+    // the widened class-C soil test, NOT through class G. The guard being asserted is "not fall-only",
+    // and C is not fall. It was `null` before only because no branch matched at all, which meant the
+    // packet's spring instruction was dropped silently — the drop was never the decision.
+    ['Direct sow in very early spring as soon as soil is workable, or fall-sow to let winter cold stratify the seed (a good Zone 5b option).', 'C'],
     ['in summer for next-year bloom', 'H'],
     ['mid-summer for blooming next spring', 'H'], // H beats F
     ['grow indoors year-round', 'J'],
     ['self-seeds freely once established', 'L'],
     ['self-sows freely', 'L'],
-    ['early spring when soil is cold', null], // unclassifiable -> ignored
+    // Was `null` with the note "unclassifiable -> ignored" — a description of the old regexes, not a
+    // decision. DAVE'S CALL 2026-09-02: "early spring when soil is cold" IS the earliest-workable-soil
+    // window (class C), because every live packet carrying the phrase is cold-tolerant or
+    // cold-REQUIRING seed. Both columbines, Hummingbird Haven, Edelweiss and Column Blend were losing
+    // this clause entirely. "Ignored" was the cost of having no branch, never an intended outcome.
+    ['early spring when soil is cold', 'C'],
   ])('%j -> class %j', (clause, cls) => {
     expect(classifyClause(clause).cls).toBe(cls);
   });
@@ -1616,6 +1626,117 @@ describe('V4-SEEDSAVEFLOW-001 in-process seed lots', () => {
     expect(buckets.direct_sow_now).toHaveLength(0); // spinach was the only one
     expect(buckets.window_closing).toHaveLength(1);
     expect(buckets.hold).toHaveLength(1);
+  });
+});
+
+describe('BUG-SOWPROSEUNREAD-001 — unreadable timing is UNKNOWN, not "too late"', () => {
+  // FIXTURE RE-POINTED 2026-09-02, because the old one stopped being unreadable. It was Quincy
+  // ('Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F).
+  // Zone 5b: late May to mid-June.'), chosen because a semicolon inside its parenthetical had once
+  // made splitClauses emit unbalanced fragments. Widening class B to accept "after all frost" made
+  // that string classify as B, so this describe block was asserting needs_profile routing against a
+  // candidate that no longer reaches it. It failed loudly rather than passing vacuously, which is the
+  // only reason it was caught — but a guard whose fixture drifts out from under it is worth a note.
+  // Quincy's paren-split property is NOT lost: BUG-SOWCLAUSEPARENSPLIT-001 below owns that string and
+  // that assertion.
+  //
+  // The replacement is also VERBATIM from live prod (Zebrune shallot), and is chosen to be stable
+  // under future widening rather than merely unreadable today: it is an INDOOR-START instruction, and
+  // no widening of a DIRECT-sow classifier should ever turn it into a direct-sow window. That keeps
+  // this block testing what it is named for — the routing of unreadable prose — instead of tracking
+  // the classifier's current coverage. It is one of the 8 clauses still unclassified on prod after the
+  // 2026-09-02 widening (was 19; measured with scripts/snapshot-clause-classes.mjs).
+  const UNREADABLE_PROSE = 'Indoor start strongly preferred in Zone 5b to mature before Sep 26 frost';
+  const unreadable = (over = {}) => toCandidate(PACKETS.cucumberSpacemaster, {
+    direct_sow_timing: UNREADABLE_PROSE, start_method: 'direct_sow',
+    days_to_maturity_min: null, days_to_maturity_max: null,
+    lifecycle: null, grown_as: null, sow_season: null, ...over,
+  });
+
+  it('THE DEFECT: it read "too late" in MARCH — a fallthrough wearing a verdict', () => {
+    // The decisive measurement. A window the engine cannot compute might be open or closed; saying
+    // "passed for 2026" on 1 March is a claim with nothing behind it. Swept across the season so a
+    // future change cannot make this pass by moving one date.
+    for (const day of ['2026-03-01', '2026-04-15', '2026-05-20', '2026-07-10', '2026-09-02']) {
+      const buckets = bucketize([unreadable()], day);
+      expect(buckets.too_late, `${day}: still filed as too late`).toHaveLength(0);
+      expect(buckets.needs_profile, `${day}: not routed to needs_profile`).toHaveLength(1);
+    }
+  });
+
+  it('says it could not read the packet, rather than blaming the packet or inventing a date', () => {
+    const entry = bucketize([unreadable()], TODAY).needs_profile[0];
+    expect(entry.windowLabel).toMatch(/read/i);
+    expect(entry.windowLabel).not.toMatch(/passed|too late/i);
+  });
+
+  it('does NOT fire for a packet with no timing prose at all — and that case is UNCHANGED', () => {
+    // The flag requires clauses.length > 0: it means "we could not read what was said", never "no
+    // one said anything". Asserted here because the two ignorances are easy to conflate.
+    //
+    // AND THE HONEST PART, recorded rather than quietly fixed: this fixture (start_method
+    // 'direct_sow', no prose, no dtm) lands in `too_late` both before and after this change, which
+    // is arguably the same unfounded claim in a second costume. It is deliberately OUT of scope —
+    // it is a different input class with a different remedy, and widening the exit to cover it would
+    // move cards this change has no measurement for. Filed as an observation, not fixed here.
+    const buckets = bucketize([unreadable({ direct_sow_timing: null })], TODAY);
+    expect(buckets.needs_profile, 'the unreadable-prose exit fired without any prose').toHaveLength(0);
+    expect(buckets.too_late, 'pre-existing routing for a no-prose packet changed').toHaveLength(1);
+  });
+
+  it('a READABLE clause is untouched — the flag needs EVERY clause to fail', () => {
+    // The guard against over-reach: one parseable clause means the engine understood the packet, and
+    // this exit must not fire. Uses the golden packet's own timing, which classifies.
+    const buckets = bucketize([toCandidate(PACKETS.cucumberSpacemaster)], TODAY);
+    expect(buckets.needs_profile).toHaveLength(0);
+  });
+
+  it('a genuinely late packet still reads too_late — the bucket is not emptied', () => {
+    // The control. If this exit swallowed the too_late branch entirely the sweep above would pass
+    // for the wrong reason, and a real "you missed it" would stop being said at all.
+    const late = toCandidate(PACKETS.cucumberSpacemaster, { direct_sow_timing: 'direct sow after last frost' });
+    const buckets = bucketize([late], '2026-11-20');
+    expect(buckets.too_late.length + buckets.sow_next_year.length).toBeGreaterThan(0);
+    expect(buckets.needs_profile).toHaveLength(0);
+  });
+});
+
+describe('BUG-SOWCLAUSEPARENSPLIT-001 — a separator inside parentheses is not a separator', () => {
+  it('does not cut a sentence at a semicolon inside a parenthetical', () => {
+    // Quincy's real prose. Split naively it yields two fragments, neither a sentence, one with an
+    // unbalanced paren: "…reliably warm (optimal 75-95F" and "never below 55-60F). Zone 5b: …".
+    const out = splitClauses('Direct sow after all frost once soil is reliably warm (optimal 75-95F; never below 55-60F). Zone 5b: late May to mid-June.');
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain('never below 55-60F');
+    expect(out[0]).toContain('Zone 5b');
+  });
+
+  it('does not cut on " or " inside parentheses either', () => {
+    const out = splitClauses('Direct sow in spring (either March or April)');
+    expect(out).toHaveLength(1);
+  });
+
+  it('STILL splits on a top-level semicolon and a top-level " or "', () => {
+    // The control: the fix must narrow the split, not disable it.
+    expect(splitClauses('sow in spring; also good as a fall crop')).toHaveLength(2);
+    expect(splitClauses('sow in spring or sow in fall')).toHaveLength(2);
+  });
+
+  it('splits correctly after a balanced parenthetical closes', () => {
+    const out = splitClauses('Direct sow early (as soon as workable); or start indoors');
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain('as soon as workable');
+    expect(out[1]).toBe('start indoors');
+  });
+
+  it('an UNBALANCED paren cannot swallow the rest of the string', () => {
+    // Prose is user data and comes unbalanced. Depth is clamped at 0 so a stray ")" returns to top
+    // level instead of going negative and disabling every separator that follows.
+    expect(splitClauses('sow early); or start indoors')).toHaveLength(2);
+    // An unclosed "(" legitimately keeps the remainder together — there is no honest place to guess
+    // the close — but it must not throw or lose text.
+    const out = splitClauses('sow early (unclosed; still here');
+    expect(out.join(' ')).toContain('still here');
   });
 });
 
