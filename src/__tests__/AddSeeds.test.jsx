@@ -20,6 +20,19 @@ const { fetchSpy, navigateSpy } = vi.hoisted(() => ({
   navigateSpy: vi.fn(),
 }))
 
+// BUG-SEEDEXTRACTOR-001: SEED_BULK_EXTRACT_ENABLED shipped FALSE on 2026-09-03, hiding the two bulk
+// intake tiles because they have never worked in prod (no ANTHROPIC_API_KEY). This suite predates
+// that and its assertions describe the flag-ON world — the photo/paste wire, the 501/413/502 banners,
+// the review table. Pinned TRUE so every one of them keeps covering what it was written to cover
+// rather than being deleted or weakened to match a hidden UI. Nothing behind the tiles was removed,
+// so all of this is still live code the moment the key is provisioned.
+// The flag-OFF world is covered by AddSeeds.extractGate.test.jsx.
+// importActual spread so every other flag keeps its real value.
+vi.mock('../lib/featureFlags.js', async (importActual) => ({
+  ...(await importActual()),
+  SEED_BULK_EXTRACT_ENABLED: true,
+}))
+
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy }),
   apiFetch: (...a) => fetchSpy(...a),

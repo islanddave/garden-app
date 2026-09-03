@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.101.0",
+    "date": "2026-09-03",
+    "highlights": [
+      "Event details no longer show you internal machine values. Things like batch ids and schema versions were rendering as raw code-looking text — on around 13,000 events — and are now hidden",
+      "The event details that ARE yours now have proper names instead of raw field names: rain gauge readings, target pest, active ingredient, loss reason and nine others",
+      "The Add Seeds screen no longer offers \"Photo of packets\" and \"Paste an order\". Neither has ever actually worked — they need a service that was never set up — so they now stay hidden rather than failing when tapped. Adding seeds one at a time is unaffected"
+    ]
+  },
+  {
     "version": "4.100.1",
     "date": "2026-09-03",
     "highlights": [
