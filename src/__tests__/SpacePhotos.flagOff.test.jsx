@@ -107,8 +107,10 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
     // 54 -> 55: V4-SEEDSAVEFLOW-001 adds /seeds/saved, flag-independent for the same reason — it is
     // in the table whether or not the space flag is on, so both counterparts move together and the
     // "exactly 2 below the flag-ON pin" delta this file exists to protect is untouched.
-    expect(paths).toHaveLength(55)
-    expect(new Set(paths).size).toBe(55)
+    // 55 -> 56: V5-HARVESTONEDOOR-001 adds /log/harvest, the combined harvest page — unconditional,
+    // so it moves the flag-OFF count by one exactly as it moves the flag-ON count.
+    expect(paths).toHaveLength(56)
+    expect(new Set(paths).size).toBe(56)
   })
 
   it('adds NO route to the overlay tree either', async () => {

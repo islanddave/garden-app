@@ -383,22 +383,27 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
   // being deleted or loosened to `toBeLessThanOrEqual`, so 5 is still a hard cap: the next addition
   // reddens this exactly as the fifth one did, and has to argue for itself the same way. See the
   // comment on the row itself for why nothing was displaced and what the standing alternative is.
-  it('renders exactly five create actions — 5 is a hard cap, not a starting point', () => {
+  // V5-HARVESTONEDOOR-001 took it BACK to 4. The voice row's own note named the exit — "this row
+  // could join [TopChrome] at no cost to the sheet... a placement decision for Dave" — and Dave made
+  // it on 2026-09-03. The guard returning to its original number is the evidence that the fifth slot
+  // was a loan and not a new baseline, which is exactly what the 4 -> 5 comment above promised.
+  it('renders exactly four create actions — 4 is a hard cap, not a starting point', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    expect(screen.getAllByTestId('create-action')).toHaveLength(5)
+    expect(screen.getAllByTestId('create-action')).toHaveLength(4)
   })
 
-  it('the fifth row is Harvest by voice, and it points at the parallel route', () => {
+  // The guard INVERTS, the same way V4-HARVFABREMOVE-001's did below: absence is the contract now,
+  // and the regression to catch is a well-meaning re-add beside the header action. Asserted three
+  // ways because a re-add could arrive under any of them — the old route, the new one, or the label.
+  it('has NO voice row — harvest logging lives behind the TopChrome circle (V5-HARVESTONEDOOR-001)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     const rows = screen.getAllByTestId('create-action')
-    expect(rows[4].textContent).toContain('Harvest by voice')
-    expect(rows[4].getAttribute('href')).toBe('/log/voice')
-    // NOT an overlay. An overlay would mount a live microphone on top of whatever is beneath it and
-    // close back to that surface; the whole risk design of this slice is that it is a place you go to
-    // and leave, unmounting the recogniser on the way out.
-    expect(rows[4].getAttribute('data-overlay-bg')).toBeNull()
+    const hrefs = rows.map(r => r.getAttribute('href'))
+    expect(hrefs).not.toContain('/log/voice')
+    expect(hrefs).not.toContain('/log/harvest')
+    expect(rows.map(r => r.textContent).join(' ')).not.toContain('Harvest by voice')
   })
 
   it('LEAVES Log an event exactly where it was — the voice row is additive, never a replacement', () => {

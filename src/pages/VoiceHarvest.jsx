@@ -326,7 +326,12 @@ const TONE = {
   idle: { bg: P.white,     border: P.border,      fg: P.light },
 }
 
-export default function VoiceHarvest() {
+// V5-HARVESTONEDOOR-001 — `embedded` is set only by HarvestLog, the combined harvest page, which
+// supplies its own title and the voice/manual selector. It suppresses this page's own <h1> and
+// intro paragraph and nothing else: every behaviour below is identical in both postures, so there
+// is no embedded-only code path to test separately. Default false keeps the standalone /log/voice
+// route (now a redirect, but still reachable in tests and from a stale bookmark) byte-identical.
+export default function VoiceHarvest({ embedded = false } = {}) {
   const { fetch: apiFetch } = useApiFetch()
 
   // OPS-CROPTYPEALIASCLIENT-001 — the raw picker payload, and the crop-type vocabulary it is
@@ -1333,12 +1338,19 @@ export default function VoiceHarvest() {
 
   return (
     <div style={{ padding: 16, maxWidth: 680, margin: '0 auto' }} data-testid="voice-harvest">
-      <h1 style={{ fontSize: '1.15rem', fontWeight: 700, color: P.dark, margin: '0 0 4px' }}>
-        Harvest by voice
-      </h1>
+      {!embedded && (
+        <h1 style={{ fontSize: '1.15rem', fontWeight: 700, color: P.dark, margin: '0 0 4px' }}>
+          Harvest by voice
+        </h1>
+      )}
+      {/* The pointer to the other surface is REWRITTEN, not just relocated. It used to read "the
+          normal harvest form is untouched under Log an event", which was a direction to a different
+          menu; the manual form is now one tap away in the selector above, so the sentence names
+          that instead. Embedded or not, the copy has to describe the doors that actually exist. */}
       <p style={{ fontSize: '0.82rem', color: P.light, lineHeight: 1.5, margin: '0 0 14px' }}>
         Say the crop, then the count, then the weight, then <strong>“next”</strong> to save and start
-        the following one. The normal harvest form is untouched under Log an event.
+        the following one.{' '}
+        {embedded ? 'Prefer to type it? Switch to Manual above.' : 'The manual harvest form is under Log a harvest.'}
       </p>
 
       {!supported && (

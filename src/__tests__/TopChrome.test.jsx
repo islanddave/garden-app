@@ -13,7 +13,7 @@ import { ROOT_TABS } from '../lib/routeClass.js'
 // navigation that used to get you to /capture spent it), parks the file, and THEN navigates.
 // `null` means "present, but carries no href" and the parity assertions below check exactly that
 // rather than pretending the href is still there.
-const ACTIONS = { 'topchrome-snap': 'NO-HREF', 'topchrome-harvest': '/log?session=harvest', 'topchrome-search': '/search' }
+const ACTIONS = { 'topchrome-snap': 'NO-HREF', 'topchrome-harvest': '/log/harvest', 'topchrome-search': '/search' }
 
 let mockUser
 vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => ({ user: mockUser }) }))
@@ -155,13 +155,13 @@ describe('TopChrome (V4-TOPCHROMEACTIONS-001) — Snap + Harvest header actions'
       expect(snap.tagName).toBe('BUTTON')
       expect(snap.getAttribute('href')).toBe(null)
       expect(screen.getByTestId('topchrome-snap-input').getAttribute('type')).toBe('file')
-      expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?session=harvest')
+      expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log/harvest')
     })
   }
   it('detail (/projects/abc): both actions present alongside the search icon', () => {
     renderAt('/projects/abc')
     expect(screen.getByTestId('topchrome-snap').tagName).toBe('BUTTON')
-    expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log?session=harvest')
+    expect(screen.getByTestId('topchrome-harvest').getAttribute('href')).toBe('/log/harvest')
     expect(screen.getByTestId('topchrome-search').getAttribute('href')).toBe('/search')
   })
   // REVERSED by V4-WEIGHINCTA-001 (CHECKIN PLAN B5, Dave GO 2026-08-18), deliberately kept as the
@@ -171,11 +171,24 @@ describe('TopChrome (V4-TOPCHROMEACTIONS-001) — Snap + Harvest header actions'
   // That coupling is already dead: V4-HARVFABREMOVE-001 dropped the string from OVERLAYABLE_CREATE
   // and BottomNav.jsx:83 records that the header action never consulted the Set at all. What replaces
   // it is the ?session= pin below — the param, not the pathname, is what EventNew reads.
-  it('the Harvest href carries ?session= — ?event_type=harvest would silently skip session mode', () => {
+  // V5-HARVESTONEDOOR-001 REPLACED WHAT THIS PINS, and the replacement is not a weaker claim.
+  // It used to assert `?session=harvest` was present, because the param — not the pathname — was
+  // what made EventNew engage the weigh-in session. The combined page carries that state as a PROP
+  // now, so there is no param left to assert. What still has to be true, and is the thing a
+  // regression would actually break, is that this href reaches the COMBINED page: any `/log…`
+  // spelling lands on the single-event form instead and the selector never renders.
+  it('the Harvest href is the combined page — a bare /log spelling would skip the selector', () => {
     renderAt('/today')
     const href = screen.getByTestId('topchrome-harvest').getAttribute('href')
-    expect(href).toBe('/log?session=harvest')
-    expect(new URLSearchParams(href.split('?')[1]).get('session')).toBe('harvest')
+    expect(href).toBe('/log/harvest')
+    const url = new URL(href, 'https://garden.futureishere.net')
+    expect(url.pathname).toBe('/log/harvest')
+    // No ?mode= — voice is the default and the canonical url for it is bare (HarvestLog.jsx).
+    expect(url.searchParams.get('mode')).toBeNull()
+    // The two spellings that would silently degrade: the old session param, and the older
+    // single-event deep link. Neither may reappear here.
+    expect(url.searchParams.get('session')).toBeNull()
+    expect(url.searchParams.get('event_type')).toBeNull()
   })
   it('all three actions are icon-only with accessible names (no visible text label)', () => {
     renderAt('/today')

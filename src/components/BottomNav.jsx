@@ -91,25 +91,18 @@ const CREATE_ACTIONS = [
   // keeps the original copy — module-const evaluated once at load, so behavior is byte-identical.
   { to: '/garden?add=1', iconName: 'lifecycle.sprout', label: 'Add a planting', sub: PROJECTS_HIDDEN ? "Something you're growing" : 'A plant growing in a project' },
   { to: '/sow',          iconName: 'lifecycle.sprout', label: 'Sow from seed',  sub: 'Start something from your seed inventory' },
-  // V5-HARVESTVOICEFLOW-001 — THE FIFTH ROW, AND IT BREAKS THE CAP ABOVE ON PURPOSE. Stated plainly
-  // rather than slipped in: the note at the top of this array says "any FIFTH action requires
-  // DISPLACEMENT, not expansion", and this is expansion. Dave chose this placement on 2026-08-30 over
-  // a sixth bottom-bar tab and a button on the Harvests page, for a surface he wants to start using
-  // daily this season.
+  // V5-HARVESTONEDOOR-001 — THE 'Harvest by voice' ROW IS GONE, AND THE CAP IS BACK TO 4.
   //
-  // WHY NOTHING WAS DISPLACED: 'Log an event' is the harvest path this row exists to run BESIDE (the
-  // whole point is that it stays reachable if voice fails), 'Log many' is Dave-protected first-class
-  // (2026-07-01 directive), and the two sprout rows are the only creation affordances in the sheet.
-  // There was no honest displacement available, so the cap moved and the guard below moved WITH it —
-  // the 4-cap test now asserts 5, so this remains a hard cap rather than becoming a starting point.
+  // V5-HARVESTVOICEFLOW-001 added it here on 2026-08-30 as a deliberate fifth row, breaking the
+  // stated 4-cap by expansion rather than displacement, and its own note named the exit: "the
+  // harvest action already lives in TopChrome... and this row could join it there at no cost to the
+  // sheet. That is a placement decision for Dave, not a refactor to do quietly." Dave made that
+  // decision on 2026-09-03 — combine the two harvest surfaces into one page and reach it from the
+  // header circle — so the row leaves and the cap it broke is restored rather than left at 5.
   //
-  // THE STANDING ALTERNATIVE, if the glance surface starts to feel crowded: the harvest action
-  // already lives in TopChrome (V4-HARVFABREMOVE-001 moved it out of this sheet precisely because
-  // harvest is the high-frequency path), and this row could join it there at no cost to the sheet.
-  // That is a placement decision for Dave, not a refactor to do quietly.
-  // `media.mic` is the SHIPPED glyph (iconRegistry.js), reused rather than minting an `action.mic`:
-  // a new glyph has to clear region-seam and pair-distinctness, and this row does not need one.
-  { to: '/log/voice',    iconName: 'media.mic',        label: 'Harvest by voice', sub: 'Hands-free — say the crop, count and weight' },
+  // NOTHING IS LOST FROM THIS SHEET. Voice was the ONLY harvest affordance here, and it now sits
+  // behind the header circle that renders on every content surface — one tap from anywhere instead
+  // of two (open sheet, pick row). The 5-cap guard in the tests goes back to asserting 4.
 ]
 
 // The create-menu targets that open as overlays (§6). Others navigate as pages.

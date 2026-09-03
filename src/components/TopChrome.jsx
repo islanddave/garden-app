@@ -167,7 +167,12 @@ function HeaderActions() {
   return (
     <>
       <SnapAction />
-      <Link to="/log?session=harvest" aria-label="Log a harvest" data-testid="topchrome-harvest" style={ACTION_CIRCLE}>
+      {/* V5-HARVESTONEDOOR-001: retargeted from `/log?session=harvest` to the combined harvest page.
+          Still a plain Link and still full-page, for the same reason V4-WEIGHINCTA-001 gave — the
+          Manual half IS the weigh-in session and it engages only outside an overlay. What changes
+          is that this circle now lands on voice by default, with the session one tap away, rather
+          than on the session with no route to voice at all. */}
+      <Link to="/log/harvest" aria-label="Log a harvest" data-testid="topchrome-harvest" style={ACTION_CIRCLE}>
         <Basket />
       </Link>
       <OverlayLink to="/search" aria-label="Search your garden" data-testid="topchrome-search" style={ACTION_CIRCLE}>

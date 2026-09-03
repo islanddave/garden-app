@@ -72,19 +72,33 @@ describe('Harvests root — weigh-in session CTA (V4-WEIGHINCTA-001 / B5)', () =
     expect(s.whiteSpace).toBe('')
   })
 
-  it('targets ?session=harvest — ?event_type=harvest would open the plain form, no session ledger', () => {
+  // V5-HARVESTONEDOOR-001: retargeted to the combined harvest page. The old assertion pinned
+  // `?session=harvest` because the param was what made EventNew engage the weigh-in session; the
+  // combined page passes that as a prop instead, so the param is gone and the pathname is what
+  // carries the meaning. Still a real guard: any `/log…` spelling would open the single-event form
+  // with no selector, which is the same class of silent degradation the original was written for.
+  it('targets the combined harvest page — a bare /log spelling would open the plain form', () => {
     render(<Harvests />)
     const href = cta().getAttribute('href')
-    expect(href).toBe('/log?session=harvest')
-    expect(new URLSearchParams(href.split('?')[1]).get('session')).toBe('harvest')
+    expect(href).toBe('/log/harvest')
+    const url = new URL(href, 'https://garden.futureishere.net')
+    expect(url.pathname).toBe('/log/harvest')
+    expect(url.searchParams.get('event_type')).toBeNull()
   })
 
-  it('reads "Weigh-in" and still sits ABOVE the Log/Totals toggle, on the default (Totals) arrival', () => {
+  it('reads "Harvest" and still sits ABOVE the Log/Totals toggle, on the default (Totals) arrival', () => {
     const { container } = render(<Harvests />)
     // BD-053 shortened the label from "Weigh-in session" to "Weigh-in": it now shares the title row
     // with the heading and Export at 390px, and the dropped word is the one carrying no information
     // ("session" is what the destination IS, not what the button does).
-    expect(cta().textContent).toContain('Weigh-in')
+    // V5-HARVESTONEDOOR-001 renamed it again, to "Harvest", and this assertion had to move with the
+    // target rather than being loosened: the destination now opens on VOICE by default, so a button
+    // still reading "Weigh-in" would name one of the two modes behind the door and be wrong on every
+    // tap that accepts the default. The label names the door.
+    expect(cta().textContent).toContain('Harvest')
+    // And it must NOT still say the old thing — a stale label is the specific regression here, and a
+    // `toContain` on the new string alone would pass against "Weigh-in / Harvest" or any half-rename.
+    expect(cta().textContent).not.toContain('Weigh-in')
     // V4-HARVDEFAULT-001 lands a bare arrival on Totals. The CTA must not be behind the Log tab, and
     // must precede the view toggle in document order — "primary" is a position claim as much as a
     // style one. compareDocumentPosition FOLLOWING === the toggle comes after the CTA.

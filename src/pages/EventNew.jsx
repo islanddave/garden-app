@@ -647,7 +647,13 @@ function MetadataSection({ eventType, metadataState, onMetadataChange }) {
   )
 }
 
-export default function EventNew() {
+// V5-HARVESTONEDOOR-001 — `harvestSession` is the PROP form of `?session=harvest`, set only by
+// HarvestLog when its selector is on Manual. A prop rather than making HarvestLog write
+// `?session=harvest` into its own URL: that would put two different spellings of the same state in
+// the address bar (`/log/harvest?mode=manual&session=harvest`) and make the redirect in App.jsx
+// ambiguous about which one it was supposed to honour. Default false, so all 22 existing callers
+// and every deep link are byte-identical.
+export default function EventNew({ harvestSession = false } = {}) {
   const navigate       = useNavigate()
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
@@ -662,7 +668,11 @@ export default function EventNew() {
   // + per-row undo). Full-page posture only — `inHarvestSession` (defined below inOverlay) is the
   // gate every session behavior hangs off; an overlay open with this param degrades to the plain
   // ?event_type=harvest deep-link behavior.
-  const harvestSessionParam = searchParams.get('session') === 'harvest'
+  // V5-HARVESTONEDOOR-001: the prop and the query param are the SAME state by two routes in — the
+  // combined page passes the prop, every pre-existing deep link and the launcher-cached PWA
+  // shortcut still carry the param. Everything downstream reads only this one name, so neither
+  // entry gets a code path of its own.
+  const harvestSessionParam = harvestSession || searchParams.get('session') === 'harvest'
   const { fetch: apiFetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
   // Fire-and-forget; never affects the save flow.

@@ -27,11 +27,20 @@
   const q = new URLSearchParams(location.search)
   const vw = Number(q.get('vw') || 390)
   const vh = Number(q.get('vh') || 844)
-  q.delete('vw'); q.delete('vh')
+  // `page=` picks WHICH harness entry to frame; default is the directory index (main.jsx), so every
+  // pre-existing url behaves exactly as before. Added 2026-09-03 (V5-HARVESTONEDOOR-001) because it
+  // was forwarded but never read: `.claude/launch.json` already had a `page=sheetcensus.html` entry
+  // that silently framed main.jsx instead, which is the shape of bug this file exists to prevent —
+  // a measurement taken confidently against the wrong surface.
+  // Constrained to a bare `*.html` basename in this directory: it is interpolated into a src, and a
+  // harness must not become an open redirect just because it is only ever run locally.
+  const page = q.get('page')
+  const safe = page && /^[a-z0-9._-]+\.html$/i.test(page) && !page.includes('..') ? page : ''
+  q.delete('vw'); q.delete('vh'); q.delete('page')
   const el = document.getElementById('frame')
   el.width = vw
   el.height = vh
-  el.src = '/tests/harness/' + (q.toString() ? '?' + q.toString() : '')
+  el.src = '/tests/harness/' + safe + (q.toString() ? '?' + q.toString() : '')
   window.__frameReady = () => {
     const w = el.contentWindow
     return !!(w && w.__h && w.document.readyState === 'complete')

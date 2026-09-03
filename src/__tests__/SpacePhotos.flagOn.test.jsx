@@ -72,8 +72,12 @@ describe('flag ON — the /space routes appear', () => {
     // counterpart, which moves 53 -> 54 for the same route).
     // 56 -> 57: V4-SEEDSAVEFLOW-001 adds /seeds/saved, flag-independent (see the flag-OFF
     // counterpart, which moves 54 -> 55 for the same route).
-    expect(paths).toHaveLength(57)
-    expect(new Set(paths).size).toBe(57)
+    // 57 -> 58: V5-HARVESTONEDOOR-001 adds /log/harvest, the combined harvest page. Also
+    // flag-independent — it has nothing to do with SPACE_PHOTOS_ENABLED; it moves both counts by
+    // one because it is an unconditional route, which is exactly why this pair is asserted on both
+    // sides of the flag rather than once.
+    expect(paths).toHaveLength(58)
+    expect(new Set(paths).size).toBe(58)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {
