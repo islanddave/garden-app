@@ -29,6 +29,17 @@ const { fetchSpy, navigateSpy, uploadSpy, createItemSpy } = vi.hoisted(() => ({
   createItemSpy: vi.fn(),
 }))
 
+// BUG-SEEDEXTRACTOR-001: the AddSeeds arm of this sweep drives the PASTE pane, whose chooser tile
+// ships hidden from 2026-09-03 (SEED_BULK_EXTRACT_ENABLED false — the extractor has never been
+// provisioned). Pinned TRUE so these three keep testing the dirty-guard contract they were written
+// for; that contract is about stash-vs-gate semantics and is unrelated to whether the tile is
+// currently offered. The pane and every path behind it are intact, just not reachable in the UI.
+// importActual spread so every other flag keeps its real value.
+vi.mock('../lib/featureFlags.js', async (importActual) => ({
+  ...(await importActual()),
+  SEED_BULK_EXTRACT_ENABLED: true,
+}))
+
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy }),
   apiFetch: (...a) => fetchSpy(...a),

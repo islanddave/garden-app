@@ -77,6 +77,28 @@ const METADATA_LABELS = {
   // Unlabelled keys render in the monospace raw-key fallback below, so omitting it from the
   // labels map is not enough — it is filtered out of the entries list itself.
   water_depth:               'Water amount',
+
+  // BUG-EVTMETARAWKEYS-001 — the 14 live keys that were rendering as raw monospace `key value` and
+  // hold something a person actually recorded. Every one of these is a LABEL rather than a hide,
+  // because hiding them would delete real content from the page: `gauge_in` is a rain reading the
+  // user took, `qty_reduced` is a quantity they entered, `active_ingredient` is off the bottle.
+  // The split is the whole judgement here — see METADATA_HIDDEN_KEYS below for the other 13.
+  // Labels are mechanical transliterations of the key, deliberately: this is a defect fix, not a
+  // copy pass, and inventing voice for 14 strings nobody has reviewed would be the wrong risk.
+  gauge_in:                  'Rain gauge (in)',
+  method:                    'Method',
+  target_pest:               'Target pest',
+  active_ingredient:         'Active ingredient',
+  reapply_after_rain:        'Reapply after rain',
+  protection_class:          'Protection type',
+  patrol:                    'Patrol',
+  trend:                     'Trend',
+  loss_reason:               'Loss reason',
+  qty_reduced:               'Quantity reduced',
+  non_chemical:              'Non-chemical',
+  issue_label:               'Issue',
+  status_from:               'Status before',
+  status_to:                 'Status after',
 }
 
 // Metadata keys that are MACHINE provenance rather than user-entered detail. Filtered out of the
@@ -86,14 +108,33 @@ const METADATA_LABELS = {
 // uuid: stored and queryable, never a detail row. Added here in the same change that starts writing
 // it, so the key has never rendered raw even once.
 //
-// MEASURED 2026-09-03, and it says this denylist is far too short: of the 35 distinct metadata keys
-// live in prod, 7 are labelled and ONE is hidden — the remaining 27 render as raw monospace
-// `key value` pairs today. `batch_id` is a bare uuid on 12,920 events and `batch_v` a schema integer
-// on the same 12,920. Both are machine provenance by the same test applied to `water_depth_source`
-// and neither is actionable by a user. Deliberately NOT fixed here: this change owns one key, and
-// silently altering what 12,920 existing events display is a separate decision with its own blast
-// radius. Filed as BUG-EVTMETARAWKEYS-001 with the full census.
-const METADATA_HIDDEN_KEYS = new Set(['water_depth_source', 'seed_lot_id'])
+// BUG-EVTMETARAWKEYS-001 — CLOSED 2026-09-03 on Dave's instruction ("fix the raw metadata keys, hide
+// batch_id and batch_v"). Measured against prod: 35 distinct metadata keys live, of which 7 were
+// labelled and ONE hidden — the remaining 27 rendered as raw monospace `key value` pairs. `batch_id`
+// is a bare uuid on 12,920 events and `batch_v` a schema integer on the same 12,920.
+//
+// ALL 27 ARE NOW ACCOUNTED FOR, split by ONE test — did a person put this here, or did the system?
+//   * 14 hold something a person recorded → LABELLED above, not hidden. Hiding them would delete
+//     real content: a rain-gauge reading, a quantity entered by hand, an ingredient off a bottle.
+//   * 13 are machine provenance → hidden here. None is actionable, and several are bare ids.
+// The count is the guard: 14 + 13 = 27, so no key was silently left rendering raw.
+//
+// The hidden 13, and why each: `batch_id`/`batch_v` (uuid + schema version, Dave named these);
+// `precip_source`/`station_series`/`rain_backfill` (which weather source a figure came from and
+// whether it was backfilled — the same "app's own confidence" reading water_depth_source is kept out
+// for); `auto_logged` (a flag saying the app wrote it, not the user); `entity_level`/`schema`
+// (internal shape); `source` (how the row was created); `harvest_input_source` (which input path);
+// `migrate_to_location`/`target_location_id` (move plumbing, id-shaped); `scope_intended` (internal).
+//
+// `migrate_to_location` is hidden rather than labelled ON PURPOSE despite the readable name: its
+// value shape was not verified and a label that renders a uuid is worse than no row at all. If it
+// turns out to hold a place name, label it — that is a strict improvement, and the reverse is not.
+const METADATA_HIDDEN_KEYS = new Set([
+  'water_depth_source', 'seed_lot_id',
+  'batch_id', 'batch_v', 'precip_source', 'station_series', 'rain_backfill', 'auto_logged',
+  'entity_level', 'schema', 'source', 'harvest_input_source', 'migrate_to_location',
+  'target_location_id', 'scope_intended',
+])
 
 // V4-EVTDELCONFIRM-001 — coverFor for the confirm sheet: the union of every photo's cover_for
 // entries, deduped by entity (one planting covered by two of the event's photos must be named

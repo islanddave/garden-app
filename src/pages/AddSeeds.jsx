@@ -16,6 +16,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
+import { SEED_BULK_EXTRACT_ENABLED } from '../lib/featureFlags.js'
 import { packetToVarietyCols } from '../lib/parseSowProfile.js'
 import { P } from '../lib/tokens.js'
 import { formatMoney } from '../lib/format.js'
@@ -335,9 +336,18 @@ export default function AddSeeds() {
               ariaLabel="How do you want to add seeds?"
               value={mode}
               onChange={handleChoose}
+              // BUG-SEEDEXTRACTOR-001 — the two bulk tiles are gated because they have never worked
+              // in prod: both need ANTHROPIC_API_KEY, which is not in the secrets bundle, so both
+              // 501 on tap. Dave 2026-09-03: do not provision it, hide the dead buttons, revisit
+              // well down the line. Filtered rather than deleted — every path behind them is intact
+              // and flipping SEED_BULK_EXTRACT_ENABLED true is the only change needed once the key
+              // exists. With the flag off the grid renders ONE tile, which is honest: "One item" is
+              // genuinely the only way to add seeds today.
               options={[
-                { value: 'photo', label: 'Photo of packets', icon: <Icon name="media.camera" size={26} decorative /> },
-                { value: 'paste', label: 'Paste an order', icon: <Icon name="status.planning" size={26} decorative /> },
+                ...(SEED_BULK_EXTRACT_ENABLED ? [
+                  { value: 'photo', label: 'Photo of packets', icon: <Icon name="media.camera" size={26} decorative /> },
+                  { value: 'paste', label: 'Paste an order', icon: <Icon name="status.planning" size={26} decorative /> },
+                ] : []),
                 { value: 'one_item', label: 'One item', icon: <Icon name="status.seed" size={26} decorative /> },
               ]}
             />

@@ -424,3 +424,24 @@ export const PHOTO_CORS_CACHE_ENABLED = true
 // exactly as it does today, and no new DOM renders on any photo surface. Both branches are tested —
 // PhotoUpload.multi.test.jsx and EventNew.multiPhoto.test.jsx each carry a flag-OFF case.
 export const PHOTO_MULTI_ATTACH_ENABLED = true
+
+// BUG-SEEDEXTRACTOR-001 (Dave 2026-09-03): the two BULK seed-intake modes on /inventory/add-seeds —
+// "Photo of packets" and "Paste an order" — have NEVER worked in production. Both POST
+// /api/inventory-items/extract-seeds, which needs ANTHROPIC_API_KEY in the garden-app/secrets
+// bundle; that secret holds only CLERK_SECRET_KEY and NEON_DATABASE_URL, so the Lambda returns 501
+// extractor_not_configured and the UI shows "The photo/paste extractor isn't configured yet".
+//
+// Dave's call, verbatim intent: don't provision the key, he doesn't need bulk intake through the app
+// at this time, defer well down the line to review — and HIDE THE DEAD BUTTONS. Two chooser tiles
+// that always fail are worse than two tiles that do not exist: they read as capability, cost a tap
+// and a disappointment each time, and quietly teach that the app is broken.
+//
+// This flag hides the TILES only. Every code path behind them — handleFile, the canvas downscale,
+// the paste textarea, the extract POST, the review table and all their tests — is left intact and
+// untouched, so flipping this true is the ONLY change needed once the key is provisioned. Nothing
+// here is deleted, because nothing here is wrong; it is unprovisioned.
+//
+// The 501 branch in AddSeeds stays too, deliberately: this flag is a client guess about server
+// config, and if it is ever flipped true while the secret is still missing, the honest error message
+// is the backstop. Belt and braces on a surface where the failure is invisible until tapped.
+export const SEED_BULK_EXTRACT_ENABLED = false
