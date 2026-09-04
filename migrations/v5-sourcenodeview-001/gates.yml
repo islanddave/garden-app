@@ -1,0 +1,155 @@
+# gates.yml
+# V5-SOURCENODEVIEW-001 — project source_id / acquired_from_source_id through public.garden_node.
+#
+# HARD DEPENDENCY: v5-sourceentity-001 (the columns must exist on public.plants first — a view cannot
+# project a column its base table does not have).
+#
+# NO `env:` KEY ANYWHERE. Every gate reads pg_catalog or information_schema, so each means the same
+# thing on staging and prod and none can pass vacuously for want of a row.
+#
+# NO COUNT GATE IN THIS FILE, DELIBERATELY. The obvious assertion is "garden_node has 57 columns",
+# and it is the wrong one. Earlier today a `continuous` count gate pinning preservation_log at 24
+# went red on BOTH live databases because a different migration in a different directory added a
+# column and did not know the pin existed — the third time that pin has been missed. A count gate on
+# a 57-column view over a table that gains columns routinely would be the same trap with a bigger
+# surface. Every gate below asserts a NAMED thing instead: it widens safely when plants gains an
+# unrelated column, and still reds if what this migration added is removed.
+
+pre:
+  - name: pre_base_columns_exist
+    note: >
+      A view cannot project a column its base table does not have, so the parent migration must be
+      applied first. Counted, so losing either column reds it rather than only the one a named check
+      happened to pick.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plants'
+         AND column_name IN ('source_id', 'acquired_from_source_id')
+      HAVING count(*) = 2
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_garden_node_is_a_view
+    note: >
+      0a is a CREATE OR REPLACE VIEW. If garden_node had become a table or a matview the statement
+      would fail confusingly; this names the assumption up front.
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema = 'public' AND table_name = 'garden_node'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_nothing_depends_on_the_view
+    note: >
+      0a only appends, so it needs no dependents check — but 0r must DROP and re-CREATE, because
+      CREATE OR REPLACE VIEW cannot remove a column. A dependent relation would make that DROP either
+      fail or, with CASCADE, silently destroy the dependent. Checked here so the rollback's safety is
+      established BEFORE the apply rather than discovered during it. Zero on prod 2026-09-04.
+    sql: |
+      SELECT DISTINCT dep.relname
+        FROM pg_depend d
+        JOIN pg_rewrite r  ON r.oid = d.objid
+        JOIN pg_class dep  ON dep.oid = r.ev_class
+       WHERE d.refobjid = to_regclass('public.garden_node')
+         AND dep.relname <> 'garden_node'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_view_columns_absent
+    note: >
+      Greenfield. If this returns a row someone already applied 0a — stop and diff before re-running.
+      continuous false by design: false forever once 0a lands.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'garden_node'
+         AND column_name IN ('source_id', 'acquired_from_source_id')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+sweep:
+  - name: sweep_no_star_select_dependency_recorded
+    note: >
+      Not an invariant — a note pinned where it will be read. Appending to a view is only safe because
+      no consumer does SELECT * against it: censused across lambda/ on 2026-09-04, 75 `FROM
+      public.garden_node`, 22 `UPDATE`, 1 `INSERT`, and ZERO star-selects. That is a property of the
+      CODE, not of the database, so SQL cannot assert it — the enforceable half is that the view still
+      exists and still resolves, which is what this checks. If a future change introduces a star-select
+      against this view, this gate will not catch it and nothing else will either.
+    sql: |
+      SELECT 1 WHERE to_regclass('public.garden_node') IS NOT NULL
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_view_projects_both_source_columns
+    note: >
+      The whole point of the migration. Named columns, not a count — see this file's header for why.
+      Armed on the receipt so it is vacuously green before the apply and red only if someone removed
+      a column afterwards.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcenodeview-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'garden_node'
+                 AND column_name IN ('source_id', 'acquired_from_source_id')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_view_still_writable
+    note: >
+      THE GATE THAT MATTERS MOST, because this migration exists ONLY to make the view writable for
+      these columns — a view that projects them but has stopped being auto-updatable would satisfy
+      the gate above and still leave lambda/plants unable to write. Postgres withdraws
+      auto-updatability the moment a view gains a join, a GROUP BY, DISTINCT, a set operation or a
+      window function, so this is a live property, not a constant. Both halves asserted: an UPDATE
+      path and an INSERT path.
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema = 'public' AND table_name = 'garden_node'
+         AND (is_updatable <> 'YES' OR is_insertable_into <> 'YES')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_source_columns_are_writable_through_the_view
+    note: >
+      Sharper than post_view_still_writable, and not implied by it: information_schema.columns carries
+      a PER-COLUMN is_updatable, and a view can be updatable overall while a specific column is not
+      (a computed or renamed expression column, for instance — this view already has three renames).
+      Since the entire purpose here is that lambda/plants can name these two columns in a SET list,
+      assert exactly that, per column.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcenodeview-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'garden_node'
+                 AND column_name IN ('source_id', 'acquired_from_source_id')
+                 AND is_updatable = 'YES') <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_renamed_columns_survived_the_replace
+    note: >
+      CREATE OR REPLACE VIEW refuses to reorder or rename, so this cannot fail as a direct result of
+      0a — it exists because 0R can, and does, DROP and re-CREATE the whole view from a body captured
+      by hand. Three of these columns are renames (project_id AS container_id, name AS display_name,
+      variety_id AS cultivar_id) and a rollback that lost one would break every reader silently, since
+      the base-table names exist and would resolve. Asserts the RENAMED names specifically, which are
+      the ones a bad re-CREATE would drop.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'garden_node'
+                 AND column_name IN ('container_id', 'display_name', 'cultivar_id')) <> 3
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: >
+      The apply left its receipt. continuous false: an apply-window check, and the gates above arm off
+      this same row, so a missing receipt shows as vacuity rather than as one failure.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcenodeview-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
