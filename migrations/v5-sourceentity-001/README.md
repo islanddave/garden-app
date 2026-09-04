@@ -1,13 +1,23 @@
 # V5-SOURCEENTITY-001 — design note
 
-**Status 2026-09-03: NOT APPLIED ANYWHERE.** Substrate only — no backfill, no Lambda, no UI. Every
-number below was measured against live prod Neon (`neondb`, PostgreSQL 17.11) on 2026-09-03.
+**Status 2026-09-04: APPLIED TO STAGING AND PROD.** Still substrate only — no backfill, no Lambda, no
+UI, and `public.source` is empty on both databases. Receipt `5.0.0-sourceentity-001`; prod applied
+2026-09-04 13:02:58Z, staging applied → rollback rehearsed → re-applied the same day. Every number
+below was measured against live prod Neon (`neondb`, PostgreSQL 17.11) on 2026-09-03.
+
+**2026-09-04 — `V5-SOURCEAUDITLOG-001` folded into `0a` rather than shipped after it.** Dave's
+requirement for a source was *"a record and log"*; §1 gave the record and nothing gave the log. The
+table now carries `trg_audit_source_upd` / `trg_audit_source_del`, binding the same generic
+`audit_stmt_update` / `audit_stmt_delete` pair already on `plants`, `event_log` and `harvest_log`, so
+every edit writes a whole-row before/after snapshot to `public.audit_events`. It landed *with* the
+table on purpose: retrofitting audit after rows exist leaves the earliest enrichment passes — the
+edits most likely to be wrong — with no history. There is deliberately **no INSERT trigger** (see §6).
 
 | File | What it is |
 |---|---|
-| `0a-additive-ddl.sql` | The migration. New `public.source`; two nullable FK columns on each of `plants` and `inventory_items`. Nothing dropped, nothing altered, nothing backfilled. |
-| `0r-rollback.sql` | Rehearsable rollback to greenfield. |
-| `gates.yml` | 25 gates (6 pre / 2 sweep / 17 post). No `env:` key anywhere, so every gate runs on **both** staging and prod. |
+| `0a-additive-ddl.sql` | The migration. New `public.source` + its audit triggers; two nullable FK columns on each of `plants` and `inventory_items`. Nothing dropped, nothing altered, nothing backfilled. |
+| `0r-rollback.sql` | Rehearsable rollback to greenfield. Drops the substrate; **keeps the `audit_events` rows**, which are history about what actually happened. |
+| `gates.yml` | 29 gates (8 pre / 2 sweep / 19 post). No `env:` key anywhere, so every gate runs on **both** staging and prod. |
 | `dedupe-mapping.csv` | **For Dave.** All 73 free-text spellings on the left, proposed canonical source on the right, with confidence and a one-line reason. |
 | `proposed-sources.csv` | **For Dave.** The 53 catalogue rows that mapping implies — the labels that live in the picker forever after. |
 | `dedupe-mapping.gen.py` | Reproduces `dedupe-mapping.csv`. Hard-fails if its left column drifts from prod. |
@@ -192,6 +202,36 @@ excluded from the SET list entirely for the same reason. **Any new FK must use t
 `hasOwnProperty` → `CASE` pattern.** The precedent, the reason and four working examples are all
 already in that file. Nothing in this migration touches Lambda.
 
+## 6. The log — why an UPDATE/DELETE pair and no INSERT trigger
+
+`plant_varieties` — the table `public.source` otherwise copies (shared catalogue, RLS off, nobody
+owns it) — carries **three** audit triggers including `audit_pv_stmt_insert`. `source` carries two.
+That asymmetry is deliberate, not an oversight:
+
+- **Creation is already recorded twice over.** `created_by` and `created_at` are NOT NULL on the row
+  itself, and for any row that is ever edited the first UPDATE's `before_jsonb` **is** the creation
+  state. An INSERT trigger would write a third copy of a fact that cannot be lost.
+- **Hard delete is still covered.** `audit_stmt_delete` captures the whole row in `before_jsonb`, so
+  even a create-then-hard-delete leaves the original shape in the log.
+- The ledger row for `V5-SOURCEAUDITLOG-001` specifies *"the same audit triggers"* as `plants`, and
+  `plants` is the update/delete pair. Matching it is the narrow copy.
+
+**The watched-column list is the part that rots.** `audit_stmt_update` writes a row only when a
+*watched* column changed, so a column added to `source` later and not added to the trigger's argument
+list becomes editable with **no history at all** — and nothing else misbehaves, so the gap is
+invisible. `post_audit_update_watches_every_mutable_column` derives the expected list from
+`information_schema` instead of restating it, and reds once per unwatched column. Three exclusions
+are permanent and documented in the gate: `id` (immutable), `match_key` (GENERATED from `name`, which
+IS watched), `updated_at` (rewritten on every UPDATE, so watching it would log every no-op write —
+the same reason the `plants` trigger omits it).
+
+**Shape is asserted, not just names.** Both audit functions read the `old_rows` / `new_rows`
+transition tables and both catch `WHEN OTHERS` and downgrade it to a `WARNING`. A trigger declared
+`FOR EACH ROW`, or without the `REFERENCING` clause, therefore raises at runtime, is swallowed, and
+leaves a table that looks audited, never errors, and logs nothing. A name-only gate is green through
+all of it, so `post_audit_triggers_installed_and_statement_level` matches each full triggerdef —
+fire time, event, transition tables, `FOR EACH STATEMENT`, and the function bound.
+
 ---
 
 ## Review checklist for Dave
@@ -259,4 +299,58 @@ will treat as authoritative. Filling them is a separate, verified pass.
   reference named columns only; `prevent_ownership_transfer` fires on `created_by`/`user_id` and is
   not installed on `public.source` (and `post_ownership_trigger_not_installed` keeps it that way).
 
-**No DDL was executed against any database, and nothing was pushed.**
+**As of 2026-09-03 no DDL had been executed against any database and nothing had been pushed.**
+
+## Verification performed (2026-09-04) — the audit log, and the apply
+
+**Gate file.** 29 gates parse, `yamllint -d relaxed` exit 0 (line-length warnings only), all 29 load
+under `gate_runner.load_gate_file`'s strict schema check, and all 28 with SQL pass
+`validate_sql_readonly`. Every gate is still `env: both`.
+
+**Instrument check on live prod, before the apply.** All four new gates ran against the unapplied
+database: `pre_audit_pair_present` → 1 row, `pre_audit_events_accepts_source` → 0, and both new post
+gates → 0 (vacuous, correct). None raised — no `42703`, no `42P01`. Self-arming confirmed.
+
+**Mutation proof of the two new post gates**, run live against `plants`, whose audit triggers are the
+known-good reference. A green control first, so the query is not red by construction:
+
+| Mutation | Result | What it proves |
+|---|---|---|
+| A — shape gate retargeted at `plants`, correct regex | 0 rows, GREEN | green control: the assertion can pass |
+| B — same, but demanding `FOR EACH ROW` | 1 row, **RED** | the shape half bites — it catches exactly the silent-failure mode |
+| C — pointed at `locations` (no audit triggers) | 1 row, **RED** | absence is detected, not passed over |
+| D — watch-list gate retargeted at `plants` | 4 rows | the list-derivation mechanism finds unwatched columns; it is not vacuous |
+
+Mutation D's four rows on `plants` (`acquired_mature_set_at`, `rain_exposed_set_at`, `last_seen_at`,
+`version`) are **not** a defect and were not filed as one: each is a companion timestamp or a
+trigger-maintained counter that only ever moves alongside a watched column, and `to_jsonb` captures
+it in the snapshot regardless. They are here as evidence the gate discriminates.
+
+**Runtime proof on staging — the thing the gates structurally cannot assert.** Shape gates cannot
+show the log actually *writes*, and both audit functions swallow their own failures. So a smoke source
+row was driven through its whole lifecycle with `app.actor_clerk_sub` set:
+
+| Step | Expected | Observed |
+|---|---|---|
+| INSERT | no audit row | 0 |
+| UPDATE `address` + `notes` | 1 row, `UPDATE`, actor carried, before/after correct | exactly that |
+| UPDATE `updated_at` alone | still 1 row | still 1 — the exclusion works, no no-op spam |
+| soft delete | action `SOFT_DELETE` | `SOFT_DELETE` |
+| restore | action `RESTORE` | `RESTORE` |
+| hard delete | `DELETE` row carrying the whole `before_jsonb`, `after_jsonb` NULL | exactly that |
+
+The smoke row was hard-deleted and its four `audit_events` rows removed, per the smoke-row hygiene
+rule; `public.source` and `audit_events WHERE table_name='source'` are both back to 0 on staging.
+
+**Apply.** staging apply → `0r-rollback` rehearsed (table gone, all three triggers dropped, receipt
+deleted) → staging re-apply → **prod apply**. Prod post gates 18/19 (the 19th is
+`post_dedupe_mapping_reviewed_by_dave`, manual, and gates the *backfill*, not this migration).
+Staging continuous sweep 23/23 with 5 apply-window-only. Prod verified directly: three triggers on
+`public.source`, receipt at 2026-09-04 13:02:58Z, `source` row count 0.
+
+**Why applying to prod is safe with the app as deployed.** The two new parent CHECKs
+(`chk_plants_source_distinct`, `chk_inventory_source_distinct`) are the only constraints this file
+arms over live tables. Both columns they read are new and NULL on every row, and no deployed writer
+sets either — so the first arm (`acquired_from_source_id IS NULL`) is true for every row the running
+code can produce. That is the falsifiable test from the 2026-08-03 arming-a-CHECK incident asked of
+prod's live artifact rather than of this branch, and it passes.

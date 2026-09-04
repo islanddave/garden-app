@@ -2,7 +2,9 @@
 # V5-SOURCEENTITY-001 — public.source, the first-class supplier/origin entity, plus two nullable
 # FK columns on each of plants and inventory_items.
 #
-# STATUS (2026-09-03): NOT APPLIED ANYWHERE. No DDL has run against staging or prod from this lane.
+# STATUS (2026-09-04): APPLIED TO STAGING AND PROD, receipt 5.0.0-sourceentity-001. Substrate only —
+# public.source is empty on both. Sequence performed: staging apply -> 0r rehearsed -> staging
+# re-apply -> prod apply. The two `continuous: false` PRE gates are false forever now, by design.
 #
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 # SEQUENCING
@@ -95,6 +97,42 @@ pre:
        WHERE n.nspname = 'public' AND p.proname = 'set_updated_at'
     expect: rowcount_gte
     value: 1
+
+  - name: pre_audit_pair_present
+    note: >
+      V5-SOURCEAUDITLOG-001. 0a binds public.audit_stmt_update and public.audit_stmt_delete to
+      public.source. CREATE TRIGGER resolves the function at creation time, so a missing one aborts
+      the whole transaction rather than degrading — this pre gate turns that into a readable failure
+      before any DDL runs. Counted, not EXISTS, so losing EITHER function reds it. Reads pg_proc for
+      the same privilege reason as pre_set_updated_at_function_present.
+    sql: |
+      SELECT 1
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('audit_stmt_update', 'audit_stmt_delete')
+      HAVING count(*) = 2
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_audit_events_accepts_source
+    note: >
+      Both audit functions INSERT into public.audit_events. Two ways that write could fail for a NEW
+      table_name specifically: the table is unreadable/absent, or a CHECK constrains table_name to an
+      enumerated list that does not include 'source'. Measured on live prod 2026-09-03: audit_events
+      carries only audit_events_pkey and audit_events_action_check (on `action`, not table_name), so
+      no widening is needed — this gate is what makes that a checked fact rather than a remembered
+      one. Reds if a table_name CHECK is ever added without adding 'source' to it.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.audit_events') IS NULL
+          OR EXISTS (SELECT 1 FROM pg_constraint
+                      WHERE conrelid = to_regclass('public.audit_events')
+                        AND contype = 'c'
+                        AND pg_get_constraintdef(oid) ~ 'table_name'
+                        AND pg_get_constraintdef(oid) !~ '''source''')
+    expect: rowcount_eq
+    value: 0
 
   - name: pre_gen_random_uuid_available
     note: >
@@ -288,6 +326,62 @@ post:
        WHERE t.tgrelid = to_regclass('public.source')
          AND NOT t.tgisinternal
          AND t.tgname = 'prevent_ownership_transfer'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_audit_triggers_installed_and_statement_level
+    note: >
+      V5-SOURCEAUDITLOG-001. Asserts the SHAPE of both audit triggers, not merely their names,
+      because a correctly-named trigger with the wrong shape fails SILENTLY here. audit_stmt_update
+      and audit_stmt_delete read the transition tables old_rows / new_rows; declared FOR EACH ROW, or
+      without the REFERENCING clause, they raise at runtime — and both functions catch WHEN OTHERS and
+      downgrade it to a WARNING so the user's edit still succeeds. The result is a table that looks
+      audited, never errors, and logs nothing. A name-only gate would be green through all of it.
+      So each triggerdef is matched against its full required form: fire time, event, transition
+      tables, FOR EACH STATEMENT, and the function bound. Counted, so losing or deforming EITHER reds.
+      Armed on the receipt rather than the table: the assertion is about what the apply installed.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourceentity-001')
+         AND (SELECT count(*) FROM pg_trigger t
+               WHERE t.tgrelid = to_regclass('public.source')
+                 AND NOT t.tgisinternal
+                 AND ((t.tgname = 'trg_audit_source_upd'
+                       AND pg_get_triggerdef(t.oid) ~ 'AFTER UPDATE ON public\.source REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION audit_stmt_update\(')
+                   OR (t.tgname = 'trg_audit_source_del'
+                       AND pg_get_triggerdef(t.oid) ~ 'AFTER DELETE ON public\.source REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION audit_stmt_delete\(\)'))
+             ) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_audit_update_watches_every_mutable_column
+    note: >
+      V5-SOURCEAUDITLOG-001, and the gate that keeps the log honest as the table grows. audit_stmt_update
+      only writes an audit row when a WATCHED column changed (or deleted_at moved), so a column added
+      to public.source in a later migration and not added to this trigger's argument list is editable
+      with NO history — the failure is invisible, since every other edit still logs correctly. This
+      derives the expected list from information_schema instead of restating it: one violation row per
+      mutable column absent from the triggerdef. Adding a column to the table without adding it to the
+      trigger reds this on the next run, which is the whole point.
+      THREE DELIBERATE EXCLUSIONS, and each has to stay excluded or this gate reds forever: `id`
+      (immutable key), `match_key` (GENERATED from name, which IS watched, so it cannot move
+      independently), and `updated_at` (rewritten by set_updated_at on EVERY update, so watching it
+      would log every no-op write — the same reason the plants trigger omits it).
+      Vacuous by design in two states, both covered elsewhere: no table -> no columns -> no rows;
+      table but no trigger -> post_audit_triggers_installed_and_statement_level reds instead.
+    sql: |
+      SELECT 1
+        FROM information_schema.columns c
+       WHERE c.table_schema = 'public'
+         AND c.table_name = 'source'
+         AND c.column_name NOT IN ('id', 'match_key', 'updated_at')
+         AND EXISTS (SELECT 1 FROM pg_trigger t
+                      WHERE t.tgrelid = to_regclass('public.source')
+                        AND t.tgname = 'trg_audit_source_upd')
+         AND NOT EXISTS (SELECT 1 FROM pg_trigger t
+                          WHERE t.tgrelid = to_regclass('public.source')
+                            AND t.tgname = 'trg_audit_source_upd'
+                            AND pg_get_triggerdef(t.oid) LIKE '%''' || c.column_name || '''%')
     expect: rowcount_eq
     value: 0
 

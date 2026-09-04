@@ -4,6 +4,11 @@
 -- STATUS AT AUTHORING (2026-09-03): NOT APPLIED ANYWHERE. Substrate only — no Lambda, no UI, no
 -- backfill in this file. Measured against live prod (neondb, PostgreSQL 17.11) on 2026-09-03.
 --
+-- APPLIED 2026-09-04 to STAGING and PROD (prod receipt 13:02:58Z), after §1b below was added.
+-- Still substrate only: public.source is empty on both, nothing is backfilled, no Lambda reads or
+-- writes the four FK columns. Idempotent throughout (IF NOT EXISTS / ON CONFLICT), so re-running it
+-- is safe; 0r-rollback.sql was rehearsed on staging between the two staging applies.
+--
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- WHY THIS EXISTS — measured, not asserted.
 --
@@ -269,6 +274,69 @@ END
 $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
+-- 1b. THE LOG — V5-SOURCEAUDITLOG-001, landing WITH the table rather than after it.
+--
+-- Dave's requirement, verbatim: "this should be a fill-in system where I provide as many details as
+-- I know. I may only know a town and that it was a trust stand, or I may know the person and the
+-- farm and the address and and and. The system should allow all of those and any entry, even
+-- unknown, should become an entity WITH A RECORD AND LOG."
+--
+-- The fill-in half was already satisfied by §1: name is the only NOT NULL column, so a source can be
+-- created from a town alone and enriched later without a migration. THE LOG HALF WAS ABSENT — with
+-- only set_updated_at above, an edit overwrote its predecessor and left no history. That is worst
+-- for exactly the rows Dave described: a trust stand that starts as a town and later gains a farm
+-- name has an edit history worth keeping, and reversing a wrong merge is only safe when the prior
+-- state is recoverable. Retrofitting an audit trigger AFTER rows exist means the earliest edits —
+-- the enrichment passes, the ones most likely to be wrong — are the ones with no history. So it
+-- ships here, before the first row.
+--
+-- SAME MECHANISM AS plants, NOT A NEW ONE. public.audit_stmt_update / audit_stmt_delete are the
+-- generic statement-level pair already installed on plants, event_log and harvest_log; they write
+-- whole-row to_jsonb snapshots into public.audit_events and derive UPDATE / SOFT_DELETE / RESTORE
+-- from the deleted_at transition. Both swallow their own failures as a WARNING (re-raising only
+-- query_canceled / admin_shutdown), so a broken audit write can never fail a user's edit.
+-- public.audit_events has NO CHECK on table_name, so 'source' needs no widening (verified on live
+-- prod 2026-09-03).
+--
+-- NO INSERT TRIGGER, deliberately, even though plant_varieties has one (audit_pv_stmt_insert). It
+-- would be redundant here: creation is already recorded by the row's own created_by / created_at,
+-- and for any row that is later edited the first UPDATE's before_jsonb IS the creation state. The
+-- pair below is what the ledger row specifies and the minimum that makes edits reversible.
+--
+-- WATCHED-COLUMN LIST: every column a human can change, plus created_by / created_at (a write to
+-- either is exactly the anomaly worth catching). match_key is omitted because it is GENERATED from
+-- name, which IS watched. updated_at is omitted because set_updated_at rewrites it on every UPDATE,
+-- so watching it would log every no-op write — the same reason plants omits it. deleted_at is
+-- listed for symmetry with plants; the function's own transition arm already fires on it regardless.
+-- post_audit_update_watches_every_mutable_column keeps this list honest against a future column.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_audit_source_upd'
+                   AND tgrelid = 'public.source'::regclass) THEN
+    CREATE TRIGGER trg_audit_source_upd
+      AFTER UPDATE ON public.source
+      REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+      FOR EACH STATEMENT
+      EXECUTE FUNCTION public.audit_stmt_update(
+        'name', 'kind', 'locality', 'address', 'website_url', 'notes',
+        'created_by', 'created_at', 'deleted_at');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_audit_source_del'
+                   AND tgrelid = 'public.source'::regclass) THEN
+    -- Soft-delete is captured by the UPDATE trigger above as action SOFT_DELETE. This one catches a
+    -- HARD delete, which under the Soft-Delete-Only Rule should never happen through the app — which
+    -- is precisely why the row it writes is worth having.
+    CREATE TRIGGER trg_audit_source_del
+      AFTER DELETE ON public.source
+      REFERENCING OLD TABLE AS old_rows
+      FOR EACH STATEMENT
+      EXECUTE FUNCTION public.audit_stmt_delete();
+  END IF;
+END
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- 2. THE POINTERS. Four nullable FK columns, two per parent. Nothing is backfilled.
 --
 -- NO ACTION (the default) ON DELETE, DELIBERATELY, ON ALL FOUR. Not CASCADE — that would delete a
@@ -371,6 +439,11 @@ VALUES ('5.0.0-sourceentity-001',
         'SOURCEENTITY: V5-SOURCEENTITY-001. New public.source catalogue (name, kind, locality, '
         'address, website_url, notes, generated match_key, soft-delete, RLS off matching '
         'plant_varieties) + partial-unique match_key index + kind index + set_updated_at trigger. '
+        'ALSO V5-SOURCEAUDITLOG-001, landing with the table rather than after it: trg_audit_source_upd '
+        'and trg_audit_source_del bind the existing generic audit_stmt_update / audit_stmt_delete '
+        'pair (the ones already on plants, event_log and harvest_log) so every edit and hard delete '
+        'writes a whole-row before/after snapshot to public.audit_events. No INSERT trigger - '
+        'creation is already recorded by created_by / created_at. '
         'plants and inventory_items each gain nullable source_id and acquired_from_source_id FKs '
         '(NO ACTION on delete) with a distinctness CHECK and four partial reverse-lookup indexes. '
         'TWO FKs because prod already records brand and shop as separate facts in '

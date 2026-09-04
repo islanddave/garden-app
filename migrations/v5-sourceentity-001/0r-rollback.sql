@@ -42,6 +42,18 @@ ALTER TABLE public.inventory_items
 
 DROP TRIGGER IF EXISTS set_updated_at ON public.source;
 
+-- V5-SOURCEAUDITLOG-001. Redundant before DROP TABLE, which takes its own triggers with it — named
+-- explicitly anyway so this file stays a readable inventory of everything 0a installed, and so it
+-- still rehearses correctly if a future edit narrows the DROP TABLE.
+--
+-- WHAT THIS DELIBERATELY DOES NOT DO: it does not delete the public.audit_events rows those triggers
+-- wrote. audit_events is an append-only forensic log shared with plants, event_log and harvest_log;
+-- erasing history because the substrate was rolled back is exactly the loss the log exists to
+-- prevent, and rows with table_name = 'source' referring to a table that no longer exists are
+-- correct — that IS what happened. A re-apply of 0a resumes appending to the same log.
+DROP TRIGGER IF EXISTS trg_audit_source_upd ON public.source;
+DROP TRIGGER IF EXISTS trg_audit_source_del ON public.source;
+
 -- Indexes and constraints on public.source go with the table.
 DROP TABLE IF EXISTS public.source;
 
