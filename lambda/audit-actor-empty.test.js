@@ -125,7 +125,12 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
     expect(ALL_JS.length).toBeGreaterThan(60);
     for (const w of WRITERS) expect(ALL_JS).toContain(w);
     const binds = WRITERS.flatMap((w) => [...SRC[w].matchAll(BIND_RE)]);
-    expect(binds).toHaveLength(5); // 4 in varieties/index.js, 1 in photos/photoDelete.js
+    // 5 in varieties/index.js, 1 in photos/photoDelete.js. An anti-vacuity FLOOR, not a ceiling on
+    // audited writes: it goes up whenever either writer gains a bind, and the census below is what
+    // decides whether that bind is acceptable. 5 -> 6 on 2026-09-04 (V4-SOURCEREG-001) for the
+    // restore arm of POST /api/varieties/sources — public.source carries trg_audit_source_upd, so
+    // that write binds the actor too even though the table it audits is not cultivar.
+    expect(binds).toHaveLength(6);
   });
 
   // ── the normalizer, driven directly (varieties copy) ──────────────────────────────────────────

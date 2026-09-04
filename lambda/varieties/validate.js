@@ -276,3 +276,126 @@ export function validateCropTypeBody(body) {
   }
   return null;
 }
+
+// ── V4-SOURCEREG-001 / V5-SOURCEKIND-001 — the provenance registry ──────────────────────────
+// public.source is WHO/WHERE a plant or packet came from; public.source_kind is the controlled
+// vocabulary source.kind is typed against. Both mint from the app, on the crop-types contract.
+
+// The fold BOTH partial-unique indexes on those two tables use, mirrored expression-for-expression:
+//   public.source.match_key       GENERATED ALWAYS AS regexp_replace(lower(name),'[^a-z0-9]','','g')
+//                                 with uq_source_match_key_live UNIQUE on it WHERE deleted_at IS NULL
+//   uq_source_kind_display_live   UNIQUE on that same expression over display_name, live rows only
+//
+// DELIBERATELY NOT slugifySourceKind's fold. That one NFKD-normalises first, so "Épinard" folds to
+// "epinard" there and to "pinard" here — Postgres lower() leaves the combining accent alone and the
+// strip then removes the whole letter. Folding HARDER than the database steers a caller away from a
+// name the index would have accepted; folding SOFTER lets the collision reach the INSERT as a 23505,
+// which surfaces as a 500 the client cannot tell apart from a transport failure. Neither outcome is
+// recoverable from the response, so this mirrors the index rather than approximating it.
+export function foldSourceKey(s) {
+  if (typeof s !== 'string') return '';
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// '' -> null for an optional column. Every optional text input in the app submits an empty string
+// rather than omitting its key, and Postgres would store that happily — leaving two spellings of
+// "not recorded" for every reader to handle and a blank locality chip rendering for one of them.
+export function blankToNull(v) {
+  if (typeof v !== 'string') return v ?? null;
+  const t = v.trim();
+  return t === '' ? null : t;
+}
+
+// display_name -> slug. Server-derived, never caller-supplied: source_kind.slug is a PRIMARY KEY
+// and the FK target of source.kind. Same derivation as slugifyCropType and deliberately a SEPARATE
+// function rather than an alias — these are two independent primary keys with two independent shape
+// CHECKs, and a tweak made for crop types must not silently re-derive what source rows point at.
+export function slugifySourceKind(name) {
+  if (typeof name !== 'string') return '';
+  return name
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '') // strip combining accents, as slugifyCropType does
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60);
+}
+
+// Decide what a proposed source-kind name should do.
+//   { ok: true,  slug }                          -> create it
+//   { ok: false, reason, slug, existingSlug }    -> steer to existingSlug instead
+//
+// The two collision sets are different sets, and that asymmetry is the point:
+//   `existingSlugs` is EVERY slug INCLUDING soft-deleted ones — slug is the PK, so a resurrect
+//   would violate it rather than politely conflict.
+//   `liveKinds` is the LIVE rows only, as { slug, display_name } — uq_source_kind_display_live is
+//   a PARTIAL index, so a retired label blocks nothing and steering on one would refuse a create
+//   the database would have accepted.
+export function resolveSourceKindName(displayName, existingSlugs = [], liveKinds = []) {
+  const slug = slugifySourceKind(displayName);
+  // chk_source_kind_slug_shape floors the slug at 2 characters, so a name that derives a shorter
+  // one ("A!") is invalid here rather than a 23514 raised by the INSERT.
+  if (slug.length < 2) return { ok: false, reason: 'invalid', slug, existingSlug: null };
+
+  const have = new Set(existingSlugs);
+  if (have.has(slug)) return { ok: false, reason: 'exists', slug, existingSlug: slug };
+
+  const sing = singularize(slug);
+  if (sing !== slug && have.has(sing)) return { ok: false, reason: 'plural', slug, existingSlug: sing };
+  // ...and the reverse: a SINGULAR of an existing plural ("Farm stand" beside "Farm stands").
+  if (have.has(`${slug}s`)) return { ok: false, reason: 'plural', slug, existingSlug: `${slug}s` };
+
+  // THE LOAD-BEARING CHECK. A label that folds onto a live row without colliding on slug —
+  // "Seedcompany" beside the seeded "Seed company", slug `seedcompany` vs `seed_company` — passes
+  // every slug test above and then raises 23505 on uq_source_kind_display_live. That is a 500 where
+  // the user should have been handed the row they meant.
+  const label = foldSourceKey(displayName);
+  const clash = liveKinds.find((k) => foldSourceKey(k?.display_name) === label);
+  if (clash) return { ok: false, reason: 'label', slug, existingSlug: clash.slug };
+
+  return { ok: true, slug, existingSlug: null };
+}
+
+export function validateSourceKindBody(body) {
+  if (!body || typeof body !== 'object') return 'body required';
+  if (typeof body.display_name !== 'string' || !body.display_name.trim()) {
+    return 'display_name is required';
+  }
+  const n = body.display_name.trim();
+  // Mirrors chk_source_kind_display_name_shape (trimmed, 2..80 chars, contains an alphanumeric).
+  if (n.length < 2 || n.length > 80) return 'display_name must be 2-80 characters';
+  if (!/[A-Za-z0-9]/.test(n)) return 'display_name must contain at least one letter or number';
+  // Refused rather than ignored. A caller that supplies a slug has a model of this table in which
+  // it names its own primary key, and silently overwriting that guess would leave it believing the
+  // key it chose is the one every source row now points at.
+  if (body.slug != null) return 'slug is derived from display_name and cannot be supplied';
+  return null;
+}
+
+export function validateSourceBody(body) {
+  if (!body || typeof body !== 'object') return 'body required';
+  if (typeof body.name !== 'string' || !body.name.trim()) return 'name is required';
+  const n = body.name.trim();
+  // Mirrors chk_source_name_shape (trimmed, 2..200 chars, contains an alphanumeric).
+  if (n.length < 2 || n.length > 200) return 'name must be 2-200 characters';
+  if (!/[A-Za-z0-9]/.test(n)) return 'name must contain at least one letter or number';
+  // chk_source_website_url is `website_url IS NULL OR ~ '^https?://'`. A BLANK string is treated as
+  // absent rather than as a violation — the same call validateBody already makes for source_url
+  // above. A create that 400s because an untouched optional field submitted '' is indistinguishable
+  // to the user from one that 400s because what they typed was wrong.
+  if (body.website_url != null && typeof body.website_url !== 'string') {
+    return 'website_url must be a string or null';
+  }
+  const url = blankToNull(body.website_url);
+  if (url != null && !/^https?:\/\//.test(url)) {
+    return 'website_url must start with http:// or https://';
+  }
+  // kind's membership in the live vocabulary is a DB question, checked by the route; this is the
+  // type check only.
+  if (body.kind != null && typeof body.kind !== 'string') {
+    return 'kind must be a source kind slug or null';
+  }
+  for (const k of ['locality', 'address', 'notes']) {
+    if (body[k] != null && typeof body[k] !== 'string') return `${k} must be a string or null`;
+  }
+  return null;
+}

@@ -11,6 +11,8 @@
 //     Was owner-only, which left the 25 cultivars created by offline intake/repair scripts
 //     uneditable by every human. A foreign household still reaches nothing. NOT a general widening.
 //   - GET /api/varieties/crop-types: globally readable controlled vocabulary (V4-PLANTTYPE-001)
+//   - GET/POST /api/varieties/{sources,source-kinds}: the provenance registry, same contract as
+//     crop-types — globally readable, owner-stamped on write (V4-SOURCEREG-001 / V5-SOURCEKIND-001)
 //
 // Audit: trigger trg_audit_plant_varieties writes to audit_events. Lambda sets
 // SET LOCAL app.actor_clerk_sub = $userId after BEGIN so trigger reads the actor. The bind goes
@@ -39,7 +41,10 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor } from './validate.js';
+import {
+  validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor,
+  validateSourceBody, validateSourceKindBody, resolveSourceKindName, foldSourceKey, blankToNull,
+} from './validate.js';
 import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
@@ -222,6 +227,211 @@ export const handler = async (event) => {
             ${userId}
           )
           RETURNING slug, display_name, default_lifecycle, category, sort_order
+        `;
+        return resp(201, created);
+      }
+
+      return resp(405, { error: 'Method not allowed' });
+    }
+
+    // ── V4-SOURCEREG-001 — the provenance registry: WHO or WHERE a plant or packet came from ───
+    //
+    // WHY THESE ROUTES HANG OFF THE VARIETIES LAMBDA, for the same reason /voice-aliases below
+    // does: a new Lambda needs a new Function URL, a new VITE_API_* variable, a repo variable AND a
+    // mapping into the build, and on 2026-08-30 the share feature shipped its code twice while its
+    // endpoint never reached the bundle because the last of those four steps was missing.
+    // VITE_API_VARIETIES is already wired, deployed and proven.
+    //
+    // CHECKED BEFORE idMatch for the same reason /crop-types, /deleted and /voice-aliases are: a
+    // single trailing segment is otherwise parsed as a variety id and "sources" 404s as a cultivar.
+    //
+    // GLOBALLY READABLE, OWNER-STAMPED ON WRITE — the crop-types contract, deliberately NOT the
+    // household one this file uses for cultivar PUT/DELETE. A source is a shared reference row (a
+    // nursery, a seed company, a person); scoping the LIST would show Jen an empty picker for every
+    // vendor Dave has already registered, and the two of them buy from the same places.
+    if (rawPath === '/api/varieties/sources') {
+      if (method === 'GET') {
+        const rows = await sql`
+          SELECT id, name, kind, locality, address, website_url, notes
+            FROM public.source
+           WHERE deleted_at IS NULL
+           ORDER BY name ASC
+        `;
+        return resp(200, rows);
+      }
+
+      if (method === 'POST') {
+        const body = JSON.parse(event.body ?? '{}');
+        const err = validateSourceBody(body);
+        if (err) return resp(400, { error: err });
+
+        const allowed = await checkRateLimit(sql, userId, 'source.create', 20);
+        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 20/hour for source.create' });
+
+        // kind is an FK into source_kind.slug, checked here as a LIVE slug rather than left to the
+        // constraint: a soft-deleted kind still satisfies the FK, and a 23503 surfaces as a 500 the
+        // client cannot tell apart from a transport failure.
+        const kind = blankToNull(body.kind);
+        if (kind != null) {
+          const [liveKind] = await sql`
+            SELECT slug FROM public.source_kind WHERE slug = ${kind} AND deleted_at IS NULL
+          `;
+          if (!liveKind) return resp(400, { error: `kind "${kind}" is not a live source kind` });
+        }
+
+        // Collision is on match_key — the generated column uq_source_match_key_live is unique on —
+        // folded here in JS so a duplicate STEERS instead of arriving as an unreadable 23505.
+        // The set deliberately includes soft-deleted rows, and the ordering is what lets one query
+        // serve both cases: that index is PARTIAL (live rows only), so any number of deleted rows
+        // may share a key while at most one live row can. NULLS FIRST puts the live one first.
+        const matchKey = foldSourceKey(body.name);
+        const [hit] = await sql`
+          SELECT id, name, kind, locality, address, website_url, notes, deleted_at
+            FROM public.source
+           WHERE match_key = ${matchKey}
+           ORDER BY deleted_at DESC NULLS FIRST
+           LIMIT 1
+        `;
+
+        if (hit) {
+          const existing = {
+            id: hit.id, name: hit.name, kind: hit.kind, locality: hit.locality,
+            address: hit.address, website_url: hit.website_url, notes: hit.notes,
+          };
+          if (hit.deleted_at) {
+            // Soft-Delete-Only: the row never actually left and the caller is asking for exactly
+            // it. Wrapped in the actor transaction because public.source carries
+            // trg_audit_source_upd — without the bind the audit snapshot of this restore records
+            // 'system' and the one person who can explain the change is the one it does not name.
+            // (public.crop_types has no such trigger, which is why the template above has no
+            // transaction here.) The `AND deleted_at IS NOT NULL` keeps a concurrent restore from
+            // writing a second, empty audit row.
+            const [, restoredRows] = await sql.transaction([
+              sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+              sql`
+                UPDATE public.source
+                   SET deleted_at = NULL
+                 WHERE id = ${hit.id}
+                   AND deleted_at IS NOT NULL
+                RETURNING id, name, kind, locality, address, website_url, notes
+              `,
+            ]);
+            if (restoredRows.length) return resp(200, { ...restoredRows[0], restored: true });
+            // Lost the race — another writer restored it between the read and the write. The row is
+            // live and it is the one the caller wants, so fall through and steer to it rather than
+            // reporting a failure for an outcome that is exactly what was asked for.
+          }
+          return resp(409, {
+            error: `Source "${hit.name}" already exists`,
+            reason: 'exists',
+            existing,
+            hint: 'Use the existing source instead of creating a duplicate.',
+          });
+        }
+
+        const [created] = await sql`
+          INSERT INTO public.source (name, kind, locality, address, website_url, notes, created_by)
+          VALUES (
+            ${body.name.trim()},
+            ${kind},
+            ${blankToNull(body.locality)},
+            ${blankToNull(body.address)},
+            ${blankToNull(body.website_url)},
+            ${blankToNull(body.notes)},
+            ${userId}
+          )
+          RETURNING id, name, kind, locality, address, website_url, notes
+        `;
+        return resp(201, created);
+      }
+
+      return resp(405, { error: 'Method not allowed' });
+    }
+
+    // ── V5-SOURCEKIND-001 — the vocabulary source.kind is typed against ────────────────────────
+    // Same mint contract as crop-types, and for the same reason: read-only from the app meant a
+    // source with no matching kind had to be saved with kind = NULL, which drops it out of every
+    // kind-grouped view. The slug is DERIVED server-side and never accepted from the caller — it is
+    // this table's PRIMARY KEY and the FK target of public.source.kind.
+    if (rawPath === '/api/varieties/source-kinds') {
+      if (method === 'GET') {
+        const rows = await sql`
+          SELECT slug, display_name, sort_order
+            FROM public.source_kind
+           WHERE deleted_at IS NULL
+           ORDER BY sort_order ASC, display_name ASC
+        `;
+        return resp(200, rows);
+      }
+
+      if (method === 'POST') {
+        const body = JSON.parse(event.body ?? '{}');
+        const err = validateSourceKindBody(body);
+        if (err) return resp(400, { error: err });
+
+        const allowed = await checkRateLimit(sql, userId, 'source_kind.create', 20);
+        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 20/hour for source_kind.create' });
+
+        // One read, two collision sets, and the asymmetry is deliberate: slugs come from EVERY row
+        // (slug is the PK, so a soft-deleted row still occupies it and a resurrect would violate it
+        // rather than politely conflict), labels from the LIVE rows only (uq_source_kind_display_live
+        // is PARTIAL, so a retired label blocks nothing).
+        const allKinds = await sql`SELECT slug, display_name, sort_order, deleted_at FROM public.source_kind`;
+        const liveKinds = allKinds.filter((k) => !k.deleted_at);
+        const verdict = resolveSourceKindName(body.display_name, allKinds.map((k) => k.slug), liveKinds);
+
+        if (!verdict.ok) {
+          if (verdict.reason === 'invalid') {
+            return resp(400, { error: 'display_name must contain at least two letters or numbers' });
+          }
+          const row = allKinds.find((k) => k.slug === verdict.existingSlug);
+          const shape = (k) => ({ slug: k.slug, display_name: k.display_name, sort_order: k.sort_order });
+          if (row.deleted_at) {
+            // A restore is an INSERT as far as uq_source_kind_display_live is concerned — the row
+            // rejoins the live set — so a live row already folding to the same label would make
+            // this UPDATE raise 23505. Steer to that live row instead of restoring into a 500.
+            const blocker = liveKinds.find(
+              (k) => foldSourceKey(k.display_name) === foldSourceKey(row.display_name),
+            );
+            if (blocker) {
+              return resp(409, {
+                error: `Source kind "${blocker.display_name}" already exists`,
+                reason: 'label',
+                existing: shape(blocker),
+                hint: 'Use the existing source kind instead of creating a duplicate.',
+              });
+            }
+            const [restored] = await sql`
+              UPDATE public.source_kind
+                 SET deleted_at = NULL
+               WHERE slug = ${verdict.existingSlug}
+              RETURNING slug, display_name, sort_order
+            `;
+            return resp(200, { ...restored, restored: true });
+          }
+          // `reason` lets the client word it correctly: exists/plural is benign (just use that one),
+          // label means the name they typed folds onto a different-looking row and the DB would have
+          // refused it.
+          return resp(409, {
+            error: `Source kind "${row.display_name}" already exists`,
+            reason: verdict.reason,
+            existing: shape(row),
+            hint: 'Use the existing source kind instead of creating a duplicate.',
+          });
+        }
+
+        // sort_order is max + 10, NOT the column default of 0. The twelve seeded kinds occupy
+        // 10..120 and the head of this list is meant to be the common cases; a minted kind taking
+        // the default would sort ABOVE every one of them.
+        const [created] = await sql`
+          INSERT INTO public.source_kind (slug, display_name, sort_order, created_by)
+          VALUES (
+            ${verdict.slug},
+            ${body.display_name.trim()},
+            (SELECT coalesce(max(sort_order), 0) + 10 FROM public.source_kind),
+            ${userId}
+          )
+          RETURNING slug, display_name, sort_order
         `;
         return resp(201, created);
       }

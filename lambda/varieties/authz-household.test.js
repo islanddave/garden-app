@@ -257,9 +257,13 @@ describe('varieties write predicates — source-level invariants', () => {
   it('the audit actor is still the calling human, not a household id', () => {
     // BUG-VARIETYACTOREMPTY-001 wrapped the bind in auditActor(); the property under test is
     // unchanged — the actor derives from the JWT sub and from nothing else. Now asserted over EVERY
-    // bind instead of "some line matches", so a fifth write path cannot slip in on a household id.
+    // bind instead of "some line matches", so a further write path cannot slip in on a household id.
+    // The count is a REVIEW GATE, not a ceiling: it goes up in the same change that adds an audited
+    // write, and the for-loop below is the invariant. 4 -> 5 on 2026-09-04 (V4-SOURCEREG-001), the
+    // restore arm of POST /api/varieties/sources — public.source carries trg_audit_source_upd, so
+    // that UPDATE is audited and must name the human who asked for it rather than 'system'.
     const binds = [...SRC.matchAll(/set_config\('app\.actor_clerk_sub', \$\{([^}]*)\}, true\)/g)].map((m) => m[1]);
-    expect(binds).toHaveLength(4);
+    expect(binds).toHaveLength(5);
     for (const b of binds) expect(b).toBe('auditActor(userId)');
     expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{[^}]*household/);
   });
