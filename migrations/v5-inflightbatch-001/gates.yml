@@ -146,14 +146,39 @@ post:
   # zero rows — turning a vacuous gate into a hard failure and defeating the arming. The catalog
   # joins are longer and they are the reason this works.
 
-  # The one PERMANENTLY window-only gate: it describes the apply EVENT, not a property of the
-  # schema, so it can never be a standing invariant. Every other gate keys off it.
+  # REVISED 2026-09-04, and the revision is the point of the gate rather than a tidy-up.
+  #
+  # This shipped `continuous: false` with the reasoning "it describes the apply EVENT, not a property
+  # of the schema." That reasoning is sound and the consequence still defeated the stated goal three
+  # lines up. `gate_runner.py --continuous-only` — the mode the scheduled invariant sweep uses — SKIPS
+  # a `continuous: false` gate, so the one gate that was supposed to stop every other gate rotting
+  # into permanent vacuity was the one gate the standing sweep never ran. Delete the schema_version
+  # row and all twelve EXISTS-guarded gates below go quietly green forever, with nothing left to
+  # notice. A skipped gate reads exactly like a passing one.
+  #
+  # It also failed loudly for the wrong reason: `--phase post` against an unapplied database (the
+  # natural pre-apply command, and how this was found) returned FAIL rather than standing down,
+  # which is the same red-until-applied problem the block above was written to eliminate.
+  #
+  # THE FIX — key the arming on the DDL rather than on the schema_version row itself. Guarding
+  # "the row exists" with "the row exists" is circular, which is why the original could not self-arm;
+  # guarding it with "the TABLE exists" is not. The gate now returns rows only when the DDL landed
+  # AND the version row did not — vacuous before the apply, and a real, permanent, swept assertion
+  # afterwards. 0a writes both in one transaction, so a violation means someone hand-applied the DDL
+  # or deleted the row, which is precisely the state that would silence everything below.
+  #
+  # Catalog join, not `::regclass`, for the reason stated above.
   - name: post_schema_version_recorded
-    continuous: false
+    continuous: true
     sql: |
-      SELECT 1 FROM public.schema_version WHERE version = '4.110.0-inflightbatch-001'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'kitchen_batch')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.110.0-inflightbatch-001')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
   - name: post_three_tables_exist
     continuous: true
