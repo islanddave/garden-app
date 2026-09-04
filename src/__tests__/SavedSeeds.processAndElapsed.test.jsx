@@ -191,8 +191,24 @@ describe('BUG-SEEDELAPSEDUPDATED-001 — elapsed measures the stage, not the las
     await mount([lot()])
     const card = screen.getByTestId('seed-lot-card').textContent
     // updated_at is ~15 minutes old in this fixture; reading it would render "today".
-    expect(card).toContain('4 days in drying')
+    //
+    // BOUNDED, not `toContain`. This assertion read `toContain('4 days in drying')` until
+    // 2026-09-04, and `'14 days in drying'.includes('4 days in drying')` is `true` — so it passed on
+    // a value ten days wrong, on the one line the page exists to be read for. The leading boundary
+    // is the entire fix; the trailing one keeps a future "4 days in dryingish" from sneaking past.
+    expect(card).toMatch(/(?:^|\D)4 days in drying(?:\D|$)/)
     expect(card).not.toContain('today')
+  })
+
+  // A SECOND AGE, because one age cannot tell a correct duration from an off-by-N one — an
+  // `elapsedDays` that added a constant, or that dropped the leading digit, survives any
+  // single-point test. This pair is also what proves the boundary above is real rather than
+  // decorative: under the old `toContain` assertion, BOTH of these cases passed either way.
+  it('renders the whole number, not a suffix of it, at two digits', async () => {
+    await mount([lot({ stage_entered_at: daysAgo(14.2) })])
+    const card = screen.getByTestId('seed-lot-card').textContent
+    expect(card).toMatch(/(?:^|\D)14 days in drying(?:\D|$)/)
+    expect(card).not.toMatch(/(?:^|\D)4 days in drying(?:\D|$)/)
   })
 
   it('renders no duration at all when the lot has no stage entry — never a fabricated one', async () => {
