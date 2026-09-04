@@ -528,10 +528,30 @@ describe('GoingNowView — no readiness affordance anywhere', () => {
     expect(html).not.toMatch(/role="progressbar"/)
   })
 
-  it('says nothing about pH, acidification, safety or shelf stability', () => {
+  // ⚠ AMENDED 2026-09-04 BY V5-PHRECORD-001, and the amendment is narrow and deliberate.
+  //
+  // This assertion used to read `.not.toMatch(/\bpH\b|acidif|shelf.stab|\bsafe\b|\bsafety\b|botul/i)`,
+  // and the `\bpH\b` arm has been REMOVED because it is now false by design. That arm was a
+  // characterization of a ruling, not of a requirement: the adjudication it encoded forbade the app
+  // to mention pH at all, was re-examined, and was found to have over-corrected — forbidding the word
+  // also forbade asking the cook to MEASURE, which is the opposite of the thing it protected. The
+  // card now asks whether you have measured and records what you measured.
+  //
+  // EVERY OTHER ARM SURVIVES UNCHANGED, and one is added. Mentioning pH is permitted; ASSESSING it is
+  // not, and neither is naming a food-safety line — a number on this surface would be a threshold
+  // whether or not any code compares to it. The sibling assertion on the CAPTURE surface
+  // (CaptureFlow.kitchenBatch.test.jsx) keeps its `\bpH\b` arm and must NOT be widened or weakened:
+  // pH belongs on the check-in, and nobody measures one while photographing a jar they just packed.
+  it('may name pH, but says nothing about acidification, safety or shelf stability', () => {
     renderView([MASH, DEHYDRATOR, CANDY, UNKNOWN_START, PAUSED, FERMENT_EXACT])
-    expect(screen.getByTestId('going-now-view').innerHTML)
-      .not.toMatch(/\bpH\b|acidif|shelf.stab|\bsafe\b|\bsafety\b|botul/i)
+    const html = screen.getByTestId('going-now-view').innerHTML
+    expect(html).not.toMatch(/acidif|shelf.stab|\bsafe\b|\bsafety\b|botul|spoil/i)
+    // No acid line, in any of the spellings the evidence base circulates. Full detail, plus the
+    // source-level guard and its non-vacuity proof, in PutUpPhReading.test.jsx.
+    expect(html).not.toMatch(/(?<![\d.])(4\.60|4\.6|4\.4|4\.2|4\.1|4\.0|3\.8|3\.3|5\.0)(?!\d)(?!\.\d)/)
+    // Green control: the pH affordance IS on this surface, so the arms above are asserting absence
+    // over a surface that actually renders it rather than over one where it never appeared.
+    expect(html).toMatch(/\bpH\b/)
   })
 })
 

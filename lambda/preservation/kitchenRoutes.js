@@ -188,8 +188,13 @@ async function getBatch(sql, batchId, householdIds) {
     WHERE batch_id = ${batchId}::uuid
     ORDER BY added_at DESC, id DESC
   `;
+  // ph_reading / ph_read_at ride the same projection (V5-PHRECORD-001). This list IS the reading
+  // history: one dated line per row, in the order they were logged, with no count, streak, run or
+  // any other aggregate over them — a batch that never acidified produces an unbroken sequence of
+  // rows, so a summary of them would turn absent failure signs into apparent success.
   const stages = await sql`
     SELECT id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at,
+           ph_reading, ph_read_at,
            storage_location_id, photo_id, note, created_by, created_at
     FROM kitchen_stage_log
     WHERE batch_id = ${batchId}::uuid
@@ -332,18 +337,28 @@ async function addStage(sql, batchId, body, userId, householdIds) {
     const ph = await loadOwnedPhoto(sql, body.photo_id, householdIds);
     if (!ph) return bad('photo_id does not match a photo you can use');
   }
+  // ph_reading IS NOT NORMALIZED AND IS NOT COERCED (V5-PHRECORD-001). It reaches the ::numeric cast
+  // as the exact string the client sent, because a Number round-trip drops a trailing zero the meter
+  // displayed, and Postgres preserves the scale of the literal it is given — so a value typed with a
+  // trailing digit reads back with it.
+  // ph_read_at has NO COALESCE, unlike entered_at directly above: entered_at legitimately defaults to
+  // "now, because that is when you logged it", while a defaulted read-time would stamp an instant
+  // onto a measurement nobody took then. validateStage has already forced the pair to travel
+  // together, and chk_ksl_ph_pairing is the backstop behind it.
   const rows = await sql`
     INSERT INTO kitchen_stage_log (
       batch_id, stage_kind, label, amount, amount_unit, cue_observed,
-      entered_at, storage_location_id, photo_id, note, created_by
+      entered_at, ph_reading, ph_read_at, storage_location_id, photo_id, note, created_by
     ) VALUES (
       ${batchId}::uuid, ${normalizeText(body.stage_kind)}::text, ${normalizeText(body.label)}::text,
       ${body.amount ?? null}::numeric, ${normalizeText(body.amount_unit)}::text,
       ${normalizeText(body.cue_observed)}::text,
       COALESCE(${body.entered_at ?? null}::timestamptz, now()),
+      ${body.ph_reading ?? null}::numeric, ${body.ph_read_at ?? null}::timestamptz,
       ${body.storage_location_id ?? null}::uuid, ${body.photo_id ?? null}::uuid,
       ${normalizeText(body.note)}::text, ${userId}::text
     ) RETURNING id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at,
+               ph_reading, ph_read_at,
                storage_location_id, photo_id, note, created_by, created_at
   `;
   // The batch rides along because appending a stage is the one write that changes the view's derived

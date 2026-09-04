@@ -11,8 +11,16 @@
 // rows. The browsable list of everything going lives here. Two questions, two surfaces.
 //
 // WHAT THIS SURFACE DOES NOT DO, and each absence is a ruling rather than an omission — the reasons
-// live at the top of ./goingNow.js: no readiness affordance, no countdown, no urgency tone, no
-// warning colour on a missing start, and nothing at all about pH, acidification or shelf stability.
+// live at the top of ./goingNow.js: no readiness affordance, no countdown, no urgency tone, and no
+// warning colour on a missing start.
+//
+// ⚠ THE ORIGINAL FORM OF THAT LIST ENDED "and nothing at all about pH, acidification or shelf
+// stability." V5-PHRECORD-001 reversed the first of those three and only the first. This card now
+// asks whether you have measured, records what you measured, and links to how — and it still says
+// NOTHING about acidification, shelf stability, or whether any reading is good. A recorded value is
+// rendered exactly as it was typed, beside the date it was taken, in the card's ordinary ink. It is
+// never scored, never coloured, never compared to anything, never counted, and never gates anything.
+// The reasoning, and the reversal's audit trail, are at the top of ./goingNow.js and ./PhReadingField.jsx.
 import React, { useState, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
@@ -22,7 +30,9 @@ import { ErrorBanner } from '../forms'
 import {
   partitionGoing, describeAge, describeStage, describeExpectedWindow, startPromptState,
   submersionPrompt, START_CHIPS, startChipPatch, pickedDatePatch, startPatchViolatesPairing,
+  phPrompt, describeLastPhReading, phRecorderVisible,
 } from './goingNow.js'
+import PhReadingField from './PhReadingField.jsx'
 
 // "Sep 3". Month + day only: the year is noise on a surface whose entire subject is the recent past,
 // and the one card that shows a year is a card about something that has been going for a year.
@@ -129,6 +139,11 @@ function BatchCard({ batch, nowMs, fetch, onChanged, paused }) {
   const window = describeExpectedWindow(batch)
   const prompt = startPromptState(batch) === 'prompt'
   const submersion = submersionPrompt(batch, nowMs)
+  const phAsk = phPrompt(batch, nowMs)
+  const lastPh = describeLastPhReading(batch)
+  // Both halves or neither: a reading whose date will not render is not a dated line, so it does not
+  // render at all rather than becoming a bare "current pH".
+  const lastPhLine = lastPh && shortDate(lastPh.at) ? `pH ${lastPh.text} recorded ${shortDate(lastPh.at)}` : null
 
   const ageText = age == null
     ? null
@@ -168,12 +183,37 @@ function BatchCard({ batch, nowMs, fetch, onChanged, paused }) {
           {submersion}
         </div>
       )}
+      {/* The measure prompt. Another QUESTION, same ink, same absence of a verdict — it asks whether
+          you measured and says nothing about what the number was or ought to be. UMN Extension's
+          published "check the pH every 1 to 2 days" is the only cadence in the evidence base with a
+          sourced number behind it, and this is that cadence and nothing more. */}
+      {phAsk && (
+        <div data-testid="going-batch-ph-prompt" style={{ marginTop: 4, color: P.mid, fontSize: '0.82rem' }}>
+          {phAsk}
+        </div>
+      )}
+      {/* The newest reading, VERBATIM, with the date it was taken. Never a count, never a streak,
+          never a tick, never a colour — a batch that never acidified produces an unbroken run of
+          "checked" entries, so an aggregate over these would turn absent failure signs into apparent
+          success. One dated line; the rest of the history is the stage log. */}
+      {lastPhLine && (
+        <div data-testid="going-batch-ph-last" style={{ marginTop: 3, color: P.mid, fontSize: '0.82rem' }}>
+          {lastPhLine}
+        </div>
+      )}
       {Number(batch.input_count) > 0 && (
         <div data-testid="going-batch-inputs" style={{ marginTop: 3, color: P.light, fontSize: '0.78rem' }}>
           {Number(batch.input_count) === 1 ? '1 pick in' : `${Number(batch.input_count)} picks in`}
         </div>
       )}
       {prompt && <SetStartDate batch={batch} fetch={fetch} onChanged={onChanged} />}
+      {/* WIDER THAN THE PROMPT ABOVE, on purpose — see phRecorderVisible. The prompt is the app
+          speaking and must not ask a nonsense question; the recorder is a door the cook opens, and
+          it stays open on an unclassified batch because the one real ferment in the system carries
+          kind NULL and this card has no kind editor. */}
+      {phRecorderVisible(batch) && (
+        <PhReadingField batch={batch} fetch={fetch} onChanged={onChanged} nowMs={nowMs} />
+      )}
     </div>
   )
 }

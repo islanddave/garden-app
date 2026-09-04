@@ -23,8 +23,14 @@
 //      FERMENT_ALARM mechanism is NOT copied here; seed ferments have a real day-5 cliff (the seed
 //      sprouts in the jar) and kitchen batches do not.
 //   6. An unknown start is a PERMANENT, ACCEPTABLE TERMINAL STATE. See `startPromptState`.
-// Nothing here says anything about pH, acidification, safety or shelf stability — that adjudication
-// is running separately and is unlanded (API-CONTRACT §3.2).
+//
+// ⚠ THIS HEADER USED TO END "Nothing here says anything about pH, acidification, safety or shelf
+// stability — that adjudication is running separately and is unlanded." The adjudication has since
+// landed and reversed the first of those four, and only the first: V5-PHRECORD-001 adds a recorded
+// pH, a prompt to measure and a link-out, in the block near the bottom of this file. Everything else
+// in that sentence still holds — nothing here says anything about acidification, safety or shelf
+// stability, and nothing scores, colours, compares or gates on a reading. Read that block before
+// touching anything named ph*.
 
 // ── start precision ──────────────────────────────────────────────────────────────────────────────
 // chk_kitchen_batch_start_precision's six values, ordered coarsest-last. A row whose precision the
@@ -109,7 +115,7 @@ export function describeAge(batch, nowMs) {
 // about the date. It is that elapsed time is not evidence about a ferment at all: BC CDC — "no
 // standard set of time to a required pH drop is provided based on vegetable category"; Snyder et al.
 // — pH is "the only critical control of significance"; and decisively UMN Extension — bubbling can
-// cease while pH is still above 4.6, so the visible completion proxy and the actual safety criterion
+// cease while the pH is still above the acid line, so the visible completion proxy and the criterion
 // can and do disagree. A perfectly known start date tells you nothing a guessed one doesn't.
 //
 // FAIL-CLOSED ON AN UNCLASSIFIED BATCH. `kind` is nullable by design (the capture path never asks),
@@ -165,6 +171,165 @@ export function submersionPrompt(batch, nowMs) {
   if (Number.isNaN(then)) return null
   if (nowMs - then < SUBMERSION_CHECK_DAYS * DAY_MS) return null
   return SUBMERSION_PROMPT
+}
+
+// ── the recorded pH ──────────────────────────────────────────────────────────────────────────────
+// V5-PHRECORD-001. The header above says "Nothing here says anything about pH" — that was true when
+// it was written and is no longer, and the reversal is deliberate rather than a drift. The
+// adjudication that produced the original silence was re-examined and found to have over-corrected:
+// forbidding the app to mention pH also forbade it to ask the cook to MEASURE, which is the opposite
+// of the thing it was protecting. BC CDC's fermented-vegetables guidance recommends "monitoring and
+// recording pH and time", and this app is a record.
+//
+// ⚠ THE LINE, AND EVERY FUNCTION BELOW SITS ON ONE SIDE OF IT:
+//   FORBIDDEN — derive, score, colour, gate, compare to a threshold, or infer from elapsed time.
+//   PERMITTED — record a measured value verbatim, prompt someone to measure, link to how.
+// So: no comparison of a reading to anything, no status, no colour, no ordering of "better" readings,
+// nothing that reads a reading and returns a judgement. The number a cook types is carried to the
+// server and back and rendered as typed, beside the date it was taken, and that is the whole feature.
+// There is no threshold constant in this file and there must never be one; the guard that keeps it
+// out is in src/__tests__/PutUpPhReading.test.jsx and it fails on the literal, not on the intent.
+//
+// ⚠ AND IT IS AN ORIGINAL DESIGN CHOICE, NOT A COMPLIANCE POSTURE. No published convention exists for
+// what home-preservation software should say about any of this — a documented negative result, not a
+// gap in the reading. Nothing here follows a standard and no comment may imply that it does.
+// Adjudication: project-state/_build-inflight-20260904/FOODSAFETY-RULING-V101.md §2 (gardening-docs).
+
+// The pH scale's definitional range, mirroring chk_ksl_ph_scale. NOT a safety band: it is symmetric,
+// it prefers no reading to any other, and it excludes nothing either instrument in the link-out below
+// can produce. Its only job is to catch a fat-finger before it is stored — a strip cannot read 46.
+export const PH_SCALE_MIN = 0
+export const PH_SCALE_MAX = 14
+
+// A reading is recorded by APPENDING a stage row, because that is where an observation about a batch
+// lives and the stage log is append-only: a wrong reading is corrected by recording the next one, and
+// the record keeps both. Stage kinds are started/tended/moved/finished/failed and going to measure
+// something is tending it.
+export const PH_STAGE_KIND = 'tended'
+
+// UMN Extension's published cadence: "continue to ferment and check the pH every 1 to 2 days." It is
+// the ONLY cadence in the evidence base with a sourced number behind it.
+//
+// TWO DAYS, THE OUTER BOUND, chosen so the prompt can never fire before the published window has
+// fully elapsed. The inner bound would be defensible too and this is a judgement rather than a
+// finding: a question asked a day early is answered "yes, this morning", and a card that asks about
+// something already done is how a reader learns that its questions can be ignored — which is the
+// same reasoning ruling 4 uses to refuse urgency tone. Late costs a day; early costs the affordance.
+//
+// It coincides with SUBMERSION_CHECK_DAYS and the two must NOT be collapsed into one constant. They
+// come from different sources (Penn State's "two to three times each week" vs UMN's "every 1 to 2
+// days") about different acts, and either publisher can revise without the other.
+export const PH_CHECK_DAYS = 2
+
+// A QUESTION, and it stops. No verdict, no failure-sign checklist, no second clause — the same shape
+// as SUBMERSION_PROMPT and for the same reason: a list of what going wrong looks like invites the
+// reader to conclude that its absence means success. It asks whether you measured; it says nothing
+// whatever about what the measurement was or should be.
+export const PH_PROMPT = 'Measured the pH in the last day or two?'
+
+export const PH_RECORD_CTA = 'Record a pH reading →'
+
+// Quoted verbatim and attributed, rather than paraphrased into house voice. The caution travels WITH
+// the recommendation because USU publishes them together and separating them would leave the cheaper
+// instrument looking equivalent to the better one.
+export const PH_INSTRUMENT_NOTE =
+  'Utah State University Extension recommends "a digital pH meter or pH test strips that can measure '
+  + 'to at least 1 decimal point", and notes that "Test strips are less accurate as the color of the '
+  + 'food can alter the result."'
+
+export const PH_LINK_URL =
+  'https://extension.usu.edu/preserve-the-harvest/research/tips-to-safely-ferment-at-home'
+// Describes what the destination is being cited FOR. The page's own title is not used as the label:
+// it is a sentence about fermenting rather than about measuring, and the app is linking to the
+// instrument note inside it.
+export const PH_LINK_LABEL = 'Utah State University Extension — how to measure →'
+
+// The only rejection this input performs, and it is about the SCALE, not about the value's meaning.
+export const PH_SCALE_HINT = 'A pH reading is a number from 0 to 14 — check what the meter showed.'
+
+// VERBATIM, and that is the requirement rather than a convenience. No rounding, no toFixed, no
+// Number() round-trip, because a Number round-trip drops a trailing zero the meter displayed.
+// Trimmed only, because leading whitespace is not part of what anyone measured.
+export function phReadingText(v) {
+  if (v == null) return null
+  const t = String(v).trim()
+  return t === '' ? null : t
+}
+
+// BOTH HALVES OR NEITHER. A reading with no instant beside it is not a dated line, and a dated line
+// is the only shape a reading is allowed to take on a surface — the ruling forbids rendering the
+// check history as a streak, a count, a badge, a run of ticks or any other aggregate, because a batch
+// that never acidified produces an unbroken run of "checked" entries and an aggregate over them turns
+// absent failure signs into apparent success. One reading, one date, no summary of the rest.
+export function describeLastPhReading(batch) {
+  const text = phReadingText(batch?.last_ph_reading)
+  if (text == null) return null
+  const at = batch?.last_ph_read_at
+  if (!at) return null
+  if (Number.isNaN(new Date(at).getTime())) return null
+  return { text, at }
+}
+
+// WHAT THE CADENCE COUNTS FROM, in the order the fallbacks apply:
+//   1. last_ph_read_at — when you last measured. This is the real anchor; the other two only exist
+//      because a batch with no reading yet still has to be asked once.
+//   2. started_at — the batch's own beginning, when the cook knows it.
+//   3. first_recorded_at — the honest floor, NOT NULL by design, so a ferment whose start was never
+//      asked (start_precision NULL) or is permanently 'unknown' still gets asked. Falling silent on
+//      those two would suppress the prompt on exactly the batches nobody has looked at.
+//
+// NO PRECISION GATE HERE, unlike describeExpectedWindow above, and the difference is the point. That
+// function pairs a start with an expected DURATION, which licenses "it's been long enough" — a
+// readiness claim, and a guessed start makes it a fabricated one. This one asks a question that makes
+// no claim about the batch at all, so a coarse start can only make the question slightly early or
+// late, and after the first reading the anchor is exact anyway.
+export function phPromptAnchor(batch) {
+  return batch?.last_ph_read_at || batch?.started_at || batch?.first_recorded_at || null
+}
+
+// KNOWN ferments only, exactly as submersionPrompt is scoped, and `kind IS NULL` is SILENT. kind is
+// nullable by design — the capture path never asks — so null means "nobody said", and asking for a
+// pH on what might be a dehydrator run fails open into nonsense. 'other' is silent for the same
+// reason. This is the opposite fail-direction from DURATION_KINDS and correctly so: suppressing a
+// question costs a prompt, asking the wrong one costs the surface's credibility.
+//
+// SUBMERSION_KIND is reused rather than copied, unlike the cadence above. The two cadences come from
+// two publishers who can revise independently; the kind scope is ONE fact — both affordances are
+// about fermentation — and a second constant holding the same string is a place for them to diverge.
+export function phPrompt(batch, nowMs) {
+  if (!batch || batch.kind !== SUBMERSION_KIND) return null
+  const since = phPromptAnchor(batch)
+  if (!since) return null
+  const then = new Date(since).getTime()
+  if (Number.isNaN(then)) return null
+  if (nowMs - then < PH_CHECK_DAYS * DAY_MS) return null
+  return PH_PROMPT
+}
+
+// WHO GETS THE RECORDER, and it is deliberately WIDER than who gets the prompt. The prompt is the app
+// speaking, so it must never ask a nonsense question — hence known ferments only. The recorder is an
+// affordance the cook reaches for, and offering it makes no claim about the batch, so it is also
+// offered on an UNCLASSIFIED one. That is not a loosening: `kind` is nullable because the capture path
+// never asks, the batch this whole schema was built for (a pepper mash on the counter) carries kind
+// NULL today, and there is no kind editor on this card — so a strict gate here would mean the one
+// real ferment in the system could never record a reading. Known NON-ferments stay out: a "record a
+// pH" link on a dehydrator run is noise.
+export function phRecorderVisible(batch) {
+  if (!batch) return false
+  return batch.kind === SUBMERSION_KIND || batch.kind == null
+}
+
+// The POST body for one reading. `ph_reading` is the trimmed STRING the cook typed, never a Number —
+// see phReadingText. Returns null for anything off the scale or unparseable, so the component can say
+// so without a round trip; the server and chk_ksl_ph_scale both restate the same rule behind it.
+export function phStagePatch(raw, atIso) {
+  const text = phReadingText(raw)
+  if (text == null) return null
+  const n = Number(text)
+  if (!Number.isFinite(n)) return null
+  if (n < PH_SCALE_MIN || n > PH_SCALE_MAX) return null
+  if (!atIso || Number.isNaN(new Date(atIso).getTime())) return null
+  return { stage_kind: PH_STAGE_KIND, ph_reading: text, ph_read_at: atIso }
 }
 
 // ── the missing-datum CTA ────────────────────────────────────────────────────────────────────────
