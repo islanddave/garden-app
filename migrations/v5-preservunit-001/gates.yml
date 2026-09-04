@@ -1,0 +1,400 @@
+# gates.yml
+# V5-PRESERVUNIT-001 (BUG-PRESERVUNITNOCHECK-001) — give preservation_log.quantity_unit a vocabulary,
+# in two phases separated by a deploy.
+#
+# ── TWO PHASES, TWO TRANSACTIONS, AND A RELEASE BETWEEN THEM ─────────────────────────────────────
+#   phase A   0a-additive-ddl.sql          arm the 22-value UNION (12 canonical + 10 legacy plurals)
+#             (run mid gates)              NO code dependency — a strict superset of every writer
+#   ── ship release R1 (CODE-CHANGES-vocabmig-20260904.md), then soak ──
+#   phase B   0b-normalise-and-narrow.sql  normalise the plurals, narrow the CHECK to the canonical 12
+#
+# `pre` runs before 0a. `sweep` carries BOTH the phase-A sweep (`sweep_a_*`, run immediately before
+# 0a) and the gates that AUTHORISE phase B (`mid_*`, run after R1 has shipped and before 0b) — the
+# runner has no `mid` phase, so the two-phase precedent v4-harvbasis-sample-001/gates.yml puts them
+# under `sweep` and distinguishes them by name. `post` runs after each apply and, for the continuous
+# gates, forever.
+#
+# THE INVARIANT, in the form v4-harvbasis-sample-001 states it, at every instant, both directions:
+#
+#     { values the constraint ACCEPTS }  ⊇  { values the live writer EMITS }
+#
+# Phase A is a WIDENING (from unconstrained-but-undeclared to a declared superset) and is safe with
+# no deploy. Phase B is a NARROWING and is the dangerous direction: it must FOLLOW its writer. Ship
+# it early and PutUp.jsx:855's `useState(prefill.quantity_unit || 'lbs')` 23514s every new put-up,
+# while the full-replace PUT (lambda/preservation/index.js:589-610) 23514s every edit and every
+# one-tap "Mark used" from a service-worker-cached bundle. The Lambda has no unit vocabulary today
+# (validateCommon:164 tests non-blank only), so each of those returns 500 and renders as
+# "Couldn't update — try again." with nothing to diagnose.
+#
+# ANY assertion failing AT ITS OWN CHECKPOINT is a HARD ABORT. The `sweep` phase is the one place
+# that needs saying out loud, because it holds two checkpoints: running `--phase sweep` before 0a
+# reports `mid_a_applied` as FAIL, correctly — phase A is not applied yet, and that gate belongs to
+# the phase-B checkpoint. Before 0a, read `sweep_a_*` only. Before 0b, read `mid_*` only. The pairing
+# is what makes this unambiguous: `mid_check_admits_canonical_before_narrowing` passes VACUOUSLY when
+# the constraint does not exist (the scalar subquery is NULL, so no row qualifies), so it is only
+# meaningful when `mid_a_applied` is green directly above it. Never read one without the other.
+#
+# COUNT DISCIPLINE — binding on every gate below, and it cuts BOTH ways here.
+# The gates about the CONSTRAINT's validity are WHOLE-TABLE and deliberately omit `deleted_at IS
+# NULL`: a CHECK does not know about deleted_at, so a soft-deleted row spelling 'quarts' aborts an
+# ADD CONSTRAINT exactly as a live one would, and a sweep filtered to live rows would green-light an
+# apply that then fails. The gates about what the APP sees state `deleted_at IS NULL` explicitly.
+# Each gate says which it is. preservation_log was 5 rows / 5 live / 0 soft-deleted as of 2026-09-03
+# (v5-inflightbatch-001/gates.yml); a gate written without stating its scope passes or fails for the
+# wrong reason the first time that changes.
+#
+# NO PROD-DERIVED ABSOLUTES. Staging carries different data from prod, so nothing below asserts a row
+# COUNT of user data. Every count-shaped gate counts VIOLATORS and expects zero, which is true on any
+# dataset that has not been hand-corrupted.
+#
+# ⚠ NO `::regclass` ANYWHERE. A regclass cast is evaluated even under a WHERE that is false, so
+# `'public.preservation_log'::regclass` ERRORS rather than returning zero rows on a database where
+# something it names is missing — turning a vacuous gate into a hard failure and defeating the
+# self-arming. The pg_class/pg_namespace joins below are longer and they are the reason this works.
+# (The sibling v4-putupmethod-001/gates.yml uses regclass throughout. It gets away with it because
+# preservation_log always exists; that is a property of that migration's subject, not a licence.)
+#
+# ── WHY THE POST GATES ARE SELF-ARMING ──────────────────────────────────────────────────────────
+# `continuous:` DEFAULTS TO TRUE and .github/workflows/gate-invariants.yml runs
+# `gate_runner.py --all --phase post --continuous-only` against live prod AND staging on every push
+# touching migrations/**, blocking, with no skip-if-unapplied logic anywhere in the runner. The push
+# necessarily precedes the apply, so a post gate asserting this migration's own effect is a
+# guaranteed red on the critical path — which is exactly what v5-inflightbatch-001's first push did
+# to every other migration's gates. Each asserting gate below returns rows only when its phase IS
+# applied AND the invariant is violated: vacuous before, permanent after, no follow-up edit. Shipping
+# `continuous: false` and flipping it in the apply commit is the alternative, and this repo has the
+# scar — v4-carecacheundo-001's equivalent gate sits red on prod because that flip never happened.
+#
+# TWO GATES BELOW ARE DELIBERATELY *NOT* ARMED — post_column_is_still_not_null and
+# post_quantity_pair_never_half_recorded. Both are TRUE against the live pre-apply schema, so arming
+# them would make them vacuous today and DELETE a real assertion. Self-arming is for a gate that
+# would otherwise be red, never a blanket style (the rule is stated in v4-putupmethod-001/gates.yml
+# and is worth repeating because it is the easy thing to get wrong in the safe-looking direction).
+#
+# ONE GATE IS ARMED ON A *WINDOW*, not on a single version row — post_a_check_admits_every_writer.
+# It asserts a property that phase B deliberately destroys, so arming it on phase A alone would turn
+# it permanently red the moment 0b lands. It is armed on "phase A applied AND phase B not applied".
+# This is the frozen-gate-breaks-on-widening class, caught here at authoring time rather than at the
+# second apply.
+
+pre:
+  - name: pre_preservation_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: rowcount_eq
+    value: 1
+
+  # THE PREMISE OF THE BUG, measured rather than asserted. If this is red the column already has a
+  # vocabulary and this migration is answering a question somebody else already answered.
+  # 'quantity_unit' is not a substring of 'quantity_value', so this cannot be tripped by the
+  # quantity_value > 0 check.
+  - name: pre_quantity_unit_has_no_check
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.contype='c'
+         AND pg_get_constraintdef(c.oid) LIKE '%quantity_unit%'
+    expect: rowcount_eq
+    value: 0
+
+  # The column must be NOT NULL going in. 0b's UPDATE uses a CASE with no ELSE, which yields NULL for
+  # an unmapped value; the WHERE clause makes that unreachable, but the NOT NULL is the backstop that
+  # turns a future editing mistake into a loud 23502 instead of a silent unit-less row.
+  - name: pre_quantity_unit_is_not_null
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name='quantity_unit' AND is_nullable='NO'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-preservunit-20260904'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # ── PHASE A: run immediately before 0a ───────────────────────────────────────────────────────
+  #
+  # L-058: every predicate a CHECK will enforce must already hold before the CHECK is armed. This is
+  # THE gate of this migration — the 22-value union is claimed to be a strict superset of every
+  # spelling any writer has ever produced, and that claim was assembled by reading source
+  # (PutUp.jsx UNIT_GROUPS, tests/integration/preservation*.js, and the 'quarts'/'cups' recorded in
+  # v5-inflightbatch-001) rather than by querying a database. This is where the claim meets the data.
+  # If it returns anything, 0a's ADD CONSTRAINT would raise 23514 and abort the apply — and the
+  # right response is to ADD the surprising spelling to 0a's legacy list and to 0b's CASE, not to
+  # force the apply.
+  #
+  # WHOLE-TABLE, no deleted_at filter, deliberately: see the count-discipline note in the header.
+  - name: sweep_a_every_stored_spelling_is_in_the_union
+    sql: |
+      SELECT count(*) FROM public.preservation_log
+       WHERE quantity_unit NOT IN (
+         'lb','oz','count','cup','pint','qt',
+         'bushel','half-bushel','peck','flat','jar','bag',
+         'lbs','cups','pints','quarts',
+         'bushels','half-bushels','pecks','flats','jars','bags'
+       )
+    expect: scalar_eq
+    value: 0
+
+  # ── PHASE B AUTHORISATION: run after R1 has shipped, before 0b ───────────────────────────────
+  - name: mid_a_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-preservunit-20260904'
+    expect: rowcount_eq
+    value: 1
+
+  - name: mid_b_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-preservunit-20260904-narrow'
+    expect: rowcount_eq
+    value: 0
+
+  # THE NON-OBVIOUS PRECONDITION FOR 0b, and the one gate here that is not implied by anything else.
+  # 0b's UPDATE writes 'qt', 'cup', 'lb' … WHILE PHASE A'S CHECK IS STILL ARMED. Those writes succeed
+  # only because 0a's union deliberately contained the 12 canonical values alongside the 10 legacy
+  # ones. If someone has hand-altered the constraint between the phases — or 0a was applied from an
+  # older copy of that file — the UPDATE 23514s against the constraint this same migration installed,
+  # halfway through a transaction that also drops it. Counts CANONICAL values MISSING from the live
+  # definition, so it is dataset-independent and names nothing about prod.
+  - name: mid_check_admits_canonical_before_narrowing
+    sql: |
+      SELECT count(*) FROM unnest(ARRAY[
+        'lb','oz','count','cup','pint','qt',
+        'bushel','half-bushel','peck','flat','jar','bag'
+      ]) AS v(val)
+       WHERE (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='preservation_log'
+                 AND c.conname='chk_preservation_log_quantity_unit')
+             NOT LIKE '%''' || v.val || '''%'
+    expect: scalar_eq
+    value: 0
+
+  # NOT AN EXECUTABLE GATE, AND IT CANNOT BE ONE. No query reachable from Postgres can see whether a
+  # service-worker-cached bundle that emits 'lbs' is still alive on somebody's phone, and that is the
+  # single fact 0b's safety turns on. Recorded as a runbook step so the runner counts it as MANUAL
+  # (explicitly NOT a pass) rather than as an unstated assumption.
+  - name: mid_r1_shipped_and_no_new_legacy_write
+    manual: true
+    note: >
+      BEFORE APPLYING 0b, confirm all three by hand. (1) Release R1 — the frontend + Lambda changes
+      in CODE-CHANGES-vocabmig-20260904.md — is LIVE IN PROD, not merely on dev: check
+      garden.futureishere.net/releases.json for the version that carried it. (2) The deployed bundle
+      no longer emits plurals: load the Put-Up form on a hard-reloaded tab and confirm the unit
+      picker shows 'lb' / 'qt', not 'lbs' / 'quarts'. (3) No NEW row has arrived with a legacy
+      spelling since R1 shipped —
+      SELECT id, quantity_unit, created_at FROM public.preservation_log
+       WHERE quantity_unit IN ('lbs','cups','pints','quarts','bushels','half-bushels','pecks',
+                               'flats','jars','bags')
+       ORDER BY created_at DESC;
+      Every returned row must predate R1's deploy timestamp. A row NEWER than R1 means a stale
+      bundle is still writing, and 0b will break it. Allow a soak long enough for cached PWA bundles
+      to turn over before re-checking; there is no signal that proves the population has drained,
+      which is why this is a judgement and not a query.
+
+post:
+  # ── PHASE A ─────────────────────────────────────────────────────────────────────────────────
+  # continuous: false — the one gate shape that CANNOT be self-armed. It is a pure apply receipt, so
+  # arming it on its own version row gives EXISTS(v) AND NOT EXISTS(v): unsatisfiable in every state,
+  # i.e. permanently vacuous, which is worse than temporarily red. It is NOT silenced at the apply:
+  # gate_runner honours `continuous: false` only under --continuous-only, which gate-invariants.yml
+  # passes and the promote runbook does not.
+  - name: post_a_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-preservunit-20260904'
+    expect: rowcount_eq
+    value: 1
+
+  # The constraint exists and is VALIDATED, not merely present. The second half is the point: a
+  # NOT VALID constraint would pass a presence check while enforcing nothing on rows that already
+  # exist. 0a creates it born-valid precisely so this can be asserted rather than hoped for. The name
+  # survives phase B's DROP + ADD, so this gate is armed on phase A alone and stays true through both.
+  - name: post_a_check_present_and_validated
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-preservunit-20260904')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class     t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE n.nspname='public' AND t.relname='preservation_log'
+                  AND c.conname='chk_preservation_log_quantity_unit'
+                  AND c.contype='c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # ARMED ON A WINDOW, not on a version row: phase A applied AND phase B NOT applied. Phase B
+  # deliberately removes the ten legacy plurals, so arming this on phase A alone would make it
+  # permanently red the moment 0b lands — the frozen-gate-breaks-on-a-later-change class that
+  # v4-dtmbasisvar-001's pre_view_column_count_33 fell into from the other direction. Inside the
+  # window it is a real assertion: every spelling any deployed writer can emit is accepted, which is
+  # the entire safety claim of phase A. Counts values MISSING from the live definition.
+  - name: post_a_check_admits_every_writer
+    sql: |
+      SELECT count(*) FROM unnest(ARRAY[
+        'lb','oz','count','cup','pint','qt',
+        'bushel','half-bushel','peck','flat','jar','bag',
+        'lbs','cups','pints','quarts',
+        'bushels','half-bushels','pecks','flats','jars','bags'
+      ]) AS v(val)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-preservunit-20260904')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-preservunit-20260904-narrow')
+         AND (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='preservation_log'
+                 AND c.conname='chk_preservation_log_quantity_unit')
+             NOT LIKE '%''' || v.val || '''%'
+    expect: scalar_eq
+    value: 0
+
+  # NOT SELF-ARMED, deliberately: TRUE against the live pre-apply schema (the column has been NOT
+  # NULL since v4-putup-001/0a-additive-ddl.sql:82 and no migration in the repo alters it; the
+  # property was re-confirmed against prod on 2026-09-03 in v5-inflightbatch-001's header, which
+  # enumerates `quantity_unit NOT NULL` among the five constraints that make an in-flight row
+  # unrepresentable). Arming it would delete a real assertion that holds today. What it protects is
+  # the family idiom that a quantity and its unit are recorded together or not at all — dropping
+  # NOT NULL here would admit a number with no unit, which is the one shape the UI renders as fact.
+  - name: post_column_is_still_not_null
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name='quantity_unit' AND is_nullable='YES'
+    expect: rowcount_eq
+    value: 0
+
+  # NOT SELF-ARMED, same reasoning: a live-data invariant that already holds. A blank-but-not-null
+  # unit satisfies NOT NULL while meaning nothing, and it is the one value a free-text column could
+  # have accumulated before this migration. Phase A's vocabulary forbids it going forward; this
+  # asserts it never happened. `deleted_at IS NULL` is DELIBERATELY ABSENT — a blank in a
+  # soft-deleted row would still abort 0a's ADD CONSTRAINT.
+  - name: post_quantity_pair_never_half_recorded
+    sql: |
+      SELECT id FROM public.preservation_log
+       WHERE quantity_unit IS NULL OR btrim(quantity_unit) = ''
+    expect: rowcount_eq
+    value: 0
+
+  # ── PHASE B ─────────────────────────────────────────────────────────────────────────────────
+  - name: post_b_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-preservunit-20260904-narrow'
+    expect: rowcount_eq
+    value: 1
+
+  # All twelve canonical values survived the DROP + ADD. Walks the expected vocabulary against the
+  # live definition so a value fat-fingered while retyping twelve strings is NAMED by its absence
+  # rather than merely counted — the same shape as v4-putupmethod-001's
+  # post_all_eighteen_values_present, and for the same reason: a DROP + ADD is the one edit that can
+  # silently lose a value.
+  - name: post_b_check_is_the_canonical_twelve
+    sql: |
+      SELECT count(*) FROM unnest(ARRAY[
+        'lb','oz','count','cup','pint','qt',
+        'bushel','half-bushel','peck','flat','jar','bag'
+      ]) AS v(val)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-preservunit-20260904-narrow')
+         AND (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='preservation_log'
+                 AND c.conname='chk_preservation_log_quantity_unit')
+             NOT LIKE '%''' || v.val || '''%'
+    expect: scalar_eq
+    value: 0
+
+  # THE CONTRACTION RECEIPT, and simultaneously the NON-VACUITY PROOF for the gate above: if the LIKE
+  # mechanism matched everything, this would fail. Each plural is independently discriminable from
+  # its singular because the pattern carries both quotes — '%''bushels''%' does not match
+  # 'half-bushel'::text, and '%''cup''%' does not match 'cups'::text. Counts plurals STILL PRESENT.
+  - name: post_b_check_admits_no_legacy_plural
+    sql: |
+      SELECT count(*) FROM unnest(ARRAY[
+        'lbs','cups','pints','quarts',
+        'bushels','half-bushels','pecks','flats','jars','bags'
+      ]) AS v(val)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-preservunit-20260904-narrow')
+         AND (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='preservation_log'
+                 AND c.conname='chk_preservation_log_quantity_unit')
+             LIKE '%''' || v.val || '''%'
+    expect: scalar_eq
+    value: 0
+
+  # THE DATA HALF, and it is not redundant with the constraint. A CHECK forbids a WRITE; it says
+  # nothing about a state reached by dropping the constraint, loading, and re-adding it NOT VALID —
+  # which is exactly what a hurried repair looks like. This is the assertion that the harmonisation
+  # actually happened and stayed happened. WHOLE-TABLE on purpose: a soft-deleted row spelling
+  # 'quarts' is still a row that would defeat the next ADD CONSTRAINT, and it is also still visible
+  # to any roll-up that forgets the filter.
+  - name: post_b_no_row_carries_a_legacy_spelling
+    sql: |
+      SELECT id FROM public.preservation_log
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-preservunit-20260904-narrow')
+         AND quantity_unit IN ('lbs','cups','pints','quarts','bushels','half-bushels',
+                               'pecks','flats','jars','bags')
+    expect: rowcount_eq
+    value: 0
+
+  # THE ANTI-DRIFT RATCHET, and the thesis of the whole migration expressed as a permanent guard.
+  # Where this column's vocabulary OVERLAPS kitchen_batch_input's chk_kbi_qty_unit — 'lb','oz',
+  # 'count','cup','qt', the five classes both tables measure — the two constraints must spell the
+  # unit identically. That overlap IS the join surface a kitchen batch's INPUTS share with the
+  # preservation rows that are its OUTPUTS, and its divergence is the bug. Asserted against the two
+  # CATALOG DEFINITIONS rather than against data, so it catches a future edit to EITHER side that
+  # re-opens the gap, which no data gate can do.
+  #
+  # ⚠ VACUOUS UNTIL V5-INFLIGHTBATCH-001 IS APPLIED, and stated rather than hidden: that migration
+  # had not been applied to prod or staging as of 2026-09-04, so chk_kbi_qty_unit does not exist yet
+  # and the second EXISTS below is false. It arms itself the moment that migration lands. If
+  # V5-INFLIGHTBATCH-001 is ever abandoned this gate stays permanently vacuous and should be retired
+  # rather than left looking like a passing assertion.
+  - name: post_b_shared_units_agree_with_kitchen_batch_input
+    sql: |
+      SELECT v.val FROM unnest(ARRAY['lb','oz','count','cup','qt']) AS v(val)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-preservunit-20260904-narrow')
+         AND EXISTS (SELECT 1 FROM pg_constraint c
+                       JOIN pg_class     t ON t.oid = c.conrelid
+                       JOIN pg_namespace n ON n.oid = t.relnamespace
+                      WHERE n.nspname='public' AND t.relname='kitchen_batch_input'
+                        AND c.conname='chk_kbi_qty_unit')
+         AND (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='preservation_log'
+                 AND c.conname='chk_preservation_log_quantity_unit')
+             LIKE '%''' || v.val || '''%'
+         AND (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='kitchen_batch_input'
+                 AND c.conname='chk_kbi_qty_unit')
+             NOT LIKE '%''' || v.val || '''%'
+    expect: rowcount_eq
+    value: 0
