@@ -218,7 +218,20 @@ async function startChrome(userDataDir) {
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding', ...EXTRA_CHROME_FLAGS,
   ], { stdio: ['ignore', 'ignore', 'ignore'] })
-  for (let i = 0; i < 60; i++) {
+  // CDP wait: 240 x 250ms = 60s, raised from 60 tries (15s) on 2026-09-04. 15s is comfortable on a
+  // Mac and MARGINAL on a loaded GitHub runner: `Chrome did not expose CDP on 9422 within 15s` failed
+  // the whole unit job on two consecutive dev commits (1909c4e8, 729bebf3) with nothing wrong in the
+  // tree — every gate passed locally on the same SHA. Nothing about the success path changes; a
+  // browser ready in 300ms still returns in 300ms. This only lengthens the patience before giving up.
+  // Override with CDP_WAIT_MS for a slower runner.
+  const CDP_WAIT_TRIES = Math.max(1, Math.ceil(Number(process.env.CDP_WAIT_MS ?? 60000) / 250))
+  for (let i = 0; i < CDP_WAIT_TRIES; i++) {
+    // A DEAD CHROME IS NOT A SLOW CHROME, and the two need different responses: one is "re-run the
+    // job", the other is "go find the missing shared library". Waiting the full 60s to report a
+    // timeout for a process that exited in the first 200ms buys nothing and actively misleads.
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      throw new Error(`Chrome EXITED before exposing CDP on ${CDP_PORT} (code=${proc.exitCode} signal=${proc.signalCode}) - a dead browser, not a slow one; re-running will not help`)
+    }
     try {
       const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)
       if (r.ok) return { proc, version: await r.json() }
@@ -226,7 +239,7 @@ async function startChrome(userDataDir) {
     await sleep(250)
   }
   proc.kill('SIGKILL')
-  throw new Error(`Chrome did not expose CDP on ${CDP_PORT} within 15s`)
+  throw new Error(`Chrome did not expose CDP on ${CDP_PORT} within ${CDP_WAIT_TRIES * 250}ms`)
 }
 
 async function attach(wsUrl) {

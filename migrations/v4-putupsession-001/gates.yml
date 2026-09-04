@@ -172,19 +172,27 @@ post:
     value: 0
     continuous: true
 
-  - name: post_column_count_is_24
+  - name: post_column_count_is_25
     note: >
       The sibling of the re-pinned gate in v4-putupprov-001/gates.yml, self-armed so it is honest
       before the apply as well as after. Two gates asserting the same count is deliberate: that one
       catches this migration being forgotten, this one catches a LATER column being added without
       its own gate, and they disagree loudly if only one is updated.
+      RE-PINNED 24 -> 25 on 2026-09-04. V5-INFLIGHTBATCH-001 added preservation_log.batch_id to both
+      live databases without touching either pin. AND THE PAIR WORKED EXACTLY AS ADVERTISED: I bumped
+      only the v4-putupprov-001 one first, the full --continuous-only sweep still went red here, and
+      "they disagree loudly if only one is updated" is precisely what happened. The design is sound;
+      what keeps failing is that a session adding a column has no reason to look in either directory.
+      THIRD MISS ON THIS PIN. Per the note now in the sibling: if a fourth column addition misses it,
+      convert both to "every named column is present" — that widens safely, still catches a dropped
+      column, and removes a cross-migration coupling that three separate sessions have not maintained.
     sql: |
       SELECT 1
        WHERE EXISTS (SELECT 1 FROM information_schema.columns
                       WHERE table_schema='public' AND table_name='preservation_log'
                         AND column_name='preserved_at_approx')
          AND (SELECT count(*) FROM information_schema.columns
-               WHERE table_schema='public' AND table_name='preservation_log') <> 24
+               WHERE table_schema='public' AND table_name='preservation_log') <> 25
     expect: rowcount_eq
     value: 0
     continuous: true

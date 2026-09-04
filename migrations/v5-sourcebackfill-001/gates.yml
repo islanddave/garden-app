@@ -1,0 +1,298 @@
+# gates.yml
+# V5-SOURCEBACKFILL-001 — populate public.source from the reviewed catalogue and point plants and
+# inventory_items at it.
+#
+# HARD DEPENDENCIES: v5-sourceentity-001 (the table and the four FK columns) and v5-sourcekind-001
+# (source.kind's FK target — without it every catalogue row carrying a kind is rejected).
+#
+# EXACTLY ONE `env:` KEY, and it is deliberate — unlike the two parent migrations, which have none.
+# gate_runner defaults to "both", and every gate here is env-agnostic EXCEPT
+# post_prod_brand_via_shop_splits_landed, which asserts a fact about the PROD CORPUS the dedupe
+# mapping was built from. Staging is an independent Neon branch with different rows (measured
+# 2026-09-04: 68 inventory rows with source text, zero plants rows, zero brand-via-shop splits), so
+# a prod row count asserted there is false about a database that has done nothing wrong. Split into
+# an env-agnostic shape check plus a prod floor, rather than one number bent to fit two unrelated
+# populations — the same resolution v5-sourceentity-001 used for post_rowcount_undisturbed.
+#
+# A RELATED HONESTY NOTE: post_every_pre_existing_row_was_matched and
+# post_no_backfilled_row_lost_its_free_text are env-agnostic in MEANING but have far less to say on
+# staging, where zero plants rows carry source_ref. On staging they are real signal for the 68
+# inventory rows and vacuous for plants; on prod they cover all 567. That is a difference in
+# evidence, not in the assertion, so they correctly stay unscoped.
+#
+# THE CUT-OFF IDIOM, used by three gates below and worth reading once. Several assertions here are
+# true of "the rows that existed when the backfill ran" and deliberately NOT of rows added later —
+# once the picker ships, a new plant will carry a source_id with no free text at all, and a gate
+# that forbade that would red on the feature working. The cut-off is not a hardcoded date; it is
+#     (SELECT applied_at FROM public.schema_version WHERE version = '5.0.0-sourcebackfill-001')
+# which self-arms twice over: before the apply the subquery is NULL, every comparison against it is
+# NULL, no rows are returned and the gate is vacuously green; after the apply it is the real instant.
+# A literal date would have to be edited on re-apply and would silently drift.
+#
+# POST GATES ARE IN VIOLATION-COUNT SHAPE (expect rowcount_eq 0) for the reason given at length in
+# v5-sourceentity-001/gates.yml: a "good state present" gate written as rowcount_eq 1 sits
+# permanently RED on every environment that has not applied yet, gets muted, and stops meaning
+# anything.
+
+pre:
+  - name: pre_substrate_applied
+    note: >
+      Both parents must be in place: v5-sourceentity-001 for public.source and the four FK columns,
+      v5-sourcekind-001 for source.kind's FK target. Without the second, every catalogue row that
+      carries a kind is rejected by fk_source_kind and 0b aborts wholesale. Counted, so a missing
+      EITHER reds.
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version IN ('5.0.0-sourceentity-001', '5.0.0-sourcekind-001')
+      HAVING count(*) = 2
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_catalogue_empty
+    note: >
+      Greenfield. 0b is idempotent (ON CONFLICT DO NOTHING plus IS NULL-guarded UPDATEs), so a
+      re-run is safe — but a catalogue that already has rows means someone applied this, or started
+      using the picker, and the operator should know which before running it again.
+      continuous false: false forever once 0b lands.
+    sql: |
+      SELECT 1 FROM public.source LIMIT 1
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_free_text_present_to_join_against
+    note: >
+      0b joins on the verbatim free text. If these columns were emptied by some earlier pass the
+      backfill would run, report success, and update nothing — the silent-no-op shape. Asserts there
+      is something to match. Deliberately a floor (>= 1), never a count: pinning 567 here would red
+      the first time Dave adds a plant.
+    sql: |
+      SELECT 1 FROM public.plants WHERE source_ref IS NOT NULL
+      UNION ALL
+      SELECT 1 FROM public.inventory_items WHERE source IS NOT NULL
+    expect: rowcount_gte
+    value: 1
+
+  - name: pre_all_catalogue_kinds_exist
+    note: >
+      Every kind the catalogue uses must be a live source_kind row. This is the gate that turns a
+      wholesale mid-transaction FK abort into a named pre-flight failure. It reads the 12 seeded
+      slugs rather than the CSV because the CSV is not visible from SQL; backfill.gen.py enforces the
+      other direction (it hard-fails if the CSV names a kind outside the 12), so the two together
+      close the loop.
+      continuous false: it names public.source_kind directly, and Postgres resolves relations at
+      parse time, so it would raise rather than pass vacuously where v5-sourcekind-001 is unapplied —
+      which pre_substrate_applied catches by name first.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM public.source_kind
+               WHERE deleted_at IS NULL
+                 AND slug = ANY (ARRAY['seed_company','nursery','garden_center','farm_stand',
+                                       'market','retail','plant_swap','person','organization',
+                                       'brand','own_garden','other'])) <> 12
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+sweep:
+  - name: sweep_dedupe_mapping_ruled_by_dave
+    note: >
+      The manual review gate this migration inherits from v5-sourceentity-001, now SATISFIED and
+      recorded rather than left hanging. All 73 spellings are ruled: REVIEW=0, low-confidence=0,
+      high=69 / medium=4. Every MERGE — the irreversible half, where a wrong call destroys a
+      distinction the merged data cannot recover — is Dave's own, including Hadley-vs-Hatfield,
+      Whately swap-vs-giving-garden, and Skawski, which he settled on 2026-09-04 with the business's
+      own website against a 2-1 in-data majority for the misspelling.
+      What he did NOT individually rule are five medium-confidence KIND labels (Bostrom Farms,
+      Nettlepoint Farm, Liz Young, Panorama Tours, Gardener's Supply Company). Those were named to
+      him explicitly and he approved the run: each is one column on one or two rows, correctable in
+      a tap from the picker, and the free text is untouched either way.
+      SQL-checkable half: the free text is still there to fall back on.
+    sql: |
+      SELECT 1 FROM public.plants WHERE source_ref IS NOT NULL LIMIT 1
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_catalogue_populated
+    note: >
+      A FLOOR, not an exact count, and the distinction matters: 54 rows land from the reviewed CSVs
+      (53 catalogue + the Unknown row), and the picker exists precisely so Dave can add a 55th.
+      Pinning the number would red the first time he uses the feature this backfill was built to
+      enable. Reds only if the catalogue has SHRUNK below what was applied, which is the failure
+      worth catching. This is not a count ratchet: the floor tracks what a completed apply put
+      there, and does not move when the catalogue legitimately grows. Armed on the receipt.
+      (It read 53 for one revision, before the 2026-09-04 re-export added Bentley Seeds — a floor
+      that is one too low still passes, so this was corrected for accuracy rather than because it
+      failed.)
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcebackfill-001')
+         AND (SELECT count(*) FROM public.source WHERE deleted_at IS NULL) < 54
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_backfilled_row_lost_its_free_text
+    note: >
+      THE PROMISE THIS WHOLE MIGRATION RESTS ON, made enforceable. plants.source_ref and
+      inventory_items.source are the sole home of facts with no column anywhere in this design —
+      order numbers (#350019, item #233), the HOMESTEAD discount, received-on dates, the day of a
+      gift. 0b reads them and never writes them, and that is what makes the five medium-confidence
+      category labels an acceptable price and the rollback cheap. This gate says a row that already
+      existed when the backfill ran, and now carries a pointer, still has its text.
+      Scoped by the cut-off idiom (see header) so a row created LATER through the picker — which
+      legitimately has a source_id and no free text at all — is out of scope rather than a violation.
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE p.source_id IS NOT NULL
+         AND p.source_ref IS NULL
+         AND p.created_at < (SELECT applied_at FROM public.schema_version
+                              WHERE version = '5.0.0-sourcebackfill-001')
+      UNION ALL
+      SELECT 1 FROM public.inventory_items i
+       WHERE i.source_id IS NOT NULL
+         AND i.source IS NULL
+         AND i.created_at < (SELECT applied_at FROM public.schema_version
+                              WHERE version = '5.0.0-sourcebackfill-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_every_pre_existing_row_was_matched
+    note: >
+      THE COMPLETENESS GATE, and the one that would have caught a silently-skipped spelling.
+      backfill.gen.py emits one statement per spelling and hard-fails if its left column drifts from
+      the prod export, so after the apply every row that had free text should have a pointer. A row
+      with text and no pointer means a spelling was missed, a statement failed, or the join was
+      subtly wrong — none of which shows up as an error, because an UPDATE that matches nothing
+      reports success.
+      Scoped by the cut-off so free text typed AFTER the backfill (still possible until the picker
+      replaces those inputs) is not counted as a miss — it is simply not yet mapped.
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE p.source_ref IS NOT NULL
+         AND p.source_id IS NULL
+         AND p.created_at < (SELECT applied_at FROM public.schema_version
+                              WHERE version = '5.0.0-sourcebackfill-001')
+      UNION ALL
+      SELECT 1 FROM public.inventory_items i
+       WHERE i.source IS NOT NULL
+         AND i.source_id IS NULL
+         AND i.created_at < (SELECT applied_at FROM public.schema_version
+                              WHERE version = '5.0.0-sourcebackfill-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_orphan_shop_without_an_originator
+    note: >
+      THE ENV-AGNOSTIC HALF of the brand-via-shop assertion. A row naming where it was bought but not
+      who made it is a half-recorded split: acquired_from_source_id means "the shop, WHEN IT DIFFERS
+      from source_id", so it is meaningless without one. True on every environment regardless of
+      how much data it holds, including an empty one.
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE acquired_from_source_id IS NOT NULL AND source_id IS NULL
+      UNION ALL
+      SELECT 1 FROM public.inventory_items
+       WHERE acquired_from_source_id IS NOT NULL AND source_id IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_prod_brand_via_shop_splits_landed
+    env: prod
+    note: >
+      THE PROD-SCOPED HALF, and the ONLY gate in this file carrying an `env:` key. It is scoped
+      because it asserts a fact about the PROD CORPUS the mapping was built from — 11 spellings that
+      carry both an originator and a shop — and staging is an independent Neon branch whose rows are
+      simply different (measured 2026-09-04: 68 inventory rows with source text, zero plants rows,
+      zero splits). Asserting 11 there would be asserting something false about a database that has
+      done nothing wrong. Split rather than scaled, per the v5-sourceentity-001 precedent where
+      post_rowcount_undisturbed asserted `< 200` against staging's 66 rows: an env-agnostic shape
+      check (post_no_orphan_shop_without_an_originator, above) plus this prod floor, rather than one
+      number bent to satisfy two unrelated populations.
+      Why it is asserted at all instead of folded into the completeness gate: those 11 rows pass a
+      source_id-only check while silently losing the shop half. That is not hypothetical — it is
+      exactly what backfill.gen.py's invariant caught before this ever ran. 'Four Phantoms Brewing
+      Company' was absent from the catalogue, and without the check those 12 plants would have kept
+      a NULL acquired_from while every statement reported success.
+      A FLOOR, not an exact count, so Dave recording another brand-via-shop purchase does not red it.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcebackfill-001')
+         AND ((SELECT count(*) FROM public.plants WHERE acquired_from_source_id IS NOT NULL)
+            + (SELECT count(*) FROM public.inventory_items WHERE acquired_from_source_id IS NOT NULL)
+             ) < 11
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_unknown_row_exists_and_was_not_backfilled_onto
+    note: >
+      V5-SOURCEUNKNOWN-001. Dave ruled 2026-09-04 that not-knowing must be a real usable entry
+      rather than a blank, because a blank cannot be told apart from never having been asked and
+      cannot be counted or listed. Two halves, and the second is the one worth guarding: the row
+      must EXIST, and nothing must have been pointed at it BY THIS MIGRATION. No spelling maps here
+      on purpose — a row whose provenance was simply never recorded is a different statement from
+      one Dave looked at and said he did not know, and backfilling the second onto the first would
+      put words in his mouth for 72 undated seed rows.
+      Scoped by the cut-off, so once he starts choosing Unknown in the picker those rows are out of
+      scope and this keeps meaning what it says.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcebackfill-001')
+         AND NOT EXISTS (SELECT 1 FROM public.source
+                          WHERE name = 'Unknown' AND deleted_at IS NULL)
+      UNION ALL
+      SELECT 1 FROM public.plants p
+        JOIN public.source s ON s.id = p.source_id
+       WHERE s.name = 'Unknown'
+         AND p.created_at < (SELECT applied_at FROM public.schema_version
+                              WHERE version = '5.0.0-sourcebackfill-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_row_names_the_same_source_twice
+    note: >
+      chk_plants_source_distinct / chk_inventory_source_distinct enforce this on write, so this gate
+      is not defending against a rogue UPDATE — it is defending against the constraints being
+      dropped, which is the kind of thing a later migration does while clearing the way for
+      something else. backfill.gen.py refuses to emit such a statement in the first place (invariant
+      4), so all three layers would have to fail together.
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE source_id IS NOT NULL AND source_id = acquired_from_source_id
+      UNION ALL
+      SELECT 1 FROM public.inventory_items
+       WHERE source_id IS NOT NULL AND source_id = acquired_from_source_id
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_every_pointer_resolves_to_a_live_source
+    note: >
+      The four FKs guarantee the row EXISTS; they say nothing about it being live. A soft-deleted
+      source with plants still pointing at it renders as a blank provenance in any query that joins
+      on deleted_at IS NULL — present in the database, invisible in the app, and silent. That is the
+      shape worth catching, and no constraint can express it.
+    sql: |
+      SELECT 1 FROM public.plants p JOIN public.source s ON s.id = p.source_id
+       WHERE s.deleted_at IS NOT NULL
+      UNION ALL
+      SELECT 1 FROM public.plants p JOIN public.source s ON s.id = p.acquired_from_source_id
+       WHERE s.deleted_at IS NOT NULL
+      UNION ALL
+      SELECT 1 FROM public.inventory_items i JOIN public.source s ON s.id = i.source_id
+       WHERE s.deleted_at IS NOT NULL
+      UNION ALL
+      SELECT 1 FROM public.inventory_items i JOIN public.source s ON s.id = i.acquired_from_source_id
+       WHERE s.deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: >
+      The apply left its receipt. continuous false: it is an apply-window check, and every gate
+      above arms off this same row, so a missing receipt shows up as universal vacuity rather than
+      as one failure.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcebackfill-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false

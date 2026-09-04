@@ -254,12 +254,25 @@ post:
   # It reds on an environment where the code has landed but the DDL has not; that is the gate working.
   # See migrations/v4-putupsession-001/gates.yml for the apply sequencing and a self-armed sibling of
   # this assertion. Bump BOTH when the next column lands.
-  - name: post_column_count_is_24
+  #
+  # RE-PINNED 24 -> 25 on 2026-09-04 by V5-SOURCEKIND-001's session, which did not add the column.
+  # V5-INFLIGHTBATCH-001 added preservation_log.batch_id and was applied to BOTH live databases
+  # earlier the same day without bumping this number, so the scheduled invariant sweep went red on
+  # prod AND staging for a schema change that was entirely correct. Verified before bumping:
+  # preservation_log has 25 columns on live prod and batch_id is present.
+  #
+  # THE GATE DID ITS JOB — this is not an argument for retiring it. But note what it costs: a
+  # `continuous` count gate is a cross-migration coupling, so the session that adds a column has to
+  # know about a pin living in an unrelated migration's directory. Two of three column additions have
+  # now missed it. If a third does, prefer converting this to "every named column is present" (which
+  # widens safely and still catches a dropped column) over bumping a fourth time — a number that
+  # three separate sessions have failed to maintain is telling you something about the design.
+  - name: post_column_count_is_25
     sql: |
       SELECT count(*) FROM information_schema.columns
        WHERE table_schema='public' AND table_name='preservation_log'
     expect: scalar_eq
-    value: 24
+    value: 25
 
   - name: post_schema_version_recorded
     sql: |
