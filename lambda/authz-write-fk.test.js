@@ -284,6 +284,14 @@ const NOT_IN_SITES = [
   'critter::species_id', 'events::species_id',
   'inventory-items::variety_id', 'plants::cultivar_id', 'plants::variety_id',
   'preservation::variety_id', 'tags::cultivar_id',
+  // V5-SOURCEPICKER-001. public.source is a shared catalogue with RLS deliberately off —
+  // v5-sourceentity-001/0a:151-161 names plant_varieties as the precedent — so there is no owner to
+  // gate against, the same argument as inventory-items::variety_id two lines above. Liveness IS
+  // checked: findDeadSourceRef requires a row with deleted_at IS NULL before either column is
+  // written, which is the strictness varieties::variety_id records. These are here rather than in
+  // SITES because a household gate would break the picker for the other household, not because the
+  // write is unguarded.
+  'inventory-items::source_id', 'inventory-items::acquired_from_source_id',
   'evidence-ingest::source_tier', 'photos::source_tier',
   // ── No FK constraint exists on the column — there is no referenced row to own. ──
   'critter::target_id', 'events::target_id', 'events::source_id',
