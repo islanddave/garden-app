@@ -24,7 +24,7 @@
 // against and every assertion bites on logic or on what the client SENDS.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -57,7 +57,17 @@ const toRgb = (hex) => {
   return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`
 }
 const ALARM_INKS = [P.terra, P.warnBorder, P.severityUrgent].map(toRgb)
-const hasNoAlarmInk = (el) => ALARM_INKS.every(ink => !el.outerHTML.includes(ink))
+// ⚠ NARROWED 2026-09-04 by V5-BATCHCLOSE-001, in step with the identical helper in
+// PutUpGoingNow.test.jsx — see that file's block for the full reasoning and for the standing
+// instrument proof that all three inks still kill and that the carve-out cannot widen by accident.
+// In one sentence: the ruling is that the card BODY never reddens for a batch that is fine, not that
+// a role="alert" error string may not use the house error ink; without the carve-out a FAILED WRITE
+// would red a test whose subject is the pH prompt.
+const hasNoAlarmInk = (el) => {
+  const clone = el.cloneNode(true)
+  clone.querySelectorAll('[data-alarm-ink-exempt]').forEach(n => n.remove())
+  return ALARM_INKS.every(ink => !clone.outerHTML.includes(ink))
+}
 
 const NOW = new Date('2026-09-04T09:00:00').getTime()
 const local = (s) => new Date(s).toISOString()
@@ -294,7 +304,33 @@ describe('GoingNowView — the prompt and the recorded line on the card', () => 
     const line = screen.getByTestId('going-batch-ph-prompt')
     expect(line.textContent).toBe('Measured the pH in the last day or two?')
     expect(line.style.color).toBe(toRgb(P.mid))
-    expect(hasNoAlarmInk(screen.getByTestId('going-batch'))).toBe(true)
+    const card = screen.getByTestId('going-batch')
+    // POSITIVE ASSERTION over the same query on the same render: the sweep is reading a real, styled
+    // card rather than an empty element, and nothing on it is carrying the exemption attribute — so
+    // the absence below is about the paint, not about a carve-out that quietly swallowed the card.
+    expect(card.outerHTML).toContain(toRgb(P.border))
+    expect(card.querySelectorAll('[data-alarm-ink-exempt]')).toHaveLength(0)
+    expect(hasNoAlarmInk(card)).toBe(true)
+  })
+
+  // The prompt is the app speaking, and it must not talk over a batch the cook has explicitly set
+  // down: a PAUSED ferment was still being asked whether it had been measured. Both arms in one
+  // render off one fixture, so the absence cannot pass because the selector was wrong.
+  it('asks nothing of a PAUSED ferment, while its unpaused twin is still asked', () => {
+    const setDown = { ...FERMENT, id: 'kb-setdown', label: 'Set down', suspended_at: '2026-08-25T12:00:00.000Z' }
+    renderView([FERMENT, setDown])
+    const byId = Object.fromEntries(screen.getAllByTestId('going-batch')
+      .map(c => [c.getAttribute('data-batch-id'), c]))
+    expect(within(byId['kb-ferment']).getByTestId('going-batch-ph-prompt').textContent).toBe(PH_PROMPT)
+    expect(within(byId['kb-setdown']).queryByTestId('going-batch-ph-prompt')).toBeNull()
+    // The RECORDER is deliberately not gated the same way — a reading taken on a paused ferment is
+    // still a fact, and the door the cook opens makes no claim about the batch.
+    expect(within(byId['kb-setdown']).getByTestId('going-ph-open').textContent).toBe(PH_RECORD_CTA)
+  })
+
+  it('phPrompt itself is silent under suspension and speaks without it', () => {
+    expect(phPrompt(FERMENT, NOW)).toBe(PH_PROMPT)
+    expect(phPrompt({ ...FERMENT, suspended_at: '2026-08-25T12:00:00.000Z' }, NOW)).toBeNull()
   })
 
   it('renders the recorded value VERBATIM with the date it was taken, as one line', () => {
