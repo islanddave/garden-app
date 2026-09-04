@@ -144,10 +144,12 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
   })
 
   it('says so when the current stage has no entry behind it — the repair case', async () => {
-    // A stage corrected from the control on this page moves the pointer WITHOUT appending a log
-    // row (seed_lot_stage_log has no DELETE, so history is added to, never rewritten). The newest
-    // entry and where the lot is now then legitimately disagree, and leaving the user to notice
-    // that is how a correct record reads as a broken one.
+    // inventory_items.seed_stage can be set without a log row: the wide PUT and the create INSERT
+    // both assign the column and append nothing, and only the /seed-stage CTE logs. That is the
+    // shape of all three live staged lots. The newest entry and where the lot is now then
+    // legitimately disagree, and leaving the user to notice that is how a correct record reads as a
+    // broken one. (The client's own non-logging writer, the <select> that used to sit on this page,
+    // was removed by V5-SEEDSTAGEONEPLACE-001 — the server-side two remain.)
     itemRef.current = { ...LOT, seed_stage: 'drying' }
     historyRef.current = [HISTORY[0]]  // one `stored` entry, lot corrected back to drying
     await renderPage()
@@ -164,8 +166,9 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     // This is the fixture that separates them. Full history [stored, drying, fermenting] with the lot
     // corrected back to `drying`: the stage IS in the log at index 1, so the shipped `currentIdx ===
     // -1` test found no divergence and rendered nothing — leaving a CURRENT badge on the middle row
-    // with a newer `stored` entry above it and no explanation. Correcting a pointer BACKWARDS is the
-    // commonest thing the repair control does, so this was the detector's own central case.
+    // with a newer `stored` entry above it and no explanation. Correcting a stage BACKWARDS is the
+    // commonest repair there is — /seeds/saved's correction door now logs one, dated to when the lot
+    // actually entered it — so this was the detector's own central case.
     //
     // Mutation that must turn this red: `stageBehindLog = currentIdx > 0` → `= false`, or reverting
     // stageOffLog to `stageNotLogged` alone. Both leave every other test in this file green.

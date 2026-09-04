@@ -22,12 +22,15 @@
 // no lot can reach `stored` unanswered, so from here on a 0 there genuinely means zero. Prod
 // carries no lots at any seed_stage today, so the invariant holds with no backfill.
 //
-// The /inventory/:id half is src/__tests__/InventoryDetail.storedCount.test.jsx, and it is
-// DELIBERATELY ASYMMETRIC — dismissible there. That panel appears only AFTER its stage write has
-// landed, so "required" could only mean nagging until satisfied, and the row cannot tell an
-// answered 0 ("none of it was viable") from an unanswered one. It would nag forever on exactly the
-// lots whose owner did answer. That asymmetry was implemented, reverted, and is recorded here so it
-// is not re-attempted as an oversight.
+// THE /inventory/:id HALF IS GONE (V5-SEEDSTAGEONEPLACE-001, 2026-09-04). That page carried a
+// second, DELIBERATELY ASYMMETRIC count prompt — dismissible, because it appeared only AFTER its
+// stage write had landed, so "required" could only have meant nagging until satisfied. Its stage
+// control was removed so that a lot's stage changes in exactly one place and every change logs, and
+// the prompt went with it: it existed solely because that control could reach `stored`.
+//
+// So the guarantee it was there for now rests ENTIRELY on the arm below. No path anywhere in the app
+// can set `stored` without answering the count, because this sheet is the only path and it refuses a
+// blank before the request goes out.
 //
 // THE PAYLOAD IS THE SUBJECT, not the click, and for the same reason InventoryDetail's stage tests
 // give: there is no narrow quantity route, so the count rides PUT /api/inventory-items/:id — the
@@ -311,7 +314,7 @@ describe('parseCountInput — the rule the whole fix turns on', () => {
   })
 })
 
-describe('countPayloadFrom — the strip list, and its agreement with InventoryDetail', () => {
+describe('countPayloadFrom — the strip list, and its agreement with the handler', () => {
   const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
   it('strips the derived and presence-guarded keys and applies the count', () => {
@@ -328,25 +331,45 @@ describe('countPayloadFrom — the strip list, and its agreement with InventoryD
     expect(countPayloadFrom(null, 3)).toEqual({ quantity_on_hand: 3 })
   })
 
-  it('strips at least everything InventoryDetail strips', () => {
-    // The two lists are separate copies (a page must not import another page's module), so this is
-    // the seam. Asserted as a SUBSET in the safe direction: a key added to InventoryDetail's lists
-    // and not to this page's would otherwise start riding a body it was excluded from for a reason.
-    // Same source-text-scrape idiom as seedStageVocabulary.test.js, and it asserts its own match
-    // first so a rename cannot make it pass vacuously.
-    const detail = readFileSync(resolve(ROOT, 'src/pages/InventoryDetail.jsx'), 'utf8')
+  it('strips every key the handler reads by PRESENCE', () => {
+    // RE-ANCHORED, V5-SEEDSTAGEONEPLACE-001. This used to scrape PUT_DERIVED_KEYS +
+    // PUT_PRESENCE_GUARDED_KEYS out of InventoryDetail.jsx. Those constants were deleted with that
+    // page's stage control and count prompt — its only wide-PUT writers — so the old scrape now
+    // finds nothing, and re-creating them there to keep this green would be a guard citing code
+    // nothing runs.
+    //
+    // The replacement anchor is STRONGER, not a downgrade: it reads the AUTHORITY rather than a
+    // second hand-maintained copy. `Object.prototype.hasOwnProperty.call(body, 'x')` is the handler's
+    // own presence idiom, and every key written that way is one where OMITTING is the guaranteed
+    // no-op and MENTIONING is an assignment. This page round-trips a LIST row into the wide PUT, so
+    // any such key it echoes back is a stale value asserted as an edit — `seed_stage` most of all,
+    // where it would revert the move the sheet was titled for.
+    //
+    // Whole-file rather than PUT-arm-only, deliberately: the sub-routes use the same idiom for
+    // source_plant_id / source_kind, and those two are in our strip list as a DELAY FUSE for the day
+    // they join the PUT's SET list. Scoping the scrape to the PUT arm would let them silently fall
+    // out of the list before that day arrives.
+    const handler = readFileSync(resolve(ROOT, 'lambda/inventory-items/index.js'), 'utf8')
     const saved = readFileSync(resolve(ROOT, 'src/pages/SavedSeeds.jsx'), 'utf8')
-    const arrayOf = (src, name, where) => {
-      const m = src.match(new RegExp(`\\b${name}\\s*=\\s*\\[([^\\]]*)\\]`))
-      expect(m, `${name} not found in ${where} — renamed, moved, or reformatted across lines`).toBeTruthy()
-      return [...m[1].matchAll(/'([^']*)'/g)].map(x => x[1])
+    const m = saved.match(/\bLIST_ROW_PUT_STRIP\s*=\s*\[([^\]]*)\]/)
+    expect(m, 'LIST_ROW_PUT_STRIP not found in SavedSeeds.jsx — renamed, moved, or reformatted').toBeTruthy()
+    const ours = [...m[1].matchAll(/'([^']*)'/g)].map(x => x[1])
+    const guarded = [...new Set(
+      [...handler.matchAll(/hasOwnProperty\.call\(body, '([^']+)'\)/g)].map(x => x[1]),
+    )].sort()
+    // The full literal, not a length floor. A regex that silently stopped matching would otherwise
+    // report an empty set as agreement — the shape this file's own `stored` arm exists to refuse.
+    expect(guarded).toEqual([
+      'featured_photo_id', 'seed_process', 'seed_stage', 'source_kind', 'source_plant_id', 'variety_id',
+    ])
+    expect(guarded.filter(k => !ours.includes(k))).toEqual([])
+    // The GET-DERIVED half has no such idiom to scrape — these are columns the id-GET and the list
+    // query ADD, not columns on inventory_items — so they are named. Inert in the SET list today
+    // (it reads only the keys it names), stripped because a PUT body carrying a germination summary
+    // or a cultivar join is an invitation to wire one of them up.
+    for (const k of ['germination', 'featured_photo_view_url', 'variety_name', 'featured_is_explicit',
+                     'stage_entered_at', 'crop_slug']) {
+      expect(ours, `${k} must stay in LIST_ROW_PUT_STRIP`).toContain(k)
     }
-    const theirs = [
-      ...arrayOf(detail, 'PUT_DERIVED_KEYS', 'InventoryDetail.jsx'),
-      ...arrayOf(detail, 'PUT_PRESENCE_GUARDED_KEYS', 'InventoryDetail.jsx'),
-    ]
-    const ours = arrayOf(saved, 'LIST_ROW_PUT_STRIP', 'SavedSeeds.jsx')
-    expect(theirs.length).toBeGreaterThan(4)
-    expect(theirs.filter(k => !ours.includes(k))).toEqual([])
   })
 })

@@ -439,7 +439,7 @@ export default function SavedSeeds() {
   const [advancing, setAdvancing] = useState(null)   // the lot whose advance sheet is open
   const [starting, setStarting]   = useState(false)  // the "track a lot" picker sheet
   // BUG-SEEDPROCFORCED-001 — the packet picked in step 1, waiting on its process in step 2. Held
-  // rather than passed straight to openAdvance because the entry stage is not known until the
+  // rather than passed straight to openStageSheet because the entry stage is not known until the
   // process is chosen, and the advance sheet is titled by that stage.
   const [startItem, setStartItem] = useState(null)
   // BUG-SEEDCANDIDATEAMBIG-001 — the picker's filter box. Cleared whenever the sheet closes or the
@@ -464,6 +464,10 @@ export default function SavedSeeds() {
   const [trackedCropSel, setTrackedCropSel] = useState(() => new Set())
   const [busy, setBusy]       = useState(false)
   const [when, setWhen]       = useState(todayLocalISO())
+  // V5-SEEDSTAGEONEPLACE-001 — the refusal shown when a correction is submitted with no date. Its
+  // own state rather than a reuse of qtyErr: two fields, two refusals, and one shared slot would
+  // paint the count's message under the date box.
+  const [dateErr, setDateErr] = useState(null)
   const [note, setNote]       = useState('')
   // BUG-SEEDZEROSOWABLE-001 — the count, now asked on EVERY move (see COUNT_ASK). '' still writes
   // nothing, which keeps "I don't know yet" a real answer on the two in-flight stages; at `stored`
@@ -639,9 +643,23 @@ export default function SavedSeeds() {
     return m
   }, [visibleTracked])
 
-  const openAdvance = (item, toStage, process = null) => {
-    setAdvancing({ item, toStage, process })
-    setWhen(todayLocalISO())
+  // ── V5-SEEDSTAGEONEPLACE-001 — one sheet, two doors ─────────────────────────────────────────────
+  // The stage control on /inventory/:id is gone, so this page is now the ONLY place a lot's stage
+  // changes and every change writes a seed_lot_stage_log row. That means it has to be able to go
+  // BACKWARDS as well as forwards: seed_lot_stage_log has no DELETE route, so if the only movement
+  // available here were `nextStage()` — one step right, `stored` terminal — a mis-tapped stage would
+  // be permanently unfixable, and a `stored` lot would have no control at all.
+  //
+  // `correction` is what separates the two doors, and the ONE thing it changes that matters is the
+  // DATE DEFAULT. An advance happens now, so `when` seeds to today and the field is a convenience. A
+  // correction is a statement about the PAST — the lot entered this stage some day you already know
+  // — so seeding today would write `stage_entered_at = the moment you noticed the mistake`, which is
+  // precisely the number this page orders its whole queue by (BUG-SEEDELAPSEDUPDATED-001) and
+  // precisely the defect the old off-log repair path existed to avoid. Blank and required instead:
+  // the answer is asked for rather than assumed.
+  const openStageSheet = (item, toStage, { process = null, correction = false } = {}) => {
+    setAdvancing({ item, toStage, process, correction })
+    setWhen(correction ? '' : todayLocalISO())
     setNote('')
     setStagePlant('')
     setStagePlantFailed(false)
@@ -653,15 +671,26 @@ export default function SavedSeeds() {
     const held = Number(item?.quantity_on_hand)
     setQtyInput(Number.isFinite(held) && held > 0 ? String(held) : '')
     setQtyErr(null)
+    setDateErr(null)
   }
 
   const readCount = () => parseCountInput(qtyInput, advancing?.toStage)
 
   async function submitStage() {
     if (!advancing) return
-    // Refuse BEFORE any request. The stage POST is not undoable from this page — seed_lot_stage_log
-    // has no DELETE and the InventoryDetail control is the only repair — so a submit that would
-    // land the stage and then reject the count is the one ordering that cannot be backed out.
+    // Refuse BEFORE any request. The stage POST is not undoable — seed_lot_stage_log has no DELETE
+    // route — so a submit that would land the stage and then reject something else is the one
+    // ordering that cannot be backed out.
+    //
+    // V5-SEEDSTAGEONEPLACE-001 — the date is REQUIRED on the correction door and only there. The
+    // field opens blank precisely so it cannot be satisfied by a default, and an empty `when` would
+    // otherwise send `T12:00:00`, which Date.parse reads as NaN and the handler 400s on with an
+    // opaque message. Refused here by name instead.
+    if (advancing.correction && !when) {
+      setDateErr('Say when the lot actually entered this stage — that is the date the list counts from.')
+      return
+    }
+    setDateErr(null)
     const count = readCount()
     if (count.error) { setQtyErr(count.error); return }
     setQtyErr(null)
@@ -724,8 +753,10 @@ export default function SavedSeeds() {
       }
       // "Started in", not "Moved to", when this is the lot's first stage — `process` is set only on
       // the start path (BUG-SEEDPROCFORCED-001). A dry lot's first entry IS drying, and calling that
-      // a move implies a fermenting step it never had.
-      const verb = advancing.process ? 'Started in' : 'Moved to'
+      // a move implies a fermenting step it never had. And "Corrected to" on the correction door
+      // (V5-SEEDSTAGEONEPLACE-001), where "Moved to fermenting" would report a repair of a wrong
+      // record as a thing that happened to the seed.
+      const verb = advancing.process ? 'Started in' : advancing.correction ? 'Corrected to' : 'Moved to'
       show({ message: linkErr ?? qtyWriteErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
       load()
@@ -991,12 +1022,30 @@ export default function SavedSeeds() {
                           Set parent plant →
                         </Link>
                       )}
+                    {/* V5-SEEDSTAGEONEPLACE-001 — the correction door, on EVERY card including a
+                        `stored` one. `stored` is terminal so it gets no advance button, which used
+                        to leave the finished lots — the ones most likely to have been mis-tapped —
+                        with no stage control anywhere in the app once /inventory/:id lost its own.
+                        A quiet text control rather than a second primary button: advancing is the
+                        routine act and keeps the loud one, while changing a stage is by definition
+                        a repair. Sized like `set-source-plant` above and for the same reason
+                        (BUG-SEEDTAPTARGET-001) — a card action, not a link inside a sentence. */}
+                    <div>
+                      <button
+                        type="button"
+                        data-testid="change-stage"
+                        onClick={() => openStageSheet(item, item.seed_stage, { correction: true })}
+                        style={changeStageBtnStyle}
+                      >
+                        Change stage
+                      </button>
+                    </div>
                   </div>
                   {to && (
                     <button
                       type="button"
                       data-testid="advance-stage"
-                      onClick={() => openAdvance(item, to)}
+                      onClick={() => openStageSheet(item, to)}
                       style={advanceBtnStyle}
                     >
                       {STAGE_META[to].label} →
@@ -1033,11 +1082,37 @@ export default function SavedSeeds() {
       {advancing && (
         <Sheet
           open busy={busy} onClose={() => setAdvancing(null)}
-          title={`${advancing.process ? 'Start in' : 'Move to'} ${STAGE_META[advancing.toStage].label.toLowerCase()}`}
+          title={advancing.correction
+            ? 'Change stage'
+            : `${advancing.process ? 'Start in' : 'Move to'} ${STAGE_META[advancing.toStage].label.toLowerCase()}`}
         >
           <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem' }}>
             {advancing.item.variety_name || advancing.item.name}
           </p>
+          {/* V5-SEEDSTAGEONEPLACE-001 — ANY stage, not one step right. Offered on the correction
+              door only: on the START door the stage is decided by the process just chosen
+              (BUG-SEEDPROCFORCED-001) and letting it be overridden here would record a `wet`
+              process against a lot filed straight into drying, and on the ADVANCE door the button
+              the user pressed already named the stage.
+              The CURRENT stage stays in the list deliberately. Re-selecting it is not a no-op: it
+              appends a correctly-dated entry for a stage that has none, which is the exact repair
+              the three live lots need — their pointer says `stored` and the log has no `stored`
+              row, so the LATERAL that derives stage_entered_at matches nothing and every card
+              renders with no elapsed time at all. */}
+          {advancing.correction && (
+            <label style={fieldLabelStyle}>
+              Stage
+              <select
+                value={advancing.toStage ?? ''}
+                onChange={(e) => setAdvancing((a) => (a ? { ...a, toStage: e.target.value } : a))}
+                data-testid="stage-select" style={inputStyle}
+              >
+                {STAGES.map((s) => (
+                  <option key={s} value={s}>{STAGE_META[s].label}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label style={fieldLabelStyle}>
             When
             {/* Backdating is first-class here (see the file header) but FORWARD-dating is never
@@ -1046,9 +1121,34 @@ export default function SavedSeeds() {
                 longest, so it does not merely look odd — it silently leaves the list. `max` is the
                 native picker's own guard and costs nothing; the server-side half is separate. */}
             <input
-              type="date" value={when} max={todayLocalISO()} onChange={(e) => setWhen(e.target.value)}
-              data-testid="stage-date" style={inputStyle}
+              type="date" value={when} max={todayLocalISO()} onChange={(e) => { setWhen(e.target.value); if (dateErr) setDateErr(null) }}
+              aria-invalid={dateErr ? 'true' : undefined}
+              aria-describedby="ss-date-help"
+              data-testid="stage-date"
+              style={dateErr ? { ...inputStyle, borderColor: P.alertBorder } : inputStyle}
             />
+            {/* Said only on the correction door, where the field opens blank and is refused empty.
+                On an advance it is seeded to today and needs no explanation. */}
+            {advancing.correction && (
+              dateErr
+                ? (
+                  <span
+                    id="ss-date-help" role="alert" data-testid="stage-date-error"
+                    style={{ display: 'block', marginTop: 6, color: P.severityUrgent, fontSize: '0.78rem', fontWeight: 600, lineHeight: 1.5 }}
+                  >
+                    {dateErr}
+                  </span>
+                )
+                : (
+                  <span
+                    id="ss-date-help" data-testid="stage-date-help"
+                    style={{ display: 'block', marginTop: 6, color: P.mid, fontSize: '0.78rem', fontWeight: 400, lineHeight: 1.5 }}
+                  >
+                    The day the lot actually entered this stage, not today — the list counts elapsed
+                    time from it.
+                  </span>
+                )
+            )}
           </label>
           <label style={fieldLabelStyle}>
             Note <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
@@ -1177,7 +1277,7 @@ export default function SavedSeeds() {
                   onClick={() => {
                     setStarting(false)
                     setStartItem(null)
-                    openAdvance(startItem, meta.stage, key)
+                    openStageSheet(startItem, meta.stage, { process: key })
                   }}
                   style={processRowStyle}
                 >
@@ -1339,6 +1439,16 @@ const advanceBtnStyle = {
   minHeight: 48, padding: '0 14px', borderRadius: 8, border: `1px solid ${P.green}`,
   backgroundColor: P.white, color: P.green, fontWeight: 600, fontSize: '0.84rem', cursor: 'pointer',
   flexShrink: 0,
+}
+// V5-SEEDSTAGEONEPLACE-001 — the correction door. inline-flex + minHeight rather than padding so
+// the 44px box IS the tap target and the label stays centred in it, exactly as `set-source-plant`
+// above it does. Wrapped in a plain <div> at the call site so it starts its own line: the
+// `set-source-plant` link is inline-flex too, and the two would otherwise sit side by side.
+const changeStageBtnStyle = {
+  display: 'inline-flex', alignItems: 'center',
+  minHeight: 44, padding: '0 8px 0 0',
+  background: 'none', border: 'none', cursor: 'pointer',
+  color: P.mid, fontSize: '0.78rem', textDecoration: 'underline', fontFamily: 'inherit',
 }
 const trackBtnStyle = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,

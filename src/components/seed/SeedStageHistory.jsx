@@ -77,18 +77,21 @@ export default function SeedStageHistory({
   const isEmpty = rows.length === 0 && !hasParent
 
   // The newest logged entry carrying the lot's current stage. Found rather than assumed to be row
-  // 0, because the stage control on this page corrects inventory_items.seed_stage WITHOUT appending
-  // a log row — seed_lot_stage_log has no DELETE route, so a mis-tap is repaired by moving the
-  // pointer, not by rewriting what happened. "Newest entry" and "where the lot is now" are
-  // therefore genuinely allowed to differ, and when they do the user is told so below rather than
-  // left to notice.
+  // 0, because inventory_items.seed_stage can still be written WITHOUT appending a log row: only the
+  // /seed-stage CTE logs, while the wide PUT and the create INSERT both assign the column and append
+  // nothing. (The client's one non-logging stage writer — the <select> that used to sit on
+  // /inventory/:id — was removed by V5-SEEDSTAGEONEPLACE-001, but the two server-side writers remain
+  // and every live staged lot predates the change.) A backdated correction from /seeds/saved is the
+  // other producer: it logs, but its entry can be OLDER than an existing row for a different stage.
+  // "Newest entry" and "where the lot is now" are therefore genuinely allowed to differ, and when
+  // they do the user is told so below rather than left to notice.
   const currentIdx = currentStage ? rows.findIndex(r => r.stage === currentStage) : -1
 
   // BUG-SEEDSTAGEHEADSHIP-001 — MEMBERSHIP IS THE WRONG PREDICATE, and the difference is the whole
   // point of this notice. `currentIdx === -1` asks "is the current stage ANYWHERE in the history".
   // The invariant this panel exists to report is "is the current stage the HEAD of the history" —
-  // and the two disagree on precisely the case the repair control creates most often, because
-  // correcting a pointer BACKWARDS lands it on a stage that is already logged.
+  // and the two disagree on precisely the case a repair creates most often, because correcting a
+  // stage BACKWARDS lands it on one that is already logged, with a later entry still above it.
   //
   // Worked: log (newest first) [stored, drying, fermenting], lot corrected back to `drying`.
   // currentIdx is 1, membership says "no divergence", nothing renders — and the reader sees the
