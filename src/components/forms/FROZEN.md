@@ -32,6 +32,7 @@ Barrel: `src/components/forms/index.js`. Token layer: `formStyles.js` (`T`) + pa
 | **Badge** | Display-only label chip (tone-colored). Not a reward surface. |
 | **EventTypePicker** | Composite: event-type taxonomy picker. |
 | **PlantingSelect** | Composite: searchable single-planting combobox (V4-PLANTPICKER-001 — union of the six former hand-rolled pickers; multi-target scope stays in ScopeChecklist). |
+| **SourcePicker** | Composite: searchable single-source combobox WITH an inline mint (V4-SOURCEREG-001, kind mint V5-SOURCEKIND-001). Joins two patterns that existed separately: PlantingSelect's combobox contract (aria-activedescendant, namespaced option ids, measured flip placement, `useDismissable`/`LAYER.SHEET`, the shared `useComboboxInput` cluster — all reused, none re-derived) and CropTypeField's inline-create-beside-a-Select. Create path is staged in-panel per VarietyPicker: `＋ Create "<query>"` footer row (a real `role="option"` that counts toward keyboard nav, shown only when a query has no exact `looseKey` match) → a mint form rendered INSTEAD of the listbox → a 409 steer renders a real `Use "<name>"` adopt button, never a dead error string. Serves BOTH `source_id` (originator) and `acquired_from_source_id` (venue) — one component, axis carried by `label`. Every button in the mint panel is `type="button"`: it renders inside the host `<form>`. |
 | **ScopeChecklist** | Composite: multi-scope checkbox group. |
 | **PlantForm** | Composite: unified add/edit planting form (E1 union). |
 | **Spinner** | Loading indicator. |

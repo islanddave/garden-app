@@ -17,6 +17,11 @@ export { default as Sheet } from './Sheet.jsx'
 export { default as TileGrid } from './TileGrid.jsx'
 export { default as EventTypePicker } from './EventTypePicker.jsx'
 export { default as PlantingSelect } from './PlantingSelect.jsx'
+// V4-SOURCEREG-001: SourcePicker joins the frozen set (FROZEN.md + formsPrimitivesFreeze updated in
+// this change) — the ONE provenance chooser, serving both source_id and acquired_from_source_id.
+// `sourceSubLabel` is deliberately NOT re-exported: it is a row formatter, not a primitive, and the
+// barrel's export surface is frozen to primitives.
+export { default as SourcePicker } from './SourcePicker.jsx'
 // V4-CROPFILTER-001: FilterChipRow joins the frozen set (FROZEN.md + formsPrimitivesFreeze updated
 // in this change) — it is the ONE multi-select filter chip row, consumed by the picker now and the
 // harvest export sheet next. CROP_CHIPS_AUTO is deliberately NOT re-exported here: it is a prop
