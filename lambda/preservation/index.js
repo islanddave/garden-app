@@ -110,7 +110,26 @@ const SHELF_LIFE_MONTHS = {
   // hot_sauce is an acidified product — fermented or vinegar-based — so the shelf-stable kinds take
   // the high-acid canning figures (as passata and can_water_bath do) and the fridge kind takes the
   // fermented figure from `ferment` below-line. No new source, two existing rows recombined.
-  hot_sauce:      { pantry: 12, cold_storage: 18, fridge: 6, default: 12 },
+  //
+  // DEFAULT CORRECTED 12 -> 6, 2026-09-04. It was the PANTRY figure, which broke the rule stated
+  // eleven lines above on quick_pickle — "the DEFAULT is the fridge number, because an unrecorded
+  // storage kind must not be read as 'somebody processed this'" — and broke it in the more dangerous
+  // direction than quick_pickle would have. Same reasoning, opposite outcome, adjacent lines; ferment
+  // and ferment_mash below both already default to their fridge figure.
+  //
+  // The two explicit shelf-stable legs are DELIBERATELY unchanged. A vinegar hot sauce made to a
+  // tested recipe and water-bath processed is genuinely shelf-stable, and the user who picked
+  // `pantry` made that determination themselves — which the app records rather than second-guesses.
+  // What it must not do is make that determination FOR them out of a blank field.
+  //
+  // Worth knowing when revisiting: this method spans two products the corpus treats differently. A
+  // 2026-09-04 search of NCHFP, Penn State, UMN, USU, OSU, UGA and NC State found no tested home
+  // recipe for a fermented pepper-mash hot sauce and no home path to making one shelf-stable, and BC
+  // CDC's default for an unverified ferment is explicit: refrigerated. The shelf-stable legs are
+  // defensible for the vinegar-and-processed case and not for the fermented one, and `method` cannot
+  // tell them apart. Splitting that is a vocabulary change, not a constant change — see
+  // project-state/_build-inflight-20260904/FOODSAFETY-RULING-V100.md and its adversarial review.
+  hot_sauce:      { pantry: 12, cold_storage: 18, fridge: 6, default: 6 },
   // ferment_mash inherits `ferment` EXACTLY. A mash under brine is preserved by the same acidity as
   // a finished ferment and lives in the same places, so shortening it would be an invented number
   // dressed as caution. What makes it a distinct value is that it is UNFINISHED, which the label
