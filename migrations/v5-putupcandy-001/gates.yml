@@ -1,0 +1,269 @@
+# gates.yml
+# V5-PUTUPCANDY-001 — widen chk_preservation_log_method from 18 values to 19, adding `candy`.
+#
+# ── SEQUENCING: MIGRATION FIRST, THEN THE CODE, AND THE LAMBDA BEFORE THE PICKER ─────────────────
+#   1. STAGING: pre -> sweep -> apply 0a -> post -> rehearse 0r -> re-apply.
+#   2. PROD:    pre -> sweep -> apply 0a -> post.
+#   3. THEN promote the release that offers `candy`. Within that release the LAMBDA half must not
+#      trail the FRONTEND half — deploy-lambda.yml and deploy.yml are separate workflows, and a
+#      picker offering an option the API rejects is a dead control that 400s. If they cannot be
+#      ordered, ship the Lambda half in one release and the picker in the next; the window is then
+#      always in the safe direction (a value the API accepts and nothing sends).
+#
+# A WIDENING IS SAFE EARLY AND UNSAFE LATE — the exact inverse of the narrowing in
+# ../v5-preservunit-001/0b-normalise-and-narrow.sql, and of this migration's own 0r. Same invariant,
+# read in both directions, in the form v4-harvbasis-sample-001/gates.yml states it:
+#
+#     { values the constraint ACCEPTS }  ⊇  { values the live writer EMITS }
+#
+# Ship the code first and every attempt to save a candied batch is a 23514 the UI cannot explain.
+# Apply the CHECK first and the only effect is a constraint permitting a value nothing sends yet.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# WHAT THESE GATES DO NOT COVER, stated so the coverage is not overread. The dangerous half of this
+# change is in JavaScript, not SQL: five surfaces enumerate this vocabulary by hand and none errors
+# on a value it has never seen (enumerated in src/__tests__/putUpMethodParity.test.js's header). No
+# gate here can see them. In particular NOTHING BELOW CAN ASSERT that `candy` has a SHELF_LIFE_MONTHS
+# entry — and a method without one silently yields no use_by_target and disappears from use-soon
+# forever, which for the shortest-lived product in the vocabulary is the worst available failure.
+# That assertion lives in the parity test, which must be extended in the same commit as the Lambda
+# change; see ../v5-preservunit-001/CODE-CHANGES-vocabmig-20260904.md §2. A green run of this file is
+# not evidence the code half is done.
+#
+# AND THE ENTRY ITSELF IS UNSOURCEABLE, which no gate can see either. The session food-safety
+# research (project-state/_build-inflight-20260904/foodsafety-research.md §6.3, §9.1) searched NCHFP,
+# UGA, Penn State, OSU, UMN, USU, MSU and NC State and found NO published home guidance on
+# candied-fruit endpoints, storage or shelf life — "there is nothing to cite". `candy` will be the
+# first row in SHELF_LIFE_MONTHS whose figures come from a HOUSE document
+# (unsweet-watermelon-guide-V100-20260811.html) rather than from the NCHFP/USDA sources that table's
+# own header names. The 0a header carries the full argument and the deferral option. Do not let a
+# green gate run here read as sign-off on that decision; it is Dave's.
+#
+# COUNT DISCIPLINE. The sweep below is WHOLE-TABLE and deliberately omits `deleted_at IS NULL`: a
+# CHECK does not know about deleted_at, so a soft-deleted row on an unlisted method would abort the
+# ADD CONSTRAINT exactly as a live one would, and a live-only sweep would green-light an apply that
+# then fails. preservation_log was 5 rows / 5 live / 0 soft-deleted as of 2026-09-03
+# (v5-inflightbatch-001/gates.yml). No gate here asserts a row COUNT of user data — staging carries
+# different data from prod, so every count-shaped gate counts VIOLATORS and expects zero.
+#
+# ⚠ NO `::regclass` ANYWHERE. A regclass cast is evaluated even under a WHERE that is false, so it
+# ERRORS rather than returning zero rows on a database where the named relation is missing, turning a
+# vacuous gate into a hard failure and defeating the self-arming below. The pg_class/pg_namespace
+# joins are longer and they are the reason this works. (v4-putupmethod-001/gates.yml uses regclass
+# throughout and gets away with it because preservation_log always exists — a property of that
+# subject, not a licence.)
+#
+# ── SELF-ARMING ─────────────────────────────────────────────────────────────────────────────────
+# `continuous:` DEFAULTS TO TRUE and .github/workflows/gate-invariants.yml runs
+# `gate_runner.py --all --phase post --continuous-only` against live prod AND staging on every push
+# touching migrations/**, blocking, with no skip-if-unapplied logic in the runner. The push
+# necessarily precedes the apply, so a post gate asserting this migration's own effect is a
+# guaranteed red on the critical path — measured on this exact vocabulary once already, when
+# v4-putupmethod-001's post gates went red against live prod (4<>0, 0<>1) before they were armed.
+# post_nineteen_values_present is therefore wrapped in `EXISTS (schema_version = this migration)`:
+# vacuous before the apply, a permanent invariant after it, no follow-up edit.
+#
+# THREE GATES BELOW ARE DELIBERATELY *NOT* ARMED — post_no_bare_can_value, post_no_syrup_value and
+# post_method_check_is_validated. All three read the CONSTRAINT DEFINITION rather than user data,
+# which is what makes them safe to leave unarmed from a lane that could query neither live database:
+# their subject is the same catalog row v4-putupmethod-001/gates.yml already asserts on both. All
+# three are already TRUE against the live 18-value constraint,
+# because a widening keeps the constraint's name and validity: they are standing invariants of the
+# eighteen-value world as much as the nineteen-value one. Arming them would make them vacuous today
+# and DELETE a real assertion. Self-arming is for a gate that would otherwise be red, never a blanket
+# style — the rule and this exact list of exceptions come from v4-putupmethod-001/gates.yml.
+
+pre:
+  - name: pre_method_check_present
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.conname='chk_preservation_log_method'
+    expect: rowcount_eq
+    value: 1
+
+  # Not yet applied. Named on the value rather than on a count so a failure points at `candy` instead
+  # of at an arithmetic mismatch.
+  - name: pre_candy_absent
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(c.oid) LIKE '%''candy''%'
+    expect: rowcount_eq
+    value: 0
+
+  # The environment must be on the POST-BD-034 eighteen-value constraint. If it is not, 0a's list is
+  # not a superset of what is live and this apply would silently ROLL FORWARD or ROLL BACK an
+  # unrelated vocabulary change. Named on ferment_mash, the last value BD-034 added.
+  - name: pre_vocabulary_is_the_eighteen_value_form
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(c.oid) LIKE '%''ferment_mash''%'
+         AND pg_get_constraintdef(c.oid) LIKE '%''purchased_preserved''%'
+    expect: rowcount_eq
+    value: 1
+
+  # The canning SAFETY split is the one thing in this vocabulary that is not a labelling preference:
+  # water-bath is high-acid only, pressure is low-acid, and a generic `can` would let a user record a
+  # low-acid jar as safely processed. Asserted BEFORE the DROP so that if the constraint were somehow
+  # already wrong, this migration is not the thing that gets blamed for it.
+  - name: pre_canning_safety_split_intact
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(c.oid) LIKE '%''can_water_bath''%'
+         AND pg_get_constraintdef(c.oid) LIKE '%''can_pressure''%'
+         AND pg_get_constraintdef(c.oid) NOT LIKE '%''can''%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupcandy-20260904'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: every predicate a CHECK is about to enforce must already hold. For a strict superset this
+  # is expected to be trivially true — which is exactly why it is worth RUNNING rather than assuming.
+  # It is the only assertion in this file that would catch "the new list is not actually a superset",
+  # i.e. a value fat-fingered or dropped while retyping eighteen strings into 0a. If it returns
+  # anything, 0a's ADD CONSTRAINT raises 23514 and aborts the apply.
+  #
+  # WHOLE-TABLE, no deleted_at filter, deliberately: see the count-discipline note in the header.
+  - name: sweep_every_stored_method_satisfies_the_new_vocabulary
+    sql: |
+      SELECT count(*) FROM public.preservation_log
+       WHERE method NOT IN (
+         'roast_freeze','whole_freeze','blanch_freeze','dehydrate','powder','passata',
+         'can_water_bath','can_pressure','jam_preserve','ferment','cure_store','cold_store',
+         'purchased_preserved','quick_pickle','pesto','hot_sauce','ferment_mash','candy','other'
+       )
+    expect: scalar_eq
+    value: 0
+
+post:
+  # continuous: false — a pure apply receipt, and the ONE gate shape here that cannot be self-armed.
+  # Arming it on its own version row gives EXISTS(v) AND NOT EXISTS(v): unsatisfiable in every state,
+  # i.e. permanently vacuous, which is worse than temporarily red. Not silenced at the apply —
+  # gate_runner honours `continuous: false` only under --continuous-only, which gate-invariants.yml
+  # passes and the promote runbook does not.
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupcandy-20260904'
+    expect: rowcount_eq
+    value: 1
+
+  # WIDENED, NOT REPLACED — the whole risk of a DROP + ADD. Walks the expected vocabulary against the
+  # live definition so a value silently lost during the retype is NAMED by its absence rather than
+  # merely counted. The eighteen pre-existing values are listed first; losing any of them is a
+  # data-destroying narrowing wearing the costume of an additive change.
+  #
+  # SELF-ARMING per the header. The gate was already violation-shaped (it counts values MISSING from
+  # the live definition, expecting 0), so arming it needed only the EXISTS conjunct — before the
+  # apply the unnest scan yields no rows, the count is 0, and it passes while CLAIMING nothing.
+  - name: post_nineteen_values_present
+    sql: |
+      SELECT count(*) FROM unnest(ARRAY[
+        'roast_freeze','whole_freeze','blanch_freeze','dehydrate','powder','passata',
+        'can_water_bath','can_pressure','jam_preserve','ferment','cure_store','cold_store',
+        'purchased_preserved','quick_pickle','pesto','hot_sauce','ferment_mash','other',
+        'candy'
+      ]) AS v(val)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupcandy-20260904')
+         AND (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='preservation_log'
+                 AND c.conname='chk_preservation_log_method')
+             NOT LIKE '%''' || v.val || '''%'
+    expect: scalar_eq
+    value: 0
+
+  # NOT SELF-ARMED — already true, and the standing SAFETY invariant of this vocabulary in every
+  # version of it. A bare `can` would erase the high-acid / low-acid distinction that decides whether
+  # a jar is safe. It is also half the non-vacuity proof for the gate above: if the LIKE mechanism
+  # matched everything, this would fail.
+  - name: post_no_bare_can_value
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(c.oid) LIKE '%''can''%'
+    expect: rowcount_eq
+    value: 0
+
+  # NOT SELF-ARMED — already true, and it is the OTHER half of the non-vacuity proof, chosen to
+  # discriminate at exactly the hard boundary: '%''candy''%' must match 'candy'::text and must NOT
+  # match 'candy_syrup'::text, because the quotes are part of the pattern. It doubles as the standing
+  # record that candy_syrup was CONSIDERED AND DEFERRED (0a header, "why one value and not two") — a
+  # citable figure exists for it but nothing in Dave's request or his data asks for it, per the same
+  # precedent that dropped salsa and juice. If a future change adds it, this gate is where the
+  # decision gets re-opened deliberately instead of by accident.
+  - name: post_no_syrup_value
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.conname='chk_preservation_log_method'
+         AND (   pg_get_constraintdef(c.oid) LIKE '%''candy_syrup''%'
+              OR pg_get_constraintdef(c.oid) LIKE '%''syrup''%')
+    expect: rowcount_eq
+    value: 0
+
+  # NOT SELF-ARMED — already true. The constraint must be VALIDATED, not merely present: a NOT VALID
+  # constraint would pass a presence check while enforcing nothing on rows that already exist. The
+  # widening is born valid precisely so this can be asserted rather than hoped for, and a widening
+  # preserves both the name and the validity, so this holds across the apply in both directions.
+  - name: post_method_check_is_validated
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class     t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='preservation_log'
+         AND c.conname='chk_preservation_log_method'
+         AND c.contype='c' AND c.convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # NOT PRESENT, DELIBERATELY, AND THE REASON IS WORTH THE SPACE. A gate named
+  # post_other_rows_still_carry_their_free_text was drafted and CUT. Two independent defects, both
+  # instructive:
+  #   1. It was BYTE-FOR-BYTE REDUNDANT with an existing validated constraint. v4-putup-001's
+  #      chk_preservation_log_method_other is already
+  #      `method <> 'other' OR (method_other_text IS NOT NULL AND btrim(method_other_text) <> '')`.
+  #      A gate asserting exactly what a CHECK enforces detects nothing and cannot fail except by
+  #      the constraint having been dropped.
+  #   2. Worse, ITS COMMENT PROMISED SOMETHING ITS SQL DID NOT DO. The comment claimed it measured
+  #      whether the `other` escape hatch was refilling — the pathology `candy` exists to relieve —
+  #      while the predicate only tested for BLANK free text. Those are different questions.
+  # The thing the comment wanted is not gateable here: "no live row uses method='other'" is a
+  # prod-derived absolute, it is FALSE today (the vinegar-pickle row), and staging carries different
+  # data. It belongs in a periodic review of the vocabulary against the practice, not in a shared
+  # blocking CI workflow. Recorded so the next author does not re-derive the same broken gate.
