@@ -60,6 +60,14 @@ const SURFACES = [
   // Escape aimed at the picker would resolve to the route overlay under it and dismiss the whole
   // page mid-selection. It stays UNDER SYSTEM so a discard confirm still outranks it.
   { file: 'components/forms/ScopeChecklist.jsx', layer: 'DIALOG', paints: Z.dialog },
+  // V5-SOURCEPICKER-001. Same registration and the same reasoning as PlantingSelect above, because
+  // it is the same kind of object: a combobox panel that is a DESCENDANT of the form hosting it, so
+  // it paints inside that form's stacking context and is peer to it rather than a system-level
+  // interruption over it. SHEET plus the equal-layer tiebreak (later registration wins) is what puts
+  // Back and Escape on the panel instead of on whatever route or sheet it was opened inside — which
+  // matters more here than for most, since this picker is reachable from inside the Sheet-hosted
+  // plant editor as well as from a full page.
+  { file: 'components/forms/SourcePicker.jsx', layer: 'SHEET', paints: Z.sheet },
 ]
 
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8')

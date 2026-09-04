@@ -356,10 +356,17 @@ function fermentUrgency(item) {
 // It rides harmlessly today only because the handler's SET list does not mention it — exactly the
 // delay fuse described above for source_plant_id/source_kind, and the reason this list is a strip
 // rather than a whitelist. Stripping it now costs nothing and removes the fuse.
+// V5-SOURCEPICKER-001 adds `source_id` and `acquired_from_source_id`, and unlike the delay fuses
+// above these are LIVE from the day they land: the handler's PUT SET list names both behind a
+// hasOwnProperty sentinel, so mentioning either IS an assignment. This page round-trips a list row
+// into the wide PUT, and the V5-SOURCEBACKFILL-001 backfill put a non-null `source_id` on all 504
+// inventory rows — so without these two entries every count edit made here would re-assert whatever
+// source the list row was holding. Against a stale row that silently reverts a provenance change
+// made anywhere else in the app, and answers 200.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
-  'source_kind',
+  'source_kind', 'source_id', 'acquired_from_source_id',
 ]
 
 /** A complete wide-PUT body from a list row, with the count applied. Pure, exported for test. */

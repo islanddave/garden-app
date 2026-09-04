@@ -359,8 +359,13 @@ describe('countPayloadFrom — the strip list, and its agreement with the handle
     )].sort()
     // The full literal, not a length floor. A regex that silently stopped matching would otherwise
     // report an empty set as agreement — the shape this file's own `stored` arm exists to refuse.
+    // V5-SOURCEPICKER-001 added the last two. They differ in kind from source_plant_id/source_kind,
+    // which sit in the strip list as a DELAY FUSE for a day that has not come: these two ARE in the
+    // PUT's SET list already, so for them omitting is the no-op and mentioning is a live assignment
+    // against a column the backfill populated on every inventory row.
     expect(guarded).toEqual([
-      'featured_photo_id', 'seed_process', 'seed_stage', 'source_kind', 'source_plant_id', 'variety_id',
+      'acquired_from_source_id', 'featured_photo_id', 'seed_process', 'seed_stage', 'source_id',
+      'source_kind', 'source_plant_id', 'variety_id',
     ])
     expect(guarded.filter(k => !ours.includes(k))).toEqual([])
     // The GET-DERIVED half has no such idiom to scrape — these are columns the id-GET and the list
