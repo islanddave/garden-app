@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.112.0",
+    "date": "2026-09-04",
+    "highlights": [
+      "Saved seed lots: the harvest year now actually saves. Setting it previously reported success and stored nothing.",
+      "The seed harvest year is now shown and editable on a seed lot's inventory page — the first surface in the app that displays it.",
+      "Cultivar search results are tappable again. Around half the variety library — every cultivar with no planting — could not be opened at all before this."
+    ]
+  },
+  {
     "version": "4.111.0",
     "date": "2026-09-04",
     "highlights": [
