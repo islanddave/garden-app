@@ -40,6 +40,8 @@ import { buttonChrome } from '../components/forms/formStyles.js'
 // PlantForm is ALREADY in the frozen barrel set (FROZEN.md / formsPrimitivesFreeze.test.js), so this
 // adoption needs no freeze change; that freeze is a reason to use it, not to route around it.
 import { PlantForm } from '../components/forms/index.js'
+// V5-INFLIGHTBATCH-001 — the kitchen destination's start row and the two pure functions behind it.
+import StartChips, { resolveStart, isPackTime } from '../components/kitchen/StartChips.jsx'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger write on the event save below.
 import { recordCropLog } from '../lib/cropLogLedger.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
@@ -79,6 +81,23 @@ const MODES = [
   { id: 'planting',  label: 'New planting',      hint: 'Create a planting, this photo becomes its picture' },
   { id: 'event',     label: 'Log on a planting', hint: 'Attach this photo to an event (Watered, Harvested…)' },
   { id: 'location',  label: 'Log on a location', hint: 'Attach this photo to a bed, area or structure — no planting needed' },
+  // V5-INFLIGHTBATCH-001 — THE CARD WITH NO PLANT IN IT, and the reason the row exists. Every other
+  // destination here is plant-shaped: four of the six demand a planting and the fifth demands a
+  // place. A pepper mash drawn from thirty plantings plus bought peppers plus salt fits none of
+  // them, so the first question this picker asked had NO CORRECT ANSWER — which is the measured
+  // mechanism behind a mash that sat three weeks and produced no record at all (0 preservation_log
+  // rows since 2026-08-21, at maximum discoverability).
+  //
+  // ORDER, against the two rules this list already carries. 'inventory' stays LAST, untouched. This
+  // sits fourth because that is the seam between the two existing groups — 'planting'/'event'/
+  // 'location' log something that happened, 'replace'/'attachonly' aim a photo at a planting that
+  // already exists — and because of the fold. What is MEASURED is in the retake control's comment
+  // below: at 360x660 the fifth and last card sat at y=608 with 660 of viewport. That a SIXTH card
+  // would clear the fold is an EXTRAPOLATION from one card's height, not a second measurement —
+  // nothing in the repo instruments this list (the log-chooser layout gate measures Log Event's
+  // chooser, not Snap's cards). Fourth position needs no such argument either way: it renders where
+  // 'replace' already renders today, which is measured ground.
+  { id: 'kitchen',   label: 'Something in the kitchen', hint: 'A mash, a ferment, a batch drying — no planting, no date, no method needed' },
   { id: 'replace',   label: 'Update a photo',    hint: 'Set this as an existing planting’s photo' },
   // V4-SNAPPHOTOONLY-001 (BD-065) — Dave: "I just want the photo attached to the plant. It is not
   // the hero shot and it does not need to be an event." The two neighbouring destinations each made
@@ -219,6 +238,13 @@ export default function CaptureFlow() {
   // and the whole difference between them is that one overwrites the main picture — a carried-over
   // choice is exactly how someone replaces a hero shot they meant only to add beside.
   const [atPlant, setAtPlant] = useState('')
+  // V5-INFLIGHTBATCH-001. Four pieces of state and only ONE of them is required — the label. The
+  // chip and the picked date are the start (both optional; see StartChips), and the brine note is
+  // asked only at pack time. There is deliberately no kind, no quantity and no planting here.
+  const [kbLabel, setKbLabel] = useState('')
+  const [kbChip, setKbChip]   = useState(null)
+  const [kbPickDate, setKbPickDate] = useState('')
+  const [kbBrine, setKbBrine] = useState('')
   const [invName, setInvName] = useState('')
   const [invType, setInvType] = useState('consumable')
   const [invCat, setInvCat]   = useState('other')
@@ -259,6 +285,10 @@ export default function CaptureFlow() {
     if (draft.locPlace) setLocPlace(draft.locPlace)
     if (draft.rpPlant)  setRpPlant(draft.rpPlant)
     if (draft.atPlant)  setAtPlant(draft.atPlant)
+    if (draft.kbLabel)  setKbLabel(draft.kbLabel)
+    if (draft.kbChip)   setKbChip(draft.kbChip)
+    if (draft.kbPickDate) setKbPickDate(draft.kbPickDate)
+    if (draft.kbBrine)  setKbBrine(draft.kbBrine)
     if (draft.invName)  setInvName(draft.invName)
     if (draft.invType)  setInvType(draft.invType)
     if (draft.invCat)   setInvCat(draft.invCat)
@@ -274,9 +304,12 @@ export default function CaptureFlow() {
   // pristine mount as touched.
   const today = todayStr()
   const plantFormTouched = Object.keys(SNAP_PLANT_FORM).some(k => plantForm[k] !== SNAP_PLANT_FORM[k])
+  // kbChip seeds to null and the other three to '', so plain truthiness is the right test for all
+  // four — unlike the seeded-non-empty fields above.
   const hasDraftContent = (
     plantFormTouched ||
     !!(evPlant || locPlace || rpPlant || atPlant || invName) ||
+    !!(kbLabel || kbChip || kbPickDate || kbBrine) ||
     evType !== 'watering' || evDate !== today ||
     invType !== 'consumable' || invCat !== 'other' || invQty !== '1' || invUnit !== 'each'
   )
@@ -289,9 +322,11 @@ export default function CaptureFlow() {
     if (!hasDraftContent || step === 'done') return
     writeDraft(DRAFT_KEY, {
       plantForm, evPlant, evType, evDate, locPlace, rpPlant, atPlant,
+      kbLabel, kbChip, kbPickDate, kbBrine,
       invName, invType, invCat, invQty, invUnit,
     })
   }, [hasDraftContent, step, plantForm, evPlant, evType, evDate, locPlace, rpPlant, atPlant,
+      kbLabel, kbChip, kbPickDate, kbBrine,
       invName, invType, invCat, invQty, invUnit])
 
   // GUARD predicate — SEPARATE from the stash and deliberately ONE term, which is both necessary
@@ -343,7 +378,12 @@ export default function CaptureFlow() {
     // planting into the next capture, and on THIS destination that is a silent wrong-write — the
     // save needs no other field, so a stale selection plus one Save tap files the photo against a
     // planting the user never picked for it.
-    setRpPlant(''); setAtPlant(''); setInvName(''); setInvType('consumable'); setInvCat('other'); setInvQty('1'); setInvUnit('each')
+    setRpPlant(''); setAtPlant('')
+    // V5-INFLIGHTBATCH-001: same wrong-write hazard as atPlant directly above, and worse in kind —
+    // this destination needs no picker at all, so a carried-over label plus one Save tap creates a
+    // SECOND batch named after the previous one, with this photo on it.
+    setKbLabel(''); setKbChip(null); setKbPickDate(''); setKbBrine('')
+    setInvName(''); setInvType('consumable'); setInvCat('other'); setInvQty('1'); setInvUnit('each')
     // PRE-EXISTING, surfaced by V4-SNAPTOAST-001: `undone` was never cleared here, so undoing a save
     // and then tapping Save & Next carried the flag into the NEXT capture — its done card opened
     // already struck through as "Undone" with Undo withdrawn, describing a save that had in fact
@@ -377,6 +417,11 @@ export default function CaptureFlow() {
     if (saving) return
     save()
   }
+
+  // V5-INFLIGHTBATCH-001 — one predicate, read by BOTH the render (whether to show the salt field)
+  // and save() (whether to send what it holds). Deriving it twice is how a hidden field's stale
+  // value reaches the wire.
+  const packTime = isPackTime({ chip: kbChip, pickedDate: kbPickDate })
 
   async function save() {
     setSaving(true); setErr(null)
@@ -485,6 +530,58 @@ export default function CaptureFlow() {
           label: `Photo added to ${place?.full_path ?? 'location'}`,
           link: { to: `/locations/${locPlace}`, label: 'View location', name: place?.full_path ?? 'location' },
           undo: () => fetch('/api/photos/' + photo.id, { method: 'DELETE' }) })
+      } else if (mode === 'kitchen') {
+        // V5-INFLIGHTBATCH-001. THE WHOLE CONTRACT OF THIS BRANCH: a label and a photo is a
+        // COMPLETE, VALID record. No planting, no date, no method, no quantity is required, and
+        // nothing below may quietly start requiring one.
+        const label = kbLabel.trim()
+        if (!label) throw new Error('Give it a name')
+        // The photo goes up FIRST, into the inbox: `intake_status: 'pending_tag'` with no parent is
+        // the one shape photos_must_have_parent admits for a parentless row, and it is the same
+        // linkage PhotoLibrary.jsx:556 passes on its "upload without choosing a parent" path. A
+        // kitchen batch is not one of photos' parent columns and inventing a plant/location parent
+        // here would be the "logged against whichever planting happened to be nearby" lie the
+        // location destination already exists to stop. The link runs the other way, through
+        // kitchen_batch.cover_photo_id, and the row's own resting state stays honest: an untagged
+        // photo is a legitimate terminal state (QuickTagCarousel treats Skip as "not now, never
+        // never"), so an undone save leaves evidence rather than a mess.
+        const photo = await attach({ intake_status: 'pending_tag' }, 'standalone', null)
+        // START, DERIVED — never asked as a grade, and read off `photos.taken_at` (the COLUMN on the
+        // row we just registered) rather than from EXIF, which stripImageFile has already destroyed
+        // by the time the bytes reach S3. resolveStart owns the DB biconditional; see its comment.
+        const start = resolveStart({
+          chip: kbChip, pickedDate: kbPickDate,
+          photoTakenAt: photo?.taken_at ?? null, photoId: photo?.id ?? null,
+        })
+        const batch = await fetch('/api/kitchen-batches', { method: 'POST', body: JSON.stringify({
+          label,
+          ...start,
+          // Gated on the SAME predicate the field is rendered by: a note typed at pack time and then
+          // back-dated by a later chip tap is a value the user can no longer see, and sending it
+          // would be a silent write. Free text, never a number — requiring a scale means it is
+          // never filled in at all.
+          brine_note: packTime && kbBrine.trim() ? kbBrine.trim() : null,
+          cover_photo_id: photo?.id ?? null,
+          // `kind` IS DELIBERATELY ABSENT from this body, not merely unset. It is nullable in the
+          // schema on purpose: the shipped put-up method picker mis-files 40% of its live rows, and
+          // a kind chosen at the moment of lowest available attention is the decision this card was
+          // built to remove. It is assignable later, from a surface that is not the kitchen counter.
+        }) })
+        // THE SUCCESS COPY IS A PHYSICAL INSTRUCTION, and it is the only ambient time cue that
+        // reaches where the batch actually lives. Everything else this app could show is inside an
+        // app that is closed while the jar sits on a shelf; a date on the lid degrades gracefully
+        // when the app is never opened again. Dated from the resolved start when there is one and
+        // from today when there is not — writing today's date on a lid is honest either way, and
+        // nothing here reads as a gap to be filled in (an unknown start is a permanent, acceptable
+        // terminal state — never a warning, never a "complete this").
+        const lidDate = start.started_at ? new Date(start.started_at) : new Date()
+        setResult({ kind: 'kitchen', id: batch?.id ?? null, label: `Kitchen batch “${label}” started`,
+          hint: `Write “${label} — ${lidDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}” on the lid.`,
+          // NO LINK, unlike every sibling destination — there is no batch surface to send anyone to
+          // yet. A "View batch" control pointing at a route that does not exist is a dead end, and
+          // the done card's own rule is one link per destination or none.
+          link: null,
+          undo: () => fetch('/api/kitchen-batches/' + batch.id, { method: 'DELETE' }) })
       } else if (mode === 'replace') {
         const pl = plantings.find(p => p.id === rpPlant)
         if (!pl) throw new Error('Pick a planting')
@@ -727,6 +824,35 @@ export default function CaptureFlow() {
                 )}
               </>
             )}
+            {/* V5-INFLIGHTBATCH-001 — ONE required field, and everything else is a tap or nothing.
+                The label is free text because free text cannot be wrong; the start is seven chips
+                and no date picker by default; the salt note appears only at pack time. There is
+                deliberately no planting picker, no method picker, no quantity and no date field —
+                each of those is a decision with a perceived correctness cost, and an entry form
+                with any uncertain required field is what converts a five-second act into an
+                open-ended one that gets deferred indefinitely. */}
+            {mode === 'kitchen' && (
+              <>
+                <Field label="What is it?" required>
+                  <Input data-testid="cap-kblabel" value={kbLabel} onChange={e => setKbLabel(e.target.value)}
+                    placeholder="e.g. Pepper mash" />
+                </Field>
+                <StartChips value={kbChip} onChange={setKbChip}
+                  pickedDate={kbPickDate} onPickedDateChange={setKbPickDate} />
+                {/* THE ONE NUMBER WORTH INTERRUPTING FOR, and only while the cook is still holding
+                    it. It sets both the safety margin and the rate, and it is gone forever if asked
+                    a week later — so it is asked at pack time and never afterwards. Free text, any
+                    shape ("1 tsp per cup", "a big pinch"): requiring a scale means requiring a
+                    measurement nobody took, which yields a blank rather than a number. */}
+                {packTime && (
+                  <Field label="Salt or brine" optional help="However you measured it — no scale needed.">
+                    <Input data-testid="cap-kbbrine" value={kbBrine} onChange={e => setKbBrine(e.target.value)}
+                      placeholder="e.g. 1 tsp per cup, or a big pinch" />
+                  </Field>
+                )}
+                <Note>Nothing else is needed — a name and this photo is a complete record.</Note>
+              </>
+            )}
             {mode === 'replace' && (
               <>
                 <Field label="Planting to update">
@@ -798,6 +924,16 @@ export default function CaptureFlow() {
             </span>
             {!undone && <Button data-testid="cap-undo" variant="secondary" disabled={saving} onClick={doUndo} style={{ minHeight: 34, padding: '5px 12px' }}>Undo</Button>}
           </div>
+          {/* V5-INFLIGHTBATCH-001 — an optional second confirmation line, currently used only by the
+              kitchen destination for the write-on-the-lid instruction. Its own row, above the exit
+              buttons: it is a thing to DO in the next ten seconds, not a control, so it must not sit
+              in the utility row beside Undo nor compete with the exits below.
+              WITHDRAWN once undone, on the same flag and for the same reason as the link — there is
+              no batch to label any more, and an instruction to write a date on a jar for a record
+              that has just been retracted is worse than silence. */}
+          {result.hint && !undone && (
+            <p data-testid="cap-hint" style={{ fontSize: '0.85rem', color: P.mid, margin: '0 0 14px' }}>{result.hint}</p>
+          )}
           {/* V4-SNAPTOAST-001: the link sits in the EXIT row beside Done, not in row 1 beside Undo.
               Row 1 is the utility zone — it reverses a write and must be reliably noticed
               (PostSaveFeedback §1); "View planting" is the opposite kind of act, it LEAVES. Grouping
