@@ -1,9 +1,11 @@
 // src/components/putup/BatchDetailView.jsx
 // V5-KBCLOSE-001 — one batch, opened on purpose: what went in, what happened to it, what came out.
 //
-// CONTROLLED. This component issues NO GET of its own — `batch` / `inputs` / `stages` / `outputs`
-// arrive already fetched, and `onChanged` walks back up to whoever owns the fetch. That is the same
-// contract GoingNowView holds and it is what keeps the page's invalidation path intact.
+// CONTROLLED. This component issues no GET for its OWN data — `batch` / `inputs` / `stages` /
+// `outputs` arrive already fetched, and `onChanged` walks back up to whoever owns the fetch. That is
+// the same contract GoingNowView holds and it is what keeps the page's invalidation path intact.
+// The hosted BatchInputsField reads for its OWN action (the crop vocabulary its add flow offers) and
+// that is a different thing: it is handed `inputs`, so it never re-reads the batch this page fetched.
 // `nowMs` is a PROP for the same reason it is on GoingNowView: ONE instant per render, so two lines
 // cannot disagree mid-paint and a test can pin an age to a fixed literal.
 //
@@ -22,11 +24,12 @@
 //
 // These are guarded by BatchDetailView.test.jsx's own sweep, over THIS root testid. The shipped
 // sweeps are scoped to `going-now-view` and would stay green over every one of them.
-import React, { useState } from 'react'
+import React from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { describeAge, describeStage, isSuspended } from './goingNow.js'
 import { describeOutcome } from './batchClose.js'
 import BatchCloseField from './BatchCloseField.jsx'
+import BatchInputsField from './BatchInputsField.jsx'
 import { preservedOn } from './JarPicker.jsx'
 
 // Local copies of two private vocabularies. STAGE_KIND_LABELS is not exported from goingNow.js and
@@ -48,6 +51,10 @@ function shortDate(iso) {
   return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+// Exported and still bound to KITCHEN_INPUT_KINDS, but no longer rendered here: BatchInputsField
+// owns the inputs section since 20260904 and formats a row through batchInputs.js's own
+// describeInputRow. Kept rather than deleted because the parity assertion over INPUT_KIND_LABELS is
+// a live guard against a vocabulary drifting from the Lambda's, and it needs a caller to test.
 export function inputRowText(row) {
   if (!row) return ''
   const parts = [INPUT_KIND_LABELS[row.input_kind] || 'Input']
@@ -96,8 +103,6 @@ function Section({ title, testId, children }) {
 }
 
 export default function BatchDetailView({ batch, inputs, stages, outputs, loading, error, nowMs, onChanged }) {
-  const [showInputs, setShowInputs] = useState(false)
-
   if (loading) {
     return (
       <div data-testid="batch-detail-view">
@@ -168,39 +173,16 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
       )}
 
       <Section title="What went in" testId="batch-detail-inputs">
-        <div data-testid="batch-detail-inputs-count" style={{ color: P.mid, fontSize: T.type.sm }}>
-          {/* Counted off the RESOLVED rows, not off the view's `input_count` — that column arrives
-              as a STRING off the bigint boundary, and a retry after a dropped write reports a delta
-              rather than the truth. The count is the headline BECAUSE the rows are not: 139 picks is
-              the measured fan-in and a scrollable list of them answers nothing a cook asks. No
-              roll-up either — inputs[] carries no weight, and a total over `qty` would sum
-              incompatible units. */}
-          {inputRows.length === 1 ? '1 thing went in' : `${inputRows.length} things went in`}
-        </div>
-        {inputRows.length > 0 && (
-          <button type="button" data-testid="batch-detail-inputs-toggle" aria-expanded={showInputs}
-            onClick={() => setShowInputs(v => !v)}
-            style={{ minHeight: T.tapMinHeight, background: 'none', border: 'none', padding: '2px 8px 2px 0',
-              cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
-            {showInputs ? 'Hide what went in' : 'List them →'}
-          </button>
-        )}
-        {showInputs && (
-          <>
-            <ul data-testid="batch-detail-inputs-list" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0 }}>
-              {inputRows.map(row => (
-                <li key={row.id} data-testid="batch-detail-input"
-                  style={{ padding: '4px 0', color: P.mid, fontSize: T.type.sm }}>{inputRowText(row)}</li>
-              ))}
-            </ul>
-            <p style={{ margin: '4px 0 0', color: P.light, fontSize: T.type.xs, lineHeight: 1.45 }}>
-              A pick listed with no amount counts as the whole pick.
-            </p>
-          </>
-        )}
-        {/* L4 mounts <BatchInputsField batchId={batch.id} onChanged={onChanged} nowMs={nowMs} /> here.
-            Its file is not this lane's to create, so the import is deliberately absent rather than
-            stubbed with a placeholder component that would have to be deleted on integration. */}
+        {/* L4's field IS this section (integrated 20260904). It renders the same count and the same
+            behind-a-tap list this lane wrote, plus the remove and the add flows — a superset — so
+            shipping both put two counts, two doors and two lists of one batch's inputs on one screen.
+            The subset went. `inputs` is handed DOWN rather than re-fetched: the page already holds
+            GET /:id, and a child re-read is how one screen ends up with two copies that disagree.
+            Normalised through `inputRows` on purpose — a non-array prop must degrade to an empty
+            section, never flip the child back into fetching for itself.
+            The whole-pick caveat is not repeated here: every bare pick row L4 renders already says
+            "— the whole pick" on its own line, and the add flow states it in full. */}
+        <BatchInputsField batchId={batch.id} inputs={inputRows} onChanged={onChanged} nowMs={nowMs} />
       </Section>
 
       <Section title="Log" testId="batch-detail-stages">

@@ -102,7 +102,13 @@ const OTHER_KINDS = KITCHEN_INPUT_KINDS.filter((k) => k !== 'harvest')
 // verbatim off an existing jar would be refused by the database (BUG-PRESERVUNITNOCHECK-001).
 const OTHER_UNITS = [...WEIGHT_UNITS, 'cup', 'qt', 'gal', 'count']
 
-export default function BatchInputsField({ batchId, onChanged, nowMs }) {
+// `inputs` is OPTIONAL and it is what makes this field mountable on a surface that already fetched.
+// Supplied (an array) = CONTROLLED: the host has GET /:id in hand, so reading it again here would put
+// two copies of one batch's rows on one screen with nothing keeping them in agreement. Absent =
+// stands alone and reads for itself. Only the MOUNT read is conditional — every post-write re-read
+// below stays unconditional, because reporting the TRUE count after a write is a different rule
+// (ruling 6) and the host's own refresh lands too late to answer with.
+export default function BatchInputsField({ batchId, inputs, onChanged, nowMs }) {
   const { fetch } = useApiFetch()
   // NO OPTIONS, DELIBERATELY. useCropTypes defaults to scope 'garden', which is the scope this
   // surface wants — a harvest_log row cannot be a loaf of bread, so the 'non_plant_food' classes
@@ -113,9 +119,11 @@ export default function BatchInputsField({ batchId, onChanged, nowMs }) {
   const { cropTypes } = useCropTypes()
   const draftKey = inputsDraftKey(batchId)
 
+  const controlled = Array.isArray(inputs)
+
   const [mode, setMode] = useState(null)
   const [showRows, setShowRows] = useState(false)
-  const [inputs, setInputs] = useState([])
+  const [rows, setRows] = useState(() => (controlled ? inputs : []))
   const [detailError, setDetailError] = useState(null)
 
   // Restored ONCE, in the initializers. A failed write must not cost the user the selections they
@@ -163,7 +171,7 @@ export default function BatchInputsField({ batchId, onChanged, nowMs }) {
   const loadDetail = useCallback(async () => {
     try {
       const row = await fetch(`/api/kitchen-batches/${batchId}`)
-      setInputs(Array.isArray(row?.inputs) ? row.inputs : [])
+      setRows(Array.isArray(row?.inputs) ? row.inputs : [])
       setDetailError(null)
       return Array.isArray(row?.inputs) ? row.inputs.length : null
     } catch {
@@ -172,7 +180,12 @@ export default function BatchInputsField({ batchId, onChanged, nowMs }) {
     }
   }, [batchId, fetch])
 
-  useEffect(() => { loadDetail() }, [loadDetail])
+  // The MOUNT read, and the one thing `inputs` turns off. Uncontrolled only.
+  useEffect(() => { if (!controlled) loadDetail() }, [controlled, loadDetail])
+  // Controlled: follow the host. It re-reads on `onChanged`, so a write made here is reflected twice
+  // — once from this component's own post-write re-read and once when the host's arrives — and both
+  // are the server's answer, not a delta.
+  useEffect(() => { if (Array.isArray(inputs)) setRows(inputs) }, [inputs])
 
   // The crop universe for the CHOSEN window, crop-unfiltered. Passing the selected crop back into
   // this call would collapse crop_list to that one crop and strand the user on it — the trap
@@ -351,9 +364,9 @@ export default function BatchInputsField({ batchId, onChanged, nowMs }) {
       </h3>
 
       <p data-testid="batch-inputs-count" style={{ margin: 0, color: P.mid, fontSize: '0.84rem' }}>
-        {inputs.length === 0
+        {rows.length === 0
           ? 'Nothing written down yet.'
-          : `${inputs.length} ${inputs.length === 1 ? 'thing' : 'things'} written down.`}
+          : `${rows.length} ${rows.length === 1 ? 'thing' : 'things'} written down.`}
       </p>
       {detailError && (
         <p role="alert" data-testid="batch-inputs-detail-error" style={{ ...noteText, color: P.terra }}>{detailError}</p>
@@ -362,15 +375,15 @@ export default function BatchInputsField({ batchId, onChanged, nowMs }) {
       {/* The list is behind a deliberate second tap. A five-week pepper window is 152 rows today and
           rising, and a scrollable wall of them is the discoverability failure this feature exists to
           avoid, not a rendering of it. */}
-      {inputs.length > 0 && (
+      {rows.length > 0 && (
         <button type="button" data-testid="batch-inputs-reveal" style={linkBtn}
           onClick={() => setShowRows((v) => !v)}>
-          {showRows ? 'Hide the list' : `Show all ${inputs.length}`}
+          {showRows ? 'Hide the list' : `Show all ${rows.length}`}
         </button>
       )}
       {showRows && (
         <ul data-testid="batch-inputs-list" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0 }}>
-          {inputs.map((row) => (
+          {rows.map((row) => (
             <li key={row.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '4px 0', borderBottom: `1px solid ${P.border}` }}>
               <span style={{ color: P.mid, fontSize: '0.8rem' }}>{describeInputRow(row)}</span>
               <button type="button" disabled={busy} data-testid={`batch-inputs-remove-${row.id}`}

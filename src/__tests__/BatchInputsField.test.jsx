@@ -476,6 +476,27 @@ describe('BatchInputsField — committing', () => {
       .toBe('139 things written down.'))
   })
 
+  it('a CLEAN write refreshes the count from a re-read, never from the number it just posted', async () => {
+    // The re-read is not only for the dropped-response path. `inserted` is a DELTA: 139 went in, but
+    // the batch already held a jar of salt, so a count taken from the response says 139 where the
+    // batch holds 140. Only GET /:id can answer the question that line asks.
+    installRouter({ preview: { matched: 139 }, insert: { inserted: 139 } })
+    renderField()
+    await openPicks()
+    fireEvent.click(screen.getByTestId('batch-inputs-preview'))
+    await screen.findByTestId('batch-inputs-net-count')
+    state.inputs = [
+      ...PREDICATE_139.map((_, i) => inputRow(i + 1)),
+      inputRow(140, { input_kind: 'pantry', label: 'Kosher salt', harvest_log_id: null }),
+    ]
+    fireEvent.click(screen.getByTestId('batch-inputs-commit'))
+    // Green control on the same render: the SERVED count is reported as served…
+    expect((await screen.findByTestId('batch-inputs-result')).textContent).toBe('139 picks added.')
+    // …and the count line is the re-read total, which is a different number on purpose.
+    await waitFor(() => expect(screen.getByTestId('batch-inputs-count').textContent)
+      .toBe('140 things written down.'))
+  })
+
   it('a failed write PRESERVES the entered selections — there is no offline queue', async () => {
     installRouter({ failInsert: true, preview: { matched: 139 } })
     renderField()
@@ -597,6 +618,23 @@ describe('BatchInputsField — adding something that did not come from the garde
     // Green control: once it settles the button is live again, so the guard is a lock and not a
     // permanent disable that would look identical in a static assertion.
     await waitFor(() => expect(screen.getByTestId('batch-inputs-other-save').disabled).toBe(false))
+  })
+
+  it('a DROPPED response on THIS form re-reads GET /:id and reports the TRUE total too', async () => {
+    // The same rule as the predicate commit's, on the arm that needs it more: this row carries no
+    // harvest_log_id, so uq_kbi_batch_harvest does not cover it and a retry inserts a SECOND copy.
+    // The count therefore has to come from a re-read and never from "well, one was requested".
+    installRouter({ failInsert: true })
+    renderField()
+    fireEvent.click(await screen.findByTestId('batch-inputs-open-other'))
+    fireEvent.change(await screen.findByLabelText('What was it'), { target: { value: 'Kosher salt' } })
+    // The write in fact committed; only the response was lost.
+    state.inputs = [inputRow(1, { input_kind: 'pantry', label: 'Kosher salt', harvest_log_id: null })]
+    fireEvent.click(screen.getByTestId('batch-inputs-other-save'))
+    expect((await screen.findByTestId('batch-inputs-other-error')).textContent)
+      .toBe('That did not come back cleanly. Some may have gone in anyway — this batch now holds 1 input.')
+    await waitFor(() => expect(screen.getByTestId('batch-inputs-count').textContent)
+      .toBe('1 thing written down.'))
   })
 
   it('refuses a blank label without a round trip, in the Lambda words', async () => {

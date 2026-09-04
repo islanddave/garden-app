@@ -1,0 +1,155 @@
+[
+  {
+    "id": "INT1-a",
+    "file": "src/components/putup/BatchInputsField.jsx",
+    "mutation": "BatchInputsField fetches on mount even when `inputs` was supplied",
+    "test": "issues no GET for its OWN data",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-b",
+    "file": "src/components/putup/BatchDetailView.jsx",
+    "mutation": "the `inputs` prop plumbing deleted from the mount in BatchDetailView",
+    "test": "issues no GET for its OWN data",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-c",
+    "file": "src/components/putup/BatchInputsField.jsx",
+    "mutation": "the post-write re-read dropped from the dropped-response path (commitPredicate)",
+    "test": "a DROPPED response re-reads GET /:id and reports the TRUE total",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-c2",
+    "file": "src/components/putup/BatchInputsField.jsx",
+    "mutation": "the post-write re-read dropped from the dropped-response path (commitOther)",
+    "test": "a DROPPED response on THIS form re-reads GET /:id",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-c3",
+    "file": "src/components/putup/BatchInputsField.jsx",
+    "mutation": "the post-write re-read dropped from the SUCCESS path (commitPredicate)",
+    "test": "a CLEAN write refreshes the count from a re-read",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-d",
+    "file": "src/components/putup/BatchDetailView.jsx",
+    "mutation": "a duplicate inputs count/toggle re-added to BatchDetailView",
+    "test": "renders the inputs surface exactly ONCE",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-d2",
+    "file": "src/components/putup/BatchDetailView.jsx",
+    "mutation": "a duplicate count re-added with no testid of its own",
+    "test": "renders the inputs surface exactly ONCE",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-f",
+    "file": "src/components/putup/BatchInputsField.jsx",
+    "mutation": "the prop-sync effect deleted (seeded at mount, never updated)",
+    "test": "follows the page when it re-reads after a write",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  {
+    "id": "INT1-g",
+    "file": "src/components/putup/BatchDetailView.jsx",
+    "mutation": "the Section title dropped from the inputs section",
+    "test": "titles the three sections",
+    "verdict": "KILLED",
+    "exit": 1,
+    "counts": {
+      "failed": 1,
+      "passed": 0
+    },
+    "baseline_exit": 0,
+    "baseline_counts": {
+      "failed": 0,
+      "passed": 1
+    }
+  }
+]

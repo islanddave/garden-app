@@ -141,15 +141,25 @@ const OUTPUT_JAR = {
 // the data is absent is not a suppression, it is a coincidence.
 const OUTPUT_JAR_WIDENED = { ...OUTPUT_JAR, use_by_target: '2026-11-12', use_by_status: 'use_soon' }
 
+const detailEl = (props = {}) => (
+  <BatchDetailView
+    batch={MASH} inputs={[]} stages={[]} outputs={[]}
+    loading={false} error={false} nowMs={NOW} onChanged={vi.fn()}
+    {...props}
+  />
+)
 function renderDetail(props = {}) {
-  return render(
-    <BatchDetailView
-      batch={MASH} inputs={[]} stages={[]} outputs={[]}
-      loading={false} error={false} nowMs={NOW} onChanged={vi.fn()}
-      {...props}
-    />,
-  )
+  return render(detailEl(props))
 }
+
+// THE ONE CALL THE CONTROLLED CONTRACT FORBIDS: `/api/kitchen-batches/{id}` with no suffix, which is
+// the page's own read. Deliberately narrower than "the spy was never called" — the hosted inputs
+// field fetches the crop vocabulary its add flow offers, and a child reading for its own ACTION is
+// not this surface re-reading its own DATA. The over-broad form would have to be deleted the first
+// time any child grew a door, which is how a guard stops being about anything.
+const batchGets = () => fetchMock.mock.calls.filter(
+  ([path, opts]) => /^\/api\/kitchen-batches\/[^/]+$/.test(String(path)) && (opts?.method ?? 'GET') === 'GET',
+)
 
 beforeEach(() => {
   fetchMock.mockReset()
@@ -222,43 +232,81 @@ describe('BatchDetailView — the header', () => {
   })
 })
 
+// ⚠ L4's BatchInputsField OWNS this section since 20260904, so every arm below asserts over ITS
+// testids. The two lanes each built the read-only half — a count, a reveal, a list — and mounting
+// both shipped two of each on one screen. L4's is the superset (it also removes a row and adds one),
+// so the subset went and these tests follow the surviving surface rather than being deleted with it.
 describe('BatchDetailView — what went in', () => {
   it('leads with the count, and 139 rows are NOT a list until asked for', () => {
     renderDetail({ inputs: [INPUT_HARVEST, INPUT_PANTRY, INPUT_OFFCUT] })
-    expect(screen.getByTestId('batch-detail-inputs-count').textContent).toBe('3 things went in')
-    expect(screen.queryByTestId('batch-detail-inputs-list')).toBeNull()
+    expect(screen.getByTestId('batch-inputs-count').textContent).toBe('3 things written down.')
+    expect(screen.queryByTestId('batch-inputs-list')).toBeNull()
     // GREEN CONTROL: the same render carries the door, so the absence is "behind a tap", not "absent".
-    expect(screen.getByTestId('batch-detail-inputs-toggle').textContent).toBe('List them →')
+    expect(screen.getByTestId('batch-inputs-reveal').textContent).toBe('Show all 3')
   })
 
   it('reads singular for one, and offers no door at all when there is nothing behind it', () => {
     renderDetail({ inputs: [INPUT_PANTRY] })
-    expect(screen.getByTestId('batch-detail-inputs-count').textContent).toBe('1 thing went in')
+    expect(screen.getByTestId('batch-inputs-count').textContent).toBe('1 thing written down.')
     renderDetail({ inputs: [] })
-    expect(screen.getAllByTestId('batch-detail-inputs-count')[1].textContent).toBe('0 things went in')
-    expect(screen.getAllByTestId('batch-detail-inputs-toggle')).toHaveLength(1)
+    expect(screen.getAllByTestId('batch-inputs-count')[1].textContent).toBe('Nothing written down yet.')
+    expect(screen.getAllByTestId('batch-inputs-reveal')).toHaveLength(1)
   })
 
-  it('opens the rows on a second tap and states what a bare pick claims', () => {
+  it('opens the rows on a second tap, and a bare pick says it claims the whole thing', () => {
     renderDetail({ inputs: [INPUT_HARVEST, INPUT_PANTRY, INPUT_OFFCUT] })
-    fireEvent.click(screen.getByTestId('batch-detail-inputs-toggle'))
-    const rows = screen.getAllByTestId('batch-detail-input').map(n => n.textContent)
-    expect(rows).toEqual(['Pick', 'Pantry · Kosher salt · 40 g', 'Pick · offcut'])
-    // A NULL qty pair is not zero — the DDL idiom is "unrecorded, assume THE WHOLE THING" — and
-    // nothing else in the system says so.
-    expect(screen.getByTestId('batch-detail-inputs-list').parentElement.textContent)
-      .toContain('A pick listed with no amount counts as the whole pick.')
-    expect(screen.getByTestId('batch-detail-inputs-toggle').textContent).toBe('Hide what went in')
+    fireEvent.click(screen.getByTestId('batch-inputs-reveal'))
+    const rows = within(screen.getByTestId('batch-inputs-list')).getAllByRole('listitem').map(n => n.textContent)
+    // A NULL qty pair is not zero — the DDL idiom is "unrecorded, assume THE WHOLE THING" — and it is
+    // said on the row itself, which is why this lane's separate footnote saying the same thing went.
+    expect(rows).toEqual([
+      'A pick from the garden — the whole pickTake it out',
+      'Kosher salt — 40 gTake it out',
+      'A pick from the garden — the whole pick · trimmings, counted elsewhereTake it out',
+    ])
+    expect(screen.getByTestId('batch-inputs-reveal').textContent).toBe('Hide the list')
   })
 
   it('renders no roll-up over qty — inputs[] carries no weight and the units do not add up', () => {
     renderDetail({ inputs: [INPUT_HARVEST, INPUT_PANTRY, INPUT_OFFCUT] })
-    fireEvent.click(screen.getByTestId('batch-detail-inputs-toggle'))
+    fireEvent.click(screen.getByTestId('batch-inputs-reveal'))
     const html = screen.getByTestId('batch-detail-inputs').innerHTML
     expect(html).not.toMatch(/\btotal\b/i)
     expect(html).not.toContain('40 g total')
     // GREEN CONTROL: the per-row amount IS on screen, so the arms above are about the aggregate.
     expect(html).toContain('40 g')
+  })
+
+  it('follows the page when it re-reads after a write, and still never reads the batch itself', () => {
+    // `onChanged` is the invalidation path: a write inside the field walks up, the page re-reads
+    // GET /:id and hands a NEW inputs[] down. Handing rows over once at mount and then ignoring the
+    // prop would leave the count frozen at whatever was true before the write.
+    const { rerender } = renderDetail({ inputs: [INPUT_PANTRY] })
+    expect(screen.getByTestId('batch-inputs-count').textContent).toBe('1 thing written down.')
+    rerender(detailEl({ inputs: [INPUT_PANTRY, INPUT_HARVEST] }))
+    expect(screen.getByTestId('batch-inputs-count').textContent).toBe('2 things written down.')
+    expect(batchGets()).toEqual([])
+  })
+
+  it('renders the inputs surface exactly ONCE — one count, one door, one list', () => {
+    // The integration defect this file now guards: L3 and L4 each rendered a count, a reveal and a
+    // list, and mounting both put two of each on one screen, fed by two separate reads of the same
+    // batch. Asserted two ways, because a duplicate could arrive with or without its own testid.
+    renderDetail({ inputs: [INPUT_HARVEST, INPUT_PANTRY, INPUT_OFFCUT] })
+    const section = screen.getByTestId('batch-detail-inputs')
+    const ids = [...section.querySelectorAll('[data-testid]')].map(n => n.dataset.testid)
+    expect(ids.filter(id => /inputs-(count|toggle|reveal|list)$/.test(id)))
+      .toEqual(['batch-inputs-count', 'batch-inputs-reveal'])
+    // NO \b ON EITHER END, and that is the load-bearing detail. textContent runs the section's lines
+    // together — "What went in3 things went inWhat went into this?3 things written down" — so a word
+    // boundary lands between two letters and REFUSES the very duplicate this arm is looking for.
+    // Measured: the boundaried form let mutation INT1-d2 through. A digit lookbehind does the job a
+    // leading \b was meant to do (no matching "3 things" inside "13 things") without that cost, and
+    // toEqual over the whole match list means an over-match would fail loudly rather than pass.
+    expect(section.textContent.match(/(?<!\d)\d+ things? (went in|written down)/g))
+      .toEqual(['3 things written down'])
+    fireEvent.click(screen.getByTestId('batch-inputs-reveal'))
+    expect(within(section).getAllByRole('list')).toHaveLength(1)
   })
 
   it('names every input kind the schema allows', () => {
@@ -370,9 +418,13 @@ describe('BatchDetailView — what came out', () => {
 
   it('reads a shape it was not given as an empty section, never a crash', () => {
     renderDetail({ inputs: null, stages: undefined, outputs: 'nope' })
-    expect(screen.getByTestId('batch-detail-inputs-count').textContent).toBe('0 things went in')
+    expect(screen.getByTestId('batch-inputs-count').textContent).toBe('Nothing written down yet.')
     expect(screen.getByTestId('batch-detail-stages-empty')).toBeTruthy()
     expect(screen.getByTestId('batch-detail-outputs-empty')).toBeTruthy()
+    // …and a null `inputs` degrades to an empty section rather than becoming a network read: the
+    // prop is normalised to [] before it reaches the field, so a shape the page never had cannot
+    // flip the child back into fetching the batch for itself.
+    expect(batchGets()).toHaveLength(0)
   })
 })
 
@@ -410,11 +462,19 @@ describe('BatchDetailView — the close door', () => {
     expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('It spoiled — threw it out · closed Sep 4')
   })
 
-  it('issues no fetch of its own — the surface is controlled', () => {
+  it('issues no GET for its OWN data — the surface is controlled', () => {
     renderDetail({ inputs: [INPUT_PANTRY], stages: [STAGE_PH], outputs: [OUTPUT_JAR] })
-    expect(fetchMock).not.toHaveBeenCalled()
-    // GREEN CONTROL: the rows it was HANDED are on screen, so "no fetch" is not "nothing rendered".
+    // The page fetched GET /:id once and handed the four arrays down; nothing under this root reads
+    // that route again. Before the lanes were composed the inputs field fetched it a second time on
+    // mount, which gave one screen two copies of inputs[] that could disagree.
+    expect(batchGets()).toEqual([])
+    // GREEN CONTROLS. The rows it was HANDED are on screen, from BOTH the arrays it renders itself
+    // and the one it passes down…
     expect(screen.getByTestId('batch-detail-stage').textContent).toBe('pH 4.60 · read Sep 2')
+    expect(screen.getByTestId('batch-inputs-count').textContent).toBe('1 thing written down.')
+    // …and the spy CAN see a call on this very render (the hosted field reads the crop vocabulary its
+    // add flow offers), so "none of THAT route" is a measurement and not a dead mock.
+    expect(fetchMock).toHaveBeenCalledWith('/api/varieties/crop-types')
   })
 })
 
@@ -429,7 +489,7 @@ describe('BatchDetailView — the inherited rulings, on this surface\'s own root
       stages: [STAGE_FINISHED, STAGE_PH, STAGE_PH_2, STAGE_STARTED],
       outputs: [OUTPUT_JAR],
     })
-    fireEvent.click(screen.getByTestId('batch-detail-inputs-toggle'))
+    fireEvent.click(screen.getByTestId('batch-inputs-reveal'))
     const view = screen.getByTestId('batch-detail-view')
     const html = view.innerHTML
     expect(html).not.toMatch(FOOD_SAFETY)
@@ -440,7 +500,7 @@ describe('BatchDetailView — the inherited rulings, on this surface\'s own root
     // swept a fully-populated surface rather than an empty div.
     expect(html).toContain('It spoiled — threw it out')
     expect(html).toContain('pH 4.60 · read Sep 2')
-    expect(html).toContain('Pantry · Kosher salt · 40 g')
+    expect(html).toContain('Kosher salt — 40 g')
     expect(html).toContain('3 pint · 3 packages · Aug 12')
   })
 
@@ -503,21 +563,30 @@ describe('BatchDetailView — the two hand-copied vocabularies are bound to thei
   })
 })
 
-describe('BatchDetailView — where L4\'s inputs field mounts', () => {
-  it('names the mount point in source so the integrator is not guessing', () => {
+describe('BatchDetailView — L4\'s inputs field IS the "what went in" section', () => {
+  it('imports it, hands it the rows the page already fetched, and really mounts it', () => {
     const src = read('src/components/putup/BatchDetailView.jsx')
     expect(src).toContain('export default function BatchDetailView')
-    expect(src).toContain('<BatchInputsField batchId={batch.id} onChanged={onChanged} nowMs={nowMs} />')
-    // Not imported, because that file is another lane's to create — a placeholder component here
-    // would have to be deleted on integration and would keep a dead branch in coverage.
-    expect(src).not.toMatch(/^import .*BatchInputsField/m)
+    expect(src).toMatch(/^import BatchInputsField from '\.\/BatchInputsField\.jsx'$/m)
+    // `inputs=` is the load-bearing half of this line: without it the field falls back to reading
+    // GET /:id for itself, which is the duplicate the composition of these two lanes exposed.
+    expect(src).toContain('<BatchInputsField batchId={batch.id} inputs={inputRows} onChanged={onChanged} nowMs={nowMs} />')
+    // Source text alone would pass over a mount inside a branch nothing reaches, so: it renders, and
+    // it renders inside the section that now owns it.
+    renderDetail({ inputs: [INPUT_PANTRY] })
+    expect(within(screen.getByTestId('batch-detail-inputs')).getByTestId('batch-inputs-field')).toBeTruthy()
   })
 })
 
 describe('BatchDetailView — the section titles a screen reader lands on', () => {
   it('titles the three sections and puts each list under its own', () => {
     renderDetail({ inputs: [INPUT_PANTRY], stages: [STAGE_PH], outputs: [OUTPUT_JAR] })
-    expect(within(screen.getByTestId('batch-detail-inputs')).getByRole('heading').textContent).toBe('What went in')
+    // TWO headings in the inputs section and that is the structure as integrated: the section keeps
+    // its own title (the landmark a screen reader lands on, unchanged from before the mount) and the
+    // hosted field keeps the heading it carries when it stands alone. Asserted as an ordered whole so
+    // a THIRD one — the duplicate-surface failure — cannot slip in under a getBy that takes the first.
+    expect(within(screen.getByTestId('batch-detail-inputs')).getAllByRole('heading').map(h => h.textContent))
+      .toEqual(['What went in', 'What went into this?'])
     expect(within(screen.getByTestId('batch-detail-stages')).getByRole('heading').textContent).toBe('Log')
     expect(within(screen.getByTestId('batch-detail-outputs')).getByRole('heading').textContent).toBe('What came out')
   })
