@@ -76,11 +76,6 @@ export const CLOSE_ACTION_LABEL = 'What happened to it?'
 export const KEPT_QUESTION = 'Did it make anything you kept?'
 export const CUE_QUESTION = 'How did you know it was done?'
 
-// The stage row a close appends. DDL 0a:296 — "EVERY CONSEQUENTIAL TRANSITION IS DECIDED BY AN
-// OBSERVED CUE, NOT A CLOCK … Recording only entered_at records the LESS authoritative half." For a
-// dehydrate batch the published endpoint IS texture, not elapsed time.
-export const CUE_STAGE_KIND = 'finished'
-
 // Placeholders, keyed off `kind` (KITCHEN_BATCH_KINDS). Examples of an OBSERVATION, never a
 // threshold and never a completion test — the field is free text and nothing reads it back.
 const CUE_PLACEHOLDERS = Object.freeze({
@@ -121,15 +116,17 @@ export function outcomeKeepsSomething(value) {
 }
 
 // ── the wire ─────────────────────────────────────────────────────────────────────────────────────
-// The body for POST /api/kitchen-batches/:id/close. Idiom: startChipPatch / phStagePatch in
-// goingNow.js — a pure builder that returns null rather than a body that could never commit.
+// The body for POST /api/kitchen-batches/:id/close, and it is the WHOLE close: ONE request.
+// Idiom: startChipPatch / phStagePatch in goingNow.js — a pure builder that returns null rather than
+// a body that could never commit.
 //
-// ⚠ `cue` IS ACCEPTED AND IS DELIBERATELY NOT ON THIS BODY. validateClose
-// (kitchenBatch.js:449-461) whitelists exactly outcome / outcome_note / output_preservation_log_ids
-// and has NO unknown-key rejection — an unrecognised key is dropped in silence and the route still
-// answers 200. So a `cue_observed` sent here would look saved and would not be. It travels as its own
-// `finished` stage row instead (cueStagePatch below), which is a route that demonstrably stores it
-// and which the DDL sanctions on an open batch and on a closed one alike.
+// `cue_observed` RIDES ON THIS BODY, and the server writes the `finished` stage row from it inside
+// the same statement as the close, gated on the `closed` CTE — so the close and the row it produces
+// cannot land apart, and no client-side second write is needed or wanted. It is written on every
+// close, cue or no cue: a NULL cue records that nobody said how they knew, rather than inventing
+// that they did. (An earlier draft of this file posted the stage row from here, because at that base
+// validateClose whitelisted three keys and silently dropped the rest behind a 200. It no longer
+// does; leaving both writes in would have put TWO `finished` rows on one act.)
 export function closePatch({ outcome, note, cue, outputIds } = {}) {
   if (!OUTCOME_LABELS[outcome]) return null
   // A non-string cue is a caller bug, not a user input — refuse the whole close rather than commit
@@ -139,6 +136,10 @@ export function closePatch({ outcome, note, cue, outputIds } = {}) {
   const body = { outcome }
   const trimmedNote = trimToNull(note)
   if (trimmedNote != null) body.outcome_note = trimmedNote
+  // Absent, not empty-string: the server normalizeTexts it to NULL either way, and an absent key is
+  // what every other builder in this family means by "nothing recorded".
+  const trimmedCue = trimToNull(cue)
+  if (trimmedCue != null) body.cue_observed = trimmedCue
 
   if (outputIds != null) {
     if (!Array.isArray(outputIds)) return null
@@ -149,14 +150,6 @@ export function closePatch({ outcome, note, cue, outputIds } = {}) {
     if (ids.length > 0) body.output_preservation_log_ids = ids
   }
   return body
-}
-
-// The body for POST /api/kitchen-batches/:id/stages. Null when the cook typed nothing — an absent
-// cue is an ordinary, permanent, acceptable state and must never manufacture an empty row.
-export function cueStagePatch(cue) {
-  const text = trimToNull(cue)
-  if (text == null) return null
-  return { stage_kind: CUE_STAGE_KIND, cue_observed: text }
 }
 
 // ── the jars ─────────────────────────────────────────────────────────────────────────────────────

@@ -72,9 +72,19 @@ const CANDY = {
   current_stage_entered_at: local('2026-09-02T09:00:00'),
 }
 const PAUSED = { ...MASH, id: 'kb-paused', label: 'Frozen candy parent', suspended_at: FIRST_RECORDED_SEP_3 }
+// Every close now writes a `finished` stage row server-side, so a closed batch ALWAYS carries
+// current_stage_kind 'finished' — and it keeps it through a reopen, because stage order is
+// deliberately non-monotonic and nothing rewrites history. Both fixtures below therefore carry it;
+// open-vs-closed is read from closed_at and from nothing else.
 const CLOSED_SPOILED = {
   ...MASH, id: 'kb-spoiled', label: 'Reaper mash', kind: 'ferment',
   closed_at: '2026-09-04T12:00:00.000Z', outcome: 'discarded_spoiled', outcome_note: 'went furry on top',
+  current_stage_kind: 'finished', current_stage_entered_at: '2026-09-04T12:00:00.000Z',
+}
+const REOPENED = {
+  ...MASH, id: 'kb-reopened', label: 'Reaper mash', kind: 'ferment',
+  closed_at: null, outcome: null, outcome_note: null,
+  current_stage_kind: 'finished', current_stage_entered_at: '2026-09-04T12:00:00.000Z',
 }
 const CLOSED_UNKNOWN_OUTCOME = {
   ...MASH, id: 'kb-future', closed_at: '2026-09-04T12:00:00.000Z', outcome: 'became_a_second_batch',
@@ -116,10 +126,20 @@ const STAGE_STARTED = {
   entered_at: FIRST_RECORDED_SEP_3, ph_reading: null, ph_read_at: null, note: null,
 }
 
+// THE REAL PROJECTION, column for column, from GET /:id's explicit SELECT — use_by_target and
+// use_by_status are deliberately absent from it, on the same shelf-stability-endorsement reasoning
+// that keeps them off the jar picker.
 const OUTPUT_JAR = {
-  id: 'pl-1', quantity_value: '3', quantity_unit: 'pint', package_count: 3,
-  preserved_at: '2026-08-12', use_by_target: '2026-11-12', use_by_status: 'use_soon',
+  id: 'pl-1', batch_id: 'kb-mash', user_id: 'user_dave', crop_type_slug: 'pepper', variety_id: null,
+  plant_id: null, harvest_log_id: null, preserved_at: '2026-08-12', preserved_at_approx: null,
+  method: 'hot_sauce', method_other_text: null, quantity_value: '3', quantity_unit: 'pint',
+  package_count: 3, storage_location_id: null, remaining_count: 3, consumed_at: null, notes: null,
+  photo_id: null, created_at: '2026-08-12T12:00:00.000Z', updated_at: '2026-08-12T12:00:00.000Z',
 }
+// The same jar as it would arrive if a future widening put the two suppressed columns back on the
+// projection. The surface must still refuse to render them — a suppression that only holds because
+// the data is absent is not a suppression, it is a coincidence.
+const OUTPUT_JAR_WIDENED = { ...OUTPUT_JAR, use_by_target: '2026-11-12', use_by_status: 'use_soon' }
 
 function renderDetail(props = {}) {
   return render(
@@ -315,15 +335,25 @@ describe('BatchDetailView — the log is a log', () => {
 })
 
 describe('BatchDetailView — what came out', () => {
-  it('lists the jars as identity only, with no shelf-life anything', () => {
+  it('lists the jars as identity only, against the real projection', () => {
     renderDetail({ outputs: [OUTPUT_JAR] })
     expect(screen.getByTestId('batch-detail-output').textContent).toBe('3 pint · 3 packages · Aug 12')
+    // The server's own SELECT omits both use-by columns, so this arm is about the projection holding.
+    expect(OUTPUT_JAR.use_by_target).toBeUndefined()
+    expect(OUTPUT_JAR.use_by_status).toBeUndefined()
+  })
+
+  it('still refuses the use-by fields if a future projection widens and hands them over', () => {
+    // TWO fixtures, and the second is the load-bearing one: with the real projection the absence is
+    // guaranteed by the server, which means the CLIENT guard would pass over data it never saw. This
+    // render hands it the data and asserts it drops it anyway.
+    renderDetail({ outputs: [OUTPUT_JAR_WIDENED] })
     const html = screen.getByTestId('batch-detail-outputs').innerHTML
     expect(html).not.toMatch(/Use soon|Past use-by|use by/i)
     expect(html).not.toContain('2026-11-12')
-    // GREEN CONTROLS: the row carries the suppressed fields in the DATA, and the identity line IS on
-    // screen, so this is a suppression rather than an accident of the fixture.
-    expect(OUTPUT_JAR.use_by_status).toBe('use_soon')
+    // GREEN CONTROLS: the row DID carry both fields, and the identity line IS on screen — so this is
+    // a suppression the client performs, not an accident of the fixture.
+    expect(OUTPUT_JAR_WIDENED.use_by_status).toBe('use_soon')
     expect(html).toContain('3 pint · 3 packages · Aug 12')
   })
 
@@ -358,6 +388,26 @@ describe('BatchDetailView — the close door', () => {
     // GREEN CONTROL, one render apart on the same component: an open batch DOES offer it.
     renderDetail()
     expect(screen.getByTestId('batch-close-open')).toBeTruthy()
+  })
+
+  // ⚠ Every close writes a `finished` stage row, so current_stage_kind === 'finished' is now TRUE of
+  // every closed batch — AND it stays true after a reopen, because stage order is non-monotonic and
+  // a reopen NULLs only the three close columns. Deriving open/closed from the stage kind would
+  // therefore leave a reopened batch permanently un-closeable, with no error and nothing on screen
+  // to explain it. closed_at is the only discriminator.
+  it('reads open-vs-closed from closed_at, never from the finished stage kind', () => {
+    // A REOPENED batch: closed_at null, outcome null, current_stage_kind still 'finished'.
+    renderDetail({ batch: REOPENED })
+    expect(REOPENED.current_stage_kind).toBe('finished')
+    expect(screen.getByTestId('batch-close-open')).toBeTruthy()
+    expect(screen.queryByTestId('batch-detail-outcome')).toBeNull()
+
+    // GREEN CONTROL, same stage kind, one column different: the CLOSED batch does hide the door and
+    // does render its outcome — so the pass above is about closed_at and not about a broken gate.
+    renderDetail({ batch: CLOSED_SPOILED })
+    expect(CLOSED_SPOILED.current_stage_kind).toBe('finished')
+    expect(screen.getAllByTestId('batch-close-open')).toHaveLength(1)
+    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('It spoiled — threw it out · closed Sep 4')
   })
 
   it('issues no fetch of its own — the surface is controlled', () => {

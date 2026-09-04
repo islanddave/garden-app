@@ -210,7 +210,7 @@ describe('BatchCloseField — two steps, not one screen', () => {
 })
 
 describe('BatchCloseField — the wire', () => {
-  it('writes the cue as its own finished stage row, THEN closes, with exactly these bodies', async () => {
+  it('closes in EXACTLY ONE request, carrying the cue on the close body', async () => {
     const onChanged = vi.fn()
     openTo('no', MASH, onChanged)
     fireEvent.click(screen.getByTestId('batch-close-outcome-ate'))
@@ -220,13 +220,29 @@ describe('BatchCloseField — the wire', () => {
 
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
     const calls = fetchMock.mock.calls.filter(c => String(c[0]).startsWith('/api/kitchen-batches'))
-    expect(calls).toHaveLength(2)
-    expect(calls[0][0]).toBe('/api/kitchen-batches/kb-mash/stages')
+    // The SERVER writes the `finished` stage row from cue_observed, in the same statement as the
+    // close and gated on the `closed` CTE. A client-side /stages POST would be a second writer for
+    // one act and would put TWO `finished` rows on the batch.
+    expect(calls.map(c => String(c[0]))).toEqual(['/api/kitchen-batches/kb-mash/close'])
     expect(calls[0][1].method).toBe('POST')
-    expect(JSON.parse(calls[0][1].body)).toEqual({ stage_kind: 'finished', cue_observed: 'ran out' })
-    expect(calls[1][0]).toBe('/api/kitchen-batches/kb-mash/close')
-    expect(calls[1][1].method).toBe('POST')
-    expect(JSON.parse(calls[1][1].body)).toEqual({ outcome: 'consumed', outcome_note: 'the last of it' })
+    expect(JSON.parse(calls[0][1].body)).toEqual({
+      outcome: 'consumed', outcome_note: 'the last of it', cue_observed: 'ran out',
+    })
+  })
+
+  it('issues no /stages request at all — and the same query proves the close DID go out', async () => {
+    const onChanged = vi.fn()
+    openTo('no', MASH, onChanged)
+    fireEvent.click(screen.getByTestId('batch-close-outcome-ate'))
+    fireEvent.change(screen.getByTestId('batch-close-cue'), { target: { value: 'ran out' } })
+    fireEvent.click(screen.getByTestId('batch-close-submit'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+
+    // ONE fetch-mock query, split two ways: the absence and its green control are the same
+    // derivation over the same recorded calls, so the absence cannot pass because nothing ran.
+    const paths = fetchMock.mock.calls.map(c => String(c[0]))
+    expect(paths.filter(p => p.endsWith('/stages'))).toEqual([])
+    expect(paths.filter(p => p.endsWith('/close'))).toEqual(['/api/kitchen-batches/kb-mash/close'])
   })
 
   it('sends the jar ids the cook actually picked', async () => {
@@ -244,16 +260,21 @@ describe('BatchCloseField — the wire', () => {
     })
   })
 
-  it('writes NO stage row when no cue was typed — an absent cue never manufactures one', async () => {
+  it('sends no cue key when nothing was typed — a NULL cue is the server\'s honest record', async () => {
     const onChanged = vi.fn()
     openTo('no', MASH, onChanged)
     fireEvent.click(screen.getByTestId('batch-close-outcome-gaveup'))
     fireEvent.click(screen.getByTestId('batch-close-submit'))
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
-    const paths = fetchMock.mock.calls.map(c => String(c[0]))
-    expect(paths.filter(p => p.endsWith('/stages'))).toEqual([])
-    // GREEN CONTROL: the close DID go out on the same run, so the absence is about the cue.
-    expect(paths.filter(p => p.endsWith('/close'))).toEqual(['/api/kitchen-batches/kb-mash/close'])
+    const close = fetchMock.mock.calls.find(c => String(c[0]).endsWith('/close'))
+    const body = JSON.parse(close[1].body)
+    expect(body).toEqual({ outcome: 'abandoned' })
+    expect(body.cue_observed).toBeUndefined()
+    // The server still writes the `finished` row — it is written on every close, cue or no cue — so
+    // an absent key records that nobody said how they knew rather than inventing that they did.
+    // GREEN CONTROL for the absence: the SAME field on the SAME component does reach the wire when
+    // it is filled, asserted one describe up ("closes in EXACTLY ONE request, carrying the cue").
+    expect(String(close[0])).toBe('/api/kitchen-batches/kb-mash/close')
   })
 
   it('closes a peer\'s batch through the peer\'s own id — scoping is the server\'s job', async () => {
@@ -296,7 +317,7 @@ describe('BatchCloseField — a failed write keeps what was entered', () => {
     expect(screen.getByTestId('batch-close-sheet')).toBeTruthy()
   })
 
-  it('does not re-post the stage row on a retry — a retry after a dropped response lies', async () => {
+  it('retries the close and nothing else — one request per attempt, never a stray second writer', async () => {
     let closeAttempts = 0
     fetchMock.mockImplementation((path) => {
       if (String(path).endsWith('/close')) {
@@ -314,11 +335,21 @@ describe('BatchCloseField — a failed write keeps what was entered', () => {
     fireEvent.click(screen.getByTestId('batch-close-submit'))
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
 
-    const stagePosts = fetchMock.mock.calls.filter(c => String(c[0]).endsWith('/stages'))
-    expect(stagePosts).toHaveLength(1)
-    // GREEN CONTROL: the close WAS retried on the same run, so "one stage post" is about the guard
-    // and not about the second submit never firing.
+    const kbPaths = fetchMock.mock.calls
+      .map(c => String(c[0])).filter(p => p.startsWith('/api/kitchen-batches'))
+    // Two attempts, two requests. The `finished` row is the server's to write inside the close
+    // statement, so a failed attempt leaves NOTHING behind and a retry duplicates nothing.
+    expect(kbPaths).toEqual([
+      '/api/kitchen-batches/kb-mash/close',
+      '/api/kitchen-batches/kb-mash/close',
+    ])
+    // GREEN CONTROL: the second attempt really did fire, so "two and only two" is about the wire and
+    // not about the retry never happening.
     expect(closeAttempts).toBe(2)
+    // And the cue rode on BOTH — a retry that dropped it would silently lose the record.
+    for (const c of fetchMock.mock.calls.filter(c => String(c[0]).endsWith('/close'))) {
+      expect(JSON.parse(c[1].body).cue_observed).toBe('ran out')
+    }
   })
 
   it('names the 409 for what it is instead of offering a retry that cannot work', async () => {

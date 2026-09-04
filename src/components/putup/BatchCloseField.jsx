@@ -22,12 +22,13 @@
 // a stray backdrop tap or an Escape mid-write would otherwise discard the surface over the top of an
 // in-flight write.
 //
-// THE CUE GOES OUT AS ITS OWN `finished` STAGE ROW, NOT ON THE CLOSE BODY. validateClose whitelists
-// three keys and silently ignores every other one with a 200, so a `cue_observed` on the close body
-// would look saved and would not be. Stage-first ordering is deliberate: a `finished` row on a batch
-// that then failed to close is TRUE (stage_kind is not monotonic and `finished` is re-enterable),
-// whereas a cue lost after a successful close cannot be recovered from anything on screen.
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+// ONE REQUEST. `cue_observed` rides on the close body and the SERVER writes the `finished` stage row
+// from it, in the same statement as the close and gated on the `closed` CTE — so the close and its
+// row cannot land apart, and there is nothing for a client-side second write to add. An earlier draft
+// posted that row from here (at the base commit, validateClose whitelisted three keys and dropped the
+// rest behind a 200, so a cue on the close body would have looked saved and would not have been);
+// keeping both would now write TWO `finished` rows for one act.
+import React, { useCallback, useEffect, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
@@ -37,7 +38,7 @@ import { useApiFetch } from '../../lib/api.js'
 import { readDraft, writeDraft, clearDraft } from '../../lib/draftStash.js'
 import {
   CLOSE_ACTION_LABEL, CUE_QUESTION, KEPT_QUESTION, OUTCOME_SLUGS,
-  closePatch, cuePlaceholder, cueStagePatch, outcomesForKept,
+  closePatch, cuePlaceholder, outcomesForKept,
 } from './batchClose.js'
 
 // A permanent identifier, exactly like PutUp's own 'put-up' key: renaming it orphans live drafts in
@@ -63,9 +64,6 @@ export default function BatchCloseField({ batch, onChanged }) {
   const [selected, setSelected] = useState(() => new Set())
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
-  // A retry after a dropped response lies: the stage row is append-only, so re-posting it on the
-  // second attempt would write a second `finished` line for one act. Remembered per open sheet.
-  const stageDone = useRef(false)
 
   const batchId = batch?.id ?? null
 
@@ -74,7 +72,6 @@ export default function BatchCloseField({ batch, onChanged }) {
     setStep(e.step); setKept(e.kept); setOutcome(e.outcome); setNote(e.note); setCue(e.cue)
     setSelected(new Set())
     setErr(null)
-    stageDone.current = false
   }, [])
 
   const openSheet = useCallback(() => {
@@ -123,11 +120,8 @@ export default function BatchCloseField({ batch, onChanged }) {
     setSaving(true)
     setErr(null)
     try {
-      const stage = cueStagePatch(cue)
-      if (stage && !stageDone.current) {
-        await fetch(`/api/kitchen-batches/${batchId}/stages`, { method: 'POST', body: JSON.stringify(stage) })
-        stageDone.current = true
-      }
+      // ONE request. A retry re-sends the same body; the close is not idempotent, so a retry after a
+      // dropped response answers 409, which is handled below and is the honest reading of "it landed".
       await fetch(`/api/kitchen-batches/${batchId}/close`, { method: 'POST', body: JSON.stringify(patch) })
       clearDraft(CLOSE_DRAFT_KEY)
       setOpen(false)

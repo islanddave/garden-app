@@ -22,9 +22,9 @@ import { fileURLToPath } from 'node:url'
 
 import {
   CLOSE_OUTCOMES, OUTCOME_SLUGS, OUTCOME_FALLBACK_LABEL, CLOSE_ACTION_LABEL, KEPT_QUESTION,
-  CUE_QUESTION, CUE_STAGE_KIND,
+  CUE_QUESTION,
   outcomeLabel, outcomesForKept, outcomeKeepsSomething, cuePlaceholder,
-  closePatch, cueStagePatch, jarIsLinkable, jarBlockReason, describeOutcome,
+  closePatch, jarIsLinkable, jarBlockReason, describeOutcome,
 } from '../components/putup/batchClose.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -141,13 +141,6 @@ describe('the two-step split', () => {
 })
 
 describe('the cue — a record, never an assessment', () => {
-  it('writes a stage_kind the server actually knows', () => {
-    const kinds = quoted(/export const KITCHEN_STAGE_KINDS = \[([\s\S]*?)\]/.exec(read(KB))[1])
-    expect(kinds).toEqual(['started', 'tended', 'moved', 'finished', 'failed'])
-    expect(kinds).toContain(CUE_STAGE_KIND)
-    expect(CUE_STAGE_KIND).toBe('finished')
-  })
-
   it('offers a placeholder for every kind the schema allows, and a neutral one for a kind-less batch', () => {
     const kinds = quoted(/export const KITCHEN_BATCH_KINDS = \[([\s\S]*?)\]/.exec(read(KB))[1])
     expect(kinds).toEqual(['ferment', 'dehydrate', 'candy', 'cure', 'infuse', 'age', 'other'])
@@ -159,14 +152,16 @@ describe('the cue — a record, never an assessment', () => {
     expect(cuePlaceholder('a_kind_from_the_future')).toBe('what made you call it?')
   })
 
-  it('becomes a stage body when something was typed, and NOTHING when it was not', () => {
-    expect(cueStagePatch('snapped clean')).toEqual({ stage_kind: 'finished', cue_observed: 'snapped clean' })
-    expect(cueStagePatch('  bubbling stopped  ')).toEqual({ stage_kind: 'finished', cue_observed: 'bubbling stopped' })
-    // An absent cue is an ordinary, permanent, acceptable state — it must never manufacture a row.
-    expect(cueStagePatch('   ')).toBeNull()
-    expect(cueStagePatch('')).toBeNull()
-    expect(cueStagePatch(null)).toBeNull()
-    expect(cueStagePatch(undefined)).toBeNull()
+  it('is no longer a client-written stage row — that constant and its builder are gone', async () => {
+    // The server writes the `finished` row from cue_observed inside the close statement. A leftover
+    // client-side stage builder would be a second writer for one act, so its ABSENCE is the contract.
+    const mod = await import('../components/putup/batchClose.js')
+    expect(mod.cueStagePatch).toBeUndefined()
+    expect(mod.CUE_STAGE_KIND).toBeUndefined()
+    // GREEN CONTROL: the module DID load and its other exports are here, so the two absences above
+    // are about those names and not about a failed import resolving to an empty object.
+    expect(typeof mod.closePatch).toBe('function')
+    expect(mod.CUE_QUESTION).toBe('How did you know it was done?')
   })
 })
 
@@ -181,13 +176,22 @@ describe('closePatch — the body POST /:id/close actually accepts', () => {
     expect(closePatch({ outcome: 'put_up', note: '   ' })).toEqual({ outcome: 'put_up' })
   })
 
-  it('never puts the cue on this body — the close route drops unknown keys with a 200', () => {
-    const body = closePatch({ outcome: 'put_up', note: 'kept two pints', cue: 'snapped clean' })
-    expect(Object.keys(body).sort()).toEqual(['outcome', 'outcome_note'])
-    expect(body.cue_observed).toBeUndefined()
-    // GREEN CONTROL over the SAME call: the sibling free-text field DID reach the body, so the
-    // absence above is about `cue` and not about the builder ignoring text in general.
-    expect(body.outcome_note).toBe('kept two pints')
+  it('carries the cue on this body — the server writes the finished stage row from it', () => {
+    const body = closePatch({ outcome: 'put_up', note: 'kept two pints', cue: '  snapped clean  ' })
+    expect(body).toEqual({
+      outcome: 'put_up', outcome_note: 'kept two pints', cue_observed: 'snapped clean',
+    })
+    expect(Object.keys(body).sort()).toEqual(['cue_observed', 'outcome', 'outcome_note'])
+  })
+
+  it('omits the cue key when nothing was typed — absent, never an empty string', () => {
+    expect(closePatch({ outcome: 'put_up', cue: '   ' })).toEqual({ outcome: 'put_up' })
+    expect(closePatch({ outcome: 'put_up', cue: '' })).toEqual({ outcome: 'put_up' })
+    expect(closePatch({ outcome: 'put_up', cue: null })).toEqual({ outcome: 'put_up' })
+    // GREEN CONTROL over the same builder: a cue that WAS typed does reach the body, so the four
+    // omissions above are about emptiness and not about the key never being written at all.
+    expect(closePatch({ outcome: 'put_up', cue: 'snapped clean' }))
+      .toEqual({ outcome: 'put_up', cue_observed: 'snapped clean' })
   })
 
   it('de-duplicates jar ids and omits the key entirely when nothing was picked', () => {
