@@ -60,8 +60,32 @@ const VALID_METHODS = [
   //   pesto currently mis-filed as passata.
   // ferment_mash: an UNFINISHED intermediate — still working, not a finished preserve.
   'quick_pickle', 'pesto', 'hot_sauce', 'ferment_mash',
+  // V5-PUTUPCANDY-001. Sugar-preserved confection — the staged-syrup candying method. Passes the
+  // strict axis test pesto and hot_sauce failed: it names a PROCESS that genuinely moves the
+  // shelf-life number (weeks dusted at room temperature against months undusted frozen), not a dish.
+  // Its shelf-life figures are HOUSE-SOURCED — see HOUSE_SOURCED_SHELF_LIFE below before touching
+  // them, and note that its entry in SHELF_LIFE_MONTHS is a hard precondition of this value existing
+  // at all: a method absent from that table never gets a use_by_target and vanishes from use-soon.
+  'candy',
   'other',
 ];
+
+// ── Methods whose SHELF_LIFE_MONTHS figures come from the HOUSE, not from published guidance. ──
+// A DATA fact, not a comment, because the UI has to be able to act on it: FOODSAFETY-RULING-V101 §8.2
+// rules that a house-sourced shelf life is either DISTINGUISHABLE ON THE SURFACE — a provenance line
+// the user can see — or it takes `default: null`. A migration header is read by nobody using the app,
+// and the number reaches every viewer in the household as a use-by date and a warn-coloured chip.
+// src/pages/PutUp.jsx keeps its own copy of this list (the two are separate deploy artifacts and
+// cannot import each other) and renders the label off it; src/__tests__/putUpMethodParity.test.js
+// binds the two and asserts every member is labelled. Adding a method here without adding it there
+// is the failure that ruling exists to prevent.
+//
+// EXPORTED with no importer today, deliberately: it is a contract about the table below rather than
+// this file's private state, and nothing in this Lambda branches on it — the label is a client
+// concern. What this list CANNOT prove is its own completeness. Provenance is not in the data, so a
+// figure invented at a keyboard and left off this list is indistinguishable here from a cited one.
+// The only defence against that is the citation discipline in the table's header.
+export const HOUSE_SOURCED_SHELF_LIFE = ['candy'];
 
 // ── Shelf-life defaults (L6): MONTHS from the put-up date, keyed by method × storage-kind. ──
 // SOURCE (cited per boss-strategic safety note — these drive "use soon" on stored FOOD and must
@@ -71,6 +95,20 @@ const VALID_METHODS = [
 // collapsed to a single conservative default; deep_freezer (0°F) gets the upper end, fridge_freezer
 // (3–6 mo, not held at 0°F) the lower. Values are DEFAULTS: user-overridable per row (L6). A null
 // result => no default expiry (row excluded from "use soon" until a use_by_target is set).
+//
+// ONE EXCEPTION, AND THE SENTENCE ABOVE IS AMENDED RATHER THAN LEFT TO READ FALSE (V5-PUTUPCANDY-001,
+// 2026-09-04). `candy` is the first and only entry here with NO published source, because none
+// exists: a search of NCHFP, UGA, Penn State, OSU, UMN, USU, MSU and NC State found no home-
+// preservation guidance covering candied-fruit endpoints, storage or shelf life — a documented
+// negative result, not an unfinished search (project-state/_build-inflight-20260904/
+// foodsafety-research.md §6.3, §9.1: "there is nothing to cite"). Its figures come from Dave's own
+// house guide and are a HOUSE PROCEDURE'S STORAGE NOTE, never Extension or USDA guidance; they must
+// not be described as either, anywhere. Every OTHER row here still holds to the original rule, and
+// the next uncited figure does not inherit a precedent from this one — it inherits a CONDITION.
+// FOODSAFETY-RULING-V101 §8.2 attaches it: a house-sourced shelf life is either distinguishable on
+// the surface, as a provenance line the user can see, or it takes `default: null`. The list above,
+// HOUSE_SOURCED_SHELF_LIFE, is how that condition is carried into the UI, and the parity test is
+// what stops a future entry from arriving without one.
 const SHELF_LIFE_MONTHS = {
   roast_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
   whole_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
@@ -135,6 +173,30 @@ const SHELF_LIFE_MONTHS = {
   // dressed as caution. What makes it a distinct value is that it is UNFINISHED, which the label
   // carries; that is a fact about the food, not about how long it keeps.
   ferment_mash:   { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 },
+  // ── V5-PUTUPCANDY-001. THE ONE HOUSE-SOURCED ROW IN THIS TABLE. ───────────────────────────────
+  // Read the amended header above first. Nothing below is published guidance and none of it may be
+  // presented as such; every figure is from Dave's own crucible-hardened house guide,
+  // unsweet-watermelon-guide-V100-20260811.html (Part 5 and Part 6), and it ships only because
+  // FOODSAFETY-RULING-V101 §8.2's condition is met — HOUSE_SOURCED_SHELF_LIFE carries `candy` into
+  // the UI, which labels the estimate on screen and asks the cook for the real date.
+  //   deep_freezer 6   — the one figure the guide states directly: Part 5 "Candied rind, uncoated
+  //                      ... ~6 months", Part 6 "undusted 6 months frozen".
+  //   fridge_freezer 4 — NOT stated by the guide. DERIVED, and marked as derived: this table's own
+  //                      convention gives deep_freezer the upper end and fridge_freezer the lower
+  //                      (it is not held at 0°F), and the guide names self-defrost cycling as the
+  //                      specific enemy of a candied product.
+  //   default 1        — the room-temperature case, and it is THE TABLE'S FLOOR rather than an
+  //                      answer. The guide says 2-3 weeks; the unit here is whole months and
+  //                      addMonths() takes an integer, so 1 is the shortest expressible non-zero and
+  //                      it OVERRUNS the house figure by about a week. 0 would read "past use by" on
+  //                      day one, teaching the user that the warn state means nothing; null would
+  //                      make the row invisible to use-soon forever, which is the exact failure this
+  //                      value exists to prevent; anything above 1 would be invention, since there is
+  //                      no published figure to round toward. Nobody may later read this as a sourced
+  //                      30-day claim.
+  // fridge, pantry and cold_storage are deliberately UNLISTED — they fall through to the same floor
+  // without implying a per-kind judgement that nothing supports.
+  candy:          { deep_freezer: 6, fridge_freezer: 4, default: 1 },
   // D6: acquisition age is unknown, so there is no honest shelf-life anchor. NULL => no default
   // expiry => excluded from "use soon" until the user sets one. Same reasoning as the non-garden
   // suppression in the create path below.
