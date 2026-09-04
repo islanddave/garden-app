@@ -264,7 +264,7 @@ export default function ProjectDetail() {
     name: '', variety: null, quantity: '1', notes: '', status: '',
     sown_at: '', sown_at_approx: false,
     qty_initial: '',
-    source_type: '', source_ref: '', source_generation: '',
+    source_type: '', source_ref: '', source_id: '', acquired_from_source_id: '', source_generation: '',
     lineage_note: '', parent_plant_id: '',
     container_type: '', container_size: '', location_id: '',
   })
@@ -436,6 +436,12 @@ export default function ProjectDetail() {
           sown_at_approx:    !!plantForm.sown_at_approx,
           qty_initial:       qtyInitial,
           source_type:       plantForm.source_type    || null,
+          // V5-SOURCEPICKER-001. Both ids ride the SAME payload as source_ref, which they do not
+          // replace: the picker records WHERE it came from, the free text keeps the order number,
+          // lot code and date that have no column anywhere in this design. `|| null` and not
+          // `.trim()` — these are ids, and '' is the picker's own empty, not whitespace.
+          source_id:               plantForm.source_id               || null,
+          acquired_from_source_id: plantForm.acquired_from_source_id || null,
           source_ref:        plantForm.source_ref.trim()        || null,
           source_generation: plantForm.source_generation.trim() || null,
           lineage_note:      plantForm.lineage_note.trim()      || null,
@@ -451,7 +457,7 @@ export default function ProjectDetail() {
         name: '', variety: null, quantity: '1', notes: '', status: '',
         sown_at: '', sown_at_approx: false,
         qty_initial: '',
-        source_type: '', source_ref: '', source_generation: '',
+        source_type: '', source_ref: '', source_id: '', acquired_from_source_id: '', source_generation: '',
         lineage_note: '', parent_plant_id: '',
         container_type: '', container_size: '', location_id: '',
       })

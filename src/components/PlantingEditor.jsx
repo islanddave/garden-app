@@ -31,10 +31,14 @@ const PLANT_FORM_FIELDS = [
   // V4-SEEDGERMRATE-001 (BD-057) — the sowing IS the planting, so both counts live here.
   'seeds_sown', 'seeds_germinated',
   'source_type', 'source_ref', 'source_generation', 'lineage_note',
+  // V5-SOURCEPICKER-001 — listed here so a planting whose ONLY edit is its
+  // provenance still reads as dirty. Omitting them would make the picker look
+  // like it saved and silently discard the change on navigate-away.
+  'source_id', 'acquired_from_source_id',
   'parent_plant_id', 'container_type', 'container_size', 'location_id',
 ]
 
-const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', seeds_sown: '', seeds_germinated: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
+const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', seeds_sown: '', seeds_germinated: '', source_type: '', source_ref: '', source_id: '', acquired_from_source_id: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
 
 // BUG-SILENTFAILSWEEP-001 — one line per verb, each naming the state the planting is actually LEFT
 // in. Not interchangeable: a failed Remove leaves a live planting in the garden, a failed Archive
@@ -62,6 +66,10 @@ function formFromPlant(plant) {
     seeds_germinated:  plant.seeds_germinated == null ? '' : String(plant.seeds_germinated),
     source_type:       plant.source_type ?? '',
     source_ref:        plant.source_ref ?? '',
+    // '' not null: SourcePicker is a CONTROLLED input and null would flip it to
+    // uncontrolled mid-life, which React warns about and which loses the value.
+    source_id:               plant.source_id ?? '',
+    acquired_from_source_id: plant.acquired_from_source_id ?? '',
     source_generation: plant.source_generation ?? '',
     lineage_note:      plant.lineage_note ?? '',
     parent_plant_id:   plant.parent_plant_id ?? '',
@@ -215,6 +223,12 @@ export default function PlantingEditor({
       seeds_sown:        form.seeds_sown.trim() ? parseInt(form.seeds_sown, 10) : null,
       seeds_germinated:  form.seeds_germinated.trim() ? parseInt(form.seeds_germinated, 10) : null,
       source_type:       form.source_type || null,
+      // V5-SOURCEPICKER-001. Both ids ride the SAME payload as source_ref, which they do not
+      // replace: the picker records WHERE it came from, the free text keeps the order number,
+      // lot code and date that have no column anywhere in this design. `|| null` and not
+      // `.trim()` — these are ids, and '' is the picker's own empty, not whitespace.
+      source_id:               form.source_id               || null,
+      acquired_from_source_id: form.acquired_from_source_id || null,
       source_ref:        form.source_ref.trim() || null,
       source_generation: form.source_generation.trim() || null,
       lineage_note:      form.lineage_note.trim() || null,
@@ -262,6 +276,12 @@ export default function PlantingEditor({
           seeds_sown:        form.seeds_sown.trim() ? parseInt(form.seeds_sown, 10) : null,
           seeds_germinated:  form.seeds_germinated.trim() ? parseInt(form.seeds_germinated, 10) : null,
           source_type:       form.source_type || null,
+          // V5-SOURCEPICKER-001. Both ids ride the SAME payload as source_ref, which they do not
+          // replace: the picker records WHERE it came from, the free text keeps the order number,
+          // lot code and date that have no column anywhere in this design. `|| null` and not
+          // `.trim()` — these are ids, and '' is the picker's own empty, not whitespace.
+          source_id:               form.source_id               || null,
+          acquired_from_source_id: form.acquired_from_source_id || null,
           source_ref:        form.source_ref.trim() || null,
           source_generation: form.source_generation.trim() || null,
           lineage_note:      form.lineage_note.trim() || null,

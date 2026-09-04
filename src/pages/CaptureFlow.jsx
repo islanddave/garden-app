@@ -167,7 +167,7 @@ const todayStr = () => todayLocalISO()
 const SNAP_PLANT_FORM = {
   name: '', variety: null, quantity: '1', notes: '', status: 'seedling',
   sown_at: '', sown_at_approx: false, qty_initial: '',
-  source_type: '', source_ref: '', source_generation: '', lineage_note: '',
+  source_type: '', source_ref: '', source_id: '', acquired_from_source_id: '', source_generation: '', lineage_note: '',
   parent_plant_id: '', container_type: '', container_size: '', location_id: '',
 }
 const card = { background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 16 }
@@ -461,6 +461,12 @@ export default function CaptureFlow() {
           sown_at_approx:    !!f.sown_at_approx,
           qty_initial:       f.qty_initial.trim() ? parseInt(f.qty_initial, 10) : null,
           source_type:       f.source_type || null,
+          // V5-SOURCEPICKER-001. Both ids ride the SAME payload as source_ref, which they do not
+          // replace: the picker records WHERE it came from, the free text keeps the order number,
+          // lot code and date that have no column anywhere in this design. `|| null` and not
+          // `.trim()` — these are ids, and '' is the picker's own empty, not whitespace.
+          source_id:               f.source_id               || null,
+          acquired_from_source_id: f.acquired_from_source_id || null,
           source_ref:        f.source_ref.trim() || null,
           source_generation: f.source_generation.trim() || null,
           lineage_note:      f.lineage_note.trim() || null,

@@ -292,6 +292,7 @@ const NOT_IN_SITES = [
   // SITES because a household gate would break the picker for the other household, not because the
   // write is unguarded.
   'inventory-items::source_id', 'inventory-items::acquired_from_source_id',
+  'plants::source_id', 'plants::acquired_from_source_id',
   'evidence-ingest::source_tier', 'photos::source_tier',
   // ── No FK constraint exists on the column — there is no referenced row to own. ──
   'critter::target_id', 'events::target_id', 'events::source_id',
