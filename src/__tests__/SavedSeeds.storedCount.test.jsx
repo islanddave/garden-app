@@ -609,12 +609,25 @@ describe('listRowPutBody — the strip list, and its agreement with the handler'
     // containment is strictly stronger on the property that matters: any key the handler starts
     // reading by presence must be in our strip list, forever, without anyone remembering to say so.
     //
+    // AND THAT PROPERTY WAS EXERCISED WITHIN THE HOUR (merge, 2026-09-04). BUG-SEEDYEARNOOP-001
+    // landed `year_harvested` as a ninth presence-guarded key from a different session. The
+    // exact-equality literal on the other side of this conflict had to be hand-edited to accept it;
+    // the containment assertion below absorbed it with no edit at all and would have caught the page
+    // failing to strip it. That is the whole argument for this shape, and it is no longer
+    // hypothetical.
+    //
     // V5-SOURCEPICKER-001 added source_id / acquired_from_source_id. They differ in kind from
     // source_plant_id/source_kind, which sit in the strip list as a DELAY FUSE for a day that has not
     // come: those two ARE in the PUT's SET list already, so for them omitting is the no-op and
     // mentioning is a live assignment against a column the backfill populated on every inventory row.
+    //
+    // `year_harvested` is named below rather than left to containment alone, because it carries a
+    // hazard none of the others do: yearHarvestedPatch() expresses its NEVER-OVERWRITE guard as the
+    // key's ABSENCE from the body, so a spread list row defeats that guard from inside the payload it
+    // rides in — and the victims are 4 curated, irreplaceable rows including a hand-entered 1986.
+    // Naming it means losing the handler's presence guard reds here, not just losing the strip.
     for (const k of ['acquired_from_source_id', 'featured_photo_id', 'seed_process', 'seed_stage',
-                     'source_id', 'source_kind', 'source_plant_id', 'variety_id']) {
+                     'source_id', 'source_kind', 'source_plant_id', 'variety_id', 'year_harvested']) {
       expect(guarded, `${k} is presence-guarded in the handler and the scrape lost it`).toContain(k)
     }
     expect(guarded.filter(k => !ours.includes(k)),

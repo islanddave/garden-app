@@ -400,6 +400,16 @@ function fermentUrgency(item) {
 // inventory rows — so without these two entries every count edit made here would re-assert whatever
 // source the list row was holding. Against a stale row that silently reverts a provenance change
 // made anywhere else in the app, and answers 200.
+// BUG-SEEDYEARNOOP-001 adds `year_harvested`, and it is LIVE in the same sense as the two above —
+// the SET list now names it behind a hasOwnProperty sentinel, so mentioning it IS an assignment
+// where until today it was discarded. But it carries a second reason the others do not, and that
+// one is the sharper of the two: yearHarvestedPatch() enforces NEVER OVERWRITE by returning an
+// EMPTY OBJECT for a lot that already has a year. That contract is expressed entirely as the
+// key's ABSENCE from the body. Spreading the list row puts the key back — so without this entry
+// the patch's guard would be silently defeated by the very payload it is spread into, and every
+// count edit would re-assert the row's own year over whatever the column actually holds. Against
+// a stale row that is how a hand-entered 1986 gets replaced, with a 200.
+//
 // V5-SEEDQTY-001 adds the last three, and they are the reason the narrow route exists at all. They
 // are real columns on inventory_items, so the list query's `i.*` puts them on every row this page
 // holds — and this page round-trips that row into the wide PUT. The handler deliberately does NOT
@@ -409,10 +419,16 @@ function fermentUrgency(item) {
 // exact shape, and a presence guard on the handler would not save it — `{ ...current, ...payload }`
 // in useInventory.updateItem re-inserts the stale value, so hasOwnProperty is TRUE and the guard
 // assigns it. Stripped here, PUT /api/inventory-items/:id/seed-measure is the only writer.
+//
+// MERGE NOTE (2026-09-04): these two arrived from different sessions in the same hour and are a
+// UNION, not a choice. They are the same defect class reached from opposite directions — a stale
+// list row re-asserting a value nobody edited — and the year's case is the one with a live victim
+// (4 curated rows, one of them a hand-entered 1986). Dropping either side's entries restores that
+// side's bug silently, with a 200.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
-  'source_kind', 'source_id', 'acquired_from_source_id',
+  'source_kind', 'source_id', 'acquired_from_source_id', 'year_harvested',
   'seed_count', 'seed_weight_g', 'seed_count_estimated',
 ]
 

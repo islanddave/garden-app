@@ -128,6 +128,10 @@ export default function InventoryDetail() {
       model:              i.model             ?? '',
       location_text:      i.location_text     ?? '',
       notes:              i.notes             ?? '',
+      // BUG-SEEDYEARNOOP-001 — GET /:id is `SELECT i.*`, so the column arrives on the row and has
+      // done all along; nothing has ever rendered it. '' not null, for the same reason the two
+      // source FKs above use '': the baseline diff reads it as a plain blank.
+      year_harvested:     i.year_harvested != null ? String(i.year_harvested) : '',
     }
   }
 
@@ -149,6 +153,12 @@ export default function InventoryDetail() {
     // here it costs no round trip and reads like the form.
     if (form.source_id && form.source_id === form.acquired_from_source_id)
       e.acquired_from_source_id = 'Same as the origin — leave this blank when they match.'
+    // BUG-SEEDYEARNOOP-001 — reject an unparseable year rather than letting it become a silent
+    // clear. parseNum returns null for both '' and NaN, so without this a typo ("19 86") would read
+    // as "the user emptied the field" and NULL a curated value on save, with a 200 and no message.
+    // Blank stays a legitimate clear; only non-blank-and-not-a-year is an error.
+    if (form.year_harvested.trim() !== '' && !/^\d{4}$/.test(form.year_harvested.trim()))
+      e.year_harvested = 'Enter a four-digit year, or leave it blank.'
     return e
   }
 
@@ -180,6 +190,16 @@ export default function InventoryDetail() {
       unit_cost:     parseNum(form.unit_cost),
       location_text: form.location_text.trim() || null,
       quantity_purchased: parseNum(form.quantity_purchased),
+      // BUG-SEEDYEARNOOP-001 — sent ONLY for seeds, and for seeds sent ALWAYS. Same presence
+      // contract as the two source FKs above: the wide PUT reads this key by hasOwnProperty into a
+      // CASE WHEN <present> … ELSE <col> END, so an omitted key leaves the column alone and a
+      // present one is authoritative. Omitting it for non-seed rows is therefore not a shortcut —
+      // it is what stops a hammer's edit form from having an opinion about a harvest year.
+      // For seeds, sending it unconditionally also seals the deep-link hole from the client side:
+      // the column can no longer be absent from a body this form produces.
+      ...(form.category === 'seeds'
+        ? { year_harvested: form.year_harvested.trim() === '' ? null : Number(form.year_harvested) }
+        : {}),
     }
     if (form.type === 'consumable') {
       return {
@@ -828,6 +848,32 @@ export default function InventoryDetail() {
                 onChange={e => set('purchase_date', e.target.value)}
               />
             </Field>
+
+            {/* BUG-SEEDYEARNOOP-001 — the first surface in the app that renders year_harvested.
+                The column has been in prod since 2026-07-13 and reaches the browser on every
+                inventory read (all three GETs are SELECT i.*), but nothing has ever displayed it,
+                which is how it stayed inert long enough for a writer to ship against it and no-op
+                unnoticed.
+                It matters because germination decays with age: how old a lot is decides whether it
+                is worth sowing, and only 4 of 316 seed rows record it. All four are here rather
+                than on SavedSeeds because every one of them has a NULL seed_stage, and that page
+                lists tracked lots — /inventory/:id is the only surface that reaches an untracked
+                lot, which SavedSeeds' own comment states.
+                Seeds only: a harvest year on a trowel is noise, and buildChanges omits the key
+                entirely for non-seed rows so the column is left alone rather than written null. */}
+            {form.category === 'seeds' && (
+              <Field label="Seed harvest year" error={errors.year_harvested}
+                help="The year this seed was grown, not the year it was bought.">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  data-testid="inv-year-harvested"
+                  placeholder="e.g. 2025"
+                  value={form.year_harvested}
+                  onChange={e => set('year_harvested', e.target.value)}
+                />
+              </Field>
+            )}
 
             <Field label="Notes">
               <Textarea

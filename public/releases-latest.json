@@ -1,5 +1,5 @@
 {
-  "version": "4.112.0",
+  "version": "4.113.0",
   "date": "2026-09-04",
   "highlights": [
     "Saved seed lots now record how many seeds are in the jar, and what they weigh, separately from how many packets are on the shelf. Three of your lots read \"185 packet\" and \"175 packet\" — those were seed counts wearing the wrong label, and they now read as counts.",

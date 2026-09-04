@@ -477,15 +477,28 @@ export default function Search() {
         {!loading && query && (results.varieties.length > 0 || extraVarieties.length > 0) && (
           <>
             <div style={sectionHead}>Varieties</div>
+            {/* BUG-CULTIVARUNREACHABLE-001 — these two groups were hand-rolled <div>s, the only
+                result category on this page that did not go through <Row>. The comment above Row
+                already CLAIMED varieties took its no-peek branch; they did not, so they rendered
+                with no `to`, no <Link> and no chevron: BUG-SEARCHDEADTAP-001's exact shape (appears
+                in search, looks tappable, does nothing), left behind when that fix repaired only
+                the planting rows.
+                It is load-bearing rather than cosmetic because /varieties/:id/edit had exactly ONE
+                door in the whole app — the "Edit variety" link on PlantingDetail (:663) — and it is
+                reached THROUGH a planting. 248 of 505 live cultivars (49.1%) have zero plantings, so
+                half the library could not be opened at all; BUG-VARIETYEDITUNREACHABLE-001 (v4.98.1)
+                closed the door for the planted half and left this one. Search already fetched and
+                matched every cultivar, so the rows were here the whole time — only the link was
+                missing. Routing them at Row makes search the second door and reaches all 248.
+                The two groups keep their DIFFERENT subtitles: server-side extras carry `species`,
+                the local set carries `group`. That asymmetry predates this fix; preserve it. */}
             {results.varieties.map(v => (
-              <div key={v.id} style={rowStyle}>
-                <div style={{ flex: 1 }}><div style={nameStyle}>{v.name}</div>{(v.group || v.crop_type_slug) && <div style={subStyle}>{v.group || v.crop_type_slug}</div>}</div>
-              </div>
+              <Row key={v.id} to={`/varieties/${v.id}/edit`} name={v.name}
+                sub={v.group || v.crop_type_slug || null} />
             ))}
             {extraVarieties.map(v => (
-              <div key={v.id} style={rowStyle}>
-                <div style={{ flex: 1 }}><div style={nameStyle}>{v.name}</div>{(v.species || v.crop_type_slug) && <div style={subStyle}>{v.species || v.crop_type_slug}</div>}</div>
-              </div>
+              <Row key={v.id} to={`/varieties/${v.id}/edit`} name={v.name}
+                sub={v.species || v.crop_type_slug || null} />
             ))}
           </>
         )}

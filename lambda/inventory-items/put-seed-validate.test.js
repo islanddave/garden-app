@@ -180,8 +180,15 @@ describe('BUG-INVSEEDPUT400-001 — the client half stays in step', () => {
     // caught. A bound that tracked the function exactly would red on every honest edit to it and
     // would teach the next reader to raise it without looking — which is how a runaway-slice guard
     // stops being one.
+    //
+    // Raised again 3400 -> 4200 on 2026-09-04 (BUG-SEEDYEARNOOP-001), on the same reasoning the
+    // previous raise gives: buildChanges grew to 3585 when it started sending year_harvested for
+    // seed rows. This is a RUNAWAY-SLICE guard, not a complexity budget — the failure it exists to
+    // catch is an unmatched indexOf slicing all ~40k characters of the page, which still lands an
+    // order of magnitude past 4200. Tightening it to hug the function would red on every honest
+    // edit and teach the next reader to raise it without looking.
     expect(fn.length).toBeGreaterThan(200);
-    expect(fn.length).toBeLessThan(3400);
+    expect(fn.length).toBeLessThan(4200);
     expect(fn).toMatch(/category:\s*form\.category/);
     expect(fn).not.toMatch(/\bvariety_id\b/);
   });
