@@ -40,10 +40,16 @@
 //      planting page reads "ferment_mash" at the user. Ugly rather than wrong, and still a defect.
 //
 // And two surfaces that are not readers but must not drift out of step with the vocabulary:
-//   6. migrations/v4-putupmethod-001/0a-additive-ddl.sql — the DB CHECK itself, the source of truth.
-//   7. migrations/v4-putupmethod-001/0r-rollback.sql — the NARROWING. It must be exactly the
-//      fourteen pre-existing values: narrower and the rollback destroys a value that was never
-//      added by this migration; wider and it fails to roll anything back.
+//   6. migrations/v5-putupcandy-001/0a-additive-ddl.sql — the DB CHECK itself, the source of truth.
+//   7. migrations/v5-putupcandy-001/0r-rollback.sql — the NARROWING. It must be exactly the
+//      pre-existing values: narrower and the rollback destroys a value that was never added by this
+//      migration; wider and it fails to roll anything back.
+//
+// V5-PUTUPCANDY-001 REPOINTED THESE TWO at the newest migration in the chain, and added an eighth
+// surface that is not a vocabulary at all — see "the house-sourced provenance contract" at the foot
+// of this file. `candy` is the first method whose shelf life has no published source, and
+// FOODSAFETY-RULING-V101 §8.2 makes a VISIBLE provenance line the condition of it shipping at any
+// value other than null. Nothing in SQL can see that condition, so it is asserted here.
 //
 // STATIC SOURCE INSPECTION, deliberately. index.js imports neon/clerk/aws and cannot be imported
 // under the unit run, and none of the three client maps is exported. Same technique and precedent as
@@ -56,9 +62,12 @@ import { dirname, resolve } from 'node:path'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (p) => readFileSync(resolve(root, p), 'utf8')
 
-const migrationSql = read('migrations/v4-putupmethod-001/0a-additive-ddl.sql')
-const rollbackSql = read('migrations/v4-putupmethod-001/0r-rollback.sql')
-const gatesYml = read('migrations/v4-putupmethod-001/gates.yml')
+// THE NEWEST migration in the chain, not the one that introduced this test. Each widening supersedes
+// the last as the source of truth for the vocabulary; pointing at an older pair would certify the
+// code against a CHECK the database no longer has.
+const migrationSql = read('migrations/v5-putupcandy-001/0a-additive-ddl.sql')
+const rollbackSql = read('migrations/v5-putupcandy-001/0r-rollback.sql')
+const gatesYml = read('migrations/v5-putupcandy-001/gates.yml')
 const lambdaSrc = read('lambda/preservation/index.js')
 const pageSrc = read('src/pages/PutUp.jsx')
 const bandSrc = read('src/components/PutUpUseSoonBand.jsx')
@@ -113,6 +122,20 @@ const labelKeys = (src, label) => new Set(
 const BAND_LABELS = labelKeys(bandSrc, 'PutUpUseSoonBand METHOD_LABELS')
 const PLANTING_LABELS = labelKeys(plantingSrc, 'PutUpFromPlanting METHOD_LABELS')
 
+// V5-PUTUPCANDY-001 — the eighth surface, and the only one here that is not a vocabulary. Both sides
+// list the methods whose shelf-life figures come from the HOUSE rather than from published guidance.
+// The Lambda's copy is the fact; the page's copy is what makes it visible. They are separate deploy
+// artifacts and cannot import each other, which is the same reason every other pair in this file is
+// compared by parsing rather than by importing.
+const HOUSE_SOURCED_LAMBDA = new Set(
+  [...stripJs(between(lambdaSrc, 'const HOUSE_SOURCED_SHELF_LIFE = [', '];', 'lambda HOUSE_SOURCED_SHELF_LIFE'))
+    .matchAll(/'([a-z_]+)'/g)].map((m) => m[1]),
+)
+const HOUSE_SOURCED_PAGE = new Set(
+  [...stripJs(between(pageSrc, 'const HOUSE_SOURCED_SHELF_LIFE = new Set([', '])', 'PutUp HOUSE_SOURCED_SHELF_LIFE'))
+    .matchAll(/'([a-z_]+)'/g)].map((m) => m[1]),
+)
+
 // The fourteen that existed before BD-034. Pinned rather than derived, because "the rollback equals
 // the forward list minus the four new values" is the claim under test — deriving it from the same
 // source it is being compared against would assert nothing.
@@ -122,27 +145,52 @@ const PRE_BD034 = [
   'purchased_preserved', 'other',
 ]
 const ADDED_BY_BD034 = ['quick_pickle', 'pesto', 'hot_sauce', 'ferment_mash']
+// V5-PUTUPCANDY-001, pinned on the same principle as the two lists above.
+const ADDED_BY_PUTUPCANDY = ['candy']
+
+// Every value this repo has deliberately put in the vocabulary, in one place. The ONLY count in this
+// file is derived from it, so the next widening adds a name to a named list instead of hunting a
+// magic number — the frozen-count-gate trap the old `toBe(18)` was one edit away from becoming.
+const PINNED_VOCAB = [...PRE_BD034, ...ADDED_BY_BD034, ...ADDED_BY_PUTUPCANDY]
+// What 0r narrows back to: everything except what THIS migration added.
+const PINNED_PRE_CANDY = [...PRE_BD034, ...ADDED_BY_BD034]
 
 const sorted = (s) => [...s].sort()
 
 describe('V4-PUTUPTAXONOMY-001 — the parse is looking at something real', () => {
-  // Without this, a restructured file that made every slice empty would satisfy every set-equality
-  // below by comparing two empty sets — a green test asserting nothing, which is the exact failure
-  // class this file exists to prevent elsewhere.
-  it.each([
-    ['0a CHECK', DB_VOCAB], ['VALID_METHODS', VALID_METHODS], ['SHELF_LIFE_MONTHS', SHELF_METHODS],
-    ['METHOD_GROUPS', METHOD_GROUPS], ['use-soon labels', BAND_LABELS], ['planting labels', PLANTING_LABELS],
-  ])('%s parsed to a populated vocabulary', (_label, set) => {
-    expect(set.size).toBe(18)
+  // THE FLOOR, and the only assertion in this file that can catch an empty parse. Everything below
+  // compares one parsed surface against another, so a restructure that emptied every slice would
+  // satisfy all of it by comparing empty sets — a green suite asserting nothing, which is the exact
+  // failure class this file exists to prevent elsewhere.
+  //
+  // Deliberately a FLOOR against a derived length and not an exact count. `toBe(18)` did this job
+  // until V5-PUTUPCANDY-001 and then failed six times over for adding one legitimate value; a bound
+  // that says "at least the values we pinned" cannot be invalidated by a widening, only by a parse
+  // that lost something. The five surfaces below are then measured against DB_VOCAB rather than
+  // against a literal, so exactly one place states the number and it states it as a name.
+  it('the DB CHECK — the source every other surface is measured against — parsed non-empty', () => {
+    expect(DB_VOCAB.size,
+      'the 0a CHECK parsed to fewer values than are pinned in this file — the parse lost something, ' +
+      'or the migration this file points at is not the one that widened it',
+    ).toBeGreaterThanOrEqual(PINNED_VOCAB.length)
   })
 
-  it('the rollback parsed to the fourteen-value vocabulary', () => {
-    expect(ROLLBACK_VOCAB.size).toBe(14)
+  it.each([
+    ['VALID_METHODS', () => VALID_METHODS], ['SHELF_LIFE_MONTHS', () => SHELF_METHODS],
+    ['METHOD_GROUPS', () => METHOD_GROUPS], ['use-soon labels', () => BAND_LABELS],
+    ['planting labels', () => PLANTING_LABELS],
+  ])('%s parsed to as many values as the DB CHECK', (_label, get) => {
+    expect(get().size).toBe(DB_VOCAB.size)
+  })
+
+  it('the rollback parsed to the pre-candy vocabulary', () => {
+    expect(ROLLBACK_VOCAB.size).toBe(PINNED_PRE_CANDY.length)
   })
 
   it('the migration widens rather than replaces', () => {
     for (const v of PRE_BD034) expect(DB_VOCAB.has(v), `${v} was dropped by the widening`).toBe(true)
     for (const v of ADDED_BY_BD034) expect(DB_VOCAB.has(v), `${v} was never added`).toBe(true)
+    for (const v of ADDED_BY_PUTUPCANDY) expect(DB_VOCAB.has(v), `${v} was never added`).toBe(true)
   })
 
   // The canning safety split is the one distinction in this vocabulary that decides whether a jar
@@ -167,8 +215,8 @@ describe('every surface spells the same vocabulary', () => {
     expect(sorted(get())).toEqual(sorted(DB_VOCAB))
   })
 
-  it('the rollback narrows to exactly the pre-BD-034 fourteen', () => {
-    expect(sorted(ROLLBACK_VOCAB)).toEqual([...PRE_BD034].sort())
+  it('the rollback narrows to exactly the vocabulary that existed before candy', () => {
+    expect(sorted(ROLLBACK_VOCAB)).toEqual([...PINNED_PRE_CANDY].sort())
   })
 })
 
@@ -185,7 +233,12 @@ describe('a new method cannot ship without a shelf life', () => {
     expect(nullDefault).toEqual(['other', 'purchased_preserved'])
   })
 
-  it.each(ADDED_BY_BD034)('%s has a usable default shelf life', (m) => {
+  // V5-PUTUPCANDY-001 folded `candy` into this list rather than writing it a test of its own. It is
+  // THE ONLY GUARD ANYWHERE on that migration's stated precondition — no SQL gate can see
+  // SHELF_LIFE_MONTHS, and v5-putupcandy-001/gates.yml says so in as many words. Candy is also the
+  // shortest-lived value in the vocabulary, so it is the one for which vanishing from use-soon costs
+  // the most.
+  it.each([...ADDED_BY_BD034, ...ADDED_BY_PUTUPCANDY])('%s has a usable default shelf life', (m) => {
     const body = SHELF_ENTRIES.get(m)
     expect(body, `${m} is absent from SHELF_LIFE_MONTHS`).toBeTruthy()
     const match = /default:\s*(\d+)/.exec(body)
@@ -194,12 +247,39 @@ describe('a new method cannot ship without a shelf life', () => {
   })
 })
 
+// ── The house-sourced provenance contract (V5-PUTUPCANDY-001 / FOODSAFETY-RULING-V101 §8.2) ──────
+// The ruling: a shelf life with no published source is either DISTINGUISHABLE ON THE SURFACE — a
+// provenance line the user can see — or it takes `default: null`, the pattern already shipped for
+// purchased_preserved and other. "A header disclaimer is not a mitigation": the number reaches every
+// viewer in the household as a use-by date and a warn-coloured chip, and the second person has no
+// way to learn a migration header exists.
+//
+// WHAT THIS CANNOT ASSERT, stated so nobody mistakes a green run for more than it is: whether the
+// Lambda's list is COMPLETE. Provenance is not in the data — a future figure invented at a keyboard
+// and left off that list looks identical here to a properly cited one. What is testable is that a
+// declared entry cannot lose its label, and that is what these two do. The other half — that the
+// page's set actually drives something a person can read — is asserted for real against the rendered
+// DOM in PutUpCandyProvenance.test.jsx, because no static parse can tell a used constant from a
+// dead one.
+describe('a house-sourced shelf life cannot ship unlabelled', () => {
+  it('the Lambda and the page name the same methods', () => {
+    expect(sorted(HOUSE_SOURCED_PAGE)).toEqual(sorted(HOUSE_SOURCED_LAMBDA))
+  })
+
+  it('every house-sourced method is a real member of the vocabulary', () => {
+    expect(HOUSE_SOURCED_LAMBDA.size).toBeGreaterThan(0)
+    for (const m of HOUSE_SOURCED_LAMBDA) {
+      expect(DB_VOCAB.has(m), `${m} is declared house-sourced but is not a method — a typo here is silent`).toBe(true)
+    }
+  })
+})
+
 describe('the apply-time gates assert the same vocabulary the code does', () => {
-  // The gates are what actually runs against staging and prod. A gate file listing sixteen of
-  // eighteen values would let a lost value through the one check that happens on the real database.
-  it.each([...PRE_BD034, ...ADDED_BY_BD034])('gates.yml names %s', (v) => {
+  // The gates are what actually runs against staging and prod. A gate file short by one value would
+  // let it through the one check that happens on the real database.
+  it.each(PINNED_VOCAB)('gates.yml names %s', (v) => {
     // Twice: once in the L-058 sweep (every live row satisfies the new vocabulary) and once in
-    // post_all_eighteen_values_present. A single occurrence means one of the two lists is short.
+    // post_nineteen_values_present. A single occurrence means one of the two lists is short.
     const hits = gatesYml.split(`'${v}'`).length - 1
     expect(hits, `expected ${v} in both the sweep list and the post ARRAY`).toBeGreaterThanOrEqual(2)
   })

@@ -50,6 +50,7 @@ const METHOD_LABELS = {
   // is still a defect, and the parity test binds all three regardless.
   quick_pickle: 'Quick / vinegar pickle', pesto: 'Pesto', hot_sauce: 'Hot sauce',
   ferment_mash: 'Fermenting mash (unfinished)',
+  candy: 'Candied',   // V5-PUTUPCANDY-001 — matches PutUp.jsx's picker label
   other: 'Other',
 }
 

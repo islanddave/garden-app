@@ -79,6 +79,10 @@ const METHOD_GROUPS = [
     { value: 'can_water_bath', label: 'Water-bath can (high-acid)' },
     { value: 'can_pressure',   label: 'Pressure can (low-acid)' },
     { value: 'jam_preserve',   label: 'Jam / preserve' },
+    // V5-PUTUPCANDY-001. Beside jam because both preserve in sugar and a candying batch is a staged
+    // syrup cook. Its shelf life is the one figure in this vocabulary with no published source, so
+    // picking it reveals the provenance note below — see HOUSE_SOURCED_SHELF_LIFE.
+    { value: 'candy',          label: 'Candied' },
     // Vinegar pickling: not a ferment (no culture), and a fridge pickle is never processed. This
     // was the only method='other' row in prod ('Vinegar dill pickles').
     { value: 'quick_pickle',   label: 'Quick / vinegar pickle' },
@@ -99,6 +103,31 @@ const METHOD_GROUPS = [
 ]
 const METHOD_LABELS = Object.fromEntries(METHOD_GROUPS.flatMap(g => g.options).map(o => [o.value, o.label]))
 const CANNING_METHODS = new Set(['can_water_bath', 'can_pressure'])
+
+// ── V5-PUTUPCANDY-001 — methods whose use-by comes from the HOUSE, not from published guidance. ──
+// The client half of lambda/preservation/index.js's HOUSE_SOURCED_SHELF_LIFE; the two are separate
+// deploy artifacts and cannot import each other, so putUpMethodParity.test.js binds them.
+// FOODSAFETY-RULING-V101 §8.2 is why this exists as a set rather than as a comment: a house-sourced
+// shelf life is either DISTINGUISHABLE ON THE SURFACE — a provenance line the user can see — or it
+// takes `default: null`. The number reaches every viewer as a date and a warn-coloured chip, and a
+// second person in the household has no way to learn that a migration header exists. Anything added
+// to the Lambda's list must appear here too, or the parity test fails and the chip goes back to
+// being an unattributed assessment.
+const HOUSE_SOURCED_SHELF_LIFE = new Set(['candy'])
+
+// The claim itself, in ONE place, because it is the load-bearing sentence rather than decoration:
+// it is what makes a use-by nobody can cite honest to the person reading it. Each surface appends
+// its own call to action; none of them may reword the claim, and none of them may describe the
+// figure as Extension- or USDA-backed — a search of NCHFP, UGA, Penn State, OSU, UMN, USU, MSU and
+// NC State found no home guidance on candied-fruit storage at all.
+//
+// WORDED TO STAY TRUE AFTER AN OVERRIDE, which is why it says "the automatic date" rather than "this
+// date". A row carries no flag distinguishing a use_by_target the server defaulted from one the cook
+// typed (unlike preserved_at_approx, which does), so a line claiming THIS date came from the guide
+// would start lying the moment someone did the thing the line asks them to do.
+const HOUSE_ESTIMATE_CLAIM =
+  'There’s no published guidance on how long candied fruit keeps, so this use-by is ours rather than ' +
+  'a tested one — the automatic date comes from our own candying guide.'
 
 // Curated unit pick-list (L5) — free-text units make "how many quarts left" un-queryable. Weight /
 // count / volume / container classes. Grouped views list per-record units and never sum across them.
@@ -1656,6 +1685,22 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
             must be <strong>pressure-canned</strong> to be safe. Check the crop guide before you can.
           </div>
         )}
+        {/* V5-PUTUPCANDY-001 / FOODSAFETY-RULING-V101 §8.2 — the visible half of the ruling, and the
+            condition on which `candy` ships at all. Placed HERE, under the method select, for the
+            same reason the canning note is: the consequence of a choice belongs at the moment of
+            making it. Deliberately NOT the warn palette the canning note uses — this is a provenance
+            statement, not a safety warning, and dressing it as an alarm would teach the user to read
+            past both. It names "Use by" below rather than moving that control, because the shape the
+            research supports is a prompt, not an assessment. */}
+        {HOUSE_SOURCED_SHELF_LIFE.has(method) && (
+          <div role="note" style={{
+            marginTop: 12, fontSize: '0.8rem', lineHeight: 1.45, color: P.mid,
+            backgroundColor: P.cream, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '10px 12px',
+          }}>
+            <strong>No published shelf life for this one.</strong> {HOUSE_ESTIMATE_CLAIM}{' '}
+            Set <strong>Use by</strong> below to <strong>Pick a date</strong> if you know the real one.
+          </div>
+        )}
 
         <div style={{ marginTop: 14 }}>
           {/* OPS-STORAGELOCNODOOR-001 — `manageable` only here, not in the walk's copy of this same
@@ -1694,7 +1739,14 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
             )}
           </div>
           <div style={{ flex: 1, minWidth: 150 }}>
-            <Field label="Use by" htmlFor="pu-useby-mode" help="Auto uses tested shelf-life for the method and storage.">
+            {/* The help text is METHOD-CONDITIONAL because the unconditional one was a claim, not a
+                hint: "tested shelf-life" is true of every method here except the house-sourced ones,
+                and leaving it in place over a candy row would attribute an uncitable number to a
+                tested source in the very control that sets it. */}
+            <Field label="Use by" htmlFor="pu-useby-mode"
+              help={HOUSE_SOURCED_SHELF_LIFE.has(method)
+                ? 'Auto uses our own house estimate for this one — see the note above.'
+                : 'Auto uses tested shelf-life for the method and storage.'}>
               <Select id="pu-useby-mode" value={useByMode} onChange={e => setUseByMode(e.target.value)} aria-label="Use by">
                 <option value="auto">Auto (recommended)</option>
                 <option value="none">No expiry</option>
@@ -2279,6 +2331,18 @@ function RecordRow({ rec, onChanged, fetch }) {
         {' · put up '}{describeApprox(prettyDate(rec.preserved_at), rec.preserved_at_approx === true)}
         {rec.use_by_target ? ` · use by ${prettyDate(rec.use_by_target)}` : ''}
       </div>
+      {/* V5-PUTUPCANDY-001 / FOODSAFETY-RULING-V101 §8.2 — THE LINE THE RULING IS ABOUT. The date one
+          line up and the chip above it are computed server-side and shipped to every viewer, and for
+          a house-sourced method that is an assessment nothing published backs. The ruling's terms are
+          exact: distinguishable on the surface, or `default: null`. A migration header is read by
+          nobody using the app, and the second person in the household has no way to learn one exists.
+          Gated on use_by_target because with no date on screen there is no claim to attribute; gated
+          on the method set rather than on 'candy' so the next house-sourced entry inherits it. */}
+      {HOUSE_SOURCED_SHELF_LIFE.has(rec.method) && rec.use_by_target && (
+        <div role="note" style={{ fontSize: '0.76rem', color: P.mid, marginTop: 3, lineHeight: 1.4 }}>
+          {HOUSE_ESTIMATE_CLAIM} Tap <strong>Edit</strong> to set the real date.
+        </div>
+      )}
       {/* Planting provenance — which wave this jar actually came from. Only rendered when the link
           exists; a put-up spanning several plantings legitimately has none. */}
       {rec.planting_name && (
@@ -2343,6 +2407,12 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // editable everywhere that other field is editable, or the pair must be create-only. The new
   // source_kind/source_label pair depends on the same invariant holding.
   const [methodOther, setMethodOther] = useState(rec.method_other_text || '')
+  // V5-PUTUPCANDY-001. The other half of FOODSAFETY-RULING-V101 §8.2: "let the cook set the real
+  // date". use_by_target has always been per-row and user-overridable at CREATE time, but this
+  // editor never exposed it, so the provenance line's "tap Edit to set the real date" would have
+  // been a dead instruction on an existing row. Seeded exactly as buildFullPayload seeds it, so an
+  // untouched save round-trips the stored value byte-for-byte.
+  const [useByTarget, setUseByTarget] = useState(rec.use_by_target ? ymd(rec.use_by_target) : '')
   const [notes, setNotes] = useState(rec.notes || '')
 
   function save() {
@@ -2352,6 +2422,11 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       package_count: packageCount === '' ? 1 : Number(packageCount),
       method,
       method_other_text: method === 'other' ? (methodOther.trim() || null) : null,
+      // Sent on EVERY save, not only when the control is rendered: the value is seeded from the same
+      // expression buildFullPayload uses, so for a row whose control never appeared this key is
+      // byte-identical to the one the payload already carried. Making it conditional would buy
+      // nothing and add a second code path to the column the ruling turns on.
+      use_by_target: useByTarget || null,
       notes: notes.trim() || null,
     })
   }
@@ -2403,6 +2478,18 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
             <Input id={`ed-method-other-${rec.id}`} type="text" value={methodOther}
               onChange={e => setMethodOther(e.target.value)} aria-label="Method description"
               placeholder="Describe how you put it up" />
+          </Field>
+        </div>
+      )}
+      {/* Keyed on the LOCAL method state, exactly as the block above is, so switching a row to a
+          house-sourced method reveals the control in the same edit rather than after a save. Shown
+          only for those methods: every other use-by here rests on a tested figure, and offering a
+          hand-override everywhere would be a UX change to all nineteen that nothing asked for. */}
+      {HOUSE_SOURCED_SHELF_LIFE.has(method) && (
+        <div style={{ marginTop: T.space.sm }}>
+          <Field label="Use-by date" htmlFor={`ed-useby-${rec.id}`} optional help={HOUSE_ESTIMATE_CLAIM}>
+            <Input id={`ed-useby-${rec.id}`} type="date" value={useByTarget}
+              onChange={e => setUseByTarget(e.target.value)} aria-label="Use-by date" />
           </Field>
         </div>
       )}

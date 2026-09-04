@@ -32,6 +32,12 @@ const METHOD_LABELS = {
   // rather than falling back to the slug, so the jar would read as though no method were recorded.
   quick_pickle: 'pickled', pesto: 'pesto', hot_sauce: 'hot sauce',
   ferment_mash: 'fermenting mash',
+  // V5-PUTUPCANDY-001. Same reason and same phrasing rule as the four above. NOTE for whoever
+  // revisits this band: candy's use-by is the one HOUSE-SOURCED figure in the vocabulary
+  // (FOODSAFETY-RULING-V101 §8.2), and this card shows no date and no warn-coloured chip — only the
+  // calm "past date" tag — so the provenance line lives where the DATE is, on PutUp's RecordRow and
+  // in its log form. If this card ever starts rendering a use-by date, it needs that line too.
+  candy: 'candied',
   other: 'put up',
 }
 
