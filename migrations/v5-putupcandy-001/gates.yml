@@ -65,7 +65,10 @@
 # vacuous before the apply, a permanent invariant after it, no follow-up edit.
 #
 # THREE GATES BELOW ARE DELIBERATELY *NOT* ARMED — post_no_bare_can_value, post_no_syrup_value and
-# post_method_check_is_validated. All three are already TRUE against the live 18-value constraint,
+# post_method_check_is_validated. All three read the CONSTRAINT DEFINITION rather than user data,
+# which is what makes them safe to leave unarmed from a lane that could query neither live database:
+# their subject is the same catalog row v4-putupmethod-001/gates.yml already asserts on both. All
+# three are already TRUE against the live 18-value constraint,
 # because a widening keeps the constraint's name and validity: they are standing invariants of the
 # eighteen-value world as much as the nineteen-value one. Arming them would make them vacuous today
 # and DELETE a real assertion. Self-arming is for a gate that would otherwise be red, never a blanket
@@ -249,20 +252,18 @@ post:
     expect: rowcount_eq
     value: 1
 
-  # THE `other` ESCAPE HATCH MUST NOT REFILL. The reason `candy` exists is that a candied batch had
-  # nowhere to go and would land in 'other' — and 'other' has already been overloaded twice in this
-  # column's history (a vinegar pickle before quick_pickle shipped; store-bought preserves before
-  # purchased_preserved did). This is the standing measurement of whether the vocabulary is keeping
-  # up with the practice: it names the rows, so a failure is a work item rather than a number.
-  # NOT self-armed — it is an invariant of the eighteen-value world too, and it may legitimately go
-  # red on a real 'other' row that needs a new value, which is exactly the signal it exists to give.
-  # `deleted_at IS NULL` is stated because this one IS about live rows: a soft-deleted mis-filing is
-  # history, not a work item.
-  - name: post_other_rows_still_carry_their_free_text
-    sql: |
-      SELECT id FROM public.preservation_log
-       WHERE deleted_at IS NULL
-         AND method = 'other'
-         AND (method_other_text IS NULL OR btrim(method_other_text) = '')
-    expect: rowcount_eq
-    value: 0
+  # NOT PRESENT, DELIBERATELY, AND THE REASON IS WORTH THE SPACE. A gate named
+  # post_other_rows_still_carry_their_free_text was drafted and CUT. Two independent defects, both
+  # instructive:
+  #   1. It was BYTE-FOR-BYTE REDUNDANT with an existing validated constraint. v4-putup-001's
+  #      chk_preservation_log_method_other is already
+  #      `method <> 'other' OR (method_other_text IS NOT NULL AND btrim(method_other_text) <> '')`.
+  #      A gate asserting exactly what a CHECK enforces detects nothing and cannot fail except by
+  #      the constraint having been dropped.
+  #   2. Worse, ITS COMMENT PROMISED SOMETHING ITS SQL DID NOT DO. The comment claimed it measured
+  #      whether the `other` escape hatch was refilling — the pathology `candy` exists to relieve —
+  #      while the predicate only tested for BLANK free text. Those are different questions.
+  # The thing the comment wanted is not gateable here: "no live row uses method='other'" is a
+  # prod-derived absolute, it is FALSE today (the vinegar-pickle row), and staging carries different
+  # data. It belongs in a periodic review of the vocabulary against the practice, not in a shared
+  # blocking CI workflow. Recorded so the next author does not re-derive the same broken gate.

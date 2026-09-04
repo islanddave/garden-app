@@ -65,11 +65,16 @@
 # `continuous: false` and flipping it in the apply commit is the alternative, and this repo has the
 # scar — v4-carecacheundo-001's equivalent gate sits red on prod because that flip never happened.
 #
-# TWO GATES BELOW ARE DELIBERATELY *NOT* ARMED — post_column_is_still_not_null and
-# post_quantity_pair_never_half_recorded. Both are TRUE against the live pre-apply schema, so arming
-# them would make them vacuous today and DELETE a real assertion. Self-arming is for a gate that
-# would otherwise be red, never a blanket style (the rule is stated in v4-putupmethod-001/gates.yml
-# and is worth repeating because it is the easy thing to get wrong in the safe-looking direction).
+# ONE GATE BELOW IS DELIBERATELY *NOT* ARMED — post_column_is_still_not_null. It is TRUE against the
+# live pre-apply schema, so arming it would make it vacuous today and DELETE a real assertion.
+# Self-arming is for a gate that would otherwise be red, never a blanket style (the rule is stated in
+# v4-putupmethod-001/gates.yml and is worth repeating because it is the easy thing to get wrong in
+# the safe-looking direction). Note what makes it safe to leave unarmed when this lane could query
+# NEITHER live database: it asserts a SCHEMA fact (information_schema.is_nullable), sourced to
+# v4-putup-001/0a-additive-ddl.sql:82 and re-confirmed against prod on 2026-09-03 by
+# v5-inflightbatch-001's header, which enumerates `quantity_unit NOT NULL` among the five constraints
+# making an in-flight row unrepresentable there. An unarmed gate over unmeasured DATA would not clear
+# that bar — see the cut gate documented in the post block below.
 #
 # ONE GATE IS ARMED ON A *WINDOW*, not on a single version row — post_a_check_admits_every_writer.
 # It asserts a property that phase B deliberately destroys, so arming it on phase A alone would turn
@@ -278,17 +283,15 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # NOT SELF-ARMED, same reasoning: a live-data invariant that already holds. A blank-but-not-null
-  # unit satisfies NOT NULL while meaning nothing, and it is the one value a free-text column could
-  # have accumulated before this migration. Phase A's vocabulary forbids it going forward; this
-  # asserts it never happened. `deleted_at IS NULL` is DELIBERATELY ABSENT — a blank in a
-  # soft-deleted row would still abort 0a's ADD CONSTRAINT.
-  - name: post_quantity_pair_never_half_recorded
-    sql: |
-      SELECT id FROM public.preservation_log
-       WHERE quantity_unit IS NULL OR btrim(quantity_unit) = ''
-    expect: rowcount_eq
-    value: 0
+  # NOT PRESENT, DELIBERATELY: a "quantity_unit is never blank" gate. It was drafted and cut, and the
+  # reasoning is worth keeping because it is the general rule for this file. A blank-but-not-null unit
+  # is already caught in BOTH windows without it — before the apply by
+  # sweep_a_every_stored_spelling_is_in_the_union (the empty string is not one of the 22 values), and
+  # after the apply by the CHECK itself. So as a standing CONTINUOUS gate it would be unverifiable in
+  # the only window where it was unique (this lane could not query prod or staging) and redundant in
+  # every window after. gate-invariants.yml is a SHARED BLOCKING workflow — a gate that reds there
+  # takes every other migration's gates down with it — so an unverifiable gate that detects nothing
+  # new is a liability, not caution. Gates catch wrongness; they do not earn their place by existing.
 
   # ── PHASE B ─────────────────────────────────────────────────────────────────────────────────
   - name: post_b_schema_version_recorded
