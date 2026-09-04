@@ -4,6 +4,8 @@
     "date": "2026-09-04",
     "highlights": [
       "Hot sauce logged without a storage location was being given a twelve-month room-temperature use-by date. It now defaults to the fridge figure, six months, the same way ferments and quick pickles already did.",
+      "Seeds, plants and supplies now record where they came from. There are two answers and they are kept apart: who grew, bred or packed the thing, and separately the shop, swap or stall where it changed hands — that second one only when it differs. The picker has type-ahead and voice, and you can add a source you have never used before without leaving the form.",
+      "Every inventory item you already had was matched to an entry in the new source catalogue, so the field starts populated rather than blank.",
       "You can rename, re-file and delete storage locations now. The buttons existed in the backend and had never been wired to a screen, so a mistyped freezer name was permanent — and a location can now be a fridge, pantry or cold store, not only a freezer.",
       "Something in the kitchen: photograph a ferment, a dehydrator run or a batch of candied rind and it becomes a batch you can follow, without naming a planting, a date, a method or a quantity. A new Going now view on Put-Up lists whatever is underway.",
       "Candying is a put-up method at last, instead of landing in Other. Its use-by is an estimate from our own candying guide rather than published guidance, and the app says so on screen and lets you set the real date.",
