@@ -1,0 +1,294 @@
+# gates.yml
+# V5-PHRECORD-001 — kitchen_stage_log.ph_reading + ph_read_at, chk_ksl_ph_pairing, chk_ksl_ph_scale,
+# idx_ksl_ph, and last_ph_reading / last_ph_read_at on v_kitchen_batch_current.
+#
+# SEQUENCING: staging apply (0a) -> gates -> rehearse 0r -> re-apply -> deploy-staging -> prod apply
+# -> gates -> promote. One file, one apply window; there is no companion 0c.
+#
+# A FOLLOW-ON, AND THE PRE GATES SAY SO. V5-INFLIGHTBATCH-001 is already applied to staging and prod
+# (2026-09-04), so kitchen_stage_log is an EXISTING table with a deployed writer. pre_inflightbatch
+# _applied is the gate that stops this file being run against an environment that never had it, where
+# the ALTERs would fail on a missing relation and the view replace would create a view from nothing.
+#
+# FAILURE MODE IF THE DDL DOES NOT LAND FIRST — asymmetric, and the safe direction is why the DDL
+# goes to prod ahead of the promote:
+#   * New Lambda + old schema = HARD. The stage INSERT names two columns that do not exist and every
+#     check-in 500s with a 42703.
+#   * Old Lambda + new schema = INERT. The old stage writer names an explicit column list that does
+#     not include either new column, so both stay NULL; the old reader does SELECT * from the view and
+#     hands two extra keys to a client that ignores them. Nothing reads a reading until the new
+#     Lambda ships and nothing can write one.
+#
+# EVERY POST GATE READS CATALOGS ONLY, and that is a HARD RULE here rather than a preference. Postgres
+# analyses a whole statement before it evaluates any WHERE, so a gate that names ph_reading in a query
+# against kitchen_stage_log raises 42703 on an unapplied database instead of returning zero rows —
+# exactly the ::regclass defect the arming pattern exists to avoid, one layer down. That is why there
+# is no data-level "the pairing holds" gate below: it cannot be written in a form that self-arms.
+# chk_ksl_ph_pairing is the enforcement; post_ph_checks_validated proves the enforcement is armed.
+#
+# NO PROD-DERIVED ABSOLUTES. Staging carries different data from prod, so nothing below asserts a row
+# COUNT of user data. Every count-shaped gate counts VIOLATORS and expects zero, which is true on any
+# dataset that has not been hand-corrupted.
+
+pre:
+  - name: pre_kitchen_stage_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='kitchen_stage_log'
+    expect: rowcount_eq
+    value: 1
+
+  # This migration ALTERs a table and REPLACES a view that another migration created. Running it
+  # against an environment that never had that migration is not "additive", it is a different file.
+  - name: pre_inflightbatch_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.110.0-inflightbatch-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_ph_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='kitchen_stage_log'
+         AND column_name IN ('ph_reading','ph_read_at')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_ph_index_absent
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='kitchen_stage_log' AND indexname='idx_ksl_ph'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-phrecord-20260904'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_view_present
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema='public' AND table_name='v_kitchen_batch_current'
+    expect: rowcount_eq
+    value: 1
+
+  # THE GATE THAT STOPS AN OPAQUE APPLY FAILURE. 0a's replacement view leads with `b.*`, which
+  # re-expands at apply time against whatever columns kitchen_batch has TODAY — while the stored view
+  # froze its expansion the day INFLIGHTBATCH created it. If any migration has since widened
+  # kitchen_batch, the new column lands in the MIDDLE of the replacement's column list, every derived
+  # column shifts one position, and CREATE OR REPLACE VIEW aborts with "cannot change name of view
+  # column", which names neither this file nor the migration that actually caused it.
+  #
+  # The invariant, stated as a violator count: the view's column count must be kitchen_batch's plus
+  # the SIX derived columns INFLIGHTBATCH appended. Dataset-independent, and red the moment the
+  # premise stops holding.
+  - name: pre_view_star_expands_unchanged
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='v_kitchen_batch_current')
+          <> (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='kitchen_batch') + 6
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: every predicate a CHECK will enforce must already hold before the CHECK is armed.
+  #
+  # Both CHECKs are on columns that do not exist yet, so every existing row will hold NULL in both the
+  # instant they do — chk_ksl_ph_pairing is satisfied by (NULL IS NULL) = (NULL IS NULL) and
+  # chk_ksl_ph_scale by its own NULL arm. The predicates therefore hold VACUOUSLY across the whole
+  # table and 0a creates both VALIDATED. Measured rather than assumed, because "obviously fine" is how
+  # an unchecked assumption ships. This cannot be written as a row-level violator count for the reason
+  # in the header: naming the columns in a query would raise 42703 before the apply.
+  - name: sweep_ph_predicates_vacuous
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='kitchen_stage_log'
+         AND column_name IN ('ph_reading','ph_read_at')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # Armed on the COLUMNS rather than on the version row, because guarding "the row exists" with "the
+  # row exists" is circular and cannot self-arm. 0a writes both in one transaction, so a violation
+  # here means someone hand-applied the DDL or deleted the row — precisely the state that would
+  # silence every gate below it.
+  - name: post_schema_version_recorded
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='kitchen_stage_log'
+                        AND column_name='ph_reading')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-phrecord-20260904')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_ph_columns_exist_and_nullable
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='kitchen_stage_log'
+                 AND column_name IN ('ph_reading','ph_read_at')
+                 AND is_nullable='YES') <> 2
+    expect: rowcount_eq
+    value: 0
+
+  # NO DEFAULT ON EITHER COLUMN, and this is a ruling rather than a tidiness check. A DEFAULT on
+  # ph_read_at would stamp an instant onto a reading nobody took; a DEFAULT on ph_reading would invent
+  # the measurement itself. Both columns mean "somebody went and measured", and a default is the one
+  # mechanism that can make that sentence false without anyone typing anything.
+  - name: post_ph_columns_have_no_default
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='kitchen_stage_log'
+                        AND column_name IN ('ph_reading','ph_read_at')
+                        AND column_default IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # Both CHECKs present AND validated. A convalidated=false here would be indistinguishable to a later
+  # reader from "known violators exist", on constraints that were created against an all-NULL column.
+  - name: post_ph_checks_validated
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND (SELECT count(*)
+                FROM pg_constraint c
+                JOIN pg_class     t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname='public' AND t.relname='kitchen_stage_log'
+                 AND c.contype='c' AND c.convalidated
+                 AND c.conname IN ('chk_ksl_ph_pairing','chk_ksl_ph_scale')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  # ⚠ THE NO-THRESHOLD GATE, and it is the schema half of this lane's whole ruling: the app may record
+  # a measured pH and may prompt someone to measure, but it may never compare one to a food-safety
+  # line, score it, or gate anything on it. The two constraints named above are a NULL-pairing rule and
+  # the pH scale's own 0-to-14 domain; ANY OTHER CHECK mentioning ph_reading is, by construction, a
+  # threshold somebody added — there is nothing else a constraint on that column could be about.
+  #
+  # Deliberately written WITHOUT the number it exists to keep out: matching on the constraint NAME set
+  # rather than on a literal means this gate cannot itself become the place the acid line re-enters the
+  # codebase. The paired source-level guard lives in src/__tests__/PutUpPhReading.test.jsx.
+  - name: post_no_extra_ph_constraint
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class     t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE n.nspname='public' AND t.relname='kitchen_stage_log'
+                  AND c.contype='c'
+                  AND pg_get_constraintdef(c.oid) LIKE '%ph_reading%'
+                  AND c.conname NOT IN ('chk_ksl_ph_pairing','chk_ksl_ph_scale'))
+    expect: rowcount_eq
+    value: 0
+
+  # ⚠ NO VERDICT COLUMN, ANYWHERE IN THIS FAMILY. The same ruling as the gate above, guarding the
+  # OTHER shape it could arrive in: not a constraint but a stored judgement — a status, a flag, a
+  # target, a pass/fail. Each name below is a thing a later "helpful" migration might add, and every
+  # one of them would turn a record into an assessment. Swept across the batch table too, because the
+  # natural place to cache a batch-level verdict is the parent.
+  - name: post_no_ph_verdict_column
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public'
+                        AND table_name IN ('kitchen_stage_log','kitchen_batch')
+                        AND column_name IN ('ph_status','ph_ok','ph_pass','ph_target','ph_threshold',
+                                            'ph_limit','is_acidified','acidified','shelf_stable',
+                                            'is_safe','safety_status'))
+    expect: rowcount_eq
+    value: 0
+
+  # The partial index the view's second LATERAL is priced against. idx_ksl_batch cannot serve that
+  # lookup — its key is (batch_id, entered_at DESC, id DESC) and the newest ROW is usually not the
+  # newest READING — so without this the derivation degrades to a scan of every stage row per batch.
+  - name: post_ph_index_present
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND NOT EXISTS (SELECT 1 FROM pg_indexes
+                          WHERE schemaname='public' AND tablename='kitchen_stage_log'
+                            AND indexname='idx_ksl_ph')
+    expect: rowcount_eq
+    value: 0
+
+  # BOTH view columns or neither. They are one fact in two halves — a reading and the instant it was
+  # read — and a surface that renders the value without its date is rendering a current state rather
+  # than a dated line, which is the exact thing the ruling forbids. Counting for 2 is what makes a
+  # half-applied view red instead of quietly half-right.
+  - name: post_view_exposes_last_ph_pair
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='v_kitchen_batch_current'
+                 AND column_name IN ('last_ph_reading','last_ph_read_at')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  # pre_view_star_expands_unchanged's counterpart: the view is now kitchen_batch's columns plus the
+  # six INFLIGHTBATCH derived ones plus this file's two. Holds this shape permanently, so a later
+  # CREATE OR REPLACE that quietly drops the pair or re-expands `b.*` over a widened kitchen_batch
+  # goes red here rather than in a client that renders an undefined.
+  - name: post_view_gained_exactly_two
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='v_kitchen_batch_current')
+          <> (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='kitchen_batch') + 8
+    expect: rowcount_eq
+    value: 0
+
+  # Prod-only: staging has no garden_ro role at all. CREATE OR REPLACE preserves a view's ACL and
+  # DROP + CREATE does not, so this gate is really about 0r — the rollback re-grants under a role
+  # guard, and if that guard is ever removed the loss shows up here rather than as a read-only
+  # investigation coming back EMPTY, which reads as "there are no batches". Conditioned on the base
+  # table's grant so it asserts a RELATIONSHIP rather than a fact about how the role was set up: if
+  # garden_ro can read kitchen_batch, it must be able to read the view over it.
+  - name: post_garden_ro_view_grant_tracks_base_table
+    continuous: true
+    env: prod
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-phrecord-20260904')
+         AND EXISTS (SELECT 1 FROM information_schema.role_table_grants
+                      WHERE grantee='garden_ro' AND table_schema='public'
+                        AND table_name='kitchen_batch' AND privilege_type='SELECT')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
+                          WHERE grantee='garden_ro' AND table_schema='public'
+                            AND table_name='v_kitchen_batch_current' AND privilege_type='SELECT')
+    expect: rowcount_eq
+    value: 0

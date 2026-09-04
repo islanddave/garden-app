@@ -53,6 +53,23 @@ export const KITCHEN_QTY_UNITS = [
   'g', 'kg', 'oz', 'lb', 'count', 'cup', 'tbsp', 'tsp', 'fl oz', 'qt', 'gal', 'ml', 'l', 'other',
 ];
 
+// V5-PHRECORD-001. chk_ksl_ph_scale, mirrored — the pH scale's definitional range and nothing else.
+//
+// ⚠ NOT A SAFETY BAND, and the distinction is the whole ruling. This range is symmetric, prefers no
+// reading to any other, and excludes nothing a meter or a strip can produce; its only job is to catch
+// a fat-finger before it is stored, exactly as the amount checks beside it do. The app RECORDS a
+// measured pH, PROMPTS someone to measure, and LINKS to how — it never derives, scores, colours,
+// gates on, or compares a reading to anything. There is no threshold constant in this file and there
+// must never be one. Adjudication: FOODSAFETY-RULING-V101.md §2 (gardening-docs project-state).
+// This is an original design choice, not a compliance posture: no published convention exists for
+// what home-preservation software should say, which the research records as a negative RESULT.
+//
+// Restated in three places on purpose — the DB CHECK, here, and the client — which is the same
+// belt-and-suspenders the vocabularies above use. A raw 23514 reads as
+// `Constraint violation: chk_ksl_ph_scale`, which is not something a cook at a counter can act on.
+export const KITCHEN_PH_SCALE_MIN = 0;
+export const KITCHEN_PH_SCALE_MAX = 14;
+
 // The PUT allowlist — an EXPLICIT set, not a full replace, and the difference from
 // index.js:589-610 is deliberate. Closing goes through its own route, so closed_at/outcome are absent;
 // first_recorded_at is the honest floor a client must never be able to move; user_id is ownership.
@@ -296,7 +313,36 @@ export function validateStage(body) {
     if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) return 'amount must be greater than 0';
     if (!KITCHEN_QTY_UNITS.includes(unit)) return `amount_unit must be one of: ${KITCHEN_QTY_UNITS.join(', ')}`;
   }
-  return uuidFieldError(body, 'storage_location_id') ?? uuidFieldError(body, 'photo_id');
+  return phError(body) ?? uuidFieldError(body, 'storage_location_id') ?? uuidFieldError(body, 'photo_id');
+}
+
+// chk_ksl_ph_pairing + chk_ksl_ph_scale, mirrored. A reading always carries the instant it was read:
+// a cook measures at the counter and logs from the sofa, so entered_at ("when did you log this") and
+// ph_read_at ("when did you read it") are different facts, and DEFAULTING one from the other would
+// stamp a time onto a measurement nobody took then. There is no default anywhere in this path — not
+// here, not in the route, not on the column — so the pair is required together or omitted together.
+//
+// NOTHING BELOW LOOKS AT THE VALUE'S MEANING. It is checked for being a number on the pH scale and
+// then passed through untouched, as the STRING the client sent: a Number round-trip drops a trailing
+// zero the meter displayed, so the route never coerces it either.
+function phError(body) {
+  const reading = body.ph_reading ?? null;
+  const readAt = body.ph_read_at ?? null;
+  if ((reading == null) !== (readAt == null)) {
+    return 'a pH reading and the time it was read must both be set, or both be empty';
+  }
+  if (reading == null) return null;
+  const n = Number(String(reading).trim());
+  if (String(reading).trim() === '' || !Number.isFinite(n)) return 'a pH reading has to be a number';
+  if (n < KITCHEN_PH_SCALE_MIN || n > KITCHEN_PH_SCALE_MAX) {
+    return `a pH reading has to be on the pH scale — ${KITCHEN_PH_SCALE_MIN} to ${KITCHEN_PH_SCALE_MAX}`;
+  }
+  // Checked here rather than left to ::timestamptz, which would surface a typo as a 22007 falling
+  // through to an opaque 500 — the same reason KITCHEN_UUID_RE exists a few lines up.
+  if (Number.isNaN(new Date(String(readAt)).getTime())) {
+    return 'ph_read_at has to be a timestamp';
+  }
+  return null;
 }
 
 // ── POST /api/kitchen-batches/:id/inputs ─────────────────────────────────────────────────────────
@@ -449,6 +495,9 @@ const CONSTRAINT_MESSAGES = {
   chk_ksl_label_nonblank: 'a stage label cannot be blank',
   chk_ksl_amount_pairing: 'an amount needs a unit, and a unit needs an amount',
   chk_ksl_amount_positive: 'an amount has to be greater than zero',
+  // V5-PHRECORD-001. Both messages describe the SHAPE of the record, never the value's meaning.
+  chk_ksl_ph_pairing: 'a pH reading needs the time it was read, and a time needs a reading',
+  chk_ksl_ph_scale: 'that is not a reading on the pH scale',
   // The two-truths guard on the fan-out. A jar either came from a batch (whose inputs live on the
   // batch) or directly from one harvest — never both.
   chk_preservation_log_one_provenance:
