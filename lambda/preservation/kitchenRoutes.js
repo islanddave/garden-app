@@ -22,20 +22,36 @@ import {
   KITCHEN_UUID_RE, parseKitchenRoute, parseBatchState, normalizeText,
   validateBatchCreate, validateBatchUpdate, batchUpdatePatch,
   validateStage, validateInputPayload, normalizeInputRows, harvestIdsIn,
-  validateClose, outputIdsIn,
+  validateClose, outputIdsIn, validateOutputsPayload, outputLogIdsIn,
 } from './kitchenBatch.js';
 
 const notFound = { status: 404, body: { error: 'Not found' } };
 const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
 const bad = (error) => ({ status: 400, body: { error } });
+// THE POST-CLOSE WRITE POLICY, in one place, stated per route in the table below. A closed batch
+// still accepts STAGE rows — the DDL's own reason, "it went mouldy in the jar three weeks later is a
+// fact about the process", and refusing it would push that fact into a note nothing can read. What a
+// closed batch refuses is a change to WHAT WENT IN: the inputs list and the merge PUT are the
+// record of a process that is over, and editing them silently rewrites history that an outcome was
+// already recorded against. Reopen is the door — it is unconditional and one tap.
+const closedForEdits = {
+  status: 409,
+  body: { error: 'This batch is closed — reopen it if you need to change what went in' },
+};
 
 // ── ownership loaders ────────────────────────────────────────────────────────────────────────────
 // Uniform contract, lifted from index.js: return the row on success, null on ANY failure — absent id,
 // malformed id, out-of-household, soft-deleted. Callers answer a null with the SAME generic response
 // they would give a malformed id, never "not found" vs "forbidden": that distinction is itself a leak.
 
-// Reads the VIEW, not kitchen_batch, so even the ownership gate has one derivation. closed_at and
-// suspended_at ride along because two routes branch on them.
+// Reads the VIEW, not kitchen_batch, so even the ownership gate has one derivation.
+//
+// closed_at rides along because the route table below BRANCHES ON IT — three routes (inputs add,
+// input delete, the merge PUT) refuse a closed batch and answer `closedForEdits`. Until 2026-09-04
+// this comment claimed two routes branched on these columns and NONE did: `batch.closed_at` appeared
+// nowhere in this file, so a closed batch silently accepted every content write. A comment that
+// describes a branch that does not exist is how the next session concludes a gate is present.
+// suspended_at is loaded and not branched on — no route refuses a paused batch, by design.
 async function loadOwnedBatch(sql, batchId, householdIds) {
   if (!KITCHEN_UUID_RE.test(String(batchId))) return null;
   const rows = await sql`
@@ -123,27 +139,59 @@ export async function handleKitchenRoute({ sql, rawPath, method, rawBody, query,
 
   const batch = await loadOwnedBatch(sql, route.id, householdIds);
   if (!batch) return notFound;
+  // The one closed-batch predicate, read once from the gate row rather than re-derived per route.
+  const isClosed = batch.closed_at != null;
 
   if (route.kind === 'batch') {
     if (method === 'GET') return getBatch(sql, batch.id, householdIds);
-    if (method === 'PUT') return updateBatch(sql, batch.id, parseBody(), householdIds);
+    // REFUSED on a closed batch: the merge PUT edits label / kind / start / brine_note / notes —
+    // the batch's own account of itself — and an outcome has already been recorded against that
+    // account. The 409 names the door rather than just the wall.
+    if (method === 'PUT') {
+      if (isClosed) return closedForEdits;
+      return updateBatch(sql, batch.id, parseBody(), householdIds);
+    }
     if (method === 'DELETE') return deleteBatch(sql, batch.id, householdIds);
     return notAllowed;
   }
   if (route.kind === 'stages') {
+    // ALLOWED on a closed batch, on purpose. See closedForEdits.
     if (method === 'POST') return addStage(sql, batch.id, parseBody(), userId, householdIds);
     return notAllowed;
   }
   if (route.kind === 'inputs') {
-    if (method === 'POST') return addInputs(sql, batch.id, parseBody(), userId, householdIds);
+    if (method === 'POST') {
+      if (isClosed) return closedForEdits;
+      return addInputs(sql, batch.id, parseBody(), userId, householdIds);
+    }
     return notAllowed;
   }
   if (route.kind === 'input') {
-    if (method === 'DELETE') return deleteInput(sql, batch.id, route.inputId);
+    if (method === 'DELETE') {
+      if (isClosed) return closedForEdits;
+      return deleteInput(sql, batch.id, route.inputId);
+    }
     return notAllowed;
   }
   if (route.kind === 'close') {
-    if (method === 'POST') return closeBatch(sql, batch.id, parseBody(), householdIds);
+    if (method === 'POST') return closeBatch(sql, batch.id, parseBody(), userId, householdIds);
+    return notAllowed;
+  }
+  if (route.kind === 'reopen') {
+    if (method === 'POST') return reopenBatch(sql, batch.id, householdIds);
+    return notAllowed;
+  }
+  // ALLOWED on a closed batch, and this one is the REPAIR PATH rather than an exception to the
+  // policy. Closing as `put_up` with the wrong jars selected is the expensive mis-tap, and before
+  // these routes existed it was permanently unfixable — close is the only other writer of
+  // preservation_log.batch_id and it can only run once. Refusing an unlink here would re-create
+  // exactly the trap the decoupling ruling removed.
+  if (route.kind === 'outputs') {
+    if (method === 'POST') return linkOutputs(sql, batch.id, parseBody(), householdIds);
+    return notAllowed;
+  }
+  if (route.kind === 'output') {
+    if (method === 'DELETE') return unlinkOutput(sql, batch.id, route.outputId, householdIds);
     return notAllowed;
   }
   return notFound;
@@ -172,7 +220,7 @@ async function listBatches(sql, q, householdIds) {
   return { status: 200, body: { state, batches: rows } };
 }
 
-// GET /api/kitchen-batches/:id — the view row plus its inputs and its stage log.
+// GET /api/kitchen-batches/:id — the view row plus its inputs, its stage log and its outputs.
 //
 // Both child lists are ordered newest-first with an `id DESC` tiebreak. On the stage log that
 // tiebreak is load-bearing: two rows written in one statement tie on entered_at AND created_at, and a
@@ -200,7 +248,27 @@ async function getBatch(sql, batchId, householdIds) {
     WHERE batch_id = ${batchId}::uuid
     ORDER BY entered_at DESC, id DESC
   `;
-  return { status: 200, body: { ...row, inputs, stages } };
+  // "Which jars came from that mash" was unanswerable before this: the view carries output_count, an
+  // integer, and preservation_log.batch_id was write-only. output_count already filters deleted_at,
+  // so this list states the same predicate to stay countable against it.
+  //
+  // use_by_target AND use_by_status ARE DELIBERATELY ABSENT from this projection. The shipped
+  // put-up row renders a warn-coloured "Use soon" / "Past use-by" chip off those two, and composed
+  // with a recorded outcome on one surface that becomes a shelf-stability endorsement this app does
+  // not make. The date is still on the row for every surface whose job is the pantry; it is not on
+  // the surface whose job is the batch. An explicit column list rather than SELECT * is what keeps
+  // that a decision instead of an accident.
+  const outputs = await sql`
+    SELECT id, batch_id, user_id, crop_type_slug, variety_id, plant_id, harvest_log_id,
+           preserved_at, preserved_at_approx, method, method_other_text,
+           quantity_value, quantity_unit, package_count, storage_location_id,
+           remaining_count, consumed_at, notes, photo_id, created_at, updated_at
+    FROM preservation_log
+    WHERE batch_id = ${batchId}::uuid
+      AND deleted_at IS NULL
+    ORDER BY preserved_at DESC, id DESC
+  `;
+  return { status: 200, body: { ...row, inputs, stages, outputs } };
 }
 
 // POST /api/kitchen-batches
@@ -374,7 +442,10 @@ async function addStage(sql, batchId, body, userId, householdIds) {
 async function addInputs(sql, batchId, body, userId, householdIds) {
   const verr = validateInputPayload(body);
   if (verr) return bad(verr);
-  if (body.predicate) return addInputsByPredicate(sql, batchId, body.predicate, userId, householdIds);
+  if (body.predicate) {
+    return addInputsByPredicate(
+      sql, batchId, body.predicate, userId, householdIds, body.preview === true);
+  }
 
   const rows = normalizeInputRows(body.inputs);
   const harvestIds = harvestIdsIn(rows);
@@ -417,28 +488,55 @@ async function addInputs(sql, batchId, body, userId, householdIds) {
 //
 // The window is a CIVIL range in ET — the same zone every other date in this system is stamped in —
 // because "the peppers I picked between the 3rd and the 10th" is a calendar claim, not an instant one.
-async function addInputsByPredicate(sql, batchId, predicate, userId, householdIds) {
+//
+// ONE HANDLER, ONE WHERE — the whole reason the dry run is shaped this way. A preview built on
+// /api/harvests would enumerate a DIFFERENT row set from the one this inserts (that route takes an
+// enum `timeframe`, not from/to, and has no variety_id), and nothing could catch the divergence: two
+// Lambdas, no shared predicate module. Here the predicate is written ONCE, in the `matched` CTE, and
+// the INSERT reads it. The preview arm and the commit arm are the SAME STATEMENT TEXT with one bound
+// boolean different — `WHERE NOT ${preview}::boolean` — so a statement-text assertion that the two
+// arms are byte-identical is a proof they bind an identical predicate, not an argument that they do.
+// A data-modifying CTE always runs to completion, so on a preview the INSERT executes and selects
+// zero rows: nothing lands, and `inserted` is honestly 0.
+//
+// `matched` is also what makes a retry honest. ON CONFLICT DO NOTHING is safe but SILENT: on a
+// re-run after a dropped response `inserted` reads 0 while 139 rows are already present, which a
+// client would render as "nothing added". Reporting both numbers lets it say the true thing.
+async function addInputsByPredicate(sql, batchId, predicate, userId, householdIds, preview) {
   const cropSlug = normalizeText(predicate.crop_type_slug);
   const varietyId = predicate.variety_id ?? null;
   const plantId = predicate.plant_id ?? null;
-  const inserted = await sql`
-    INSERT INTO kitchen_batch_input (batch_id, input_kind, harvest_log_id, created_by)
-    SELECT ${batchId}::uuid, 'harvest'::text, h.id, ${userId}::text
-    FROM harvest_log h
-    JOIN event_log e ON e.id = h.event_id AND e.deleted_at IS NULL
-    LEFT JOIN garden_node gn ON gn.id = e.plant_id AND gn.deleted_at IS NULL
-    LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
-    WHERE h.created_by = ANY(${householdIds})
-      AND h.deleted_at IS NULL
-      AND (e.event_date AT TIME ZONE ${ET_TZ}::text)::date >= ${predicate.from}::date
-      AND (e.event_date AT TIME ZONE ${ET_TZ}::text)::date <= ${predicate.to}::date
-      AND (${plantId}::uuid IS NULL OR e.plant_id = ${plantId}::uuid)
-      AND (${varietyId}::uuid IS NULL OR gn.cultivar_id = ${varietyId}::uuid)
-      AND (${cropSlug}::text IS NULL OR cv.crop_type_slug = ${cropSlug}::text)
-    ON CONFLICT DO NOTHING
-    RETURNING id
+  const rows = await sql`
+    WITH matched AS (
+      SELECT h.id
+      FROM harvest_log h
+      JOIN event_log e ON e.id = h.event_id AND e.deleted_at IS NULL
+      LEFT JOIN garden_node gn ON gn.id = e.plant_id AND gn.deleted_at IS NULL
+      LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
+      WHERE h.created_by = ANY(${householdIds})
+        AND h.deleted_at IS NULL
+        AND (e.event_date AT TIME ZONE ${ET_TZ}::text)::date >= ${predicate.from}::date
+        AND (e.event_date AT TIME ZONE ${ET_TZ}::text)::date <= ${predicate.to}::date
+        AND (${plantId}::uuid IS NULL OR e.plant_id = ${plantId}::uuid)
+        AND (${varietyId}::uuid IS NULL OR gn.cultivar_id = ${varietyId}::uuid)
+        AND (${cropSlug}::text IS NULL OR cv.crop_type_slug = ${cropSlug}::text)
+    ), added AS (
+      INSERT INTO kitchen_batch_input (batch_id, input_kind, harvest_log_id, created_by)
+      SELECT ${batchId}::uuid, 'harvest'::text, m.id, ${userId}::text
+      FROM matched m
+      WHERE NOT ${preview}::boolean
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    )
+    SELECT (SELECT count(*)::int FROM matched) AS matched_count,
+           (SELECT count(*)::int FROM added) AS inserted_count
   `;
-  return { status: 201, body: { inserted: inserted.length, predicate } };
+  const matched = rows[0]?.matched_count ?? 0;
+  if (preview) return { status: 200, body: { matched, predicate } };
+  return {
+    status: 201,
+    body: { inserted: rows[0]?.inserted_count ?? 0, matched, predicate },
+  };
 }
 
 // DELETE /api/kitchen-batches/:id/inputs/:inputId — a hard delete, because kitchen_batch_input has no
@@ -459,21 +557,35 @@ async function deleteInput(sql, batchId, inputId) {
 
 // POST /api/kitchen-batches/:id/close
 //
-// THE ONLY WRITER OF preservation_log.batch_id. That column is deliberately absent from
-// PRESERVATION_EDITABLE_COLUMNS (provenance.js:33), which is the declared single source of truth for
-// four hand-lists — one of them, buildFullPayload, lives in the FRONTEND. If batch_id joined it, the
+// One of TWO writers of preservation_log.batch_id in this module — this and linkOutputs/unlinkOutput
+// below, which exist because linking a jar used to require ENDING the batch. It remains absent from
+// PRESERVATION_EDITABLE_COLUMNS (provenance.js:33), the declared single source of truth for four
+// hand-lists — one of them, buildFullPayload, lives in the FRONTEND. If batch_id joined that list the
 // full-replace PUT would let a "Mark used" tap from a service-worker-cached bundle NULL a batch's
-// output link and return 200.
+// output link and return 200. Every writer of it is server-side and in this file; that is the
+// invariant, not "exactly one route".
 //
-// ONE STATEMENT, and the ORDER of the two CTEs is the whole point. `linked` reads `closed`'s output, so
-// a batch that is already closed, soft-deleted or not the caller's produces an empty `closed` and the
-// preservation_log update touches nothing. Written the other way round, a failed close would still
-// have relabelled the jars.
+// ONE STATEMENT, and the ORDER of the CTEs is the whole point. `linked` and `finished` both read
+// `closed`'s output, so a batch that is already closed, soft-deleted or not the caller's produces an
+// empty `closed`, the preservation_log update touches nothing and no stage row is written. Written
+// the other way round, a failed close would still have relabelled the jars.
 //
-// A jar that already cites a single harvest raises chk_preservation_log_one_provenance, which rolls the
-// whole statement back and surfaces through kitchenErrorMessage — the close FAILS rather than silently
-// linking fewer jars than were asked for.
-async function closeBatch(sql, batchId, body, householdIds) {
+// AND p.batch_id IS NULL — BUG-JARSTEAL-001. Without it, closing batch B with a jar already linked to
+// batch A RE-POINTS it: 200, `linked_count` counts it, and A's output_count silently drops with no
+// error and no record. The sibling collision (a jar that already cites a single harvest) fails LOUDLY
+// via chk_preservation_log_one_provenance, which rolls the whole statement back and surfaces through
+// kitchenErrorMessage. This one had no constraint behind it, so the conjunct IS the guard: an
+// already-linked jar is now silently SKIPPED, and `linked_output_count` coming back below the number
+// of ids sent is the client's signal — the same contract a foreign or soft-deleted id already had.
+//
+// THE `finished` STAGE ROW is written here rather than left to the client, and it carries
+// cue_observed. The DDL's own rule is that every consequential transition is decided by an observed
+// cue and not a clock, and recording only the instant records the less authoritative half. Written in
+// the SAME statement so a close and its stage row cannot land apart — the createBatch idiom, and the
+// neon HTTP driver cannot carry an id between two statements in one transaction anyway. It is written
+// on every close, cue or no cue: the transition happened either way, and a NULL cue records that
+// nobody said how they knew rather than inventing that they did.
+async function closeBatch(sql, batchId, body, userId, householdIds) {
   const verr = validateClose(body);
   if (verr) return bad(verr);
   const outputIds = outputIdsIn(body);
@@ -496,7 +608,14 @@ async function closeBatch(sql, batchId, body, householdIds) {
       WHERE p.id = ANY(${outputIds}::uuid[])
         AND p.user_id = ANY(${householdIds})
         AND p.deleted_at IS NULL
+        AND p.batch_id IS NULL
       RETURNING p.id
+    ), finished AS (
+      INSERT INTO kitchen_stage_log (batch_id, stage_kind, cue_observed, entered_at, created_by)
+      SELECT c.id, 'finished'::text, ${normalizeText(body.cue_observed)}::text, now(),
+             ${userId}::text
+      FROM closed c
+      RETURNING id
     )
     SELECT (SELECT count(*)::int FROM closed) AS closed_count,
            (SELECT count(*)::int FROM linked) AS linked_count
@@ -509,4 +628,103 @@ async function closeBatch(sql, batchId, body, householdIds) {
       linked_output_count: rows[0].linked_count,
     },
   };
+}
+
+// POST /api/kitchen-batches/:id/reopen — UNCONDITIONAL, and no DDL.
+//
+// NULLs exactly KITCHEN_BATCH_CLOSE_COLUMNS, which is what close writes. Both halves of
+// chk_kitchen_batch_close_pairing ((closed_at IS NULL) = (outcome IS NULL)) are cleared in the same
+// statement, so the biconditional is satisfied; clearing closed_at alone would raise 23514 and
+// surface as "closing a batch needs an outcome", which on a reopen would be actively misleading.
+// chk_kitchen_batch_suspend_exclusive is strictly relaxed. outcome_note is outside the pairing and is
+// cleared anyway, or it dangles as a note describing an outcome no longer recorded.
+//
+// NO output_count GATE, deliberately. A "reopen only while nothing is linked" rule reads as safety
+// and is not: output_count is non-monotonic (soft-delete the jars and it falls to 0, so the gate
+// opens through an action with nothing to do with reopening), and it forbids repair of the one
+// EXPENSIVE mis-tap — closed as put_up with the wrong jars — while permitting the cheap one.
+// DELETE /:id/outputs/:plid is the repair for a wrong link now, so the gate would protect nothing.
+//
+// IT ALSO DOES NOT UNLINK. Close is no longer the only writer of batch_id: a jar linked on an OPEN
+// batch through POST /:id/outputs is a deliberate, standalone assertion, and a reopen that cleared
+// every link would destroy it. Reopen inverts the CLOSE, not the linking.
+//
+// REOPEN RESUMES A PAUSED BATCH — stated, not silent. Close sets suspended_at = NULL (the CHECK
+// requires it), so a paused batch that is closed and reopened comes back ACTIVE and moves out of the
+// Paused group. Preserving the pause through a close would need a new kitchen_batch column, which
+// forces a CREATE OR REPLACE VIEW and re-pins a frozen count gate, for no gain: a batch you closed by
+// mistake is one you are picking back up. suspended_at is in KITCHEN_BATCH_EDITABLE_COLUMNS, so
+// re-pausing is one PUT.
+async function reopenBatch(sql, batchId, householdIds) {
+  const rows = await sql`
+    UPDATE kitchen_batch
+    SET closed_at = NULL,
+        outcome = NULL,
+        outcome_note = NULL
+    WHERE id = ${batchId}::uuid
+      AND user_id = ANY(${householdIds})
+      AND deleted_at IS NULL
+      AND closed_at IS NOT NULL
+    RETURNING id
+  `;
+  // Mirrors closeBatch's 409 rather than a 404: the batch was found by loadOwnedBatch, so the only
+  // reason the scoped UPDATE matched nothing is that it was not closed. (The TOCTOU window — a batch
+  // soft-deleted between the gate and this statement — reports the same thing and is the one case
+  // this message is wrong about, exactly as close's is.)
+  if (!rows.length) return { status: 409, body: { error: 'This batch is not closed' } };
+  return { status: 200, body: await readBatch(sql, batchId, householdIds) };
+}
+
+// POST /api/kitchen-batches/:id/outputs — link jars to a batch WITHOUT closing it.
+//
+// Same four predicates as close's `linked` CTE, for the same reasons, including
+// `p.batch_id IS NULL`: a jar belongs to at most one batch and this route must not be the door
+// BUG-JARSTEAL-001 came back through. An id that is foreign, soft-deleted, absent, or already linked
+// is SILENTLY SKIPPED — the caller compares `linked` to `requested` and says so. Naming which id
+// failed would be an existence oracle for another household's jars, the same reason the harvest gate
+// reports a count.
+//
+// `requested` is the POST-DEDUPE length, matching the explicit inputs form's contract: a body naming
+// one jar twice asked for one link.
+async function linkOutputs(sql, batchId, body, householdIds) {
+  const verr = validateOutputsPayload(body);
+  if (verr) return bad(verr);
+  const ids = outputLogIdsIn(body);
+  const rows = await sql`
+    UPDATE preservation_log p
+    SET batch_id = ${batchId}::uuid, updated_at = NOW()
+    WHERE p.id = ANY(${ids}::uuid[])
+      AND p.user_id = ANY(${householdIds})
+      AND p.deleted_at IS NULL
+      AND p.batch_id IS NULL
+    RETURNING p.id
+  `;
+  return { status: 200, body: { linked: rows.length, requested: ids.length } };
+}
+
+// DELETE /api/kitchen-batches/:id/outputs/:plid — unlink one jar.
+//
+// Scoped by batch_id AS WELL AS id, the deleteInput idiom: a jar linked to another batch cannot be
+// unlinked through a batch the caller does own. The household predicate is bound here rather than
+// inherited from loadOwnedBatch, and it is `= ANY(householdIds)` rather than `= userId` so link and
+// unlink are exactly symmetric — Dave can link Jen's jar to his batch, so he must be able to undo it.
+//
+// updated_at is set by hand because preservation_log has NO set_updated_at trigger (the kitchen
+// family has one, this family does not) — the same asymmetry close's `linked` CTE handles.
+//
+// 404 rather than 200 when nothing matched, mirroring deleteInput: idempotent in STATE, not in
+// status.
+async function unlinkOutput(sql, batchId, plId, householdIds) {
+  if (!KITCHEN_UUID_RE.test(String(plId))) return notFound;
+  const rows = await sql`
+    UPDATE preservation_log p
+    SET batch_id = NULL, updated_at = NOW()
+    WHERE p.id = ${plId}::uuid
+      AND p.batch_id = ${batchId}::uuid
+      AND p.user_id = ANY(${householdIds})
+      AND p.deleted_at IS NULL
+    RETURNING p.id
+  `;
+  if (!rows.length) return notFound;
+  return { status: 200, body: { ok: true } };
 }

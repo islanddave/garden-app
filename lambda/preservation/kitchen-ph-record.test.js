@@ -166,9 +166,12 @@ describe('POST /stages — the reading reaches the column VERBATIM', () => {
   });
 });
 
+// GET /:id issues FIVE statements in order: the ownership gate, the view row, inputs, stages, and
+// outputs (the last added by V5-KBBATCHCLOSE). The queues below are that shape; a queue one short
+// makes mockSql reject with "unexpected extra query", which is how the outputs list announced itself.
 describe('GET /:id — the reading history is a list of dated rows, never a summary', () => {
   it('projects both columns on every stage row', async () => {
-    const sql = mockSql([OWNED, VIEW_ROW, [], STAGE_ROW]);
+    const sql = mockSql([OWNED, VIEW_ROW, [], STAGE_ROW, []]);
     const res = await handleKitchenRoute({
       rawPath: `/api/kitchen-batches/${BATCH}`, method: 'GET', rawBody: null, query: {},
       userId: DAVE, householdIds: HOUSEHOLD, sql,
@@ -186,7 +189,7 @@ describe('GET /:id — the reading history is a list of dated rows, never a summ
   // a dated line and the client renders it as one.
   // Mutation: add `count(*) FILTER (WHERE ph_reading IS NOT NULL)` to the stage projection.
   it('computes nothing over them — no count, min, max, avg or streak', async () => {
-    const sql = mockSql([OWNED, VIEW_ROW, [], STAGE_ROW]);
+    const sql = mockSql([OWNED, VIEW_ROW, [], STAGE_ROW, []]);
     await handleKitchenRoute({
       rawPath: `/api/kitchen-batches/${BATCH}`, method: 'GET', rawBody: null, query: {},
       userId: DAVE, householdIds: HOUSEHOLD, sql,

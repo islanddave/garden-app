@@ -85,6 +85,31 @@ export const KITCHEN_BATCH_SERVER_OWNED_COLUMNS = [
   'created_at', 'updated_at', 'deleted_at',
 ];
 
+// THE REVERSIBILITY CONTRACT, NAMED SO A TEST CAN BIND IT. close writes exactly this set; reopen
+// NULLs exactly this set. Under a mock driver a round-trip cannot be proven, only what each handler
+// SENDS — so the assertable form is set equality in BOTH directions against this one constant, which
+// is what stops close and reopen drifting apart later. Adding a fourth column to the close UPDATE
+// without adding it here reds; adding it here without adding it to both statements also reds.
+//
+// suspended_at is DELIBERATELY NOT IN THIS SET even though close writes it. It is not part of the
+// close's own record — it is the pause being cleared because chk_kitchen_batch_suspend_exclusive
+// forbids a suspended closed batch — and a reopen that NULLed it would be a no-op on a column that
+// is already NULL. Reopen therefore RESUMES a paused batch rather than restoring the pause, which is
+// stated rather than silent: a batch you closed by mistake is one you are picking back up.
+export const KITCHEN_BATCH_CLOSE_COLUMNS = ['closed_at', 'outcome', 'outcome_note'];
+
+// The predicate bulk-add's window ceiling, inclusive of both endpoints. NOT a performance bound — a
+// 1,212-row INSERT..SELECT is nothing to Postgres. It is a REPAIRABILITY bound: the undo for a
+// mis-tapped predicate is DELETE /:id/inputs/:inputId, one row at a time, and the predicate form
+// discards its RETURNING ids so even a targeted undo needs a full before/after GET diff. Measured on
+// live prod 2026-09-04: `{from:'2000-01-01', to:'2100-01-01'}` with no other term inserts 1,212 rows
+// in one tap.
+//
+// 366 and not less: the client's window comes from HarvestTimeframeChips, whose season chip spans a
+// full Nov-Oct grow year (365 days inclusive, 366 across a leap day). A cap that rejected a season
+// would break the one control the design ships for choosing the window.
+export const KITCHEN_PREDICATE_MAX_SPAN_DAYS = 366;
+
 // Columns whose value is normalized to "meaningful string or null" before it reaches the column.
 // btrim() CHECKs exist on label / kind_other, and a whitespace-only brine_note is noise either way.
 const KITCHEN_TEXT_COLUMNS = new Set([
@@ -135,6 +160,9 @@ export function parseKitchenRoute(rawPath) {
   if (sub === 'inputs' && !tail) return { kind: 'inputs', id };
   if (sub === 'inputs' && tail) return { kind: 'input', id, inputId: tail };
   if (sub === 'close' && !tail) return { kind: 'close', id };
+  if (sub === 'reopen' && !tail) return { kind: 'reopen', id };
+  if (sub === 'outputs' && !tail) return { kind: 'outputs', id };
+  if (sub === 'outputs' && tail) return { kind: 'output', id, outputId: tail };
   return null;
 }
 
@@ -354,6 +382,14 @@ export function validateInputPayload(body) {
   const hasList = has(body, 'inputs');
   const hasPredicate = has(body, 'predicate');
   if (hasList === hasPredicate) return 'send either inputs or predicate, not both and not neither';
+  // `preview` is the dry-run flag and it belongs to the predicate form ONLY. The explicit form is
+  // already reviewable — the client built the rows — so a preview there would be an arm with nothing
+  // to resolve, and accepting it silently is how a client ends up believing it dry-ran a write that
+  // committed. Strict boolean for the same reason is_byproduct is: "true" must not read as true.
+  if (has(body, 'preview')) {
+    if (!hasPredicate) return 'preview only applies to the predicate form';
+    if (typeof body.preview !== 'boolean') return 'preview must be true or false';
+  }
   if (hasPredicate) return predicateError(body.predicate);
   if (!Array.isArray(body.inputs) || body.inputs.length === 0) return 'inputs must be a non-empty array';
   for (const row of body.inputs) {
@@ -398,6 +434,17 @@ function inputRowError(row) {
   return null;
 }
 
+// Inclusive day count between two YYYY-MM-DD literals. Date.parse of a date-only ISO string is
+// specified as UTC, so both ends land on a UTC midnight and the difference is an exact multiple of
+// 86_400_000 — no DST hour to round off, in any zone the runner happens to sit in. Callers must have
+// shape-checked both literals first; a non-date reaches NaN here and NaN > cap is false, which is why
+// predicateError runs DATE_RE before this and not after.
+export function predicateSpanDays(p) {
+  const from = Date.parse(`${p.from}T00:00:00Z`);
+  const to = Date.parse(`${p.to}T00:00:00Z`);
+  return Math.round((to - from) / 86400000) + 1;
+}
+
 function predicateError(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return 'predicate must be an object';
   // Zoneless local calendar days, both required. A window is what makes the bulk add reviewable
@@ -405,6 +452,14 @@ function predicateError(p) {
   if (!DATE_RE.test(String(p.from ?? ''))) return 'predicate.from must be a YYYY-MM-DD date';
   if (!DATE_RE.test(String(p.to ?? ''))) return 'predicate.to must be a YYYY-MM-DD date';
   if (String(p.to) < String(p.from)) return 'predicate.to must be on or after predicate.from';
+  // The span ceiling. The module already refuses an OPEN-ENDED window on the grounds that it "is not
+  // a predicate, it is 'everything'" — this applies the same reasoning to a window wide enough to
+  // mean the same thing. Both endpoints are ET calendar days, so the count is inclusive: from == to
+  // is a span of 1.
+  const span = predicateSpanDays(p);
+  if (span > KITCHEN_PREDICATE_MAX_SPAN_DAYS) {
+    return `that window covers ${span} days — a bulk add takes at most ${KITCHEN_PREDICATE_MAX_SPAN_DAYS}, so narrow it or add the picks in two passes`;
+  }
   if (p.variety_id != null && !isUuid(p.variety_id)) return 'predicate.variety_id must be a uuid';
   if (p.plant_id != null && !isUuid(p.plant_id)) return 'predicate.plant_id must be a uuid';
   if (p.crop_type_slug != null && normalizeText(p.crop_type_slug) == null) {
@@ -446,6 +501,14 @@ export function harvestIdsIn(inputs) {
 // ── POST /api/kitchen-batches/:id/close ──────────────────────────────────────────────────────────
 // chk_kitchen_batch_close_pairing makes closed_at and outcome inseparable, so outcome is required
 // here and is the only thing that is.
+//
+// `cue_observed` rides on this body and is NOT validated, deliberately. The close is the most
+// consequential transition in the feature — "I decided it is done" — and it was the one transition
+// that could not record the observation that decided it, while every lesser one could
+// (kitchen_stage_log.cue_observed, there since INFLIGHTBATCH). For a dehydrate batch the published
+// endpoint IS the cue: NCHFP's own test is "brittle or crisp… shatter if hit with a hammer", not an
+// elapsed time. So it is free text, never a picklist, never range-checked, and never read back into
+// any decision — that is exactly what keeps it a RECORD and not an assessment.
 export function validateClose(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const outcome = normalizeText(body.outcome);
@@ -462,6 +525,29 @@ export function validateClose(body) {
 
 export function outputIdsIn(body) {
   return [...new Set(body.output_preservation_log_ids ?? [])];
+}
+
+// ── POST /api/kitchen-batches/:id/outputs ────────────────────────────────────────────────────────
+// LINKING IS DECOUPLED FROM CLOSING, and that is the ruling this route exists to carry. Before it,
+// close was the only writer of preservation_log.batch_id, so a jar could not be linked to a batch
+// without ENDING the batch — and the commonest real event in both of Dave's processes is a partial
+// draw-off from a batch that keeps going (two quarts of sauce off a mash whose crock continues;
+// three trays jarred while a fourth goes back in). The DDL anticipates exactly that — "one mash
+// batch legitimately outputs both hot_sauce and ferment_mash jars" — and the only route that could
+// record it was terminal. close keeps output_preservation_log_ids for the terminal case.
+export function validateOutputsPayload(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
+  const ids = body.preservation_log_ids;
+  if (!Array.isArray(ids)) return 'preservation_log_ids must be an array';
+  if (!ids.length) return 'preservation_log_ids must be a non-empty array';
+  if (!ids.every(isUuid)) return 'preservation_log_ids must all be uuids';
+  return null;
+}
+
+// Deduped, matching outputIdsIn: a request naming the same jar twice must not report two links when
+// one row moves.
+export function outputLogIdsIn(body) {
+  return [...new Set(body.preservation_log_ids ?? [])];
 }
 
 // ── error surfacing ──────────────────────────────────────────────────────────────────────────────

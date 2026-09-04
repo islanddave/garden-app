@@ -405,6 +405,12 @@ function projectRow(r) {
     planting_sown_at: r.planting_sown_at ?? null,
     planting_succession_order: r.planting_succession_order ?? null,
     harvest_log_id: r.harvest_log_id,
+    // V5-INFLIGHTBATCH-001 / BUG-JARSTEAL-001. READ-ONLY here and nowhere else: batch_id stays out of
+    // PRESERVATION_EDITABLE_COLUMNS (see kitchen-batch-id-guard.test.js — a stale cached bundle's
+    // full-replace PUT would NULL it and return 200), but it must be READABLE or no picker can tell a
+    // linked jar from an unlinked one, and a close that re-points another batch's jar is undetectable
+    // by any client. Written only by the kitchen-batch close / outputs routes, server-side.
+    batch_id: r.batch_id ?? null,
     preserved_at: r.preserved_at,
     method: r.method,
     method_other_text: r.method_other_text,
