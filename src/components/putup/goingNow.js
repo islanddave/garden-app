@@ -165,6 +165,12 @@ export const SUBMERSION_PROMPT = 'Everything still under the brine?'
 // your attention and not about the jar.
 export function submersionPrompt(batch, nowMs) {
   if (!batch || batch.kind !== SUBMERSION_KIND) return null
+  // SILENT ON A PAUSED BATCH. A pause is the cook saying "I have set this down"; asking whether it is
+  // still under the brine is the app questioning an answer it was just given, and the cadence it is
+  // keyed on has no meaning across a suspension anyway — the clock ran while nobody was tending it.
+  // Ruling 3 permits questions, not noise, and noise on this card is what the four retired signalling
+  // surfaces died of. The same gate is on phPrompt below, for the same reason.
+  if (isSuspended(batch)) return null
   const since = batch.current_stage_entered_at || batch.first_recorded_at
   if (!since) return null
   const then = new Date(since).getTime()
@@ -298,6 +304,10 @@ export function phPromptAnchor(batch) {
 // about fermentation — and a second constant holding the same string is a place for them to diverge.
 export function phPrompt(batch, nowMs) {
   if (!batch || batch.kind !== SUBMERSION_KIND) return null
+  // Silent on a paused batch — see submersionPrompt. phRecorderVisible is deliberately NOT gated the
+  // same way: the prompt is the app speaking and must not talk over a set-down batch, while the
+  // recorder is a door the cook opens, and a reading taken on a paused ferment is still a fact.
+  if (isSuspended(batch)) return null
   const since = phPromptAnchor(batch)
   if (!since) return null
   const then = new Date(since).getTime()
@@ -352,6 +362,35 @@ export function startPromptState(batch) {
 // suspended_at is the discriminator, and it is NOT closed_at — chk_kitchen_batch_suspend_exclusive
 // makes the two mutually exclusive, and `state=going` returns both suspended and active rows.
 export function isSuspended(batch) { return !!batch?.suspended_at }
+
+// ── pause / resume, and the two doors off the card ───────────────────────────────────────────────
+// V5-BATCHCLOSE-001. `suspended_at` sits on KITCHEN_BATCH_EDITABLE_COLUMNS and the card above already
+// draws the state it produces, and yet NOTHING in the client has ever written it: the app shipped the
+// irreversible give-up and left the reversible one unreachable. That is backwards for an
+// interrupt-sensitive user — the cheapest correct answer to "I am not dealing with this right now"
+// should be the one you can take back.
+//
+// ONE key reaches the wire. The kitchen-batch PUT is a MERGE (see startChipPatch's note below), so an
+// absent column is left alone; do not copy the preservation route's full-replace payload shape here.
+// The instant is the caller's INJECTED clock and never a Date.now() in this file — everything here is
+// a pure function of a row plus an explicit `now`, which is what lets a test pin the PUT body to a
+// fixed literal instead of to whenever the run happened.
+export function pausePatch(paused, nowMs) {
+  if (paused) return { suspended_at: null }
+  const at = new Date(nowMs)
+  return Number.isNaN(at.getTime()) ? null : { suspended_at: at.toISOString() }
+}
+
+// The card's copy, as constants rather than as JSX literals, so a test binds the string it asserts
+// rather than re-typing it — the same reason PH_PROMPT and SUBMERSION_PROMPT live here.
+// The two `→` labels REVEAL a surface; the pause pair COMMITS a write on one tap and carries no
+// arrow, because an arrow that writes is a promise the control does not keep.
+export const OPEN_BATCH_CTA = 'Open this batch →'
+export const CLOSED_DOOR_CTA = 'Closed batches →'
+export const PAUSE_CTA = 'Pause this batch'
+// Never "Resume": the word the user has for this is picking it back up, and the label has to read the
+// same way on a card they last touched two months ago.
+export const RESUME_CTA = 'Pick it back up'
 
 // ── ordering ─────────────────────────────────────────────────────────────────────────────────────
 // `started_at DESC NULLS LAST, first_recorded_at DESC`, mirroring the server's ORDER BY. The client
