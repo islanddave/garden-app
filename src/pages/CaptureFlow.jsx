@@ -91,10 +91,12 @@ const MODES = [
   // ORDER, against the two rules this list already carries. 'inventory' stays LAST, untouched. This
   // sits fourth because that is the seam between the two existing groups — 'planting'/'event'/
   // 'location' log something that happened, 'replace'/'attachonly' aim a photo at a planting that
-  // already exists — and because of the measured fold: the comment on the retake control pins
-  // 360x660 as the reference viewport, where the sixth card lands off-screen. The card that exists
-  // to be found cannot be the one below the fold, and demoting a shipped destination to buy that
-  // position is a trade this row does not need to make.
+  // already exists — and because of the fold. What is MEASURED is in the retake control's comment
+  // below: at 360x660 the fifth and last card sat at y=608 with 660 of viewport. That a SIXTH card
+  // would clear the fold is an EXTRAPOLATION from one card's height, not a second measurement —
+  // nothing in the repo instruments this list (the log-chooser layout gate measures Log Event's
+  // chooser, not Snap's cards). Fourth position needs no such argument either way: it renders where
+  // 'replace' already renders today, which is measured ground.
   { id: 'kitchen',   label: 'Something in the kitchen', hint: 'A mash, a ferment, a batch drying — no planting, no date, no method needed' },
   { id: 'replace',   label: 'Update a photo',    hint: 'Set this as an existing planting’s photo' },
   // V4-SNAPPHOTOONLY-001 (BD-065) — Dave: "I just want the photo attached to the plant. It is not

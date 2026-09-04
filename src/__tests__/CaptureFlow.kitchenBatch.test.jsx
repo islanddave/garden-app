@@ -60,6 +60,7 @@ beforeEach(() => {
     if (m === 'GET' && path === '/api/plants') return Promise.resolve(PLANTS)
     if (m === 'GET' && path === '/api/locations/with-path') return Promise.resolve([])
     if (m === 'POST' && path === '/api/kitchen-batches') return Promise.resolve({ id: 'kb-1', label: 'Pepper mash' })
+    if (m === 'POST' && path === '/api/inventory-items') return Promise.resolve({ id: 'inv-1', name: 'Pro-Mix HP' })
     return Promise.resolve({ ok: true })
   })
 })
@@ -88,7 +89,8 @@ describe('CaptureFlow — Something in the kitchen (V5-INFLIGHTBATCH-001)', () =
     const file = new File(['x'], 'snap.jpg', { type: 'image/jpeg' })
     await act(async () => { fireEvent.change(screen.getByTestId('capture-input'), { target: { files: [file] } }) })
     // Full ordered literal: ADDITIVE (nothing displaced), the standing "inventory stays LAST" rule
-    // survives a third append, and the new card is ABOVE the fold rather than sixth of seven.
+    // survives a third append, and the new card is fourth rather than sixth. Order only — jsdom has
+    // no layout engine, so the fold argument in MODES' own comment is not testable here.
     expect(Array.from(document.querySelectorAll('[data-testid^="mode-"]')).map(b => b.getAttribute('data-testid'))).toEqual([
       'mode-planting', 'mode-event', 'mode-location', 'mode-kitchen', 'mode-replace', 'mode-attachonly', 'mode-inventory',
     ])
@@ -146,13 +148,19 @@ describe('CaptureFlow — Something in the kitchen (V5-INFLIGHTBATCH-001)', () =
   })
 
   it('says nothing about pH, acid, safety or shelf life — no seat has adjudicated food safety', async () => {
+    const FOOD_SAFETY = /\bpH\b|acidif|acidity|botulis|shelf.stable|shelf life|\bsafe(ty)?\b|spoil/i
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-kitchen')
     await type('cap-kblabel', 'Pepper mash')
+    // ASSERTED TWICE, at both steps, because they render DISJOINT text: the form's notes unmount the
+    // moment the save lands, so a done-card-only sweep cannot see the form and a form-only sweep
+    // cannot see the success copy — and the success copy is exactly where a "keeps for months"
+    // reassurance would most naturally be added.
+    expect(screen.getByTestId('cap-kblabel')).toBeDefined()   // anchor: this IS the form step
+    expect(document.body.textContent).not.toMatch(FOOD_SAFETY)
     await save()
-    // Swept across the form AND the done card, because the success copy is where a "keeps for N
-    // months" reassurance would most naturally be added.
-    expect(document.body.textContent).not.toMatch(/\bpH\b|acidif|acidity|botulis|shelf.stable|shelf life|\bsafe(ty)?\b|spoil/i)
+    expect(screen.getByTestId('cap-hint')).toBeDefined()      // anchor: this IS the done step
+    expect(document.body.textContent).not.toMatch(FOOD_SAFETY)
   })
 })
 
@@ -265,12 +273,25 @@ describe('CaptureFlow — after the kitchen save (V5-INFLIGHTBATCH-001)', () => 
   })
 
   it('offers no link, because there is no batch surface to send anyone to yet', async () => {
+    // GREEN CONTROL FIRST. `queryByTestId('cap-view')` is VACUOUS in this file — the router mock
+    // renders <a>{children}</a> and drops every other prop, so that id never matches for ANY
+    // destination and the absence it "proves" is the selector's, not the app's. So the link slot is
+    // shown working on a destination that has a target, then shown empty on this one, both through
+    // the same query.
+    const control = render(<CaptureFlow />)
+    await snapTo('mode-inventory')
+    await type('cap-invname', 'Pro-Mix HP')
+    await save()
+    expect(screen.getByText('View item')).toBeDefined()
+    expect(document.querySelectorAll('a')).toHaveLength(1)
+    control.unmount()
+
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-kitchen')
     await type('cap-kblabel', 'Pepper mash')
     await save()
-    expect(screen.queryByTestId('cap-view')).toBeNull()
     expect(screen.getByTestId('cap-next')).toBeDefined()   // anchor: the done card really rendered
+    expect(document.querySelectorAll('a')).toHaveLength(0)
   })
 
   it('undo soft-deletes the batch and withdraws the lid instruction', async () => {
