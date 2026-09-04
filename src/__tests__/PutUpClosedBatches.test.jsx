@@ -180,6 +180,16 @@ describe('ordering — closed_at DESC, and deliberately NOT the going-now sort',
       .toEqual(['kb-closed-putup', 'kb-closed-crock'])
   })
 
+  it('leaves TWO undated rows in the order the server sent them, rather than shuffling them', () => {
+    const A = { ...CLOSED_PUTUP, id: 'kb-nodate-a', closed_at: null }
+    const B = { ...CLOSED_SPOILED, id: 'kb-nodate-b', closed_at: null }
+    expect(sortClosed([A, B]).map(r => r.id)).toEqual(['kb-nodate-a', 'kb-nodate-b'])
+    expect(sortClosed([B, A]).map(r => r.id)).toEqual(['kb-nodate-b', 'kb-nodate-a'])
+    // Green control: the comparator is live on this input — a dated row still overtakes both.
+    expect(sortClosed([A, CLOSED_PUTUP, B]).map(r => r.id))
+      .toEqual(['kb-closed-putup', 'kb-nodate-a', 'kb-nodate-b'])
+  })
+
   it('leaves rows closed at the same instant in the order the server sent them', () => {
     const A = { ...CLOSED_PUTUP, id: 'kb-tie-a' }
     const B = { ...CLOSED_PUTUP, id: 'kb-tie-b' }
@@ -285,6 +295,10 @@ describe('the outcome label table is TOTAL, and no stored value reaches the DOM'
     expect(Object.keys(CLOSED_OUTCOME_LABELS).sort()).toEqual([
       'abandoned', 'consumed', 'discarded_spoiled', 'given_away', 'put_up', 'put_up_different',
     ])
+    // A closed row cannot have a null outcome — chk_kitchen_batch_close_pairing is a biconditional —
+    // so the null arm contributes no segment to the meta line rather than a placeholder label.
+    expect(outcomeLabel(null)).toBeNull()
+    expect(outcomeLabel(undefined)).toBeNull()
   })
 
   // THE FALLBACK IS NOT THE VALUE. A seventh outcome added server-side, a typo, a stale bundle:
@@ -608,5 +622,22 @@ describe('loading, error and empty', () => {
   it('tolerates a missing list without throwing', () => {
     renderView(undefined)
     expect(screen.getByTestId('closed-empty')).toBeTruthy()
+  })
+
+  // THE PRODUCTION CALL SHAPE. The page omits `now`, so the `?? Date.now()` arm is the one that
+  // actually ships and every other test in this file takes the other one. The month LABEL is
+  // deliberately not asserted as a full literal here: with the wall clock supplying the year it is
+  // 'August' this year and 'August 2026' next, which is the whole reason the prop exists. What this
+  // pins is that the default arm renders rather than throwing on an undefined clock.
+  it('renders with `now` omitted, which is how the page calls it', () => {
+    render(
+      <MemoryRouter initialEntries={['/put-up']}>
+        <ClosedBatchesView batches={[CLOSED_PUTUP]} loading={false} error={false} onReload={vi.fn()} />
+      </MemoryRouter>,
+    )
+    expect(ids()).toEqual(['kb-closed-putup'])
+    expect(screen.getAllByTestId('closed-month-heading')).toHaveLength(1)
+    expect(screen.getByTestId('closed-month-heading').textContent).toMatch(/^August( \d{4})?$/)
+    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Aug 28 · Put it up · 2 put-ups')
   })
 })
