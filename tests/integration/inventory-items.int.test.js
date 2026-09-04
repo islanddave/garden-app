@@ -590,6 +590,9 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
     expect(row, 'the lot is missing from the reverse read entirely').toBeTruthy()
     expect(row.seed_count).toBe(185)
     expect(Number(row.seed_weight_g)).toBe(0.5)
+  })
+})
+
 // BUG-SEEDYEARNOOP-001 — year_harvested against REAL Postgres.
 //
 // This block exists because every other guard on this column reads SOURCE TEXT.
