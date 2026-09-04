@@ -67,6 +67,34 @@ function failure(err, fallbackMessage) {
   }
 }
 
+// ONE request per path however many instances mount. Every provenance form carries TWO pickers
+// (origin + acquired-from), so an edit form for a row that already has an origin issued two
+// identical GETs of the same 54-row list. InventoryAdd.sourcePicker.test.jsx reported this and
+// named useSources.js as the only place it could be fixed.
+//
+// Coalesced at the REQUEST rather than behind a store. useCachedFetch is the obvious candidate and
+// is the wrong tool here on two counts: it caches ONLY when IMAGE_LIST_CACHE_ENABLED is on AND a
+// Clerk sub exists, so it is a plain per-instance fetch in any provider-less unit test — the fix
+// could not be proven by the suite that would have to guard it — and adopting it moves `sources`
+// out of local state, taking the post-mint local insert (and its ORDER BY mirror) with it.
+//
+// A DEDUPE WINDOW, never a cache: the entry is dropped the moment the promise settles, so the next
+// mount always re-fetches and no caller can be served a list that outlived its request. Both arms
+// are pinned in useSources.test.js — the join, and the re-fetch that proves the window closes.
+// Rejection propagates to every joiner, which is exactly what each instance's own .catch expects.
+const inFlight = new Map()
+
+function sharedGet(fetch, path) {
+  const pending = inFlight.get(path)
+  if (pending) return pending
+  // Promise.resolve keeps the NON-FATAL contract for a mock that returns a non-Promise.
+  const p = Promise.resolve(fetch(path)).finally(() => {
+    if (inFlight.get(path) === p) inFlight.delete(path)
+  })
+  inFlight.set(path, p)
+  return p
+}
+
 export function useSources({ enabled = true } = {}) {
   const { fetch } = useApiFetch()
   const [sources, setSources] = useState([])
@@ -76,7 +104,7 @@ export function useSources({ enabled = true } = {}) {
     if (!enabled) { setLoading(false); return undefined }
     let alive = true
     setLoading(true)
-    Promise.resolve(fetch(SOURCES_PATH))
+    sharedGet(fetch, SOURCES_PATH)
       .then(data => { if (alive) setSources(Array.isArray(data) ? data : []) })
       .catch(() => { if (alive) setSources([]) })
       .finally(() => { if (alive) setLoading(false) })
@@ -107,7 +135,7 @@ export function useSourceKinds({ enabled = true } = {}) {
     if (!enabled) { setLoading(false); return undefined }
     let alive = true
     setLoading(true)
-    Promise.resolve(fetch(SOURCE_KINDS_PATH))
+    sharedGet(fetch, SOURCE_KINDS_PATH)
       .then(data => { if (alive) setSourceKinds(Array.isArray(data) ? data : []) })
       .catch(() => { if (alive) setSourceKinds([]) })
       .finally(() => { if (alive) setLoading(false) })

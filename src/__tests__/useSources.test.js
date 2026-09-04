@@ -45,6 +45,54 @@ describe('useSources', () => {
     expect(c.result.current.sources).toEqual([])
   })
 
+  it('two instances mounted together issue ONE GET, and both get the list', async () => {
+    // The real shape: an edit form for a row that already has an origin mounts the origin picker
+    // and the acquired-from picker in the same commit. The fetch is held open so the second mount
+    // lands INSIDE the window — resolving first would make this pass whether or not it coalesces.
+    let resolveIt
+    fetchSpy.mockReturnValueOnce(new Promise(r => { resolveIt = r }))
+    const a = renderHook(() => useSources())
+    const b = renderHook(() => useSources())
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    await act(async () => { resolveIt(SOURCES) })
+    await waitFor(() => expect(a.result.current.loading).toBe(false))
+    await waitFor(() => expect(b.result.current.loading).toBe(false))
+    // The joiner gets the SAME list, not an empty degrade — sharing the promise must not cost the
+    // second instance its data.
+    expect(a.result.current.sources.map(s => s.id)).toEqual(['src-baker', 'src-fedco'])
+    expect(b.result.current.sources.map(s => s.id)).toEqual(['src-baker', 'src-fedco'])
+  })
+
+  it('the window CLOSES on settle — a later mount re-fetches rather than replaying a cache', async () => {
+    // The negative control for the test above. Without it, "one GET" would also pass if the entry
+    // were never cleared, which would be a cache serving a list that outlived its request.
+    fetchSpy.mockResolvedValueOnce(SOURCES)
+    const a = renderHook(() => useSources())
+    await waitFor(() => expect(a.result.current.loading).toBe(false))
+
+    fetchSpy.mockResolvedValueOnce([SOURCES[0]])
+    const b = renderHook(() => useSources())
+    await waitFor(() => expect(b.result.current.loading).toBe(false))
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    expect(b.result.current.sources.map(s => s.id)).toEqual(['src-baker'])
+  })
+
+  it('a rejection reaches every joiner — both degrade, neither hangs', async () => {
+    let rejectIt
+    fetchSpy.mockReturnValueOnce(new Promise((_, rej) => { rejectIt = rej }))
+    const a = renderHook(() => useSources())
+    const b = renderHook(() => useSources())
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    await act(async () => { rejectIt(new Error('boom')) })
+    await waitFor(() => expect(a.result.current.loading).toBe(false))
+    await waitFor(() => expect(b.result.current.loading).toBe(false))
+    expect(a.result.current.sources).toEqual([])
+    expect(b.result.current.sources).toEqual([])
+  })
+
   it('enabled:false never fetches and still resolves loading', async () => {
     const { result } = renderHook(() => useSources({ enabled: false }))
     await waitFor(() => expect(result.current.loading).toBe(false))

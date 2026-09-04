@@ -11,7 +11,8 @@
 // source_id, so the id stops at their form state today. Those three files belong to other lanes.
 //
 // EVERY NEEDLE IN THIS FIXTURE IS UNIQUE — 'Fedco', 'Greenfield' and 'Botanical' appear nowhere
-// else in the rendered tree, and every row assertion resolves through `sp-opt-<id>` so it names
+// else in the rendered tree, and every row assertion resolves through `<picker-testid>-opt-<id>`
+// (namespaced per instance, since both listboxes can be open at once) so it names
 // WHICH row satisfied it rather than merely that one did. No jest-dom (L-182): plain DOM reads.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -74,7 +75,7 @@ async function openPicker(testid) {
   const root = input.parentElement
   fireEvent.focus(input)
   await waitFor(() => expect(root.querySelector('[data-testid="sp-panel"]')).not.toBe(null))
-  return { input, root, opt: (id) => root.querySelector(`[data-testid="sp-opt-${id}"]`) }
+  return { input, root, opt: (id) => root.querySelector(`[data-testid="${testid}-opt-${id}"]`) }
 }
 
 beforeEach(() => {

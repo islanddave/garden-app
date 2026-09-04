@@ -615,7 +615,14 @@ export default function SourcePicker({
                 // SELECTED, not highlighted — the active row is carried by aria-activedescendant
                 // above. VarietyPicker conflates the two; do not copy it from there.
                 aria-selected={String(s.id) === String(value)}
-                data-testid={`sp-opt-${s.id}`}
+                // Namespaced by the host's own testid, exactly as the chip above is. TWO pickers
+                // sit on every provenance form and BOTH listboxes can be open at once (the blur
+                // close is deferred, so focusing the second opens it before the first shuts —
+                // SourcePicker.test.jsx pins getAllByRole('listbox') at 2). A bare `sp-opt-<id>`
+                // therefore matches in two panels, and a global query silently takes whichever
+                // came first. Falls back to the bare form when no testid is supplied, so a
+                // standalone render is unchanged.
+                data-testid={dataTestId ? `${dataTestId}-opt-${s.id}` : `sp-opt-${s.id}`}
                 onClick={() => select(s)}
                 style={rowStyle(i === highlight)}
               >

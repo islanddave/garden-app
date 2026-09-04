@@ -85,7 +85,9 @@ async function openProvenance() {
 async function pickOrigin(id) {
   const roots = [...document.querySelectorAll('[data-testid="sp-panel"]')]
   expect(roots.length, 'exactly one source panel should be open').toBe(1)
-  await act(async () => { fireEvent.click(screen.getByTestId(`sp-opt-${id}`)) })
+  // Scoped through the one open panel rather than by a global testid: the row is namespaced by the
+  // host form's own testid now, and scoping is what the exactly-one assertion above is FOR.
+  await act(async () => { fireEvent.click(roots[0].querySelector(`[data-testid$="-opt-${id}"]`)) })
 }
 
 describe('V5-SOURCEPICKER-001 — the plant chain reaches the network', () => {

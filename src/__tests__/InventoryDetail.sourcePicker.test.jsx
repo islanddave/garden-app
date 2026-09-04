@@ -85,7 +85,7 @@ async function openPicker(testid) {
   const root = input.parentElement
   fireEvent.focus(input)
   await waitFor(() => expect(root.querySelector('[data-testid="sp-panel"]')).not.toBe(null))
-  return { input, root, opt: (id) => root.querySelector(`[data-testid="sp-opt-${id}"]`) }
+  return { input, root, opt: (id) => root.querySelector(`[data-testid="${testid}-opt-${id}"]`) }
 }
 
 const save = async () => { await act(async () => { fireEvent.click(screen.getByText('Save changes')) }) }
@@ -104,6 +104,22 @@ describe('InventoryDetail — the edit path got the same three fields', () => {
     expect(labels.filter(t => t.includes('Order / lot reference')).length).toBe(1)
     const ref = screen.getByLabelText('Order / lot reference')
     expect(ref.value).toBe('order no. 350019')
+  })
+
+  it('an item that ALREADY has an origin mounts BOTH pickers and still issues one GET', async () => {
+    // The reported case, at the page level: the venue picker is gated on source_id, so a row that
+    // has one mounts both pickers in the SAME commit and the second request lands inside
+    // useSources' dedupe window. /inventory/add cannot exhibit this — there the venue picker
+    // appears only after you pick an origin, by which time the window has closed and a second GET
+    // is correct. Hook-level arms (join, window-closes, shared rejection) are in useSources.test.js.
+    await renderPage(withRow({ source_id: 'src-fedco' }))
+    // A picker WITH a value renders its chip, not the combobox — so the two instances are asserted
+    // through different handles. Both are still SourcePicker mounts, which is what costs a GET.
+    expect(await screen.findByTestId('inv-detail-origin-chip')).toBeTruthy()
+    expect(screen.getByTestId('inv-detail-acquired-from')).toBeTruthy()
+
+    const gets = fetchSpy.mock.calls.filter(c => !c[1] && c[0] === '/api/varieties/sources')
+    expect(gets.length).toBe(1)
   })
 
   it('choosing an origin puts source_id in the SUBMITTED changes, and the free text still submits its own value', async () => {

@@ -11,7 +11,8 @@
 // failing state rather than an invisible one.
 //
 // EVERY NEEDLE IS UNIQUE — 'Fedco', 'Greenfield' and 'Botanical' appear nowhere else in the tree,
-// and rows resolve through `sp-opt-<id>` scoped to ONE picker's root, so each assertion names WHICH
+// and rows resolve through `<picker-testid>-opt-<id>` scoped to ONE picker's root — namespaced per
+// instance, because both listboxes can be open at once — so each assertion names WHICH
 // row of WHICH instance satisfied it. No jest-dom (L-182): plain DOM reads.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -90,7 +91,7 @@ async function openPicker(testid) {
   const root = input.parentElement
   fireEvent.focus(input)
   await waitFor(() => expect(root.querySelector('[data-testid="sp-panel"]')).not.toBe(null))
-  return { input, root, opt: (id) => root.querySelector(`[data-testid="sp-opt-${id}"]`) }
+  return { input, root, opt: (id) => root.querySelector(`[data-testid="${testid}-opt-${id}"]`) }
 }
 
 const submit = async () => {
@@ -216,11 +217,15 @@ describe('/inventory/add — the guards around the new fields', () => {
   })
 
   it('a blank form issues exactly ONE GET /api/varieties/sources', async () => {
-    // `useSources` fetches on mount and `useApiFetch` is uncached, so each mounted SourcePicker
-    // costs one request for the same 54-row list. Gating the venue picker on `source_id` is what
-    // keeps the common case — a form nobody has touched — at one. The two-instance case (an edit
-    // form for a row that already has an origin) still costs two; the only fix for THAT is inside
-    // useSources.js, which this lane does not own. Reported, not silently absorbed.
+    // `useSources` fetches on mount, so each mounted SourcePicker costs one request for the same
+    // 54-row list. Gating the venue picker on `source_id` is what keeps the common case — a form
+    // nobody has touched — at one.
+    //
+    // The two-instance case this comment used to report as unfixed IS FIXED: useSources now
+    // coalesces concurrent GETs of the same path. It does not change THIS number, and that is the
+    // point of keeping both tests — here the second picker mounts only after you pick an origin,
+    // long after the dedupe window closed, so a second GET then is correct rather than wasteful.
+    // The fixed case is an EDIT form, pinned in InventoryDetail.sourcePicker.test.jsx.
     await renderAdd()
     const gets = fetchMock.mock.calls.filter(c => !c[1] && c[0] === '/api/varieties/sources')
     expect(gets.length).toBe(1)
