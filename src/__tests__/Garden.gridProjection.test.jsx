@@ -109,7 +109,7 @@ describe('Garden — ?edit= resolves its target by id, not from the projected li
     await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
     // The assertion that fails if the editor is ever repointed back at the list row.
     expect(screen.getByLabelText(/Notes/i).value).toBe('started under the south light')
-    expect(screen.getByLabelText(/Source reference/i).value).toBe("Johnny's Lot 4421")
+    expect(screen.getByLabelText(/Order \/ lot reference/i).value).toBe("Johnny's Lot 4421")
     expect(fetchSpy.mock.calls.some(([u, o = {}]) => u === '/api/plants/plant-2' && !o.method)).toBe(true)
   })
 

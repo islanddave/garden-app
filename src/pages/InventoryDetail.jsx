@@ -9,7 +9,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
-import { EnumSelect, Field, Input, Select, Textarea, Button, PlantingSelect } from '../components/forms'
+import { EnumSelect, Field, Input, Select, Textarea, Button, PlantingSelect, SourcePicker } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import SeedStageHistory from '../components/seed/SeedStageHistory.jsx'
 // V4-SEEDORIGIN-001 — the SAME eight values preservation_log uses, deliberately. This registry is
@@ -120,6 +120,10 @@ export default function InventoryDetail() {
       purchase_date:      i.purchase_date     ?? '',
       source:             i.source            ?? '',
       source_url:         i.source_url        ?? '',
+      // V4-SOURCEREG-001 — GET /:id is `SELECT i.*`, so both FK columns arrive on the row. '' not
+      // null, so the picker's empty contract and the baseline diff both read them as plain blanks.
+      source_id:              i.source_id              ?? '',
+      acquired_from_source_id:i.acquired_from_source_id?? '',
       brand:              i.brand             ?? '',
       model:              i.model             ?? '',
       location_text:      i.location_text     ?? '',
@@ -140,6 +144,11 @@ export default function InventoryDetail() {
       e.quantity_on_hand = 'Enter a quantity (0 is fine).'
     if (form.type === 'durable' && form.quantity === '')
       e.quantity = 'Enter quantity.'
+    // CHECK chk_inventory_source_distinct — a row may not name the same source twice. The Lambda
+    // rejects it too (inventory-items/index.js:193), but its message names the two columns; caught
+    // here it costs no round trip and reads like the form.
+    if (form.source_id && form.source_id === form.acquired_from_source_id)
+      e.acquired_from_source_id = 'Same as the origin — leave this blank when they match.'
     return e
   }
 
@@ -160,6 +169,13 @@ export default function InventoryDetail() {
       notes:         form.notes.trim()         || null,
       source:        form.source.trim()        || null,
       source_url:    form.source_url.trim()    || null,
+      // V4-SOURCEREG-001. Both keys are sent ALWAYS, and that is the contract rather than a habit:
+      // the wide PUT reads these two by hasOwnProperty into a `CASE WHEN <present> … ELSE <col> END`
+      // (inventory-items/index.js:943-952), so PRESENCE means "use this value" and an omitted key
+      // means "leave the column alone". This form renders both controls, so it owns both values and
+      // an explicit null is a real clear.
+      source_id:               form.source_id               || null,
+      acquired_from_source_id: form.acquired_from_source_id || null,
       purchase_date: form.purchase_date        || null,
       unit_cost:     parseNum(form.unit_cost),
       location_text: form.location_text.trim() || null,
@@ -750,11 +766,49 @@ export default function InventoryDetail() {
               </Field>
             </div>
 
-            <Field label="Source">
+            {/* ── V4-SOURCEREG-001 — the EDIT half of the same three fields as /inventory/add ─────
+                Both halves or neither: the add form alone would leave every existing item stranded
+                on free text, which is where the 73 spellings of 35 places came from. `source` stays
+                and is relabelled to the order/lot reference it actually holds — 567 rows carry text
+                with no other column in this design and it was deliberately never overwritten. */}
+            <Field label="Origin" help="Who grew, bred, packed or gave it.">
+              <SourcePicker
+                label="Origin"
+                value={form.source_id}
+                onChange={(sid) => {
+                  // Clearing the origin clears the venue with it — acquired_from means "the shop
+                  // WHEN IT DIFFERS from the grower" and is meaningless alone. The distinct-error
+                  // is about the PAIR, so it can be resolved from this end too; `set()` would only
+                  // clear its own key's.
+                  if (sid) setForm(f => ({ ...f, source_id: sid }))
+                  else setForm(f => ({ ...f, source_id: '', acquired_from_source_id: '' }))
+                  setErrors(e => (e.acquired_from_source_id ? { ...e, acquired_from_source_id: null } : e))
+                }}
+                placeholder="Search sources…"
+                data-testid="inv-detail-origin"
+              />
+            </Field>
+
+            {/* Only once an origin exists — before that the question is "different from what?". */}
+            {form.source_id !== '' && (
+              <Field label="Acquired from" error={errors.acquired_from_source_id}
+                help="The shop or venue, only if it differs from the origin.">
+                <SourcePicker
+                  label="Acquired from"
+                  value={form.acquired_from_source_id}
+                  onChange={(sid) => set('acquired_from_source_id', sid)}
+                  placeholder="Search sources…"
+                  data-testid="inv-detail-acquired-from"
+                />
+              </Field>
+            )}
+
+            <Field label="Order / lot reference"
+              help="Order number, lot code, discount, date — anything with no field of its own.">
               <Input
                 value={form.source}
                 onChange={e => set('source', e.target.value)}
-                placeholder="Store or vendor name"
+                placeholder="e.g. order no. 350019, item 233"
               />
             </Field>
 

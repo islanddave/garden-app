@@ -10,7 +10,7 @@ import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
-import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
+import { EnumSelect, Field, Input, Textarea, Button, SourcePicker } from '../components/forms'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 
 // V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
@@ -90,6 +90,10 @@ export default function InventoryAdd() {
     // shared optional
     source:           '',
     source_url:       '',
+    // V4-SOURCEREG-001 — the controlled registry ids. Empty string, not null, so the stash
+    // predicate below (`(v ?? '') !== ''`) reads them the same way as every other blank field.
+    source_id:              '',
+    acquired_from_source_id:'',
     purchase_date:    '',
     unit_cost:        '',
     quantity_purchased:'',
@@ -134,8 +138,13 @@ export default function InventoryAdd() {
   // them is fine but because the stash above already restores them and each extra term is another
   // chance to hold a service-worker update for a user who only tapped "Consumable" and walked away.
   // A false-positive guard costs a held update and a dead backdrop; that is the expensive direction.
+  // V4-SOURCEREG-001 — the two registry ids are NOT in TEXT_FIELDS and must not be: that array is
+  // consumed by `.trim()` and names the free-text fields. They are named separately here because
+  // the guard would otherwise miss a form whose only content is a chosen source — the picker is a
+  // real edit, and losing it to a service-worker reload is the same loss as losing a typed vendor.
   const hasUnsavedInput = !!(
-    TEXT_FIELDS.some(k => (form[k] ?? '').trim()) || form.variety
+    TEXT_FIELDS.some(k => (form[k] ?? '').trim()) || form.variety ||
+    form.source_id || form.acquired_from_source_id
   )
 
   useReportOverlayDirty(hasUnsavedInput)
@@ -216,6 +225,12 @@ export default function InventoryAdd() {
     if (form.category === 'seeds' && !form.variety) {
       e.variety = 'Pick or create the seed variety so the packet links to a plant.'
     }
+    // CHECK chk_inventory_source_distinct — a row may not name the same source twice. The Lambda
+    // rejects it too (inventory-items/index.js:193), but its message names the two columns; caught
+    // here it costs no round trip and reads like the form.
+    if (form.source_id && form.source_id === form.acquired_from_source_id) {
+      e.acquired_from_source_id = 'Same as the origin — leave this blank when they match.'
+    }
     return e
   }
 
@@ -261,6 +276,11 @@ export default function InventoryAdd() {
       notes:         form.notes.trim()        || null,
       source:        form.source.trim()       || null,
       source_url:    form.source_url.trim()   || null,
+      // V4-SOURCEREG-001. Sent ALWAYS, null when blank — POST names both columns in its INSERT
+      // (inventory-items/index.js:1183) so an omitted key is a null anyway; sending it explicitly
+      // keeps this builder honest about what the row will hold.
+      source_id:               form.source_id               || null,
+      acquired_from_source_id: form.acquired_from_source_id || null,
       purchase_date: form.purchase_date       || null,
       unit_cost:     parseNum(form.unit_cost),
       location_text: form.location_text.trim()|| null,
@@ -561,11 +581,51 @@ export default function InventoryAdd() {
                     />
                   </Field>
                 </div>
-                <Field label="Source (store / vendor)">
+                {/* ── V4-SOURCEREG-001 — the field that produced 73 spellings of 35 places ────────
+                    `inventory_items.source` was free text and stayed free text; what changes is
+                    that the VENDOR NAME now has a controlled home (`source_id` -> public.source)
+                    and the free text below is relabelled to the order/lot reference it actually
+                    holds. Both are kept: 567 rows carry text that has no other column anywhere in
+                    this design (order numbers, "(HOMESTEAD discount)", received-on dates), and it
+                    was deliberately never overwritten. */}
+                <Field label="Origin" help="Who grew, bred, packed or gave it.">
+                  <SourcePicker
+                    label="Origin"
+                    value={form.source_id}
+                    onChange={(sid) => {
+                      // Clearing the origin clears the venue with it: acquired_from means "the shop
+                      // WHEN IT DIFFERS from the grower", so it is meaningless alone and a stale id
+                      // left in state would still be submitted.
+                      // Either way the distinct-error is dropped: it is about the PAIR, so it can be
+                      // resolved by moving this end, and `set()` only clears its own key's error.
+                      if (sid) setForm(f => ({ ...f, source_id: sid }))
+                      else setForm(f => ({ ...f, source_id: '', acquired_from_source_id: '' }))
+                      setErrors(e => (e.acquired_from_source_id ? { ...e, acquired_from_source_id: null } : e))
+                    }}
+                    placeholder="Search sources…"
+                    data-testid="inv-add-origin"
+                  />
+                </Field>
+                {/* Only once an origin exists — before that the question is "different from what?".
+                    Inline, not behind a button: a control appears when it can change the answer. */}
+                {form.source_id !== '' && (
+                  <Field label="Acquired from" error={errors.acquired_from_source_id}
+                    help="The shop or venue, only if it differs from the origin.">
+                    <SourcePicker
+                      label="Acquired from"
+                      value={form.acquired_from_source_id}
+                      onChange={(sid) => set('acquired_from_source_id', sid)}
+                      placeholder="Search sources…"
+                      data-testid="inv-add-acquired-from"
+                    />
+                  </Field>
+                )}
+                <Field label="Order / lot reference"
+                  help="Order number, lot code, discount, date — anything with no field of its own.">
                   <Input
                     value={form.source}
                     onChange={e => set('source', e.target.value)}
-                    placeholder="e.g. True Leaf Market"
+                    placeholder="e.g. order no. 350019, item 233"
                   />
                 </Field>
                 <Field label="Source URL">
