@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.111.0",
+    "date": "2026-09-04",
+    "highlights": [
+      "Hot sauce logged without a storage location was being given a twelve-month room-temperature use-by date. It now defaults to the fridge figure, six months, the same way ferments and quick pickles already did.",
+      "You can rename, re-file and delete storage locations now. The buttons existed in the backend and had never been wired to a screen, so a mistyped freezer name was permanent — and a location can now be a fridge, pantry or cold store, not only a freezer.",
+      "Groundwork for tracking something while it is still going — a ferment, a dehydrator run, a batch of candied rind. Nothing is switched on yet."
+    ]
+  },
+  {
     "version": "4.110.0",
     "date": "2026-09-03",
     "highlights": [
