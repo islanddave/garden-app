@@ -172,8 +172,16 @@ describe('BUG-INVSEEDPUT400-001 — the client half stays in step', () => {
     );
     // Bound the slice: an unmatched index yields -1 and slices the whole file, which would make
     // every assertion below read the entire page instead of one function.
+    //
+    // Ceiling raised 2500 -> 3400 on 2026-09-04 (V5-SOURCEPICKER-001), because buildChanges grew to
+    // 2778 when it started sending source_id / acquired_from_source_id. Raised rather than removed,
+    // and the headroom is deliberate rather than generous: InventoryDetail.jsx is ~40k characters,
+    // so anything that slices the whole page lands two orders of magnitude past this and is still
+    // caught. A bound that tracked the function exactly would red on every honest edit to it and
+    // would teach the next reader to raise it without looking — which is how a runaway-slice guard
+    // stops being one.
     expect(fn.length).toBeGreaterThan(200);
-    expect(fn.length).toBeLessThan(2500);
+    expect(fn.length).toBeLessThan(3400);
     expect(fn).toMatch(/category:\s*form\.category/);
     expect(fn).not.toMatch(/\bvariety_id\b/);
   });

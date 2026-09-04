@@ -62,10 +62,22 @@ const LIST_MAX_H = 280
 const ICON_PX = 18
 const ICON_SM_PX = 16
 
+// The mint stage renders a header, three fields and an action row AROUND the scrollable body, so the
+// panel needs more room than the list does. That extra must be subtracted from the available space
+// at MEASURE time, not added to the answer afterwards — which is exactly what computePlacement's
+// `panelExtra` is for, and this component originally did not pass it.
+//
+// Measured on a real 390x500 viewport 2026-09-04: adding it afterwards made the panel 392px tall
+// inside 282px of measured room and, flipped up, put its top edge 11px ABOVE the viewport, clipping
+// the "New source" header. Every control stayed reachable and nothing errored — which is why no test
+// failed and why only a real browser at real geometry could see it. jsdom returns zero from
+// getBoundingClientRect, so the 19 unit tests behind this component cannot reach the question.
+const MINT_PANEL_EXTRA = 120
+
 // Same guard PlantingSelect's measurePlacement carries: jsdom has no layout engine and no
 // visualViewport, so this returns null there and the panel renders the unmeasured default (down,
 // 280) rather than exercising a path the suite cannot observe.
-function measurePlacement(inputEl, inOverlay, forceFlip) {
+function measurePlacement(inputEl, inOverlay, forceFlip, panelExtra = 0) {
   if (!inputEl || typeof inputEl.getBoundingClientRect !== 'function') return null
   const r = inputEl.getBoundingClientRect()
   if (!r || (!r.top && !r.bottom && !r.height)) return null
@@ -77,7 +89,7 @@ function measurePlacement(inputEl, inOverlay, forceFlip) {
   const chrome = readChromeInsets(inputEl, inOverlay)
   return computePlacement({
     rectTop: r.top, rectBottom: r.bottom, viewTop, viewBottom,
-    chromeTop: chrome.top, chromeBottom: chrome.bottom, forceFlip,
+    chromeTop: chrome.top, chromeBottom: chrome.bottom, forceFlip, panelExtra,
   })
 }
 
@@ -256,7 +268,10 @@ export default function SourcePicker({
     let raf = 0
     const apply = () => {
       raf = 0
-      const next = measurePlacement(inputRef.current, inOverlay, flipLatchRef.current)
+      // `stage` is already a dep of this effect, so switching to the mint form re-measures with
+      // its extra reserved rather than granting it space the measurement said was not there.
+      const next = measurePlacement(inputRef.current, inOverlay, flipLatchRef.current,
+        stage === 'mint' ? MINT_PANEL_EXTRA : 0)
       if (next && flipLatchRef.current === null) flipLatchRef.current = next.flip
       setPlacement(prev =>
         (prev?.flip === next?.flip && prev?.maxHeight === next?.maxHeight) ? prev : next)
@@ -577,7 +592,7 @@ export default function SourcePicker({
       )}
 
       {listboxOpen && (
-        <div style={panelStyle(placement)} data-testid="sp-panel">
+        <div style={panelStyle(placement, 0)} data-testid="sp-panel">
           <ul
             id={listboxId}
             role="listbox"
@@ -644,7 +659,7 @@ export default function SourcePicker({
         // groups, so nesting these inputs there would be invalid ARIA and would break the combobox.
         // EVERY button below is type="button" — this panel sits inside the host's <form>, and a
         // default-type button would submit it and save the plant instead of minting the source.
-        <div style={panelStyle(placement)} data-testid="sp-mint">
+        <div style={panelStyle(placement, MINT_PANEL_EXTRA)} data-testid="sp-mint">
           <div style={mintBody}>
             <div style={mintHeader}>New source</div>
 
@@ -827,7 +842,7 @@ const linkBtn = {
 
 // The floating panel both stages share, so the list and the mint form anchor identically and the
 // panel never changes position when the stage swaps under the user's thumb.
-function panelStyle(placement) {
+function panelStyle(placement, extra = 0) {
   const flip = !!placement?.flip
   return {
     position: 'absolute',
@@ -843,7 +858,10 @@ function panelStyle(placement) {
     border: `1px solid ${P.border}`,
     borderRadius: T.radiusField,
     boxShadow: flip ? '0 -6px 18px rgba(0,0,0,0.12)' : '0 6px 18px rgba(0,0,0,0.12)',
-    maxHeight: (placement?.maxHeight ?? LIST_MAX_H) + 120,
+    // `extra` is what measurePlacement already SUBTRACTED for this stage, added back here so the
+    // panel occupies exactly the room that was measured as available and not a byte more. A flat
+    // constant here is what put the panel's top edge outside the viewport when flipped up.
+    maxHeight: (placement?.maxHeight ?? LIST_MAX_H) + extra,
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
