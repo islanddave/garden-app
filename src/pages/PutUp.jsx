@@ -49,6 +49,8 @@ import NumberPad from '../components/NumberPad.jsx'
 // reason ?session=putup is a mode flag rather than a page: the app has a three-times-repeated
 // pattern for "a thing you are in the middle of" and it is never a new destination.
 import GoingNowView from '../components/putup/GoingNowView.jsx'
+import BatchDetailView from '../components/putup/BatchDetailView.jsx'
+import ClosedBatchesView from '../components/putup/ClosedBatchesView.jsx'
 import { useSuppressBottomNav } from '../hooks/useSuppressBottomNav.js'
 import {
   WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
@@ -224,47 +226,6 @@ export function batchRows(payload) {
   return Array.isArray(payload) ? payload : (Array.isArray(payload?.batches) ? payload.batches : [])
 }
 
-// ══ INTEGRATOR: DELETE BOTH PLACEHOLDERS BELOW AND ADD THE TWO IMPORTS ═════════════════════════
-//
-//   import BatchDetailView from '../components/putup/BatchDetailView.jsx'      // lane L3
-//   import ClosedBatchesView from '../components/putup/ClosedBatchesView.jsx'  // lane L5
-//
-// Lane L2 owns this page but NOT those two components, and neither file exists on this branch — a
-// static import of a path that is not there fails module resolution and reds every test that renders
-// PutUp. These placeholders hold the seam open so the page's own plumbing (the two GETs, the prop
-// shapes, the onChanged fan-out, the back control) is built and TESTED now; they take exactly the
-// prop shapes BUILD-CONTRACT §3 freezes, so the swap is two import lines and two deletions and
-// nothing else moves. Every page-level assertion in PutUpGoingNow.test.jsx binds to the WIRE (which
-// path, which verb, which body) or to a testid this page owns, so the assertions survive the swap.
-//
-// UNVERIFIED until the swap lands: that L3's and L5's components accept these props as spelled.
-function BatchDetailView({ batch, loading, error }) {
-  return (
-    <div data-testid="batch-detail-placeholder">
-      {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
-      {error && <ErrorBanner>Couldn&rsquo;t load that batch — try again.</ErrorBanner>}
-      {batch && <div data-testid="batch-detail-title"
-        style={{ fontWeight: 700, color: P.dark, fontSize: T.type.md }}>{batch.label}</div>}
-    </div>
-  )
-}
-
-function ClosedBatchesView({ batches, loading, error }) {
-  const rows = Array.isArray(batches) ? batches : []
-  return (
-    <div data-testid="closed-batches-placeholder">
-      {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
-      {error && <ErrorBanner>Couldn&rsquo;t load those batches — try again.</ErrorBanner>}
-      {rows.map(b => (
-        <div key={b.id} data-testid="closed-batch" data-batch-id={b.id}
-          style={{ marginBottom: T.space.sm, padding: '12px 14px', backgroundColor: P.white,
-            border: `1px solid ${P.border}`, borderRadius: T.radiusBadge,
-            fontWeight: 700, color: P.dark, fontSize: T.type.md }}>{b.label}</div>
-      ))}
-    </div>
-  )
-}
-// ══ END PLACEHOLDERS ══════════════════════════════════════════════════════════════════════════
 
 export default function PutUp() {
   const location = useLocation()
