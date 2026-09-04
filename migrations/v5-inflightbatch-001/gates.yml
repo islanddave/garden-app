@@ -1,0 +1,263 @@
+# gates.yml
+# V5-INFLIGHTBATCH-001 — kitchen_batch / kitchen_batch_input / kitchen_stage_log,
+# preservation_log.batch_id, v_kitchen_batch_current, and Guard 4 in archive_plant_events.
+#
+# SEQUENCING: staging apply (0a then 0c) -> gates -> rehearse 0r -> re-apply -> deploy-staging ->
+# prod apply -> gates -> promote.
+#
+# 0a AND 0c ARE ONE APPLY WINDOW, not two. kitchen_batch_input.harvest_log_id is ON DELETE RESTRICT
+# and archive_plant_events HARD-DELETES harvest_log rows, so between 0a and 0c an archive of a
+# planting whose harvest fed a batch aborts with a bare 23503. Today that window is harmless because
+# no input row can exist yet — but "harmless because the table is empty" is a property of the
+# minute, not of the migration, so post_guard4_present is a gate rather than a note.
+#
+# FAILURE MODE IF THE DDL DOES NOT LAND FIRST — asymmetric, and the safe direction is why the DDL
+# goes to prod ahead of the promote:
+#   * New Lambda + old schema = HARD. Every batch route 500s on a missing relation.
+#   * Old Lambda + new schema = INERT, and provably so. The preservation writer is an ALLOWLIST at
+#     all four hand-lists (PRESERVATION_EDITABLE_COLUMNS, lambda/preservation/provenance.js:33), and
+#     batch_id is deliberately absent from it, so the old writer cannot touch the new column and
+#     nothing reads the new tables until the new Lambda ships.
+#     NOTE this is the OPPOSITE of inventory_items, where putPayloadFrom spreads the whole row minus
+#     a DENYLIST — which is a second, independent reason this slice puts nothing there.
+#
+# COUNT DISCIPLINE — binding on every gate below. Every predicate over preservation_log states
+# `deleted_at IS NULL` explicitly where it is about live rows, because the filter IS the assertion's
+# scope statement. preservation_log is 5 rows / 5 live / 0 soft-deleted as of 2026-09-03; a gate
+# written without the filter would pass or fail for the wrong reason the first time a row is deleted.
+#
+# NO PROD-DERIVED ABSOLUTES. Staging carries different data from prod, so nothing below asserts a row
+# COUNT of user data. The one count-shaped gate (pre_preservation_one_provenance_vacuous) counts
+# VIOLATORS and expects zero, which is true on any dataset that has not been hand-corrupted.
+
+pre:
+  - name: pre_preservation_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_harvest_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='harvest_log'
+    expect: rowcount_eq
+    value: 1
+
+  # The three tables must NOT exist yet. Also guards the name collision this migration renamed away
+  # from: `event_batches` is an unrelated live table (a bulk-action undo ledger) and nothing here
+  # may touch it.
+  - name: pre_kitchen_tables_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public'
+         AND table_name IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_batch_id_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log' AND column_name='batch_id'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.110.0-inflightbatch-001'
+    expect: rowcount_eq
+    value: 0
+
+  # 0a references both by name in CREATE TRIGGER. A missing function fails the apply mid-transaction
+  # rather than at parse time, so it is cheaper to assert it up front.
+  - name: pre_trigger_functions_exist
+    sql: |
+      SELECT count(*) FROM pg_proc
+       WHERE proname IN ('set_updated_at','prevent_ownership_transfer')
+    expect: scalar_eq
+    value: 2
+
+  # 0c is a CREATE OR REPLACE of this function. If it is absent, 0c would CREATE a function that
+  # never existed here and silently diverge from whatever the environment actually runs.
+  - name: pre_archive_fn_exists
+    sql: |
+      SELECT 1 FROM pg_proc WHERE proname = 'archive_plant_events'
+    expect: rowcount_eq
+    value: 1
+
+  # Guard 3 must already be present, because 0c's body is the post-Guard-3 definition. If this is
+  # red, the environment is on a pre-BUG-ARCHPRESERVGUARD-001 function and applying 0c would silently
+  # ROLL FORWARD an unrelated change.
+  - name: pre_guard3_present
+    sql: |
+      SELECT 1 FROM pg_proc
+       WHERE proname = 'archive_plant_events'
+         AND pg_get_functiondef(oid) LIKE '%preservation_log row(s) record put-ups%'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # L-058: every predicate a CHECK will enforce must already hold before the CHECK is armed.
+  #
+  # For the three new tables it holds VACUOUSLY — they do not exist, so there is nothing to violate
+  # and 0a's CHECKs are created VALIDATED against an empty population. Asserted rather than assumed,
+  # because "obviously fine" is how an unchecked assumption ships.
+  - name: sweep_no_preexisting_kitchen_rows_possible
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public'
+         AND table_name IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log')
+    expect: rowcount_eq
+    value: 0
+
+  # THE ONE CHECK ON AN EXISTING TABLE, and the only place this migration can fail on live data.
+  # chk_preservation_log_one_provenance forbids a row carrying BOTH batch_id and harvest_log_id.
+  # batch_id does not exist yet so it will be NULL on every row, which makes the constraint
+  # vacuously true — but that is an argument, and this is the measurement. Counts VIOLATORS, so it
+  # is dataset-independent and correct on staging and prod alike.
+  - name: sweep_preservation_one_provenance_vacuous
+    sql: |
+      SELECT count(*) FROM public.preservation_log
+       WHERE deleted_at IS NULL AND harvest_log_id IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.110.0-inflightbatch-001'
+    expect: rowcount_eq
+    value: 1
+
+  # SELF-ARMING, and every post gate below it is too: these assert the END state, so they are TRUE
+  # from the moment the apply lands and stay true forever. That is what makes them safe to leave
+  # continuous. Only the two that describe the apply WINDOW itself (schema_version, and the pre
+  # gates) are continuous:false.
+  - name: post_three_tables_exist
+    sql: |
+      SELECT count(*) FROM information_schema.tables
+       WHERE table_schema='public'
+         AND table_name IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log')
+    expect: scalar_eq
+    value: 3
+
+  - name: post_batch_id_exists_and_nullable
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name='batch_id' AND is_nullable='YES'
+    expect: rowcount_eq
+    value: 1
+
+  # THE GATE THAT CATCHES THE 23503. Guard 4 and the RESTRICT FK are two halves of one mechanism and
+  # neither is safe alone: the FK without the guard turns every archive of a batch-fed planting into
+  # a bare, unexplained abort. Matched on the guard's own message text so a future CREATE OR REPLACE
+  # that drops it goes red here rather than in production.
+  - name: post_guard4_present
+    sql: |
+      SELECT 1 FROM pg_proc
+       WHERE proname = 'archive_plant_events'
+         AND pg_get_functiondef(oid) LIKE '%kitchen_batch row(s) record a batch fed by these harvests%'
+    expect: rowcount_eq
+    value: 1
+
+  # Guard 3 must SURVIVE 0c. 0c is a whole-function replace built from a dump, so the failure mode
+  # is not "Guard 4 missing" but "Guard 3 silently lost in the rewrite" — invisible until an archive
+  # strips a put-up's provenance months later.
+  - name: post_guard3_survived
+    sql: |
+      SELECT 1 FROM pg_proc
+       WHERE proname = 'archive_plant_events'
+         AND pg_get_functiondef(oid) LIKE '%preservation_log row(s) record put-ups%'
+    expect: rowcount_eq
+    value: 1
+
+  # The RESTRICT half. SET NULL or CASCADE here would each destroy provenance in its own way, and
+  # both are one careless ALTER away.
+  - name: post_input_harvest_fk_is_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.kitchen_batch_input'::regclass
+         AND confrelid = 'public.harvest_log'::regclass
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 1
+
+  # The stage log dies WITH its parent — it is part of the batch, not a reference to it, and there is
+  # no independent consumer of an orphaned stage row. This is the one place CASCADE is correct, and
+  # it is the opposite of the input table above, so it is asserted rather than assumed.
+  - name: post_stage_log_fk_is_cascade
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.kitchen_stage_log'::regclass
+         AND confrelid = 'public.kitchen_batch'::regclass
+         AND confdeltype = 'c'
+    expect: rowcount_eq
+    value: 1
+
+  # NO CURRENT-STAGE COLUMN ON THE PARENT. This is the ruling the whole design rests on — the one
+  # existing cache-beside-log instance diverged on 100% of its live rows — and a column is exactly
+  # the kind of thing a later "optimisation" adds without reading the header. Red the build instead.
+  - name: post_no_current_stage_cache_column
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='kitchen_batch'
+         AND column_name IN ('current_stage','current_stage_kind','stage','stage_entered_at')
+    expect: rowcount_eq
+    value: 0
+
+  # The derived read surface, and the index that makes deriving affordable. The view is only cheap
+  # because this composite exists, so the index is not optional and its absence must not be silent.
+  - name: post_view_exists
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema='public' AND table_name='v_kitchen_batch_current'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_stage_log_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='kitchen_stage_log'
+         AND indexname='idx_ksl_batch'
+    expect: rowcount_eq
+    value: 1
+
+  # The four start states, enforced. This biconditional is the entire "unknown is first-class"
+  # requirement expressed as a constraint rather than a convention, and a convention is what the
+  # design's own §1.6 cautionary tale was.
+  - name: post_start_pairing_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.kitchen_batch'::regclass
+         AND conname = 'chk_kitchen_batch_start_pairing'
+         AND convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # Every CHECK on the new tables must be VALIDATED, not NOT VALID. They were created against empty
+  # tables so there is no reason for any of them to be unvalidated, and a convalidated=false a later
+  # reader finds is indistinguishable from "known violators exist".
+  - name: post_all_new_checks_validated
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE conrelid IN ('public.kitchen_batch'::regclass,
+                          'public.kitchen_batch_input'::regclass,
+                          'public.kitchen_stage_log'::regclass)
+         AND contype = 'c' AND NOT convalidated
+    expect: scalar_eq
+    value: 0
+
+  # Prod-only: staging has no garden_ro role at all. The read-only role must be able to see the new
+  # relations or every read-only investigation of a batch comes back empty rather than refused,
+  # which is the failure that reads as "there are no batches".
+  - name: post_garden_ro_can_read_kitchen_batch
+    env: prod
+    sql: |
+      SELECT 1 FROM information_schema.role_table_grants
+       WHERE grantee='garden_ro' AND table_schema='public'
+         AND table_name='kitchen_batch' AND privilege_type='SELECT'
+    expect: rowcount_eq
+    value: 1
