@@ -1,9 +1,8 @@
 {
-  "version": "4.109.0",
+  "version": "4.110.0",
   "date": "2026-09-03",
   "highlights": [
-    "Sorting Inventory by \"Newest first\" no longer leads with the packets that have no purchase date at all. Anything unrecorded now sorts last whichever way you sort, on every column",
-    "Add seeds goes straight to the form with consumable and seeds already filled in. It was a chooser with one option, which just made you tap twice to get where you were already going",
-    "When you store a saved-seed lot, the app records the year it was saved — the number that decides whether the seed is still worth sowing in three years. It never overwrites a year you entered yourself"
+    "Saving seed from an F1 hybrid now warns you before you save — the plants it grows will vary, so buy fresh seed if you want the same plant again",
+    "Open-pollinated varieties say so too, so silence now honestly means nobody has checked yet rather than all clear"
   ]
 }

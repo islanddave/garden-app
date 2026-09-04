@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Save seed — the F1 warning at phone width</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      /* The badge is burned into the screenshot on purpose: a capture that does not carry its own
+         viewport width cannot be trusted, because macOS Chrome refuses windows under ~500px and will
+         silently lay out at 500 and CROP to 390. A reviewer must be able to see the measurement. */
+      #verdict {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+        background: #2f5d43; font: 11px/1.4 ui-monospace, monospace; color: #fff;
+        padding: 4px 8px; white-space: pre-wrap;
+      }
+      #root { padding-top: 34px; }
+    </style>
+  </head>
+  <body>
+    <div id="verdict">booting…</div>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/seedwarning.jsx"></script>
+  </body>
+</html>

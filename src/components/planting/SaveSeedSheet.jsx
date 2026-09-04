@@ -101,7 +101,7 @@
 // have — lot created, toast shown, routed to /inventory/:id.
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sheet, PlantingSelect } from '../forms'
+import { Sheet, PlantingSelect, Badge } from '../forms'
 import VarietyPicker from '../VarietyPicker.jsx'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
@@ -201,6 +201,72 @@ export function parseOpeningCount(raw) {
   if (!Number.isFinite(n)) return { value: null, error: 'That is not a number.' }
   if (n < 0) return { value: null, error: 'A count cannot be negative.' }
   return { value: n, error: null }
+}
+
+/**
+ * V5-VARIETYHYBRIDFLAG-001 — the reader half. Design V101 §5: ONE surface, ONE firing arm.
+ *
+ * Returns null for "say nothing at all", or { tone, badge, line }. `tone: null` means a plain line
+ * with no badge.
+ *
+ * THE EMPTY STATE IS THE IMPORTANT ONE. 404 of 483 live cultivars have never been assessed, and on
+ * those this returns null — no badge, no line, no reserved space. A warning that appears on every
+ * save is trained away within a week; this one fires on 19 rows and can never cry wolf.
+ *
+ * OPEN-POLLINATED MUST NOT BE SILENT, and that is not a nicety. If only the F1 arm ever spoke, then
+ * silence would mean both "we checked and it is fine" and "nobody ever looked" — and once those two
+ * are indistinguishable the warning's absence carries no information, which destroys the value of
+ * the warning's presence. The positive line is what makes silence honestly mean "unknown".
+ *
+ * THE COPY DOES NOT CALL SAVING F1 SEED A MISTAKE. Deliberate F2 growing-out is how dehybridizing
+ * starts and is a legitimate thing to do on purpose; the sentence names the consequence and the
+ * alternative and then gets out of the way.
+ *
+ * SHIPPED ENUM, verified against chk_plant_varieties_breeding_system on live prod 2026-09-03:
+ * f1 | open_pollinated | landrace | unknown, plus NULL. Note the design text refers to an
+ * `f2_or_later` value — it was NOT shipped and does not exist in the CHECK. `landrace` is the
+ * mirror case: it IS in the CHECK and the design's state table never mentions it, so it gets its
+ * own line here rather than being folded into open_pollinated, which would assert uniformity a
+ * landrace does not have. breedingNoticeCoverage.test.js reads the CHECK's own value list out of
+ * the migration and fails if any allowed value has no arm here, so widening the enum cannot
+ * silently reintroduce the empty case this function exists to make meaningful.
+ */
+export function breedingNotice(variety) {
+  switch (variety?.breeding_system) {
+    case 'f1':
+      return {
+        tone: 'warn',
+        badge: 'F1 hybrid',
+        line: 'Seed from an F1 will not come true — what grows next year will vary, sometimes a lot. '
+            + 'Worth saving if you want to see what it throws; buy fresh seed if you want this exact plant again.',
+      }
+    case 'open_pollinated':
+      // Deliberately hedged on isolation. Breeding status and PURITY are different facts (design
+      // V101 §8): an OP variety grown in a shared pool still crosses. Claiming it "comes true" flat
+      // would overclaim exactly the thing V5-SEEDLOTPROVENANCE-001 exists to track separately.
+      return {
+        tone: null,
+        badge: null,
+        line: 'Open-pollinated — its seed comes true, as long as it did not cross with something flowering nearby.',
+      }
+    case 'landrace':
+      return {
+        tone: null,
+        badge: null,
+        line: 'A landrace — variable by design. Saved seed keeps the population, not one uniform plant.',
+      }
+    case 'unknown':
+      return {
+        tone: null,
+        badge: null,
+        line: 'We looked and could not tell whether this one is a hybrid — the seed packet or catalogue will say.',
+      }
+    default:
+      // NULL (never asked) AND any value a future migration adds that this build predates. Silence
+      // is the right answer for both: this component must never assert a breeding claim it does not
+      // have. The coverage test above is what stops the second case from going unnoticed.
+      return null
+  }
 }
 
 /** The planting's own cultivar, in the shape VarietyPicker's `value` wants. Null when it has none. */
@@ -594,6 +660,29 @@ export default function SaveSeedSheet({ planting, onClose }) {
         <p role="alert" data-testid="save-seed-error" style={errorStyle}>{error}</p>
       )}
 
+      {/* V5-VARIETYHYBRIDFLAG-001 reader. Keyed on `variety` — the state that will actually be
+          WRITTEN — and deliberately not on the `planting` prop. Those differ whenever the user opens
+          the picker and chooses a different cultivar, and that case is the one most worth getting
+          right: a deliberately-named variety is the most considered save there is, and reading the
+          prop would show the warning for the plant they started from rather than the seed they are
+          saving. Sits above Save rather than beside the variety row so it is the last thing read
+          before the tap it is about. Renders NOTHING (not an empty box) when there is no assessment
+          — see breedingNotice. */}
+      {(() => {
+        const notice = breedingNotice(variety)
+        if (!notice) return null
+        return (
+          <div data-testid="breeding-notice" data-breeding={variety?.breeding_system} style={breedingNoticeStyle}>
+            {notice.badge && (
+              <Badge tone={notice.tone} style={{ marginRight: 8, verticalAlign: 'middle' }}>
+                {notice.badge}
+              </Badge>
+            )}
+            <span>{notice.line}</span>
+          </div>
+        )
+      })()}
+
       <button
         type="button" onClick={save} disabled={!canSave}
         data-testid="save-seed-submit" style={primaryBtnStyle(!canSave)}
@@ -627,6 +716,12 @@ const processRowStyle = (selected) => ({
   backgroundColor: selected ? P.greenPale : P.white, color: P.dark,
 })
 const hintStyle = { margin: '6px 0 0', color: P.mid, fontSize: '0.78rem', lineHeight: 1.5 }
+// V5-VARIETYHYBRIDFLAG-001. No border or fill of its own: the F1 arm carries a warn Badge that is
+// already the colour signal, and boxing the other three arms would give an ordinary factual line the
+// visual weight of an alert. Bottom margin only, so the block sits against Save.
+const breedingNoticeStyle = {
+  margin: '0 0 12px', color: P.mid, fontSize: '0.82rem', lineHeight: 1.5,
+}
 const errorStyle = {
   margin: '0 0 12px', padding: '8px 10px', borderRadius: 8,
   border: `1px solid ${P.alertBorder}`, backgroundColor: P.alert,

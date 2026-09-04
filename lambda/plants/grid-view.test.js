@@ -345,7 +345,11 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
   });
 
   it('is far narrower than grid on variety_ref, and carries none of the prose', () => {
-    expect(varietyRefKeys(PICKER_SQL).sort()).toEqual(['crop_type_slug', 'default_unit', 'id', 'name', 'species']);
+    // breeding_system added 2026-09-03 (V5-VARIETYHYBRIDFLAG-001). EventNew resolves seedSaveTarget
+    // out of THIS list and hands it to SaveSeedSheet, whose F1 warning reads
+    // variety_ref.breeding_system — so the field is a handoff through EventNew, not a read by it.
+    // It is one short enum string and carries no prose, so the projection stays narrow.
+    expect(varietyRefKeys(PICKER_SQL).sort()).toEqual(['breeding_system', 'crop_type_slug', 'default_unit', 'id', 'name', 'species']);
     expect(PICKER_SQL).not.toMatch(/care_notes|soil_notes|common_diseases|expected_yield_notes|source_url/);
   });
 

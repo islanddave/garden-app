@@ -549,7 +549,19 @@ export const handler = async (event) => {
                    determinacy, day_length_response, grown_as,
                    start_method, start_indoor_weeks_min, start_indoor_weeks_max,
                    direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
-                   days_to_germ_min, days_to_germ_max, sow_season, sow_notes
+                   days_to_germ_min, days_to_germ_max, sow_season, sow_notes,
+                   -- V5-VARIETYHYBRIDFLAG-001. THE THIRD DOOR, and the least obvious one. Both
+                   -- SaveSeedSheet entry points seed their variety state from the planting's
+                   -- variety_ref, but the sheet also mounts a VarietyPicker, and picking there
+                   -- replaces that state wholesale with a row from THIS list (VarietyPicker.jsx:291
+                   -- hands the whole object to onChange). No backticks in these SQL comments: this
+                   -- is inside a JS template literal and one would terminate it.
+                   -- Omit the column here and the F1 warning goes silent precisely when
+                   -- the user DELIBERATELY named the cultivar they are saving seed from - the worst
+                   -- of the four silent cases, because that is the most considered save there is.
+                   -- Both branches of this ternary carry it and must stay identical; the q/non-q
+                   -- split is a WHERE difference, never a projection difference.
+                   breeding_system
             FROM public.cultivar
             WHERE deleted_at IS NULL
               AND LOWER(display_name) LIKE ${'%' + q.toLowerCase() + '%'}
@@ -567,7 +579,11 @@ export const handler = async (event) => {
                    determinacy, day_length_response, grown_as,
                    start_method, start_indoor_weeks_min, start_indoor_weeks_max,
                    direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
-                   days_to_germ_min, days_to_germ_max, sow_season, sow_notes
+                   days_to_germ_min, days_to_germ_max, sow_season, sow_notes,
+                   -- Identical to the q branch above by construction — see its comment. A
+                   -- projection difference between these two would make the F1 warning depend on
+                   -- whether the user typed in the search box.
+                   breeding_system
             FROM public.cultivar
             WHERE deleted_at IS NULL
             ORDER BY display_name ASC

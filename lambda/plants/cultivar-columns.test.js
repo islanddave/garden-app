@@ -47,11 +47,17 @@ const HANDLERS = readdirSync(__dirname)
 
 // L-081 KEYED contract. Every column below verified present on public.cultivar in live prod Neon on
 // 2026-08-29 (42 columns), read through the read-only role.
+// 2026-09-03 (V5-VARIETYHYBRIDFLAG-001): breeding_system added. Re-verified against live prod the
+// same day — the view is now 46 columns and exposes breeding_system, breeding_source and
+// breeding_confidence; only breeding_system is referenced by this Lambda, and only it is listed
+// here. This is a COLUMN added to an existing keyed relation, not a new relation: the L-081 ratchet
+// says a new relation gets its own contract file and the baseline is never raised, and neither of
+// those applies to widening the cultivar list this file already owns.
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  cultivar: ['care_notes', 'common_diseases', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'deleted_at', 'display_name', 'dtm_basis', 'expected_yield_notes', 'genus', 'growth_habit', 'id', 'lifecycle', 'photo_id', 'scoville_max', 'scoville_min', 'soil_notes', 'source_url', 'species', 'sun_requirements'],
+  cultivar: ['breeding_system', 'care_notes', 'common_diseases', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'deleted_at', 'display_name', 'dtm_basis', 'expected_yield_notes', 'genus', 'growth_habit', 'id', 'lifecycle', 'photo_id', 'scoville_max', 'scoville_min', 'soil_notes', 'source_url', 'species', 'sun_requirements'],
 };
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;

@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.110.0",
+    "date": "2026-09-03",
+    "highlights": [
+      "Saving seed from an F1 hybrid now warns you before you save — the plants it grows will vary, so buy fresh seed if you want the same plant again",
+      "Open-pollinated varieties say so too, so silence now honestly means nobody has checked yet rather than all clear"
+    ]
+  },
+  {
     "version": "4.109.0",
     "date": "2026-09-03",
     "highlights": [

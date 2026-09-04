@@ -541,7 +541,15 @@ export const handler = async (event) => {
                      'sun_requirements', pv.sun_requirements,
                      'common_diseases', pv.common_diseases,
                      'expected_yield_notes', pv.expected_yield_notes,
-                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit
+                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit,
+                     -- V5-VARIETYHYBRIDFLAG-001 reader half. SaveSeedSheet warns before saving seed
+                     -- from an F1, and variety_ref is what it has in hand at save time (design
+                     -- V101 section 7.3). breeding_system ONLY: the sheet reads no other breeding
+                     -- field, and this object is already 43.4% of the response body, so
+                     -- breeding_source and breeding_confidence stay off the wire until something
+                     -- renders them. NOTE: no backticks in SQL comments inside a JS template
+                     -- literal -- one terminates the template and the file stops parsing.
+                     'breeding_system', pv.breeding_system
                    )
                  ELSE NULL END AS variety_ref,
                  parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id,
@@ -1384,6 +1392,18 @@ export const handler = async (event) => {
             -- dtm_basis / harvest_habit are deliberately NOT carried: no consumer on this path imports
             -- plantingMaturity or reads them. If a chooser ever shows an est-harvest chip, they come
             -- back here rather than the call site reverting to the wide shape.
+            --
+            -- breeding_system IS carried, added V5-VARIETYHYBRIDFLAG-001, and it is here for exactly
+            -- the reason the species note above exists — a HANDOFF, not a read. EventNew is the
+            -- SECOND door into SaveSeedSheet (seedSaveTarget, EventNew.jsx:3621, resolved out of
+            -- THIS list, not out of /api/plants/:id), and the sheet's F1 warning reads
+            -- variety_ref.breeding_system. Census the handoffs, not the reads: a field-read grep in
+            -- EventNew finds nothing, because EventNew never touches
+            -- the field — it passes the whole object to a sheet that does. Drop it here and the
+            -- warning silently never fires on the log-flow door while still working from the planting
+            -- page, which is the failure this projection's own comments were written to prevent.
+            -- Obeying EventNew.jsx:1271: a new field read on this path is added HERE rather than by
+            -- reverting the call site to the wide shape.
             SELECT gp.id, gp.display_name AS name, gp.quantity,
                    gp.container_id AS project_id, pp.display_name AS project_name,
                    gp.sown_at, gp.succession_order,
@@ -1398,7 +1418,8 @@ export const handler = async (event) => {
                        'id', pv.id, 'name', pv.display_name,
                        'crop_type_slug', pv.crop_type_slug,
                        'default_unit', ct.default_unit,
-                       'species', pv.species)
+                       'species', pv.species,
+                       'breeding_system', pv.breeding_system)
                    ELSE NULL END AS variety_ref
             FROM public.garden_node gp
             LEFT JOIN public.container pp ON pp.id = gp.container_id
