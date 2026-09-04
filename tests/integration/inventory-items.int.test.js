@@ -326,3 +326,83 @@ describe.skip('list query filters (handler does not implement query filters yet)
     for (const row of body) expect(row.category).toBe('seeds')
   })
 })
+
+// BUG-SEEDYEARNOOP-001 — year_harvested against REAL Postgres.
+//
+// This block exists because every other guard on this column reads SOURCE TEXT.
+// put-year-harvested.test.js asserts the SET list contains the CASE and not a bare assignment;
+// InventoryDetail.yearHarvested.test.jsx asserts what the client puts on the wire. Neither
+// EXECUTES the statement, so neither can see a driver-level failure — and the presence guard binds
+// a parameter inside a CASE, which is exactly the shape where @neondatabase/serverless has bitten
+// this repo before (it cannot type a standalone null; here the CASE's ELSE branch supplies the
+// integer type). "The SQL says the right thing" and "Postgres does the right thing" are different
+// claims, and only this file can make the second one.
+//
+// The middle test is the one that matters. Four prod rows carry an irreplaceable year — the Hopi
+// Black Dye Sunflower's 2025 exists structurally in this column and nowhere else — and they
+// survived until today only because the SET list omitted the column entirely. Now that it is
+// assigned, their protection is the ELSE branch and nothing else. This asserts that protection by
+// running it, rather than by reading it.
+describe('PUT year_harvested — presence guard against real Postgres (BUG-SEEDYEARNOOP-001)', () => {
+  let varietyId
+  let itemId
+
+  beforeAll(async () => {
+    setTestUserId(USER)
+    const v = await directSql`
+      INSERT INTO plant_varieties (name, created_by)
+      VALUES (${'int-yh-variety-' + RUN}, ${USER})
+      RETURNING id
+    `
+    varietyId = v[0].id
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/inventory-items',
+      body: { name: 'yh-lot-' + RUN, type: 'durable', category: 'seeds', quantity: 1, variety_id: varietyId },
+    })
+    expect(created.status).toBe(201)
+    itemId = created.body.id
+  })
+
+  afterAll(async () => {
+    await directSql`DELETE FROM inventory_items WHERE id = ${itemId}`
+    await directSql`DELETE FROM entity WHERE entity_type='cultivar' AND cultivar_ref_id = ${varietyId}`
+    await directSql`DELETE FROM plant_varieties WHERE id = ${varietyId}`
+  })
+
+  const put = (extra) => callHandler(handler, {
+    method: 'PUT', path: `/api/inventory-items/${itemId}`,
+    body: { name: 'yh-lot-' + RUN, type: 'durable', category: 'seeds', quantity: 1, variety_id: varietyId, ...extra },
+  })
+
+  it('writes the year and stores it (write -> read-back)', async () => {
+    setTestUserId(USER)
+    const { status, body } = await put({ year_harvested: 1986 })
+    expect(status).toBe(200)
+    expect(body.year_harvested).toBe(1986)
+    const rows = await directSql`SELECT year_harvested FROM inventory_items WHERE id = ${itemId}`
+    expect(rows[0].year_harvested).toBe(1986)
+  })
+
+  it('PRESERVES the stored year when the key is omitted — the four curated rows', async () => {
+    // The decisive assertion of this file. A bare assignment would null the column here and answer
+    // 200, and no source-text guard can tell the two apart at runtime. The preceding test leaves
+    // 1986 in place; this payload does not mention the column at all.
+    setTestUserId(USER)
+    const { status, body } = await put({})
+    expect(status).toBe(200)
+    expect(body.year_harvested).toBe(1986)
+    const rows = await directSql`SELECT year_harvested FROM inventory_items WHERE id = ${itemId}`
+    expect(rows[0].year_harvested).toBe(1986)
+  })
+
+  it('clears the year on an explicit null — presence, not truthiness', async () => {
+    // The other half of the guard. If the sentinel tested `!= null` instead of hasOwnProperty this
+    // would silently keep 1986 and a year entered by mistake would be unremovable.
+    setTestUserId(USER)
+    const { status, body } = await put({ year_harvested: null })
+    expect(status).toBe(200)
+    expect(body.year_harvested).toBe(null)
+    const rows = await directSql`SELECT year_harvested FROM inventory_items WHERE id = ${itemId}`
+    expect(rows[0].year_harvested).toBe(null)
+  })
+})
