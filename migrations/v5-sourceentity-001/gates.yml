@@ -220,7 +220,30 @@ post:
     expect: rowcount_eq
     value: 0
 
+  # Retired STRUCTURALLY (the `retired:` field), not deleted, so the reversal stays attributable and
+  # a future reader can see that the vocabulary lock was given up ON PURPOSE and what replaced it.
   - name: post_kind_vocabulary_exact
+    retired: >
+      SUPERSEDED 2026-09-04 by V5-SOURCEKIND-001 on an explicit Dave decision, not silenced. Shown
+      the 12 kinds, he ruled: "1 but i want to be able to create a new type as part of the interface
+      like we can do with crop type." This gate pins the CHECK's exact contents AND order so a
+      thirteenth value cannot appear — which is precisely the behaviour he asked to remove, so
+      leaving it armed would red on him using the feature. chk_source_kind is dropped; source.kind is
+      now an FK into the mintable public.source_kind.
+      THE ARGUMENT THIS GATE WAS BUILT ON IS STILL RIGHT ABOUT THE DANGER AND WAS WRONG ABOUT THE
+      REMEDY. What destroyed plants.source_type was not that its set could grow — it was that the
+      column had no table behind it, so any writer could put any string in it with nothing to collide
+      against. crop_types lives in this same schema, grows on demand, and has not fragmented, because
+      growth runs through a guarded mint that resolves a proposed name against every existing slug
+      including soft-deleted ones. A frozen CHECK is a stronger promise about the SET and a much
+      weaker one about the USER: faced with a place that is none of the 12, the only options were
+      'other' (erases the distinction) or free text elsewhere (which is how 73 spellings happened).
+      Replaced by three gates in migrations/v5-sourcekind-001/gates.yml, which together defend more
+      than this one did: post_fk_present_validated_no_action (every source.kind resolves to a real
+      row, validated by Postgres against the whole table), post_twelve_seeds_still_live (none of the
+      twelve he approved can be removed or soft-deleted out from under the sources using it), and
+      post_frozen_check_is_gone (a future session cannot "restore" this CHECK for safety and thereby
+      make every minted kind unwritable).
     note: >
       THE DRIFT GATE, and the reason this migration can claim it does not fork a vocabulary. The
       regex pins the array CONTENTS, their ORDER, and the closing bracket, so a thirteenth value

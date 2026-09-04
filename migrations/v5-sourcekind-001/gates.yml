@@ -1,0 +1,299 @@
+# gates.yml
+# V5-SOURCEKIND-001 — public.source_kind, the mintable vocabulary behind source.kind, replacing the
+# frozen 12-value CHECK that v5-sourceentity-001 shipped.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# HARD DEPENDENCY: v5-sourceentity-001 must be applied first (receipt 5.0.0-sourceentity-001).
+# public.source and its kind column are this migration's subject; pre_sourceentity_applied checks it
+# rather than letting a later gate raise 42P01 and read as an infra error.
+#
+# ENVIRONMENT SYMMETRY — NO `env:` KEY APPEARS ANYWHERE IN THIS FILE. gate_runner defaults env to
+# "both". Every gate reads pg_catalog or information_schema, or reads seed rows this migration wrote
+# itself, so each means the same thing on staging and prod and none can pass vacuously for want of a
+# user row.
+#
+# POST GATES SELF-ARM AND ARE WRITTEN IN VIOLATION-COUNT SHAPE (expect rowcount_eq 0), for the reason
+# spelled out at length in v5-sourceentity-001/gates.yml: a "good state is present" gate written as
+# rowcount_eq 1 is permanently RED on every environment that has not applied yet, so it gets muted
+# and stops meaning anything. Asserting the VIOLATION gives all three states correctly.
+#
+# NO GATE BELOW DOES A DIRECT `FROM public.source` OR `FROM public.source_kind` WHERE THE RELATION
+# MIGHT BE ABSENT. Postgres resolves relations at PARSE time, so an EXISTS-on-the-receipt guard
+# cannot protect a direct reference — the gate would raise instead of passing vacuously. Relations
+# are resolved with to_regclass; the no-orphan property is asserted as "the FK exists and is
+# VALIDATED" rather than by counting orphan rows, which is the same guarantee read from the catalog.
+# The only exceptions read public.source_kind through to_regclass-guarded catalog joins, or read the
+# seed rows in a gate whose own arm proves the table is there.
+
+pre:
+  - name: pre_sourceentity_applied
+    note: >
+      This migration edits public.source. If v5-sourceentity-001 has not been applied, STOP — do not
+      run 0a here, apply the parent first. Checked on the receipt rather than the table so the
+      failure names the actual cause.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourceentity-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_source_kind_table_absent
+    note: >
+      Greenfield. If this returns a row, someone already applied 0a — stop and diff before re-running.
+      continuous false by design: false forever once 0a lands.
+    sql: |
+      SELECT 1 WHERE to_regclass('public.source_kind') IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_frozen_check_present
+    note: >
+      The constraint this migration REPLACES. Its presence is what makes the swap meaningful; its
+      absence would mean someone already dropped it by hand, and 0a's DROP ... IF EXISTS would then
+      succeed silently while the column sat unconstrained. continuous false: false forever after 0a.
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_source_kind'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_audit_pair_present
+    note: >
+      0a binds public.audit_stmt_update / audit_stmt_delete to source_kind. CREATE TRIGGER resolves
+      the function at creation time, so a missing one aborts the transaction; this turns that into a
+      readable failure first. Reads pg_proc, not information_schema.routines, which is
+      privilege-filtered and returns zero rows for garden_ro while the function sits there healthy.
+    sql: |
+      SELECT 1
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('audit_stmt_update', 'audit_stmt_delete')
+      HAVING count(*) = 2
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_every_existing_kind_is_seedable
+    note: >
+      THE ARMING-A-CONSTRAINT GATE, asked of live data rather than of the branch. 0a adds a VALIDATED
+      foreign key over source.kind, which is checked against every existing row at ALTER time. If any
+      live source already carries a kind outside the 12 seeded values, the apply aborts — better to
+      learn that here, named, than from a failed transaction. Counts violations, so it is 0 on the
+      expected state (source empty on both databases as of 2026-09-04) and names the problem
+      otherwise. Reads source.kind through row_to_json so it does not raise where the column is
+      absent. It DOES name public.source directly, which is why it is `continuous: false`: Postgres
+      resolves relations at parse time, so no guard can stop this raising 42P01 on an environment
+      that never applied v5-sourceentity-001. pre_sourceentity_applied is the gate that catches that
+      case, by name, before this one is reached.
+    sql: |
+      SELECT 1
+        FROM (SELECT row_to_json(t) AS j FROM public.source t) r
+       WHERE r.j->>'kind' IS NOT NULL
+         AND r.j->>'kind' <> ALL (ARRAY['seed_company','nursery','garden_center','farm_stand',
+                                        'market','retail','plant_swap','person','organization',
+                                        'brand','own_garden','other'])
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+sweep:
+  - name: sweep_source_catalogue_state_recorded
+    note: >
+      Not an invariant — a MEASUREMENT taken at the apply, so the apply window has a record of how
+      much data the FK was validated against. As of 2026-09-04 public.source is empty on both
+      databases, which is why this migration is cheap; if a future re-run finds rows here, the
+      arming question in pre_every_existing_kind_is_seedable stops being theoretical. Asserts only
+      that the count is readable, never a particular number — a frozen count gate breaks the moment
+      the catalogue is legitimately backfilled.
+    sql: |
+      SELECT count(*)
+        FROM (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourceentity-001') _applied
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_source_kind_table_present
+    note: >
+      Armed on the RECEIPT, not on the table: arming a table-exists assert on table-existence is
+      tautological and can never fail. Phrased as "receipt written but table missing" — vacuously
+      green before apply, red only if someone dropped it afterwards.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcekind-001')
+         AND to_regclass('public.source_kind') IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_source_kind_columns_present
+    note: >
+      All seven declared columns exist. Counted, so the gate reds if ANY one is dropped rather than
+      only the one a named check happened to pick.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source_kind') IS NOT NULL
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'source_kind'
+                 AND column_name IN ('slug','display_name','sort_order','created_by',
+                                     'created_at','updated_at','deleted_at')
+             ) <> 7
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_twelve_seeds_still_live
+    note: >
+      A FLOOR, NOT AN EXACT SET — and that distinction is the whole point of this migration. The gate
+      it replaces (post_kind_vocabulary_exact in v5-sourceentity-001) pinned the vocabulary's exact
+      contents and ORDER so a thirteenth value could not appear; minting now makes a thirteenth value
+      the expected outcome, so pinning the set would red on Dave using the feature. What must still
+      hold is that none of the twelve he approved has been silently removed or soft-deleted out from
+      under the sources pointing at it. Counts the seeds that are live and reds if that is not 12.
+      A MINTED kind is invisible to this gate, by design.
+      `continuous: false`, reluctantly and for a parse-time reason rather than a semantic one: this
+      is the one assertion here that must read source_kind's ROWS, and Postgres resolves the relation
+      at parse time, so on an environment that has not applied 0a it would raise 42P01 rather than
+      pass vacuously — which is the failure mode this whole file is written to avoid. None of the 103
+      gate files in this repo reads a possibly-absent relation continuously, and inventing an idiom
+      (query_to_xml) for one gate would cost every future reader more than it buys. The standing
+      protection for the property that actually matters — every source.kind resolving to a real row —
+      is post_fk_present_validated_no_action, which reads it from the catalog and IS continuous.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM public.source_kind
+               WHERE deleted_at IS NULL
+                 AND slug = ANY (ARRAY['seed_company','nursery','garden_center','farm_stand',
+                                       'market','retail','plant_swap','person','organization',
+                                       'brand','own_garden','other'])) <> 12
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_frozen_check_is_gone
+    note: >
+      chk_source_kind must NOT come back. If a later migration "restores" it for safety, every minted
+      kind becomes unwritable and the feature Dave asked for is silently dead — the constraint would
+      reject exactly the rows the picker is for. Armed on the receipt so it is vacuous before apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcekind-001')
+         AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_source_kind')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_fk_present_validated_no_action
+    note: >
+      THE GATE THAT CARRIES THE NO-ORPHAN GUARANTEE, which is why it is read from the catalog rather
+      than by counting orphan rows: a VALIDATED foreign key IS the statement that no row violates it,
+      checked by Postgres against the whole table, and it keeps being true for every future write.
+      Three facts asserted together because each alone is insufficient — the constraint exists, it
+      targets public.source_kind, it is convalidated (a NOT VALID FK enforces new writes but was
+      never checked against existing rows), and confdeltype is 'a' (NO ACTION). ON DELETE SET NULL
+      would silently erase a source's classification when a kind was tidied up; CASCADE would delete
+      the source itself.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcekind-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint
+                WHERE conname = 'fk_source_kind'
+                  AND contype = 'f'
+                  AND conrelid = to_regclass('public.source')
+                  AND confrelid = to_regclass('public.source_kind')
+                  AND convalidated
+                  AND confdeltype = 'a')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_slug_shape_check_intact
+    note: >
+      The slug is a PRIMARY KEY and an FK target, so it is server-derived and must stay lowercase
+      snake_case. This CHECK is the database half of that rule; without it a client that guesses the
+      API could mint 'Farm Stand' as a slug and there would be two ways to spell one kind in the key
+      space itself. Asserts the constraint exists AND is not NOT VALID.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source_kind') IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint
+                WHERE conrelid = to_regclass('public.source_kind')
+                  AND conname = 'chk_source_kind_slug_shape'
+                  AND convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_folded_label_unique_over_live_rows
+    note: >
+      THE ANTI-DRIFT INDEX, and the one that replaces what the frozen CHECK used to buy. The slug PK
+      stops two rows keyed farm_stand; this stops "Farm Stand" and "Farm  stand" existing as two live
+      rows with different slugs and labels a human cannot tell apart — the drift shape that produced
+      73 spellings of 35 places. Must stay PARTIAL on deleted_at IS NULL so soft-deleting a kind
+      frees its label for reuse; a total unique index would poison the label forever. Asserts the
+      index exists, is unique, and still carries the partial predicate.
+    sql: |
+      SELECT 1
+       WHERE to_regclass('public.source_kind') IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'source_kind'
+                  AND indexname = 'uq_source_kind_display_live'
+                  AND indexdef ~ 'CREATE UNIQUE INDEX'
+                  AND indexdef ~ 'WHERE \(deleted_at IS NULL\)')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_audit_triggers_not_installed
+    note: >
+      A PROHIBITION, not an omission — and it exists because the omission was made the wrong way
+      round first. This migration's first draft attached audit_stmt_update / audit_stmt_delete here
+      by analogy with V5-SOURCEAUDITLOG-001 on public.source. They installed cleanly, passed a full
+      triggerdef shape gate, and wrote NOTHING. Driving a real UPDATE through on staging 2026-09-04
+      produced the only signal there was:
+        WARNING: audit_stmt_update(source_kind): audit write FAILED, SQLSTATE=42703
+                 (column o.id does not exist). The originating UPDATE is unaffected.
+      Both generic audit functions read n.id / o.id into public.audit_events.row_id, which is typed
+      UUID. source_kind is keyed by a text slug, mirroring crop_types — no id to read, and no way to
+      put a slug in a uuid column even if there were. Every table carrying these triggers today
+      (plants, event_log, harvest_log, plant_varieties) has a uuid id; crop_types, the schema's only
+      other slug-keyed vocabulary, has no audit triggers for precisely this reason.
+      Because both functions catch WHEN OTHERS and downgrade to a WARNING, a trigger here does not
+      error and does not look broken — it leaves a table that appears audited and logs nothing. That
+      is worse than no audit at all, because it is believed. So the correct state is enforced rather
+      than remembered: adding either trigger back reds this gate.
+      Wanting a real edit history here is legitimate; the price is a uuid surrogate key on this table
+      or a text-keyed audit variant plus a widened audit_events.row_id shared with four other tables.
+      Either is a migration of its own — do that, then change this gate deliberately.
+    sql: |
+      SELECT 1 FROM pg_trigger t
+       WHERE t.tgrelid = to_regclass('public.source_kind')
+         AND NOT t.tgisinternal
+         AND t.tgname IN ('trg_audit_source_kind_upd', 'trg_audit_source_kind_del')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_rls_off_or_policied
+    note: >
+      THE SILENT-DENY GUARD, carried over from v5-sourceentity-001 verbatim in intent. source_kind
+      ships with RLS OFF, matching crop_types and plant_varieties. This does not forbid enabling it —
+      it forbids enabling it with ZERO POLICIES, which is deny-all for every non-owner role and fails
+      by returning no rows rather than a permission error. Found live on public.schema_version on
+      2026-09-01, where it had been blinding the read-only role for an unknown period. Violation
+      shape: RLS on AND no policy. On a VOCABULARY table this is worse than usual — the picker would
+      render empty and every mint would look like the first one.
+    sql: |
+      SELECT 1 FROM pg_class c
+       WHERE c.oid = to_regclass('public.source_kind')
+         AND c.relrowsecurity
+         AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: >
+      The apply left its receipt. continuous false: it is checked in the apply window, and every
+      other post gate above already arms off this same row, so a missing receipt shows up as
+      universal vacuity rather than as a failure.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcekind-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false

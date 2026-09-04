@@ -133,18 +133,20 @@ m(P, "Hatley Plant Swap", "Hadley Plant Swap", "plant_swap", "Hadley, MA", "", "
   "spelling is a mistyping of Hadley, a real adjacent town, and the swap stays SEPARATE from "
   "Hatfield. The 2026-05-30 Cantaloupe came from Hadley.")
 # MERGED on Dave's ruling. Both spellings resolve to ONE source carrying all 5 rows.
-# NOTE the two open sub-questions surfaced to him and not yet answered: (1) which of the two names
-# the merged source should carry - 'Plant Swap' is used here only because it holds 4 of the 5 rows,
-# not because he chose it; (2) whether to correct the label to the town's real spelling, Whately.
-# Neither is destructive and both are a rename away; the merge itself is what was irreversible.
-m(P, "Whatley Plant Swap", "Whatley Plant Swap", "plant_swap", "Whately, MA", "", "high", "new",
+# BOTH open sub-questions are now answered. (1) The merged place carries the SWAP name, which was
+# already the working choice on row count; Dave confirmed the two are one thing and did not ask for
+# the giving-garden name. (2) DAVE RULED 2026-09-04: correct the label to the town's real spelling,
+# Whately. All five stored rows say 'Whatley'; the label does not have to repeat the typo, and the
+# locality column already said 'Whately, MA' - so leaving the name misspelt would have made one row
+# disagree with itself. A rename, fully reversible; the merge was the irreversible half and it stands.
+m(P, "Whatley Plant Swap", "Whately Plant Swap", "plant_swap", "Whately, MA", "", "high", "new",
   "DAVE RULED 2026-09-03: 'the whatley swap/giving garden are the same thing (and different from "
-  "hatfield and hatley)'. This row is the merge TARGET - 4 of the 5 rows. Town is really Whately; "
-  "the label correction is still unruled and is a separate, reversible call.")
-m(P, "Whatley Giving Garden", "Whatley Plant Swap", "plant_swap", "Whately, MA", "", "high", "merge",
+  "hatfield and hatley)'. This row is the merge TARGET - 4 of the 5 rows. DAVE RULED 2026-09-04: "
+  "label corrected to the town's real spelling, Whately.")
+m(P, "Whatley Giving Garden", "Whately Plant Swap", "plant_swap", "Whately, MA", "", "high", "merge",
   "DAVE RULED 2026-09-03: same thing as 'Whatley Plant Swap' one day later. Merged into it. The "
   "giving-garden-vs-event distinction the design raised is not a real distinction here - it is one "
-  "place Dave typed two ways.")
+  "place Dave typed two ways. Label carries the 2026-09-04 Whately spelling correction.")
 
 # ── Long River ───────────────────────────────────────────────────────────────────────────────────
 m(P, "Long River Produce Market", "Long River Produce Market", "market", "Deerfield, MA", "",
@@ -178,15 +180,31 @@ m(P, "Greenfield Farmers Market", "Greenfield Farmers Market", "market", "Greenf
   "one purchase and the venue on another, and because the venue sits on the PARENT row rather than "
   "on the vendor, a vendor who trades at several markets needs no duplicate rows. A market is a "
   "venue that hosts vendors; the vendor is who grew it.")
-m(P, "Shawski Farms", "Shawski Farms", "farm_stand", "", "", "high", "new",
-  "Majority spelling (2 of 4 rows) adopted as the label. SEE THE SPELLING FLAG on 'Skawski Farms'.")
-m(P, "Shawski Farm", "Shawski Farms", "farm_stand", "", "", "high", "merge",
-  "Singular/plural of the same name; same day (2026-05-31), same source_type, same shopping trip.")
-m(P, "Skawski Farms", "Shawski Farms", "farm_stand", "", "", "high", "merge",
-  "MERGE IS HIGH CONFIDENCE - all three rows were created 2026-05-31 as one nursery_transplant "
-  "trip. THE CANONICAL SPELLING IS NOT: 'Shawski' vs 'Skawski' is an h/k transposition and the "
-  "majority is only 2-1. Dave should confirm which is the farm's actual name before this becomes "
-  "the label on 4 plants.")
+# DAVE RULED 2026-09-04, and the MINORITY spelling won. He answered the flag with the business's own
+# site, https://www.skawskifarms.com, which reads "SKAWSKI FARMS, INC" - so 'Skawski' is correct and
+# the 2-1 majority was 2-1 for a typo. Worth keeping as a standing caution: a within-data majority is
+# evidence about how a name was TYPED, never about how it is SPELLED, and the two diverge exactly
+# when the name is unfamiliar. The merge itself was already high confidence and is unaffected.
+#
+# kind ALSO corrected, farm_stand -> nursery, on the same source: the site describes "over two acres
+# of greenhouses" with "all of our flowers are grown right on site". They grow what they sell, which
+# is a nursery; the roadside stand is one of its counters, not the business. This matches the 4
+# plants' own source_type of nursery_transplant, which farm_stand sat awkwardly against.
+#
+# LOCALITY DELIBERATELY LEFT EMPTY. The page's text does not state the town - Hatfield appears only
+# on a sign inside a photograph - and a guessed locality in a column Dave will read as authoritative
+# is worse than a blank one he can fill from the picker.
+m(P, "Skawski Farms", "Skawski Farms", "nursery", "", "", "high", "new",
+  "DAVE RULED 2026-09-04 with the business's own site: 'SKAWSKI FARMS, INC'. This spelling is "
+  "correct and is the label, despite holding only 1 of the 4 rows. kind farm_stand -> nursery on "
+  "the same evidence (two acres of greenhouses, grown on site), which also agrees with the rows' "
+  "source_type of nursery_transplant.",
+  site="https://www.skawskifarms.com")
+m(P, "Shawski Farms", "Skawski Farms", "nursery", "", "", "high", "merge",
+  "The h/k transposition, twice typed. Was provisionally the canonical label on a 2-1 majority; "
+  "Dave's 2026-09-04 ruling reversed that against the vendor's own spelling.")
+m(P, "Shawski Farm", "Skawski Farms", "nursery", "", "", "high", "merge",
+  "Same transposition, singular. Same day (2026-05-31), same source_type, same shopping trip.")
 
 # ── Starview ─────────────────────────────────────────────────────────────────────────────────────
 m(P, "Starview Gardens", "Starview Gardens", "nursery", "", "", "high", "new",
