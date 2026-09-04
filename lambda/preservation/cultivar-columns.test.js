@@ -102,7 +102,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation cultivar column contra
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(5);
+    // 5 -> 6 with V5-INFLIGHTBATCH-001: the kitchen-batch predicate bulk-add LEFT JOINs cultivar to
+    // resolve `crop_type_slug` for a harvest window. It reaches for cv.id / cv.deleted_at /
+    // cv.crop_type_slug only, all three already in the contract below, so the column list is unchanged.
+    expect(STATEMENTS).toHaveLength(6);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['cv']);
   });

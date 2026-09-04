@@ -45,8 +45,14 @@ const HANDLERS = readdirSync(__dirname)
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
+//
+// V5-INFLIGHTBATCH-001 added `event_id`. The kitchen-batch predicate bulk-add resolves a date window
+// over harvest_log, and harvest_log has NO date column of its own — a harvest hangs off an event, so
+// the window is `event_log.event_date` reached through this FK. It is the ONLY new column here; the
+// window's crop/variety/plant selectors all resolve through garden_node and cultivar, which have their
+// own contracts beside this one.
 const AUDIT_COLUMNS = {
-  harvest_log: ['created_by', 'deleted_at', 'id'],
+  harvest_log: ['created_by', 'deleted_at', 'event_id', 'id'],
 };
 
 const HARVEST_LOG_COLUMNS = AUDIT_COLUMNS.harvest_log;
@@ -110,9 +116,12 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation harvest_log column con
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(1);
+    // 1 -> 3 with V5-INFLIGHTBATCH-001: index.js's unaliased ownership gate, plus kitchenRoutes.js's
+    // loadOwnedHarvestLogs (the batched form of that same gate) and the predicate bulk-add's
+    // INSERT..SELECT. Both new ones bind the table as `h`.
+    expect(STATEMENTS).toHaveLength(3);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual([]);
+      .toEqual(['h']);
   });
 
   it('accounts for every unaliased harvest_log read', () => {

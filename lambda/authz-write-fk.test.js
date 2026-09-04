@@ -423,6 +423,33 @@ const NOT_IN_SITES = [
   'critter::plant_id', 'critter::source_event_id',
   'preservation::harvest_log_id', 'preservation::photo_id', 'preservation::plant_id',
   'preservation::storage_location_id', // the four module-private preservation loaders, asserted below
+  // ── V5-INFLIGHTBATCH-001, three columns written by lambda/preservation/kitchenRoutes.js. They are
+  //    here rather than in SITES for a MECHANICAL reason, not a judgement one: the `known` set above
+  //    keys a SITES row as `file.replace('/index.js','')`, so a row naming a non-index handler file
+  //    would key as `preservation/kitchenRoutes.js::<field>` and never match the `preservation::`
+  //    pair the walker produces. Same position the four module-private preservation loaders are in.
+  //
+  // cover_photo_id — BODY-SETTABLE AND GATED, on BOTH verbs, by the shared loadOwnedPhoto from
+  // household.js (anchored on photos.created_by, never the stale uploaded_by). It is a read surface:
+  // the column comes straight back on every v_kitchen_batch_current row, which is the
+  // storage_location_id class, not merely a bad FK. Both call sites are asserted by executing them —
+  // lambda/preservation/kitchenRoutes.test.js runs each route against a mock driver and asserts the
+  // household array is BOUND, which a static call-site scan cannot distinguish from written-but-dead.
+  'preservation::cover_photo_id',
+  // start_anchor_id — BODY-SETTABLE, NO DATABASE FK AT ALL (a polymorphic uuid naming photos.id or
+  // harvest_log.id; the DDL declares it bare), so nothing enforced even EXISTENCE. Gated on both
+  // verbs by gateStartAnchor, which dispatches to loadOwnedPhoto or the harvest_log created_by
+  // predicate; validation first narrows the anchor kind to harvest|photo, so those two arms are
+  // exhaustive and no id can reach the column unchecked. Nothing dereferences it today — this is the
+  // Finding-1 class pre-empted, exactly as preservation::harvest_log_id was.
+  'preservation::start_anchor_id',
+  // batch_id — NOT BODY-SETTABLE. The close-out route writes `SET batch_id = c.id` where `c` is the
+  // statement's own closing CTE, i.e. the ROUTE's batch id, whose household ownership was proven by a
+  // pre-read before the statement was built. There is no request shape that puts a caller-chosen
+  // value in this column, and it is deliberately absent from PRESERVATION_EDITABLE_COLUMNS so the
+  // full-replace preservation PUT cannot reach it either (lambda/preservation/kitchen-batch-id-guard
+  // .test.js). Same class as photos::featured_photo_id above.
+  'preservation::batch_id',
   // ── The id being READ, not written: a `WHERE id = ${...}` inside the SET-clause slice, or the
   //    handler's own row id / route param. Nothing crosses a household boundary. ──
   // photos::photo_id is NO LONGER read-only as of W-DEL: photoDelete.js NULLs plant_varieties.photo_id
