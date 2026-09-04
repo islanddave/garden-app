@@ -24,6 +24,24 @@ IMPLIED = {
         "Named only inside three '(via ...)' parentheticals and in metadata.purchase_location on 12 "
         "rows; it has no free-text spelling of its own, so the mapping alone would never create it. "
         "This is the row that makes Dave's brand-vs-shop question answerable."),
+
+    # ADDED 2026-09-04. This dict existed to catch exactly this case and caught only one of the two:
+    # the backfill generator's invariant check (every proposed_acquired_from must exist in the
+    # catalogue) hard-failed on it. Without that check the 12 "Jen from Four Phantoms" plants would
+    # have silently kept a NULL acquired_from_source_id while everything reported success — the shop
+    # half of a split quietly dropped, which is the exact loss the two-FK design exists to prevent.
+    # Facts are Dave-confirmed 2026-09-03 (recorded in the mapping's reason for that spelling): Four
+    # Phantoms is Four Phantoms Brewing Company, 301 Wells St, Greenfield MA, and the Jen named is a
+    # CO-OWNER of the brewery — not Dave's partner Jen.
+    # kind 'organization', not 'retail' or 'market': it is a brewery, not a place he shops for
+    # plants. It is where he met the person, which is what acquired_from means.
+    "Four Phantoms Brewing Company": (
+        "organization", "Greenfield, MA", "",
+        "Brewery at 301 Wells St. Not a plant source in its own right - it is where Dave met Jen, a "
+        "co-owner, who gave him 12 plants. The venue half of a person-met-at-a-place split.",
+        "Named only as the acquired_from of 'Jen from Four Phantoms' (12 rows); it has no free-text "
+        "spelling of its own, so the mapping alone would never create it. Dave confirmed the "
+        "identity and the co-owner relationship on 2026-09-03."),
 }
 
 rows = list(csv.DictReader(SRC.open(encoding="utf-8")))

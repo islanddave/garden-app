@@ -268,15 +268,27 @@ m(P, "Big Y sale", "Big Y", "retail", "", "", "high", "new",
   residue="'sale'")
 
 # ── Brands not bought from directly ──────────────────────────────────────────────────────────────
-m(P, "Bonnie", "Bonnie Plants", "brand", "", "Home Depot, Greenfield", "high", "split",
+# SHOP NARROWED 2026-09-04, 'Home Depot, Greenfield' -> 'Home Depot'. Surfaced by the backfill
+# generator's invariant that every proposed_acquired_from must exist in the catalogue: it did not,
+# and the fix could have gone either way. Creating a 'Home Depot, Greenfield' catalogue row would
+# have split one chain into two entries ON A RECOLLECTION, and asserted by omission that the OTHER
+# 17 Home Depot rows are a different store - which nothing records either way. The chain is the fact
+# Dave stated; the branch is the part he flagged as 'likely'. So the certain half is stored and the
+# uncertain half stays in the residue, where it was always going to live.
+# Reversible, and reversible from the app: if he confirms the branch, the picker mints
+# 'Home Depot, Greenfield' and these 5 rows re-point. That is the fill-in system working, and it is
+# a better home for a recollection than a catalogue row created on his behalf today.
+m(P, "Bonnie", "Bonnie Plants", "brand", "", "Home Depot", "high", "split",
   "DAVE RULED 2026-09-03: 'bonnie is the supplier, and absolutely a note i want to keep, but i "
   "likely bought it from Home Depot in Greenfield, so two additional useful pieces of info.' This "
   "is the two-FK design working as intended - Bonnie Plants is the ORIGINATOR (source_id) and Home "
-  "Depot Greenfield is the SHOP (acquired_from_source_id). NOTE HIS WORD 'LIKELY': the shop is his "
+  "Depot is the SHOP (acquired_from_source_id). NOTE HIS WORD 'LIKELY': the shop is his "
   "recollection, not a record, and must be stored as such rather than promoted to a fact - see the "
-  "residue. Do not let a later pass read it back as evidenced.",
+  "residue. Do not let a later pass read it back as evidenced. The GREENFIELD BRANCH specifically "
+  "is not stored: it would need its own catalogue row, splitting the chain in two on a recollection "
+  "while implying the other 17 Home Depot rows are a different store.",
   residue="Dave's 'likely' - the Home Depot attribution is recalled, not recorded, and the "
-          "uncertainty travels with it")
+          "uncertainty travels with it. The GREENFIELD branch is recorded here and nowhere else")
 
 # ── Seed companies (mail order) ──────────────────────────────────────────────────────────────────
 m(P, "Burpee", "Burpee", "seed_company", "", "", "high", "new",
@@ -361,6 +373,31 @@ m(I, "Panorama Tours, Austria (souvenir)", "Panorama Tours", "other", "Austria",
   "new", "A souvenir seed packet from a tour company. Not a garden source in any normal sense, "
          "which is what 'other' is for.",
   residue="'(souvenir)'")
+
+# ── Added after the 2026-09-03 export ────────────────────────────────────────────────────────────
+# ADDED 2026-09-04, and the way it was found is the point. The backfill ran green on prod and
+# post_every_pre_existing_row_was_matched reported 53 unmatched inventory rows: a peer session
+# ("Bentley Seeds inventory entry") had entered a whole seed order on 2026-09-03, AFTER the export
+# this mapping joins against. Nothing was wrong with the mapping; it was one day stale, and a
+# 73-spelling artifact built from a point-in-time export of a database other sessions are actively
+# writing to is stale by construction.
+#
+# The lesson for whoever regenerates this next: RE-EXPORT FIRST, always. The generator hard-fails on
+# drift in both directions, so a stale TSV cannot silently corrupt the mapping — but it CAN silently
+# under-cover live data, which is a miss the generator has no way to see. The completeness gate is
+# what sees it. Re-exported as prod-spellings-20260904.tsv, verified byte-identical to the 09-03
+# file on every unchanged line (only Amazon 107->164, Home Depot 15->24, and this new spelling
+# differ), so the export query is the same one.
+#
+# No website: nothing in prod evidences one — source_url, brand and metadata.vendor are all NULL on
+# all 53 rows — and the standing rule here is that a URL written from memory is an unverified fact
+# in a column Dave will read as authoritative.
+m(I, "Bentley Seeds order #50330", "Bentley Seeds", "seed_company", "", "", "high", "new",
+  "53 seed rows entered 2026-09-03 as one order. A seed company that packs and sells its own "
+  "packets, so seed_company rather than retail. The order number is the same residue shape as the "
+  "Botanical Interests and Main Street Seed rows: it has no column anywhere in this design and "
+  "stays in the free text, which is untouched.",
+  residue="'order #50330' - the order number, which has no column and stays where it was typed")
 
 # ── Emit ─────────────────────────────────────────────────────────────────────────────────────────
 rows, seen = [], set()

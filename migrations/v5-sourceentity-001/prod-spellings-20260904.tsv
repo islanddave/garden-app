@@ -1,0 +1,74 @@
+inventory_items.source	164	amendment+climate_control+containers+fertilizer+growing_media+lighting+other+pest_control+seeds+shelving+tools	Amazon
+inventory_items.source	2	other	Amazon (GoveeLife)
+inventory_items.source	1	pest_control	Amazon (NaturesGoodGuys)
+inventory_items.source	1	other	Amazon (Toudura)
+inventory_items.source	2	seeds	Belchertown Plant Swap
+inventory_items.source	53	seeds	Bentley Seeds order #50330
+inventory_items.source	1	other	Best Buy
+inventory_items.source	8	seeds	Botanical Interests (via Gardener’s Supply Company, Hadley MA (retail store))
+inventory_items.source	38	seeds	Botanical Interests online order #350019 (confirmed 2026-07-08, received 2026-07-18); July 2026 intake.
+inventory_items.source	89	seeds	Botanical Interests online order; captured 2026-06-10 as official seed->plant pipeline seeding
+inventory_items.source	9	seeds	Botanical Interests packet
+inventory_items.source	1	seeds	Free from Belchertown Plant Swap, June 2026 (originally Lake Valley Seed, item #233)
+inventory_items.source	1	seeds	Gardens at Mathews
+inventory_items.source	2	seeds	Greenfield Co-op
+inventory_items.source	1	seeds	Gurney's Seed & Nursery Co.
+inventory_items.source	1	seeds	High Mowing Organic Seeds
+inventory_items.source	1	seeds	High Mowing Organic Seeds (via Gardener’s Supply Company, Hadley MA (retail store))
+inventory_items.source	2	seeds	High Mowing packet
+inventory_items.source	2	seeds	Hillfolk Seed Collective
+inventory_items.source	24	amendment+containers+other+pest_control+tools	Home Depot
+inventory_items.source	1	seeds	Home-saved (source not recorded)
+inventory_items.source	1	seeds	Jen's uncle
+inventory_items.source	8	seeds	Johnny's Selected Seeds
+inventory_items.source	1	seeds	Livingston packet
+inventory_items.source	1	seeds	Magic Wings Inc (via Belchertown Plant Swap)
+inventory_items.source	36	seeds	Mary's Heirloom Seeds online order (HOMESTEAD discount); July 2026 intake. Received 2026-07-17.
+inventory_items.source	1	seeds	Massachusetts Flower Growers Association
+inventory_items.source	1	seeds	Panorama Tours, Austria (souvenir)
+inventory_items.source	35	seeds	Sandia Seed Company online order #152165; August 2026 intake.
+inventory_items.source	3	seeds	Seed Savers Exchange (via Gardener’s Supply Company, Hadley MA (retail store))
+inventory_items.source	3	seeds	Seed Savers Exchange packet
+inventory_items.source	1	seeds	UMass Amherst Libraries - Common Seed Project
+inventory_items.source	9	containers+growing_media+lighting+other+pest_control	Walmart
+plants.source_ref	4	nursery_transplant	Amazon
+plants.source_ref	1	plant_swap	Belchertown Plant Swap June
+plants.source_ref	1	gift	Belchertown Plant Swap June 2026
+plants.source_ref	1	nursery_transplant	Belchertown Plant swap June
+plants.source_ref	2	nursery_transplant	Big Y sale
+plants.source_ref	5	nursery_transplant	Bonnie
+plants.source_ref	2	nursery_transplant	Bostrom Farms
+plants.source_ref	31	seed_packet	Botanical Interests
+plants.source_ref	4	nursery_transplant	Burpee
+plants.source_ref	3	rescued	Chapley Gardens - 397 Greenfield Rd Deerfield MA
+plants.source_ref	1	nursery_transplant	Class Grass Garden Canter
+plants.source_ref	1	gift	Emma Daley 2026.06.13
+plants.source_ref	3	rescued	Greenfield Co-op
+plants.source_ref	1	rescued	Greenfield Farmers Co-op
+plants.source_ref	1	nursery_transplant	Greenfield Farmers Market
+plants.source_ref	1	nursery_transplant	Hart Farm trust stand
+plants.source_ref	1	gift	Hatfield Plant Swap
+plants.source_ref	1	plant_swap	Hatley Plant Swap
+plants.source_ref	3	seed_packet	High Mowing Organic Seeds
+plants.source_ref	2	nursery_transplant	Home Depot
+plants.source_ref	3	gift	Imogen
+plants.source_ref	12	nursery_transplant	Jen from Four Phantoms
+plants.source_ref	1	gift	Liz Young via Belchertown Plant Swap June
+plants.source_ref	1	volunteer	Long River
+plants.source_ref	1		Long River Market, Deerfield, MA, USA
+plants.source_ref	26	rescued	Long River Produce Market
+plants.source_ref	1	gift	Nettlepoint Farm
+plants.source_ref	4	gift	Ojos de Luna
+plants.source_ref	2	seed_packet	Renee's Garden
+plants.source_ref	1	seed_packet	Seed Savers Exchange
+plants.source_ref	1	nursery_transplant	Shawski Farm
+plants.source_ref	2	nursery_transplant	Shawski Farms
+plants.source_ref	1	nursery_transplant	Skawski Farms
+plants.source_ref	2	nursery_transplant	Starview
+plants.source_ref	46	nursery_transplant	Starview Gardens
+plants.source_ref	1	nursery_transplant	Sunderland - trust stand
+plants.source_ref	1	nursery_transplant	The Warren Place Flower Farm
+plants.source_ref	1	nursery_transplant	Trust Stand Greenfield -Upper Road
+plants.source_ref	1		Trust stand in Hadley
+plants.source_ref	1	plant_swap	Whatley Giving Garden
+plants.source_ref	4	rescued	Whatley Plant Swap

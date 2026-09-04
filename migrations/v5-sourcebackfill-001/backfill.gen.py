@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Generate 0b-backfill.sql for V5-SOURCEBACKFILL-001.
+
+Reads the two REVIEWED artifacts from the parent migration and emits SQL. The SQL is generated,
+never hand-edited: a hand-maintained 73-branch backfill whose left column has drifted from the
+mapping is worse than none, because it looks authoritative and silently skips rows.
+
+  usage: backfill.gen.py <proposed-sources.csv> <dedupe-mapping.csv> <out.sql>
+
+INVARIANTS THIS SCRIPT ENFORCES, hard-failing rather than emitting a partial file:
+  1. Every proposed_source_name referenced by the mapping exists in the catalogue CSV.
+  2. Every proposed_acquired_from referenced by the mapping exists in the catalogue CSV.
+  3. No (parent_column, spelling) pair appears twice.
+  4. No row names the same source as originator AND shop — that would violate
+     chk_plants_source_distinct / chk_inventory_source_distinct at apply time.
+  5. Every kind used is one of the 12 seeded in v5-sourcekind-001. A minted kind is legitimate in
+     the app but must not appear in a generated backfill, where it would mean the CSV drifted from
+     the vocabulary.
+"""
+import csv, sys, pathlib
+
+SRC = pathlib.Path(sys.argv[1])
+MAP = pathlib.Path(sys.argv[2])
+OUT = pathlib.Path(sys.argv[3])
+
+SEEDED_KINDS = {
+    'seed_company', 'nursery', 'garden_center', 'farm_stand', 'market', 'retail',
+    'plant_swap', 'person', 'organization', 'brand', 'own_garden', 'other',
+}
+
+# The parent column each mapping row keys off. plants stores the free text in source_ref;
+# inventory_items in source. Nothing else is read, and neither is written.
+PARENT = {
+    'plants.source_ref':        ('public.plants',           'source_ref'),
+    'inventory_items.source':   ('public.inventory_items',  'source'),
+}
+
+# V5-SOURCEUNKNOWN-001. Dave ruled 2026-09-04 that not-knowing must be a real, usable entry rather
+# than a blank: "there may be some rare cases where I do not know where a seed may have come from,
+# so so long as I can use Unknown in general, this works for me." It is created here rather than in
+# a migration of its own because it is catalogue DATA, and because a picker that offers Unknown from
+# the first day is the whole point — an Unknown added later leaves a window where the only way to
+# record not-knowing is the blank that caused the 73 spellings.
+# NOTHING IS BACKFILLED ONTO IT. No existing spelling maps here: a row whose provenance was never
+# recorded is genuinely different from one Dave looked at and said he did not know, and asserting
+# the second on his behalf would put words in his mouth for 72 undated seed rows.
+UNKNOWN_ROW = dict(
+    name='Unknown',
+    kind='',           # deliberately NULL — Unknown is not a KIND of place, it is the absence of one
+    locality='', address='', website='',
+    notes="V5-SOURCEUNKNOWN-001. Use this when you were asked and genuinely do not know. It means "
+          "something a blank cannot: a blank is indistinguishable from never having been asked, and "
+          "cannot be counted or listed. Nothing was backfilled onto this row - every row pointing "
+          "here was pointed here deliberately.",
+)
+
+
+def q(s):
+    """SQL string literal, or NULL for empty."""
+    if s is None or s == '':
+        return 'NULL'
+    return "'" + s.replace("'", "''") + "'"
+
+
+def main():
+    catalogue = list(csv.DictReader(SRC.open(encoding='utf-8')))
+    mapping = list(csv.DictReader(MAP.open(encoding='utf-8')))
+
+    by_name = {r['proposed_source_name']: r for r in catalogue}
+    if len(by_name) != len(catalogue):
+        sys.exit('FATAL: duplicate proposed_source_name in the catalogue CSV')
+
+    seen = set()
+    errs = []
+    for r in mapping:
+        key = (r['parent_column'], r['spelling'])
+        if key in seen:
+            errs.append(f'duplicate mapping row {key}')
+        seen.add(key)
+        if r['parent_column'] not in PARENT:
+            errs.append(f'unknown parent_column {r["parent_column"]!r}')
+        if r['proposed_source_name'] not in by_name:
+            errs.append(f'{r["spelling"]!r} -> {r["proposed_source_name"]!r} is not in the catalogue')
+        acq = r['proposed_acquired_from']
+        if acq:
+            if acq not in by_name:
+                errs.append(f'{r["spelling"]!r} acquired_from {acq!r} is not in the catalogue')
+            if acq == r['proposed_source_name']:
+                errs.append(f'{r["spelling"]!r} names {acq!r} as BOTH originator and shop — the '
+                            f'distinctness CHECK would reject every row it touches')
+    for c in catalogue:
+        if c['proposed_kind'] and c['proposed_kind'] not in SEEDED_KINDS:
+            errs.append(f'{c["proposed_source_name"]!r} uses kind {c["proposed_kind"]!r}, which is '
+                        f'not one of the 12 seeded by v5-sourcekind-001')
+    if errs:
+        sys.exit('FATAL:\n  ' + '\n  '.join(errs))
+
+    L = []
+    w = L.append
+    w('-- 0b-backfill.sql — GENERATED by backfill.gen.py. DO NOT EDIT BY HAND.')
+    w('-- V5-SOURCEBACKFILL-001. Regenerate with:')
+    w('--   python3 backfill.gen.py ../v5-sourceentity-001/proposed-sources.csv \\')
+    w('--     ../v5-sourceentity-001/dedupe-mapping.csv 0b-backfill.sql')
+    w('--')
+    w('-- Populates public.source from the REVIEWED catalogue and points plants / inventory_items at')
+    w('-- it. Dave approved the run on 2026-09-04 with five medium-confidence KIND labels stated to')
+    w('-- him explicitly (Bostrom Farms, Nettlepoint Farm, Liz Young, Panorama Tours, and')
+    w("-- Gardener's Supply Company); every MERGE decision was already his.")
+    w('--')
+    w('-- THE FREE TEXT IS NOT TOUCHED. plants.source_ref and inventory_items.source are read as the')
+    w('-- join key and never written, so this migration is reversible by nulling four columns —')
+    w('-- which is exactly what 0r-rollback.sql does. That is why five medium-confidence category')
+    w('-- labels were an acceptable price for shipping now: nothing is destroyed, and each is one')
+    w('-- tap to correct from the picker.')
+    w('--')
+    w('-- IDEMPOTENT. Catalogue inserts are ON CONFLICT DO NOTHING; every UPDATE is guarded by')
+    w('-- `IS NULL` on the column it sets, so a re-run cannot overwrite a value a human has since')
+    w('-- corrected through the app. Re-running after a manual fix is safe and is a no-op for it.')
+    w('--')
+    w('-- SOFT-DELETED PARENTS ARE INCLUDED DELIBERATELY (no deleted_at filter on plants). 16 of the')
+    w('-- 182 plants rows are soft-deleted; their provenance is history worth keeping, and the')
+    w('-- Deleted-Planting History Rule says a withdrawn record does not retract what happened.')
+    w('')
+    w('BEGIN;')
+    w('')
+    w('-- ── 1. THE CATALOGUE ─────────────────────────────────────────────────────────────────────')
+    w(f'-- {len(catalogue)} reviewed rows + the Unknown row = {len(catalogue) + 1}.')
+    w('INSERT INTO public.source (name, kind, locality, address, website_url, notes, created_by)')
+    w('VALUES')
+    vals = []
+    for c in sorted(catalogue, key=lambda r: r['proposed_source_name']):
+        vals.append('  (%s, %s, %s, %s, %s, %s, %s)' % (
+            q(c['proposed_source_name']), q(c['proposed_kind']), q(c['proposed_locality']),
+            q(c['proposed_address']), q(c['proposed_website']), q(c['notes_seed']), q('system')))
+    u = UNKNOWN_ROW
+    vals.append('  (%s, %s, %s, %s, %s, %s, %s)' % (
+        q(u['name']), q(u['kind']), q(u['locality']), q(u['address']), q(u['website']),
+        q(u['notes']), q('system')))
+    w(',\n'.join(vals))
+    w('ON CONFLICT DO NOTHING;')
+    w('')
+    w('-- ── 2. THE POINTERS ──────────────────────────────────────────────────────────────────────')
+    w('-- One statement per verbatim spelling, matched EXACTLY and scoped to its own parent column.')
+    w('-- Exact match, not ILIKE or trim: the spellings ARE the data, and a fuzzy join here would')
+    w('-- re-create by accident the conflation this whole entity exists to undo.')
+    w('')
+
+    for r in sorted(mapping, key=lambda x: (x['parent_column'], x['spelling'])):
+        table, col = PARENT[r['parent_column']]
+        acq = r['proposed_acquired_from']
+        w(f'-- {r["parent_column"]}: {r["spelling"]!r} ({r["rows_in_prod"]} rows, {r["action"]}, '
+          f'{r["confidence"]})')
+        if acq:
+            w(f'--   originator {r["proposed_source_name"]!r} via shop {acq!r}')
+        w(f'UPDATE {table} t SET')
+        w('       source_id = (SELECT s.id FROM public.source s')
+        w(f'                     WHERE s.name = {q(r["proposed_source_name"])} '
+          'AND s.deleted_at IS NULL)')
+        if acq:
+            w('     , acquired_from_source_id = (SELECT s.id FROM public.source s')
+            w(f'                                   WHERE s.name = {q(acq)} AND s.deleted_at IS NULL)')
+        w(f' WHERE t.{col} = {q(r["spelling"])}')
+        w('   AND t.source_id IS NULL;')
+        w('')
+
+    w('-- ── 3. RECEIPT ───────────────────────────────────────────────────────────────────────────')
+    w("INSERT INTO public.schema_version (version, description, applied_at)")
+    w("VALUES ('5.0.0-sourcebackfill-001',")
+    w("        'SOURCEBACKFILL: V5-SOURCEBACKFILL-001. Populates public.source with %d reviewed '"
+      % len(catalogue))
+    w("        'catalogue rows plus the V5-SOURCEUNKNOWN-001 Unknown row, then sets source_id and '")
+    w("        'acquired_from_source_id on plants and inventory_items from the %d reviewed '"
+      % len(mapping))
+    w("        'spellings. plants.source_ref and inventory_items.source are READ ONLY and remain '")
+    w("        'the record of provenance; every UPDATE is IS NULL-guarded so a re-run cannot '")
+    w("        'overwrite a human correction. Fully reversible by nulling the four FK columns '")
+    w("        '(0r-rollback.sql). Dave approved the run 2026-09-04 with five medium-confidence '")
+    w("        'kind labels named to him.',")
+    w('        now())')
+    w('ON CONFLICT (version) DO UPDATE')
+    w('  SET applied_at = now(), description = EXCLUDED.description;')
+    w('')
+    w('COMMIT;')
+    w('')
+
+    OUT.write_text('\n'.join(L), encoding='utf-8')
+    n_acq = sum(1 for r in mapping if r['proposed_acquired_from'])
+    print(f'OK  {len(catalogue)} catalogue rows + 1 Unknown -> {len(catalogue)+1} source rows')
+    print(f'    {len(mapping)} spelling statements ({n_acq} also set acquired_from_source_id)')
+    print(f'    kinds used: {sorted({c["proposed_kind"] for c in catalogue if c["proposed_kind"]})}')
+    print(f'    wrote {OUT}')
+
+
+if __name__ == '__main__':
+    main()
