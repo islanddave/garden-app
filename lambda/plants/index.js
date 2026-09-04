@@ -558,8 +558,16 @@ export const handler = async (event) => {
       // about what "variety_name" means. LEFT JOIN: a seeds row must have a variety_id under
       // chk_inventory_seed_requires_variety, but the join must not be what decides whether a lot
       // is visible.
+      // V5-SEEDQTY-001 — seed_count / seed_weight_g travel with the lot. SeedLotsFromPlanting
+      // renders `${formatQty(lot.quantity_on_hand)} on hand`, and after the backfill puts
+      // quantity_on_hand back to meaning CONTAINERS every saved lot reads "1 on hand" — the count
+      // is the fact the gardener came here for. Without these two the field is not wrong, it is
+      // silently absent, which is the harder failure to notice.
+      // seed_count_estimated is deliberately NOT projected: this list has no room to render "approx"
+      // and an unread column would make this contract assert something the code does not do.
       const rows = await sql`
         SELECT i.id, i.name, i.seed_stage, i.quantity_on_hand, i.created_at,
+               i.seed_count, i.seed_weight_g,
                pv.display_name AS variety_name
           FROM public.inventory_items i
           LEFT JOIN public.cultivar pv ON pv.id = i.variety_id

@@ -32,7 +32,7 @@ import { T } from '../components/forms/formStyles.js'
 import { SEED_STAGES } from '../components/seed/seedStages.js'
 import SaveSeedSheet from '../components/planting/SaveSeedSheet.jsx'
 import { looseIncludes } from '../lib/comboboxInput.js'
-import { formatQty, formatDate } from '../lib/format.js'
+import { formatQty, formatDate, formatSeedWeight } from '../lib/format.js'
 
 // Process order, and it is an ORDER not a set: "advance" means one step right, and `stored` is
 // terminal. Kept in one place so the section list, the next-stage arrow and the advance button copy
@@ -218,12 +218,44 @@ const prettySlug = (s) => {
 // The row's first line: what the seed IS. Unchanged from the shipped behaviour.
 const candidateTitle = (i) => i.variety_name || i.name || ''
 
+// V5-SEEDQTY-001 — "how many SEEDS", as its own fact. `seed_count` is a nullable integer, so absent
+// and zero are finally different things: null is "nobody has counted this", 0 is a lot that was
+// counted and yielded nothing. Both are worth knowing before you commit a permanent stage-log row to
+// a packet, and only one of them is worth hiding — so 0 renders.
+//
+// "seeds" is a UI LABEL and never a `unit` value. inventory_items_unit_check is untouched by this
+// change on purpose: with a seed_count column in place, a `unit='seeds'` token would make two
+// encodings of one jar legal (qoh=1 packet + seed_count=185, or qoh=185 seeds) with nothing forcing
+// them to agree. The word belongs on the screen, not in the row.
+const seedCountLabel = (n) => {
+  if (n == null || n === '') return ''
+  const c = Number(n)
+  if (!Number.isFinite(c)) return ''
+  const shown = formatQty(c)
+  return `${shown} ${shown === '1' ? 'seed' : 'seeds'}`
+}
+
 // The second line, and the whole fix. Facts that actually separate two packets of one cultivar, in
 // the order they separate them: how much is in the jar, where it came from, when it was bought.
 // Absent facts are DROPPED rather than rendered as a dash — "Brandywine · — · —" is noise, and the
 // ordinal below is what covers a row with nothing left to say.
+//
+// THE SEED COUNT LEADS, and the packet count keeps its place behind it. Until V5-SEEDQTY-001 a saved
+// lot put its seed count into `quantity_on_hand` and left `unit='packet'`, so this line read
+// "185 packet" — one number wearing the wrong noun. `quantity_on_hand` means CONTAINERS again, which
+// makes the same row read "1 packet", so without a seed segment here the count Dave typed simply
+// stops being on screen. Two segments rather than one merged string because they answer two
+// questions ("how many jars" / "how much seed") and either can be absent independently.
 function candidateFacts(i) {
   const parts = []
+  const seeds = seedCountLabel(i.seed_count)
+  if (seeds) parts.push(seeds)
+  // formatSeedWeight, NEVER formatQty. formatQty is String(Math.round(n)) with no unit, so a 0.5 g
+  // lot would render as the bare "1" — a wrong number wearing no noun, next to a count. Imported
+  // from lib/format rather than re-spelled here so this page and the planting surfaces cannot start
+  // disagreeing about what a gram looks like.
+  const weight = formatSeedWeight(i.seed_weight_g)
+  if (weight) parts.push(weight)
   const qty = formatQty(i.quantity_on_hand)
   if (qty !== '') parts.push(i.unit ? `${qty} ${i.unit}` : qty)
   if (i.source) parts.push(String(i.source))
@@ -322,13 +354,18 @@ function fermentUrgency(item) {
   return null
 }
 
-// ── V4-SEEDSTOREDQTY-001 — writing a COUNT from this page ─────────────────────────────────────────
-// There is no narrow quantity route on the handler, so the count goes through PUT
-// /api/inventory-items/:id — which is the wide PUT, where every column in the SET list is assigned
-// unconditionally (`= ${body.x ?? null}`). A short body there is not a partial update, it is a wipe.
-// The complete row is therefore round-tripped, which is the same contract InventoryDetail's
-// putPayloadFrom() keeps for its stage write; the row available here is the LIST row, which is
-// `i.*` plus two derived columns.
+// ── V4-SEEDSTOREDQTY-001 — the wide PUT this page still opens, and what is left in it ─────────────
+// THE COUNT NO LONGER TRAVELS THIS WAY (V5-SEEDQTY-001). It used to, because there was no narrow
+// quantity route, and the cost was the defect: `quantity_on_hand` is the CONTAINERS column, so a
+// saved lot came out of this page reading `185.000 packet`. `seed_count` / `seed_weight_g` /
+// `seed_count_estimated` now have PUT /api/inventory-items/:id/seed-measure, which is their only
+// writer anywhere in the app — see the strip list below for why nothing else may name them.
+//
+// What still comes through here is `year_harvested`, which has no narrow route. The wide PUT assigns
+// every column in its SET list unconditionally (`= ${body.x ?? null}`), so a short body is not a
+// partial update, it is a wipe. The complete row is therefore round-tripped, which is the same
+// contract InventoryDetail's putPayloadFrom() keeps for its stage write; the row available here is
+// the LIST row, which is `i.*` plus three derived columns.
 //
 // MIRRORS PUT_DERIVED_KEYS + PUT_PRESENCE_GUARDED_KEYS in src/pages/InventoryDetail.jsx, where the
 // per-key reasoning is spelled out. Duplicated rather than imported for the reason SaveSeedSheet.jsx
@@ -363,13 +400,38 @@ function fermentUrgency(item) {
 // inventory rows — so without these two entries every count edit made here would re-assert whatever
 // source the list row was holding. Against a stale row that silently reverts a provenance change
 // made anywhere else in the app, and answers 200.
+// BUG-SEEDYEARNOOP-001 adds `year_harvested`, and it is LIVE in the same sense as the two above —
+// the SET list now names it behind a hasOwnProperty sentinel, so mentioning it IS an assignment
+// where until today it was discarded. But it carries a second reason the others do not, and that
+// one is the sharper of the two: yearHarvestedPatch() enforces NEVER OVERWRITE by returning an
+// EMPTY OBJECT for a lot that already has a year. That contract is expressed entirely as the
+// key's ABSENCE from the body. Spreading the list row puts the key back — so without this entry
+// the patch's guard would be silently defeated by the very payload it is spread into, and every
+// count edit would re-assert the row's own year over whatever the column actually holds. Against
+// a stale row that is how a hand-entered 1986 gets replaced, with a 200.
+//
+// V5-SEEDQTY-001 adds the last three, and they are the reason the narrow route exists at all. They
+// are real columns on inventory_items, so the list query's `i.*` puts them on every row this page
+// holds — and this page round-trips that row into the wide PUT. The handler deliberately does NOT
+// name them in its SET list, so today they ride through inert; the day one is added, an unrelated
+// wide PUT from here would re-assert whatever the LIST ROW held AT MOUNT, silently reverting a count
+// written minutes earlier through /seed-measure and answering 200. That is BUG-INVLOSTUPDATE-001's
+// exact shape, and a presence guard on the handler would not save it — `{ ...current, ...payload }`
+// in useInventory.updateItem re-inserts the stale value, so hasOwnProperty is TRUE and the guard
+// assigns it. Stripped here, PUT /api/inventory-items/:id/seed-measure is the only writer.
+//
+// MERGE NOTE (2026-09-04): these two arrived from different sessions in the same hour and are a
+// UNION, not a choice. They are the same defect class reached from opposite directions — a stale
+// list row re-asserting a value nobody edited — and the year's case is the one with a live victim
+// (4 curated rows, one of them a hand-entered 1986). Dropping either side's entries restores that
+// side's bug silently, with a 200.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
-  'source_kind', 'source_id', 'acquired_from_source_id',
+  'source_kind', 'source_id', 'acquired_from_source_id', 'year_harvested',
+  'seed_count', 'seed_weight_g', 'seed_count_estimated',
 ]
 
-/** A complete wide-PUT body from a list row, with the count applied. Pure, exported for test. */
 /**
  * V5-SEEDYEARHARVESTED-001 — the harvest year a saved lot already knows and never records.
  *
@@ -397,20 +459,34 @@ export function yearHarvestedPatch(row, toStage, whenISO) {
   return Number.isInteger(y) && y > 1900 && y < 2200 ? { year_harvested: y } : {}
 }
 
-export function countPayloadFrom(row, quantityOnHand) {
+/**
+ * A complete wide-PUT body from a list row, unchanged apart from the strip. Pure, exported for test.
+ *
+ * WAS `countPayloadFrom(row, quantityOnHand)` until V5-SEEDQTY-001, and the rename is the change:
+ * the count no longer travels this way. It used to return `{ ...out, quantity_on_hand: count }`,
+ * which is how a saved lot ended up reading "185 packet" in prod — the seed count written into the
+ * containers column. `quantity_on_hand` now round-trips whatever the row already held and means
+ * containers again; the count goes to PUT /:id/seed-measure and nowhere else.
+ *
+ * The wide PUT survives on this page for ONE key: `year_harvested` (V5-SEEDYEARHARVESTED-001), which
+ * has no narrow route. It still has to carry the whole row, because every column in the handler's
+ * SET list is a bare unconditional assignment — a short body there is a wipe with a 200 on it.
+ * `type` in particular is load-bearing: the handler nulls quantity_on_hand outright unless
+ * body.type === 'consumable' (BUG-INVSEEDPUT400-001 is the same fact from the other side).
+ */
+export function listRowPutBody(row) {
   const out = { ...(row ?? {}) }
   for (const k of LIST_ROW_PUT_STRIP) delete out[k]
-  // `type` rides through untouched and is load-bearing: the handler nulls quantity_on_hand outright
-  // unless body.type === 'consumable' (BUG-INVSEEDPUT400-001 is the same fact from the other side).
-  return { ...out, quantity_on_hand: quantityOnHand }
+  return out
 }
 
 /**
  * BUG-SEEDZEROSOWABLE-001 — read the count field for a move into `toStage`. Pure, exported for test.
  *
  * @returns {{value: number|null, error: null}|{value: null, error: string}}
- *   `value` is the number to PUT, or null meaning "write nothing and leave the lot's count alone".
- *   `error` is a refusal — the submit must not proceed.
+ *   `value` is the number to PUT as `seed_count` on /seed-measure (V5-SEEDQTY-001 — it went to
+ *   `quantity_on_hand` on the wide PUT until then), or null meaning "write nothing and leave the
+ *   lot's count alone". `error` is a refusal — the submit must not proceed.
  *
  * THE ONE ASYMMETRY IS DELIBERATE. Blank is a legitimate answer on `fermenting` and `drying` ("I
  * haven't counted") and is refused on `stored`, because that is the stage whose 0 is unreadable
@@ -434,6 +510,17 @@ export function parseCountInput(raw, toStage) {
   const n = Number(typed)
   if (!Number.isFinite(n)) return { value: null, error: 'That is not a number.' }
   if (n < 0) return { value: null, error: 'A count cannot be negative.' }
+  // V5-SEEDQTY-001 — WHOLE SEEDS, refused here rather than by the API. `seed_count` is an `integer`
+  // column and the /seed-measure route answers a non-integer with
+  // `400 seed_count must be a whole number of seeds, or null`. That 400 arrives AFTER the stage POST
+  // has landed, so a typed "20.5" would move the lot and drop the count, reporting it as a toast on
+  // a sheet that has already closed. The field is `step="1"` and `inputMode="numeric"`, but a decimal
+  // point is one tap away on an Android numeric keypad, so the guard is real and not belt-and-braces.
+  //
+  // This REPLACES the "takes a fraction as given" rule, which was correct while the count lived in
+  // `quantity_on_hand numeric(10,3)` — half a packet is a coherent quantity. Half a seed is not.
+  // Same guard, same wording, on SaveSeedSheet's capture field, so the two doors agree.
+  if (!Number.isInteger(n)) return { value: null, error: 'A seed count is a whole number of seeds.' }
   return { value: n, error: null }
 }
 
@@ -672,11 +759,22 @@ export default function SavedSeeds() {
     setStagePlantFailed(false)
     // BUG-SEEDZEROSOWABLE-001 — seed the field with what the lot already holds so the gardener is
     // amending a running count rather than being asked the same question from scratch at every step.
-    // A 0 prefills as BLANK, not as "0": 0 is the create-time placeholder for "nobody has counted
-    // this yet", and rendering it as an answer would let a `stored` move satisfy its own required
-    // field with a number no human ever typed — the exact ambiguity this change exists to end.
-    const held = Number(item?.quantity_on_hand)
-    setQtyInput(Number.isFinite(held) && held > 0 ? String(held) : '')
+    //
+    // FROM `seed_count`, NOT `quantity_on_hand` (V5-SEEDQTY-001). This read is why the repoint cannot
+    // wait for a second pass: the backfill puts `quantity_on_hand` back to 1 (one packet), so a
+    // prefill still pointed at that column would offer "1" to a gardener amending a lot of 185, and
+    // the retyped 185 would go straight back into the containers column on the next stage advance.
+    //
+    // AND THE `> 0` GUARD DIES WITH IT, deliberately. It existed because `quantity_on_hand` is NOT
+    // NULL for a consumable (consumable_requires_quantity_on_hand), so 0 was the only way that column
+    // could say "nobody has counted this" — and rendering that 0 as an answer would have let a
+    // `stored` move satisfy its own required field with a number no human typed. `seed_count` is
+    // NULLABLE, so it says the same thing with `null` and 0 goes back to meaning what it says: a lot
+    // that was counted and yielded nothing. Blanking a measured 0 here would re-create exactly the
+    // conflation the new column exists to end, one layer up.
+    const held = item?.seed_count
+    const n = Number(held)
+    setQtyInput(held != null && held !== '' && Number.isFinite(n) ? String(n) : '')
     setQtyErr(null)
     setDateErr(null)
   }
@@ -739,23 +837,44 @@ export default function SavedSeeds() {
       // its OWN failure, because a lot that reached `stored` reached it whether or not we also
       // learned how much came out. Blank is not a skipped field, it is the answer "still don't know"
       // — and the only honest thing to do with it is write nothing, leaving the lot at whatever it
-      // already held. Last of the three so the write order reads in order of importance.
+      // already held.
+      //
+      // V5-SEEDQTY-001 — THROUGH THE NARROW ROUTE, and this is the fix rather than a refactor of it.
+      // The count used to ride the WIDE PUT into `quantity_on_hand`, which is how prod ended up
+      // holding `185.000 packet`: one number in the containers column wearing the containers noun.
+      // /seed-measure reads its three keys by presence and touches nothing else, so no stale value
+      // from a list row read at mount can ride along with them.
+      //
+      // `seed_count_estimated: false` on every write from this page, always. This field is answered
+      // by the person holding the seed, on the step where they are holding it — it is a counted
+      // number, never a vendor's "approx. 25 seeds" off the back of a packet, and the two have to
+      // stay distinguishable or the column says nothing.
       let qtyWriteErr = null
       if (count.value != null) {
         try {
-          await fetch(`/api/inventory-items/${advancing.item.id}`, {
+          await fetch(`/api/inventory-items/${advancing.item.id}/seed-measure`, {
             method: 'PUT',
-            body: JSON.stringify({
-              ...countPayloadFrom(advancing.item, count.value),
-              // V5-SEEDYEARHARVESTED-001 — rides along on the count PUT rather than issuing a second
-              // request: it is the same row, the same moment, and a separate write would be a second
-              // thing that can fail half-way. Spread LAST so it is unambiguous which key wins, and it
-              // contributes nothing at all unless this is a move to `stored` on a lot with no year.
-              ...yearHarvestedPatch(advancing.item, advancing.toStage, when),
-            }),
+            body: JSON.stringify({ seed_count: count.value, seed_count_estimated: false }),
           })
         } catch (e) {
           qtyWriteErr = e?.message ?? 'Stage saved, but the count did not.'
+        }
+      }
+      // V5-SEEDYEARHARVESTED-001 — the ONE key on this page with no narrow route, so it is the only
+      // thing left that opens the wide PUT. Its own request now that the count has moved off it, and
+      // its own failure for the same reason the two above have theirs. Gated on the patch being
+      // non-empty rather than on the count, so the wide PUT is never opened with nothing to say: it
+      // contributes only on a move to `stored` on a lot with no year already recorded.
+      let yearWriteErr = null
+      const yearPatch = yearHarvestedPatch(advancing.item, advancing.toStage, when)
+      if (Object.keys(yearPatch).length > 0) {
+        try {
+          await fetch(`/api/inventory-items/${advancing.item.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ ...listRowPutBody(advancing.item), ...yearPatch }),
+          })
+        } catch (e) {
+          yearWriteErr = e?.message ?? 'Stage saved, but the harvest year did not.'
         }
       }
       // "Started in", not "Moved to", when this is the lot's first stage — `process` is set only on
@@ -764,7 +883,7 @@ export default function SavedSeeds() {
       // (V5-SEEDSTAGEONEPLACE-001), where "Moved to fermenting" would report a repair of a wrong
       // record as a thing that happened to the seed.
       const verb = advancing.process ? 'Started in' : advancing.correction ? 'Corrected to' : 'Moved to'
-      show({ message: linkErr ?? qtyWriteErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
+      show({ message: linkErr ?? qtyWriteErr ?? yearWriteErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
       load()
     } catch (e) {
@@ -1223,8 +1342,14 @@ export default function SavedSeeds() {
                 {required
                   ? <span data-testid="seed-count-required" style={{ color: P.severityUrgent, fontWeight: 600 }}>(required)</span>
                   : <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>}
+                {/* V5-SEEDQTY-001 — inputMode `numeric`, not `decimal`. `seed_count` is an integer
+                    column and /seed-measure 400s on a fraction, so a decimal point on the Android
+                    keypad advertises an answer the API refuses. Coordinated with the identical
+                    change on SaveSeedSheet's capture field in the same round; no other input's
+                    inputMode is touched. parseCountInput still refuses a pasted fraction — a
+                    keyboard hint is a hint, not a guard. */}
                 <input
-                  type="number" inputMode="decimal" min="0" step="1" value={qtyInput}
+                  type="number" inputMode="numeric" min="0" step="1" value={qtyInput}
                   onChange={(e) => { setQtyInput(e.target.value); if (qtyErr) setQtyErr(null) }}
                   placeholder={advancing.item.unit ? `e.g. 2 ${advancing.item.unit}` : 'e.g. 2'}
                   aria-invalid={qtyErr ? 'true' : undefined}

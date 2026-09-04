@@ -1,0 +1,181 @@
+# gates.yml
+# V5-SEEDQTY-001 — seed_count / seed_weight_g / seed_count_estimated on inventory_items.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# ENVIRONMENT SYMMETRY — NO `env:` KEY APPEARS ANYWHERE IN THIS FILE. gate_runner defaults env to
+# "both", and gate-invariants.yml runs `--phase post --continuous-only` against BOTH prod and
+# staging on every migrations/** push plus a weekly cron, treating UNKNOWN as a third FAILING
+# outcome. Consequence, stated because it is the thing that reds sweeps: **0a must be applied to
+# PROD AND STAGING before this directory is pushed.** Applying to one and pushing reds the other
+# leg immediately, and it looks like a broken gate rather than a missing apply.
+#
+# CONTINUOUS GATES HERE ARE SHAPE ONLY — column exists, data type, constraint exists, view exposes.
+# Every gate that asserts a VALUE or a COUNT OF ROWS carries `continuous: false`. This is not
+# stylistic: a frozen data count becomes a permanent invariant on two databases with different data,
+# so it reds on staging immediately and on prod the moment Dave logs anything. This directory has
+# two live cautionary siblings — v4-dtmbasisvar-001:41 pinned v_sow_candidates at 33 columns (live
+# is now 37) and had to be neutralised with `continuous: false` on 2026-09-02, and
+# ops-cueinstrument-001:92 `post_no_extra_columns value: 8` is the same shape still armed.
+#
+# NO GATE BELOW COUNTS TOTAL COLUMNS ON inventory_items OR ON v_sow_candidates. Every column
+# assertion is an IN-list rowcount, so a peer migration adding an unrelated column cannot red it.
+# That is the outbound half of the same lesson: this migration must not become the next sibling that
+# breaks someone else's sweep.
+#
+# NO DIRECT `FROM public.<table>` WHERE THE RELATION MIGHT BE ABSENT. Postgres resolves relations at
+# PARSE time, so an EXISTS-guard cannot protect a direct reference — the gate would raise rather
+# than pass vacuously. Everything here reads pg_catalog / information_schema.
+
+pre:
+  - name: pre_seed_columns_absent
+    note: >
+      Greenfield check. If this returns rows, 0a already ran here — stop and diff before re-running.
+      continuous false by design: false forever once 0a lands.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name IN ('seed_count', 'seed_weight_g', 'seed_count_estimated')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_backfill_candidates_present
+    note: >
+      CHARACTERIZATION BEFORE THE MOVE. Six seed rows carry a seed count in quantity_on_hand on prod
+      (185/175/121 packet + 100/15/10 each). The first draft of this migration named THREE ids; a
+      test written against three would have passed on a backfill that missed three more, which is
+      why the target is a predicate. The six prod ids are 69832d29, 181627da, 099cfba0, 2d6df841,
+      0bd5f450, 8fc07941. STAGING WILL DIFFER — this is a data count and therefore continuous false,
+      and it is expected to be non-6 anywhere that is not prod-at-2026-09-04. It documents the
+      pre-state; it is not an invariant.
+    sql: |
+      SELECT 1 FROM public.inventory_items
+       WHERE category = 'seeds' AND deleted_at IS NULL AND quantity_on_hand > 5
+    expect: rowcount_eq
+    value: 6
+    continuous: false
+
+  - name: pre_unit_check_not_widened
+    note: >
+      Records the DELIBERATE non-change. Two review seats independently rejected adding
+      'seeds'/'g'/'mg' to inventory_items_unit_check, because with seed_count and seed_weight_g in
+      place it would make two encodings of one jar legal with nothing forcing them to agree. This
+      gate exists so a future reader can see the omission was a decision. Quoted-literal match:
+      a bare LIKE '%g%' is satisfied by the pre-existing 'gal' and would pass on an un-widened
+      constraint — a vacuous gate that reads as proof. continuous false: a later migration may
+      legitimately widen this vocabulary, and this must not veto that.
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'inventory_items_unit_check'
+         AND pg_get_constraintdef(oid) LIKE '%''seeds''%'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_seed_columns_present
+    note: >
+      SHAPE, continuous. IN-list rowcount, never a total column count, so a peer migration adding an
+      unrelated column to inventory_items cannot red this.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name IN ('seed_count', 'seed_weight_g', 'seed_count_estimated')
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_seed_count_is_integer
+    note: >
+      DATA TYPE PIN, and it is load-bearing rather than pedantic: a numeric seed_count would accept
+      185.5 seeds and the CHECK (>= 0) would not object. Half a seed is not a thing.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'seed_count' AND data_type = 'integer'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_seed_weight_scale_3
+    note: >
+      numeric(10,3) resolves to 1 mg. Grams is the canonical scale everywhere in this codebase
+      (harvest_log.weight_grams, crop_types.grams_per_unit, harvest-constants toGrams); milligrams
+      appear nowhere, and storing mg would put a x1000 on every future join to a gram column with
+      nothing enforcing it.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'seed_weight_g'
+         AND numeric_precision = 10 AND numeric_scale = 3
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_seed_checks_present
+    note: >
+      The four phase-0a CHECKs, by name, as an IN-list. One per column for the seeds-only pair so a
+      violation names WHICH column caused it — the house pattern on this table
+      (chk_inventory_source_kind_seeds_only, chk_inventory_source_plant_seeds_only).
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.inventory_items'::regclass
+         AND conname IN ('chk_inventory_seed_count_seeds_only',
+                         'chk_inventory_seed_weight_seeds_only',
+                         'chk_inventory_seed_count_nonneg',
+                         'chk_inventory_seed_weight_nonneg')
+    expect: rowcount_eq
+    value: 4
+
+  - name: post_view_exposes_seed_columns
+    note: >
+      THE DELIVERABLE MOST LIKELY TO BE FORGOTTEN. v_sow_candidates enumerates its columns
+      explicitly, so ADD COLUMN does NOT propagate into it, and lambda/inventory-items/index.js:330
+      does `SELECT * FROM v_sow_candidates`. Without the CREATE OR REPLACE in 0a the sow surface
+      reads quantity_on_hand=1 after the backfill with no path to the real count. IN-list, so
+      widening the view later stays gate-safe.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'v_sow_candidates'
+         AND column_name IN ('seed_count', 'seed_weight_g', 'seed_count_estimated')
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_backfill_conservation
+    note: >
+      PHASE 0b ONLY, and continuous false for two independent reasons: it is a data count, and 0b is
+      applied later than 0a so this is RED in the window between them by design. Six rows moved;
+      a backfill that moved the numbers nowhere would satisfy post_no_count_in_quantity below on its
+      own, which is why this pairs with it. Expected to differ on staging.
+    sql: |
+      SELECT 1 FROM public.inventory_items
+       WHERE category = 'seeds' AND deleted_at IS NULL AND seed_count IS NOT NULL
+    expect: rowcount_eq
+    value: 6
+    continuous: false
+
+  - name: post_no_count_in_quantity
+    note: >
+      The state 0b leaves behind: no seed row still carries a count in quantity_on_hand. DELIBERATELY
+      continuous FALSE despite being the gate that would have caught the original bug — as a
+      continuous invariant it would red the day Dave legitimately buys ten packets of something, and
+      a gate that reds on correct data gets muted and stops meaning anything. The regression guard
+      against a writer putting a count back into quantity_on_hand is a TEST
+      (src/__tests__/SavedSeeds.storedCount.test.jsx), not a threshold on live data.
+    sql: |
+      SELECT 1 FROM public.inventory_items
+       WHERE category = 'seeds' AND deleted_at IS NULL AND quantity_on_hand > 5
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_pairing_check_validated
+    note: >
+      PHASE 0b ONLY. convalidated, not merely present — a NOT VALID constraint that was never
+      VALIDATEd enforces new writes but certifies nothing about existing rows, and the difference is
+      invisible to a presence check. continuous false: red between 0a and 0b by design.
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.inventory_items'::regclass
+         AND conname = 'chk_inventory_seed_count_basis_pairing'
+         AND convalidated
+    expect: rowcount_eq
+    value: 1
+    continuous: false

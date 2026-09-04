@@ -1,14 +1,9 @@
 {
-  "version": "4.111.0",
+  "version": "4.113.0",
   "date": "2026-09-04",
   "highlights": [
-    "Hot sauce logged without a storage location was being given a twelve-month room-temperature use-by date. It now defaults to the fridge figure, six months, the same way ferments and quick pickles already did.",
-    "Seeds, plants and supplies now record where they came from. There are two answers and they are kept apart: who grew, bred or packed the thing, and separately the shop, swap or stall where it changed hands — that second one only when it differs. The picker has type-ahead and voice, and you can add a source you have never used before without leaving the form.",
-    "Every inventory item you already had was matched to an entry in the new source catalogue, so the field starts populated rather than blank.",
-    "You can rename, re-file and delete storage locations now. The buttons existed in the backend and had never been wired to a screen, so a mistyped freezer name was permanent — and a location can now be a fridge, pantry or cold store, not only a freezer.",
-    "Something in the kitchen: photograph a ferment, a dehydrator run or a batch of candied rind and it becomes a batch you can follow, without naming a planting, a date, a method or a quantity. A new Going now view on Put-Up lists whatever is underway.",
-    "Candying is a put-up method at last, instead of landing in Other. Its use-by is an estimate from our own candying guide rather than published guidance, and the app says so on screen and lets you set the real date.",
-    "You can record a pH reading against a ferment, and the app will ask whether you have measured lately and link to what instrument to use. It never scores the number or tells you the batch is safe — it just keeps the reading you took.",
-    "Changing a seed lot's stage now happens in one place, on Saved seeds, and it always records the history. You can correct a stage that was tapped wrongly and give it the date it really happened."
+    "Saved seed lots now record how many seeds are in the jar, and what they weigh, separately from how many packets are on the shelf. Three of your lots read \"185 packet\" and \"175 packet\" — those were seed counts wearing the wrong label, and they now read as counts.",
+    "Saving seed lets you enter a count or a weight. Type a plain number for grams, or add mg — a packet that states \"0.5 g\" and one that states \"500 mg\" now record the same thing.",
+    "A counted-empty jar is now different from one nobody has counted. Zero seeds is an answer; blank means the question is still open."
   ]
 }

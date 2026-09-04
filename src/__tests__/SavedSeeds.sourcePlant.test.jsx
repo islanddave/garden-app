@@ -130,6 +130,9 @@ describe('SavedSeeds — provenance (V4-SEEDLINK-001)', () => {
     expect(writes.map(([p, o]) => `${o.method} ${p}`)).toEqual([
       'POST /api/inventory-items/inv-1/seed-stage',
       'PATCH /api/inventory-items/inv-1/source-plant',
+      // V5-SEEDQTY-001 — the count left the wide PUT for its own narrow route, so it lands here,
+      // still after provenance. The wide PUT below now carries only year_harvested.
+      'PUT /api/inventory-items/inv-1/seed-measure',
       'PUT /api/inventory-items/inv-1',
     ])
     expect(JSON.parse(writes[1][1].body)).toEqual({ source_plant_id: 'pl-melon' })

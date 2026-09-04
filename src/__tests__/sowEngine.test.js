@@ -1882,6 +1882,53 @@ describe('BUG-SEEDZEROSOWABLE-001 — the lot you just saved and have not starte
     expect(isUnstartedSave(justSaved({ seed_stage: 'stored' }))).toBe(false);
   });
 
+  // ── V5-SEEDQTY-001 — the shape SaveSeedSheet ACTUALLY creates from this release on ──────────────
+  // Every fixture above hand-builds `quantity_on_hand: 0`, which is what the writer used to store.
+  // The writer now stores `quantity_on_hand: 1` (one JAR) and puts the count in `seed_count`, so
+  // none of the tests above can see a regression in the divert — an authored fixture cannot fail
+  // when the thing that changed is what the writer produces. These are lifted from the new create
+  // path instead. Without the seed_count arm in isUnstartedSave, the first two are false.
+  const newSave = (over = {}) => toCandidate(PACKETS.cucumberSpacemaster, {
+    quantity_on_hand: 1, seed_stage: null, source_plant_id: 'pl-1',
+    seed_count: null, seed_weight_g: null, ...over,
+  });
+
+  it('isUnstartedSave: the NEW create shape — one jar, nothing measured — is still unstarted', () => {
+    expect(isUnstartedSave(newSave())).toBe(true);
+    expect(isUnstartedSave(newSave({ source_plant_id: null, source_kind: 'own_garden' }))).toBe(true);
+    // GREEN CONTROL: the same row bought rather than saved is still not one, so this is not simply
+    // returning true for everything at qty 1.
+    expect(isUnstartedSave(newSave({ source_plant_id: null, source_kind: 'store' }))).toBe(false);
+  });
+
+  it('isUnstartedSave: EITHER a count or a weight means something was recorded', () => {
+    // A measured zero counts as recorded — "I counted, the pod was empty" is an answer, and the
+    // whole reason seed_count distinguishes 0 from NULL.
+    expect(isUnstartedSave(newSave({ seed_count: 0 }))).toBe(false);
+    expect(isUnstartedSave(newSave({ seed_count: 185 }))).toBe(false);
+    expect(isUnstartedSave(newSave({ seed_weight_g: '0.500' }))).toBe(false);
+    expect(isUnstartedSave(newSave({ seed_weight_g: 0 }))).toBe(false);
+    // Empty string is the driver's blank, not a recorded zero — must NOT count as recorded.
+    expect(isUnstartedSave(newSave({ seed_count: '', seed_weight_g: '' }))).toBe(true);
+  });
+
+  it('isUnstartedSave: stays INERT on a view that predates the migration', () => {
+    // The independent-deployability property. On an environment whose v_sow_candidates has not been
+    // widened, the keys are ABSENT rather than null — and absent must read as "cannot tell", or
+    // every own-seed unstaged lot would flip to unstarted on the old view. This is why the guard
+    // uses hasOwnProperty rather than `== null`.
+    const oldView = toCandidate(PACKETS.cucumberSpacemaster, {
+      quantity_on_hand: 1, seed_stage: null, source_plant_id: 'pl-1',
+    });
+    delete oldView.seed_count; delete oldView.seed_weight_g;
+    expect(isUnstartedSave(oldView)).toBe(false);
+    // GREEN CONTROL: the legacy qty-0 arm still fires on that same un-widened row, so "inert" means
+    // inert about the NEW signal, not broken outright.
+    const oldViewEmpty = { ...oldView, quantity_on_hand: 0 };
+    delete oldViewEmpty.seed_count; delete oldViewEmpty.seed_weight_g;
+    expect(isUnstartedSave(oldViewEmpty)).toBe(true);
+  });
+
   it('isUnstartedSave: a saved lot with a real count is ordinary sowable seed', () => {
     // Gated on isDepleted, so this only ever re-homes a lot that would otherwise read as empty.
     expect(isUnstartedSave(justSaved({ quantity_on_hand: 12 }))).toBe(false);

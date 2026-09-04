@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatQty, formatMoney, formatDate } from '../lib/format.js'
+import { formatQty, formatMoney, formatDate, formatSeedWeight } from '../lib/format.js'
 
 describe('formatQty', () => {
   it('drops trailing zeros from string decimals (numeric column source)', () => {
@@ -75,6 +75,59 @@ describe('formatDate', () => {
   })
   it('returns input untouched for an out-of-range month', () => {
     expect(formatDate('2026-13-01')).toBe('2026-13-01')
+  })
+})
+
+describe('formatSeedWeight (V5-SEEDQTY-001)', () => {
+  // THE BOUNDARY PAIR IS THE POINT OF THIS SUITE. Every other case below passes under either a `>`
+  // or a `>=` at 0.1, so without these two lines the branch that decides grams-vs-milligrams is
+  // untested at the only input that can tell them apart.
+  //
+  // BOTH SHAPES, and the string one is the shape the app actually gets: seed_weight_g is
+  // numeric(10,3) and the pg driver serializes numeric as a STRING ("0.100"), never a number. A
+  // boundary suite fed only number literals would be green while every live render went through an
+  // untested path — the same reason formatQty's own suite leads with '3.000'.
+  it('is closed on the gram side at 0.1 — 0.1 is grams, 0.099 is milligrams', () => {
+    expect(formatSeedWeight(0.1)).toBe('0.1 g')
+    expect(formatSeedWeight(0.099)).toBe('99 mg')
+    expect(formatSeedWeight('0.100')).toBe('0.1 g')
+    expect(formatSeedWeight('0.099')).toBe('99 mg')
+  })
+  it('renders grams at or above a decigram, trailing zeros trimmed', () => {
+    expect(formatSeedWeight(0.5)).toBe('0.5 g')
+    expect(formatSeedWeight(1)).toBe('1 g')
+    expect(formatSeedWeight(28.35)).toBe('28.35 g')
+    // 1 oz, the unit the live 'Pinto Beans (Quincy)' packet is stocked in.
+    expect(formatSeedWeight(28.3495)).toBe('28.35 g')
+    expect(formatSeedWeight(100)).toBe('100 g')
+  })
+  it('reads numeric(10,3) strings straight off the column', () => {
+    expect(formatSeedWeight('28.350')).toBe('28.35 g')
+    expect(formatSeedWeight('0.500')).toBe('0.5 g')
+    expect(formatSeedWeight('0.050')).toBe('50 mg')
+  })
+  it('renders milligrams below a decigram, as an integer', () => {
+    expect(formatSeedWeight(0.05)).toBe('50 mg')
+    expect(formatSeedWeight(0.001)).toBe('1 mg')
+    expect(formatSeedWeight('0.012')).toBe('12 mg')
+  })
+  it('keeps a measured zero distinguishable from an unrecorded weight', () => {
+    // "0 g" is a reading somebody took; '' is a column nobody has written. Collapsing them would
+    // make an empty field and an empty jar the same claim. 0 must NOT land in the mg branch.
+    expect(formatSeedWeight(0)).toBe('0 g')
+    expect(formatSeedWeight('0.000')).toBe('0 g')
+    expect(formatSeedWeight(null)).toBe('')
+    expect(formatSeedWeight(undefined)).toBe('')
+    expect(formatSeedWeight('')).toBe('')
+  })
+  it('returns input as-is for non-finite values (defensive)', () => {
+    expect(formatSeedWeight('abc')).toBe('abc')
+  })
+  it('never routes seed weight through formatQty, which would round a real weight to a bare integer', () => {
+    // The regression this function exists to prevent, stated as a comparison: same input, and the
+    // wrong helper answers "1" with no unit for half a gram of lettuce seed.
+    expect(formatQty(0.5)).toBe('1')
+    expect(formatSeedWeight(0.5)).toBe('0.5 g')
   })
 })
 

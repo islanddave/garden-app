@@ -125,22 +125,30 @@ describe('V4-SAVESEEDBTN-001 — the POST payload', () => {
     expect(body.name).toMatch(/^Brandywine — saved \d{4}$/)
   })
 
-  it('creates the lot on ZERO — never null, and never a guessed count', async () => {
-    // V4-SEEDSTOREDQTY-001. This sheet used to offer a packet count defaulting to 1, which was a
-    // guess dressed as data: at "Save seed" the seed is still wet and unthreshed. Two halves, and
-    // both are load-bearing:
-    //   0 not null — the live CHECK consumable_requires_quantity_on_hand is
+  it('creates ONE CONTAINER — never null, and never the seed count', async () => {
+    // V5-SEEDQTY-001 REPLACED THIS TEST'S SUBJECT, and the history is why the assertion is worth
+    // keeping rather than deleting. It used to pin `quantity_on_hand === 0`: V4-SEEDSTOREDQTY-001
+    // removed a packet count that defaulted to 1, and 0 was the honest placeholder for "nobody has
+    // counted this" on a column the CHECK will not let be null. Then BUG-SEEDZEROSOWABLE-001 put an
+    // optional count back on the sheet and it went into this same column, which is how prod grew
+    // rows reading "185.000 packet" — one column carrying containers and seeds at once.
+    //   1 not the count — quantity_on_hand means CONTAINERS. One save-seed act, one jar. The seed
+    //     count now goes to PUT /seed-measure (SaveSeedSheet.seedMeasure.test.jsx).
+    //   1 not null — the live CHECK consumable_requires_quantity_on_hand is
     //     `type <> 'consumable' OR quantity_on_hand IS NOT NULL`, so null is refused outright.
-    //   0 not 1 — 1 is a fabricated count that survives into Sow now looking measured.
-    // Asserted with Object.is so a `0` cannot be satisfied by null/undefined coercion.
+    // Asserted with Object.is so the value cannot be satisfied by coercion.
     apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
     openSheet()
     fireEvent.click(screen.getByTestId('save-seed-submit'))
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
     const body = bodyOf(apiFetchSpy.mock.calls[0])
     expect(Object.prototype.hasOwnProperty.call(body, 'quantity_on_hand')).toBe(true)
-    expect(body.quantity_on_hand).toBe(0)
+    expect(body.quantity_on_hand).toBe(1)
     expect(body.quantity_on_hand).not.toBeNull()
+    // The three measure columns are reachable only through /seed-measure — never on this create.
+    for (const k of ['seed_count', 'seed_weight_g', 'seed_count_estimated']) {
+      expect(Object.prototype.hasOwnProperty.call(body, k)).toBe(false)
+    }
   })
 
   it('offers no count field at all, and says where the question went', async () => {

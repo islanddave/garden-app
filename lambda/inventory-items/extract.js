@@ -21,6 +21,28 @@ const MAX_FIELD_CHARS = 2000;
 // leave headroom for keys the save path merges in (sku/vendor/needs_confirmation).
 const MAX_METADATA_BYTES = 8000;
 
+// V5-SEEDQTY-001 (2026-09-04) — TWO KEYS REMOVED from the metadata schema below, deliberately.
+// Neither had a reader anywhere in src/ or lambda/; both had this prompt as their only writer.
+//
+//   "seeds_per_packet": SUPERSEDED by the real column inventory_items.seed_count, which carries a
+//   CHECK, a >= 0 domain and a seed_count_estimated companion. Leaving it here would have written a
+//   second, unconstrained seed count into jsonb on every intake — two numbers per jar, in two type
+//   systems (it was string on 71 prod rows and number on 14), only one of them constrained. The
+//   values were also not trustworthy enough to migrate: of 85 non-null values on prod, THIRTY-NINE
+//   were the literal `1`, which is the model reading "1 packet" as a seed count. A cherry-tomato
+//   packet does not hold one seed. Nothing was backfilled from it and the existing rows were left
+//   in place (inert, unread) for Dave to rule on — ledger OPS-SEEDSPERPACKET-001.
+//
+//   "heirloom": RETRACTED FROM PROD THIS SAME DAY on Dave's decision — all 178 keys removed across
+//   316 seed rows — because every value traced to a VENDOR NAME (36 from the vendor literally called
+//   "Mary's Heirloom Seeds", 8 from Botanical Interests) rather than to anything about the plant.
+//   Biquinho Yellow F1, a hybrid by its own cultivar name, was flagged heirloom. Had this key stayed
+//   in the prompt, enabling the extractor would have silently re-created the artifact Dave had just
+//   ruled out. Breeding truth lives in plant_varieties.breeding_system, never in this jsonb.
+//
+// Note this whole path is currently unreachable in prod anyway (SEED_BULK_EXTRACT_ENABLED is false
+// and the Lambda 501s for want of ANTHROPIC_API_KEY) — which is exactly why it needed fixing now:
+// the collision would otherwise appear months later, at the moment someone provisions the key.
 const EXTRACT_PROMPT = `You are extracting a seed inventory from a seed vendor source (an order confirmation email or page, a packing slip, or a photo of one or more seed packets).
 
 Extract EVERY seed packet / line item into a JSON array. Each array element must match this schema exactly:
@@ -37,9 +59,7 @@ Extract EVERY seed packet / line item into a JSON array. Each array element must
   "price_usd": number or null,
   "sku": string or null,
   "metadata": {
-    "seeds_per_packet": integer or null,
     "organic": boolean or null,
-    "heirloom": boolean or null,
     "item_category": string or null
   },
   "crop_type_slug_guess": string or null,  // snake_case crop slug guess, e.g. "tomato", "pepper"

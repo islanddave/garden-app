@@ -24,7 +24,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { formatQty } from '../../lib/format.js'
+import { formatQty, formatSeedWeight } from '../../lib/format.js'
 import { seedStageLabel } from '../seed/seedStages.js'
 
 // { lots, failed, loading }. `loading` renders as nothing at all rather than as a skeleton: the
@@ -76,7 +76,21 @@ export default function SeedLotsFromPlanting({ lots, failed }) {
         // Explicit zero is "none left"; NULL is "never counted", which is not the same claim and
         // must not render as 0. Same reading sowEngine's isDepleted takes of this column.
         const qty = lot.quantity_on_hand == null ? null : formatQty(lot.quantity_on_hand)
-        const meta = [variety, stage, qty == null ? null : `${qty} on hand`].filter(Boolean)
+        // V5-SEEDQTY-001 — the seeds themselves, which is what a gardener came here to read.
+        // quantity_on_hand is CONTAINERS now, so on a lot saved through this flow it says "1 on
+        // hand" and always will; without these two the interesting number is nowhere on the line.
+        //
+        // ABSENT AND NULL BOTH RENDER NOTHING, and absent is the live case: the columns only reach
+        // this list once lambda/plants/index.js's seed-lots SELECT names them, so until that lands
+        // every lot here is missing the keys entirely. Same == null test covers both, and an
+        // explicit 0 survives it — a counted-empty jar reads "0 seeds", which is a fact somebody
+        // recorded, where nothing at all means nobody has counted.
+        const seeds = lot.seed_count == null
+          ? null
+          : `${formatQty(lot.seed_count)} ${Number(lot.seed_count) === 1 ? 'seed' : 'seeds'}`
+        const weight = formatSeedWeight(lot.seed_weight_g) || null
+        const meta = [variety, stage, seeds, weight, qty == null ? null : `${qty} on hand`]
+          .filter(Boolean)
         return (
           <li
             key={lot.id}

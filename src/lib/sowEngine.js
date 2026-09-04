@@ -1254,7 +1254,44 @@ export function isUnstartedSave(candidate) {
   // Any stage at all means the process was started — including `stored`, where a 0 is now an
   // explicitly answered count (SavedSeeds.jsx parseCountInput) and depletion is the right reading.
   if (stage != null && stage !== '') return false;
-  return isDepleted(candidate);
+  // ── V5-SEEDQTY-001 — THE "NOTHING RECORDED YET" SIGNAL MOVED COLUMNS ───────────────────────────
+  // This function's whole premise was that a just-saved lot reads `qty 0`, because SaveSeedSheet
+  // created it with whatever the count field held and that field is blank by default. V5-SEEDQTY-001
+  // changed the create to `quantity_on_hand: 1` — one JAR — and moved the count to `seed_count`. So
+  // isDepleted alone would return false for every new save and the divert this function exists to
+  // perform would silently stop firing, re-opening BUG-SEEDZEROSOWABLE-001: a jar of wet fermenting
+  // seed offered by Sow Now as though it were a finished packet.
+  //
+  // Caught by the build lane, NOT by the suite: sowEngine.test.js, SowNow.test.jsx and
+  // CultivationLead.test.jsx all hand-build their candidate rows, so none of them reds on a change
+  // to what the WRITER stores. A test whose fixture is authored rather than lifted from the real
+  // distribution cannot see a writer regression. The cases below are pinned to the shape
+  // SaveSeedSheet now actually creates.
+  //
+  // MEASURED BEFORE CHANGING IT (prod, v_sow_candidates, 2026-09-04): zero rows are
+  // (own-seed, no stage) — every own-seed lot is `stored`, and every unstaged lot was bought. So
+  // this predicate is inert on all 310 live candidates and this edit reclassifies nothing that
+  // exists; it only governs lots created from here on.
+  //
+  // Legacy arm kept FIRST and unchanged: a lot created before this release still carries the old
+  // shape, and `qty <= 0` remains the honest reading of it.
+  if (isDepleted(candidate)) return true;
+  // The un-widened-view guard, which preserves the independent-deployability property the note
+  // above prizes. `seed_count` absent from the row object is NOT the same as present-and-null: on an
+  // environment whose v_sow_candidates predates this migration, every key read would be `undefined`
+  // and a naive `== null` test would flip every own-seed unstaged lot to "unstarted" — the exact
+  // opposite of the inert fallback. Absent columns must read as "cannot tell", i.e. false.
+  const hasMeasureCols = candidate != null
+    && (Object.prototype.hasOwnProperty.call(candidate, 'seed_count')
+      || Object.prototype.hasOwnProperty.call(candidate, 'seed_weight_g'));
+  if (!hasMeasureCols) return false;
+  // Nothing measured at all — neither counted nor weighed — is what "saved it and never started"
+  // now looks like. A lot with EITHER a count or a weight has had something recorded about it and
+  // belongs in its timing bucket, which is the same judgement the old `qty > 0` arm made.
+  // `=== ''` matters alongside `== null` for the same reason it does in isDepleted: the neon driver
+  // returns numerics as strings and an empty string must not read as a recorded zero.
+  const blank = (v) => v == null || v === '';
+  return blank(candidate.seed_count) && blank(candidate.seed_weight_g);
 }
 
 /**

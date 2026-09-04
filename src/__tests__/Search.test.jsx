@@ -15,7 +15,16 @@ const SAMPLE = {
     { id: 'p3', project_id: null, name: 'Aloe Vera' },
   ],
   '/api/locations': [{ id: 'l1', name: 'Greenhouse Bench' }, { id: 'l2', name: 'Pasture Bed' }],
-  '/api/varieties': [{ id: 'v1', name: 'Sungold', group: 'tomato' }],
+  // BUG-CULTIVARUNREACHABLE-001 fixtures. v2/v3 are REAL prod rows, not invented ones: both are
+  // live cultivars with ZERO plantings, which is the shape that made them unreachable — the only
+  // door to /varieties/:id/edit is the "Edit variety" link on a PLANTING's page. 248 of 505 live
+  // cultivars (49.1%) are in this state. v3 additionally carries no species, which is the row that
+  // exposed the bug: it cannot be opened to record one.
+  '/api/varieties': [
+    { id: 'v1', name: 'Sungold', group: 'tomato' },
+    { id: 'v2', name: 'Chabaud Blend', crop_type_slug: 'carnation', species: 'Dianthus caryophyllus' },
+    { id: 'v3', name: 'Mixed Colors', crop_type_slug: 'dianthus' },
+  ],
 }
 // `fetch` is defined ONCE in the factory, not per useApiFetch() call, because the real hook returns
 // a useCallback'd function whose identity is stable across renders (lib/api.js:310) and a mock that
@@ -65,6 +74,38 @@ describe('Search page (V4-SEARCH-001)', () => {
     expect((await screen.findByText('Pasture Bed')).closest('a').getAttribute('href')).toBe('/locations/l2')
     fireEvent.change(input, { target: { value: 'sungold' } })
     expect(await screen.findByText('Sungold')).toBeTruthy()
+  })
+
+  // BUG-CULTIVARUNREACHABLE-001 — the defect this pair exists to hold closed.
+  //
+  // The assertion directly above is the one that let it ship: findByText passes on an inert <div>
+  // exactly as it does on a <Link>, so "varieties are matched" was verified while "varieties are
+  // REACHABLE" never was. Search rendered its variety groups as hand-rolled divs — the only result
+  // category on the page not routed through <Row> — so every cultivar result was a dead tap, the
+  // same shape as BUG-SEARCHDEADTAP-001 two tests up, which repaired only the planting rows.
+  //
+  // These assert the anchor and its href, so a regression to a bare <div> fails on `.closest('a')`
+  // being null rather than passing silently. Verified non-vacuous by reverting Search.jsx: both fail.
+  it('links a cultivar that has NO planting — the only door to the editor is a planting page', async () => {
+    renderPage()
+    const input = await screen.findByLabelText('Search your garden')
+    fireEvent.change(input, { target: { value: 'mixed colors' } })
+    const row = await screen.findByText('Mixed Colors')
+    const link = row.closest('a')
+    // The whole bug in one assertion: there must BE an anchor at all.
+    expect(link).toBeTruthy()
+    expect(link.getAttribute('href')).toBe('/varieties/v3/edit')
+  })
+
+  it('keeps each variety group its own subtitle while routing both to the editor', async () => {
+    renderPage()
+    const input = await screen.findByLabelText('Search your garden')
+    fireEvent.change(input, { target: { value: 'chabaud' } })
+    const row = await screen.findByText('Chabaud Blend')
+    expect(row.closest('a').getAttribute('href')).toBe('/varieties/v2/edit')
+    // The local group subtitles on `group || crop_type_slug`; this row has no group, so the slug
+    // shows. Asserted because the fix rewrote both groups and the two use DIFFERENT fields.
+    expect(await screen.findByText('carnation')).toBeTruthy()
   })
   it('shows a no-match message for gibberish', async () => {
     renderPage()

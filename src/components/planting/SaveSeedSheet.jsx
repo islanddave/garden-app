@@ -21,7 +21,21 @@
 // and unthreshed and nobody knows the answer. Dave's call, and the shape of the whole flow follows
 // from it — the lot is created at 0 and the count is asked at the one moment it is knowable, on the
 // move into `stored` (src/pages/SavedSeeds.jsx's advance sheet, and the stage control on
-// src/pages/InventoryDetail.jsx).
+// src/pages/InventoryDetail.jsx). BOTH halves of that last clause have since been corrected:
+// BUG-SEEDZEROSOWABLE-001 put an optional count back on this sheet, and V5-SEEDQTY-001 (next
+// paragraph) took the opening quantity off quantity_on_hand entirely.
+//
+// V5-SEEDQTY-001 — AND THE COUNT IS NO LONGER A QUANTITY. `quantity_on_hand` means CONTAINERS
+// everywhere now: this create writes 1 (one jar/packet came off this plant) and the measurements —
+// seeds counted, grams weighed, or neither — go to inventory_items.seed_count / seed_weight_g
+// through PUT /seed-measure, its own narrow route. Dave 2026-09-04: "some packets have count, some
+// have grams or mg. We need to account for both aspects", so the sheet asks for both and requires
+// neither; the route reads keys by presence, so a field left blank sends nothing. Writing the
+// count into quantity_on_hand is what produced prod rows reading "185.000 packet" — one column
+// carrying two different facts, and the wide PUT overwriting whichever one it last saw. The three
+// measure columns (seed_count, seed_weight_g, seed_count_estimated) are reachable ONLY through that
+// route; they are deliberately absent from the wide PUT's SET list, for BUG-INVLOSTUPDATE-001's
+// reason (useInventory's adjustQuantity resends an entire stale list row).
 //
 // WRITE SHAPE (POST /api/inventory-items). Every key is load-bearing; see validateCreate and the
 // INSERT column list in lambda/inventory-items/index.js:
@@ -204,6 +218,78 @@ export function parseOpeningCount(raw) {
 }
 
 /**
+ * V5-SEEDQTY-001 — the opening WEIGHT, and the other half of Dave's requirement: "some packets have
+ * count, some have grams or mg. We need to account for both aspects." Pure, exported for test.
+ * Returns { value: grams|null, error }.
+ *
+ * GRAMS IS THE STORED UNIT and a BARE NUMBER IS GRAMS. That is the one decision in here that could
+ * do real damage if it went the other way: reading a bare number as milligrams would be a silent
+ * 1000x error on every packet, with nothing downstream able to notice — 28 g of beans and 28 mg of
+ * lettuce seed are both plausible rows. So the suffix is what changes the unit, never the magnitude,
+ * and the field hint says so on screen rather than leaving it to be inferred.
+ *
+ * DECIMALS ARE LEGAL HERE, unlike the count beside it: 0.5 g is an ordinary packet and seed_weight_g
+ * is numeric(10,3), where the count is an integer column. 3dp is the column's whole resolution, so
+ * the value is rounded to it HERE rather than left for Postgres to round on insert — what we send is
+ * then exactly what is stored, and a lot's weight never comes back different from what was typed.
+ *
+ * A POSITIVE WEIGHT THAT ROUNDS TO ZERO IS REFUSED, not stored. 0 on this column means "weighed it,
+ * there is nothing there", the same measured fact 0 means on the count; writing it for 0.0004 g
+ * would be the one rounding that changes the sentence rather than its precision.
+ */
+export function parseSeedWeight(raw) {
+  const typed = String(raw ?? '').trim()
+  if (typed === '') return { value: null, error: null }
+  const m = typed.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))\s*(g|mg)?$/i)
+  if (!m) return { value: null, error: 'That is not a weight — type a number of grams, or add "mg".' }
+  const n = Number(m[1])
+  if (!Number.isFinite(n)) return { value: null, error: 'That is not a weight — type a number of grams, or add "mg".' }
+  if (n < 0) return { value: null, error: 'A weight cannot be negative.' }
+  const grams = m[2] && m[2].toLowerCase() === 'mg' ? n / 1000 : n
+  const rounded = Math.round(grams * 1000) / 1000
+  if (grams > 0 && rounded === 0) {
+    return { value: null, error: 'That is finer than a milligram — round it to the nearest mg.' }
+  }
+  return { value: rounded, error: null }
+}
+
+/**
+ * V5-SEEDQTY-001 — what PUT /seed-measure should carry, or null for "do not call it at all". Pure,
+ * exported for test.
+ *
+ * BLANK IS NOT ZERO ON THIS ROUTE, which is the whole reason this is a second function rather than
+ * a use of the one above. parseOpeningCount maps a blank field to 0 because the CREATE needs a
+ * number — consumable_requires_quantity_on_hand refuses NULL, so 0 was the only placeholder that
+ * column would accept for "nobody has counted this yet". seed_count carries no such constraint: it
+ * is nullable, and NULL is exactly that sentence. Passing the blank field's 0 through would write a
+ * MEASURED ZERO — "I counted, there are none" — onto a lot whose owner typed nothing, on the one
+ * column the schema notes call out as a fact rather than a placeholder. So a blank field sends no
+ * request, and the column stays NULL.
+ *
+ * seed_count_estimated is FALSE on everything this sheet writes: a number typed while holding the
+ * seed is a counted number, not a vendor claim off the back of a packet. It rides with the COUNT and
+ * only with the count — it is a statement about that number's provenance, and sending it beside a
+ * weight alone would claim something about a count that was never given.
+ *
+ * KEY-BY-KEY, because the route reads BY PRESENCE: a packet states a count or a weight, rarely both,
+ * so each field independently either contributes its key or does not exist in the body. Both blank
+ * returns null and no request is made at all.
+ */
+export function seedMeasurePayload(rawCount, rawWeight = '') {
+  const payload = {}
+  if (String(rawCount ?? '').trim() !== '') {
+    const { value, error } = parseOpeningCount(rawCount)
+    if (!error) {
+      payload.seed_count = value
+      payload.seed_count_estimated = false
+    }
+  }
+  const weighed = parseSeedWeight(rawWeight)
+  if (!weighed.error && weighed.value != null) payload.seed_weight_g = weighed.value
+  return Object.keys(payload).length ? payload : null
+}
+
+/**
  * V5-VARIETYHYBRIDFLAG-001 — the reader half. Design V101 §5: ONE surface, ONE firing arm.
  *
  * Returns null for "say nothing at all", or { tone, badge, line }. `tone: null` means a plain line
@@ -334,6 +420,8 @@ export default function SaveSeedSheet({ planting, onClose }) {
   const [seedProcess, setSeedProcess] = useState(null)
   // BUG-SEEDZEROSOWABLE-001 — blank means "haven't counted"; see parseOpeningCount.
   const [count, setCount] = useState('')
+  // V5-SEEDQTY-001 — the alternative to the count, not a second thing to fill in. See parseSeedWeight.
+  const [weight, setWeight] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -364,6 +452,24 @@ export default function SaveSeedSheet({ planting, onClose }) {
       setError(opening.error)
       return
     }
+    // V5-SEEDQTY-001 — WHOLE SEEDS, and this guard is new because the destination column changed
+    // under it. A decimal used to be legal: the count went to quantity_on_hand, numeric(10,3).
+    // seed_count is an INTEGER column and PUT /seed-measure refuses a non-integer outright
+    // (lambda/inventory-items/index.js — "seed_count must be a whole number of seeds, or null"), so
+    // without this the lot is created, the measure 400s, and the number the user typed is dropped
+    // with only a toast to show for it. Answered here for the same reason the two guards above are:
+    // the client can see it, so the round trip buys nothing.
+    if (!Number.isInteger(opening.value)) {
+      setError('A seed count is a whole number of seeds.')
+      return
+    }
+    // Same client-first treatment as the two guards above. The weight's own errors are things the
+    // user can see and fix — a stray letter, a negative, a value finer than the column records.
+    const weighed = parseSeedWeight(weight)
+    if (weighed.error) {
+      setError(weighed.error)
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -374,13 +480,16 @@ export default function SaveSeedSheet({ planting, onClose }) {
           category: 'seeds',
           type: 'consumable',
           unit: 'packet',
+          // V5-SEEDQTY-001 — ONE CONTAINER, and never the seed count. This column means packets on
+          // the shelf everywhere now; the count the user typed goes to PUT /seed-measure below.
+          // Hard-coded 1 rather than derived from anything: a save-seed act produces one jar, and
+          // the number of seeds in it is a different question this row no longer answers.
+          //
           // NEVER NULL, whatever the user typed. The live CHECK
           // consumable_requires_quantity_on_hand is `type <> 'consumable' OR quantity_on_hand IS NOT
-          // NULL`, so a consumable row with a null count is refused outright while 0 is accepted.
-          // BUG-SEEDZEROSOWABLE-001: 0 is now the value for a BLANK field only — "nobody has counted
-          // this yet" — and a gardener who already knows the number says so here instead of waiting
-          // for the move into `stored`. See parseOpeningCount.
-          quantity_on_hand: opening.value,
+          // NULL`, so a consumable row with a null count is refused outright — which is why this is
+          // 1 and not omitted.
+          quantity_on_hand: 1,
           variety_id: varietyId,
           // V4-SEEDINTAKEAGNOSTIC-001 — `parent`, not `planting`: the prop when the caller knew it,
           // the picked planting when the user chose one, and NULL for seed that came from no plant
@@ -393,6 +502,25 @@ export default function SaveSeedSheet({ planting, onClose }) {
           ...(!parent && sourceKind ? { source_kind: sourceKind } : {}),
         }),
       })
+      // V5-SEEDQTY-001 — the count, as its own request on its own route. Same shape of decision as
+      // the stage below: a second write that the lot's existence does not depend on, so it carries
+      // its own failure rather than failing the save. The lot is what the user asked for and it
+      // landed; the toast says which of the follow-ups did not.
+      //
+      // SKIPPED ENTIRELY ON A BLANK FIELD — see seedMeasurePayload. A blank count is not a zero, and
+      // the request that would write one is the request not made.
+      let measureFailed = false
+      const measure = seedMeasurePayload(count, weight)
+      if (measure && lot?.id) {
+        try {
+          await fetch(`/api/inventory-items/${lot.id}/seed-measure`, {
+            method: 'PUT',
+            body: JSON.stringify(measure),
+          })
+        } catch {
+          measureFailed = true
+        }
+      }
       let stageFailed = false
       // Set only AFTER the stage POST resolves, which is what makes it safe to put in the event's
       // note: it records the stage that LANDED, not the one that was asked for.
@@ -442,8 +570,22 @@ export default function SaveSeedSheet({ planting, onClose }) {
         // timeline row they never requested is noise they cannot act on, and re-raising here would
         // report a landed create as a failed save.
       }
-      toast.show(stageFailed
-        ? { message: "Seed lot saved — couldn't start tracking it", tone: 'error' }
+      // Built from a list rather than nested ternaries because there are now TWO optional writes
+      // that can miss independently, and a message naming only one of them would be a false all-
+      // clear on the other. The stage-only wording is unchanged from what shipped.
+      // Named after what the user actually typed rather than after the route: "couldn't record the
+      // count" on a save where they only gave a weight would be a message about something they
+      // never entered.
+      const has = (k) => !!measure && Object.prototype.hasOwnProperty.call(measure, k)
+      const measureNoun = has('seed_count') && has('seed_weight_g') ? 'record the count and weight'
+        : has('seed_weight_g') ? 'record the weight'
+        : 'record the count'
+      const missed = [
+        measureFailed && measureNoun,
+        stageFailed && 'start tracking it',
+      ].filter(Boolean)
+      toast.show(missed.length
+        ? { message: `Seed lot saved — couldn't ${missed.join(' or ')}`, tone: 'error' }
         : { message: 'Seed lot saved', tone: 'success' })
       if (onClose) onClose()
       // WHERE THE ACTION ENDS — and it now depends on whether the lot joined a QUEUE.
@@ -614,8 +756,11 @@ export default function SaveSeedSheet({ planting, onClose }) {
           correctly removed. */}
       <label style={fieldLabelStyle}>
         How many? <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
+        {/* inputMode NUMERIC, not decimal: seed_count is an integer column and a decimal point one
+            tap away on Dave's Android keypad is a 400 from the route (see the whole-number guard in
+            save()). The weight field below is the one that wants a decimal pad. */}
         <input
-          type="number" inputMode="decimal" min="0" step="1" value={count}
+          type="number" inputMode="numeric" min="0" step="1" value={count}
           onChange={(e) => setCount(e.target.value)}
           placeholder="e.g. 20"
           aria-describedby="save-seed-count-note"
@@ -625,6 +770,28 @@ export default function SaveSeedSheet({ planting, onClose }) {
       <p id="save-seed-count-note" data-testid="save-seed-count-note" style={{ ...hintStyle, margin: '0 0 14px' }}>
         Leave it blank if the seed is still wet and unthreshed. You can set or change the count at
         every step, and you&apos;ll be asked for a final one when you mark the lot stored.
+      </p>
+
+      {/* V5-SEEDQTY-001 — the weight, and it is an ALTERNATIVE to the count rather than a second
+          thing to fill in: a packet states one or the other and rarely both. Hence "Or", and hence
+          both fields optional and blank.
+
+          type="text", NOT type="number", and that is load-bearing: a number input rejects "2.5 g"
+          and hands back an EMPTY string for it in every browser, so the suffix this field documents
+          would silently erase what the user typed. inputMode decimal for the keypad. */}
+      <label style={fieldLabelStyle}>
+        Or a weight <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
+        <input
+          type="text" inputMode="decimal" value={weight}
+          onChange={(e) => setWeight(e.target.value)}
+          placeholder="e.g. 2.5 g"
+          aria-describedby="save-seed-weight-note"
+          data-testid="save-seed-weight" style={inputStyle}
+        />
+      </label>
+      <p id="save-seed-weight-note" data-testid="save-seed-weight-note" style={{ ...hintStyle, margin: '0 0 14px' }}>
+        Whichever the packet tells you &mdash; a count or a weight. A bare number is GRAMS; type
+        &ldquo;mg&rdquo; after it for milligrams, e.g. 250 mg.
       </p>
 
       {/* Optional, and DEFAULTED OFF. Choosing a process writes a permanent seed_lot_stage_log row,
