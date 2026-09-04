@@ -45,6 +45,10 @@ import { useReportOverlayDirty, useInOverlaySurface } from '../context/OverlayCo
 // new page, a new endpoint or a new table, copying the weigh-in's shape rather than editing it
 // (EventNew.jsx is frozen: OPS-WEIGHINUXFROZEN-001).
 import NumberPad from '../components/NumberPad.jsx'
+// V5-INFLIGHTBATCH-001 slice "going now" — a THIRD view behind the same segmented toggle. Same
+// reason ?session=putup is a mode flag rather than a page: the app has a three-times-repeated
+// pattern for "a thing you are in the middle of" and it is never a new destination.
+import GoingNowView from '../components/putup/GoingNowView.jsx'
 import { useSuppressBottomNav } from '../hooks/useSuppressBottomNav.js'
 import {
   WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
@@ -187,8 +191,52 @@ export default function PutUp() {
   const hasPrefill = prefillKey !== BARE_PREFILL_KEY
 
   // Adaptive default: a harvest-triggered open lands on the form; a bare "Put-Up" tap lands on the
-  // inventory ("what have I got?") — the more common intent from the More menu.
+  // inventory ("what have I got?") — the more common intent from the More menu. V5-INFLIGHTBATCH-001
+  // promotes a bare open to 'going' the moment there is anything to check; see autoDefaultedRef.
   const [view, setView] = useState(hasPrefill ? 'log' : 'stores')
+  // Set the moment the user picks a view themselves. The auto-default below is a DEFAULT, not a
+  // preference — it may never move someone off a segment they chose or off a form they are typing in.
+  const viewTouchedRef = useRef(false)
+  const chooseView = useCallback((v) => { viewTouchedRef.current = true; setView(v) }, [])
+
+  // ── V5-INFLIGHTBATCH-001 — open batches, fetched at the PAGE and passed down ───────────────────
+  // The page owns this fetch rather than GoingNowView, because the default-view decision below needs
+  // the count on every open regardless of which segment renders. One GET, not two.
+  //
+  // Three-valued on purpose, and the third value is the load-bearing one: `null` means "not loaded,
+  // or the route is unavailable". Until the migration is applied to a database the route 500s, and
+  // in that state this page must behave EXACTLY as it does today — no flip, no banner, no change to
+  // the bare-open landing. Only an array is an answer.
+  const { fetch: pageFetch } = useApiFetch()
+  const [going, setGoing] = useState(null)
+  const [goingLoading, setGoingLoading] = useState(true)
+  const [goingError, setGoingError] = useState(false)
+  const loadGoing = useCallback(() => {
+    setGoingLoading(true)
+    pageFetch('/api/kitchen-batches?state=going')
+      .then(rows => { setGoing(Array.isArray(rows) ? rows : []); setGoingError(false) })
+      .catch(() => { setGoingError(true) })
+      .finally(() => setGoingLoading(false))
+  }, [pageFetch])
+  useEffect(() => { loadGoing() }, [loadGoing])
+
+  // THE BARE-OPEN DEFAULT. A bare Put-Up open landing on "what have I got" is correct today and
+  // wrong the moment batches exist, because the answer to "what is going on right now" would then be
+  // one tap further away than the answer to a question nobody asked. This one flip takes "what needs
+  // me" to ONE tap from app open and is the entire discoverability fix — no Today band, no new tab,
+  // no new surface of any kind.
+  //
+  // Decided ONCE, on the first load that produces an answer, and never revisited: a late-arriving
+  // fetch may not yank someone off a form (the prefill path lands on 'log', and clearPrefill leaves
+  // them there with hasPrefill false) or off a segment they chose. Hence both guards plus the
+  // view === 'stores' check, which is the state this flip is defined to replace.
+  const autoDefaultedRef = useRef(false)
+  useEffect(() => {
+    if (autoDefaultedRef.current || !Array.isArray(going)) return
+    autoDefaultedRef.current = true
+    if (!going.length || viewTouchedRef.current || view !== 'stores') return
+    setView('going')
+  }, [going, view])
 
   // V4-PUTUPENGINE-001 slice 2 — picking a recent harvest navigates IN PLACE with a new prefill.
   // That reuses the one prefill door PreserveOffer / PutUpFromPlanting / PutUpUseSoonBand already
@@ -247,7 +295,7 @@ export default function PutUp() {
             segmented control below switches VIEWS; this starts the primary ACTION. Only rendered on
             the read view — on the form it would be a button that does nothing. */}
         {view === 'stores' && (
-          <button type="button" onClick={() => setView('log')} data-testid="putup-primary-cta"
+          <button type="button" onClick={() => chooseView('log')} data-testid="putup-primary-cta"
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               width: '100%', minHeight: T.buttonMinHeight, marginBottom: 14, backgroundColor: P.green, color: P.white,
               border: 'none', borderRadius: T.radiusCard, fontSize: T.type.md, fontWeight: 700,
@@ -256,12 +304,18 @@ export default function PutUp() {
           </button>
         )}
 
+        {/* LIFECYCLE ORDER, left to right: going → logged → stored. That is time order, which is
+            the one arrangement a user can predict without reading. The grammar was already
+            inconsistent (a VERB beside a QUESTION) and a third label had to join it; "Going now"
+            names the OBJECT's state, which is what the other two labels are really doing too.
+            Three options is still inside the ≤4 the page holds itself to. */}
         <div style={{ marginBottom: 18 }}>
           <SegmentedControl
             ariaLabel="Put-Up view"
             value={view}
-            onChange={setView}
+            onChange={chooseView}
             options={[
+              { value: 'going',  label: 'Going now' },
               { value: 'log',    label: 'Log a put-up' },
               { value: 'stores', label: "What's put up" },
             ]}
@@ -291,9 +345,11 @@ export default function PutUp() {
           </div>
         )}
 
-        {view === 'log'
-          ? <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => setView('stores')} />
-          : <StoresView />}
+        {view === 'going' && (
+          <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing} />
+        )}
+        {view === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
+        {view === 'stores' && <StoresView />}
       </div>
     </div>
   )
@@ -1602,11 +1658,17 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
         )}
 
         <div style={{ marginTop: 14 }}>
+          {/* OPS-STORAGELOCNODOOR-001 — `manageable` only here, not in the walk's copy of this same
+              field. Renaming vocabulary is a deliberate, desk-posture act; the walk is a hands-wet
+              sitting whose job is one item at a time. */}
           <StorageField
             value={storageId}
             onChange={setStorageId}
             locations={storageLocations}
+            manageable
             onCreated={(row) => { setStorageLocations(list => [...list, row]); setStorageId(String(row.id)) }}
+            onUpdated={(row) => setStorageLocations(list => list.map(l => (String(l.id) === String(row.id) ? { ...l, ...row } : l)))}
+            onDeleted={(id) => setStorageLocations(list => list.filter(l => String(l.id) !== String(id)))}
             fetch={fetch}
           />
         </div>
@@ -1736,13 +1798,30 @@ function PlantingField({ value, onChange, cropSlug, varietyId, onDerive }) {
   )
 }
 
-// Inline storage-location field with a lightweight "＋ New location" creator (POST /api/storage-locations).
-function StorageField({ value, onChange, locations, onCreated, fetch }) {
+// Inline storage-location field with a lightweight "＋ New location" creator (POST /api/storage-locations)
+// and — OPS-STORAGELOCNODOOR-001 — the rename/delete door that was missing.
+//
+// THE DEFECT. lambda/storage-location/index.js has shipped PUT :id (:88-104) and DELETE :id
+// (:106-121) since V4-HARVESTCENTER-001, and a repo-wide grep found NO frontend caller for either:
+// the client only ever GETs and POSTs. So a mistyped or obsolete freezer label was PERMANENT, in a
+// vocabulary that is per-user, free text, and appears on every put-up row that references it.
+//
+// KIND IS SETTABLE, and that half is not cosmetic. Live prod carries exactly 3 rows, all
+// kind='deep_freezer', all owned by Dave and none by Jen — while chk_storage_location_kind already
+// permits fridge / pantry / cold_storage. A ferment moving counter → fridge → pantry is therefore a
+// DATA gap, not a schema gap, and the only thing standing between the data and the schema was a
+// missing form control.
+//
+// `manageable` gates the door to the log form deliberately. The freezer walk mounts this same
+// component (under "＋ Somewhere else") and the walk is a hands-wet, one-item-at-a-time sitting;
+// renaming and deleting vocabulary belongs on the deliberate surface, not in the middle of a walk.
+function StorageField({ value, onChange, locations, onCreated, onUpdated, onDeleted, manageable, fetch }) {
   const [adding, setAdding] = useState(false)
   const [label, setLabel] = useState('')
   const [kind, setKind] = useState('deep_freezer')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const [managing, setManaging] = useState(false)
 
   // BUG-PUTUPLOC-001 — the first "add location" failed and the retry succeeded, with CloudWatch
   // proving NO POST ever reached garden-storage-location. Falsified already: fetch prop not passed,
@@ -1815,11 +1894,21 @@ function StorageField({ value, onChange, locations, onCreated, fetch }) {
         </Select>
       </Field>
       {!adding ? (
-        <button type="button" onClick={() => setAdding(true)}
-          style={{ background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: T.type.sm,
-            fontWeight: 600, padding: '8px 0 0', textDecoration: 'underline' }}>
-          ＋ New location
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: T.space.md }}>
+          <button type="button" onClick={() => setAdding(true)}
+            style={{ background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: T.type.sm,
+              fontWeight: 600, padding: '8px 0 0', textDecoration: 'underline' }}>
+            ＋ New location
+          </button>
+          {/* Only when there is something to edit. A door onto an empty list is furniture. */}
+          {manageable && locations.length > 0 && (
+            <button type="button" data-testid="pu-manage-locations" onClick={() => setManaging(m => !m)}
+              style={{ background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: T.type.sm,
+                fontWeight: 600, padding: '8px 0 0', textDecoration: 'underline' }}>
+              {managing ? 'Done editing' : 'Edit locations'}
+            </button>
+          )}
+        </div>
       ) : (
         <div style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '12px 14px', backgroundColor: P.cream }}>
           {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
@@ -1840,6 +1929,159 @@ function StorageField({ value, onChange, locations, onCreated, fetch }) {
           </div>
         </div>
       )}
+      {managing && !adding && (
+        <StorageLocationEditor
+          locations={locations} fetch={fetch} classify={classify}
+          selectedId={value} onClearSelected={() => onChange('')}
+          onUpdated={onUpdated} onDeleted={onDeleted}
+        />
+      )}
+    </div>
+  )
+}
+
+// OPS-STORAGELOCNODOOR-001 — the rename/delete list. One row per location, expanded in place.
+//
+// WHAT DELETE ACTUALLY DOES, checked in the handler before writing a guard rather than after:
+// lambda/storage-location/index.js:111-118 is a SOFT delete (`SET deleted_at = NOW()`), so a
+// location still referenced by a preservation_log row cannot raise a foreign-key violation — there
+// is nothing to violate. And the four read surfaces LEFT JOIN storage_location with NO deleted_at
+// predicate (e.g. lambda/preservation/index.js:415), so rows already stored there KEEP RENDERING
+// their label; only the GET list filters deleted_at IS NULL, so the term merely stops being offered.
+// A client-side "is it in use?" pre-check would therefore be guarding against a hazard that does not
+// exist, and would need a count this component has never fetched. The honest guard is the one below:
+// a two-step confirm that STATES the consequence, with no invented number in it.
+function StorageLocationEditor({ locations, fetch, classify, selectedId, onClearSelected, onUpdated, onDeleted }) {
+  const [editingId, setEditingId] = useState(null)
+  const [draftLabel, setDraftLabel] = useState('')
+  const [draftKind, setDraftKind] = useState('deep_freezer')
+  const [confirmingId, setConfirmingId] = useState(null)
+  const [busyId, setBusyId] = useState(null)
+  const [err, setErr] = useState(null)
+
+  function startEdit(loc) {
+    setErr(null); setConfirmingId(null)
+    setEditingId(loc.id); setDraftLabel(loc.label ?? '')
+    // A row whose kind is not in the pick-list keeps its own value as the initial selection rather
+    // than silently becoming a deep_freezer on the next save — the Select renders it as an extra
+    // option below. VALID_KINDS and STORAGE_KINDS agree today; this is what stops a future drift in
+    // either list from rewriting data through a form the user only opened to fix a typo.
+    setDraftKind(loc.kind ?? 'deep_freezer')
+  }
+
+  async function save(loc) {
+    const trimmed = draftLabel.trim()
+    if (!trimmed) { setErr('Give the location a name.'); return }
+    setBusyId(loc.id); setErr(null)
+    try {
+      // PUT is COALESCE-per-column on the handler (:92-101), so this is a merge and not the
+      // full-replace shape preservation's PUT uses. Both fields are sent because both are on screen.
+      const row = await fetch(`/api/storage-locations/${loc.id}`, {
+        method: 'PUT', body: JSON.stringify({ label: trimmed, kind: draftKind }),
+      })
+      setEditingId(null)
+      onUpdated?.(row ?? { ...loc, label: trimmed, kind: draftKind })
+    } catch (e) {
+      setErr(`Couldn't save that change — try again. (${classify(e).code})`)
+    } finally { setBusyId(null) }
+  }
+
+  async function remove(loc) {
+    setBusyId(loc.id); setErr(null)
+    try {
+      await fetch(`/api/storage-locations/${loc.id}`, { method: 'DELETE' })
+      setConfirmingId(null)
+      // The picker above may be sitting on the row that just went away. Clearing to Unassigned is
+      // the only honest resolution: leaving the id selected would submit a location the user can no
+      // longer see, and the create-form Select would render a blank value with no explanation.
+      if (String(selectedId) === String(loc.id)) onClearSelected?.()
+      onDeleted?.(loc.id)
+    } catch (e) {
+      setErr(`Couldn't delete that location — try again. (${classify(e).code})`)
+    } finally { setBusyId(null) }
+  }
+
+  return (
+    <div data-testid="pu-location-editor"
+      style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '10px 12px', backgroundColor: P.cream }}>
+      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
+      {locations.map(loc => {
+        const editing = editingId === loc.id
+        const confirming = confirmingId === loc.id
+        const kindLabel = STORAGE_KINDS.find(k => k.value === loc.kind)?.label ?? loc.kind ?? ''
+        return (
+          <div key={loc.id} data-testid="pu-location-row" data-loc-id={loc.id}
+            style={{ padding: '8px 0', borderTop: `1px solid ${P.border}` }}>
+            {!editing ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: T.type.sm, fontWeight: 600, color: P.dark }}>{loc.label}</div>
+                  <div style={{ fontSize: '0.75rem', color: P.light }}>{kindLabel}</div>
+                </div>
+                <button type="button" data-testid="pu-location-rename" onClick={() => startEdit(loc)}
+                  style={{ minHeight: T.tapMinHeight, padding: '4px 8px', background: 'none', border: 'none',
+                    cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, color: P.green }}>
+                  Edit
+                </button>
+                <button type="button" data-testid="pu-location-delete" disabled={busyId === loc.id}
+                  onClick={() => { setErr(null); setConfirmingId(confirming ? null : loc.id) }}
+                  style={{ minHeight: T.tapMinHeight, padding: '4px 8px', background: 'none', border: 'none',
+                    cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, color: P.terra }}>
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <div>
+                <Field label="Name *" htmlFor={`pu-editloc-label-${loc.id}`}>
+                  <Input id={`pu-editloc-label-${loc.id}`} value={draftLabel}
+                    onChange={e => setDraftLabel(e.target.value)} aria-label="Location name" />
+                </Field>
+                <div style={{ marginTop: T.space.sm }}>
+                  <Field label="Kind" htmlFor={`pu-editloc-kind-${loc.id}`}>
+                    <Select id={`pu-editloc-kind-${loc.id}`} value={draftKind}
+                      onChange={e => setDraftKind(e.target.value)} aria-label="Location kind">
+                      {STORAGE_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+                      {!STORAGE_KINDS.some(k => k.value === draftKind) && (
+                        <option value={draftKind}>{draftKind}</option>
+                      )}
+                    </Select>
+                  </Field>
+                </div>
+                <div style={{ display: 'flex', gap: T.space.sm, marginTop: 10 }}>
+                  <Button type="button" variant="primary" loading={busyId === loc.id} loadingLabel="Saving…"
+                    data-testid="pu-location-save" onClick={() => save(loc)}>Save</Button>
+                  <Button type="button" variant="secondary"
+                    onClick={() => { setEditingId(null); setErr(null) }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+            {confirming && !editing && (
+              <div data-testid="pu-location-confirm-delete"
+                style={{ marginTop: 8, padding: '8px 10px', background: P.white,
+                  border: `1px solid ${P.border}`, borderRadius: T.radiusButton }}>
+                <div data-testid="pu-location-delete-consequence" style={{ fontSize: '0.78rem', color: P.mid }}>
+                  Delete &ldquo;{loc.label}&rdquo;? Anything already stored there keeps this label &mdash;
+                  it just stops being offered for new put-ups.
+                </div>
+                <div style={{ display: 'flex', gap: T.space.sm, marginTop: 8 }}>
+                  <button type="button" data-testid="pu-location-delete-confirm" disabled={busyId === loc.id}
+                    onClick={() => remove(loc)}
+                    style={{ minHeight: T.tapMinHeight, padding: '6px 12px', background: 'none',
+                      border: `1px solid ${P.terra}`, borderRadius: T.radiusButton, cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, color: P.terra }}>
+                    Yes, delete
+                  </button>
+                  <button type="button" onClick={() => setConfirmingId(null)}
+                    style={{ minHeight: T.tapMinHeight, padding: '6px 12px', background: 'none', border: 'none',
+                      cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', color: P.light }}>
+                    Keep it
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
