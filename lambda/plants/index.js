@@ -92,6 +92,74 @@ async function getSecrets() {
   return _secrets;
 }
 
+// ── V4-SOURCEREG-001 — the two source FKs on the plants write paths ──────────────────────────────
+//
+// Textual siblings of the pair in lambda/inventory-items/index.js: the same two columns, the same
+// catalogue, the other writer. Kept in THIS file rather than household.js, which is held
+// byte-identical across nineteen Lambda directories by lambda/household-copies-sync.test.js —
+// widening its export surface for one consumer would edit eighteen out-of-scope Lambdas.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// LIVENESS, NOT OWNERSHIP, and that is the one decision here worth stating. public.source is a
+// shared catalogue with RLS deliberately off, the same shape as public.plant_varieties — which
+// variety_id is likewise ungated for on both verbs (see the "NOT gated" note on the POST path
+// below). Household-scoping it would break the picker every household reads, which is why the pair
+// belongs in authz-write-fk.test.js's shared-vocabulary group rather than in SITES, and why there
+// is no warnRejectedFk call here: that signal means "a cross-household FK write was attempted", and
+// a stale id out of a catalogue everyone shares is not that.
+//
+// What IS checked is the strictness the varieties handler applies to variety_id — the row must
+// exist AND not be soft-deleted. So an id from a picker list fetched before a delete answers with a
+// named field instead of landing a reference that reads as dangling. The DB FK proves existence and
+// is blind to deleted_at.
+//
+// UUID_RE first: a malformed id reaching Postgres raises 22P02, which the catch at the bottom of
+// this file does not map, so it would surface as an opaque 500 rather than the 400 every other
+// bad-id path on these verbs returns.
+//
+// One statement per id rather than one `= ANY(...)`: the caller needs to know WHICH of the two is
+// bad, and a set-returning query that comes back one row short cannot say. Both are optional and
+// absent from every request any deployed screen sends today, so the common case issues no query.
+async function findDeadSourceRef(sql, refs) {
+  for (const [field, id] of refs) {
+    if (id == null) continue;
+    if (!UUID_RE.test(String(id))) return field;
+    const rows = await sql`
+      SELECT 1 FROM public.source WHERE id = ${id} AND deleted_at IS NULL
+    `;
+    if (!rows.length) return field;
+  }
+  return null;
+}
+
+// The pair names two DIFFERENT places: source_id is who grew, bred or packed it,
+// acquired_from_source_id is the shop or venue where it changed hands, set only when it DIFFERS.
+// NULL is "not recorded", never "the same as the other one" — so equality is meaningless rather
+// than merely redundant, and chk_plants_source_distinct rejects it.
+//
+// Body-only, matching every other validator on these verbs: it fires when one payload carries both
+// ids and stays silent otherwise. The PARTIAL write — a body sending one id that collides with the
+// row's STORED value of the other — cannot be answered here, because no validator on either verb
+// reads the pre-update row; CONSTRAINT_MESSAGES below is what answers that one. Two mechanisms,
+// neither redundant.
+function sourceRefsCollide(body) {
+  return body.source_id != null && body.source_id === body.acquired_from_source_id;
+}
+
+const SOURCE_DISTINCT_ERROR =
+  'source_id and acquired_from_source_id must name different sources';
+const deadSourceRefError = (field) => `${field} does not match a source you can use`;
+
+// The catch at the bottom has always answered a 23514 with the raw constraint name. That is already
+// a 400 rather than a 500, but `Constraint violation: chk_plants_source_distinct` is not a sentence
+// anyone can act on, and this is the one constraint on these verbs a plain two-picker interaction
+// can reach. Keyed by name and consulted BEFORE the generic arm, so every other constraint keeps
+// the text it has today.
+const CONSTRAINT_MESSAGES = {
+  chk_plants_source_distinct:
+    'The originator and the place you got it from have to be two different sources. Clear one of them, or pick a different one.',
+};
+
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 export const handler = async (event) => {
@@ -769,6 +837,23 @@ export const handler = async (event) => {
         // written — the sentinel is the only shape that can express all three. Deliberately NOT on
         // the `clear` allowlist; validate.js's tier-3 block says why.
         const hasAcquiredMature = Object.prototype.hasOwnProperty.call(body, 'acquired_mature');
+        // V4-SOURCEREG-001. Presence sentinels, NOT the `clear` channel, and the choice is forced
+        // twice over.
+        //  (a) validate.js's tier-3 block states the house rule as one clearing mechanism per
+        //      column: location_id and acquired_mature are enumerated there as deliberately ABSENT
+        //      from CLEARABLE_FIELDS precisely because they already carry a sentinel, and a second
+        //      spelling for one fact is what that block exists to prevent.
+        //  (b) The only client these two will ever have is SourcePicker, whose onChange emits an id
+        //      or null. A form binding `source_id: form.source_id || null` therefore says "clear"
+        //      with a plain null — which the COALESCE merge below reads as "no opinion" and
+        //      silently preserves. The sentinel is the only thing that makes a source picked by
+        //      mistake removable at all, and reaching NULL through `clear` instead would need
+        //      lambda/plants/validate.js AND its byte-mirrored client half src/lib/clearKeys.js
+        //      (equality-asserted by src/__tests__/clearKeys.test.js) to move together.
+        // Presence, not truthiness: an explicit null is a real value here ("not recorded"), so a
+        // `!= null` test would make clearing unreachable.
+        const hasSourceId = Object.prototype.hasOwnProperty.call(body, 'source_id');
+        const hasAcqSource = Object.prototype.hasOwnProperty.call(body, 'acquired_from_source_id');
         const _amErr = validateAcquiredMature(body);
         if (_amErr) return resp(400, { error: _amErr });
         // V4-LOSSEVENT-001 — non-negative floor on qty_lost, shared with the POST path. MUST BE
@@ -830,6 +915,15 @@ export const handler = async (event) => {
             return resp(400, { error: 'succession_group_id does not match a planting you can use' });
           }
         }
+        // V4-SOURCEREG-001 — distinctness first because it needs no round trip, then liveness. Both
+        // sit at the end of this body-FK cluster, i.e. before the ownership pre-flight, matching the
+        // order the four gates above already run in.
+        if (sourceRefsCollide(body)) return resp(400, { error: SOURCE_DISTINCT_ERROR });
+        const _deadSource = await findDeadSourceRef(sql, [
+          ['source_id', body.source_id ?? null],
+          ['acquired_from_source_id', body.acquired_from_source_id ?? null],
+        ]);
+        if (_deadSource) return resp(400, { error: deadSourceRefError(_deadSource) });
 
         // ── CANONICAL OWNERSHIP PREDICATE (BUG-PLANTLESSWRITE-001) ────────────────────────────
         // Every by-id read/write in this Lambda scoped ownership through an INNER JOIN on the
@@ -1043,6 +1137,20 @@ export const handler = async (event) => {
               WHEN ${hasAcquiredMature}
                 THEN (CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE now() END)
               ELSE p.acquired_mature_set_at
+            END,
+            -- V4-SOURCEREG-001. Sentinel arms, for the reason stated at hasSourceId above. The
+            -- ELSE p.<col> is the half that matters most today: neither key is sent by anything in
+            -- src/, so it is the arm every deployed screen's save takes, and a bare assignment here
+            -- would erase both columns on the first edit of any planting that has them and answer
+            -- 200. Both columns are projected by public.garden_node as of v5-sourcenodeview-001, so
+            -- naming them through this view cannot 42703.
+            source_id                = CASE
+              WHEN ${hasSourceId} THEN ${body.source_id ?? null}
+              ELSE p.source_id
+            END,
+            acquired_from_source_id  = CASE
+              WHEN ${hasAcqSource} THEN ${body.acquired_from_source_id ?? null}
+              ELSE p.acquired_from_source_id
             END
           WHERE p.id = ${plantId}
             AND (
@@ -1054,7 +1162,7 @@ export const handler = async (event) => {
               OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
             )
             AND p.deleted_at IS NULL
-          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.seeds_sown, p.seeds_germinated, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
+          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.seeds_sown, p.seeds_germinated, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.acquired_mature, p.acquired_mature_source, p.acquired_mature_set_at, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version, p.source_id, p.acquired_from_source_id
         `,
         ];
         if (_statusChanged) {
@@ -1765,6 +1873,16 @@ export const handler = async (event) => {
           return resp(400, { error: 'succession_group_id does not match a planting you can use' });
         }
       }
+      // V4-SOURCEREG-001 — the same two checks in the same order as the PUT path, so the verbs
+      // cannot drift. No sentinel needed on this one: there is no prior row to preserve, so an
+      // omitted key and an explicit null are both "not recorded" on a create — the same call the
+      // acquired_mature block above makes, for the same reason.
+      if (sourceRefsCollide(body)) return resp(400, { error: SOURCE_DISTINCT_ERROR });
+      const _deadSourcePost = await findDeadSourceRef(sql, [
+        ['source_id', body.source_id ?? null],
+        ['acquired_from_source_id', body.acquired_from_source_id ?? null],
+      ]);
+      if (_deadSourcePost) return resp(400, { error: deadSourceRefError(_deadSourcePost) });
 
       const qty = parseInt(body.quantity, 10);
       const qtyVal = isNaN(qty) || qty < 1 ? 1 : qty;
@@ -1784,7 +1902,8 @@ export const handler = async (event) => {
            parent_plant_id, divergence_type, lineage_note,
            succession_group_id, succession_order,
            container_type, container_size, location_id,
-           acquired_mature, acquired_mature_source, acquired_mature_set_at)
+           acquired_mature, acquired_mature_source, acquired_mature_set_at,
+           source_id, acquired_from_source_id)
         VALUES (
           ${resolvedProjectId},
           ${body.name},
@@ -1841,9 +1960,14 @@ export const handler = async (event) => {
           -- bare expression rather than against a typed sibling column.
           ${body.acquired_mature ?? null},
           CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE 'user' END,
-          CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE now() END
+          CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE now() END,
+          -- V4-SOURCEREG-001. Bound straight through, unlike the PUT's sentinel arms: a create has
+          -- no prior value for a sentinel to protect, so an explicit null and an absent key mean the
+          -- same thing and the only shape either can write is the one the caller asked for.
+          ${body.source_id ?? null},
+          ${body.acquired_from_source_id ?? null}
         )
-        RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, seeds_sown, seeds_germinated, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
+        RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, seeds_sown, seeds_germinated, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version, source_id, acquired_from_source_id
       `;
       const newPlant = inserted[0];
 
@@ -1887,7 +2011,7 @@ export const handler = async (event) => {
           SET succession_group_id = id
           WHERE id = ${newPlant.id}
             AND succession_group_id IS NULL
-          RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, seeds_sown, seeds_germinated, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version
+          RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, seeds_sown, seeds_germinated, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, acquired_mature, acquired_mature_source, acquired_mature_set_at, kind, workspace_id, last_seen_at, attr_override, version, source_id, acquired_from_source_id
         `;
         if (updated.length) return resp(201, updated[0]);
       }
@@ -1899,7 +2023,11 @@ export const handler = async (event) => {
   } catch (err) {
     console.error('plants lambda error', err);
     if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
+    if (err.code === '23514') {
+      // Named constraints first (V4-SOURCEREG-001), then the pre-existing generic arm unchanged.
+      const named = CONSTRAINT_MESSAGES[err.constraint];
+      return resp(400, { error: named ?? `Constraint violation: ${err.constraint ?? err.message}` });
+    }
     return resp(500, { error: 'Internal server error' });
   }
 };
