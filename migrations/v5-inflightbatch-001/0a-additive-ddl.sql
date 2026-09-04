@@ -243,9 +243,19 @@ CREATE TABLE public.kitchen_batch_input (
   CONSTRAINT chk_kbi_qty_pairing CHECK ((qty IS NULL) = (qty_unit IS NULL)),
   CONSTRAINT chk_kbi_qty_positive CHECK (qty IS NULL OR qty > 0),
   -- CHECK'd on purpose. preservation_log.quantity_unit is the ONE unit column in this family with no
-  -- vocabulary constraint and it has ALREADY drifted — it stores 'quarts'/'cups' while
-  -- harvest_log_unit_check spells the same unit 'qt' (filed as BUG-PRESERVUNITNOCHECK-001). Do not
-  -- inherit that.
+  -- vocabulary constraint and it has ALREADY drifted (filed as BUG-PRESERVUNITNOCHECK-001).
+  --
+  -- CORRECTED 2026-09-04, verified against live prod pg_constraint. This comment previously read
+  -- "it stores 'quarts'/'cups' while harvest_log_unit_check spells the same unit 'qt'". The second
+  -- half is FALSE and the ledger row it was copied from carries the same error. harvest_log_unit_check
+  -- is ('lb','oz','kg','g','count','bunch','cup','head') — it has no quart spelling at all. 'qt' lives
+  -- in inventory_items_unit_check ('each','packet','oz','fl oz','lb','gal','qt','bag','roll','sheet',
+  -- 'other').
+  --
+  -- The drift is therefore THREE-WAY, not two-way, which is worse than the original comment claimed:
+  -- preservation says 'quarts', inventory says 'qt', and harvest has no concept of the unit. A future
+  -- reconciliation cannot just pick one of two spellings; it has to decide what harvest does with a
+  -- volume unit it never had. Do not inherit any of it.
   CONSTRAINT chk_kbi_qty_unit CHECK (qty_unit IS NULL OR qty_unit = ANY (ARRAY[
     'g','kg','oz','lb','count','cup','tbsp','tsp','fl oz','qt','gal','ml','l','other']))
 );
