@@ -363,9 +363,14 @@ describe('countPayloadFrom — the strip list, and its agreement with the handle
     // which sit in the strip list as a DELAY FUSE for a day that has not come: these two ARE in the
     // PUT's SET list already, so for them omitting is the no-op and mentioning is a live assignment
     // against a column the backfill populated on every inventory row.
+    // BUG-SEEDYEARNOOP-001 adds `year_harvested`. It is the same KIND as source_id and
+    // acquired_from_source_id — already in the SET list, so omitting is the no-op and mentioning is
+    // a live assignment — but with a second reason to be stripped that none of the others have:
+    // yearHarvestedPatch() expresses its never-overwrite guard as the key's ABSENCE, and a spread
+    // list row puts the key back, defeating the guard from inside the payload it rides in.
     expect(guarded).toEqual([
       'acquired_from_source_id', 'featured_photo_id', 'seed_process', 'seed_stage', 'source_id',
-      'source_kind', 'source_plant_id', 'variety_id',
+      'source_kind', 'source_plant_id', 'variety_id', 'year_harvested',
     ])
     expect(guarded.filter(k => !ours.includes(k))).toEqual([])
     // The GET-DERIVED half has no such idiom to scrape — these are columns the id-GET and the list

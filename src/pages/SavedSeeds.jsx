@@ -363,10 +363,19 @@ function fermentUrgency(item) {
 // inventory rows — so without these two entries every count edit made here would re-assert whatever
 // source the list row was holding. Against a stale row that silently reverts a provenance change
 // made anywhere else in the app, and answers 200.
+// BUG-SEEDYEARNOOP-001 adds `year_harvested`, and it is LIVE in the same sense as the two above —
+// the SET list now names it behind a hasOwnProperty sentinel, so mentioning it IS an assignment
+// where until today it was discarded. But it carries a second reason the others do not, and that
+// one is the sharper of the two: yearHarvestedPatch() enforces NEVER OVERWRITE by returning an
+// EMPTY OBJECT for a lot that already has a year. That contract is expressed entirely as the
+// key's ABSENCE from the body. Spreading the list row puts the key back — so without this entry
+// the patch's guard would be silently defeated by the very payload it is spread into, and every
+// count edit would re-assert the row's own year over whatever the column actually holds. Against
+// a stale row that is how a hand-entered 1986 gets replaced, with a 200.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
-  'source_kind', 'source_id', 'acquired_from_source_id',
+  'source_kind', 'source_id', 'acquired_from_source_id', 'year_harvested',
 ]
 
 /** A complete wide-PUT body from a list row, with the count applied. Pure, exported for test. */

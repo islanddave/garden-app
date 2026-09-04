@@ -801,6 +801,13 @@ export const handler = async (event) => {
         // row on its next edit, from any form, with a 200. See the SET list below.
         const hasSourceId    = Object.prototype.hasOwnProperty.call(body, 'source_id');
         const hasAcqSource   = Object.prototype.hasOwnProperty.call(body, 'acquired_from_source_id');
+        // BUG-SEEDYEARNOOP-001 — the guard that makes V5-SEEDYEARHARVESTED-001 actually write.
+        // SavedSeeds.jsx:393-398 has been putting `year_harvested` in this PUT's body since that
+        // item shipped, and the SET list below never named the column: the key was discarded and
+        // the route answered 200, so the user set a harvest year, saw success, and stored nothing.
+        // Presence, not truthiness — an explicit null is a MEANINGFUL clear (a year entered by
+        // mistake being taken back out), so a not-null test would make clearing impossible.
+        const hasYearHarvested = Object.prototype.hasOwnProperty.call(body, 'year_harvested');
         // Vocabulary is enforced by a DB CHECK, but a 400 here is a better answer than a 500 from a
         // constraint violation — and it names the legal values, which the constraint error does not.
         const SEED_PROCESSES = ['wet', 'dry', 'fresh'];
@@ -949,7 +956,31 @@ export const handler = async (event) => {
             acquired_from_source_id = CASE
               WHEN ${hasAcqSource} THEN ${body.acquired_from_source_id ?? null}
               ELSE acquired_from_source_id
+            END,
+            -- BUG-SEEDYEARNOOP-001. The presence guard is not a stylistic choice here, it is the
+            -- difference between fixing a no-op and destroying four irreplaceable values.
+            --
+            -- Only 4 of 510 rows carry a year_harvested, and they are the ones that cannot be
+            -- reconstructed: Hopi Black Dye Sunflower 2025 (whose year exists structurally in THIS
+            -- COLUMN ONLY — its metadata carries no year key at all, the rest is prose), Jen's
+            -- Edelweiss 1986 from Austria, Red Mustard 2026, Common Milkweed 2022.
+            --
+            -- A BARE assignment here would read as working, because
+            -- useInventory.js:121-122 merges the cached list row into the body and that row came
+            -- from SELECT i.*, so on normal navigation the value round-trips. It is the DEEP-LINK
+            -- path — list never loaded, body is buildChanges() alone, which does not send this key —
+            -- that nulls all four, silently, with a 200. Same latent shape InventoryDetail.jsx:164
+            -- documents for the type column: masked by the merge, bites only when the list has
+            -- not loaded.
+            year_harvested = CASE
+              WHEN ${hasYearHarvested} THEN ${body.year_harvested ?? null}
+              ELSE year_harvested
             END
+            -- lot_number is DELIBERATELY ABSENT and must stay absent: NULL on all 510 rows with no
+            -- reader, writer, migration, index, constraint, view or RLS reference. Parked, not
+            -- forgotten — it needs a lot-numbering scheme that does not exist. See the guard in
+            -- put-year-harvested.test.js, which pins this omission the way metadata-write.test.js
+            -- pins the metadata omission.
           WHERE id = ${itemId}
             AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
