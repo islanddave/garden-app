@@ -48,7 +48,12 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 // the date; the count's own arm is SavedSeeds.storedCount.test.jsx.
 const DRYING = {
   id: 'inv-1', name: 'Green Flesh Honeydew', category: 'seeds', type: 'consumable',
-  status: 'active', quantity_on_hand: 8, unit: 'packet', reorder_threshold: null,
+  // V5-SEEDQTY-001: the count moved to its own column and the stage sheet prefills from THERE, so
+  // this fixture needs both — `quantity_on_hand` is now the container count (packets on the shelf)
+  // and `seed_count` is the number of seeds. Without seed_count the sheet opens blank and a
+  // correction into `stored` is refused before the stage POST, which is the fixture failing, not
+  // the code.
+  status: 'active', quantity_on_hand: 8, seed_count: 8, unit: 'packet', reorder_threshold: null,
   reorder_quantity: null, notes: 'From the 2026 melon', source: 'Self-saved', source_url: null,
   purchase_date: null, unit_cost: null, quantity_purchased: null, location_text: 'Seed tin',
   brand: null, model: null, tags: ['melon'], metadata: { sku: 'GF-2026' },
@@ -185,7 +190,10 @@ describe('SavedSeeds — the correction door (V5-SEEDSTAGEONEPLACE-001)', () => 
     // BUG-SEEDZEROSOWABLE-001's guarantee, which used to be held by two surfaces and is now held by
     // this one alone. A lot on 0 at `stored` is read as depleted by sowEngine.isDepleted(), and
     // `stored` is terminal so nothing later asks again.
-    await mount([{ ...DRYING, quantity_on_hand: 0 }])
+    // V5-SEEDQTY-001: this case wants the count field to open BLANK, which is now expressed as
+    // `seed_count: null` ("nobody has counted") rather than `quantity_on_hand: 0`. The two stopped
+    // being the same statement when seed_count became nullable: 0 there is a MEASURED zero.
+    await mount([{ ...DRYING, seed_count: null }])
     await clickId('change-stage')
     await change('stage-select', 'stored')
     await change('stage-date', '2026-08-30')

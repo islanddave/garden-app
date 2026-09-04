@@ -126,6 +126,24 @@ export const SEED_CONSTRAINT_MESSAGES = {
   // split, for the same reason, as chk_inventory_source_plant_seeds_only above.
   chk_inventory_source_distinct:
     'The originator and the place you got it from have to be two different sources. Clear one of them, or pick a different one.',
+  // V5-SEEDQTY-001 — the seed COUNT/WEIGHT pair. These need sentences even though neither column is
+  // settable through the wide PUT, and that is the whole point: the seeds-only CHECKs read the
+  // STORED value, not the body, so recategorising a lot that already carries a count fires
+  // chk_inventory_seed_count_seeds_only from a payload that never mentions seed_count.
+  // validateUpdate's body-only guard cannot see that case. Same two-mechanism split, for the same
+  // reason, as chk_inventory_source_plant_seeds_only above. Both CHECKs also assert
+  // `type = 'consumable'`, so the sentence names both halves rather than only the category.
+  chk_inventory_seed_count_seeds_only:
+    'This lot records how many seeds are in it, so it has to stay a consumable Seeds item. Clear the seed count first if you want to move it somewhere else.',
+  chk_inventory_seed_weight_seeds_only:
+    'This lot records what its seeds weigh, so it has to stay a consumable Seeds item. Clear the seed weight first if you want to move it somewhere else.',
+  // The two RANGE checks, and why they are reachable at all: /seed-measure deliberately does NOT
+  // pre-empt them with a JS `< 0` test — see that route for why an unexecuted CHECK is worse than a
+  // slower one. These are what the user reads when the database does the refusing.
+  chk_inventory_seed_count_nonneg:
+    'A seed count cannot be negative. Enter 0 if the packet is empty, or leave it blank if you have not counted them.',
+  chk_inventory_seed_weight_nonneg:
+    'A seed weight cannot be negative. Enter 0 if the packet is empty, or leave it blank if you have not weighed it.',
 };
 
 // A plain JSON object, not an array and not a scalar. jsonb would happily store `"abc"` or `[1]`,
@@ -280,6 +298,23 @@ export function validateUpdate(body) {
   }
   if (body.source_kind != null && body.category != null && body.category !== 'seeds') {
     return 'source_kind is only allowed when category is seeds';
+  }
+  // V5-SEEDQTY-001. Same shape, same body-only scoping and the same reason as the two guards above:
+  // without them, a payload naming a non-seeds category alongside a count comes back as
+  // `400 Constraint violation: chk_inventory_seed_count_seeds_only`, which names a constraint rather
+  // than a field. That is BUG-INVUPDATESEEDGUARD-001 verbatim, already fixed once for
+  // source_plant_id.
+  //
+  // WORTH STATING PLAINLY: neither column is in this PUT's SET list — they are reachable only
+  // through PUT /:id/seed-measure — so nothing here can ever LAND a value. This guard is purely
+  // about the error an API caller gets back. The far commoner user path, recategorising a lot whose
+  // count is already STORED, carries neither key in the body and is answered by
+  // SEED_CONSTRAINT_MESSAGES instead. Both halves are needed; neither covers the other.
+  if (body.seed_count != null && body.category != null && body.category !== 'seeds') {
+    return 'seed_count is only allowed when category is seeds';
+  }
+  if (body.seed_weight_g != null && body.category != null && body.category !== 'seeds') {
+    return 'seed_weight_g is only allowed when category is seeds';
   }
   return null;
 }
@@ -668,6 +703,113 @@ export const handler = async (event) => {
         RETURNING id, source_kind
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
+    }
+
+    // ── V5-SEEDQTY-001 — HOW MANY SEEDS, and WHAT DO THEY WEIGH? (closes BUG-SEEDQTYUNIT-001) ─────
+    //
+    // Three prod lots read `185.000 packet`. Those are seed COUNTS wearing the packet unit, because
+    // the only place a count could go was quantity_on_hand. seed_count / seed_weight_g are now
+    // separate columns and quantity_on_hand goes back to meaning containers everywhere.
+    //
+    // A DEDICATED SUB-ROUTE, and the argument is STRICTLY STRONGER here than for /source-plant and
+    // /source-kind above — for those, an explicit-presence guard in the wide PUT would have been a
+    // defensible alternative. Here it would not be, and that is the finding that fixed the design.
+    // There are THREE wide-PUT callers, not two, and the third carries no strip list at all:
+    // src/hooks/useInventory.js adjustQuantity sends `{ ...current, [col]: newValue }` — the ENTIRE
+    // raw list row — on every +/- tap on /inventory, the highest-frequency write path in the app.
+    // And updateItem merges `{ ...current, ...payload }` against a list the hook reloads on mount,
+    // so hasOwnProperty would be TRUE carrying a STALE value and the CASE arm would assign it: an
+    // unrelated InventoryDetail save silently reverting a count written minutes earlier by
+    // SavedSeeds, answering 200. That is BUG-INVLOSTUPDATE-001's exact shape. Keeping the three
+    // columns out of that statement entirely is the only guard that holds — the source_plant_id
+    // precedent, which src/pages/InventoryDetail.jsx already documents as existing "precisely to
+    // dodge that".
+    //
+    // PUT rather than the PATCH the two sibling sub-routes use: that is the verb the callers were
+    // built against (CONTRACT-seedqty-20260904 §3). Keys are still read by PRESENCE, so it behaves
+    // as a partial update; the verb is a naming choice here, not a semantic one.
+    const seedMeasureMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/seed-measure$/);
+    if (seedMeasureMatch) {
+      const itemId = seedMeasureMatch[1];
+      if (method !== 'PUT') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+
+      // PRESENCE, not truthiness — the idiom every seed sub-route in this file uses, and here it IS
+      // the contract: an ABSENT key leaves the stored measurement alone, an explicit `null` clears
+      // it. `0` is a measured fact ("I counted; the packet is empty"), so a truthiness test would
+      // silently drop the one value that most needs recording and make "empty" indistinguishable
+      // from "never measured".
+      //
+      // No required key and therefore no 400 for an empty body, unlike /source-plant and
+      // /source-kind: those exist to set exactly one column, so a body that names none of them is
+      // malformed. This route carries three independent measurements and a caller that sends only
+      // the weight is normal traffic, not a mistake.
+      const hasCount     = Object.prototype.hasOwnProperty.call(body, 'seed_count');
+      const hasWeight    = Object.prototype.hasOwnProperty.call(body, 'seed_weight_g');
+      const hasEstimated = Object.prototype.hasOwnProperty.call(body, 'seed_count_estimated');
+
+      // TYPE guards only. The RANGE is left to chk_inventory_seed_count_nonneg /
+      // chk_inventory_seed_weight_nonneg, deliberately: a JS `< 0` test here would mean NOTHING in
+      // this repo ever executes those CHECKs, and an unarmed constraint would then be
+      // indistinguishable from an armed one — a green suite proving the guard it never ran. The
+      // integration tests send -1 and expect the DATABASE to refuse it. Both names are mapped in
+      // SEED_CONSTRAINT_MESSAGES, so the refusal still reads as a sentence rather than a
+      // constraint name.
+      //
+      // The type test is not redundant with that: a non-numeric value raises 22P02, which nothing
+      // maps, so it falls through the catch as an opaque 500 — the V4-AUTHZRESIDUE-001 contract
+      // says a malformed input gets a named 400. Numeric STRINGS are refused rather than coerced;
+      // '185' and 185 must not be two spellings of one write.
+      if (hasCount && body.seed_count != null && !Number.isInteger(body.seed_count)) {
+        return resp(400, { error: 'seed_count must be a whole number of seeds, or null' });
+      }
+      if (hasWeight && body.seed_weight_g != null
+          && (typeof body.seed_weight_g !== 'number' || !Number.isFinite(body.seed_weight_g))) {
+        return resp(400, { error: 'seed_weight_g must be a number of grams, or null' });
+      }
+      if (hasEstimated && body.seed_count_estimated != null
+          && typeof body.seed_count_estimated !== 'boolean') {
+        return resp(400, { error: 'seed_count_estimated must be true, false or null' });
+      }
+
+      // Same predicate set as /source-plant and /source-kind: household-scoped, live rows only,
+      // seeds only, 404 on no match so a foreign or non-seed item answers exactly as a missing one.
+      //
+      // NO `type = 'consumable'` conjunct, even though both seeds-only CHECKs require it. Adding it
+      // would answer a durable seeds row with a 404 — a lie about a row the caller owns and can see
+      // on their own screen. The CHECK refuses that write instead, and its mapped sentence names
+      // both halves of the rule.
+      //
+      // The three CASE arms bind an untyped parameter against the column in their ELSE, which is
+      // what lets a bare null through without an explicit cast. Verified by PREPARE against live
+      // prod rather than assumed: `CASE WHEN $1 THEN $2 ELSE <int col> END` resolves $2 to integer
+      // and the numeric equivalent to numeric (pg_prepared_statements.parameter_types, 2026-09-04).
+      const rows = await sql`
+        UPDATE public.inventory_items
+           SET seed_count = CASE
+                 WHEN ${hasCount} THEN ${body.seed_count ?? null}
+                 ELSE seed_count
+               END,
+               seed_weight_g = CASE
+                 WHEN ${hasWeight} THEN ${body.seed_weight_g ?? null}
+                 ELSE seed_weight_g
+               END,
+               seed_count_estimated = CASE
+                 WHEN ${hasEstimated} THEN ${body.seed_count_estimated ?? null}
+                 ELSE seed_count_estimated
+               END,
+               updated_at = NOW()
+         WHERE id = ${itemId}
+           AND created_by = ANY(${householdIds})
+           AND deleted_at IS NULL
+           AND category = 'seeds'
+        RETURNING id, seed_count, seed_weight_g, seed_count_estimated
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      // seed_weight_g is numeric(10,3), which @neondatabase/serverless returns as a STRING. Left as
+      // the driver gives it, matching every other numeric this handler echoes (quantity_on_hand,
+      // unit_cost); every client-side reader must Number() it.
       return resp(200, rows[0]);
     }
 

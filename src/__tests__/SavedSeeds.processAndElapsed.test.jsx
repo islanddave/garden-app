@@ -177,8 +177,10 @@ describe('BUG-SEEDPROCFORCED-001 — starting a lot no longer asserts a ferment'
     await click('stage-save')
 
     const w = writes()
-    // Two writes now: the stage POST, then the count PUT the typed number triggers.
-    expect(w).toHaveLength(2)
+    // V5-SEEDQTY-001 split the second write in two. Three now: the stage POST, then the NARROW
+    // /seed-measure PUT carrying the typed count, then the wide PUT that still exists on this page
+    // solely to carry year_harvested. The count no longer rides the wide body at all.
+    expect(w).toHaveLength(3)
     const body = JSON.parse(w[0][1].body)
     expect(w[0][1].method).toBe('POST')
     expect(Object.prototype.hasOwnProperty.call(body, 'seed_process')).toBe(false)

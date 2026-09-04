@@ -89,6 +89,18 @@ const INVENTORY_ITEMS_COLUMNS = [
   // to inventory_items, and that file pins seed_lot_stage_log's own relation on purpose.
   'source_plant_id',
   'source_kind',
+  // V5-SEEDQTY-001 — the seed quantity axis. All THREE are genuinely referenced: PUT
+  // /:id/seed-measure writes and RETURNS each one under its own explicit-presence CASE. They are
+  // deliberately NOT in the wide PUT's SET list or the POST INSERT (a bare assignment there loses a
+  // count on every unrelated edit — see the route), so this sub-route is their only writer, which
+  // makes this file the only thing that audits them against prod.
+  //
+  // seed_count_estimated is listed even though the contract for this ticket named only the first
+  // two. Omitting it would leave a column this handler writes audited by nothing, which is exactly
+  // the silent gap the file exists to close; the floor below moves to 38 to match.
+  'seed_count',
+  'seed_weight_g',
+  'seed_count_estimated',
 ];
 
 describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
@@ -105,10 +117,11 @@ describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
 
   it('pins a non-trivial contract — an emptied array must fail, not silently pass', () => {
     // 31 -> 33 with V4-SEEDSAVEFLOW-001's two columns, 33 -> 34 with V4-SEEDLINK-001's
-    // source_plant_id, 34 -> 35 with V4-SEEDORIGIN-001's source_kind. Ratcheting the floor for
+    // source_plant_id, 34 -> 35 with V4-SEEDORIGIN-001's source_kind, 35 -> 38 with
+    // V5-SEEDQTY-001's seed_count / seed_weight_g / seed_count_estimated. Ratcheting the floor for
     // columns genuinely added to THIS relation is the normal move; what must never happen is folding
     // a DIFFERENT relation's columns in to raise it, which is why seed_lot_stage_log got its own file.
-    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(35);
+    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(38);
   });
 
   it('queries inventory_items', () => {

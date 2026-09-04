@@ -62,10 +62,16 @@ const HANDLERS = readdirSync(__dirname)
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
+//
+// V5-SEEDQTY-001 adds seed_count / seed_weight_g to the seed-lots read. Those two are the ONLY
+// entries here NOT yet present on live prod — they land with migrations/v5-seedqty-001/
+// 0a-additive-ddl.sql, so Phase 1 reports them missing until that DDL is applied. That is the
+// intended ordering (the audit is what proves the deploy happened), not a stale contract.
 const AUDIT_COLUMNS = {
   inventory_items: [
     'created_at', 'created_by', 'deleted_at', 'id', 'name',
-    'quantity_on_hand', 'seed_stage', 'source_plant_id', 'variety_id',
+    'quantity_on_hand', 'seed_count', 'seed_stage', 'seed_weight_g',
+    'source_plant_id', 'variety_id',
   ],
 };
 
