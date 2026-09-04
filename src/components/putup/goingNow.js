@@ -421,7 +421,15 @@ export function describeStage(batch, nowMs) {
 export const START_CHIPS = [
   { value: 'today',      label: 'Today',             days: 0,    precision: 'exact',   anchor: 'memory' },
   { value: 'yesterday',  label: 'Yesterday',         days: 1,    precision: 'day',     anchor: 'memory' },
-  { value: 'few_days',   label: 'A few days ago',    days: 3,    precision: 'day',     anchor: 'memory' },
+  // 4, not 3, CORRECTED at integration 2026-09-04. This table and START_CHIPS in
+  // src/components/kitchen/StartChips.jsx were built by two concurrent lanes from the same panel
+  // ruling. They agreed on 18 for "2–3 weeks" and DISAGREED here — capture back-dated 4 days and this
+  // surface back-dated 3, so the same chip on the same batch produced a different date depending on
+  // which screen the user happened to tap it from. The rule the panel actually stated is the MIDPOINT
+  // of the window each chip names (3–5 d → 4, 14–21 d → 18), so capture was right. See
+  // src/__tests__/startChipParity.test.js, which now makes the two tables agree by assertion rather
+  // than by coincidence.
+  { value: 'few_days',   label: 'A few days ago',    days: 4,    precision: 'day',     anchor: 'memory' },
   { value: 'about_week', label: 'About a week',      days: 7,    precision: 'week',    anchor: 'memory' },
   { value: 'few_weeks',  label: '2–3 weeks',         days: 18,   precision: 'week',    anchor: 'memory' },
   { value: 'unsure',     label: 'Longer / not sure', days: null, precision: 'unknown', anchor: 'memory' },
