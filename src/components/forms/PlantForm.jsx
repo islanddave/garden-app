@@ -18,7 +18,12 @@
 // Controlled contract:
 //   value     object  — { name, quantity, variety, notes, status, project_id?,
 //                         sown_at, sown_at_approx, qty_initial, source_type,
+//                         source_id, acquired_from_source_id,
 //                         source_ref, source_generation, lineage_note }
+//             source_id / acquired_from_source_id (V4-SOURCEREG-001) are patched out of here like
+//             every other key, so a HOST that enumerates its payload keys must name them or the
+//             chosen id is dropped between this form and the wire. All three hosts enumerate
+//             (PlantingEditor:218/265, ProjectDetail:439, CaptureFlow:464) — see the wiring report.
 //   onChange  (patch) => void   — host merges: onChange={p => setForm(f => ({ ...f, ...p }))}
 //   onSubmit  (e) => void       — host's existing submit handler (builds + sends payload)
 //   submitting bool             — disables submit + swaps label
@@ -30,7 +35,7 @@
 //   idPrefix  string            — unique id namespace (Plants edit renders one PlantForm per row)
 //   detailsDefaultOpen bool     — open the planting-details disclosure initially (default false)
 import React from 'react'
-import { Field, Input, Select, Textarea, Button, StatusSelect, ErrorBanner } from './index.js'
+import { Field, Input, Select, Textarea, Button, StatusSelect, ErrorBanner, SourcePicker } from './index.js'
 import VarietyPicker from '../VarietyPicker.jsx'
 import { P } from '../../lib/constants.js'
 import { PLANT_SOURCE_OPTIONS, PLANT_CONTAINER_TYPE_OPTIONS } from '../../lib/dropdownRegistry.js'
@@ -189,10 +194,70 @@ export default function PlantForm({
               options={PLANT_SOURCE_OPTIONS} />
           </Field>
 
-          <Field label="Source reference" htmlFor={`${pid}-sref`} optional>
+          {/* ── V4-SOURCEREG-001 — the controlled provenance registry, THREE fields deep ────────────
+              These sit under the `Source` Select above and are a DIFFERENT AXIS from it, not a
+              refinement of it. That Select is PLANT_SOURCE_OPTIONS: the TRANSACTION (seed packet /
+              bought as transplant / gift). These two are the PLACE: `plants.source_id` = who grew,
+              bred, packed or gave it, `plants.acquired_from_source_id` = the shop or venue where it
+              changed hands. dropdownRegistry.js:38-55 keeps a third such vocabulary twenty lines
+              from the second with an explicit "Do not unify them" — same reason, same answer here.
+
+              Labelled Origin / Acquired from rather than Source / Acquired from, because the Select
+              above already owns the visible word "Source" on this form and two fields with one
+              accessible name is the a11y defect, not a copy preference. The contrast is also what
+              teaches the distinction: both ARE sources, and only the pairing says which is which.
+
+              INLINE, never behind a button (Dave: "there is no point in having to click to get to a
+              search/sort/filter"), and `required={false}` on both — provenance is optional on every
+              existing row and 567 of them carry only the free text below. */}
+          <Field label="Origin" htmlFor={`${pid}-srcid`} optional
+            help="Who grew, bred, packed or gave it.">
+            <SourcePicker
+              id={`${pid}-srcid`}
+              label="Origin"
+              value={v.source_id ?? ''}
+              onChange={(sid) => set(sid
+                ? { source_id: sid }
+                // Clearing the originator clears the venue with it: acquired_from is defined as
+                // "the shop WHEN IT DIFFERS from the grower", so it has no meaning on its own, and
+                // leaving a stale id in form state would submit one.
+                : { source_id: '', acquired_from_source_id: '' })}
+              placeholder="Search sources…"
+              data-testid="plant-origin" />
+          </Field>
+
+          {/* Rendered only once an origin exists — a control appears when it can change the answer.
+              Before that it is asking "different from what?".
+
+              chk_plants_source_distinct rejects a row naming one source twice, so the equal case is
+              surfaced through Field's own `error` slot rather than a second child — Field takes
+              exactly ONE element child and contract-errors on two. The host owns submit here, so
+              this form can only WARN; the two inventory pages block the save. */}
+          {(v.source_id ?? '') !== '' && (
+            <Field label="Acquired from" htmlFor={`${pid}-acqid`} optional
+              help="The shop or venue, only if it differs from the origin."
+              error={(v.acquired_from_source_id ?? '') !== '' && v.acquired_from_source_id === v.source_id
+                ? 'Same as the origin — leave this blank when they match.'
+                : null}>
+              <SourcePicker
+                id={`${pid}-acqid`}
+                label="Acquired from"
+                value={v.acquired_from_source_id ?? ''}
+                onChange={(sid) => set({ acquired_from_source_id: sid })}
+                placeholder="Search sources…"
+                data-testid="plant-acquired-from" />
+            </Field>
+          )}
+
+          {/* KEPT, relabelled. `plants.source_ref` is the only home for the facts with no column
+              anywhere in this design — order numbers, lot codes, "(HOMESTEAD discount)", the day of
+              a gift — and 567 rows already carry that text. The old label ("Source reference") read
+              as a second place to type a vendor name, which is what the picker above is for now. */}
+          <Field label="Order / lot reference" htmlFor={`${pid}-sref`} optional
+            help="Order number, lot code, discount, date — anything with no field of its own.">
             <Input id={`${pid}-sref`} value={v.source_ref}
               onChange={e => set({ source_ref: e.target.value })}
-              placeholder="e.g. Johnny's Lot 4421" />
+              placeholder="e.g. Lot 4421, order no. 350019" />
           </Field>
 
           <Field label="Generation" htmlFor={`${pid}-sgen`} optional>

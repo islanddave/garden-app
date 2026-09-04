@@ -202,7 +202,7 @@ describe('ProjectDetail — V1.2a-4 S1 plantForm extension', () => {
 
     // source_ref, source_generation, lineage_note via placeholders
     await act(async () => {
-      fireEvent.change(screen.getByPlaceholderText("e.g. Johnny's Lot 4421"), { target: { value: 'Home batch 2025' } })
+      fireEvent.change(screen.getByPlaceholderText(/order no\. 350019/), { target: { value: 'Home batch 2025' } })
     })
     await act(async () => {
       fireEvent.change(screen.getByPlaceholderText('e.g. F2, third gen saved'), { target: { value: 'F4' } })

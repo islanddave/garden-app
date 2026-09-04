@@ -272,7 +272,7 @@ describe('ProjectDetail ↔ dirty guard — add-planting form', () => {
   it.each([
     [/^Notes/,           'from the co-op flat'],
     [/Initial quantity/, '12'],
-    [/Source reference/, 'Johnny\'s'],
+    [/Order \/ lot reference/, 'Johnny\'s'],
     [/Generation/,       'F2'],
     [/Lineage note/,     'saved from last year'],
     [/Pot size/,         '3 gal'],

@@ -15,6 +15,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
 vi.mock('../components/VarietyPicker.jsx', () => ({ default: () => null }))
+// V4-SOURCEREG-001 — PlantForm now mounts SourcePicker, which reaches Clerk through useApiFetch.
+// PlantingEditor takes its own `fetch` as a PROP, so nothing here mocked the module; without this
+// every case dies on "useAuth can only be used within <ClerkProvider>", which would read as a dirty
+// -signal defect and is the auth layer. Empty list — the picker degrades to "no suggestions" by
+// design, and the source wiring is covered in PlantForm.sourcePicker.test.jsx.
+// STABLE identities: the real useApiFetch memoises `fetch` on [getToken], and useSources keys its
+// effect on that identity. A factory that minted a fresh vi.fn per call re-fires the effect on
+// every render and spins the worker to an OOM kill — measured here, 46s to "Worker exited
+// unexpectedly", which does NOT read as a mock problem.
+const { emptyFetch } = vi.hoisted(() => ({ emptyFetch: async () => [] }))
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({ fetch: emptyFetch, getToken: async () => 'tok' }),
+  apiFetch: emptyFetch,
+}))
 
 import PlantingEditor from '../components/PlantingEditor.jsx'
 

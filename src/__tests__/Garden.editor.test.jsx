@@ -429,7 +429,7 @@ describe('Garden — the planting editor can actually clear a field', () => {
   it('clears several emptied fields in one save', async () => {
     const body = await openEditorAndSave(() => {
       fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: '' } })
-      fireEvent.change(screen.getByLabelText(/Source reference/i), { target: { value: '' } })
+      fireEvent.change(screen.getByLabelText(/Order \/ lot reference/i), { target: { value: '' } })
     })
     expect([...body.clear].sort()).toEqual(['notes', 'source_ref'])
   })
