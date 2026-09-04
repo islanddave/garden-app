@@ -10,6 +10,16 @@ import { householdScope, loadOwnedPhoto } from './household.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, validateProvenance, normalizeSourceLabel } from './provenance.js';
 import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
+// V5-INFLIGHTBATCH-001 — /api/kitchen-batches rides THIS Lambda, not a 27th one. A new function needs
+// an AWS function + Function URL created out of band, a new VITE_API_* repo variable, a row in
+// deploy-staging.yml's hardcoded env: block and a 27th row in deploy-lambda.yml's matrix — and that
+// matrix rewrites the live config of all 26 existing functions on every run. Two paths already map to
+// one Lambda in src/lib/api.js (/api/entity-tags, /api/search), and these tables are in the
+// preservation family, where householdScope() isolation is already wired.
+// The handlers live in ./kitchenRoutes.js so they can be IMPORTED and executed by vitest; this file
+// cannot be. See that file's header.
+import { handleKitchenRoute } from './kitchenRoutes.js';
+import { kitchenErrorMessage } from './kitchenBatch.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -381,6 +391,21 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/preservation';
 
   try {
+    // ── /api/kitchen-batches/** (V5-INFLIGHTBATCH-001), delegated whole. ──
+    // Returns null for every path that is not one of its own, so the preservation routes below are
+    // reached unchanged. Household scope is passed in rather than recomputed — one call to
+    // householdScope() per request, the same array every predicate in this handler binds.
+    const kitchen = await handleKitchenRoute({
+      sql,
+      rawPath,
+      method,
+      rawBody: event.body,
+      query: event.queryStringParameters ?? {},
+      userId,
+      householdIds,
+    });
+    if (kitchen) return resp(kitchen.status, kitchen.body);
+
     // ── Literal sub-routes, checked BEFORE /api/preservation/:id so 'whats-put-up' / 'use-soon'
     //    are not mis-parsed as a row id (mirrors the inventory-items SEEDINV precedent). ──
 
@@ -743,6 +768,17 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('preservation lambda error', err);
+    // V5-INFLIGHTBATCH-001: the kitchen_* CHECKs, given words. Consulted FIRST and returns null for
+    // anything it does not own, so every mapping below keeps its existing behaviour. The one overlap
+    // is chk_preservation_log_one_provenance, which only the batch close-out route can violate.
+    const kitchenMsg = kitchenErrorMessage(err);
+    if (kitchenMsg) return resp(400, { error: kitchenMsg });
+    // 42P01 = relation missing, the OTHER half of the 42703 case below and the expected failure in the
+    // window this feature's sequencing creates: old schema + new Lambda 500s on every batch route.
+    // Without this the operator gets a bare "Internal server error" during exactly that window.
+    if (err.code === '42P01') {
+      return resp(500, { error: `Schema out of date for this deploy — relation missing: ${err.message}` });
+    }
     // V4-PUTUPPROV-001: give the two provenance CHECKs human text. validateUpdate deliberately
     // skips provenance when a PUT omits source_kind (it cannot see the STORED kind without a read),
     // so these are genuinely reachable — and RecordRow.put() would otherwise swallow them into an

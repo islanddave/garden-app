@@ -85,6 +85,14 @@ const PREFIX_TO_LAMBDA = {
   '/api/entity-tags': 'tags',
   '/api/storage-locations': 'storage-location',
   '/api/preservation': 'preservation',
+  // V5-INFLIGHTBATCH-001 — a SECOND prefix on the same Lambda and the same Function URL, the
+  // '/api/entity-tags' -> tags shape. The kitchen-batch routes live in lambda/preservation because a
+  // 27th function would need an AWS function, a Function URL, a VITE_API_* repo variable, a row in
+  // deploy-staging.yml's hardcoded env: block and a 27th row in deploy-lambda.yml's matrix — and that
+  // matrix rewrites the live config of all 26 existing functions on every run. The route literals and
+  // regex live in lambda/preservation/kitchenBatch.js, which this file's walker reaches because it
+  // walks every non-test file in the directory rather than stopping at index.js.
+  '/api/kitchen-batches': 'preservation',
   '/api/harvests': 'harvests',
   '/api/share/facebook': 'facebook-share',
   // Same Lambda, same Function URL — the handler routes on rawPath (V4-IGSHARE-001).
