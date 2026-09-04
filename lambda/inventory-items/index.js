@@ -115,6 +115,17 @@ export const SEED_CONSTRAINT_MESSAGES = {
     'This lot names the plant it was saved from, so it cannot also say it came from a shop, a gift or a farm stand. Clear one of the two.',
   chk_inventory_seed_requires_variety:
     'A seed lot has to name a variety. Pick one before saving.',
+  // V4-SOURCEREG-001. NOT a seed constraint, and it sits in this map anyway because the catch block
+  // that reads it is keyed on constraint name for the WHOLE handler, not on the seed routes — the
+  // name of the const is the only thing here that says "seed".
+  //
+  // The body-only compare in the PUT/POST paths answers the case where one payload carries both
+  // ids. It CANNOT answer the partial write — a body that sends only `source_id` colliding with the
+  // row's stored `acquired_from_source_id` — because this handler's validators never read the stored
+  // row. That case reaches the CHECK, and this is what it says when it gets there. Same two-mechanism
+  // split, for the same reason, as chk_inventory_source_plant_seeds_only above.
+  chk_inventory_source_distinct:
+    'The originator and the place you got it from have to be two different sources. Clear one of them, or pick a different one.',
 };
 
 // A plain JSON object, not an array and not a scalar. jsonb would happily store `"abc"` or `[1]`,
@@ -138,6 +149,53 @@ export function validateMetadata(metadata) {
   }
   return null;
 }
+
+// V4-SOURCEREG-001 — the two `public.source` FKs, checked for LIVENESS and not for ownership.
+//
+// Deliberately not an ownership gate, and this is the one decision here worth stating: `source` is a
+// shared catalogue with RLS off and no created_by-based scoping, the same shape as
+// public.plant_varieties (the migration's own blast-radius note names that precedent). Household-
+// gating it would break the picker every household reads, which is why the pair belongs with
+// `inventory-items::variety_id` in authz-write-fk.test.js's shared-vocabulary group rather than in
+// SITES. What IS checked is the strictness the varieties handler applies to variety_id: the row has
+// to exist and not be soft-deleted, so a stale id from a picker whose list was fetched before a
+// delete answers with a named field instead of landing a dangling-looking reference. The DB FK
+// proves existence but is blind to deleted_at.
+//
+// UUID_RE first, mirroring the sourcePlantId gate in the POST path: a malformed id reaching Postgres
+// raises 22P02, which nothing maps, so it falls through the catch as an opaque 500 rather than the
+// 400 the V4-AUTHZRESIDUE-001 contract promises everywhere else.
+//
+// One statement per id rather than one `= ANY(...)`: the caller needs to know WHICH of the two is
+// bad, and a set-returning query that comes back one row short cannot say. Both are optional and
+// almost always absent, so the common case issues no query at all.
+async function findDeadSourceRef(sql, refs) {
+  for (const [field, id] of refs) {
+    if (id == null) continue;
+    if (!UUID_RE.test(String(id))) return field;
+    const rows = await sql`
+      SELECT 1 FROM public.source WHERE id = ${id} AND deleted_at IS NULL
+    `;
+    if (!rows.length) return field;
+  }
+  return null;
+}
+
+// The pair names two DIFFERENT places: source_id is who grew/bred/packed it, acquired_from_source_id
+// is the shop where it changed hands, set only when it DIFFERS. NULL is "not recorded", never "same
+// as the other one" — so equality is meaningless rather than merely redundant, and
+// chk_inventory_source_distinct rejects it.
+//
+// Body-only, matching every other validator in this file: it fires when one payload carries both
+// ids, and stays silent otherwise. The partial-write collision is answered by the constraint message
+// map instead — see chk_inventory_source_distinct there for why both halves are needed.
+function sourceRefsCollide(body) {
+  return body.source_id != null && body.source_id === body.acquired_from_source_id;
+}
+
+const SOURCE_DISTINCT_ERROR =
+  'source_id and acquired_from_source_id must name different sources';
+const deadSourceRefError = (field) => `${field} does not match a source you can use`;
 
 export function validateCreate(body) {
   if (!body || typeof body !== 'object') return 'body required';
@@ -737,6 +795,12 @@ export const handler = async (event) => {
         // does not round-trip it would have NULLed the cultivar link on a seeds row. The 400 was
         // masking that. Same guard, same reason as the two lines above.
         const hasVariety     = Object.prototype.hasOwnProperty.call(body, 'variety_id');
+        // V4-SOURCEREG-001 — the same guard as the four above, and the one where it is least
+        // optional. Nothing in the app writes these two columns yet, so EVERY screen that PUTs an
+        // inventory item today omits both keys: a bare assignment would null the provenance of any
+        // row on its next edit, from any form, with a 200. See the SET list below.
+        const hasSourceId    = Object.prototype.hasOwnProperty.call(body, 'source_id');
+        const hasAcqSource   = Object.prototype.hasOwnProperty.call(body, 'acquired_from_source_id');
         // Vocabulary is enforced by a DB CHECK, but a 400 here is a better answer than a 500 from a
         // constraint violation — and it names the legal values, which the constraint error does not.
         const SEED_PROCESSES = ['wet', 'dry', 'fresh'];
@@ -783,6 +847,15 @@ export const handler = async (event) => {
             return resp(400, { error: 'location_id does not match a location you can use' });
           }
         }
+
+        // V4-SOURCEREG-001. Distinctness first: it needs no round trip, and rejecting a payload that
+        // names one place twice before looking either up is one fewer query on the failing path.
+        if (sourceRefsCollide(body)) return resp(400, { error: SOURCE_DISTINCT_ERROR });
+        const deadRef = await findDeadSourceRef(sql, [
+          ['source_id', body.source_id ?? null],
+          ['acquired_from_source_id', body.acquired_from_source_id ?? null],
+        ]);
+        if (deadRef) return resp(400, { error: deadSourceRefError(deadRef) });
 
         const isConsumable = body.type === 'consumable';
         const isDurable = body.type === 'durable';
@@ -858,6 +931,24 @@ export const handler = async (event) => {
             seed_stage = CASE
               WHEN ${hasSeedStage} THEN ${body.seed_stage ?? null}
               ELSE seed_stage
+            END,
+            -- V4-SOURCEREG-001. EXPLICIT-PRESENCE GUARDS for the same reason as the two above, and
+            -- with a wider blast radius than any of them. The four columns already guarded here are
+            -- each invisible to ONE form; these two are invisible to EVERY form — nothing in src/
+            -- sends either key today — so a bare assignment would not merely risk losing provenance,
+            -- it would null both columns on the first edit of every row that has them, from any
+            -- screen, and answer 200. The sentinel is what makes the columns writable by a future
+            -- picker without making them erasable by every caller that predates it.
+            --
+            -- Presence, not truthiness: an explicit null source_id is a MEANINGFUL value (a source
+            -- cleared back to unrecorded), so a not-null test would make clearing impossible.
+            source_id = CASE
+              WHEN ${hasSourceId} THEN ${body.source_id ?? null}
+              ELSE source_id
+            END,
+            acquired_from_source_id = CASE
+              WHEN ${hasAcqSource} THEN ${body.acquired_from_source_id ?? null}
+              ELSE acquired_from_source_id
             END
           WHERE id = ${itemId}
             AND created_by = ANY(${householdIds})
@@ -1036,6 +1127,17 @@ export const handler = async (event) => {
         return resp(400, { error: 'source_kind must be own_garden when a source plant is set' });
       }
 
+      // V4-SOURCEREG-001 — same two checks as the PUT arm, in the same order, so the two verbs
+      // cannot answer the same bad payload differently. No presence sentinel is needed here: on a
+      // create there is no prior value for an absent key to preserve, so absent and explicit-null are
+      // the same write (the reasoning the source_plant_id note above records for this verb).
+      if (sourceRefsCollide(body)) return resp(400, { error: SOURCE_DISTINCT_ERROR });
+      const deadRef = await findDeadSourceRef(sql, [
+        ['source_id', body.source_id ?? null],
+        ['acquired_from_source_id', body.acquired_from_source_id ?? null],
+      ]);
+      if (deadRef) return resp(400, { error: deadSourceRefError(deadRef) });
+
       const isConsumable = body.type === 'consumable';
       const isDurable = body.type === 'durable';
       const tags = Array.isArray(body.tags) ? body.tags : [];
@@ -1064,6 +1166,11 @@ export const handler = async (event) => {
       // comments inside it, so every English word of a comment placed there is read as a column
       // name and reported missing from prod. Writing it inside produced 53 bogus misses ("the",
       // "Postgres", "rather") on one run of scripts/dev-main-schema-audit.py.
+      // V4-SOURCEREG-001 — source_id / acquired_from_source_id are NAMED below for the third time
+      // in this handler's history for the same reason: an omitted column is not an error, so a
+      // create that dropped them would return 201 with the provenance gone. The two free-text
+      // `source` / `source_url` columns beside them stay exactly as they are — this pair is the
+      // structured registry reference, not a replacement for the string a caller already sends.
       const rows = await sql`
         INSERT INTO inventory_items (
           user_id, created_by, type, name, category,
@@ -1072,7 +1179,8 @@ export const handler = async (event) => {
           quantity_on_hand, reorder_threshold, reorder_quantity,
           quantity, condition, brand, model,
           image_url, featured_image_id, variety_id, metadata,
-          seed_process, seed_stage, source_plant_id, source_kind
+          seed_process, seed_stage, source_plant_id, source_kind,
+          source_id, acquired_from_source_id
         ) VALUES (
           ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
@@ -1087,7 +1195,8 @@ export const handler = async (event) => {
           ${body.brand ?? null}, ${body.model ?? null},
           ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
           ${metadataJson}::jsonb,
-          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${sourcePlantId}, ${sourceKind}
+          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${sourcePlantId}, ${sourceKind},
+          ${body.source_id ?? null}, ${body.acquired_from_source_id ?? null}
         ) RETURNING *
       `;
       return resp(201, rows[0]);
