@@ -476,6 +476,16 @@ const LANE_SOURCES = [
   ['migrations/v5-phrecord-001/0a-additive-ddl.sql', 'chk_ksl_ph_scale'],
   ['migrations/v5-phrecord-001/0r-rollback.sql', 'chk_ksl_ph_scale'],
   ['migrations/v5-phrecord-001/gates.yml', 'post_no_extra_ph_constraint'],
+  // V5-BATCHCLOSEOUT-001 — the close-out surfaces, added at integration. Lanes L3 and L5 each ran an
+  // equivalent sweep over their own sources locally, but this file is the CENSUS: a guard that lives
+  // in five places is five guards that can each be deleted alone. The batch detail renders the stage
+  // log, which is where every recorded pH reading is displayed, so these files sit squarely in the
+  // path this sweep exists to police.
+  ['src/components/putup/batchClose.js', 'CLOSE_OUTCOMES'],
+  ['src/components/putup/BatchCloseField.jsx', 'BatchCloseField'],
+  ['src/components/putup/BatchDetailView.jsx', 'BatchDetailView'],
+  ['src/components/putup/JarPicker.jsx', 'JarPicker'],
+  ['src/components/putup/ClosedBatchesView.jsx', 'ClosedBatchesView'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the

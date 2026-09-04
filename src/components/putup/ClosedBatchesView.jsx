@@ -29,6 +29,7 @@ import React, { useState, useMemo, useCallback } from 'react'
 import { useApiFetch } from '../../lib/api.js'
 import { P, T } from '../../lib/tokens.js'
 import { Button, ErrorBanner } from '../forms'
+import { CLOSE_OUTCOMES } from './batchClose.js'
 
 // The single spelling of both routes, exported because the PAGE owns the list fetch and this
 // component owns the reopen. src/lib/deletedEntities.js states the rule this follows: "a route
@@ -40,18 +41,17 @@ export const reopenBatchPath = (id) => `/api/kitchen-batches/${id}/reopen`
 // The six outcomes, in the final wording — do not re-word. Matches chk_kitchen_batch_outcome and
 // the server's KITCHEN_OUTCOMES.
 //
-// INTEGRATOR NOTE: L3 owns src/components/putup/batchClose.js and exports CLOSE_OUTCOMES from it.
-// That file did not exist when this lane branched, so this is the local statement of the same six
-// labels. Collapse the two onto CLOSE_OUTCOMES once both lanes land, and keep the three-way parity
-// test (DDL <-> KITCHEN_OUTCOMES <-> labels) pointed at whichever survives.
-export const CLOSED_OUTCOME_LABELS = {
-  put_up: 'Put it up',
-  put_up_different: 'Put it up — but not what I set out to make',
-  consumed: 'Ate it',
-  given_away: 'Gave it away',
-  discarded_spoiled: 'It spoiled — threw it out',
-  abandoned: 'Gave up on it',
-}
+// COLLAPSED AT INTEGRATION (20260904). This lane branched before L3's batchClose.js existed and
+// carried its own literal statement of these six labels, flagged in-source as drift waiting to
+// happen. Both lanes have now landed, so the labels are DERIVED from the single source rather than
+// restated: CLOSE_OUTCOMES is the one table, the close sheet and this archive read the same strings
+// by construction, and a re-wording cannot reach one surface without the other.
+//
+// Derived rather than re-exported so this module keeps its own map shape (value -> label) for
+// outcomeLabel()'s lookup, without a second literal anyone could edit in isolation.
+export const CLOSED_OUTCOME_LABELS = Object.freeze(
+  Object.fromEntries(CLOSE_OUTCOMES.map(o => [o.value, o.label])),
+)
 
 // The fallback for a value this client does not know — a seventh outcome added server-side, a typo,
 // a stale bundle. It is NOT the raw value, and that is the whole point: echoing an unrecognised enum
