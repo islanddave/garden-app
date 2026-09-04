@@ -124,6 +124,30 @@ sweep:
     value: 0
 
 post:
+  # SELF-ARMING, EVERY ONE OF THEM, and that is a house authoring requirement rather than a style
+  # choice. .github/workflows/gate-invariants.yml runs every `continuous` post gate against live
+  # prod AND staging on a schedule and on every migrations/** push, with no skip-if-unapplied logic
+  # anywhere in gate_runner.py. A migration's post gates therefore go red the moment the directory
+  # reaches the branch and STAY red until someone applies it — which is exactly what the first push
+  # of this file did, turning the whole workflow red for every other migration too.
+  #
+  # THE SHAPE: each gate returns rows only when the migration IS applied AND the invariant is
+  # violated, so it is vacuously true before the apply and asserts for real, permanently, afterwards
+  # — with no follow-up edit. The alternative (ship `continuous: false`, flip it in the apply commit)
+  # is a step that gets forgotten, and this repo has the scar: v4-carecacheundo-001's equivalent gate
+  # sits red on prod because that flip never happened.
+  #
+  # It cannot rot into permanent vacuity: 0a writes the schema_version row in the SAME transaction as
+  # the DDL, so "applied" and "armed" are the same event, and post_schema_version_recorded proves the
+  # row landed.
+  #
+  # ⚠ NO `::regclass` ANYWHERE BELOW. A regclass cast is evaluated even under a WHERE that is false,
+  # so `'public.kitchen_batch'::regclass` would ERROR on an unapplied database rather than returning
+  # zero rows — turning a vacuous gate into a hard failure and defeating the arming. The catalog
+  # joins are longer and they are the reason this works.
+
+  # The one PERMANENTLY window-only gate: it describes the apply EVENT, not a property of the
+  # schema, so it can never be a standing invariant. Every other gate keys off it.
   - name: post_schema_version_recorded
     continuous: false
     sql: |
@@ -131,133 +155,198 @@ post:
     expect: rowcount_eq
     value: 1
 
-  # SELF-ARMING, and every post gate below it is too: these assert the END state, so they are TRUE
-  # from the moment the apply lands and stay true forever. That is what makes them safe to leave
-  # continuous. Only the two that describe the apply WINDOW itself (schema_version, and the pre
-  # gates) are continuous:false.
   - name: post_three_tables_exist
+    continuous: true
     sql: |
-      SELECT count(*) FROM information_schema.tables
-       WHERE table_schema='public'
-         AND table_name IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log')
-    expect: scalar_eq
-    value: 3
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND (SELECT count(*) FROM information_schema.tables
+               WHERE table_schema='public'
+                 AND table_name IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log')) <> 3
+    expect: rowcount_eq
+    value: 0
 
   - name: post_batch_id_exists_and_nullable
+    continuous: true
     sql: |
-      SELECT 1 FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='preservation_log'
-         AND column_name='batch_id' AND is_nullable='YES'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='preservation_log'
+                            AND column_name='batch_id' AND is_nullable='YES')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
   # THE GATE THAT CATCHES THE 23503. Guard 4 and the RESTRICT FK are two halves of one mechanism and
   # neither is safe alone: the FK without the guard turns every archive of a batch-fed planting into
-  # a bare, unexplained abort. Matched on the guard's own message text so a future CREATE OR REPLACE
+  # a bare, unexplained abort. Matched on the guard's own message text, so a future CREATE OR REPLACE
   # that drops it goes red here rather than in production.
   - name: post_guard4_present
+    continuous: true
     sql: |
-      SELECT 1 FROM pg_proc
-       WHERE proname = 'archive_plant_events'
-         AND pg_get_functiondef(oid) LIKE '%kitchen_batch row(s) record a batch fed by these harvests%'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_proc
+                WHERE proname = 'archive_plant_events'
+                  AND pg_get_functiondef(oid)
+                      LIKE '%kitchen_batch row(s) record a batch fed by these harvests%')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
-  # Guard 3 must SURVIVE 0c. 0c is a whole-function replace built from a dump, so the failure mode
-  # is not "Guard 4 missing" but "Guard 3 silently lost in the rewrite" — invisible until an archive
-  # strips a put-up's provenance months later.
+  # Guard 3 must SURVIVE 0c. 0c is a whole-function replace built from a dump, so the failure mode is
+  # not "Guard 4 missing" but "Guard 3 silently lost in the rewrite" — invisible until an archive
+  # strips a put-up's provenance months later. The 0r rehearsal already proved the rollback keeps it;
+  # this proves the apply does too, forever.
   - name: post_guard3_survived
+    continuous: true
     sql: |
-      SELECT 1 FROM pg_proc
-       WHERE proname = 'archive_plant_events'
-         AND pg_get_functiondef(oid) LIKE '%preservation_log row(s) record put-ups%'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_proc
+                WHERE proname = 'archive_plant_events'
+                  AND pg_get_functiondef(oid) LIKE '%preservation_log row(s) record put-ups%')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
-  # The RESTRICT half. SET NULL or CASCADE here would each destroy provenance in its own way, and
-  # both are one careless ALTER away.
+  # The RESTRICT half. SET NULL or CASCADE would each destroy provenance in its own way, and both are
+  # one careless ALTER away.
   - name: post_input_harvest_fk_is_restrict
+    continuous: true
     sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conrelid = 'public.kitchen_batch_input'::regclass
-         AND confrelid = 'public.harvest_log'::regclass
-         AND confdeltype = 'r'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class     t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                 JOIN pg_class     f ON f.oid = c.confrelid
+                WHERE n.nspname='public' AND t.relname='kitchen_batch_input'
+                  AND f.relname='harvest_log' AND c.confdeltype='r')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
   # The stage log dies WITH its parent — it is part of the batch, not a reference to it, and there is
-  # no independent consumer of an orphaned stage row. This is the one place CASCADE is correct, and
-  # it is the opposite of the input table above, so it is asserted rather than assumed.
+  # no independent consumer of an orphaned stage row. This is the one place CASCADE is correct, and it
+  # is the opposite of the input table above, so it is asserted rather than assumed.
   - name: post_stage_log_fk_is_cascade
+    continuous: true
     sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conrelid = 'public.kitchen_stage_log'::regclass
-         AND confrelid = 'public.kitchen_batch'::regclass
-         AND confdeltype = 'c'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class     t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                 JOIN pg_class     f ON f.oid = c.confrelid
+                WHERE n.nspname='public' AND t.relname='kitchen_stage_log'
+                  AND f.relname='kitchen_batch' AND c.confdeltype='c')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
   # NO CURRENT-STAGE COLUMN ON THE PARENT. This is the ruling the whole design rests on — the one
-  # existing cache-beside-log instance diverged on 100% of its live rows — and a column is exactly
-  # the kind of thing a later "optimisation" adds without reading the header. Red the build instead.
+  # existing cache-beside-log instance diverged on 100% of its live rows and left its elapsed-time
+  # feature dark in prod — and a cache column is exactly the kind of thing a later "optimisation"
+  # adds without reading the header. Already a violator count, so arming is the only change.
   - name: post_no_current_stage_cache_column
+    continuous: true
     sql: |
-      SELECT 1 FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='kitchen_batch'
-         AND column_name IN ('current_stage','current_stage_kind','stage','stage_entered_at')
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='kitchen_batch'
+                        AND column_name IN ('current_stage','current_stage_kind','stage',
+                                            'stage_entered_at'))
     expect: rowcount_eq
     value: 0
 
-  # The derived read surface, and the index that makes deriving affordable. The view is only cheap
-  # because this composite exists, so the index is not optional and its absence must not be silent.
   - name: post_view_exists
+    continuous: true
     sql: |
-      SELECT 1 FROM information_schema.views
-       WHERE table_schema='public' AND table_name='v_kitchen_batch_current'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.views
+                          WHERE table_schema='public' AND table_name='v_kitchen_batch_current')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
+  # The view is only affordable because this composite exists — deriving current stage is one index
+  # probe per open batch against (batch_id, entered_at DESC, id DESC). The index is not optional and
+  # its absence must not be silent.
   - name: post_stage_log_index_present
+    continuous: true
     sql: |
-      SELECT 1 FROM pg_indexes
-       WHERE schemaname='public' AND tablename='kitchen_stage_log'
-         AND indexname='idx_ksl_batch'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_indexes
+                          WHERE schemaname='public' AND tablename='kitchen_stage_log'
+                            AND indexname='idx_ksl_batch')
     expect: rowcount_eq
-    value: 1
+    value: 0
 
   # The four start states, enforced. This biconditional is the entire "unknown is first-class"
-  # requirement expressed as a constraint rather than a convention, and a convention is what the
-  # design's own §1.6 cautionary tale was.
+  # requirement expressed as a constraint rather than a convention — and a convention is exactly what
+  # the seed-lot cautionary tale turned out to be.
   - name: post_start_pairing_check_present
+    continuous: true
     sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conrelid = 'public.kitchen_batch'::regclass
-         AND conname = 'chk_kitchen_batch_start_pairing'
-         AND convalidated
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class     t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE n.nspname='public' AND t.relname='kitchen_batch'
+                  AND c.conname='chk_kitchen_batch_start_pairing' AND c.convalidated)
     expect: rowcount_eq
-    value: 1
-
-  # Every CHECK on the new tables must be VALIDATED, not NOT VALID. They were created against empty
-  # tables so there is no reason for any of them to be unvalidated, and a convalidated=false a later
-  # reader finds is indistinguishable from "known violators exist".
-  - name: post_all_new_checks_validated
-    sql: |
-      SELECT count(*) FROM pg_constraint
-       WHERE conrelid IN ('public.kitchen_batch'::regclass,
-                          'public.kitchen_batch_input'::regclass,
-                          'public.kitchen_stage_log'::regclass)
-         AND contype = 'c' AND NOT convalidated
-    expect: scalar_eq
     value: 0
 
-  # Prod-only: staging has no garden_ro role at all. The read-only role must be able to see the new
-  # relations or every read-only investigation of a batch comes back empty rather than refused,
-  # which is the failure that reads as "there are no batches".
+  # Every CHECK on the new tables must be VALIDATED, not NOT VALID. They are created against empty
+  # tables so there is no reason for any to be unvalidated, and a convalidated=false that a later
+  # reader finds is indistinguishable from "known violators exist".
+  - name: post_all_new_checks_validated
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class     t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE n.nspname='public'
+                  AND t.relname IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log')
+                  AND c.contype='c' AND NOT c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # Prod-only: staging has no garden_ro role at all. The read-only role must see the new relations or
+  # every read-only investigation of a batch comes back EMPTY rather than refused — which reads as
+  # "there are no batches", the most misleading possible answer.
   - name: post_garden_ro_can_read_kitchen_batch
+    continuous: true
     env: prod
     sql: |
-      SELECT 1 FROM information_schema.role_table_grants
-       WHERE grantee='garden_ro' AND table_schema='public'
-         AND table_name='kitchen_batch' AND privilege_type='SELECT'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.110.0-inflightbatch-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
+                          WHERE grantee='garden_ro' AND table_schema='public'
+                            AND table_name='kitchen_batch' AND privilege_type='SELECT')
     expect: rowcount_eq
-    value: 1
+    value: 0
