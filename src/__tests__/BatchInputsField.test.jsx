@@ -704,7 +704,11 @@ describe('batch-inputs-field — the eight inherited rulings, guarded HERE', () 
     expect(html).not.toMatch(/acidif|shelf.stab|\bsafe\b|\bsafety\b|botul|spoil/i)
     // Green control: the surface is there and is full of copy, so the absence is a property of the
     // words chosen rather than of an empty render.
-    expect(html).toContain('What went into this?')
+    // Re-pointed at integration 20260904: this control used to be the field's own <h3> "What went
+    // into this?", which was removed because the host Section already renders that heading. A
+    // control anchored to a heading that a LAYOUT change can delete is a control that fails silently
+    // — this one is anchored to the count line, which is the one thing this field always renders.
+    expect(html).toContain('written down')
     expect(html.length).toBeGreaterThan(2000)
   })
 
@@ -748,7 +752,11 @@ describe('batch-inputs-field — the eight inherited rulings, guarded HERE', () 
 
   it('asks questions and never issues a verdict about the food', async () => {
     const html = await renderEverything()
-    expect(html).toContain('What went into this?')
+    // Control re-pointed at integration (see the sweep above). The `?` assertion below is NOT
+    // decoration and is the ruling itself: this surface asks, it never pronounces. It survives the
+    // heading removal because the questions it was really about are the field labels — "From which
+    // planting?", "How much went in altogether?", "What kind?", "What was it?" — not the heading.
+    expect(html).toContain('written down')
     expect(html).not.toMatch(/\bshould\b|\bmust be\b|\bis done\b|\blooks (good|bad)\b/i)
     expect(html).toMatch(/\?/)
   })

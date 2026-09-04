@@ -586,7 +586,11 @@ describe('BatchDetailView — the section titles a screen reader lands on', () =
     // hosted field keeps the heading it carries when it stands alone. Asserted as an ordered whole so
     // a THIRD one — the duplicate-surface failure — cannot slip in under a getBy that takes the first.
     expect(within(screen.getByTestId('batch-detail-inputs')).getAllByRole('heading').map(h => h.textContent))
-      .toEqual(['What went in', 'What went into this?'])
+      // ONE heading for one thing. The hosted BatchInputsField used to render its own <h3> directly
+      // under this Section's, stacking two headings a line apart and putting two entries in the
+      // screen-reader heading list for a single section. The host owns it; the field's was removed
+      // at integration 20260904.
+      .toEqual(['What went in'])
     expect(within(screen.getByTestId('batch-detail-stages')).getByRole('heading').textContent).toBe('Log')
     expect(within(screen.getByTestId('batch-detail-outputs')).getByRole('heading').textContent).toBe('What came out')
   })

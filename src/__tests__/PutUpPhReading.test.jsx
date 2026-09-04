@@ -486,6 +486,8 @@ const LANE_SOURCES = [
   ['src/components/putup/BatchDetailView.jsx', 'BatchDetailView'],
   ['src/components/putup/JarPicker.jsx', 'JarPicker'],
   ['src/components/putup/ClosedBatchesView.jsx', 'ClosedBatchesView'],
+  ['src/components/putup/batchInputs.js', 'predicateBody'],
+  ['src/components/putup/BatchInputsField.jsx', 'BatchInputsField'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the

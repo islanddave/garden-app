@@ -357,12 +357,13 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs }) 
   const windowLine = describeWindow(win)
   const netLine = netCountLine({ matched: preview?.matched ?? 0, skipped })
 
+  // NO HEADING OF ITS OWN. This field is mounted as the body of BatchDetailView's "What went in"
+  // Section, which already renders the <h3> — a second heading here stacked two of them one line
+  // apart and put two entries in the screen-reader heading list for one thing. The host owns the
+  // heading; if this is ever mounted with no section around it, the caller supplies one.
+  // Removed at integration 20260904, after the mount landed.
   return (
     <div data-testid="batch-inputs-field" style={{ marginTop: 12 }}>
-      <h3 style={{ margin: '0 0 6px', fontSize: '0.95rem', fontWeight: 700, color: P.dark }}>
-        What went into this?
-      </h3>
-
       <p data-testid="batch-inputs-count" style={{ margin: 0, color: P.mid, fontSize: '0.84rem' }}>
         {rows.length === 0
           ? 'Nothing written down yet.'
