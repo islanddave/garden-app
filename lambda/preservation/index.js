@@ -113,8 +113,46 @@ const SHELF_LIFE_MONTHS = {
   roast_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
   whole_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
   blanch_freeze:  { deep_freezer: 12, fridge_freezer: 4, default: 10 },
-  dehydrate:      { pantry: 12, cold_storage: 12, default: 12 },
-  powder:         { pantry: 18, cold_storage: 18, default: 18 },   // powdered: 18–24 mo (NCHFP dehydrate)
+  // ── Dried foods. THE ONE ROW WITH A PUBLISHED FRUIT/VEGETABLE SPLIT THE METHOD CANNOT SEE. ─────
+  // NCHFP, verbatim (foodsafety-research.md §6.2): "Recommended storage times for dried foods range
+  // from 4 months to 1 year... Most dried fruits can be stored for 1 year at 60F, 6 months at 80F.
+  // Vegetables have about half the shelf-life of fruits." That is a 2x2 — fruit 12/6, veg 6/3, by
+  // storage temperature — plus a printed 4-to-12 envelope. Three decisions, all declared:
+  //   TEMPERATURE. `pantry` takes the WARM anchor (80F), `cold_storage` the COOL one (60F). NCHFP
+  //     defines neither word; this mapping is THE ONLY INFERENCE HERE, and the numbers on both sides
+  //     of it are printed. It survives its own stress test: a ~70F pantry interpolated between the
+  //     anchors gives veg 4.5 (linear) or 4.2 (log-linear), and the real response is Arrhenius-shaped,
+  //     which bends lower still. Three routes, one answer — 4 is the GENEROUS read of the warm leg.
+  //     Nothing is extrapolated below 60F: no anchor exists there, and inventing one is what this
+  //     table forbids. (A root cellar is also the most HUMID room in the house, which is the dried-food
+  //     enemy NCHFP names; that is why cold_storage takes 6 exactly and is never rounded up.)
+  //   FRUIT vs VEGETABLE. Takes the VEGETABLE leg. The method spans both; splitting it is
+  //     V5-PUTUPOUTPUTSHELF-001, not this constant. The chosen error is UNDERSTATING A DRIED FRUIT,
+  //     chosen because the errors are not symmetric: overstating points at NCHFP's named dried-food
+  //     failure ("Moldy foods should be discarded" — and the mould floor a_w ~0.65 sits far below any
+  //     pathogen threshold, research §6.1), understating points at an early chip on a row the cook can
+  //     override. cure_store, one line down, already set this precedent — a published 3-9 crop spread
+  //     shipped as 3/4, the low end.
+  //   PANTRY IS 4, NOT 3. "About half" of 6 is 3, but 3 falls below NCHFP's own printed envelope floor
+  //     of 4 months. 4 is a number the source prints; 3 would be this file's arithmetic overruling it.
+  //   DEFAULT = the pantry (shorter) leg. No fridge figure here, so shelf-life-default-floor.test.js
+  //     does not bind — but its rule does, restated: an unrecorded storage kind must not be read as
+  //     "somebody put this somewhere cool". It is also the leg that will actually fire; prod has three
+  //     deep_freezer locations and zero pantry/cold_storage rows (verified 2026-09-06).
+  dehydrate:      { pantry: 4, cold_storage: 6, default: 4 },   // fruit 12 @60F / 6 @80F, veg half that (fruit/veg-varying; vegetable leg)
+  // powder INHERITS dehydrate EXACTLY — no new source, one existing row reused (the ferment_mash
+  // pattern). It previously read { 18, 18, 18 } with the comment "powdered: 18-24 mo (NCHFP dehydrate)".
+  // THAT CITATION IS FALSE AND IS BEING REMOVED, NOT SOFTENED: NCHFP's dried-food ceiling in the text
+  // above is ONE YEAR and half that for vegetables, so 18 was 1.5x its own cited source's maximum and
+  // 4.5x the vegetable figure; a 2026-09-06 grep of the whole evidence base found no 18- and no
+  // 24-month figure anywhere in it; and git log -S dates the line to c2371b4, 2026-07-20, seven weeks
+  // BEFORE that evidence base existed. Grinding also runs the wrong way mechanically — a powder has far
+  // more surface area than the slices it came from, is more hygroscopic, and CAKES as it reabsorbs
+  // moisture, which is the failure NCHFP names ("Foods that are packaged seemingly 'bone dry' can spoil
+  // if moisture is reabsorbed during storage"). Equal-to-dehydrate is already the generous reading;
+  // longer is unsupportable in citation AND in mechanism. Not house-sourced — every figure is derived
+  // from the printed NCHFP text above — so HOUSE_SOURCED_SHELF_LIFE stays ['candy'].
+  powder:         { pantry: 4, cold_storage: 6, default: 4 },   // ground dried food = dehydrate, same source, same figures
   passata:        { pantry: 12, cold_storage: 18, default: 12 },   // canned tomato sauce, high-acid
   can_water_bath: { pantry: 12, cold_storage: 18, default: 12 },   // high-acid: 12–18 mo best quality
   can_pressure:   { pantry: 12, cold_storage: 12, default: 12 },   // low-acid pressure-canned: ~12 mo
