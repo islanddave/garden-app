@@ -12,7 +12,10 @@
 //       passes the day a fifth is authored short.
 //   (b) CARD INTEGRITY — no seed-lot card overflows its own box horizontally or vertically, its
 //       text column does not clip its content, and the advance button's rect does not intersect
-//       that column. Plus: the document does not scroll sideways.
+//       that column. Plus: the document does not scroll sideways. V5-SEEDCOUNTCARD-001 added the
+//       seed-measure line to that column, so it gets its own box read: clipping, viewport fit,
+//       visibility by checkVisibility(), and non-intersection with the advance button. Its
+//       PRESENCE is reported and not asserted — see the fixture note under SCOPE.
 //   (c) ACTION CLEARANCE — in the two sheet states, the primary action hit-tests to itself, sits
 //       inside the 390px viewport, and is reachable: either painted within the panel or inside a
 //       panel that genuinely scrolls. A Save that is clipped out of a non-scrolling panel is
@@ -32,6 +35,18 @@
 // is a property of the DATA, not of the layout, and its instrument is
 // scripts/seed_label_ambiguity.py. Padding this fixture to 260 rows by repeating eight real names
 // would fabricate a distribution rather than measure one.
+//
+// AND ONE THING IT CANNOT MEASURE TODAY, said here rather than left to be discovered. The TRACKED
+// rows in tests/harness/seedssaved.jsx carry no `seed_count`, `seed_weight_g` or
+// `seed_count_estimated`, so V5-SEEDCOUNTCARD-001's seed-measure line renders on ZERO of the four
+// cards and every box read below is of a card WITHOUT it. The checks in (b) are therefore live but
+// unexercised: they will fire the day the line exists and they say nothing about it until then. That
+// is REPORTED loudly on every run rather than asserted, because the fixture is the thing that has to
+// change and failing here would only red CI at a file this gate does not own. The fix is two scalars
+// on the TRACKED array — one hand-counted lot (`seed_count`, `seed_count_estimated: false`, ideally
+// with a `seed_weight_g` so both segments are on one line) and one vendor-estimated lot
+// (`seed_count_estimated: true`, which renders the longer "approx. N seeds" string and is the worse
+// case for the 44-character name it shares a column with).
 //
 // THE INSTRUMENT CHECK, and why it is not optional. A layout gate that measures nothing scores a
 // perfect pass — every "all targets clear the floor" is trivially true of a page with no targets.
@@ -244,7 +259,21 @@ const MEASURE = (c) => `(() => {
     const col = cd.firstElementChild
     const adv = cd.querySelector('${tid('advance-stage')}')
     const cr = col ? box(col) : null, ar = adv ? box(adv) : null
+    // V5-SEEDCOUNTCARD-001. Read as its own box rather than trusting the column's colClips above:
+    // colClips answers "did anything in this column overflow" and this answers "was it this line",
+    // which is the difference between a finding and a search. \`shown\` is checkVisibility(), never
+    // offsetParent — a line inside a collapsed <details> reports a parent and reads as visible.
+    const meas = cd.querySelector('${tid('lot-seed-measure')}')
+    const mr = meas ? box(meas) : null
     return {
+      measure: meas ? {
+        text: (meas.textContent || '').trim().replace(/\\s+/g, ' '),
+        w: mr.w, h: mr.h,
+        shown: shown(meas),
+        clips: meas.scrollWidth > meas.clientWidth + 1,
+        fitsX: mr.l >= -0.5 && mr.r <= w.innerWidth + 0.5,
+        overlapsAdvance: ar ? !(ar.l >= mr.r || ar.r <= mr.l || ar.t >= mr.b || ar.b <= mr.t) : false,
+      } : null,
       label: name(cd.querySelector('a[href]') || cd),
       h: r.h, w: r.w,
       overflowX: cd.scrollWidth > cd.clientWidth + 1,
@@ -299,7 +328,8 @@ const MEASURE = (c) => `(() => {
     emptyState: !!d.querySelector('${tid('saved-seeds-empty')}'),
     counts: { cards: cards.length, sections: sections.length, candidates: candidates.length,
               controls: taps.length, links: links.length,
-              advanceBtns: d.querySelectorAll('${tid('advance-stage')}').length },
+              advanceBtns: d.querySelectorAll('${tid('advance-stage')}').length,
+              measureLines: d.querySelectorAll('${tid('lot-seed-measure')}').length },
     taps, links, cardMetrics, sheet, action,
   }
 })()`
@@ -395,6 +425,15 @@ try {
         if (cd.colClips) fail(`${at}: card "${cd.label}" clips its text column — the variety name does not fit beside the advance button`)
         if (cd.overlaps) fail(`${at}: card "${cd.label}": the advance button's rect intersects the text column`)
         if (!cd.fitsX) fail(`${at}: card "${cd.label}" sits outside the ${vw}px viewport`)
+        // V5-SEEDCOUNTCARD-001. Only reachable on a card whose row carries a measurement; see the
+        // fixture note in the header for why that is currently no card at all.
+        const ms = cd.measure
+        if (ms) {
+          if (!ms.shown) fail(`${at}: card "${cd.label}": the seed-measure line "${ms.text}" is in the document but not visible — a rendered measurement nobody can read is the defect this line exists to fix, one layer down`)
+          if (ms.clips) fail(`${at}: card "${cd.label}": the seed-measure line "${ms.text}" clips its own content — the count is on screen and cut off`)
+          if (!ms.fitsX) fail(`${at}: card "${cd.label}": the seed-measure line sits outside the ${vw}px viewport`)
+          if (ms.overlapsAdvance) fail(`${at}: card "${cd.label}": the seed-measure line's rect intersects the advance button`)
+        }
       }
       if (m.sidewaysScroll) fail(`${at}: document scrollWidth ${m.docScrollW} > clientWidth ${m.docClientW} — the page scrolls sideways`)
 
@@ -420,6 +459,13 @@ try {
       console.log(`[seeds-saved] ${at}: ${m.counts.cards} cards / ${m.counts.sections} sections / ${m.counts.candidates} candidates · ${m.counts.controls} controls, shortest ${minTap}px (floor ${TAP_MIN_HEIGHT_PX}px), ${short.length} under · pageH ${m.pageH}px`)
       if (m.cardMetrics.length) {
         console.log(`[seeds-saved] ${at}: card gap text→advance ${m.cardMetrics.map(cd => cd.hasAdvance ? cd.colToAdvancePx + 'px' : '—').join('/')} · card heights ${m.cardMetrics.map(cd => cd.h).join('/')}px · overflow ${m.cardMetrics.filter(cd => cd.overflowX || cd.colClips).length}`)
+        // V5-SEEDCOUNTCARD-001. The zero case is printed as loudly as the populated one and says
+        // NOT MEASURED in those words: a silent "0 lines" beside a PASS is exactly how a change
+        // whose clearance was never read gets recorded as one that was.
+        const withMeasure = m.cardMetrics.filter(cd => cd.measure)
+        console.log(withMeasure.length
+          ? `[seeds-saved] ${at}: seed-measure line on ${withMeasure.length}/${m.cardMetrics.length} card(s) · ${withMeasure.map(cd => `"${cd.measure.text}" ${cd.measure.w}x${cd.measure.h}`).join(' / ')} · clipped ${withMeasure.filter(cd => cd.measure.clips).length}`
+          : `[seeds-saved] ${at}: seed-measure line on 0/${m.cardMetrics.length} cards — NOT MEASURED. The fixture's tracked rows carry no seed_count/seed_weight_g, so every height above is a card WITHOUT that line and this run says nothing about its clearance (header, SCOPE).`)
       }
       if (m.sheet) {
         console.log(`[seeds-saved] ${at}: sheet y${m.sheet.top}-${m.sheet.bottom} h${m.sheet.height} · scrollable ${m.sheet.scrollable} (${m.sheet.hiddenBelowPx}px below the fold) · candidate list scroll ${m.sheet.candidateListScrollPx ?? '—'}px · narrowing control ${m.sheet.hasFilterControl ? 'present' : 'NONE'}`)
