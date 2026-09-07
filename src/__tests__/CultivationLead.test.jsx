@@ -260,11 +260,35 @@ describe('CultivationLead component', () => {
   it('but a STORED lot with seed in it is back on Today — the divert is not a one-way door', async () => {
     // The forward half, and the reason the two above are not simply "seed lots never appear". A lot
     // that finished the process and has a count is ordinary sowable seed again.
+    //
+    // THE GATE IS THE ASSERTION, DELIBERATELY — do not put this back to `waitFor(fetch called)` with
+    // a bare assertion after it. This is the ONLY test in the file that requires the RESOLVED payload
+    // to have rendered, and it went red on dev (run 34156253558, `expected 'Sow now' to match ...`)
+    // with all 18 of its neighbours green. `toHaveBeenCalledWith` is satisfied the instant the effect
+    // fires, which is synchronous — it says nothing about the payload having landed in state and
+    // committed. Whether the assertion saw the sow line or the pre-resolve 'Sow now' came down to how the
+    // fetch microtask happened to fall relative to act()'s incidental flush, and on a loaded runner
+    // (1057 files, coverage instrumentation) it fell late. Reproduced both ways locally: a 0ms mock
+    // renders the line, a 120ms mock reads 'Sow now' — same code, same fixture, opposite results.
+    //
+    // The assertion below is UNCHANGED from the one that failed. Only the synchronisation moved:
+    // waiting on the content closes the gap the old gate left open, which is why this is a
+    // strengthening rather than a loosening.
+    //
+    // Its siblings above are immune to this for a reason worth knowing before you copy their shape:
+    // they assert 'Sow now', which is what the region holds BEFORE and AFTER resolve alike. That
+    // makes them un-flakeable AND vacuous-passable — each would stay green if the payload never
+    // arrived at all, so none of them actually proves its divert fires. Fixing that means giving them
+    // a positive control (a second, undiverted candidate whose line you wait for, then assert the
+    // diverted variety_name is absent), which is a redesign of what they pin rather than a
+    // synchronisation fix, so it is deliberately NOT bundled into this red-clearing change.
     fetchMock.mockResolvedValue({
       items: [lettuce({ seed_stage: 'stored', quantity_on_hand: 20, source_plant_id: 'pl-1' })],
     })
     renderLead({ todayISO: TODAY })
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
-    expect(screen.getByTestId('cultivation-lead').textContent).toMatch(/Sow Winter Density by Aug 18/)
+    await waitFor(() =>
+      expect(screen.getByTestId('cultivation-lead').textContent).toMatch(/Sow Winter Density by Aug 18/)
+    )
   })
 })
