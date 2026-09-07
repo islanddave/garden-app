@@ -1,8 +1,27 @@
 # gates.yml
 # V4-READYTRAYIMPRESSION-001 — public.ready_impression (the weigh-in tray impression log).
 #
-# STATUS AT AUTHORING (2026-08-17): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
-# prod. The authoring lane executed no DDL anywhere.
+# STATUS: APPLIED TO BOTH DATABASES. Verified read-only against live prod and live staging
+# 2026-09-07 (OPS-GATEFROZENCOUNT-001 follow-on):
+#
+#   prod     public.ready_impression  112 rows, 12 columns, shown_on 2026-08-18 .. 2026-08-24,
+#                                     1 distinct user, 43 distinct plants
+#   staging  public.ready_impression  0 rows, 12 columns
+#
+# All 10 schema-shape post gates pass on BOTH databases, under the owner role AND under garden_ro.
+# post_starts_empty fails on prod at rowcount=112 — correctly; see its own note.
+#
+# There is NO schema_version row for this migration on either database, because 0a-additive-ddl.sql
+# never writes one. Stated as an explicit negative so the next auditor does not read its absence as
+# evidence of non-apply — the live relation is the receipt, and the first beacon row (2026-08-18)
+# bounds the apply date.
+#
+# THE ORIGINAL STATUS LINE READ "STATUS AT AUTHORING (2026-08-17): AUTHORED, NOT APPLIED. Not
+# applied to staging, not applied to prod." That went stale at the apply and was never revised, and
+# it is not cosmetic: it is a stale exhaustive claim of exactly the kind that hid v4-carekey-001's
+# dead verb. It cost real work — lane E's §E3 deferred this file on the strength of it, and the
+# eleven `continuous` flags below then sat unflipped for three weeks while a live, growing table
+# went unguarded by the nightly sweep. Corrected here rather than left for whoever reads it next.
 #
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 # SEQUENCING
@@ -19,11 +38,13 @@
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 # GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
 #
-#   * Every post gate carries `continuous: false` at authoring because the migration is UNAPPLIED —
+#   * Every post gate carried `continuous: false` at authoring because the migration was UNAPPLIED —
 #     the scheduled sweep runs post gates against LIVE prod and would report a standing red until
 #     the apply (convention per v4-watchimpression-001 / v4-weatherdaily-001).
-#   * The SCHEMA-SHAPE gates (table/columns/constraints/index) stay true forever once applied: flip
-#     those to `continuous: true` AFTER the prod apply.
+#   * The SCHEMA-SHAPE gates (table/columns/constraints/index) stay true forever once applied: those
+#     ten were FLIPPED to `continuous: true` 2026-09-07, the apply having been confirmed above. Each
+#     was run against live prod AND live staging before its flag was moved, and each was then
+#     mutation-proved to still be capable of going red. Ten flipped, one deliberately left dormant.
 #   * post_starts_empty is PERMANENTLY window-scoped — never flip it. It is an L-369 category-1
 #     emptiness assert: the tray's beacon populates this table from the first weigh-in session after
 #     the Lambda ships, so its truth decays BY DESIGN the moment the feature runs.
@@ -82,7 +103,7 @@ post:
        WHERE table_schema='public' AND table_name='ready_impression'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_all_columns_present
     sql: |
@@ -93,7 +114,7 @@ post:
                              'repeat_interval_days','created_at')
     expect: rowcount_eq
     value: 12
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_no_extra_columns
     note: >
@@ -115,9 +136,10 @@ post:
       list instead of a list plus a total. Allowlist verified against live prod AND staging
       2026-09-07: both carry exactly these 12 columns.
 
-      This gate is `continuous: false`, so unlike the four above it is not in the scheduled sweep
-      and could not have red anything; it is de-frozen now so the shape is already correct when the
-      flag is flipped, rather than one more thing to get right during an apply.
+      That de-freeze was written while this gate was still `continuous: false` and therefore outside
+      the scheduled sweep, so it could not red anything at the time. It is `continuous: true` as of
+      2026-09-07 and IS now in the sweep — de-freezing it first is what made arming it safe, since
+      the armed frozen TOTAL would have gone red in the sweep on the first legitimate widening.
 
       The allowlist must stay NULL-free: `x NOT IN (…, NULL)` is NULL for every x, so a single NULL
       element would make this gate return zero rows against ANY table shape and go vacuously green.
@@ -129,7 +151,7 @@ post:
                                  'repeat_interval_days','created_at')
     expect: rowcount_eq
     value: 0
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_no_created_by_column
     note: >
@@ -142,7 +164,7 @@ post:
        WHERE table_schema='public' AND table_name='ready_impression' AND column_name='created_by'
     expect: rowcount_eq
     value: 0
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_shown_on_is_date_not_timestamp
     note: >
@@ -155,7 +177,7 @@ post:
          AND column_name='shown_on' AND data_type='date'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_check_constraints_present
     note: >
@@ -170,7 +192,7 @@ post:
                          'ready_impression_snapshot_chk')
     expect: rowcount_eq
     value: 3
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_unique_guard_columns
     note: >
@@ -188,7 +210,7 @@ post:
          AND a.attname IN ('user_id','plant_id','shown_on','region')
     expect: rowcount_eq
     value: 4
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_unique_guard_has_exactly_four_columns
     note: >
@@ -203,7 +225,7 @@ post:
          AND c.conname='uq_ready_impression_day'
     expect: rowcount_eq
     value: 4
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_fk_to_plants
     sql: |
@@ -212,7 +234,7 @@ post:
          AND confrelid='public.plants'::regclass
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_plant_day_index_present
     note: >
@@ -225,13 +247,22 @@ post:
          AND indexname='idx_ready_impression_plant_day'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip to true after the PROD apply
+    continuous: true    # armed 2026-09-07 — verified green on prod + staging, then mutation-proved
 
   - name: post_starts_empty
     note: >
       PERMANENT apply-window gate — NEVER flip to continuous (L-369 category 1). The tray beacon
       populates this table from the first weigh-in session after the Lambda ships, so this assert is
       true only inside the apply window. It exists solely to prove the DDL itself seeded nothing.
+
+      NO LONGER A PREDICTION — MEASURED. It is the one gate of the eleven that was NOT armed on
+      2026-09-07, and the reason is on the record rather than argued: run read-only against live
+      prod that day it returned `rowcount=112`, i.e. it is ALREADY RED and has been since the first
+      beacon write on 2026-08-18. Arming it would have planted a permanent false red in the
+      blocking nightly sweep. It read PASS on staging the same day only because staging has never
+      received a beacon write (0 rows); that is an accident of traffic, not evidence of an
+      invariant, and it will red there too the first time staging serves a weigh-in session. A
+      green reading on ONE database is not grounds to flip this.
     sql: |
       SELECT 1 FROM public.ready_impression
     expect: rowcount_eq

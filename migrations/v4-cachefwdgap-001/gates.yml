@@ -28,11 +28,20 @@
 # ORDER APPLIED: nothing is applied yet. Authored, gate-validated, and dry-run against live prod
 # inside BEGIN/ROLLBACK.
 #
-# The sweep phase is the L-058 all-row check in its data-repair form: it MEASURES the two drift
-# populations separately before the write, so the post phase can assert that one went to zero while
-# the other is exactly as many rows as it was. Both sweeps use rowcount_gte: 0 — they always pass,
-# still run, still report. That is the point: they put the before/after of a data-quality finding on
-# the record instead of in prose.
+# The sweep phase is the L-058 all-row check in its data-repair form: it MEASURES the three affected
+# populations separately before the write, so the post phase can assert that the behind population
+# went to zero while the ahead population is exactly as many rows as it was. The third — plantings
+# with events and no entity_memory row at all — this migration deliberately does NOT repair; it is
+# measured so it is owned rather than invisible (see the block above that gate). All three sweeps
+# use rowcount_gte: 0 — they always pass, still run, still report. That is the point: they put the
+# before/after of a data-quality finding on the record instead of in prose.
+#
+# COUNT CORRECTED 2026-09-07. This sentence read "the two drift populations" and "Both sweeps" — an
+# exhaustive-sounding accounting written when there were two, never revised when the third was added
+# and labelled "THE THIRD POPULATION". All three gates are and were correct; only the prose was
+# wrong. Fixed rather than tolerated because it is the same stale-exhaustive-claim mechanism that
+# hid v4-carekey-001's dead verb and that left v4-readytrayimpression-001 reading "NOT APPLIED" for
+# three weeks after it was applied.
 
 pre:
   # The columns this migration writes. Asserting the substrate rather than assuming it. SEVEN here,
