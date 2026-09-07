@@ -5,8 +5,8 @@
     "highlights": [
       "Editing an inventory item no longer rounds a fractional quantity — saving any field used to rewrite 0.5 packets to 1",
       "Saved seed lots now show their seed count and weight on the card, not just in the picker",
-      "Adding seed inventory opens the vendor/source fields by default so provenance gets recorded",
-      "Migration gates no longer freeze a table's column count, and one gate that could never fail now can"
+      "You can now mark a seed count as approximate rather than hand-counted",
+      "Adding seed inventory opens the vendor/source fields by default so provenance gets recorded"
     ]
   },
   {
