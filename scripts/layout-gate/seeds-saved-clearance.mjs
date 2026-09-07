@@ -12,7 +12,11 @@
 //       passes the day a fifth is authored short.
 //   (b) CARD INTEGRITY — no seed-lot card overflows its own box horizontally or vertically, its
 //       text column does not clip its content, and the advance button's rect does not intersect
-//       that column. Plus: the document does not scroll sideways.
+//       that column. Plus: the document does not scroll sideways. V5-SEEDCOUNTCARD-001 added the
+//       seed-measure line to that column, so it gets its own box read: clipping, viewport fit,
+//       visibility by checkVisibility(), and non-intersection with the advance button. HOW MANY
+//       cards carry it is asserted EXACTLY, like the card and section counts and for the same
+//       reason — see the fixture note under SCOPE.
 //   (c) ACTION CLEARANCE — in the two sheet states, the primary action hit-tests to itself, sits
 //       inside the 390px viewport, and is reachable: either painted within the panel or inside a
 //       panel that genuinely scrolls. A Save that is clipped out of a non-scrolling panel is
@@ -32,6 +36,21 @@
 // is a property of the DATA, not of the layout, and its instrument is
 // scripts/seed_label_ambiguity.py. Padding this fixture to 260 rows by repeating eight real names
 // would fabricate a distribution rather than measure one.
+//
+// AND THE THING IT COULD NOT MEASURE UNTIL 2026-09-06, kept because the shape of the hole is worth
+// remembering. The TRACKED rows in tests/harness/seedssaved.jsx carried no `seed_count`,
+// `seed_weight_g` or `seed_count_estimated`, so V5-SEEDCOUNTCARD-001's seed-measure line rendered on
+// ZERO of the four cards: every box read below was of a card WITHOUT it, the four checks in (b) were
+// live and exercised by nothing, and this file printed PASS. It said NOT MEASURED in those words
+// rather than passing quietly, which is the only reason the gap was visible at all — but a loud
+// report beside a green exit is still a green exit.
+//
+// The fixture now carries three measured lots and one deliberately unmeasured one ("121 seeds ·
+// 1.6 g", no line, "approx. 7000 seeds · 12.5 g", "185 seeds"), so the checks in (b) read a real box
+// on every populated case, and `measureLines` is an EXACT per-case expectation below. Drop those
+// columns again and this gate goes RED rather than back to reporting its own blindness. The
+// unmeasured lot is not slack: it keeps a card WITHOUT the line on screen, so a regression that
+// renders it unconditionally has something to fail against.
 //
 // THE INSTRUMENT CHECK, and why it is not optional. A layout gate that measures nothing scores a
 // perfect pass — every "all targets clear the floor" is trivially true of a page with no targets.
@@ -87,11 +106,14 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 // nothing FAILS this gate rather than passing it.
 //
 // EXACT vs MINIMUM is a deliberate split, not sloppiness:
-//   · cards / sections / advanceBtns are EXACT because they fall straight out of the fixture rows
-//     in tests/harness/seedssaved.jsx, which this gate owns — 4 tracked lots whose stages are
-//     fermenting/fermenting/drying/stored, so 3 sections, and `stored` is terminal so only 3 cards
-//     carry an advance button. If a redesign changes that grouping the two files move together,
-//     and being told so is the point.
+//   · cards / sections / advanceBtns / measureLines are EXACT because they fall straight out of the
+//     fixture rows in tests/harness/seedssaved.jsx, which this gate owns — 4 tracked lots whose
+//     stages are fermenting/fermenting/drying/stored, so 3 sections, and `stored` is terminal so
+//     only 3 cards carry an advance button. 3 of the 4 carry a seed measurement, the fourth
+//     deliberately none. If a redesign changes that grouping the two files move together, and being
+//     told so is the point. measureLines is set on EVERY case with no `!= null` escape, unlike
+//     advanceBtns: a case authored without it must fail loudly, because "this case measures no
+//     seed-measure line" is exactly the state that hid for a release.
 //   · minCandidates is a FLOOR because the candidate list is the surface under redesign — a cap or
 //     a search filter legitimately changes how many of the 4 untracked rows are offered, and
 //     pinning the number would freeze a decision this lane did not make. What must never happen is
@@ -99,10 +121,10 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 // 667 is the same phone with the keyboard up and is the tighter geometry; it is run for the two
 // sheet states, where an 85vh panel cap is what bites.
 const CASES = [
-  { name: 'empty', viewports: [[390, 844]], expect: { cards: 0, sections: 0, minCandidates: 0, minControls: 1, emptyState: true, sheet: false } },
-  { name: 'list', viewports: [[390, 844]], expect: { cards: 4, sections: 3, minCandidates: 0, advanceBtns: 3, minControls: 4, emptyState: false, sheet: false } },
-  { name: 'picker', viewports: [[390, 844], [390, 667]], expect: { cards: 4, sections: 3, minCandidates: 1, minControls: 5, emptyState: false, sheet: true } },
-  { name: 'advance', viewports: [[390, 844], [390, 667]], expect: { cards: 4, sections: 3, minCandidates: 0, minControls: 4, emptyState: false, sheet: true, primary: 'stage-save' } },
+  { name: 'empty', viewports: [[390, 844]], expect: { cards: 0, sections: 0, minCandidates: 0, minControls: 1, measureLines: 0, emptyState: true, sheet: false } },
+  { name: 'list', viewports: [[390, 844]], expect: { cards: 4, sections: 3, minCandidates: 0, advanceBtns: 3, minControls: 4, measureLines: 3, emptyState: false, sheet: false } },
+  { name: 'picker', viewports: [[390, 844], [390, 667]], expect: { cards: 4, sections: 3, minCandidates: 1, minControls: 5, measureLines: 3, emptyState: false, sheet: true } },
+  { name: 'advance', viewports: [[390, 844], [390, 667]], expect: { cards: 4, sections: 3, minCandidates: 0, minControls: 4, measureLines: 3, emptyState: false, sheet: true, primary: 'stage-save' } },
 ]
 
 const failures = []
@@ -244,7 +266,21 @@ const MEASURE = (c) => `(() => {
     const col = cd.firstElementChild
     const adv = cd.querySelector('${tid('advance-stage')}')
     const cr = col ? box(col) : null, ar = adv ? box(adv) : null
+    // V5-SEEDCOUNTCARD-001. Read as its own box rather than trusting the column's colClips above:
+    // colClips answers "did anything in this column overflow" and this answers "was it this line",
+    // which is the difference between a finding and a search. \`shown\` is checkVisibility(), never
+    // offsetParent — a line inside a collapsed <details> reports a parent and reads as visible.
+    const meas = cd.querySelector('${tid('lot-seed-measure')}')
+    const mr = meas ? box(meas) : null
     return {
+      measure: meas ? {
+        text: (meas.textContent || '').trim().replace(/\\s+/g, ' '),
+        w: mr.w, h: mr.h,
+        shown: shown(meas),
+        clips: meas.scrollWidth > meas.clientWidth + 1,
+        fitsX: mr.l >= -0.5 && mr.r <= w.innerWidth + 0.5,
+        overlapsAdvance: ar ? !(ar.l >= mr.r || ar.r <= mr.l || ar.t >= mr.b || ar.b <= mr.t) : false,
+      } : null,
       label: name(cd.querySelector('a[href]') || cd),
       h: r.h, w: r.w,
       overflowX: cd.scrollWidth > cd.clientWidth + 1,
@@ -299,7 +335,8 @@ const MEASURE = (c) => `(() => {
     emptyState: !!d.querySelector('${tid('saved-seeds-empty')}'),
     counts: { cards: cards.length, sections: sections.length, candidates: candidates.length,
               controls: taps.length, links: links.length,
-              advanceBtns: d.querySelectorAll('${tid('advance-stage')}').length },
+              advanceBtns: d.querySelectorAll('${tid('advance-stage')}').length,
+              measureLines: d.querySelectorAll('${tid('lot-seed-measure')}').length },
     taps, links, cardMetrics, sheet, action,
   }
 })()`
@@ -358,6 +395,7 @@ try {
       if (m.counts.candidates < e.minCandidates) mismatch.push(`${m.counts.candidates} candidates offered, expected >=${e.minCandidates} — a picker offering nothing is indistinguishable from a picker that never rendered`)
       if (!e.sheet && m.counts.candidates) mismatch.push(`${m.counts.candidates} candidates on a case with no picker open`)
       if (e.advanceBtns != null && m.counts.advanceBtns !== e.advanceBtns) mismatch.push(`advance buttons ${m.counts.advanceBtns} != ${e.advanceBtns}`)
+      if (m.counts.measureLines !== e.measureLines) mismatch.push(`seed-measure lines ${m.counts.measureLines} != ${e.measureLines} — the fixture's tracked rows stopped carrying seed_count/seed_weight_g, so the clearance checks below would read a card that has no such line and report a pass about nothing`)
       if (m.counts.controls < e.minControls) mismatch.push(`${m.counts.controls} interactive controls, expected >=${e.minControls}`)
       if (m.emptyState !== e.emptyState) mismatch.push(`empty state ${m.emptyState}, expected ${e.emptyState}`)
       if (e.sheet && !m.sheet) mismatch.push('no [role="dialog"] — the sheet this case exists to measure never opened')
@@ -395,6 +433,15 @@ try {
         if (cd.colClips) fail(`${at}: card "${cd.label}" clips its text column — the variety name does not fit beside the advance button`)
         if (cd.overlaps) fail(`${at}: card "${cd.label}": the advance button's rect intersects the text column`)
         if (!cd.fitsX) fail(`${at}: card "${cd.label}" sits outside the ${vw}px viewport`)
+        // V5-SEEDCOUNTCARD-001. Only reachable on a card whose row carries a measurement; see the
+        // fixture note in the header for why that is currently no card at all.
+        const ms = cd.measure
+        if (ms) {
+          if (!ms.shown) fail(`${at}: card "${cd.label}": the seed-measure line "${ms.text}" is in the document but not visible — a rendered measurement nobody can read is the defect this line exists to fix, one layer down`)
+          if (ms.clips) fail(`${at}: card "${cd.label}": the seed-measure line "${ms.text}" clips its own content — the count is on screen and cut off`)
+          if (!ms.fitsX) fail(`${at}: card "${cd.label}": the seed-measure line sits outside the ${vw}px viewport`)
+          if (ms.overlapsAdvance) fail(`${at}: card "${cd.label}": the seed-measure line's rect intersects the advance button`)
+        }
       }
       if (m.sidewaysScroll) fail(`${at}: document scrollWidth ${m.docScrollW} > clientWidth ${m.docClientW} — the page scrolls sideways`)
 
@@ -420,6 +467,12 @@ try {
       console.log(`[seeds-saved] ${at}: ${m.counts.cards} cards / ${m.counts.sections} sections / ${m.counts.candidates} candidates · ${m.counts.controls} controls, shortest ${minTap}px (floor ${TAP_MIN_HEIGHT_PX}px), ${short.length} under · pageH ${m.pageH}px`)
       if (m.cardMetrics.length) {
         console.log(`[seeds-saved] ${at}: card gap text→advance ${m.cardMetrics.map(cd => cd.hasAdvance ? cd.colToAdvancePx + 'px' : '—').join('/')} · card heights ${m.cardMetrics.map(cd => cd.h).join('/')}px · overflow ${m.cardMetrics.filter(cd => cd.overflowX || cd.colClips).length}`)
+        // V5-SEEDCOUNTCARD-001. Every string and box, printed: these are the numbers a wording or
+        // font change has to move. The zero case no longer reaches this line — it fails the
+        // measureLines expectation above and the run stops at the mismatch, which is the point of
+        // asserting a count that used to be reported.
+        const withMeasure = m.cardMetrics.filter(cd => cd.measure)
+        console.log(`[seeds-saved] ${at}: seed-measure line on ${withMeasure.length}/${m.cardMetrics.length} card(s) · ${withMeasure.map(cd => `"${cd.measure.text}" ${cd.measure.w}x${cd.measure.h}`).join(' / ')} · clipped ${withMeasure.filter(cd => cd.measure.clips).length}`)
       }
       if (m.sheet) {
         console.log(`[seeds-saved] ${at}: sheet y${m.sheet.top}-${m.sheet.bottom} h${m.sheet.height} · scrollable ${m.sheet.scrollable} (${m.sheet.hiddenBelowPx}px below the fold) · candidate list scroll ${m.sheet.candidateListScrollPx ?? '—'}px · narrowing control ${m.sheet.hasFilterControl ? 'present' : 'NONE'}`)

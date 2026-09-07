@@ -227,12 +227,26 @@ const candidateTitle = (i) => i.variety_name || i.name || ''
 // change on purpose: with a seed_count column in place, a `unit='seeds'` token would make two
 // encodings of one jar legal (qoh=1 packet + seed_count=185, or qoh=185 seeds) with nothing forcing
 // them to agree. The word belongs on the screen, not in the row.
-const seedCountLabel = (n) => {
+//
+// V5-SEEDCOUNTCARD-001 adds the `estimated` arm, and it is a WORD rather than a glyph. `≈` is what
+// CropWeightLine uses for an estimated harvest total, but that number sits alone in a big figure
+// where the symbol has room to be noticed; this one rides a 0.78rem line between a packet count and
+// a vendor name, where a leading `≈` is a smudge. "approx." is also the vocabulary this file already
+// uses for the concept in prose ("a vendor's `approx. 25 seeds` off the back of a packet", below) and
+// the one lambda/plants reached for when it declined to project the column at all. Spelled out, it
+// survives being read aloud and being read on a phone in a shed.
+//
+// Second parameter rather than a second helper: this label is now rendered on TWO surfaces (the
+// candidate picker and the tracked card) and a lot that is estimated on one is estimated on both.
+// Default-absent behaves exactly as before, so a caller that does not know about the flag renders
+// what it always did rather than silently asserting "hand-counted".
+const seedCountLabel = (n, estimated) => {
   if (n == null || n === '') return ''
   const c = Number(n)
   if (!Number.isFinite(c)) return ''
   const shown = formatQty(c)
-  return `${shown} ${shown === '1' ? 'seed' : 'seeds'}`
+  const counted = `${shown} ${shown === '1' ? 'seed' : 'seeds'}`
+  return estimated ? `approx. ${counted}` : counted
 }
 
 // The second line, and the whole fix. Facts that actually separate two packets of one cultivar, in
@@ -248,7 +262,7 @@ const seedCountLabel = (n) => {
 // questions ("how many jars" / "how much seed") and either can be absent independently.
 function candidateFacts(i) {
   const parts = []
-  const seeds = seedCountLabel(i.seed_count)
+  const seeds = seedCountLabel(i.seed_count, i.seed_count_estimated)
   if (seeds) parts.push(seeds)
   // formatSeedWeight, NEVER formatQty. formatQty is String(Math.round(n)) with no unit, so a 0.5 g
   // lot would render as the bare "1" — a wrong number wearing no noun, next to a count. Imported
@@ -261,6 +275,41 @@ function candidateFacts(i) {
   if (i.source) parts.push(String(i.source))
   const bought = formatDate(i.purchase_date)
   if (bought) parts.push(bought)
+  return parts.join(' · ')
+}
+
+/**
+ * V5-SEEDCOUNTCARD-001 — the same measurement, on the card of a lot that is already TRACKED. Pure,
+ * exported for test.
+ *
+ * THE GAP THIS CLOSES. V5-SEEDQTY-001 put the count on screen in exactly one place: candidateFacts
+ * above, which renders on the picker — and the picker lists UNTRACKED lots only (`seed_stage` null
+ * is what makes a row a candidate). The moment a lot is tracked it leaves that list forever and
+ * renders through the card below, which showed the stage, the elapsed days, the process, the parent
+ * plant and no quantity of any kind. Every saved lot Dave holds is at `stored`, so on the surface he
+ * actually opens, the number the stage sheet REQUIRED him to type was visible nowhere. Worse than a
+ * wrong number: an absent one, on the page whose whole job is to say what a lot is.
+ *
+ * SAME VOCABULARY, deliberately shared rather than re-spelled. seedCountLabel and formatSeedWeight
+ * are the picker's, so "185 seeds" and "0.5 g" cannot start meaning different things on two surfaces
+ * one tap apart. The two segments and their order match candidateFacts for the same reason.
+ *
+ * `quantity_on_hand` is NOT on this line, and that is the one deliberate divergence from the picker.
+ * It means CONTAINERS, and it earns its place over there because the picker's job is to tell 260
+ * near-identical packets apart — "1 packet" is a disambiguator. Here there is nothing to
+ * disambiguate: the card names one known lot, every saved lot reads "1 packet" after the backfill,
+ * and a second number wearing a different noun beside the seed count is the exact confusion
+ * V5-SEEDQTY-001 exists to end. A reader who wants it has /inventory/:id one tap away.
+ *
+ * Returns '' when nothing has been measured, and the caller renders no line at all — absent is
+ * "nobody has counted this", never zero (a measured 0 is a real answer and DOES render).
+ */
+export function lotMeasure(i) {
+  const parts = []
+  const seeds = seedCountLabel(i?.seed_count, i?.seed_count_estimated)
+  if (seeds) parts.push(seeds)
+  const weight = formatSeedWeight(i?.seed_weight_g)
+  if (weight) parts.push(weight)
   return parts.join(' · ')
 }
 
@@ -1051,6 +1100,7 @@ export default function SavedSeeds() {
             <p style={sectionSubStyle}>{STAGE_META[s].sub}</p>
             {list.map((item) => {
               const to = nextStage(item.seed_stage)
+              const measure = lotMeasure(item)
               const urgencyKey = fermentUrgency(item)
               const urgency = urgencyKey ? FERMENT_URGENCY[urgencyKey] : null
               return (
@@ -1111,6 +1161,29 @@ export default function SavedSeeds() {
                         <div style={{ color: urgency.ink, fontSize: '0.75rem', marginTop: 3 }}>
                           {urgency.note}
                         </div>
+                      </div>
+                    )}
+                    {/* V5-SEEDCOUNTCARD-001 — how much seed is in the jar, on the surface that
+                        holds the jar. See lotMeasure() for what is on this line and why the
+                        packet count is not. Rendered ONLY when something has been measured: an
+                        uncounted lot gets no line rather than a "0 seeds" nobody established, and
+                        the card looks exactly as it does today until a measurement exists.
+                        POSITION. Below the ferment badge and above the parent, so the stage
+                        warnings stay contiguous with the stage line they qualify and the two
+                        lot-level facts — what is in it, where it came from — read together. On
+                        Dave's lots, which are all `stored` and carry no warnings, that puts it
+                        directly under the elapsed line.
+                        P.mid rather than the P.light of the provenance line below: this is a
+                        number he typed and could not see afterwards, which makes it the reason
+                        this row exists rather than a footnote to it. Both clear AA since
+                        V4-INKCONTRAST-001 (P.light is #707070 at 4.952:1), so this is emphasis,
+                        not contrast.
+                        `lot-seed-measure` matches the `lot-source-plant` naming below; the layout
+                        gate's card census reads it by that id. */}
+                    {measure && (
+                      <div data-testid="lot-seed-measure"
+                           style={{ color: P.mid, fontSize: '0.78rem', marginTop: 3 }}>
+                        {measure}
                       </div>
                     )}
                     {/* V4-SEEDLINK-001 — the parent, retroactively. Two states and no third: the
