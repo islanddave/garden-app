@@ -137,6 +137,23 @@ post:
   # anything but a weed — so a NULL is the honest value and no habit was invented to clear the red.
   # The reasoning and the flip condition live in not_harvest_tracked.contested.horseweed, which
   # harvestNullHabitCoverage.test.js binds to this list.
+  #
+  # 2026-09-07 (lane-penstemon-20260907): penstemon added, and it is a CORRECTION of the entry above.
+  # The planting the paragraph above calls a snapdragon is not one — it is a Penstemon, identified
+  # from its own photo on four independent characters (gaping corolla with an open white throat vs
+  # Antirrhinum's sealed personate palate; a white staminode in the mouth; a long exserted arching
+  # style; leaves opposite-decussate and sessile to the flowering node, where A. majus is alternate
+  # distally). So a NEW crop type was minted for it rather than the snapdragon row being edited.
+  # Recorded NULL rather than seeded, on the same test Dave set for horseweed and on the settled
+  # precedent of the eight cut flowers already on this list (dianthus, carnation, cosmos,
+  # blanketflower, delphinium, hollyhock, stock, poppy): a rescued bedding plant grown to be looked
+  # at gets no habit invented for it. Reasoning, counter-argument, flip condition and the full
+  # identification live in not_harvest_tracked.contested.penstemon.
+  #
+  # snapdragon is deliberately LEFT SEEDED at cut_and_come_again/21d. That value is correct for
+  # Antirrhinum majus as a vocabulary entry whatever this one planting turns out to be; it simply has
+  # no planting behind it now. Un-seeding it to match the re-key would discard a sourced fact and add
+  # a ninth NULL to police, which is the wrong direction on both counts.
   - name: post_every_null_habit_is_a_recorded_decision
     sql: |
       SELECT count(*) FROM public.crop_types c
@@ -154,7 +171,7 @@ post:
            'four_o_clock','foxglove','geranium','ginger','goldenrod','grape','haworthia','helichrysum',
            'hibiscus','hollyhock','hosta','hoya','jade','japanese_maple','lantana','lithops','luffa',
            'marigold','meat','milk','milkweed','money_plant','morning_glory','mustard',
-           'nectarine','parsnip','pear','perilla','petunia','pineapple','plum','poppy','pothos',
+           'nectarine','parsnip','pear','penstemon','perilla','petunia','pineapple','plum','poppy','pothos',
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
            'spinach','stock','succulent','summer_savory','sunflower','thunbergia','torenia',
            'tradescantia','turnip','tweedia',

@@ -53,7 +53,7 @@ export const NOT_HARVEST_TRACKED_SLUGS = Object.freeze([
   'helichrysum', 'hibiscus', 'hollyhock', 'horseweed', 'hosta', 'hoya', 'jade', 'japanese_maple',
   'lantana',
   'lithops', 'marigold',
-  'meat', 'milk', 'milkweed', 'money_plant', 'morning_glory', 'petunia', 'pineapple', 'poppy',
+  'meat', 'milk', 'milkweed', 'money_plant', 'morning_glory', 'penstemon', 'petunia', 'pineapple', 'poppy',
   'pothos', 'rose', 'sedum', 'sempervivum', 'spider_plant', 'stock', 'succulent', 'sunflower',
   'thunbergia', 'torenia', 'tradescantia', 'tweedia', 'viola', 'yarrow', 'yogurt',
 ])
