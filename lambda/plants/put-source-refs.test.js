@@ -62,6 +62,9 @@ const PROJECT = '11112222-3333-4444-8555-666677778888';
 const ORIGINATOR = 'a1111111-1111-4111-8111-111111111111';
 const SHOP = 'b2222222-2222-4222-8222-222222222222';
 const GONE = 'c3333333-3333-4333-8333-333333333333';
+// The pointer ALREADY STORED on the row under edit. Distinct from every id above, so "preserved"
+// can never be satisfied by a value the request itself supplied.
+const STORED = 'd4444444-4444-4444-8444-444444444444';
 
 // The value bound to ONE named placeholder, not "is this value anywhere in the list". This UPDATE
 // binds seven such boolean flags, so `expect(values).toContain(false)` would be satisfied by any of
@@ -74,6 +77,42 @@ const boundAfter = (call, re) => {
   const end = m.index + m[0].length;
   expect(call.text[end], `${re} must sit immediately before a binding`).toBe('?');
   return call.values[(call.text.slice(0, end).match(/\?/g) ?? []).length];
+};
+
+// BUG-PLANTSOURCEIDCLEAR-001. Resolve what ONE column's CASE block actually writes for THIS
+// request, by walking its arms against their bound values the way Postgres would.
+//
+// Deliberately understands BOTH shapes: the pre-fix presence sentinel (WHEN <flag> THEN <value>
+// ELSE p.col) and the shipped clear-channel merge (WHEN <clear> @> ARRAY[...] THEN NULL ELSE
+// COALESCE(<value>, p.col)). A helper that only parsed the new shape would red on the old code with
+// "no match", which proves nothing about the data loss — this one reports that the old code WRITES
+// NULL, which is the bug itself, demonstrated rather than asserted.
+//
+// Bindings are positional: the stub builds text as strings.join('?'), so a placeholder's value is
+// indexed by how many '?' precede it. \b guards the column name because acquired_from_source_id
+// ENDS in source_id and would otherwise capture the wrong block, and the tempered
+// `(?:(?!= CASE)[\s\S])` bounds the search to ONE assignment — the same extractor-swallows-too-much
+// defect clear-fields.test.js records at its own drift guard.
+const qs = (s) => (s.match(/\?/g) ?? []).length;
+const resolveCase = (call, col, stored) => {
+  const m = call.text.match(new RegExp(`\\b${col}\\s*= CASE((?:(?!= CASE)[\\s\\S])*?)\\bEND\\b`));
+  expect(m, `${col} has no CASE ... END block`).toBeTruthy();
+  let idx = qs(call.text.slice(0, m.index));
+  const parts = m[1].split(/\bELSE\b/);
+  const elsePart = parts.length > 1 ? parts.pop() : '';
+  for (const arm of parts.join(' ').split(/\bWHEN\b/).slice(1)) {
+    const [condRaw, thenRaw = ''] = arm.split(/\bTHEN\b/);
+    const condVals = call.values.slice(idx, (idx += qs(condRaw)));
+    const thenQ = qs(thenRaw);
+    const thenVals = call.values.slice(idx, (idx += thenQ));
+    const fires = /@>\s*ARRAY\[/.test(condRaw)
+      ? Array.isArray(condVals[0]) && condVals[0].includes(condRaw.match(/ARRAY\['([^']+)'\]/)?.[1])
+      : condVals[0] === true;
+    if (fires) return thenQ === 0 && /\bNULL\b/i.test(thenRaw) ? null : (thenVals[0] ?? null);
+  }
+  // ELSE is either a bare `p.<col>` (the old sentinel's preserve arm) or `COALESCE(<bound>, p.col)`
+  // (the shipped shape), where a non-null binding SETS and a null one falls through to stored.
+  return /COALESCE\s*\(/i.test(elsePart) ? (call.values.slice(idx, idx + qs(elsePart))[0] ?? stored) : stored;
 };
 
 const callMatching = (re) => {
@@ -146,31 +185,23 @@ beforeEach(() => {
   stubState.sqlHandler = routeSql();
 });
 
-describe('V4-SOURCEREG-001 PUT — the clear path, which is what the sentinel exists for', () => {
-  it('CLEARS source_id on an explicit null, which a COALESCE merge cannot do', async () => {
+// BUG-PLANTSOURCEIDCLEAR-001 REVISED THIS BLOCK. It used to assert that a bare `source_id: null`
+// CLEARS the column — the presence sentinel — and that assertion was correct against the design of
+// the day. The design changed because that shape cost 7 live prod rows their provenance: clearing
+// moved to the `clear` channel and presence now only SETS. These cases therefore red on purpose
+// against the old code, which is a test encoding a decision that was reversed, not a gap.
+// The clear cases live in the BUG-PLANTSOURCEIDCLEAR-001 describes below.
+describe('V4-SOURCEREG-001 PUT — a bare null is no longer a clear', () => {
+  it('does NOT clear source_id on an explicit null the request did not ask to clear', async () => {
     const { status } = parse(await handler(put({ ...plantingEditorPayload(), source_id: null })));
     expect(status).toBe(200);
     const call = callMatching(/UPDATE public\.garden_node p/);
-    // The sentinel fired…
-    expect(boundAfter(call, /\bsource_id\s+= CASE\s*\n?\s*WHEN /)).toBe(true);
-    // …and what it wrote is NULL, not the stored value. A COALESCE arm here would collapse the null
-    // back onto p.source_id and the user's removal would be a silent no-op answering 200.
-    expect(boundAfter(call, /\bsource_id\s+= CASE\s*\n?\s*WHEN \?\s*THEN /)).toBe(null);
-    expect(call.text).not.toMatch(/\bsource_id\s+= COALESCE/);
+    expect(resolveCase(call, 'source_id', STORED)).toBe(STORED);
+    // The clear arm must be the one guarding NULL, not a bare assignment.
+    expect(call.text).toMatch(/\bsource_id\s*= CASE WHEN \?\s*@> ARRAY\['source_id'\] THEN NULL ELSE COALESCE\(/);
   });
 
-  it('CLEARS acquired_from_source_id on an explicit null without touching its sibling', async () => {
-    const { status } = parse(await handler(put({ source_id: ORIGINATOR, acquired_from_source_id: null })));
-    expect(status).toBe(200);
-    const call = callMatching(/UPDATE public\.garden_node p/);
-    expect(boundAfter(call, /\bacquired_from_source_id\s+= CASE\s*\n?\s*WHEN /)).toBe(true);
-    expect(boundAfter(call, /\bacquired_from_source_id\s+= CASE\s*\n?\s*WHEN \?\s*THEN /)).toBe(null);
-    // The sibling was SET in the same request. Clearing one and setting the other in one payload is
-    // the "I had these backwards" correction, and it must not be an either/or.
-    expect(boundAfter(call, /\bsource_id\s+= CASE\s*\n?\s*WHEN \?\s*THEN /)).toBe(ORIGINATOR);
-  });
-
-  it('needs no liveness lookup to clear — a null is not an id to check', async () => {
+  it('needs no liveness lookup for a null — a null is not an id to check', async () => {
     const { status } = parse(await handler(put({ source_id: null, acquired_from_source_id: null })));
     expect(status).toBe(200);
     expect(sourceLookups()).toHaveLength(0);
@@ -183,18 +214,19 @@ describe('V4-SOURCEREG-001 PUT — an omitted key must not touch the column', ()
     expect(status).toBe(200);
     const call = callMatching(/UPDATE public\.garden_node p/);
     // Structure: an ELSE arm that re-reads the stored column.
-    expect(call.text).toMatch(/\bsource_id\s+= CASE[\s\S]*?ELSE p\.source_id\s*\n?\s*END/);
-    // And the flag that selects between the arms is OFF. Without this, a CASE hardwired to a
-    // constant true would satisfy the line above while writing null into the column.
-    expect(boundAfter(call, /\bsource_id\s+= CASE\s*\n?\s*WHEN /)).toBe(false);
+    // Structure: a preserve arm that re-reads the stored column…
+    expect(call.text).toMatch(/\bsource_id\s*= CASE[\s\S]*?COALESCE\(\?, p\.source_id\) END/);
+    // …AND the value that actually resolves. Without the second assertion a CASE hardwired to a
+    // constant would satisfy the first while writing null into the column.
+    expect(resolveCase(call, 'source_id', STORED)).toBe(STORED);
   });
 
   it('leaves acquired_from_source_id alone when the real editor payload does not mention it', async () => {
     const { status } = parse(await handler(put(plantingEditorPayload())));
     expect(status).toBe(200);
     const call = callMatching(/UPDATE public\.garden_node p/);
-    expect(call.text).toMatch(/\bacquired_from_source_id\s+= CASE[\s\S]*?ELSE p\.acquired_from_source_id\s*\n?\s*END/);
-    expect(boundAfter(call, /\bacquired_from_source_id\s+= CASE\s*\n?\s*WHEN /)).toBe(false);
+    expect(call.text).toMatch(/\bacquired_from_source_id\s*= CASE[\s\S]*?COALESCE\(\?, p\.acquired_from_source_id\) END/);
+    expect(resolveCase(call, 'acquired_from_source_id', STORED)).toBe(STORED);
   });
 
   it('issues no source lookup at all when neither key is present', async () => {
@@ -341,6 +373,82 @@ describe('V4-SOURCEREG-001 POST — the create path binds both columns', () => {
     expect(call.values[cols.indexOf('source_id')]).toBe(null);
     expect(call.values[cols.indexOf('acquired_from_source_id')]).toBe(null);
     expect(sourceLookups()).toHaveLength(0);
+  });
+});
+
+// BUG-PLANTSOURCEIDCLEAR-001 — 7 live prod rows lost their provenance to the case below.
+//
+// The shape is the one MEASURED in audit_events: a WIDE editor body (it carries quantity and
+// location_id, which is what separated the 7 destroyers from the 24 harmless narrow bodies) that
+// also carries source_id the client never hydrated. Under the bare presence sentinel, merely
+// INCLUDING the key was the clear, so the first save of any planting erased it and answered 200.
+//
+// These cases assert the WRITTEN VALUE, not the SQL shape. put-seed-validate.test.js recorded why:
+// a CASE wired to a constant satisfies a structural check while writing what a bare assignment
+// would, so "there is an ELSE arm" is not evidence that the ELSE arm is the one that fires.
+
+describe('BUG-PLANTSOURCEIDCLEAR-001 — an unhydrated null must not erase a stored source', () => {
+  it('PRESERVES source_id when a wide editor body carries a null the user never chose', async () => {
+    const { status } = parse(await handler(put({
+      ...plantingEditorPayload(),
+      quantity: 3,             // wide. `quantity, source_id, updated_at, version` is verbatim the
+      source_id: null,         // changed-key set of 3 of the 7 destroyed prod rows.
+    })));
+    expect(status).toBe(200);
+    const call = callMatching(/UPDATE public\.garden_node p/);
+    expect(resolveCase(call, 'source_id', STORED)).toBe(STORED);
+  });
+
+  it('PRESERVES acquired_from_source_id on the same body', async () => {
+    const { status } = parse(await handler(put({
+      ...plantingEditorPayload(), quantity: 3, acquired_from_source_id: null,
+    })));
+    expect(status).toBe(200);
+    const call = callMatching(/UPDATE public\.garden_node p/);
+    expect(resolveCase(call, 'acquired_from_source_id', STORED)).toBe(STORED);
+  });
+
+  it('still SETS a source the user actually picked', async () => {
+    // The guard must not be a blanket "ignore this column" — that would trade data loss for a dead
+    // control, which is the defect V4-SOURCEREG-001 was itself fixing.
+    const { status } = parse(await handler(put({ ...plantingEditorPayload(), source_id: ORIGINATOR })));
+    expect(status).toBe(200);
+    const call = callMatching(/UPDATE public\.garden_node p/);
+    expect(resolveCase(call, 'source_id', STORED)).toBe(ORIGINATOR);
+  });
+});
+
+describe('BUG-PLANTSOURCEIDCLEAR-001 — deliberate clearing still works', () => {
+  it('CLEARS source_id when the request explicitly names it in clear[]', async () => {
+    // The intent marker. clearPatch emits this only when the LOADED row held a value and the form
+    // is now empty (src/lib/clearKeys.js buildClearKeys), i.e. exactly "the user removed it".
+    const { status } = parse(await handler(put({
+      ...plantingEditorPayload(), source_id: null, clear: ['source_id'],
+    })));
+    expect(status).toBe(200);
+    const call = callMatching(/UPDATE public\.garden_node p/);
+    expect(resolveCase(call, 'source_id', STORED)).toBe(null);
+  });
+
+  it('CLEARS acquired_from_source_id independently of its sibling', async () => {
+    const { status } = parse(await handler(put({
+      source_id: ORIGINATOR, acquired_from_source_id: null, clear: ['acquired_from_source_id'],
+    })));
+    expect(status).toBe(200);
+    const call = callMatching(/UPDATE public\.garden_node p/);
+    expect(resolveCase(call, 'acquired_from_source_id', STORED)).toBe(null);
+    // Clearing one while setting the other in one payload is the "I had these backwards"
+    // correction, and it must not be an either/or.
+    expect(resolveCase(call, 'source_id', STORED)).toBe(ORIGINATOR);
+  });
+
+  it('400s a request that both clears and sets the same column', async () => {
+    // validateClear's ambiguity rule. Picking a winner for a contradictory request is the failure
+    // mode the clear channel exists to remove, so this must never reach SQL.
+    const { status, body } = parse(await handler(put({ source_id: ORIGINATOR, clear: ['source_id'] })));
+    expect(status).toBe(400);
+    expect(body.error).toBe('source_id cannot be both cleared and set in the same request');
+    expect(stubState.sqlCalls.filter((c) => /UPDATE public\.garden_node p/.test(c.text))).toHaveLength(0);
   });
 });
 

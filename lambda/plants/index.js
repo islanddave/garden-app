@@ -884,23 +884,40 @@ export const handler = async (event) => {
         // written — the sentinel is the only shape that can express all three. Deliberately NOT on
         // the `clear` allowlist; validate.js's tier-3 block says why.
         const hasAcquiredMature = Object.prototype.hasOwnProperty.call(body, 'acquired_mature');
-        // V4-SOURCEREG-001. Presence sentinels, NOT the `clear` channel, and the choice is forced
-        // twice over.
-        //  (a) validate.js's tier-3 block states the house rule as one clearing mechanism per
-        //      column: location_id and acquired_mature are enumerated there as deliberately ABSENT
-        //      from CLEARABLE_FIELDS precisely because they already carry a sentinel, and a second
-        //      spelling for one fact is what that block exists to prevent.
-        //  (b) The only client these two will ever have is SourcePicker, whose onChange emits an id
-        //      or null. A form binding `source_id: form.source_id || null` therefore says "clear"
-        //      with a plain null — which the COALESCE merge below reads as "no opinion" and
-        //      silently preserves. The sentinel is the only thing that makes a source picked by
-        //      mistake removable at all, and reaching NULL through `clear` instead would need
-        //      lambda/plants/validate.js AND its byte-mirrored client half src/lib/clearKeys.js
-        //      (equality-asserted by src/__tests__/clearKeys.test.js) to move together.
-        // Presence, not truthiness: an explicit null is a real value here ("not recorded"), so a
-        // `!= null` test would make clearing unreachable.
-        const hasSourceId = Object.prototype.hasOwnProperty.call(body, 'source_id');
-        const hasAcqSource = Object.prototype.hasOwnProperty.call(body, 'acquired_from_source_id');
+        // V4-SOURCEREG-001, REVISED BY BUG-PLANTSOURCEIDCLEAR-001 (2026-09-07, Dave). These two
+        // columns are SET by presence and CLEARED by the `clear` channel — not cleared by presence.
+        //
+        // The original design made mere presence of the key the clear. That is unsafe for a reason
+        // the old comment here named in advance and shipped anyway: a form binding
+        // `source_id: form.source_id || null` says "clear" with a plain null, and every client in
+        // this app binds its ids that way. It cost 7 live prod rows their provenance — MEASURED in
+        // audit_events, 7 of 7 wide bodies destroying the pointer against 0 of 24 narrow ones,
+        // because width was the only thing deciding whether the key rode along.
+        //
+        // BUG-SRCIDLEAK-001 fixed the GET projection so the editor round-trips a real id, and added
+        // a client guard. Both are correct and both stay. Neither is sufficient: they sit on the
+        // client side of the boundary, so a script, a future component, a re-introduced bare
+        // binding, or a service-worker-cached bundle from before that fix still reaches this line
+        // with `source_id: null` and still erases the column. This is the only place that cannot be
+        // bypassed, which is why the guard belongs here as well.
+        //
+        // WHY THIS IS NOT A SECOND CLEARING POLICY. It is a SWITCH, not an addition — presence
+        // loses its clearing power in the same commit the `clear` arm gains it, so there is still
+        // exactly ONE way to NULL these columns and validate.js's tier-3 house rule holds. The
+        // objection recorded against a server guard was that the Lambda "holds nothing that
+        // separates the user removed the source from the client never had it". True of the old body
+        // shape; the fix is to CREATE that signal rather than conclude none can exist. `clear` is
+        // it, and buildClearKeys only emits it when the loaded row held a value AND the form is now
+        // empty — which is that distinction, computed where it is knowable.
+        //
+        // COST: a bare `source_id: null` can no longer clear. Any caller wanting removal must name
+        // the column in `clear`, and CLEARABLE_FIELDS must stay byte-mirrored with
+        // src/lib/clearKeys.js (src/__tests__/clearKeys.test.js asserts the two lists EQUAL).
+        //
+        // No presence sentinel is computed for these two any more, deliberately: the UPDATE binds
+        // them with the ordinary `WHEN clear THEN NULL ELSE COALESCE(value, stored)` shape, and
+        // COALESCE already expresses "a non-null id sets, a null or absent one preserves". A
+        // hasOwnProperty flag would now have nothing to select.
         const _amErr = validateAcquiredMature(body);
         if (_amErr) return resp(400, { error: _amErr });
         // V4-LOSSEVENT-001 — non-negative floor on qty_lost, shared with the POST path. MUST BE
@@ -1193,20 +1210,24 @@ export const handler = async (event) => {
                 THEN (CASE WHEN ${body.acquired_mature ?? null}::boolean IS NULL THEN NULL ELSE now() END)
               ELSE p.acquired_mature_set_at
             END,
-            -- V4-SOURCEREG-001. Sentinel arms, for the reason stated at hasSourceId above. The
-            -- ELSE p.<col> is the half that matters most today: neither key is sent by anything in
-            -- src/, so it is the arm every deployed screen's save takes, and a bare assignment here
-            -- would erase both columns on the first edit of any planting that has them and answer
-            -- 200. Both columns are projected by public.garden_node as of v5-sourcenodeview-001, so
-            -- naming them through this view cannot 42703.
-            source_id                = CASE
-              WHEN ${hasSourceId} THEN ${body.source_id ?? null}
-              ELSE p.source_id
-            END,
-            acquired_from_source_id  = CASE
-              WHEN ${hasAcqSource} THEN ${body.acquired_from_source_id ?? null}
-              ELSE p.acquired_from_source_id
-            END
+            -- V4-SOURCEREG-001, revised by BUG-PLANTSOURCEIDCLEAR-001 — read the note in the
+            -- validator block above before touching these two. The clear arm is checked FIRST, so
+            -- an explicit removal wins over a value in the same body; validateClear already 400s
+            -- that combination, so the ordering is belt-and-braces rather than load-bearing.
+            --
+            -- The ELSE is the ORDINARY COALESCE MERGE every other clearable column on this
+            -- statement uses, and it already says exactly what is wanted: a non-null id SETS, and a
+            -- null or absent one falls through to the stored value. That is the whole fix — the
+            -- arm a body carrying an unhydrated source_id of null now takes is the preserve arm.
+            -- Adopting the house shape rather than a bespoke boolean flag also keeps these two
+            -- inside clear-fields.test.js's allowlist-to-SQL drift guard, which demands the arm
+            -- verbatim as WHEN clear THEN NULL ELSE COALESCE( and would not have recognised a
+            -- hand-rolled variant. NO BACKTICKS in these comments: one terminates the template
+            -- literal and the file stops parsing, which this edit proved the hard way. Both columns
+            -- are projected by public.garden_node as of v5-sourcenodeview-001, so naming them
+            -- through this view cannot 42703.
+            source_id                = CASE WHEN ${clear} @> ARRAY['source_id'] THEN NULL ELSE COALESCE(${body.source_id ?? null}, p.source_id) END,
+            acquired_from_source_id  = CASE WHEN ${clear} @> ARRAY['acquired_from_source_id'] THEN NULL ELSE COALESCE(${body.acquired_from_source_id ?? null}, p.acquired_from_source_id) END
           WHERE p.id = ${plantId}
             AND (
               -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT
