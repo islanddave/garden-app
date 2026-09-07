@@ -25,6 +25,13 @@ export const CLEARABLE_FIELDS = [
   'qty_initial', 'qty_current', 'loss_cause',
   'seeds_sown', 'seeds_germinated',   // V4-SEEDGERMRATE-001 (BD-057)
   'source_type', 'source_ref', 'source_generation',
+  // BUG-PLANTSOURCEIDCLEAR-001 — the two source FKs MOVED here from the presence sentinel they used
+  // to be cleared by (index.js, see the note at setsSourceId). This is a SWITCH, not a second
+  // spelling: presence lost its clearing power in the same change, so the tier-3 one-mechanism rule
+  // below still holds. Presence-clearing cost 7 live prod rows their provenance, because every form
+  // in this app binds an id as `x: form.x || null` and that reads as an explicit clear.
+  // No care-engine consumer branches on either column, so tier 2 does not apply.
+  'source_id', 'acquired_from_source_id',
   // lineage / succession FKs. The authz gates on these are already `!= null`-guarded, so a clear
   // skips the gate harmlessly rather than bypassing it.
   'parent_plant_id', 'divergence_type', 'succession_group_id', 'succession_order',

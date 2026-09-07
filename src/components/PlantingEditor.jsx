@@ -43,8 +43,8 @@ const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: 
 // BUG-SRCIDLEAK-001 — the PUT half of the two source FKs, and the reason it is a function instead of
 // two more lines in the payload literal.
 //
-// These two are NOT COALESCE-merged on the server. They are cleared by a PRESENCE sentinel
-// (lambda/plants/index.js:874): the key appearing in the body IS the clear. So the plain
+// These two are NOT COALESCE-merged on the server. They USED to be cleared by a PRESENCE sentinel
+// — the key appearing in the body WAS the clear. So the plain
 // `source_id: form.source_id || null` that used to sit in handleEdit said "erase this" for a field
 // the form had never loaded — the GET projection omitted both columns, formFromPlant seeded '', and
 // the FIRST edit of any planting erased its provenance. 7 prod rows lost theirs before the
@@ -55,15 +55,23 @@ const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: 
 // client never asserts an opinion it does not hold. A future read that drops them again goes red
 // there and is merely inert here, instead of silently destroying data the way it just did.
 //
-// DELIBERATELY NOT A SERVER CHECK. The Lambda receives `{source_id: null}` and holds nothing that
-// separates "the user removed the source" from "the client never had it" — so any server-side
-// refusal of that null would break the deliberate clear the sentinel exists to make possible
-// (index.js:865-871), and would be a second clearing policy for one column, which validate.js's
-// tier-3 block forbids by name. The client is the only side that knows which of the two it meant.
+// THERE IS NOW ALSO A SERVER GUARD (BUG-PLANTSOURCEIDCLEAR-001, 2026-09-07, Dave). This comment
+// used to say a server check was impossible, because the Lambda "holds nothing that separates the
+// user removed the source from the client never had it". That was true of the body shape as it then
+// stood, and the fix was to CREATE the missing signal rather than conclude none could exist: the
+// two columns now CLEAR through `clear: []` and are merely SET by presence, so a bare
+// `source_id: null` is a no-op at the handler no matter who sends it. Not a second clearing policy
+// — presence lost its clearing power in the same change, so validate.js's tier-3 one-mechanism rule
+// still holds.
+//
+// This patch STAYS, and is now belt-and-braces rather than the only line of defence: a client that
+// asserts no opinion it does not hold is still the honest shape, and it keeps working unchanged if
+// the allowlists ever move again.
 //
 // Omit ONLY when BOTH are true: the loaded row did not carry the key, and the form holds nothing.
-// A key the row carried stays sendable, so clearing a source still works; a value the user picked
-// stays sendable, so setting one still works even from a payload that did not carry the column.
+// Deliberate clearing does NOT depend on this function — clearPatch below emits `clear:
+// ['source_id']` when the loaded row held a source and the picker is now empty, which is the
+// intent marker the server acts on.
 // handleAdd is untouched and must stay so — a POST has no prior row to preserve, which the INSERT's
 // own comment says in as many words.
 const SOURCE_SENTINEL_KEYS = ['source_id', 'acquired_from_source_id']

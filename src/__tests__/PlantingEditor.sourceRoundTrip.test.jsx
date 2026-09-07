@@ -114,22 +114,29 @@ describe('BUG-SRCIDLEAK-001 — an unrelated edit must not erase a planting sour
     expect(body.source_ref).toBe('Lot 4421')
   })
 
-  it('still lets the picker CLEAR an origin — a present null, which is what the sentinel wants', async () => {
-    // The case that rules out a server-side guard. To the Lambda this request is byte-identical to
-    // the bug's request: `{source_id: null}`. Nothing in it distinguishes "the user removed the
-    // source" from "the client never had it", so any server heuristic that refused the null would
-    // break THIS. The client is the only side that can tell them apart, which is where the guard is.
+  it('still lets the picker CLEAR an origin — now through clear[], the explicit intent marker', async () => {
+    // BUG-PLANTSOURCEIDCLEAR-001 CHANGED WHAT THIS TEST PROVES. It used to read "the case that
+    // rules out a server-side guard": to the Lambda a deliberate clear was byte-identical to the
+    // bug's request, `{source_id: null}`, so no server check could tell them apart. That is exactly
+    // why the null stopped being the clear. Removal now travels as clear:['source_id'] — a marker
+    // no accidental binding emits — and THIS is the end-to-end proof that the server guard did not
+    // cost the user the ability to remove a source they picked by mistake.
     await renderEditor()
     await act(async () => { fireEvent.click(screen.getByLabelText('Clear origin')) })
     await save()
 
     const body = putBody()
-    expect(has(body, 'source_id'), 'the key must be PRESENT — presence is the clear channel').toBe(true)
-    expect(body.source_id).toBe(null)
+    // The marker itself. Without it the new handler takes its preserve arm and the removal is a
+    // silent no-op answering 200 — the failure this assertion exists to catch.
+    expect(body.clear, 'a deliberate removal must name the column in clear[]').toContain('source_id')
     // PlantForm clears the venue with the originator (acquired_from is "the shop when it DIFFERS",
-    // so it is meaningless alone). Both keys must therefore be present nulls, not just the one.
-    expect(has(body, 'acquired_from_source_id')).toBe(true)
-    expect(body.acquired_from_source_id).toBe(null)
+    // so it is meaningless alone), so both columns are removed, not just the one.
+    expect(body.clear).toContain('acquired_from_source_id')
+    // The values still ride along as nulls. validateClear accepts null-plus-clear and rejects only
+    // value-plus-clear, so the two compose; pinned because a future edit that sent an ID here
+    // instead would turn this request into a 400.
+    expect(body.source_id ?? null).toBe(null)
+    expect(body.acquired_from_source_id ?? null).toBe(null)
   })
 })
 

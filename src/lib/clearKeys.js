@@ -84,7 +84,7 @@ export const SERVER_CLEARABLE = {
   projects: ['description', 'variety', 'start_date', 'target_end_date', 'location_id'],
   locations: ['description'],
   // Tier 1 of the plants triage — mirrored verbatim from lambda/plants/validate.js. Eleven of these
-  // 21 have no input in PlantForm, so they are inert until some form renders them; that is fine and
+  // 25 have no input in PlantForm, so they are inert until some form renders them; that is fine and
   // is why the manifest, not this list, decides what a given form may clear.
   plants: [
     'notes', 'metadata', 'lineage_note',
@@ -93,6 +93,12 @@ export const SERVER_CLEARABLE = {
     'qty_initial', 'qty_current', 'loss_cause',
     'seeds_sown', 'seeds_germinated',   // V4-SEEDGERMRATE-001 (BD-057)
     'source_type', 'source_ref', 'source_generation',
+    // BUG-PLANTSOURCEIDCLEAR-001 — moved here from the server's presence sentinel. PlantForm DOES
+    // render these two, so unlike the eleven inert entries above they are live the moment this
+    // lands: buildClearKeys emits the key only when the loaded row held a source AND the picker is
+    // now empty, which is precisely "the user removed it" and is the signal the server needs to
+    // tell a deliberate removal from a client that never had the value.
+    'source_id', 'acquired_from_source_id',
     'parent_plant_id', 'divergence_type', 'succession_group_id', 'succession_order',
     'source_inventory_item_id',
     'container_size',
