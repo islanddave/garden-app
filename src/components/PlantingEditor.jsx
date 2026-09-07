@@ -54,17 +54,23 @@ function formFromPlant(plant) {
     name:     plant.name,
     variety:  plant.variety_ref ?? null,
     varietyText: plant.variety_ref?.name ?? '',
-    // BUG-INVQTYROUNDTRIP-001 — LEFT ON formatQty DELIBERATELY, and this line is the one place in
-    // that sweep where the exact prefill is the wrong change. plants.quantity IS numeric(10,3), so
-    // the rounding is as dishonest here as it was in InventoryDetail; the difference is downstream.
-    // PlantForm renders this as <input type="number" min="1"> with NO step, so the implicit step=1
-    // makes 2.5 report validity.stepMismatch — and PlantForm's <form> has NO noValidate (unlike
-    // InventoryDetail's). MEASURED in qtyRoundTripPlanting.test.jsx: with a 2.500 prefill the submit
-    // event never fires and the ENTIRE planting form becomes unsavable — name, notes, status, all of
-    // it — which is a worse failure than the round it replaces. The honest fix is three coordinated
-    // parts (step on PlantForm's input, this prefill, parseFloat instead of parseInt in handleAdd/
-    // handleEdit), and PlantForm.jsx belongs to another lane's write partition. Prod holds ZERO
-    // fractional plants.quantity rows, so nothing is losing data here today.
+    // BUG-PLANTQTYSTEP-001 — STAYS ON formatQty, and that is now a settled contract rather than the
+    // deferral BUG-INVQTYROUNDTRIP-001 left here. That ticket read this line as the planting half of
+    // the inventory round-trip bug and refused it only because the exact prefill would have made the
+    // form unsubmittable. The refusal was right; the diagnosis was half of one.
+    //
+    // A per-writer census of plants.quantity (2026-09-07) settled which. An inventory quantity is a
+    // MEASURE — half a packet, 4.4 lb of pumice — so rounding it destroys a real value, and
+    // formatQtyExact is the fix. This one is a COUNT of plants, where 2.5 denotes nothing: every
+    // sibling counter on the row is an `integer` column, lambda/events casts `p.quantity::int` to
+    // derive qty_current from it, and 0 of the 320 rows ever written carry a fraction. numeric(10,3)
+    // is an accident of this column's history, not a licence. So formatQty's rounding is CORRECT
+    // here, not tolerated — swapping in formatQtyExact would be the actual defect.
+    //
+    // The contract is now enforced on both sides instead of merely observed: PlantForm declares
+    // step="1" + inputMode="numeric", and lambda/plants validateQuantity 400s a non-integer on the
+    // PUT, the POST and the merge route (the PUT bound body.quantity straight into its COALESCE
+    // until then, so a fraction really could be stored — it just never had been).
     quantity: formatQty(plant.quantity ?? 1),
     notes:    plant.notes ?? '',
     status:   plant.status ?? '',

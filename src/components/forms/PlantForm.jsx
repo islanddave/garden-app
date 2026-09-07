@@ -73,8 +73,22 @@ export default function PlantForm({
             onChange={e => set({ name: e.target.value })}
             placeholder={'e.g. "Megatron Jalapeno" or "Serrano seedlings"'} />
         </Field>
+        {/* BUG-PLANTQTYSTEP-001 — `step="1"` and `inputMode="numeric"` state the integer contract at
+            the point of entry. plants.quantity is numeric(10,3) in the schema, which reads like an
+            invitation to allow fractions here; it is not. This box counts PLANTS, and every sibling
+            counter on the row (qty_initial / qty_current / qty_harvested / qty_lost / seeds_sown /
+            seeds_germinated) is an `integer` column — quantity is the lone numeric, and lambda/events
+            casts it `::int` downstream anyway. The server refuses a non-integer with a 400 as of this
+            change (lambda/plants/validate.js validateQuantity), so this is the near half of one
+            contract rather than the only thing holding the line.
+
+            `step="1"` is behaviourally identical to the HTML default that was already applying — the
+            value is that the next reader sees a DECISION instead of an omission, and that reaching
+            for `step="any"` now means overwriting an explicit "1" rather than filling a blank.
+            `inputMode="numeric"` matches the two seed-count boxes below and keeps Android's keypad
+            off the decimal point, which is where a fraction would otherwise be typed. */}
         <Field label="Quantity" htmlFor={`${pid}-qty`}>
-          <Input id={`${pid}-qty`} type="number" min="1" value={v.quantity}
+          <Input id={`${pid}-qty`} type="number" min="1" step="1" inputMode="numeric" value={v.quantity}
             onChange={e => set({ quantity: e.target.value })} />
         </Field>
       </div>

@@ -19,7 +19,7 @@ import { loadOwnedProject, loadOwnedPlantingRef, resolveContainerForCultivar } f
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { jsonResponder } from './http-response.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
-import { validateClear, approxOrNull, validateAcquiredMature, validateQtyLost } from './validate.js';
+import { validateClear, approxOrNull, validateAcquiredMature, validateQtyLost, validateQuantity } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 import { deriveAnchorOnCreate } from './anchorCreate.js';
 import { setOverwinterCore } from './overwinterAttr.js';
@@ -460,6 +460,17 @@ export const handler = async (event) => {
       try { body = JSON.parse(event.body ?? '{}'); }
       catch { return resp(400, { error: 'Invalid JSON body' }); }
 
+      // BUG-PLANTQTYSTEP-001 — the THIRD writer of plants.quantity, and the least obvious one.
+      // `overrides` is caller-supplied and beats every reconciliation rule (merge.js:394), landing
+      // in `quantity = COALESCE(${resolved.quantity}, quantity)` at merge.js:579 with nothing
+      // between it and the column. Guarded HERE rather than in mergeCore because the override map is
+      // shaped like a request body and this is where request bodies are validated — and because a
+      // 400 is the right answer to a bad request, whereas mergeCore's failures are 409/422 outcomes
+      // of a legitimate one. Only `quantity` is judged: overrides also carries qty_initial /
+      // qty_current / qty_harvested / qty_lost, which are `integer` columns and out of this ticket.
+      const _qErrMerge = validateQuantity(body.overrides ?? {});
+      if (_qErrMerge) return resp(400, { error: _qErrMerge });
+
       const r = await mergeCore(sql, {
         winnerId,
         loserIds: body.loser_ids,
@@ -871,6 +882,14 @@ export const handler = async (event) => {
         // into a 23514 -> 500 on a live route. validate.js carries the full ordering note.
         const _qlErr = validateQtyLost(body);
         if (_qlErr) return resp(400, { error: _qlErr });
+        // BUG-PLANTQTYSTEP-001 — THE verb this guard exists for. The UPDATE below binds
+        // body.quantity straight into `COALESCE(${body.quantity ?? null}, p.quantity)`, and
+        // chk_plants_quantity only asserts `>= 1`, so until now numeric(10,3) scale was the only
+        // thing between a PUT and a stored 2.500 on a column every other counter in the family
+        // declares as `integer`. Shared with the POST path and the merge route so the three writers
+        // cannot drift; validate.js carries the count-vs-measure reasoning.
+        const _qErr = validateQuantity(body);
+        if (_qErr) return resp(400, { error: _qErr });
         if (hasFeatured && body.featured_photo_id != null) {
           // V4-PHOTOFEATURE-002 (Dave bug: "Couldn't set featured photo"): accept a photo linked
           // to this plant EITHER directly (photos.plant_id) OR via an event logged on this plant
@@ -1812,6 +1831,13 @@ export const handler = async (event) => {
       // untouched; qty-lost-guard.test.js asserts BOTH call sites exist.
       const _qlErrPost = validateQtyLost(body);
       if (_qlErrPost) return resp(400, { error: _qlErrPost });
+      // BUG-PLANTQTYSTEP-001 — same validator as the PUT path. This verb was never the hole:
+      // `parseInt(body.quantity, 10)` below has clamped since V1. But parseInt('2.5') is 2, which
+      // is a SILENT round of a value the caller chose, and silent rounding is the whole class this
+      // ticket exists to remove — the clamp stays for absent/garbage, and a fraction now 400s here
+      // instead of being quietly filed as a different number.
+      const _qErrPost = validateQuantity(body);
+      if (_qErrPost) return resp(400, { error: _qErrPost });
 
       // ── AUTHZ: body-supplied PARENT ids (BUG-PARENTOWN-001, 5th instance of the pattern) ────────
       // Until now POST stored project_id / location_id / parent_plant_id / source_inventory_item_id /

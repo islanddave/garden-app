@@ -177,3 +177,49 @@ export function validateQtyLost(body = {}) {
   if (v < 0) return 'qty_lost must be a non-negative integer or null';
   return null;
 }
+
+// BUG-PLANTQTYSTEP-001 — plants.quantity is a COUNT OF PLANTS, and this makes that contract
+// explicit instead of accidental.
+//
+// WHY IT IS A GUARD AND NOT FRACTIONAL SUPPORT. The column really is numeric(10,3), which is why
+// this looked at first like the planting half of BUG-INVQTYROUNDTRIP-001. It is not the same class.
+// An inventory quantity is a MEASURE — half a seed packet, 4.4 lb of pumice — so rounding it
+// destroys a real value. A planting quantity is a COUNT, and 2.5 plants does not denote anything.
+// The rest of the schema already says so out loud: qty_initial, qty_current, qty_harvested,
+// qty_lost, seeds_sown and seeds_germinated are ALL `integer` (measured on live prod 2026-09-07);
+// `quantity` is the lone numeric in its own counter family, and lambda/events casts `p.quantity::int`
+// when it derives qty_current from it (index.js:2640, :3452), so a stored fraction would be silently
+// rounded into an integer column by the next loss or undo write anyway.
+//
+// WHAT WAS ACTUALLY OPEN. `chk_plants_quantity` is `CHECK (quantity >= 1)` — it constrains the RANGE
+// and says nothing about integrality, so numeric(10,3) scale was the only thing between a request
+// and a stored 2.500. POST has clamped since V1 (`parseInt(body.quantity, 10)`) and all three client
+// callers clamp too (PlantingEditor, CaptureFlow, ProjectDetail), but the PUT bound body.quantity
+// straight into its COALESCE and the merge route passed body.overrides.quantity through unread.
+// Prod holds 0 fractional rows in 320 ever written, so this closes the hole before it is used
+// rather than after — but the hole was live, not hypothetical.
+//
+// COERCION-TOLERANT, WHICH IS THE OPPOSITE CALL FROM validateQtyLost ABOVE, deliberately. That one
+// is `typeof v !== 'number'` strict because NO caller sends qty_lost at all, so strictness costs
+// nothing. quantity has three client callers plus a read side: the pg driver serializes
+// numeric(10,3) as the STRING '2.000', so a client that echoes a value it just read back into a PUT
+// is sending a legitimate whole number in string form. '2.000' and '3' must pass; '2.500' must not.
+// A typeof gate would reject all four alike and break the echo. Only the DENOTED value is judged.
+//
+// NOT A RANGE CHECK. 0 and -3 stay exactly as they are today (POST clamps them to 1, PUT lets
+// chk_plants_quantity raise 23514 -> 500), because widening this into a range guard would change
+// POST's create contract for values this ticket has no evidence about. The message names the one
+// thing being enforced.
+export const QUANTITY_ERROR = 'quantity must be a whole number of plants';
+
+export function validateQuantity(body = {}) {
+  if (!Object.prototype.hasOwnProperty.call(body, 'quantity')) return null;
+  const v = body.quantity;
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'number' && typeof v !== 'string') return QUANTITY_ERROR;
+  // '' and '   ' coerce to 0 under Number(), which is a whole number nobody typed. NaN here so the
+  // single Number.isInteger test below rejects them alongside 'abc', Infinity and 2.5.
+  const n = (typeof v === 'string' && v.trim() === '') ? NaN : Number(v);
+  if (!Number.isInteger(n)) return QUANTITY_ERROR;
+  return null;
+}
