@@ -437,42 +437,132 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
     expect(row.seed_count_estimated).toBe(false)
   })
 
-  it('an EXPLICIT null clears it — presence and absence must differ', async () => {
+  it('an EXPLICIT null clears the PAIR — presence and absence must differ', async () => {
+    // REWRITTEN for chk_inventory_seed_count_basis_pairing (phase 0b). This test used to set up with
+    // `{ seed_count: 185 }` and clear with `{ seed_count: null }`. Both are half-pairs now, and the
+    // old version was green for the WRONG REASON even before the constraint: the 185 silently failed,
+    // so the "clear" ran against a row that was already null and proved nothing. It is the only one
+    // of these that CI did not flag, which is exactly why it needed rewriting rather than deleting.
+    //
+    // The contract it encodes now: an explicit null still CLEARS rather than being read as absent,
+    // and clearing is a two-column operation because the count and its basis are one fact.
     setTestUserId(QTY_USER)
     const { body: lot } = await createSeedLot()
-    await measure(lot.id, { seed_count: 185 })
+    const setup = await measure(lot.id, { seed_count: 185, seed_count_estimated: false })
+    expect(setup.status, `setup -> ${JSON.stringify(setup.body)}`).toBe(200)
 
-    const { status } = await measure(lot.id, { seed_count: null })
+    const half = await measure(lot.id, { seed_count: null })
+    expect(half.status, 'the count was cleared out from under its basis').toBe(400)
+    expect(half.body.error).not.toMatch(/chk_/)
+    expect((await stored(lot.id)).seed_count, 'the refused clear still landed').toBe(185)
+
+    const { status } = await measure(lot.id, { seed_count: null, seed_count_estimated: null })
     expect(status).toBe(200)
-    expect((await stored(lot.id)).seed_count).toBeNull()
+    const row = await stored(lot.id)
+    expect(row.seed_count).toBeNull()
+    expect(row.seed_count_estimated).toBeNull()
   })
 
   it('0 is a MEASURED FACT, stored and distinguishable from unrecorded', async () => {
     // "I counted them; the packet is empty" must survive. A truthiness test anywhere on this path
     // collapses it into "nobody has counted", which is the one thing the column exists to separate.
+    //
+    // REWRITTEN for phase 0b: the count now carries `seed_count_estimated: false`, which makes this
+    // case STRONGER rather than weaker. `0` and `false` are the two values a truthiness test reads
+    // as unset, and together they are the most complete pair this route can be sent — "I counted
+    // them; the packet is empty." Both have to survive the round trip.
     setTestUserId(QTY_USER)
     const { body: lot } = await createSeedLot()
-    const { status } = await measure(lot.id, { seed_count: 0, seed_weight_g: 0 })
-    expect(status).toBe(200)
+    const { status, body } = await measure(lot.id, {
+      seed_count: 0, seed_weight_g: 0, seed_count_estimated: false,
+    })
+    expect(status, `seed-measure -> ${JSON.stringify(body)}`).toBe(200)
     const row = await stored(lot.id)
     expect(row.seed_count).toBe(0)
     expect(Number(row.seed_weight_g)).toBe(0)
+    expect(row.seed_count_estimated, 'a `false` basis was read as absent').toBe(false)
+  })
+
+  // ── THE PAIRING RULE, against the armed constraint (chk_inventory_seed_count_basis_pairing,
+  // VALIDATEd on prod and staging by migrations/v5-seedqty-001/0b-backfill-and-arm.sql). NEW in this
+  // lane: nothing here existed before, because the contract these encode did not.
+  //
+  // The route refuses a half-pair in JS rather than letting it reach the CHECK, because the useful
+  // sentence names WHICH half is missing and a 23514 fires identically on both directions. It
+  // refuses rather than defaulting the basis to `false`, which would assert "hand-counted" about a
+  // number nobody said that about.
+
+  it('REFUSES a count with no basis — the number has to say where it came from', async () => {
+    setTestUserId(QTY_USER)
+    const { body: lot } = await createSeedLot()
+
+    const { status, body } = await measure(lot.id, { seed_count: 185 })
+    expect(status, `a count with no basis was accepted: ${JSON.stringify(body)}`).toBe(400)
+    expect(body.error, 'the constraint name leaked to the user').not.toMatch(/chk_/)
+    expect((await stored(lot.id)).seed_count, 'the refused write still landed').toBeNull()
+  })
+
+  it('ALLOWS that SAME body once the lot has a basis — a re-count', async () => {
+    // THE LOAD-BEARING PAIR WITH THE TEST ABOVE. The body is identical; only the stored row differs.
+    // A guard written against the BODY could not tell these apart and would have to refuse this one
+    // — a legitimate correction — or admit the one above.
+    setTestUserId(QTY_USER)
+    const { body: lot } = await createSeedLot()
+    await measure(lot.id, { seed_count: 185, seed_count_estimated: false })
+
+    const { status, body } = await measure(lot.id, { seed_count: 200 })
+    expect(status, `a re-count was refused: ${JSON.stringify(body)}`).toBe(200)
+    const row = await stored(lot.id)
+    expect(row.seed_count).toBe(200)
+    expect(row.seed_count_estimated, 'the basis was dropped by a count-only write').toBe(false)
+  })
+
+  it('REFUSES a basis with no count — the orphan in the other direction', async () => {
+    setTestUserId(QTY_USER)
+    const { body: lot } = await createSeedLot()
+
+    const { status, body } = await measure(lot.id, { seed_count_estimated: true })
+    expect(status, `a basis with no count was accepted: ${JSON.stringify(body)}`).toBe(400)
+    expect(body.error).not.toMatch(/chk_/)
+    expect((await stored(lot.id)).seed_count_estimated, 'the refused write still landed').toBeNull()
+  })
+
+  it('ALLOWS a basis correction alone on a counted lot', async () => {
+    // "That 185 was the packet's claim, not my count." One column moves, the pair stays whole — and
+    // the count must NOT be disturbed by a write that never mentioned it.
+    setTestUserId(QTY_USER)
+    const { body: lot } = await createSeedLot()
+    await measure(lot.id, { seed_count: 185, seed_count_estimated: false })
+
+    const { status, body } = await measure(lot.id, { seed_count_estimated: true })
+    expect(status, `a basis correction was refused: ${JSON.stringify(body)}`).toBe(200)
+    const row = await stored(lot.id)
+    expect(row.seed_count_estimated).toBe(true)
+    expect(row.seed_count).toBe(185)
   })
 
   it('REFUSES a negative seed_count (chk_inventory_seed_count_nonneg), and 0 is the green control', async () => {
     // The handler deliberately does NOT range-check in JS, so this executes the constraint itself.
     // Without the 0 arm below, a suite that had stopped running — or a route that 400s on every
     // body — would read as a pass.
+    //
+    // REWRITTEN for phase 0b, and this one had to be: `{ seed_count: -1 }` alone is a half-pair, so
+    // the new JS pairing guard would refuse it BEFORE the statement ran and this case would go
+    // vacuous — passing on a 400 that never touched chk_inventory_seed_count_nonneg, which is the
+    // precise failure the route's own comment says it declines to range-check in order to avoid.
+    // CI caught the same thing on the old code from the other side ("the constraint name leaked":
+    // the unmapped pairing CHECK won the race and answered instead of nonneg). Carrying the basis
+    // keeps -1 reaching the database. The message assertion is what proves WHICH rule refused.
     setTestUserId(QTY_USER)
     const { body: lot } = await createSeedLot()
 
-    const bad = await measure(lot.id, { seed_count: -1 })
+    const bad = await measure(lot.id, { seed_count: -1, seed_count_estimated: false })
     expect(bad.status, `-1 was accepted: ${JSON.stringify(bad.body)}`).toBe(400)
     expect(bad.body.error, 'the constraint name leaked to the user').not.toMatch(/chk_/)
-    expect(bad.body.error).toMatch(/cannot be negative/i)
+    expect(bad.body.error, 'refused by the pairing guard, not by nonneg').toMatch(/cannot be negative/i)
     expect((await stored(lot.id)).seed_count, 'the refused write still landed').toBeNull()
 
-    const good = await measure(lot.id, { seed_count: 0 })
+    const good = await measure(lot.id, { seed_count: 0, seed_count_estimated: false })
     expect(good.status, `0 was refused: ${JSON.stringify(good.body)}`).toBe(200)
     expect((await stored(lot.id)).seed_count).toBe(0)
   })
@@ -532,6 +622,9 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
   })
 
   it('refuses to measure a lot in another household — 404, same as a missing one', async () => {
+    // Unchanged, and now load-bearing for a second reason: the body is a half-pair, so this also
+    // pins that the pairing guard's stored-row read answers 404 BEFORE it judges the pair. A 400
+    // about the contents of a foreign row would confirm that row exists.
     setTestUserId(QTY_USER)
     const { body: lot } = await createSeedLot()
     setTestUserId(FOREIGN_USER)
@@ -564,10 +657,14 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
       },
     })
     expect(created.status, `POST -> ${JSON.stringify(created.body)}`).toBe(201)
-    const { status, body } = await measure(created.body.id, { seed_count: 5 })
+    // REWRITTEN for phase 0b, for the same reason as the nonneg case above: a count-only body would
+    // now be stopped by the JS pairing guard and never reach chk_inventory_seed_count_seeds_only,
+    // making this a 400 that proves nothing about the seeds-only rule. The /consumable/ assertion is
+    // what tells the two refusals apart. (CI saw the old version fail as a leaked constraint name.)
+    const { status, body } = await measure(created.body.id, { seed_count: 5, seed_count_estimated: false })
     expect(status).toBe(400)
     expect(body.error).not.toMatch(/chk_/)
-    expect(body.error).toMatch(/consumable/i)
+    expect(body.error, 'refused by the pairing guard, not by seeds-only').toMatch(/consumable/i)
   })
 
   it('the /seed-lots read on lambda/plants carries the count through', async () => {
@@ -580,7 +677,11 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
       VALUES (NULL, ${'qty-parent-' + RUN}, ${QTY_USER}) RETURNING id`
     const parentId = p[0].id
     const { body: lot } = await createSeedLot({ source_plant_id: parentId })
-    await measure(lot.id, { seed_count: 185, seed_weight_g: 0.5 })
+    // REWRITTEN for phase 0b: the basis rides with the count. Without it this setup half-paired and
+    // silently 400'd, and the assertion below read `null` where it wanted 185 — one of the four CI
+    // reds. The subject of the test is unchanged: the widened SELECT in lambda/plants.
+    const seeded = await measure(lot.id, { seed_count: 185, seed_weight_g: 0.5, seed_count_estimated: false })
+    expect(seeded.status, `seed-measure -> ${JSON.stringify(seeded.body)}`).toBe(200)
 
     const { status, body } = await callHandler(plantsHandler, {
       method: 'GET', path: `/api/plants/${parentId}/seed-lots`,

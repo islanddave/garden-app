@@ -144,6 +144,17 @@ export const SEED_CONSTRAINT_MESSAGES = {
     'A seed count cannot be negative. Enter 0 if the packet is empty, or leave it blank if you have not counted them.',
   chk_inventory_seed_weight_nonneg:
     'A seed weight cannot be negative. Enter 0 if the packet is empty, or leave it blank if you have not weighed it.',
+  // V5-SEEDQTY-001 phase 0b — the PAIRING rule, and the one entry here that is NOT the primary
+  // refusal. /seed-measure pre-empts this CHECK in JS, unlike the two nonneg rules above where an
+  // unexecuted constraint was the greater risk, because the useful sentence names WHICH half is
+  // missing and a 23514 cannot: the constraint fires identically on a count without a basis and a
+  // basis without a count. So this is the backstop, and it stays reachable through two doors the
+  // route's guard cannot close — the window between that guard's stored-row SELECT and its UPDATE,
+  // where a concurrent write to the same lot moves the other half; and any future writer that
+  // reaches these columns without going through the route at all. Both directions get this one
+  // sentence, because at this point we no longer know which one it was.
+  chk_inventory_seed_count_basis_pairing:
+    'A seed count and how it was counted are one fact. Save the number together with where it came from, or clear both together.',
 };
 
 // A plain JSON object, not an array and not a scalar. jsonb would happily store `"abc"` or `[1]`,
@@ -771,6 +782,58 @@ export const handler = async (event) => {
       if (hasEstimated && body.seed_count_estimated != null
           && typeof body.seed_count_estimated !== 'boolean') {
         return resp(400, { error: 'seed_count_estimated must be true, false or null' });
+      }
+
+      // ── THE PAIRING RULE (chk_inventory_seed_count_basis_pairing, armed NOT VALID -> swept ->
+      // VALIDATEd on prod and staging by migrations/v5-seedqty-001/0b-backfill-and-arm.sql).
+      // seed_count and seed_count_estimated are ONE FACT written into two columns, so the database
+      // requires `(seed_count IS NULL) = (seed_count_estimated IS NULL)`.
+      //
+      // REFUSED, not completed, and that is the whole design decision. Defaulting a missing basis to
+      // `false` would be the smaller diff and it would assert "I counted these myself" about a
+      // number nobody said that about — fabricating the exact fact this column was added to record,
+      // since a vendor's "approx. 200 seeds" and a hand-counted 185 are different facts.
+      //
+      // JUDGED ON THE RESULTING ROW, NOT THE BODY, which is what forces the SELECT this handler
+      // otherwise takes care to avoid. Keys are read by presence, so the body is a partial update
+      // merged into stored values: `{seed_count: 200}` is CORRECT on a lot that already carries a
+      // basis (a re-count) and WRONG on one that does not, and `{seed_count: null}` is the mirror
+      // image. A body-only guard cannot separate those, so it would have to refuse the legitimate
+      // re-count or admit the broken write — neither is the contract.
+      //
+      // Gated on a pair key being PRESENT: a weight-only body, or the empty body the presence
+      // contract explicitly allows, cannot move either column, and the stored pair is already legal.
+      // Those keep their single round trip.
+      //
+      // The stored row is ALWAYS a legal pair, which is why only the body can break one here: the
+      // CHECK is VALIDATEd, and the WHERE below excludes the soft-deleted rows it exempts.
+      if (hasCount || hasEstimated) {
+        // Scoped IDENTICALLY to the UPDATE below — including the deliberate absence of
+        // `type = 'consumable'`, so a durable seeds row reaches chk_inventory_seed_count_seeds_only
+        // and reads its sentence instead of a 404 lying about a row on the caller's own screen.
+        // 404 is answered HERE, before the pairing test, so an unreadable row stays indistinguishable
+        // from a missing one rather than leaking its existence through a 400 about its contents.
+        const [current] = await sql`
+          SELECT seed_count, seed_count_estimated
+            FROM public.inventory_items
+           WHERE id = ${itemId}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+             AND category = 'seeds'
+        `;
+        if (!current) return resp(404, { error: 'Not found' });
+
+        // `== null`, never truthiness: `0` seeds and a `false` basis are both MEASURED values, and
+        // they are the two the falsy test would silently read as unset.
+        const count = hasCount ? (body.seed_count ?? null) : current.seed_count;
+        const basis = hasEstimated ? (body.seed_count_estimated ?? null) : current.seed_count_estimated;
+        if ((count == null) !== (basis == null)) {
+          return resp(400, {
+            error: count == null
+              ? 'Clearing a seed count also clears how it was counted — clear both together, or leave the count as it is.'
+              : 'A seed count has to say where the number came from. Record whether you counted the seeds yourself or took the number off the packet.',
+          });
+        }
       }
 
       // Same predicate set as /source-plant and /source-kind: household-scoped, live rows only,
