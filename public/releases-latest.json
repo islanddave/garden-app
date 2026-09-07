@@ -1,10 +1,9 @@
 {
-  "version": "4.115.0",
-  "date": "2026-09-06",
+  "version": "4.116.0",
+  "date": "2026-09-07",
   "highlights": [
-    "Editing an inventory item no longer rounds a fractional quantity — saving any field used to rewrite 0.5 packets to 1",
-    "Saved seed lots now show their seed count and weight on the card, not just in the picker",
-    "You can now mark a seed count as approximate rather than hand-counted",
-    "Adding seed inventory opens the vendor/source fields by default so provenance gets recorded"
+    "Editing a planting no longer erases which nursery or swap it came from",
+    "Planting quantities are now whole numbers end to end, refused with a clear message rather than silently rounded",
+    "Seed measurements on saved lots are guarded against overflowing their card"
   ]
 }
