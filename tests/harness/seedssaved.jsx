@@ -57,36 +57,55 @@ const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
 //   i2  no line at all                 both columns NULL — the control. A card WITHOUT the line has
 //                                      to stay on screen, or a regression that renders it
 //                                      unconditionally has nothing left to fail against.
-//   i3  "approx. 7000 seeds · 12.5 g"  the longest string this page can honestly produce: the
-//                                      vendor-claim prefix, a four-digit count and a two-digit
-//                                      weight, in the narrow column a card shares with its advance
-//                                      button. Mustard seed runs ~1.8mg, so 7000 seeds IS 12.5 g —
-//                                      bulk greens seed is sold BY WEIGHT with an approximate count
-//                                      printed on it, which is the fact seed_count_estimated exists
-//                                      to record.
-//   i4  "185 seeds"                    prod's exact shape, on prod's stage: all three of Dave's
-//                                      stored lots carry a hand count and no weight (1884=185,
-//                                      Sugar Baby=175, Ukrainian Purple=121).
+//   i3  "approx. 2147483647 seeds      the CEILING of the two columns — see the block below. 39
+//        · 9999999.99 g"               characters, an intrinsic 255.4px, WRAPPING to two lines in
+//                                      the 230.4px column a card shares with its advance button.
+//   i4  "185 seeds"                    prod's exact shape, on prod's stage: three of Dave's stored
+//                                      lots carry a hand count and no weight (1884=185, Sugar
+//                                      Baby=175, Ukrainian Purple=121).
+//
+// THE CEILING ROW, and why i3 is no longer a packet anyone could own (2026-09-07). It used to read
+// "approx. 7000 seeds · 12.5 g" and this file called that "the longest string this page can honestly
+// produce". It is not. `lot-seed-measure` sets no `white-space`, so an over-long value never clips —
+// it WRAPS, and the card grows under it. The widest string the columns can put in that box is the
+// ceiling of their own types: `seed_count` is `integer` (max 2147483647, and formatQty prints it
+// with no separators), `seed_weight_g` is `numeric(10,3)`, and `seed_count_estimated` adds the
+// "approx. " prefix. Measured in real Chrome at 390px: 255.4px of text in a 230.4px column, two line
+// boxes, card 184px -> 199px. That two-line bound is what seeds-saved-clearance.mjs now asserts, and
+// with 7000 seeds on this row it had a full line of slack and the boundary was exercised by nothing.
+//
+// 9999999.990, NOT the column's true maximum 9999999.999: formatSeedWeight rounds to two decimals
+// and strips trailing zeros, so .999 renders as the SHORTER "10000000 g". The widest RENDERED weight
+// is not the widest STORED one.
+//
+// So this row keeps the "a real database would accept it" half of the rule above and deliberately
+// drops the "a packet could hold it" half. The question it answers is not "what does a saved lot
+// look like" — i1 and i4 answer that, either side of it — but "how wide is the widest string these
+// two columns can put beside a Drying → button", and only the type ceiling answers that. Prod's own
+// widest is far shorter: 12 of 324 seed rows carry a count, max 500, ZERO carry a weight, so the
+// longest string live today is "approx. 500 seeds" (read from prod Neon 2026-09-07).
 //
 // PAIRING, not decoration: inventory_items carries CHECK ((seed_count IS NULL) =
 // (seed_count_estimated IS NULL)) (migrations/v5-seedqty-001/0b), so a count without its flag is a
 // row no real database can hold — the same class of fixture-only row as the missing `status` above.
 // Every row here sets both or neither. Weights are STRINGS because numeric(10,3) serializes as one.
 //
-// TWO CASES DELIBERATELY NOT HERE. A weight with no count ("99 mg", both count columns NULL) is
-// legal and renders, but it is the SHORTEST string on the line and can never be the binding layout
-// case; src/__tests__/SavedSeeds.trackedMeasure.test.jsx owns it, where content is the question.
-// And `seed_count_estimated: true` is reachable today only through PUT
-// /api/inventory-items/:id/seed-measure — no in-app surface writes it (SaveSeedSheet and the card's
-// own count field both write false, deliberately). It is fixtured because the page RENDERS that
-// string and the column exists to be rendered, not because prod holds such a row yet.
+// ONE CASE DELIBERATELY NOT HERE. A weight with no count ("99 mg", both count columns NULL) is legal
+// and renders, but it is the SHORTEST string on the line and can never be the binding layout case;
+// src/__tests__/SavedSeeds.trackedMeasure.test.jsx owns it, where content is the question.
+//
+// `seed_count_estimated: true` used to be listed here as a second absent case, on the grounds that
+// only PUT /api/inventory-items/:id/seed-measure could write it. Both halves of that expired: the
+// SeedCountBasis control ships in SaveSeedSheet and in this page's own count field, and prod already
+// holds an estimated lot ("Dill saved seed 2026", 500 seeds, seed_count_estimated true — read
+// 2026-09-07). The prefix on i3 is now a live shape, not a hypothetical one.
 const TRACKED = [
   { id: 'i1', name: 'Money Plant packet',   variety_name: 'Money Plant (self-saved, variety unrecorded)', crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(4),
     seed_count: 121,  seed_weight_g: '1.600',  seed_count_estimated: false },
   { id: 'i2', name: 'Cinderella packet',    variety_name: "Cinderella (Rouge Vif d'Etampes)",             crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(0),
     seed_count: null, seed_weight_g: null,     seed_count_estimated: null },
   { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  crop_slug: 'mustard', status: 'active', seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12),
-    seed_count: 7000, seed_weight_g: '12.500', seed_count_estimated: true },
+    seed_count: 2147483647, seed_weight_g: '9999999.990', seed_count_estimated: true },
   { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 crop_slug: 'summer_squash', status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40),
     seed_count: 185,  seed_weight_g: null,     seed_count_estimated: false },
 ]
