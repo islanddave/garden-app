@@ -30,7 +30,10 @@ import Spinner from '../components/forms/Spinner.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { T } from '../components/forms/formStyles.js'
 import { SEED_STAGES } from '../components/seed/seedStages.js'
-import SaveSeedSheet from '../components/planting/SaveSeedSheet.jsx'
+// SeedCountBasis alongside the sheet itself: V5-SEEDESTTOGGLE-001's control is shared by the two
+// writers of the seed-measure columns, and this page already depended on that module, so the shared
+// control adds no edge to the import graph and cannot close a cycle.
+import SaveSeedSheet, { SeedCountBasis } from '../components/planting/SaveSeedSheet.jsx'
 import { looseIncludes } from '../lib/comboboxInput.js'
 import { formatQty, formatDate, formatSeedWeight } from '../lib/format.js'
 
@@ -619,6 +622,12 @@ export default function SavedSeeds() {
   // re-enter — the count is a running number now, not a one-time capture.
   const [qtyInput, setQtyInput] = useState('')
   const [qtyErr, setQtyErr]     = useState(null)
+  // V5-SEEDESTTOGGLE-001 — whether the count in that field was counted out or estimated. Seeded from
+  // the lot on open (see openStageSheet) and sent with every count this sheet writes, because
+  // seed_count and seed_count_estimated are one fact in two columns and the route refuses a half of
+  // it. Its own state rather than a field on `advancing`: that object is the sheet's IDENTITY (which
+  // lot, which stage, which door) and the answers the user types are held beside it, not inside it.
+  const [qtyEstimated, setQtyEstimated] = useState(false)
   // V4-SEEDLINK-001 — the parent plant chosen inside the advance sheet, for a lot that has none.
   // '' is "not chosen"; the field is optional and a lot can always be linked later from
   // /inventory/:id, which is the canonical editor for this column.
@@ -824,6 +833,14 @@ export default function SavedSeeds() {
     const held = item?.seed_count
     const n = Number(held)
     setQtyInput(held != null && held !== '' && Number.isFinite(n) ? String(n) : '')
+    // V5-SEEDESTTOGGLE-001 — the basis is seeded from the lot for the SAME reason the count is, and
+    // it is the more dangerous of the two to get wrong. Every submit that carries a count carries a
+    // basis with it (the pairing rule), so a switch that opened `false` on an estimated lot would
+    // silently re-assert "hand-counted" about a number Dave had already said was a vendor's — the
+    // exact fabrication this column was added to prevent, arriving through the door meant to fix it.
+    // `=== true` rather than a truthy read: NULL is "never recorded", which reads as not-estimated
+    // here and is what the historical rows hold.
+    setQtyEstimated(item?.seed_count_estimated === true)
     setQtyErr(null)
     setDateErr(null)
   }
@@ -894,16 +911,23 @@ export default function SavedSeeds() {
       // /seed-measure reads its three keys by presence and touches nothing else, so no stale value
       // from a list row read at mount can ride along with them.
       //
-      // `seed_count_estimated: false` on every write from this page, always. This field is answered
-      // by the person holding the seed, on the step where they are holding it — it is a counted
-      // number, never a vendor's "approx. 25 seeds" off the back of a packet, and the two have to
-      // stay distinguishable or the column says nothing.
+      // `seed_count_estimated` USED TO BE A HARDCODED `false` here, reasoning that the field is
+      // "answered by the person holding the seed, on the step where they are holding it". True of
+      // the lot he threshed himself; false of the bought packet the V4-SEEDINTAKEAGNOSTIC-001 arm
+      // lets onto this page, whose count is a vendor's "approx. 25 seeds" printed on the back.
+      // V5-SEEDESTTOGGLE-001 sends the answer the switch actually holds — see qtyEstimated, seeded
+      // from the lot so re-saving never re-asserts a basis nobody restated.
+      //
+      // THE PAIR TRAVELS TOGETHER, and both keys are inside the `count.value != null` branch for
+      // that reason: chk_inventory_seed_count_basis_pairing requires
+      // `(seed_count IS NULL) = (seed_count_estimated IS NULL)` and the route 400s on a half-pair
+      // rather than completing it with a `false` nobody said.
       let qtyWriteErr = null
       if (count.value != null) {
         try {
           await fetch(`/api/inventory-items/${advancing.item.id}/seed-measure`, {
             method: 'PUT',
-            body: JSON.stringify({ seed_count: count.value, seed_count_estimated: false }),
+            body: JSON.stringify({ seed_count: count.value, seed_count_estimated: qtyEstimated }),
           })
         } catch (e) {
           qtyWriteErr = e?.message ?? 'Stage saved, but the count did not.'
@@ -1410,7 +1434,11 @@ export default function SavedSeeds() {
             }
             const required = advancing.toStage === 'stored'
             return (
-              <label style={fieldLabelStyle} data-testid="seed-count">
+              <>
+              {/* marginBottom 0 so the basis switch below sits against this field rather than a
+                  field-gap away from it — V5-SEEDESTTOGGLE-001, and the same override on
+                  SaveSeedSheet's count label. */}
+              <label style={{ ...fieldLabelStyle, marginBottom: 0 }} data-testid="seed-count">
                 {ask.label}{' '}
                 {required
                   ? <span data-testid="seed-count-required" style={{ color: P.severityUrgent, fontWeight: 600 }}>(required)</span>
@@ -1451,6 +1479,16 @@ export default function SavedSeeds() {
                     </span>
                   )}
               </label>
+              {/* V5-SEEDESTTOGGLE-001 — the same control, the same words, as the create sheet's;
+                  imported from it rather than re-spelled, so the two doors into these columns cannot
+                  start describing the same fact differently. OUTSIDE the <label> above: a <button>
+                  nested in one is interactive content whose click the label is meant to ignore, and
+                  "meant to" is not a thing to bet a toggle on across a browser and jsdom. */}
+              <SeedCountBasis
+                estimated={qtyEstimated} onChange={setQtyEstimated}
+                testId="seed-count-estimated"
+              />
+              </>
             )
           })()}
           <button type="button" onClick={submitStage} disabled={busy} data-testid="stage-save" style={primaryBtnStyle}>

@@ -116,6 +116,9 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sheet, PlantingSelect, Badge } from '../forms'
+// V5-SEEDESTTOGGLE-001 — for T.tapMinHeight in basisRowStyle. Read from the token rather than
+// spelled 44 here, so the control cannot quietly fall under a floor the layout gate raises.
+import { T } from '../forms/formStyles.js'
 import VarietyPicker from '../VarietyPicker.jsx'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
@@ -266,27 +269,80 @@ export function parseSeedWeight(raw) {
  * column the schema notes call out as a fact rather than a placeholder. So a blank field sends no
  * request, and the column stays NULL.
  *
- * seed_count_estimated is FALSE on everything this sheet writes: a number typed while holding the
- * seed is a counted number, not a vendor claim off the back of a packet. It rides with the COUNT and
- * only with the count — it is a statement about that number's provenance, and sending it beside a
- * weight alone would claim something about a count that was never given.
+ * seed_count_estimated USED TO BE FALSE unconditionally here, on the reasoning that "a number typed
+ * while holding the seed is a counted number, not a vendor claim off the back of a packet". That is
+ * true of seed shaken out of a plant Dave grew and false of everything the V4-SEEDINTAKEAGNOSTIC-001
+ * arm takes in — a bought or traded packet whose count is printed on it. V5-SEEDESTTOGGLE-001 makes
+ * it the caller's answer (see SeedCountBasis); the default is still `false`, so a caller that does
+ * not pass one writes exactly what this function always wrote.
+ *
+ * It rides with the COUNT and only with the count — it is a statement about that number's
+ * provenance, and sending it beside a weight alone would claim something about a count that was
+ * never given. That is also the PAIRING rule the database enforces
+ * (chk_inventory_seed_count_basis_pairing: `(seed_count IS NULL) = (seed_count_estimated IS NULL)`)
+ * and the route now refuses a half-pair with a 400 rather than completing it. Both keys are written
+ * inside the one branch precisely so no edit can add one without the other.
  *
  * KEY-BY-KEY, because the route reads BY PRESENCE: a packet states a count or a weight, rarely both,
  * so each field independently either contributes its key or does not exist in the body. Both blank
  * returns null and no request is made at all.
  */
-export function seedMeasurePayload(rawCount, rawWeight = '') {
+export function seedMeasurePayload(rawCount, rawWeight = '', estimated = false) {
   const payload = {}
   if (String(rawCount ?? '').trim() !== '') {
     const { value, error } = parseOpeningCount(rawCount)
     if (!error) {
       payload.seed_count = value
-      payload.seed_count_estimated = false
+      payload.seed_count_estimated = !!estimated
     }
   }
   const weighed = parseSeedWeight(rawWeight)
   if (!weighed.error && weighed.value != null) payload.seed_weight_g = weighed.value
   return Object.keys(payload).length ? payload : null
+}
+
+/**
+ * V5-SEEDESTTOGGLE-001 — WHERE THE NUMBER CAME FROM, and the control that finally lets someone say.
+ *
+ * `inventory_items.seed_count_estimated` shipped with V5-SEEDQTY-001 and SavedSeeds' seedCountLabel
+ * has rendered `approx. 200 seeds` off it since V5-SEEDCOUNTCARD-001 — but BOTH writers in the app
+ * hardcoded `false`, so the column could only ever say "hand-counted" and the `approx.` arm was
+ * unreachable from inside the app. A packet reading "approx. 200 seeds" was recorded as a number
+ * Dave had counted out himself: the app asserting a fact he never stated, on the one column that
+ * exists because "a vendor's 'approx. 200 seeds' and a hand-counted 185 are different facts".
+ *
+ * ONE COMPONENT, TWO SURFACES, deliberately. Both writers of these columns render THIS — the sheet
+ * below and the advance sheet on src/pages/SavedSeeds.jsx, which already imports this module for the
+ * sheet itself, so sharing costs no new import direction and cannot go circular. seedCountLabel is
+ * shared on the READ side for exactly this reason: two hand-spelled labels one tap apart are two
+ * labels that drift, and Dave reads both.
+ *
+ * OFF BY DEFAULT, and that is a data decision rather than a visual one. `false` is what every
+ * existing row holds and what both writers have always sent, so defaulting to "estimated" would
+ * silently re-interpret counts already recorded. This is an opt-in STATEMENT: nothing asks the
+ * question, nothing blocks on it, and leaving it alone writes what it wrote yesterday.
+ *
+ * A BUTTON RATHER THAN <input type="checkbox">, for a measured reason and not a stylistic one.
+ * scripts/layout-gate/seeds-saved-clearance.mjs censuses every visible `button, input, select,
+ * textarea` in the advance sheet against T.tapMinHeight — the 14px checkbox PlantForm's "Approximate
+ * date" uses would fail that floor, and wearing a role the census does not select for would be
+ * gaming the instrument rather than passing it. 44px is also just the right target on the phone this
+ * is used on. role="switch" over the aria-pressed the process rows below use: those are a one-of-N
+ * choice wearing a toggle, this is a genuine binary setting, and the distinct role keeps a test's
+ * getByRole('switch') from ever matching them.
+ */
+export const SEED_BASIS_LABEL = 'Approximate — not hand-counted'
+
+export function SeedCountBasis({ estimated, onChange, testId }) {
+  return (
+    <button
+      type="button" role="switch" aria-checked={!!estimated} data-testid={testId}
+      onClick={() => onChange(!estimated)} style={basisRowStyle(!!estimated)}
+    >
+      <span aria-hidden="true" style={basisMarkStyle(!!estimated)}>{estimated ? '✓' : ''}</span>
+      {SEED_BASIS_LABEL}
+    </button>
+  )
 }
 
 /**
@@ -420,6 +476,10 @@ export default function SaveSeedSheet({ planting, onClose }) {
   const [seedProcess, setSeedProcess] = useState(null)
   // BUG-SEEDZEROSOWABLE-001 — blank means "haven't counted"; see parseOpeningCount.
   const [count, setCount] = useState('')
+  // V5-SEEDESTTOGGLE-001 — how that count was arrived at. `false` is the historical write and stays
+  // the default; see SeedCountBasis. Kept even while the count field is blank, so backing out a typo
+  // and retyping the number does not silently drop the answer already given about it.
+  const [countEstimated, setCountEstimated] = useState(false)
   // V5-SEEDQTY-001 — the alternative to the count, not a second thing to fill in. See parseSeedWeight.
   const [weight, setWeight] = useState('')
   const [busy, setBusy] = useState(false)
@@ -510,7 +570,7 @@ export default function SaveSeedSheet({ planting, onClose }) {
       // SKIPPED ENTIRELY ON A BLANK FIELD — see seedMeasurePayload. A blank count is not a zero, and
       // the request that would write one is the request not made.
       let measureFailed = false
-      const measure = seedMeasurePayload(count, weight)
+      const measure = seedMeasurePayload(count, weight, countEstimated)
       if (measure && lot?.id) {
         try {
           await fetch(`/api/inventory-items/${lot.id}/seed-measure`, {
@@ -754,7 +814,9 @@ export default function SaveSeedSheet({ planting, onClose }) {
           Blank-by-default and never pre-filled with a number: see parseOpeningCount for why that
           distinction is the whole difference between this field and the one V4-SEEDSTOREDQTY-001
           correctly removed. */}
-      <label style={fieldLabelStyle}>
+      {/* marginBottom 0 so the basis switch below sits against this field rather than a field-gap
+          away from it — V5-SEEDESTTOGGLE-001, and the same override on SavedSeeds' count label. */}
+      <label style={{ ...fieldLabelStyle, marginBottom: 0 }}>
         How many? <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
         {/* inputMode NUMERIC, not decimal: seed_count is an integer column and a decimal point one
             tap away on Dave's Android keypad is a 400 from the route (see the whole-number guard in
@@ -767,6 +829,13 @@ export default function SaveSeedSheet({ planting, onClose }) {
           data-testid="save-seed-count" style={inputStyle}
         />
       </label>
+      {/* V5-SEEDESTTOGGLE-001 — outside the <label> on purpose: a <button> nested in one is
+          interactive content whose click the label is supposed to ignore, and "supposed to" is not
+          a thing to bet a toggle on across a browser and jsdom. */}
+      <SeedCountBasis
+        estimated={countEstimated} onChange={setCountEstimated}
+        testId="save-seed-count-estimated"
+      />
       <p id="save-seed-count-note" data-testid="save-seed-count-note" style={{ ...hintStyle, margin: '0 0 14px' }}>
         Leave it blank if the seed is still wet and unthreshed. You can set or change the count at
         every step, and you&apos;ll be asked for a final one when you mark the lot stored.
@@ -883,6 +952,25 @@ const processRowStyle = (selected) => ({
   backgroundColor: selected ? P.greenPale : P.white, color: P.dark,
 })
 const hintStyle = { margin: '6px 0 0', color: P.mid, fontSize: '0.78rem', lineHeight: 1.5 }
+// V5-SEEDESTTOGGLE-001. Deliberately lighter than processRowStyle: that one offers a choice in its
+// own right, this one modifies the field it sits under, and giving them the same weight would read
+// as two questions. `margin` top 6 / bottom 14 with the count label's own bottom margin zeroed on
+// both surfaces, so the switch sits against the field it is about rather than floating between it
+// and the next one. Selected state is carried by border + fill + weight, never by colour alone.
+const basisRowStyle = (on) => ({
+  display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+  minHeight: T.tapMinHeight, margin: '6px 0 14px', padding: '0 12px',
+  borderRadius: 8, cursor: 'pointer',
+  border: `1px solid ${on ? P.green : P.border}`,
+  backgroundColor: on ? P.greenPale : P.white,
+  color: on ? P.dark : P.mid, fontSize: '0.82rem', fontWeight: on ? 600 : 400,
+})
+const basisMarkStyle = (on) => ({
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  width: 18, height: 18, borderRadius: 4,
+  border: `1px solid ${on ? P.green : P.border}`,
+  backgroundColor: on ? P.green : P.white, color: P.white, fontSize: '0.7rem', lineHeight: 1,
+})
 // V5-VARIETYHYBRIDFLAG-001. No border or fill of its own: the F1 arm carries a warn Badge that is
 // already the colour signal, and boxing the other three arms would give an ordinary factual line the
 // visual weight of an alert. Bottom margin only, so the block sits against Save.
