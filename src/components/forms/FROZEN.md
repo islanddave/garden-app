@@ -74,11 +74,20 @@ decision someone can take rather than a surprise someone discovers.
    the contract's substantive rule** (derived tags are non-removable, system-managed), so
    the divergence is in the interface shape, not the behaviour.
 2. **`TagFilterBar` shipped as an active-filter REMOVAL bar**, not the contract's
-   facet-toggle row: `({ filters, onRemove, onClear, style })`, `role="region"
+   facet-toggle row: `({ filters, onRemove, onClear, clearLabel, style })`, `role="region"
    aria-label="Active filters"`, rendering removable TagChips for the filters already
    applied. It is a different primitive wearing the contracted name. Consequence worth
    stating plainly: the facet-toggle row §3 actually specifies is still **unbuilt**, and its
-   name is taken.
+   name is taken. (The contracted toggle row's job is done in practice by **FilterChipRow**,
+   which is a different grammar — value chips within one axis, not a facet switcher.)
+
+   **First production consumer, 2026-09-07: `PhotoLibrary`** (V5-PHOTOFILTERPARITY-001). Until
+   then this primitive had ZERO callers outside its own unit test — built, tested, and wired to
+   nothing, which is why the divergence above went two releases without anyone hitting it.
+   `clearLabel` (default `'Clear'`, so every prior render is byte-identical) was added in that
+   change: a page may carry a narrower clear beside this one — PhotoLibrary's FilterChipRow clears
+   only the crop chips while this bar clears every axis — and two buttons reading the same word
+   with different blast radii is a control the user has to guess at.
 
 ### GroupByControl's regression oracle
 

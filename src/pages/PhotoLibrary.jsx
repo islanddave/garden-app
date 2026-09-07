@@ -13,6 +13,15 @@ import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
+// V5-PHOTOFILTERPARITY-001 (BD0901-01) — the three shared filter primitives this page had none of.
+import FilterChipRow from '../components/forms/FilterChipRow.jsx'
+import TagFilterBar from '../components/forms/TagFilterBar.jsx'
+import SegmentedControl from '../components/forms/SegmentedControl.jsx'
+import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
+import {
+  cropIndex, cropOfPhoto, filterByCrop, sortPhotos, activeFilterPills,
+  PHOTO_FILTER_MODES, PHOTO_SORT_MODES, DEFAULT_PHOTO_SORT,
+} from '../lib/photoFilters.js'
 import { chevronDataUri } from '../components/forms/formStyles.js'
 import { photoLoadErrorMessage } from '../components/PhotosWall.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
@@ -40,6 +49,11 @@ import { snapshotFiles } from '../lib/fileSnapshot.js'
 // Device-local memory of the zone filter, mirroring LogMany.jsx's SCOPE_KEY ('quicklog.lastScope').
 // Same namespaced-by-surface shape, same write-on-change / validate-on-restore contract.
 const LOC_FILTER_KEY = 'photos.lastLocationFilter'
+
+// V5-PHOTOFILTERPARITY-001 — byte-identical to EventNew's, PlantingSelect's and SavedSeeds' path
+// string, deliberately: dataCache keys on the path, so any drift here (a trailing slash, a reordered
+// param) silently mints a second cache bucket and the crop join stops riding the warm one.
+const PICKER_PATH = '/api/plants?view=picker'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -126,6 +140,79 @@ export default function PhotoLibrary() {
   const [filterProject,  setFilterProject]  = useState('')
   const [filterLocation, setFilterLocation] = useState('')  // V4-PHOTOLOCFIND-001: space filter (server-side subtree)
   const [filterMode,     setFilterMode]     = useState('all')
+  // V5-PHOTOFILTERPARITY-001 — the crop facet, Garden's lead group-by ("Type") arriving here as a
+  // FILTER. A Set, owned here, session-ephemeral: that is FilterChipRow's stated contract and it is
+  // the right one for a narrowing whose whole risk is being left on by accident. The zone filter
+  // persists because a zone is WHERE YOU ARE; a crop is what you were looking for five minutes ago.
+  const [cropSel, setCropSel] = useState(() => new Set())
+  // V5-PHOTOFILTERPARITY-001 — the page had NO sort control at all; the list was whatever order the
+  // wire happened to arrive in. Two directions only, because over a photo grid there is nothing else
+  // to sort BY: the list carries no name, no weight and no crop of its own (see photoFilters.js).
+  const [sortOrder, setSortOrder] = useState(DEFAULT_PHOTO_SORT)
+
+  // ── V5-PHOTOFILTERPARITY-001: the crop axis ──────────────────────────────────────────────────
+  // GET /api/photos returns plant_id and nothing else about the planting — no name, no variety, no
+  // crop (all five list templates select the same column set). So the crop comes from a JOIN, and
+  // the join side is the picker projection: ~101KB, zero presigned URLs, and already the app's
+  // warmest cached list (PlantingSelect, EventNew and SavedSeeds all read this exact path, so
+  // dataCache usually answers it without a round trip). The wide `/api/plants` this page already
+  // fetches for its two pickers would have been free-er still, but only under PROJECTS_HIDDEN — with
+  // the flag off that list is project-scoped and empty until a project is chosen, so the crop filter
+  // would silently not exist. One source that works in both flag states beats a cheaper one that
+  // half-works.
+  //
+  // Archived plantings are absent from this projection AND their photos are absent from the list
+  // (both photo templates exclude `gna.archived_at IS NOT NULL`), so the two sets agree — the join
+  // has no systematic hole.
+  //
+  // BOTH READS ARE GATED ON A PHOTO ACTUALLY NAMING A PLANTING — SavedSeeds' `anyLinked` idiom,
+  // paired with useCropTypes' own `enabled` flag, which was minted for exactly this. Not thrift:
+  // with no plant-attached photo in hand there is no crop to derive, so the facet cannot render and
+  // both requests would be pure latency on a page whose cold paint is already ~450KB of presigned
+  // thumbnails. It also keeps the Untagged view honest — nothing there has a planting, so the crop
+  // row correctly disappears rather than offering chips that can only match zero.
+  //
+  // A PLAIN EFFECT RATHER THAN useCachedFetch, and the reason is a hazard rather than a preference.
+  // SavedSeeds reads this same path through `useCachedFetch(anyLinked ? PICKER_PATH : null)` and
+  // that is the better shape on paper — dataCache is warm here, since PlantingSelect and EventNew
+  // read the identical key. But useCachedFetch calls `fetchRef.current(path).then(...)` unguarded
+  // (useCachedFetch.js:41 and :64), so a caller whose fetch returns undefined throws inside a passive
+  // effect and takes the whole page down. useCropTypes wraps the same call in `Promise.resolve()`
+  // and says why in its header; this does the same. Hardening useCachedFetch itself is the real fix
+  // and is a shared-hook change outside this row's scope — reported, not smuggled in here.
+  const anyPlantPhoto = useMemo(() => photos.some(p => p?.plant_id), [photos])
+  const [plantsForCrop, setPlantsForCrop] = useState([])
+  useEffect(() => {
+    if (!anyPlantPhoto) return undefined
+    let alive = true
+    Promise.resolve(apiFetch(PICKER_PATH))
+      .then(rows => { if (alive) setPlantsForCrop(Array.isArray(rows) ? rows : []) })
+      .catch(() => { if (alive) setPlantsForCrop([]) })
+    return () => { alive = false }
+  }, [apiFetch, anyPlantPhoto])
+  const cropByPlantId = useMemo(() => cropIndex(plantsForCrop), [plantsForCrop])
+  // Stable by useCallback because useCropFacetOptions takes it as a memo dep and this page can hold
+  // ~1,400 rows — an inline arrow would re-count the universe on every keystroke in the upload form.
+  const cropSlugOf = useCallback(p => cropOfPhoto(p, cropByPlantId), [cropByPlantId])
+  // Universe from `photos` — the PRE-crop-filter list — so a chip tap can never collapse the row to
+  // the one crop already chosen (the self-collapse trap useHarvestFilterOptions.js documents).
+  const { options: cropOptions, pinned: cropPinned, labelBySlug: cropLabelBySlug } =
+    useCropFacetOptions(photos, cropSlugOf, { enabled: anyPlantPhoto })
+  // The capability gate, SavedSeeds' rule: the row renders when it could actually change the answer
+  // and is absent otherwise. One crop across every photo means a chip row that can only be furniture.
+  const cropFacetEligible = cropOptions.length >= 2
+  const toggleCrop = useCallback(slug => {
+    setCropSel(prev => { const n = new Set(prev); n.has(slug) ? n.delete(slug) : n.add(slug); return n })
+  }, [])
+  const clearCrops = useCallback(() => setCropSel(prev => (prev.size ? new Set() : prev)), [])
+  // THE RENDERED LIST. Filter then sort, both non-mutating, both in src/lib so they are covered.
+  // Every read below that used to say `photos` now says this — the grid, the window, the "Show more"
+  // count, the selection derivation and the Select-mode gate — because a photo the chips have hidden
+  // must not be shareable, countable or scrollable-to.
+  const visiblePhotos = useMemo(
+    () => sortPhotos(filterByCrop(photos, cropSel, cropByPlantId), sortOrder),
+    [photos, cropSel, cropByPlantId, sortOrder],
+  )
 
   // V4-AMBIENTZONE-001 — the zone filter REMEMBERS itself, deliberately in Log Many's idiom rather
   // than a second one. This was the only zone control in the app the user had to re-pick on every
@@ -142,6 +229,40 @@ export default function PhotoLibrary() {
     setFilterLocation(id)
     try { localStorage.setItem(LOC_FILTER_KEY, id) } catch (e) {}
   }, [])
+
+  // ── V5-PHOTOFILTERPARITY-001: the active-filter breadcrumb's data + its two escapes ───────────
+  // Labels are resolved HERE, against the lists this page already holds, rather than inside the pure
+  // builder: a zone's name lives in `locations` and a project's in `projects`, and photoFilters.js
+  // must stay free of the page's fetches to remain unit-testable.
+  const activePills = useMemo(() => activeFilterPills({
+    mode: filterMode,
+    cropSel,
+    cropLabelBySlug,
+    locationId: filterLocation,
+    locationLabel: locations.find(l => String(l.id) === String(filterLocation))?.full_path ?? '',
+    projectId: filterProject,
+    projectLabel: projects.find(p => String(p.id) === String(filterProject))?.name ?? '',
+  }), [filterMode, cropSel, cropLabelBySlug, filterLocation, locations, filterProject, projects])
+
+  // Per-pill removal. Switching on `kind` rather than re-parsing the composite chip id: the builder
+  // stamps it, so a new axis added there gets a compile-visible gap here instead of a silent no-op.
+  const removeFilterPill = useCallback(tag => {
+    if (tag?.kind === 'mode') setFilterMode('all')
+    else if (tag?.kind === 'crop') setCropSel(prev => { const n = new Set(prev); n.delete(tag.slug); return n })
+    else if (tag?.kind === 'zone') selectLocationFilter('')
+    else if (tag?.kind === 'project') setFilterProject('')
+  }, [selectLocationFilter])
+
+  // The one-tap escape, Garden's "Show all" and Harvests' "Clear filters" in one control. It clears
+  // the PERSISTED zone too (through selectLocationFilter), because a Clear that left the sticky
+  // filter behind would re-narrow the library on the next visit — which is the stale-lens trap
+  // Garden's lens cue exists to prevent, arriving one mount later.
+  const clearAllFilters = useCallback(() => {
+    setFilterMode('all')
+    setFilterProject('')
+    selectLocationFilter('')
+    setCropSel(prev => (prev.size ? new Set() : prev))
+  }, [selectLocationFilter])
 
   const [showUpload,     setShowUpload]     = useState(false)
   const [uploadForm,     setUploadForm]     = useState({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
@@ -267,28 +388,36 @@ export default function PhotoLibrary() {
   // change behaves exactly as before.
   // Keyed on the filter TUPLE rather than a mount flag: StrictMode runs every effect twice on mount,
   // and a bare "skip the first run" flag would let the second run collapse the restored window in dev.
+  // V5-PHOTOFILTERPARITY-001: the crop selection joins the tuple. It is a client-side narrowing
+  // rather than a refetch, but it changes the SET the window and the selection describe in exactly
+  // the way the other three do — an id picked before the chips went on may no longer be on screen.
+  // Sort is deliberately ABSENT: reordering the same set neither invalidates a selection nor
+  // justifies throwing away scroll depth the user built.
   const lastFiltersRef = useRef(null)
   useEffect(() => {
-    const sig = `${filterProject}|${filterLocation}|${filterMode}`
+    const sig = `${filterProject}|${filterLocation}|${filterMode}|${[...cropSel].sort().join(',')}`
     if (lastFiltersRef.current === sig) return
     const first = lastFiltersRef.current === null
     lastFiltersRef.current = sig
     if (first) return
     setShown(PAGE)
     setSelected(prev => (prev.size ? new Set() : prev))
-  }, [filterProject, filterLocation, filterMode])
+  }, [filterProject, filterLocation, filterMode, cropSel])
   useEffect(() => {
     // Scroll listener rather than IntersectionObserver: IO is the same viewport-intersection
     // machinery native lazy depends on, and that is precisely what is not firing on this layout.
     function onScroll() {
       if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 800) {
-        setShown(s => (s < photos.length ? s + PAGE : s))
+        setShown(s => (s < visiblePhotos.length ? s + PAGE : s))
       }
     }
     window.addEventListener('scroll', onScroll, { passive: true })
     onScroll() // a short first page must still be able to grow without a scroll
     return () => window.removeEventListener('scroll', onScroll)
-  }, [photos.length])
+    // V5-PHOTOFILTERPARITY-001: the RENDERED length, not the fetched one. Keyed on `photos.length`
+    // the window would keep growing past the end of a crop-filtered grid — reaching the bottom of
+    // eleven tomatoes would raise `shown` toward the four hundred photos that are not on screen.
+  }, [visiblePhotos.length])
 
   // ---- Initial data load ----
   useEffect(() => {
@@ -915,7 +1044,12 @@ export default function PhotoLibrary() {
   // re-pick against the list in front of them, instead of carrying an unreviewed selection across a
   // context change. (Intersecting inside that effect would also be a no-op — `photos` is still the
   // OLD array at that point; the refetch has not resolved. It would have to move into loadPhotos.)
-  const selectedPhotos = photos.filter(p => selected.has(p.id))
+  // V5-PHOTOFILTERPARITY-001: derived from the RENDERED list, not the fetched one. Same argument the
+  // paragraph above makes for deriving at all — a photo the crop chips have hidden is not on screen,
+  // so it must not be counted, capped against MAX_SHARE_PHOTOS, or posted publicly. The filter-change
+  // effect already clears the Set, so this is belt-and-braces for the paths that replace `photos`
+  // without a filter change (an upload completing, a quick-tag assignment).
+  const selectedPhotos = visiblePhotos.filter(p => selected.has(p.id))
   const selectionCount = selectedPhotos.length
   const selectionOverMax = selectionCount > MAX_SHARE_PHOTOS
   // Dormant-until-configured: the FB share UI only appears once VITE_API_FACEBOOK_SHARE is wired
@@ -953,7 +1087,7 @@ export default function PhotoLibrary() {
             </Link>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: T.space.lg }}>
-            {photos.length > 0 && fbShareEnabled && (
+            {visiblePhotos.length > 0 && fbShareEnabled && (
               <button
                 onClick={() => (selectMode ? exitSelectMode() : enterSelectMode())}
                 style={{
@@ -1206,18 +1340,31 @@ export default function PhotoLibrary() {
         )}
 
         {/* ── Filters ── */}
+        {/* V5-PHOTOFILTERPARITY-001 — THE FILTERS NOW COMPOSE. Every control on this row used to
+            CLEAR the others: a mode chip reset the zone and the project, and either select reset the
+            mode to All. So "untagged photos in the greenhouse" and "today's tomato photos" were not
+            askable — the second tap always undid the first, silently, with no cue that it had.
+            Garden has had composing filters since V4-ASSIGNLENS-001 (the caretaker lens ANDs with
+            the group-by facet); this is that parity, and it is the change the crop chips below need
+            in order to be worth anything.
+            Mechanically the composition was always there: `mode` is applied client-side in
+            loadPhotos AFTER the ?project_id=/?location_id= response lands, so the two layers never
+            conflicted. The mutual exclusion was a UI decision, and only a UI decision is undone
+            here — no query shape moves. */}
         <div style={{ display: 'flex', gap: 8, marginBottom: T.space.md, flexWrap: 'wrap', alignItems: 'center' }}>
-          {[
-            { mode: 'all',        label: 'All' },
-            // V4-PHOTOTODAYFILTER-001: first, because it is the one people reach for. The IG
-            // crucible ranked it third of five and named why: findability over 1302 photos is this
-            // build's one real advantage over Business Suite, and the single filter that matters
-            // when you are about to post — "what did I shoot today" — did not exist.
-            { mode: 'today',      label: 'Today' },
-            { mode: 'standalone', label: 'No event' },
-            { mode: 'untagged',   label: 'Untagged' },
-          ].map(({ mode, label }) => {
-            const active = filterMode === mode && !filterProject && !filterLocation
+          {PHOTO_FILTER_MODES.map(({ value: mode, label }) => {
+            // V4-PHOTOTODAYFILTER-001 put Today first, because it is the one people reach for: the
+            // IG crucible ranked it third of five and named why — findability over 1302 photos is
+            // this build's one real advantage over Business Suite, and the single filter that
+            // matters when you are about to post ("what did I shoot today") did not exist. The row's
+            // ORDER now lives in photoFilters.PHOTO_FILTER_MODES so the chips and the active-filter
+            // breadcrumb below cannot disagree about a label.
+            //
+            // No `&& !filterProject && !filterLocation` term any more: a mode chip is active when
+            // the mode is on, full stop. Under the old coupling that term was load-bearing (picking
+            // a zone silently reset the mode, and the chip had to stop claiming to be on); with the
+            // filters composing it would do the opposite job — hide a mode narrowing that IS applied.
+            const active = filterMode === mode
             // The count rides ONLY the Untagged chip, and only once measured and non-zero. A "0"
             // badge is noise on a chip whose empty state is already its own answer, and rendering
             // one before the first list lands would assert an empty inbox we have not checked.
@@ -1233,7 +1380,7 @@ export default function PhotoLibrary() {
               <button
                 key={mode}
                 data-testid={`pl-filter-${mode}`}
-                onClick={() => { setFilterMode(mode); setFilterProject(''); selectLocationFilter('') }}
+                onClick={() => setFilterMode(mode)}
                 style={badge == null ? chipStyle : {
                   ...chipStyle,
                   // Left half of a split pill: square off the seam so the two segments read as one
@@ -1286,7 +1433,7 @@ export default function PhotoLibrary() {
           {!PROJECTS_HIDDEN && (
           <select
             value={filterProject}
-            onChange={e => { setFilterProject(e.target.value); selectLocationFilter(''); setFilterMode('all') }}
+            onChange={e => { setFilterProject(e.target.value); selectLocationFilter('') }}
             style={{
               ...selectStyle,
               fontSize: T.type.sm, padding: '6px 30px 6px 10px',
@@ -1303,7 +1450,11 @@ export default function PhotoLibrary() {
               descendants' photos). Mutually exclusive with the project filter, like the mode chips. */}
           <select
             value={filterLocation}
-            onChange={e => { selectLocationFilter(e.target.value); setFilterProject(''); setFilterMode('all') }}
+            // Zone and project still clear EACH OTHER, and that pair alone is not a UI choice: the
+            // query string is `?project_id=… : ?location_id=… : ''` (loadPhotos), so the server can
+            // only scope by one of them. The mode chips and the crop chips are client-side layers on
+            // top of whichever scope is in force, which is why those compose and this pair cannot.
+            onChange={e => { selectLocationFilter(e.target.value); setFilterProject('') }}
             style={{
               ...selectStyle,
               fontSize: T.type.sm, padding: '6px 30px 6px 10px',
@@ -1317,6 +1468,87 @@ export default function PhotoLibrary() {
           </select>
         </div>
 
+        {/* ── V5-PHOTOFILTERPARITY-001: the crop facet ──
+            Garden's LEAD group-by option is "Type" (crop_type from the cultivar join) and this page
+            had no crop axis of any kind — the biggest single gap in the parity audit. Same shared
+            primitive the planting chooser and the seed page use, same multi-select-OR grammar, same
+            pinned-two-plus-`More ▾` collapse, so this is one more consumer rather than a fourth
+            hand-rolled chip row.
+            WHAT A CHIP MEANS, and it is narrower than it looks: photos carry a plant_id, not a
+            subject. "Tomato" is "filed under a tomato planting", which is what the gardener was
+            doing that day — not a claim about what the lens was pointed at. A photo attached only to
+            an event, a zone or a project carries no planting at all and no chip can match it; the
+            breadcrumb below is what keeps that from being a silent disappearance.
+            `onClear` is FilterChipRow's own affordance and is passed deliberately even though the
+            breadcrumb also clears: the row is where the fingers already are. */}
+        {cropFacetEligible && (
+          <div style={{ marginBottom: T.space.md }}>
+            <FilterChipRow
+              options={cropOptions}
+              selected={cropSel}
+              onToggle={toggleCrop}
+              pinned={cropPinned}
+              onClear={clearCrops}
+              trayMaxHeight={200}
+              aria-label="Filter photos by crop"
+              data-testid="pl-crop-filter"
+            />
+          </div>
+        )}
+
+        {/* ── V5-PHOTOFILTERPARITY-001: sort ──
+            The page had NO sort; the grid was whatever order the wire arrived in, which is
+            created_at DESC and therefore correct but unstated and unchangeable. Oldest-first is the
+            one a drain actually wants — the untagged photo that has sat longest is the one to deal
+            with — which is the same argument SavedSeeds' by-stage ordering makes for its queue.
+            SegmentedControl is the frozen primitive for a 2-way mutually-exclusive VIEW toggle; a
+            chip row here would have said "these compose" about two things that cannot.
+            Rendered only over a populated grid, per Harvests' rule: above an empty state it would
+            offer to reorder nothing. */}
+        {!loading && !error && visiblePhotos.length > 1 && (
+          <div style={{ marginBottom: T.space.md, maxWidth: 260 }}>
+            <SegmentedControl
+              options={PHOTO_SORT_MODES}
+              value={sortOrder}
+              onChange={setSortOrder}
+              ariaLabel="Sort photos by date"
+              data-testid="pl-sort"
+            />
+          </div>
+        )}
+
+        {/* ── V5-PHOTOFILTERPARITY-001: the active-filter breadcrumb ──
+            Garden answers "why am I seeing so few?" with its lens cue (label + hidden count + a
+            one-tap Show all); Harvests answers it with `filterActive` + Clear filters. This page
+            answered it with nothing, and with the filters now COMPOSING that gap gets worse rather
+            than better — four narrowings can be on at once and two of them (a collapsed crop tray, a
+            zone select scrolled off the top) are easy to miss.
+            TagFilterBar is the app's shipped primitive for exactly this and had ZERO production
+            consumers before this line — built, tested in facetPrimitives.test.jsx, and never wired
+            to anything (FROZEN.md records it as an active-filter REMOVAL bar occupying the
+            contracted name). Per-pill removal is strictly better than one Clear-all, so this is
+            reuse, not a mint.
+            The count is stated as what IS shown rather than what is hidden: the mode/zone narrowing
+            happens at fetch time, so this page cannot honestly say how many photos those two are
+            holding back. "N shown" is a number it can stand behind. */}
+        {activePills.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: T.space.md }}>
+            {/* "Clear all", not "Clear": FilterChipRow above carries its own Clear, which wipes only
+                the crop chips. Two buttons reading the same word with different blast radii is a
+                control the user has to guess at. */}
+            <TagFilterBar filters={activePills} onRemove={removeFilterPill} onClear={clearAllFilters} clearLabel="Clear all" />
+            {!loading && !error && (
+              <div role="status" aria-live="polite" data-testid="pl-filter-cue" style={{
+                fontSize: '0.78rem', color: P.mid, backgroundColor: P.greenPale,
+                border: `1px solid ${P.border}`, borderRadius: 6, padding: '4px 10px',
+                alignSelf: 'flex-start',
+              }}>
+                {visiblePhotos.length === 1 ? '1 photo shown' : `${visiblePhotos.length} photos shown`}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Grid ── */}
         {loading ? (
           <p style={{ color: P.light, fontSize: T.type.base }}>Loading…</p>
@@ -1326,11 +1558,31 @@ export default function PhotoLibrary() {
             errorTitle="Couldn’t load your photos"
             onRetry={loadPhotos}
           />
-        ) : photos.length === 0 ? (
+        ) : visiblePhotos.length === 0 ? (
+          // V5-PHOTOFILTERPARITY-001 — TWO emptinesses, told apart. "No photos yet / upload your
+          // first one" answers "how do I start", which is the wrong question for someone who has
+          // 1,400 photos and four filters on; it reads as data loss. Harvests draws exactly this
+          // line (`filterActive` → "No harvests match these filters" + Clear), and the crop chips
+          // make the filtered branch newly reachable with a full library behind it.
           <div style={{ textAlign: 'center', padding: '48px 16px', color: P.light }}>
             <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📷</div>
-            <p style={{ margin: 0, fontSize: T.type.base }}>No photos yet.</p>
-            <p style={{ margin: '6px 0 0', fontSize: T.type.sm }}>Upload your first one above.</p>
+            {activePills.length > 0 ? (
+              <>
+                <p data-testid="pl-empty-filtered" style={{ margin: 0, fontSize: T.type.base }}>
+                  No photos match these filters.
+                </p>
+                <button type="button" onClick={clearAllFilters} style={{
+                  marginTop: 12, padding: '10px 20px', fontSize: T.type.sm2, fontWeight: 700,
+                  minHeight: T.tapMinHeight, borderRadius: T.radiusButton,
+                  border: `1px solid ${P.green}`, background: P.white, color: P.green, cursor: 'pointer',
+                }}>Clear filters</button>
+              </>
+            ) : (
+              <>
+                <p data-testid="pl-empty-first-run" style={{ margin: 0, fontSize: T.type.base }}>No photos yet.</p>
+                <p style={{ margin: '6px 0 0', fontSize: T.type.sm }}>Upload your first one above.</p>
+              </>
+            )}
           </div>
         ) : (
           // V3-PHOTODBG-001 (4/4): the grid render is wrapped in an ErrorBoundary so a render-time
@@ -1341,7 +1593,7 @@ export default function PhotoLibrary() {
             fallback={(err, retry) => <PhotoGridErrorFallback retry={() => { retry(); loadPhotos() }} />}
           >
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-              {photos.slice(0, shown).map(photo => (
+              {visiblePhotos.slice(0, shown).map(photo => (
                 <PhotoCard
                   key={photo.id}
                   photo={photo}
@@ -1351,12 +1603,12 @@ export default function PhotoLibrary() {
                 />
               ))}
             </div>
-            {shown < photos.length && (
+            {shown < visiblePhotos.length && (
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
                 <button type="button" onClick={() => setShown(s => s + PAGE)}
                   style={{ background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: T.radiusButton,
                            padding: '11px 20px', fontSize: T.type.sm2, fontWeight: 700, cursor: 'pointer', minHeight: T.tapMinHeight }}>
-                  Show more ({photos.length - shown} left)
+                  Show more ({visiblePhotos.length - shown} left)
                 </button>
               </div>
             )}

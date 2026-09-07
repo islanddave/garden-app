@@ -422,6 +422,27 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     // still the plant the seed came from, and blanking its name would hide a true record rather
     // than prevent a wrong guess. The one surface that OFFERS plantings on this page is the sheet's
     // PlantingSelect, which gets the filter from the Lambda projection itself.
+    //
+    // SIXTH CONSUMER ADDED 2026-09-07 — pages/PhotoLibrary.jsx (V5-PHOTOFILTERPARITY-001). The crop
+    // filter's JOIN SIDE: GET /api/photos returns plant_id and nothing else about the planting, so a
+    // photo's crop is resolved against this list. Its field reads, counted:
+    //   id                          -> the Map key in photoFilters.cropIndex, matched against
+    //                                  photos.plant_id
+    //   variety_ref.crop_type_slug  -> the crop itself, i.e. the chip value and the filter predicate
+    // Two fields, both inside PICKER_KEYS; no widening. It is the only consumer that does NOT go
+    // through useCachedFetch — a plain effect instead, because useCachedFetch calls
+    // `fetchRef.current(path).then(...)` unguarded and a fetch that returns undefined therefore
+    // throws inside a passive effect; useCropTypes wraps the identical call in Promise.resolve() and
+    // says why in its header. That is a shared-hook defect, recorded here rather than fixed under a
+    // Photos row. Consequence for THIS census: the page holds its own PICKER_PATH constant, kept
+    // byte-identical so it still shares dataCache's key shape with the five above.
+    // archived_at is deliberately NOT read, and unlike the PutUp case that is not an omission: the
+    // projection already excludes archived plantings, and the photos list independently drops photos
+    // whose planting is archived (`NOT EXISTS ... gna.archived_at IS NOT NULL` in every template), so
+    // the two sets agree and there is no archived row for this join to guess about.
+    // NOTE src/lib/photoFilters.js holds the crop-join PREDICATES but deliberately does not spell the
+    // URL, so this census keeps meaning "files that request the projection" rather than "files that
+    // mention the param" — the same distinction the --exclude-dir below draws for tests.
     const CLIENT = resolve(__dirname, '..', '..', 'src');
     // --exclude-dir=__tests__: the census is of PRODUCTION call sites. Test files legitimately name
     // the URL in their assertions, and counting those would make this assertion self-satisfying —
@@ -429,8 +450,8 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     const hits = execSync(`grep -rl --exclude-dir=__tests__ "view=picker" ${CLIENT} || true`, { encoding: 'utf8' })
       .split('\n').filter(Boolean).map((p) => p.replace(`${CLIENT}/`, '')).sort();
     expect(hits).toEqual([
-      'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/PutUp.jsx',
-      'pages/SavedSeeds.jsx', 'pages/VoiceHarvest.jsx',
+      'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/PhotoLibrary.jsx',
+      'pages/PutUp.jsx', 'pages/SavedSeeds.jsx', 'pages/VoiceHarvest.jsx',
     ]);
   });
 });
