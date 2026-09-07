@@ -115,7 +115,10 @@
 // have — lot created, toast shown, routed to /inventory/:id.
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sheet, PlantingSelect, Badge } from '../forms'
+// V5-SEEDSOURCEPICKER-001 — Field and SourcePicker are InventoryAdd's own two imports for this
+// block. Reusing BOTH is what keeps the two intake doors onto `inventory_items` saying one thing:
+// Field owns the label/help/aria-describedby wiring, SourcePicker owns the combobox.
+import { Sheet, PlantingSelect, Badge, Field, SourcePicker } from '../forms'
 // V5-SEEDESTTOGGLE-001 — for T.tapMinHeight in basisRowStyle. Read from the token rather than
 // spelled 44 here, so the control cannot quietly fall under a floor the layout gate raises.
 import { T } from '../forms/formStyles.js'
@@ -451,6 +454,25 @@ const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== '
  * 'own_garden' OR source_plant_id IS NULL`. It writes NO timeline event either — there is no plant to
  * hang one on, and inventing a placeholder planting to carry it would put plants in the garden that
  * were never planted.
+ *
+ * V5-SEEDSOURCEPICKER-001 — AND IT NOW WRITES WHICH ONE. Dave 2026-09-07: "seed saving has no way to
+ * tell which source is there - I can note it is a Farm Stand, but not which." That arm offered the
+ * eight-value kind and nothing else, so every farm stand, swap and shop in the seed library came back
+ * as the same three rows of vocabulary. `source_id` / `acquired_from_source_id` were already live on
+ * this table (V5-SOURCEPICKER-001, 54 rows since 2026-09-04) and already wired into PlantingEditor,
+ * PlantForm, /inventory/add and /inventory/:id — this sheet was the one intake surface that missed
+ * them, which is also why the fix is a wiring rather than a build.
+ *
+ * BOTH REFS, NOT JUST THE VENUE, and that is the one judgement call in this change. "Which farm
+ * stand" reads like an acquired-from question, but the schema's own answer is the opposite: the
+ * migration README (v5-sourceentity-001 §3) defines `acquired_from_source_id` as the shop "set ONLY
+ * when it differs" from the originator, NULL meaning "not recorded, or not distinct" — and records
+ * that "for the large majority of rows only `source_id` is ever set". A farm stand that grew what it
+ * sold IS the originator, so writing it to acquired_from alone would file every lot as
+ * venue-known/origin-unknown: the minority shape, unreachable from any other surface in the app, and
+ * a row /inventory/:id would render with an empty Origin. Origin is therefore the primary field here
+ * exactly as it is on /inventory/add, and the venue is disclosed under it for the genuine
+ * bought-a-Fedco-packet-at-the-co-op case.
  */
 export default function SaveSeedSheet({ planting, onClose }) {
   const { fetch } = useApiFetch()
@@ -464,6 +486,15 @@ export default function SaveSeedSheet({ planting, onClose }) {
   // null until answered, and only asked when the caller did not already know. 'plant' | 'other'.
   const [origin, setOrigin] = useState(planting ? 'plant' : null)
   const [sourceKind, setSourceKind] = useState('')
+  // V5-SEEDSOURCEPICKER-001 — WHICH one, beside the kind's WHAT KIND OF PLACE. Dave 2026-09-07:
+  // "seed saving has no way to tell which source is there - I can note it is a Farm Stand, but not
+  // which." Both are kept because they are two different vocabularies, not two spellings of one:
+  // `inventory_items.source_kind` is the eight-value CHECK above (farm_stand, csa, store…), while
+  // these are FKs into `public.source`, the 54-row registry where "Bardwell's" and "Long River
+  // Produce Market" are separate rows. `source.kind` — the row's OWN kind, minted through the
+  // picker — is a third, extensible vocabulary and is not this column.
+  const [sourceId, setSourceId] = useState('')
+  const [acquiredFromId, setAcquiredFromId] = useState('')
 
 
   const seeded = plantingVariety(parent)
@@ -530,6 +561,16 @@ export default function SaveSeedSheet({ planting, onClose }) {
       setError(weighed.error)
       return
     }
+    // V5-SEEDSOURCEPICKER-001 — the same client-first treatment as the three guards above, against
+    // the same pair the server refuses (sourceRefsCollide -> SOURCE_DISTINCT_ERROR, and the CHECK
+    // chk_inventory_source_distinct behind it). NULL on acquired_from means "not recorded, or not
+    // distinct" and never "same as the origin", so naming one source twice is not redundant — it is
+    // a sentence with no meaning. Reachable rather than theoretical: both pickers offer the whole
+    // registry, so the same row can be chosen in each.
+    if (sourceId && sourceId === acquiredFromId) {
+      setError('Acquired from is the same as the origin — leave it blank when they match.')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -560,6 +601,25 @@ export default function SaveSeedSheet({ planting, onClose }) {
           // reads source_kind by PRESENCE, so an explicit null and an absent key are different.
           source_plant_id: parent?.id ?? null,
           ...(!parent && sourceKind ? { source_kind: sourceKind } : {}),
+          // V5-SEEDSOURCEPICKER-001 — the named source, on the SAME `!parent` gate as the kind
+          // above and for the same reason: seed off one of our own plants has its provenance in
+          // source_plant_id, and a registry row would be asserting a second, different origin for
+          // it. Nothing server-side needed widening — the create arm validates both refs
+          // (sourceRefsCollide, findDeadSourceRef) and NAMES both in its INSERT
+          // (lambda/inventory-items/index.js:1419/1435), which is the check
+          // BUG-SEEDPOSTDROPSPARENT-001 exists to make us run.
+          //
+          // Same spread-by-presence discipline as the kind, deliberately even though the create arm
+          // treats absent and explicit-null identically ("on a create there is no prior value for an
+          // absent key to preserve"). The PUT does not, and a key that is written one way here and
+          // read another way there is how the two drift.
+          //
+          // Only ONE mechanism keeps a stale venue out of this body: the origin picker's onChange
+          // clears acquiredFromId when the origin is cleared. Re-deriving that here as
+          // `sourceId && acquiredFromId` would be a second copy of the same rule, and a redundant
+          // guard cannot be tested — neutralise either half and the suite stays green.
+          ...(!parent && sourceId ? { source_id: sourceId } : {}),
+          ...(!parent && acquiredFromId ? { acquired_from_source_id: acquiredFromId } : {}),
         }),
       })
       // V5-SEEDQTY-001 — the count, as its own request on its own route. Same shape of decision as
@@ -761,6 +821,47 @@ export default function SaveSeedSheet({ planting, onClose }) {
               })}
             </select>
           </label>
+          {/* V5-SEEDSOURCEPICKER-001 — WHICH farm stand, and the reason this sheet was the one
+              surface V5-SOURCEPICKER-001 missed. Labels, help text and the disclosure rule are
+              InventoryAdd's, verbatim (src/pages/InventoryAdd.jsx:621-652): these are the two
+              intake doors onto the same two columns, and two spellings of one question is exactly
+              how they diverge.
+
+              NOT gated on the kind select above. The kind is optional and always has been (the
+              create only sends it when truthy), so hiding the name behind it would reinstate
+              "I can note it is a Farm Stand, but not which" for anyone who skips it — and the
+              picker is the half Dave asked for. */}
+          <Field label="Origin" help="Who grew, bred, packed or gave it." style={{ marginBottom: 14 }}>
+            <SourcePicker
+              label="Origin"
+              value={sourceId}
+              onChange={(sid) => {
+                // Clearing the origin clears the venue with it: acquired_from means "the shop WHEN
+                // IT DIFFERS from the grower", so it is meaningless alone and a stale id left in
+                // state would still be submitted. THE one mechanism — see the payload note in
+                // save().
+                setSourceId(sid)
+                if (!sid) setAcquiredFromId('')
+              }}
+              placeholder="Search sources…"
+              data-testid="seed-source"
+            />
+          </Field>
+          {/* Only once an origin exists — before that "does it differ?" has nothing to differ from.
+              Inline rather than behind a disclosure: a control appears when it can change the
+              answer. */}
+          {sourceId !== '' && (
+            <Field label="Acquired from" help="The shop or venue, only if it differs from the origin."
+              style={{ marginBottom: 14 }}>
+              <SourcePicker
+                label="Acquired from"
+                value={acquiredFromId}
+                onChange={(sid) => setAcquiredFromId(sid)}
+                placeholder="Search sources…"
+                data-testid="seed-acquired-from"
+              />
+            </Field>
+          )}
           <button
             type="button" onClick={() => setOrigin(null)}
             style={{ marginTop: 8, background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: '0.82rem', padding: '8px 0' }}
