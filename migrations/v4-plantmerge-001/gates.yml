@@ -118,12 +118,31 @@ post:
   - name: post_no_extra_columns
     note: >
       Paired with the gate above so the two together pin the column set EXACTLY. The IN-filter gate
-      alone passes happily on a table that also grew a column nobody intended.
+      alone passes happily on a table that also grew a column nobody intended. This one is the
+      other half: it asserts NO COLUMN EXISTS OUTSIDE the intended set, and projects the offender's
+      name so a red says which column rather than only how many.
+
+      DE-FROZEN 2026-09-06 (OPS-GATEFROZENCOUNT-001). Until this edit the gate counted the table's
+      columns UNFILTERED and asserted `value: 14` — an armed frozen TOTAL, which is a different and
+      worse thing than the sibling's `value: 14` above (that one is the length of its own inline
+      IN-list and cannot be moved by a column the list does not name). A frozen total reds on ANY
+      widening, including a legitimate one, and the tempting repair — 14 -> 15 — silently re-freezes
+      at the new number and teaches the next person to bump again. v4-dtmbasisvar-001:41 is the one
+      that already fired (v_sow_candidates pinned at 33 columns, live 37, neutralised 2026-09-02);
+      ops-cueinstrument-001 was de-frozen the same way earlier in this batch. The NOT-IN form fails
+      on precisely the same unintended column and accommodates an intended one by editing ONE list
+      instead of a list plus a total.
+
+      The allowlist must stay NULL-free: `x NOT IN (…, NULL)` is NULL for every x, so a single NULL
+      element would make this gate return zero rows against ANY table shape and go vacuously green.
     sql: |
-      SELECT 1 FROM information_schema.columns
+      SELECT column_name FROM information_schema.columns
        WHERE table_schema='public' AND table_name='merge_event'
+         AND column_name NOT IN ('id','op_id','winner_plant_id','loser_plant_ids','group_label',
+                                 'snapshot','snapshot_version','events_dropped','rows_repointed',
+                                 'merged_at','merged_by','restored_at','restored_by','workspace_id')
     expect: rowcount_eq
-    value: 14
+    value: 0
     continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_op_id_unique

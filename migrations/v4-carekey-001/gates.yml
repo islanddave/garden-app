@@ -42,6 +42,10 @@
 #
 # Both informational captures use `rowcount_gte: 0` — they always pass, still run, still report.
 # They exist so the before/after of a data-quality finding is on the record rather than in prose.
+# They are also the ONLY two gates here entitled to that verb, and this line was already written as
+# if that were true. It was not, until 2026-09-06: post_no_new_triggers_on_touched_tables carried
+# `rowcount_gte: 0` while its own comment declared it an assertion, so it could not fail. Read this
+# accounting as exhaustive — a third `rowcount_gte` in this file is a bug, not a capture.
 
 pre:
   # Phase A must already be applied. Asserting the substrate rather than assuming it: applying this
@@ -305,13 +309,42 @@ post:
   # fails on prod-vs-restore drift. A VALIDATE adds none, so that inventory is unchanged and needs no
   # fixture update. If this ever returns > 0, restore-verify must be revisited in the same commit.
   - name: post_no_new_triggers_on_touched_tables
+    note: >
+      DE-VACUUMED 2026-09-06 (OPS-GATEFROZENCOUNT-001). This gate was written as an ASSERTION — the
+      comment above says "if this ever returns > 0, restore-verify must be revisited in the same
+      commit" — but carried `expect: rowcount_gte` with `value: 0`. `rows >= 0` is true for EVERY
+      possible result, so it could not fail and read green forever. Its immediate neighbour
+      post_no_plant_row_bakes_next_water_at uses `rowcount_eq: 0` on the same violation shape; this
+      was a one-verb slip, not a design choice, and the file header's "both informational captures"
+      accounting (which names the two sweep_capture_* gates) is itself evidence this was never meant
+      to be the third.
+
+      THE ALLOWLIST WAS ALSO STALE, and the dead verb is why nobody found out. Authored 2026-08-07;
+      v4-harvestaudit-001 then armed trg_audit_event_log_del + trg_audit_event_log_upd on event_log,
+      and both are live on prod AND staging today. Flipping the verb alone would therefore have
+      turned the blocking sweep RED on both databases for a legitimately shipped feature — trading a
+      vacuous green for a false red, which is the same defect wearing the other mask. The two audit
+      triggers are added here so the gate asserts the INTENDED inventory rather than a 2026-08-07
+      snapshot of it. Per the instruction above, restore-verify.py WAS revisited: its trigger_set()
+      builds the inventory dynamically from live prod and diffs it against the restore, so it holds
+      no fixture list and needed no edit.
+
+      trg_event_log_user_stats and trg_entity_memory_updated_at are retained but exist nowhere — not
+      live on either database, and named in no other file in this repo. Harmless in a NOT-IN list,
+      and left in place rather than quietly narrowed; recorded here so the next reader knows the
+      allowlist is a superset of the live inventory by intent and not by accident.
+
+      The allowlist must stay NULL-free: `x NOT IN (…, NULL)` is NULL for every x, so a single NULL
+      element would make this gate return zero rows against ANY trigger inventory and go vacuously
+      green a second time, by a different route.
     sql: |
-      SELECT 1 FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
+      SELECT t.relname || '.' || g.tgname FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
        WHERE NOT g.tgisinternal
          AND t.relname IN ('event_log', 'entity_memory')
          AND g.tgname NOT IN ('set_updated_at', 'prevent_ownership_transfer',
-                              'trg_event_log_user_stats', 'trg_entity_memory_updated_at')
-    expect: rowcount_gte
+                              'trg_event_log_user_stats', 'trg_entity_memory_updated_at',
+                              'trg_audit_event_log_del', 'trg_audit_event_log_upd')
+    expect: rowcount_eq
     value: 0
 
   # continuous: false ADDED 2026-08-10 — apply-time receipt, not a standing invariant, and the one
