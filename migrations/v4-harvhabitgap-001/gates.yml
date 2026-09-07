@@ -124,6 +124,19 @@ post:
   # entry is a hard CI failure rather than a slow drift, same as yarrow on 2026-08-25. Recorded in
   # not_harvest_tracked.slugs in the same change, which harvestNullHabitCoverage.test.js requires;
   # projection untouched (nothing added to by_crop_type).
+  #
+  # 2026-09-07 (lane-cropprofiles-20260907): horseweed added. Two crop types were minted 2026-09-07
+  # with a NULL harvest_habit and on no list, so this gate went red on prod the same day — expected
+  # scalar_eq=0, got 2. Only ONE of the two is recorded here. snapdragon was SEEDED instead, at
+  # cut_and_come_again / 21d: Antirrhinum majus regrows the harvested tissue (the field contract's
+  # own definition of the habit) and the interval is sourced to USU Extension CutFlower/01, "a second
+  # flush of stems approximately three weeks later" — so it leaves this gate's population by
+  # acquiring a real habit rather than by being excused. horseweed is the recorded NULL, and the test
+  # was Dave's: flowers harvestable or not. Erigeron canadensis heads are 3-5 mm, NC State Extension
+  # calls them "small, inconspicuous white flowers", and no extension source treats the species as
+  # anything but a weed — so a NULL is the honest value and no habit was invented to clear the red.
+  # The reasoning and the flip condition live in not_harvest_tracked.contested.horseweed, which
+  # harvestNullHabitCoverage.test.js binds to this list.
   - name: post_every_null_habit_is_a_recorded_decision
     sql: |
       SELECT count(*) FROM public.crop_types c
@@ -145,6 +158,7 @@ post:
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
            'spinach','stock','succulent','summer_savory','sunflower','thunbergia','torenia',
            'tradescantia','turnip','tweedia',
+           'horseweed',
            'vietnamese_coriander','viola','yarrow','yogurt')
     expect: scalar_eq
     value: 0
