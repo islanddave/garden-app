@@ -27,8 +27,8 @@
         "no_history": 0,
         "pest": 0,
         "plantings": 3,
-        "rain_skipped": 1,
-        "water_due": 2
+        "rain_skipped": 3,
+        "water_due": 0
       },
       "substrate": {
         "feeding_now": 3,
@@ -59,40 +59,33 @@
             "project": "Garden",
             "project_id": "pj1",
             "reason": "Skip — 0.3\" rain over the last few days counts as watering"
-          }
-        ],
-        "water_due": [
+          },
           {
+            "credited_days": 1,
             "crop": "pepper",
             "days_since": 3,
             "id": "fg2",
             "in_ground": false,
             "interval": 3,
-            "method": "deep_even",
-            "moisture": "evenly_moist",
             "name": "Small Bag Pepper",
-            "never": false,
-            "overdue_by": 0,
             "project": "Garden",
             "project_id": "pj1",
-            "rain_note": "Water — 0.3\" rain under the 0.35\" soak-in threshold"
+            "reason": "Skip — 0.3\" rain over the last few days counts as watering"
           },
           {
+            "credited_days": 1,
             "crop": "pepper",
             "days_since": 3,
             "id": "fg3",
             "in_ground": false,
             "interval": 3,
-            "method": "deep_even",
-            "moisture": "evenly_moist",
             "name": "Unsized Bag Pepper",
-            "never": false,
-            "overdue_by": 0,
             "project": "Garden",
             "project_id": "pj1",
-            "rain_note": "Water — 0.3\" rain under the 0.35\" soak-in threshold"
+            "reason": "Skip — 0.3\" rain over the last few days counts as watering"
           }
-        ]
+        ],
+        "water_due": []
       }
     }
   },

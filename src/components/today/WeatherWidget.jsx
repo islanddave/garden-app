@@ -265,7 +265,32 @@ export default function WeatherWidget({
   const rainWhen = showToday ? 'today' : 'tomorrow'
   const rainAmtKnown = rainIn != null
   const rainAmtWeighted = rainAmtKnown ? round2(rainIn * rainPop / 100) : null
-  const rainNote = uncertain
+
+  // BUG-RAINCARDFORECASTONLY-001 — the card used to print a PoP-WEIGHTED FORECAST as the day's rain figure even
+  // when the WS-2902 in the yard had already measured the rain. Reported by Dave 2026-09-06: the card read
+  // "0.03″ rain expected" on a morning the gauge finished at 0.29″. Both numbers were "right" and neither was
+  // what he wanted to know. Three different quantities were in play — the gauge, the plan's snapshot, and a
+  // client-side Open-Meteo fetch — and the ONLY one the card showed was the one that never consults the gauge
+  // (DRG-WXROLL-001 deliberately scopes the live overlay to the informational figure; that is unchanged, and is
+  // exactly why this figure can drift from the yard).
+  //
+  // A MEASUREMENT OUTRANKS A FORECAST, so it leads. Both halves are read off `hydrology` — never `rainSrc` —
+  // because the live overlay carries no station provenance at all (see stationProv above): pairing a measured
+  // number with a forecast from a different source would put two incompatible bases in one sentence. The
+  // still-expected half is the plan's `today_remaining_in`, the same hourly-scoped remainder the watering
+  // engine uses, so the card and the list can no longer disagree about how much more is coming.
+  //
+  // Unweighted, deliberately. `rainIn * pop / 100` is an expected VALUE and is the right shape for a forecast;
+  // applying it to rain that has physically fallen would be nonsense (0.29″ at 40% is not 0.12″).
+  const measuredToday = Number.isFinite(hydrology?.today_observed_in) ? hydrology.today_observed_in : null
+  const gaugeMeasured = measuredToday != null && measuredToday > 0
+  const remainingToday = Number.isFinite(hydrology?.today_remaining_in) ? hydrology.today_remaining_in : null
+
+  const rainNote = gaugeMeasured
+    ? (remainingToday != null && remainingToday > 0
+        ? `${measuredToday.toFixed(2)}″ fallen · ${remainingToday.toFixed(2)}″ more expected · ${todayPop}%`
+        : `${measuredToday.toFixed(2)}″ fallen today · none more expected`)
+    : uncertain
     ? (rainAmtKnown && rainIn >= 0.1
         ? `~${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% — could climb`
         : `${rainPop}% chance ${rainWhen} · little so far, could climb`)
@@ -377,7 +402,11 @@ export default function WeatherWidget({
         <Lane level={scale.beds} Target={BedIcon} label="In-ground beds" />
       </div>
 
-      {(rainIn > 0 || uncertain || live) && (
+      {/* BUG-RAINCARDFORECASTONLY-001 adds `gaugeMeasured`: a day whose rain has ALREADY FALLEN can leave every
+          forecast field at 0 (Open-Meteo drops a delivered event from the current day's total — measured
+          2026-09-06: 0.0" reported for a day the gauge finished at 0.29"), so the old gate hid the line
+          precisely when the card had a real number to show. */}
+      {(rainIn > 0 || uncertain || live || gaugeMeasured) && (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           {/* care.rainPct is drawn for this exact line: its registry note calls it "the FORECAST twin
               of event.rain … one drop under a raised cloud reads as 'some chance', three streaks read

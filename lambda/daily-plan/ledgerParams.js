@@ -127,8 +127,13 @@ const LIGHT_CREDIT_WI = 0.5;                 // Light: D := max(0, D - this x wi
 const RAIN_DAY = {
   // fabric_ground added by BUG-RAINCREDITLIVEPATH-001 purely to hold the mirror equal — these two maps drive
   // NOTHING (only bagHeatSoftenF below is read at runtime); the engine-side row is the one with behaviour.
-  ia: { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35, fabric_ground: 0.20 },
-  hold: { in_ground: 3, intermediate: 2, small_fast: 1, fabric_ground: 3 },
+  // BUG-RAINTIERFALLBACK-001 (2026-09-06): small_fast 0.35 -> 0.17 (Dave-observed: a plain quarter inch must
+  // credit a rigid pot) and the derived 'unknown' fallback row, both mirrored here for the same reason — the
+  // lockstep test in this directory compares these maps to engine.RAIN_TIER_IA/HOLD with toEqual, so a
+  // one-sided edit reds there rather than drifting quietly. Derived the same way as the engine's, not
+  // transcribed, so the two cannot disagree about what "strictest" means.
+  ia: { in_ground: 0.20, intermediate: 0.25, small_fast: 0.17, fabric_ground: 0.20, unknown: 0.25 },
+  hold: { in_ground: 3, intermediate: 2, small_fast: 1, fabric_ground: 3, unknown: 1 },
   // Bag >=85F credit demotion. Keyed to weather_daily.tmax_f of the qualifying day, not today's
   // forecast high. Under RAIN_DEPTH this is a ONE-CLASS DEMOTION (deep->normal->light->nothing)
   // rather than a 0.5x scalar — the scalar had no meaning once the credit stopped being a number of

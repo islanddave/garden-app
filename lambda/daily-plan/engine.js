@@ -263,17 +263,56 @@ function rainCreditDays(cls, wi, hy, measuredOnly=false){
 // (spec §6/§8 — err toward watering: raise IA, shorten hold, tighten ceiling; in_ground IA is the #1 tune target).
 // BUG-RAINCREDITLIVEPATH-001: fabric_ground ports RAIN_DEPTH_TIER_OVERRIDE's bed-equivalence onto this LIVE
 // flag-OFF-ledger path. Values equal in_ground deliberately (same intent as ledgerParams.RAIN_DEPTH.fabric_ground).
-// small_fast is UNCHANGED and stays the strictest row + the NULL/unknown fallback (see the invariant at :197-208).
-const RAIN_TIER_IA   = { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35, fabric_ground: 0.20 }; // inches (initial abstraction per tier)
-const RAIN_TIER_HOLD = { in_ground: 3,    intermediate: 2,    small_fast: 1,    fabric_ground: 3     }; // max credit days per tier; never raise small_fast
+//
+// BUG-RAINTIERFALLBACK-001 (2026-09-06) — TWO changes, and the second exists to make the first safe.
+//
+// (1) small_fast IA 0.35 -> 0.17. Dave's call, from his own observation: a plain quarter inch of rain must bank a
+//     day for a rigid pot, and it did not. DERIVATION, in the same terms the 0.35 used — need 0.075"/day (his
+//     observed satisfaction figure for a mulched container), so a 0.25" event has to clear IA and still leave a
+//     day: 0.25 - 0.17 = 0.08 >= 0.075. Rounded DOWN to two decimals (the gauge's own resolution) because rounding
+//     UP here would round AWAY from the event he asked to cover — 0.18 leaves 0.07 and misses. HOLD is untouched
+//     at 1: the retune makes a quarter inch COUNT for a rigid pot, it does not make it last longer. Measured
+//     2026-09-06: 0.34" window precip left 49 plantings on the list at `0.34" rain under the 0.35" soak-in
+//     threshold`, i.e. short by 0.01".
+//
+//     WHAT THIS ROW NOW MEANS, because 0.17 INVERTS the ordering the tier table was built on. small_fast is now
+//     the LOWEST bar in the table — a rigid pot clears it before a 5-gal bag (0.20), the ground (0.20) or a
+//     raised bed (0.25) — so a 0.19" rain credits the pots and leaves the beds on the list. Read as
+//     "interception/canopy loss" that is backwards: a small vessel under a canopy sheds MORE, which is exactly
+//     what 0.35 encoded. The resolution is that 0.35 was never measured — it was an assumption — and this number
+//     is: Dave has watched these pots after quarter-inch rains. So for THIS row the quantity is the rain depth
+//     that observably SATISFIES the vessel, not an estimate of what it loses. Put to Dave with the inversion
+//     spelled out (2026-09-06) and confirmed: his observation outranks the model's guess. The reservoir physics
+//     has not gone anywhere — it lives in HOLD, which is untouched and still ordered correctly (pot 1 day, bag
+//     and ground 3, bed 2). Do not "restore" the ordering by raising this back without new observation.
+//
+// (2) An explicit, DERIVED 'unknown' row — because (1) would otherwise have been silently unsafe. Until now
+//     rainTierFor resolved unrecognized/NULL container_type to 'small_fast', and that was fail-safe ONLY while
+//     small_fast happened to hold the strictest values. Nothing enforced the coupling; the comment at the
+//     FAIL-SAFE INVARIANT above simply asserted it and asked the next editor to re-check by hand. Lowering IA to
+//     0.17 breaks it: 'unknown' vessels would have started clearing a LOWER bar than a raised bed (0.25) or the
+//     ground (0.20) — better-than-bed credit for the 8 plantings the engine knows least about, which is the exact
+//     inversion that went live for a few hours on 2026-08-17. Deriving the row from the named tiers (max IA, min
+//     hold, min per-stage ceiling) decouples the two concerns: any tier may now be retuned on its own agronomy
+//     without anyone re-deriving who is strictest. Same shape ledgerParams.RAIN_DEPTH has used since F2.
+//     The _NAMED tables are the tunable surface; the exported tables carry the derived row and are what callers
+//     key. 'unknown' is unreachable from any container_type string (RAIN_VESSEL_TIER has no such value).
+const RAIN_TIER_IA_NAMED   = { in_ground: 0.20, intermediate: 0.25, small_fast: 0.17, fabric_ground: 0.20 }; // inches (initial abstraction per tier)
+const RAIN_TIER_HOLD_NAMED = { in_ground: 3,    intermediate: 2,    small_fast: 1,    fabric_ground: 3     }; // max credit days per tier
+const RAIN_TIER_IA   = { ...RAIN_TIER_IA_NAMED,   unknown: Math.max(...Object.values(RAIN_TIER_IA_NAMED)) };
+const RAIN_TIER_HOLD = { ...RAIN_TIER_HOLD_NAMED, unknown: Math.min(...Object.values(RAIN_TIER_HOLD_NAMED)) };
 // Vessel -> tier. Covers the full DB container_type CHECK vocab (14 values, verified prod 2026-07-08) + the generic
 // 'pot' used in fixtures. Rigid pots (plastic/terracotta/ceramic/'pot') are small_fast: generic unknown-size pots dry
 // fast; large rigid pots re-tag to trough.
 // FAIL-SAFE INVARIANT (both resolvers below): an unrecognized/NULL container_type must get the LEAST credit of any
 // row in the table being keyed -> water it. That is a property of the TABLE, not of a tier name, and the two tables
 // no longer agree on which row satisfies it:
-//   RAIN_TIER_IA/HOLD + RAIN_MAX_DAYS (this file, live flag-OFF) -> small_fast is still strictest (highest IA 0.35,
-//     lowest hold 1, tightest ceiling), so rainTierFor's 'small_fast' fallback remains CORRECT. Do not "fix" it.
+//   BOTH tables now satisfy it the SAME way, and neither depends on a tier name any more (BUG-RAINTIERFALLBACK-001,
+//   2026-09-06 — before that date this file's tables relied on small_fast happening to be strictest, with nothing
+//   enforcing it; the note here said "Do not 'fix' it", which was correct for the values of the day and became
+//   wrong the moment small_fast was retuned to 0.17):
+//   RAIN_TIER_IA/HOLD + RAIN_MAX_DAYS (this file, live flag-OFF) -> derived 'unknown' row (max IA, min hold, min
+//     per-stage ceiling across the named tiers); rainTierFor resolves unrecognized/NULL to it.
 //   RAIN_DEPTH (ledgerParams, F2) -> has its OWN explicit 'unknown' row, strictly stricter than every named tier.
 //     rainDepthTierFor exists for that table and resolves unrecognized/NULL to 'unknown', never to a named tier.
 //     (History: for a few hours on 2026-08-17 small_fast was flattened to the in_ground values there, which made
@@ -299,7 +338,9 @@ const FABRIC_GROUND_MIN_GAL = 3;
 // Failing to parse a size therefore errs toward WATERING — the same direction vesselProfile.smallVessel takes.
 function rainTierFor(container_type, sizeGal){
   const ct = (container_type||'').toLowerCase();
-  const base = RAIN_VESSEL_TIER[ct] || 'small_fast';
+  // BUG-RAINTIERFALLBACK-001: was `|| 'small_fast'`. The fallback is now the derived 'unknown' row, so it stays
+  // strictest by construction no matter how the named tiers are retuned. A recognized vessel is unaffected.
+  const base = RAIN_VESSEL_TIER[ct] || 'unknown';
   if(ct !== 'fabric_bag') return base;
   return (Number.isFinite(sizeGal) && sizeGal >= FABRIC_GROUND_MIN_GAL) ? 'fabric_ground' : base;
 }
@@ -325,7 +366,7 @@ function rainDepthTierFor(container_type, sizeGal){
 // Max-days ceiling: clamps the watering interval before the due-check so a rain-credited planting still re-surfaces
 // for a moisture check (anti suppression-inversion). tier x stage; +1 for drought-tolerant Mediterranean herbs,
 // -1 for steady-moisture leafy/Solanaceae at flowering/fruiting (bolt / split / blossom-end-rot on swings), floor 1.
-const RAIN_MAX_DAYS = {
+const RAIN_MAX_DAYS_NAMED = {
   small_fast:   { seedling: 1, vegetative: 2, flowering: 2, fruiting: 1, mature: 2 },
   intermediate: { seedling: 2, vegetative: 3, flowering: 3, fruiting: 2, mature: 4 },
   in_ground:    { seedling: 2, vegetative: 4, flowering: 3, fruiting: 3, mature: 5 },
@@ -333,6 +374,17 @@ const RAIN_MAX_DAYS = {
   // REQUIRED: without it, enabling that flag makes rainMaxDays read RAIN_MAX_DAYS.fabric_ground -> undefined for
   // every big bag. Mirrors in_ground, matching the tier's IA/hold.
   fabric_ground:{ seedling: 2, vegetative: 4, flowering: 3, fruiting: 3, mature: 5 },
+};
+// BUG-RAINTIERFALLBACK-001: the third table rainTierFor's fallback keys, so it needs the same derived row or the
+// new 'unknown' tier reads undefined here — the identical defect the fabric_ground note above records. Per-stage
+// MIN across the named tiers = the tightest ceiling at every stage, so an unknown vessel re-surfaces for a
+// moisture check soonest. Derived per stage, not copied from small_fast: copying would re-create the named-alias
+// coupling this change exists to remove.
+const RAIN_MAX_DAYS_STAGES = ['seedling','vegetative','flowering','fruiting','mature'];
+const RAIN_MAX_DAYS = {
+  ...RAIN_MAX_DAYS_NAMED,
+  unknown: Object.fromEntries(RAIN_MAX_DAYS_STAGES.map((s) =>
+    [s, Math.min(...Object.values(RAIN_MAX_DAYS_NAMED).map((t) => t[s]))])),
 };
 function rainStageFor(status){ const s=(status||'').toLowerCase();
   if(s==='seedling'||s==='germinated'||s==='sown') return 'seedling';
@@ -342,7 +394,7 @@ function rainStageFor(status){ const s=(status||'').toLowerCase();
   return 'mature'; }   // active/harvested/mature/unknown -> mature (loosest column, still capped)
 function rainMaxDays(tier, status, crop){
   const stage=rainStageFor(status);
-  const base=(RAIN_MAX_DAYS[tier]||RAIN_MAX_DAYS.small_fast)[stage];
+  const base=(RAIN_MAX_DAYS[tier]||RAIN_MAX_DAYS.unknown)[stage];
   if(base==null) return null;
   const c=(crop||'').toLowerCase();
   let mod=0;
@@ -351,8 +403,8 @@ function rainMaxDays(tier, status, crop){
   return Math.max(1, base+mod); }
 // Tiered rain credit — mirrors rainCreditDays but with per-tier IA + hold. Returns {credit_days,wp,eff,tier} or null.
 function rainCreditDaysTiered(tier, wi, hy, measuredOnly=false){
-  const ia = RAIN_TIER_IA[tier] ?? RAIN_TIER_IA.small_fast;
-  const hold = RAIN_TIER_HOLD[tier] ?? RAIN_TIER_HOLD.small_fast;
+  const ia = RAIN_TIER_IA[tier] ?? RAIN_TIER_IA.unknown;
+  const hold = RAIN_TIER_HOLD[tier] ?? RAIN_TIER_HOLD.unknown;
   const wp = creditPrecip(hy, measuredOnly); if(wp==null) return null;
   const eff = wp - ia;
   if(eff<=0) return null;
@@ -403,21 +455,37 @@ const SOAK_FCST_POP_PCT = SOAK_THRESHOLDS.SOAK_FCST_POP_PCT;     // min PoP for 
 //
 // DERIVATION (every input is either Dave-observed or already shipped in this file):
 //   need    0.075"/day  — Dave-observed satisfaction figure for a mulched container.
-//   loss    0.35"       — RAIN_TIER_IA.small_fast above: this engine's OWN initial abstraction for a
+//   loss    0.17"       — RAIN_TIER_IA.small_fast above: this engine's OWN initial abstraction for a
 //                         small fast-drying vessel ("first-wetting/runoff/canopy loss"). It is LIVE in
 //                         prod (CARE_RAIN_CREDIT_ENABLED=true), so this borrows a number already in
 //                         force rather than inventing a second, disagreeing one. It is also where the
 //                         "canopy sheds water away" physics is already priced in — counting that effect
 //                         again here would be double-charging it.
-//   => a container banks a full day only once rain clears 0.35 + 0.075 = 0.425".
+//   => a container banks a full day only once rain clears 0.17 + 0.075 = 0.245".
 //   haircut 0.47        — this branch acts on a FORECAST, not a gauge, which is the one thing that
 //                         distinguishes it from the soak branch. Measured against 56 days of this
 //                         season's own prior_runs, the worst realized/forecast ratio on a day that
 //                         cleared the PoP gate was 0.47 (2026-06-22: 1.42" forecast, 0.67" delivered).
-//   => 0.425 / 0.47 = 0.9043", rounded UP to 0.91" — a safety bar must round toward watering, and 0.90
-//      actually banks 0.073" against a 0.075" need. Two decimals is the gauge's own resolution; more
-//      would be false precision on a 4-sample haircut. At this bar even the season's worst bust leaves
-//      the container its full day's water; at 0.70" that same bust delivers 0.33" and banks NOTHING.
+//   => 0.245 / 0.47 = 0.5213", rounded UP to 0.53" — a safety bar must round toward watering, and 0.52
+//      banks 0.0744" against a 0.075" need. Two decimals is the gauge's own resolution; more would be
+//      false precision on a 4-sample haircut. At this bar even the season's worst bust still leaves the
+//      container its full day's water. Note 0.53 clears the SOAK_FCST_QPF_IN floor (0.50) by only 0.03":
+//      the band this bar needs to stay inside is now narrow, so a further cut to the loss term would
+//      collapse it into dead code — soakcontainer.test.js's "stays strictly above the qualifying gate"
+//      is what makes that impossible to land quietly.
+//
+// RETUNED 2026-09-06 (BUG-RAINTIERFALLBACK-001, was 0.91"). Nothing about the physics or the cost
+// asymmetry below changed — only the loss term, which Dave lowered 0.35 -> 0.17 on his own observation
+// that a plain quarter inch must count for a rigid pot. This bar is DERIVED from that term, so it
+// follows arithmetically; the executable derivation test caught the divergence the moment the term
+// moved (it read `banked` 0.2577 against a "< 2x need" ceiling of 0.15) rather than letting 0.91 sit on
+// silently as a number nothing justified any more. Dave was shown the consequence and chose to let it
+// follow: the app is now quicker to say "skip the pots, rain is coming" — it acts at a 0.53" forecast
+// where it used to need 0.91". That is a real widening of FORECAST-based suppression for containers,
+// and it is the one direction the note below argues against, so it is recorded here as a decision
+// rather than a derivation artefact. If a busted forecast ever dries a pot, THIS is the line to revisit
+// — and the honest fix would be to decouple the two terms (a gauge reading is a fact, a forecast is a
+// guess), not to re-raise the measured-credit IA, which is answering a different question.
 //
 // Only the WORST observed bust pushes the answer this high — the mean ratio (0.93) would put it at 0.46",
 // under the 0.5" floor below. Designing to the worst case is deliberate: a false WATER on a free-draining
@@ -923,7 +991,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       // creditPrecip IS windowPrecip, so the flag-OFF note is byte-identical.
       const wp=creditPrecip(hydrology, measuredCreditEnabled);
       // flag-OFF: _iaShown===RAIN_IA.outdoor and _creditClass===(rcls==='outdoor') -> note is byte-identical.
-      const _iaShown = rainCreditEnabled ? (RAIN_TIER_IA[_rainTier] ?? RAIN_TIER_IA.small_fast) : RAIN_IA.outdoor;
+      const _iaShown = rainCreditEnabled ? (RAIN_TIER_IA[_rainTier] ?? RAIN_TIER_IA.unknown) : RAIN_IA.outdoor;
       // BUG-HEATDEMOTETOTAL-001: the bag branch now reports the credit that SURVIVED the gate, and only
       // fires when there was a credit at all. `bagHeatGate && rc==null` means the rain never cleared the
       // soak-in threshold in the first place — the old note called that "rain credit withheld on hot

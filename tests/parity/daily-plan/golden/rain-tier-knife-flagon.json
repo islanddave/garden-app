@@ -4,7 +4,7 @@
   "hydrology": {
     "rain_coming": false,
     "rain_horizon": null,
-    "recent_precip_in": 0.35,
+    "recent_precip_in": 0.25,
     "status": {
       "ok": true,
       "uncertainty": {
@@ -27,8 +27,8 @@
         "no_history": 0,
         "pest": 0,
         "plantings": 1,
-        "rain_skipped": 0,
-        "water_due": 1
+        "rain_skipped": 1,
+        "water_due": 0
       },
       "substrate": {
         "feeding_now": 1,
@@ -47,24 +47,21 @@
         "fertilize": [],
         "no_history": [],
         "pest": [],
-        "rain_skipped": [],
-        "water_due": [
+        "rain_skipped": [
           {
+            "credited_days": 1,
             "crop": "pepper",
             "days_since": 3,
             "id": "rk1",
             "in_ground": false,
             "interval": 3,
-            "method": "deep_even",
-            "moisture": "evenly_moist",
             "name": "Deck Pepper",
-            "never": false,
-            "overdue_by": 0,
             "project": "Garden",
             "project_id": "pj1",
-            "rain_note": "Water — 0.35\" rain under the 0.35\" soak-in threshold"
+            "reason": "Skip — 0.25\" rain over the last few days counts as watering"
           }
-        ]
+        ],
+        "water_due": []
       }
     }
   },

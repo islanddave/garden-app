@@ -48,10 +48,13 @@ describe('BUG-SOAKBAR-001 — the bar is derived, and the derivation is executab
   // The headline behaviour change. At the old 2.0" bar a container facing a 0.9" forecast at 92% PoP was
   // told to water; the derivation says 0.9" is precisely the point where even the season's worst forecast
   // bust still banks a full day. THIS IS THE TEST THAT FAILS AT 2.0.
+  // BUG-RAINTIERFALLBACK-001: bar retuned 0.91 -> 0.53 (the loss term it derives from moved 0.35 -> 0.17).
+  // Read the bar from the engine rather than restating it, so the next retune moves this fixture with it
+  // instead of failing here as a stale literal — the same lesson BUG-SOAKTESTLITERAL-001 taught above.
   it('suppresses a small vessel at the derived bar, and still waters just below it', () => {
-    const at = { recent_precip_in: 0, today_precip_in: 0.91, today_pop: 92, tomorrow_precip_in: 0, tomorrow_pop: null };
+    const at = { recent_precip_in: 0, today_precip_in: SOAK_TODAY_SMALL_IN, today_pop: 92, tomorrow_precip_in: 0, tomorrow_pop: null };
     expect(sup(at, true)?.kind).toBe('today');
-    const below = { ...at, today_precip_in: 0.90 };
+    const below = { ...at, today_precip_in: SOAK_TODAY_SMALL_IN - 0.01 };
     expect(sup(below, true)).toBe(null);
   });
 
@@ -75,7 +78,7 @@ describe('BUG-SOAKBAR-001 — the bar is derived, and the derivation is executab
       // ...and the BEHAVIOUR must move with it, not merely the export.
       const hy = { recent_precip_in: 0, today_precip_in: 1.0, today_pop: 92, tomorrow_precip_in: 0, tomorrow_pop: null };
       expect(patched.saturationSuppressed('outdoor', hy, { todayAware: true, smallVessel: true })).toBe(null);
-      expect(sup(hy, true)?.kind).toBe('today');   // the real engine, same input, still suppresses at 0.91
+      expect(sup(hy, true)?.kind).toBe('today');   // the real engine, same input, still suppresses at its own bar
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -88,7 +91,13 @@ describe('BUG-SOAKBAR-001 — the bar is derived, and the derivation is executab
     // that happens to be spelled small_fast: remap a rigid pot to a gentler tier and the derivation below
     // would be subtracting an abstraction containers never pay. Pinned via the engine's own resolver.
     expect(RAIN_TIER_IA[rainTierFor('plastic_pot')]).toBe(IA_SMALL_FAST_IN);
-    expect(RAIN_TIER_IA[rainTierFor(null)]).toBe(IA_SMALL_FAST_IN);  // unknown vessels land here too
+    // BUG-RAINTIERFALLBACK-001: was `expect(RAIN_TIER_IA[rainTierFor(null)]).toBe(IA_SMALL_FAST_IN)` — "unknown
+    // vessels land here too". They no longer do, deliberately: rainTierFor now resolves NULL/unrecognised to the
+    // derived 'unknown' row so the fail-safe survives a small_fast retune. That does NOT weaken this derivation,
+    // because the bar being derived governs `smallVessel` (vesselProfile), and a rigid pot — pinned above — is
+    // what actually pays IA_SMALL_FAST_IN. What must still hold is the direction: an unknown vessel clears a bar
+    // at least as high as the rigid pot it used to alias, never a lower one.
+    expect(RAIN_TIER_IA[rainTierFor(null)]).toBeGreaterThanOrEqual(IA_SMALL_FAST_IN);
     const delivered = SOAK_TODAY_SMALL_IN * WORST_OBSERVED_DELIVERY;
     const banked = delivered - IA_SMALL_FAST_IN;
     expect(banked).toBeGreaterThanOrEqual(CONTAINER_NEED_IN_PER_DAY);
@@ -149,7 +158,14 @@ describe('BUG-SOAKBAR-001 — replay against the real 2026 season (live prod pay
     { d: '2026-06-22', hy: { recent_precip_in: 0, today_precip_in: 1.42, today_pop: 91, tomorrow_precip_in: 1.25, tomorrow_pop: 74, upcoming_precip_in: 1.25 },
       expectSmall: 'today', actual: 0.67 },
     { d: '2026-07-07', hy: { recent_precip_in: 0, today_precip_in: 0.74, today_pop: 90, tomorrow_precip_in: 0, tomorrow_pop: 7, upcoming_precip_in: 0.16 },
-      expectSmall: null, actual: 1.03 },
+      // BUG-RAINTIERFALLBACK-001 (2026-09-06): was `null`. This is the ONE day in the season the 0.91 -> 0.53
+      // retune flips, and it flips toward suppression: forecast 0.74" clears 0.53" where it missed 0.91".
+      // `actual` says the call is right — 1.03" fell, MORE than forecast, so the containers genuinely got their
+      // water. That is worth stating plainly because the retune widens FORECAST-based suppression, which is the
+      // direction the header argues against; this day is the evidence that the widened bar is not reckless, and
+      // the season's worst bust (06-22, 1.42" -> 0.67") was already suppressed at the OLD bar, so the retune
+      // does not touch it.
+      expectSmall: 'today', actual: 1.03 },
     { d: '2026-07-29', hy: { recent_precip_in: 0.8, today_precip_in: 2.2, today_pop: 95, tomorrow_precip_in: 0.02, tomorrow_pop: 72, upcoming_precip_in: 0.03 },
       expectSmall: 'today', actual: 2.84 },
     { d: '2026-08-03', hy: { recent_precip_in: 0, today_precip_in: 4.32, today_pop: 92, tomorrow_precip_in: 0, tomorrow_pop: 0, upcoming_precip_in: 0 },
@@ -217,9 +233,14 @@ describe('BUG-SOAKBAR-001 — replay against the real 2026 season (live prod pay
   // deliberate edit. 2026-06-22 joined the list — not because the bar moved (it did not) but because the
   // incoming branch stopped claiming days on unmeasured rain, so the bar is consulted on one more day of
   // the season than before. One day of 56 nightly runs; every other day is unchanged.
-  it('the bar fires on three days this season — 06-22 joined when incoming went measured-only', () => {
+  it('the bar fires on all four days this season — 07-07 joined when the bar dropped to 0.53', () => {
     const firesNow = SEASON.filter(s => sup(s.hy, true)?.kind === 'today').map(s => s.d);
-    expect(firesNow).toEqual(['2026-06-22', '2026-07-29', '2026-08-03']);
+    expect(firesNow).toEqual(['2026-06-22', '2026-07-07', '2026-07-29', '2026-08-03']);
+    // Every qualifying day of the season now suppresses, so this list has stopped discriminating: at 0.53"
+    // no day in the corpus separates fire from no-fire. Pin the boundary directly instead, or the assertion
+    // above degrades into "the bar is below every forecast we have" and cannot fail for the right reason.
+    const justUnder = { ...SEASON[1].hy, today_precip_in: SOAK_TODAY_SMALL_IN - 0.01 };
+    expect(sup(justUnder, true)).toBe(null);
     // And no day in the season is claimed by incoming any more: every payload here predates the gauge
     // split, so soakBasis is `recent` alone and only 07-29 carries any measured water at all (0.8" < 1.0"
     // cap, < 0.5"... no: 0.8 >= 0.5, but its tomorrow_precip_in is 0.02, below the more-coming bar).

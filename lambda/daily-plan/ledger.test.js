@@ -53,9 +53,15 @@ describe('params lockstep (mirrored constants cannot drift)', () => {
     expect(LP.RAIN_DAY.ia).toEqual(engine.RAIN_TIER_IA);
     expect(LP.RAIN_DAY.hold).toEqual(engine.RAIN_TIER_HOLD);
   });
-  it('rainDepthTierFor mirrors rainTierFor except on the ONE declared divergence (the fallback)', () => {
-    // Two resolvers still exist because the two tables disagree on which row is the FAIL-SAFE:
-    // RAIN_DEPTH has an explicit 'unknown' row, RAIN_TIER_IA/HOLD does not and uses 'small_fast'.
+  it('rainDepthTierFor and rainTierFor now agree everywhere — the last divergence is gone', () => {
+    // BUG-RAINTIERFALLBACK-001 (2026-09-06) CLOSED the divergence this test was named for. The two resolvers
+    // existed apart because the two tables disagreed on which row was the FAIL-SAFE: RAIN_DEPTH had an explicit
+    // 'unknown' row, RAIN_TIER_IA/HOLD aliased the fallback to 'small_fast'. That alias was only safe while
+    // small_fast happened to hold the strictest values, and lowering it to 0.17 broke exactly that — so the
+    // engine tables gained their own derived 'unknown' row and rainTierFor now resolves to it. Both resolvers
+    // agree on every input. They are deliberately NOT merged: the tables they key still carry different
+    // quantities (inches-of-IA vs depth CLASSES), and one resolver serving two tables is how a future retune of
+    // one silently re-points the other. Identical behaviour, separate ownership.
     // REWRITTEN by BUG-RAINCREDITLIVEPATH-001. This block previously pinned the OPPOSITE of the
     // shipped behaviour: it asserted the legacy resolver must NOT learn 'fabric_ground' and that the
     // three engine tables must NOT carry that key. Its stated reason was that the name "would read as
@@ -68,11 +74,18 @@ describe('params lockstep (mirrored constants cannot drift)', () => {
       expect(engine.rainDepthTierFor(ct, null), `${ct} unsized`).toBe(engine.rainTierFor(ct, null));
       expect(engine.rainDepthTierFor(ct, 0.06), `${ct} tiny`).toBe(engine.rainTierFor(ct, 0.06));
     }
-    // The one surviving divergence: the fallback for an unrecognized/NULL container_type.
+    // The formerly-diverging case: the fallback for an unrecognized/NULL container_type. Both now say 'unknown'.
     for (const ct of [null, undefined, '', 'mystery_pot']) {
-      expect(engine.rainTierFor(ct), `${ct} (live)`).toBe('small_fast');
-      expect(engine.rainTierFor(ct, 20), `${ct} (live, sized)`).toBe('small_fast');  // size cannot rescue an unknown type
+      expect(engine.rainTierFor(ct), `${ct} (live)`).toBe('unknown');
+      expect(engine.rainTierFor(ct, 20), `${ct} (live, sized)`).toBe('unknown');  // size cannot rescue an unknown type
       expect(engine.rainDepthTierFor(ct), `${ct} (F2)`).toBe('unknown');
+      expect(engine.rainTierFor(ct), `${ct} agreement`).toBe(engine.rainDepthTierFor(ct));
+    }
+    // ...and the row they land on is genuinely the strictest in every table it keys — the property the old
+    // 'small_fast' alias only satisfied by coincidence, which is what made the retune unsafe.
+    for (const t of Object.keys(engine.RAIN_TIER_IA)) {
+      expect(engine.RAIN_TIER_IA.unknown, `IA vs ${t}`).toBeGreaterThanOrEqual(engine.RAIN_TIER_IA[t]);
+      expect(engine.RAIN_TIER_HOLD.unknown, `hold vs ${t}`).toBeLessThanOrEqual(engine.RAIN_TIER_HOLD[t]);
     }
     // The size gate itself, on the live resolver, at the shared threshold.
     expect(engine.rainTierFor('fabric_bag', 5)).toBe('fabric_ground');

@@ -90,10 +90,18 @@ describe('WXWATER tier lookup — every DB container_type maps; unknown fails sa
     for (const t of ['raised_bed', 'trough', 'whiskey_barrel', 'window_box']) expect(rainTierFor(t)).toBe('intermediate');
     for (const t of ['fabric_bag', 'hanging_basket', 'tray_cell', 'soil_block', 'solo_cup', 'plastic_pot', 'terracotta', 'ceramic', 'pot', 'other']) expect(rainTierFor(t)).toBe('small_fast');
   });
-  it('null / unknown container_type -> small_fast (least credit, err toward watering)', () => {
-    expect(rainTierFor(null)).toBe('small_fast');
-    expect(rainTierFor(undefined)).toBe('small_fast');
-    expect(rainTierFor('mystery_pot')).toBe('small_fast');
+  // BUG-RAINTIERFALLBACK-001 (2026-09-06): the fallback row was renamed from the 'small_fast' ALIAS to a derived
+  // 'unknown'. The CONTRACT this test exists to hold — least credit, err toward watering — is unchanged and is
+  // now structural rather than coincidental, so it is asserted here as a property instead of a string.
+  it('null / unknown container_type -> unknown (least credit, err toward watering)', () => {
+    expect(rainTierFor(null)).toBe('unknown');
+    expect(rainTierFor(undefined)).toBe('unknown');
+    expect(rainTierFor('mystery_pot')).toBe('unknown');
+    // the part that actually matters: whatever it is called, it must clear the highest bar and hold the shortest
+    for (const t of Object.keys(RAIN_TIER_IA)) {
+      expect(RAIN_TIER_IA[rainTierFor(null)], `IA vs ${t}`).toBeGreaterThanOrEqual(RAIN_TIER_IA[t]);
+      expect(RAIN_TIER_HOLD[rainTierFor(null)], `hold vs ${t}`).toBeLessThanOrEqual(RAIN_TIER_HOLD[t]);
+    }
   });
   // BUG-RAINCREDITLIVEPATH-001. The one-arg assertions above pass because sizeGal is undefined -> strict row,
   // which is the DESIGNED default but is a reason those tests do not state. Pin the size gate explicitly so a
@@ -111,22 +119,33 @@ describe('WXWATER tier lookup — every DB container_type maps; unknown fails sa
     // or Infinity coerces past the gate. A caller handing over a raw container_size must fail SAFE.
     expect(rainTierFor('fabric_bag', '5')).toBe('small_fast');
     expect(rainTierFor('fabric_bag', Infinity)).toBe('small_fast');
-    // the gate is fabric-only: a big rigid pot does NOT get promoted, and no fallback can reach the new row
+    // the gate is fabric-only: a big rigid pot does NOT get promoted, and no fallback can reach fabric_ground.
+    // BUG-RAINTIERFALLBACK-001: an unrecognised/NULL type now lands on 'unknown' rather than aliasing to
+    // small_fast — a SIZE can never rescue a vessel whose TYPE the engine does not recognise.
     expect(rainTierFor('plastic_pot', 20)).toBe('small_fast');
-    expect(rainTierFor('mystery_pot', 20)).toBe('small_fast');
-    expect(rainTierFor(null, 20)).toBe('small_fast');
+    expect(rainTierFor('mystery_pot', 20)).toBe('unknown');
+    expect(rainTierFor(null, 20)).toBe('unknown');
   });
   it('tier constants are the coarse-v1 values (IA spreads around the legacy 0.25; holds 3/2/1)', () => {
     // fabric_ground added by BUG-RAINCREDITLIVEPATH-001 at the in_ground values (0.20 / 3).
-    // small_fast is UNCHANGED and must stay the strictest row — it is still the NULL/unknown fallback.
-    expect(RAIN_TIER_IA).toEqual({ in_ground: 0.20, intermediate: 0.25, small_fast: 0.35, fabric_ground: 0.20 });
-    expect(RAIN_TIER_HOLD).toEqual({ in_ground: 3, intermediate: 2, small_fast: 1, fabric_ground: 3 });
-    // the fail-safe invariant as a property of the TABLE, not of the literals above
+    // BUG-RAINTIERFALLBACK-001 (2026-09-06): small_fast retuned 0.35 -> 0.17 (Dave — a plain quarter inch must
+    // credit a rigid pot), and a DERIVED 'unknown' row added so the fail-safe no longer rides on which named tier
+    // happens to be strictest. The exported tables therefore carry five rows, not four.
+    expect(RAIN_TIER_IA).toEqual({ in_ground: 0.20, intermediate: 0.25, small_fast: 0.17, fabric_ground: 0.20, unknown: 0.25 });
+    expect(RAIN_TIER_HOLD).toEqual({ in_ground: 3, intermediate: 2, small_fast: 1, fabric_ground: 3, unknown: 1 });
+    // the fail-safe invariant as a property of the TABLE, not of the literals above — now carried by 'unknown',
+    // which is DERIVED from the named rows, so this loop can no longer be broken by retuning any single tier.
     for (const t of Object.keys(RAIN_TIER_IA)) {
-      if (t === 'small_fast') continue;
-      expect(RAIN_TIER_IA.small_fast, `IA ${t}`).toBeGreaterThanOrEqual(RAIN_TIER_IA[t]);
-      expect(RAIN_TIER_HOLD.small_fast, `hold ${t}`).toBeLessThanOrEqual(RAIN_TIER_HOLD[t]);
+      if (t === 'unknown') continue;
+      expect(RAIN_TIER_IA.unknown, `IA ${t}`).toBeGreaterThanOrEqual(RAIN_TIER_IA[t]);
+      expect(RAIN_TIER_HOLD.unknown, `hold ${t}`).toBeLessThanOrEqual(RAIN_TIER_HOLD[t]);
     }
+    // ...and the fallback actually REACHES that row. The old code left this coupling to a comment asking the next
+    // editor to re-check by hand, which is exactly what failed: nothing would have caught small_fast dropping
+    // below in_ground while unknown vessels still aliased to it.
+    expect(rainTierFor(null)).toBe('unknown');
+    expect(rainTierFor('no_such_vessel')).toBe('unknown');
+    expect(rainTierFor('plastic_pot')).toBe('small_fast');   // a recognised vessel is unaffected
   });
 });
 
@@ -159,9 +178,16 @@ describe('WXWATER rainCreditDaysTiered — per-tier IA threshold + hold cap', ()
     expect(rainCreditDaysTiered('in_ground', 5, H(0.22)).credit_days).toBe(3);
     expect(rainCreditDaysTiered('in_ground', 2, H(0.5)).credit_days).toBe(2); // capped at wi
   });
-  it('small_fast needs a heavier rain (IA 0.35) and holds only 1 day', () => {
-    expect(rainCreditDaysTiered('small_fast', 5, H(0.30))).toBeNull();     // 0.30 < 0.35
-    expect(rainCreditDaysTiered('small_fast', 5, H(0.40)).credit_days).toBe(1);
+  // BUG-RAINTIERFALLBACK-001: IA 0.35 -> 0.17, so small_fast is now the LOWEST bar in the table rather than the
+  // highest — a rigid pot is credited by a rain that leaves a raised bed on the list. Deliberate (Dave-observed:
+  // a plain quarter inch satisfies his pots); the reservoir ordering lives in HOLD, which is unchanged at 1 day.
+  it('small_fast clears a light rain (IA 0.17) but still holds only 1 day', () => {
+    expect(rainCreditDaysTiered('small_fast', 5, H(0.15))).toBeNull();     // 0.15 < 0.17
+    expect(rainCreditDaysTiered('small_fast', 5, H(0.20)).credit_days).toBe(1);
+    // the point of the retune, asserted directly: a quarter inch banks a rigid pot its day
+    expect(rainCreditDaysTiered('small_fast', 5, H(0.25)).credit_days).toBe(1);
+    // ...and hold, not IA, is what still separates it from a bag: same rain, three times the credit
+    expect(rainCreditDaysTiered('fabric_ground', 5, H(0.25)).credit_days).toBe(3);
   });
   it('missing precip -> null', () => {
     expect(rainCreditDaysTiered('in_ground', 5, { recent_precip_in: null, today_precip_in: null })).toBeNull();
@@ -192,23 +218,37 @@ describe('WXWATER flag-ON behavior — directional divergence from flag-OFF', ()
   // BUG-RAINCREDITLIVEPATH-001 — the end-to-end delta, through generatePlan on the LIVE flag configuration
   // (credit ON, ceiling OFF), which no test previously covered (recon gap 6).
   it('fabric_ground: a >=3 gal bag is credited where the same bag under small_fast is watered', () => {
-    const base = { status: 'vegetative', last_water: ago(3), db_cadence: SEED({ crop: 'chard' }) };
-    // 0.21" — the real 2026-08-17 window precip. Above fabric_ground IA 0.20, below small_fast IA 0.35.
+    // BUG-RAINTIERFALLBACK-001 REWROTE THIS FIXTURE, and the reason is the finding. It used to separate the tiers
+    // by IA — 0.21" sat above fabric_ground's 0.20 and below small_fast's 0.35, so one credited and the other did
+    // not. small_fast is now 0.17, BELOW fabric_ground, so no rain depth exists that credits a big bag and not a
+    // rigid pot; an IA-based contrast here is unprovable, not merely retuned. The size gate still diverges, but
+    // now through HOLD (3 days vs 1), so the fixture separates them by how OVERDUE the planting is instead.
+    // 5 days since water on a 3-day cadence: 1 day of credit leaves it due (5 > 4), 3 days covers it (5 <= 6).
+    const base = { status: 'vegetative', last_water: ago(5), db_cadence: SEED({ crop: 'chard' }) };
     const big   = { ...base, container_type: 'fabric_bag', container_size: '5 gal' };
     const tiny  = { ...base, container_type: 'fabric_bag', container_size: '3 in' };   // 0.06 gal, the live outlier
     const nosz  = { ...base, container_type: 'fabric_bag', container_size: null };
     const rigid = { ...base, container_type: 'plastic_pot', container_size: '5 gal' };
-    expect(bucket(big,   H(0.21), true, wx, false).b).toBe('SKIP');   // the change
-    expect(bucket(tiny,  H(0.21), true, wx, false).b).toBe('DUE');    // below the gate -> unchanged
-    expect(bucket(nosz,  H(0.21), true, wx, false).b).toBe('DUE');    // unparseable -> unchanged, errs to watering
-    expect(bucket(rigid, H(0.21), true, wx, false).b).toBe('DUE');    // not a bag -> unchanged
-    // and it is the rain CREDIT that moved it, not the saturation-cap branch (which sets saturated:true)
-    const w = bucket(big, H(0.21), true, wx, false).out.tasks.rain_skipped.find((x) => x.id === 't');
+    expect(bucket(big,   H(0.25), true, wx, false).b).toBe('SKIP');   // hold 3 covers the 5-day gap
+    expect(bucket(tiny,  H(0.25), true, wx, false).b).toBe('DUE');    // below the gate -> hold 1, still short
+    expect(bucket(nosz,  H(0.25), true, wx, false).b).toBe('DUE');    // unparseable -> unchanged, errs to watering
+    expect(bucket(rigid, H(0.25), true, wx, false).b).toBe('DUE');    // not a bag -> hold 1, still short
+    // the tiny bag and the rigid pot ARE credited now (0.25 > 0.17) — they just aren't credited ENOUGH. Pin that,
+    // so a future regression that stops crediting them entirely cannot hide behind the same DUE verdict.
+    const tinyW = bucket(tiny, H(0.25), true, wx, false).out.tasks.water_due.find((x) => x.id === 't');
+    expect(tinyW).toBeTruthy();
+    // credited-but-short reads "didn't cover the gap"; uncredited reads "under the N" soak-in threshold". Pinning
+    // the distinction is what stops this from passing for the wrong reason — a regression that stopped crediting
+    // small_fast entirely would leave the planting in water_due exactly as it is here.
+    expect(tinyW.rain_note).toContain("didn't cover the gap");
+    expect(tinyW.rain_note).not.toContain('soak-in threshold');
+    // and it is the rain CREDIT that moved the big bag, not the saturation-cap branch (which sets saturated:true)
+    const w = bucket(big, H(0.25), true, wx, false).out.tasks.rain_skipped.find((x) => x.id === 't');
     expect(w.credited_days).toBe(3);                    // hold 3, capped at wi=3
     expect(w.saturated).toBeUndefined();
-    expect(w.reason).toBe('Skip — 0.21" rain over the last few days counts as watering');
-    // flag-OFF is untouched by all of this (outdoor IA 0.25 > 0.21 -> no credit)
-    expect(bucket(big, H(0.21), false, wx).b).toBe('DUE');
+    expect(w.reason).toBe('Skip — 0.25" rain over the last few days counts as watering');
+    // flag-OFF is untouched by all of this (outdoor IA 0.25, and eff must be > 0 -> 0.25 exactly does not credit)
+    expect(bucket(big, H(0.25), false, wx).b).toBe('DUE');
   });
   it('max-days ceiling clamps a long cadence so the plant re-surfaces (anti suppression-inversion)', () => {
     // in_ground, mature, cadence 5, big rain: flag-OFF holds 1 day (SKIP at dW==5). ceiling(mature in_ground)=5,

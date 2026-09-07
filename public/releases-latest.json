@@ -1,9 +1,8 @@
 {
-  "version": "4.113.0",
-  "date": "2026-09-04",
+  "version": "4.114.0",
+  "date": "2026-09-06",
   "highlights": [
-    "Saved seed lots now record how many seeds are in the jar, and what they weigh, separately from how many packets are on the shelf. Three of your lots read \"185 packet\" and \"175 packet\" — those were seed counts wearing the wrong label, and they now read as counts.",
-    "Saving seed lets you enter a count or a weight. Type a plain number for grams, or add mg — a packet that states \"0.5 g\" and one that states \"500 mg\" now record the same thing.",
-    "A counted-empty jar is now different from one nobody has counted. Zero seeds is an answer; blank means the question is still open."
+    "Today's weather card now shows the rain your gauge actually measured, alongside how much more is still expected — instead of a probability-weighted forecast that could read near zero on a morning it had already rained.",
+    "A plain quarter inch of rain now counts as watering for small pots and trays, which previously needed more than a third of an inch before the list would clear them."
   ]
 }

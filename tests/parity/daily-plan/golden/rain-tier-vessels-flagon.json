@@ -27,8 +27,8 @@
         "no_history": 0,
         "pest": 0,
         "plantings": 2,
-        "rain_skipped": 1,
-        "water_due": 1
+        "rain_skipped": 2,
+        "water_due": 0
       },
       "substrate": {
         "feeding_now": 2,
@@ -59,25 +59,21 @@
             "project": "Garden",
             "project_id": "pj1",
             "reason": "Skip — 0.3\" rain over the last few days counts as watering"
-          }
-        ],
-        "water_due": [
+          },
           {
+            "credited_days": 1,
             "crop": "pepper",
             "days_since": 3,
             "id": "nv1",
             "in_ground": false,
             "interval": 3,
-            "method": "deep_even",
-            "moisture": "evenly_moist",
             "name": "Unlabelled Vessel Pepper",
-            "never": false,
-            "overdue_by": 0,
             "project": "Garden",
             "project_id": "pj1",
-            "rain_note": "Water — 0.3\" rain under the 0.35\" soak-in threshold"
+            "reason": "Skip — 0.3\" rain over the last few days counts as watering"
           }
-        ]
+        ],
+        "water_due": []
       }
     }
   },

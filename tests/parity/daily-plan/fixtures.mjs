@@ -81,19 +81,33 @@ const TODAY_HEAVY = {
 //   flag-OFF: RAIN_IA.outdoor 0.25 -> eff 0.10 -> credited -> rain_skipped.
 //   flag-ON:  RAIN_TIER_IA.small_fast 0.35 -> eff 0 -> NO credit -> waters, and the note prints the tier IA.
 //   Sits ON the small_fast IA, so any retune of that constant flips the bucket AND the note (falsifiability).
+// BUG-RAINTIERFALLBACK-001 MOVED THIS KNIFE, and which constant it rests on INVERTED with it.
+// It used to sit exactly on RAIN_TIER_IA.small_fast (0.35): flag-OFF credited (0.35 > outdoor 0.25) and
+// flag-ON did not (eff 0). small_fast is now 0.17, BELOW outdoor, so 0.35 credits under BOTH models and the
+// pair collapsed into one plan — the parity suite's own non-vacuity guard caught it, which is the whole
+// reason that guard exists. Re-pointed at RAIN_IA.outdoor (0.25) instead, the one constant the two models
+// can still straddle: flag-OFF eff 0 -> waters, flag-ON eff 0.08 -> credited. The DIRECTION of divergence is
+// the opposite of what it was, and that is not an artefact — it is the ordering inversion Dave accepted
+// (a rigid pot is now credited by rain that leaves the legacy single-outdoor model watering).
 const RAIN_TIER_KNIFE = {
   today: '2026-06-22',
   weather: { tonightLow: 60, highToday: 80, code: 1, short: 'Clearing', unit: 'F' },
-  hydrology: { recent_precip_in: 0.35, today_precip_in: 0, today_pop: 10, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  hydrology: { recent_precip_in: 0.25, today_precip_in: 0, today_pop: 10, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
   ownerFallback: 'dave',
   plantings: [
     P({ id: 'rk1', name: 'Deck Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'pot', container_size: '5 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-19', covered: false, db_cadence: PEPPER }),
   ],
 };
 // RAIN_TIER_VESSELS: 0.30" window rain across the two tiers prod actually lands on.
-//   nv1 — NULL container_type (~22 such rows in prod): rainTierFor's 'small_fast' FALLBACK, IA 0.35 -> no credit
-//         under the flag, so it waters. Pins the fail-safe direction of the fallback: re-pointing it at
-//         intermediate/in_ground (IA 0.25/0.20) would credit it and flip this golden.
+//   nv1 — NULL container_type (~22 such rows in prod): rainTierFor's FALLBACK. Pins the fail-safe direction.
+//         BUG-RAINTIERFALLBACK-001 (2026-09-06) FLIPPED THIS GOLDEN, exactly as the previous version of this
+//         comment predicted it would ("re-pointing it at intermediate/in_ground (IA 0.25/0.20) would credit it
+//         and flip this golden"). The fallback is now the DERIVED 'unknown' row = max IA across the named
+//         tiers = 0.25, so 0.30" clears it by 0.05 and nv1 is credited where it used to water. The invariant
+//         is intact — unknown is still the strictest row in the table — but the absolute bar moved DOWN with
+//         small_fast, because that is what "strictest of the named tiers" means once the strictest tier is
+//         retuned. Real consequence, small population: the ~8 live NULL-container rows now credit at 0.25"
+//         rather than 0.35".
 //   bed2 — in_ground: IA 0.20 -> credited, and RAIN_TIER_HOLD.in_ground 3 gives credited_days 3 vs the
 //         flag-OFF RAIN_HOLD_DAYS 1, so the hold table is pinned too.
 const RAIN_TIER_VESSELS = {
@@ -437,7 +451,7 @@ export const scenarios = [
   // that is a separately-flagged clamp (DRG-WXFLAGSPLIT-001 F1) and pinning it here would conflate the two.
   {
     name: 'rain-tier-knife-flagoff',
-    desc: '0.35" on an established outdoor pot, flag OFF: clears RAIN_IA.outdoor 0.25 -> rain_skipped.',
+    desc: '0.25" on an established outdoor pot, flag OFF: sits exactly ON RAIN_IA.outdoor 0.25 -> eff 0, no credit -> waters.',
     input: { ...RAIN_TIER_KNIFE, rainCreditEnabled: false },
   },
   {

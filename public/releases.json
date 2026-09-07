@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.114.0",
+    "date": "2026-09-06",
+    "highlights": [
+      "Today's weather card now shows the rain your gauge actually measured, alongside how much more is still expected — instead of a probability-weighted forecast that could read near zero on a morning it had already rained.",
+      "A plain quarter inch of rain now counts as watering for small pots and trays, which previously needed more than a third of an inch before the list would clear them."
+    ]
+  },
+  {
     "version": "4.113.0",
     "date": "2026-09-04",
     "highlights": [

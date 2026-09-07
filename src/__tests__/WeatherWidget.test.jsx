@@ -427,3 +427,55 @@ describe('WeatherWidget — DRG-WXSTATION-002 weather-station source on Today (V
     expect(hydrologySourceLabel({})).toBeNull()
   })
 })
+
+// BUG-RAINCARDFORECASTONLY-001 — the card must lead with what the GAUGE measured, not a probability-weighted
+// forecast. Reported by Dave 2026-09-06: the card read "0.03″ rain expected" on a morning his WS-2902 finished
+// at 0.29″. Every fixture below is that real day or a degradation of it. Before this block the file set
+// `today_observed_in` exactly ZERO times, so the whole gauge path shipped unexercised — the failure class the
+// suite is least able to notice, because the other 46 tests stay green either way.
+describe('WeatherWidget — a measurement outranks a forecast (BUG-RAINCARDFORECASTONLY-001)', () => {
+  // 2026-09-06 15:30 ET, verbatim from prod daily_plan.items->hydrology.
+  const gauged = {
+    recent_precip_in: 0.05, today_precip_in: 0.29, today_observed_in: 0.29, today_remaining_in: 0,
+    today_pop: 40, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false,
+    station: { station_fresh: true, today_source: 'station', station_mac: 'F8:B3:B7:82:1F:0D' },
+  }
+
+  it('prints the measured amount, not the PoP-weighted forecast', () => {
+    render(<WeatherWidget weather={weather} hydrology={gauged} />)
+    expect(screen.getByText(/0\.29″ fallen today/)).toBeTruthy()
+    // the specific wrong number from the report: 0.29 x 40% = 0.12, and the live-forecast form was ~0.03
+    expect(screen.queryByText(/0\.12″/)).toBeNull()
+    expect(screen.queryByText(/rain expected/)).toBeNull()
+  })
+
+  it('shows BOTH halves when rain has fallen and more is still coming', () => {
+    const mid = { ...gauged, today_observed_in: 0.14, today_remaining_in: 0.15, today_precip_in: 0.29 }
+    render(<WeatherWidget weather={weather} hydrology={mid} />)
+    expect(screen.getByText(/0\.14″ fallen · 0\.15″ more expected · 40%/)).toBeTruthy()
+  })
+
+  // The gate, not just the sentence. Open-Meteo drops a delivered event from the current day's total, so a
+  // fully-rained day can carry zeroes in every forecast field — which is when the card most needs to speak.
+  it('renders the line at all when every forecast field is zero but the gauge has a number', () => {
+    const allZeroForecast = { ...gauged, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 }
+    render(<WeatherWidget weather={weather} hydrology={allZeroForecast} />)
+    expect(screen.getByText(/0\.29″ fallen today/)).toBeTruthy()
+  })
+
+  // Fail-safe: no gauge (or a dry day) must leave the pre-existing forecast sentence byte-identical, or this
+  // change would have silently rewritten the card for every plan that has no bound station.
+  it('leaves the forecast wording untouched when there is no measured rain', () => {
+    render(<WeatherWidget weather={weather} hydrology={hydrology} />)
+    expect(screen.getByText(/rain expected/)).toBeTruthy()
+    expect(screen.queryByText(/fallen/)).toBeNull()
+  })
+
+  it('does not treat a zero or absent gauge reading as a measurement', () => {
+    for (const observed of [0, null, undefined]) {
+      const { unmount } = render(<WeatherWidget weather={weather} hydrology={{ ...hydrology, today_observed_in: observed }} />)
+      expect(screen.queryByText(/fallen/), `observed=${observed}`).toBeNull()
+      unmount()
+    }
+  })
+})
