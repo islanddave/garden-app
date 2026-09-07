@@ -758,3 +758,59 @@ describe('bindStationToSpace', () => {
     expect(bindStationToSpace({ weather_lat: null, weather_lng: null }, s)).toBeNull();
   });
 });
+
+// BUG-GAUGERESETLAG-001 — the reset is not exactly at midnight, and a plain max over the civil day inherits
+// the PREVIOUS day's finished total. Reproduced from Dave's real WS-2902 history on 2026-09-07: the
+// accumulator held 0.29" (2026-09-06's total) through 00:04 EDT and reset to 0 at 00:05, and the 05:30 plan
+// published today_observed_in 0.29 on a day the live device read dailyrainin 0 / hourlyrainin 0 / weekly 0.
+//
+// The fixture is the shape of that morning, not a re-run of it: a wet day, a five-minute carryover tail, and
+// a dry day after. Before the fix the 09-07 bucket is 0.29; after it, 0.
+describe('BUG-GAUGERESETLAG-001 — a late accumulator reset must not carry into the next day', () => {
+  const ET = (iso) => Date.parse(iso);   // explicit offsets below, so no tz ambiguity
+  const rec = (iso, rain) => ({ dateutc: ET(iso), dailyrainin: rain, tempf: 60 });
+
+  // Newest-first, exactly as the AWN history endpoint returns it.
+  const withCarryover = [
+    rec('2026-09-07T17:55:00-04:00', 0),
+    rec('2026-09-07T12:00:00-04:00', 0),
+    rec('2026-09-07T00:05:00-04:00', 0),      // ← the reset
+    rec('2026-09-07T00:04:00-04:00', 0.29),   // ← yesterday's total, still on the clock
+    rec('2026-09-07T00:00:00-04:00', 0.29),
+    rec('2026-09-06T23:55:00-04:00', 0.29),
+    rec('2026-09-06T14:00:00-04:00', 0.14),
+    rec('2026-09-06T00:02:00-04:00', 0.01),   // ← the same carryover one day earlier
+    rec('2026-09-05T23:50:00-04:00', 0.01),
+    rec('2026-09-05T09:00:00-04:00', 0.01),
+  ];
+
+  it('attributes the carryover to the day it actually fell on', () => {
+    const s = deriveStation({ mac: MAC, records: withCarryover },
+                            { nowMs: ET('2026-09-07T17:56:00-04:00') });
+    expect(s.buckets['2026-09-07']).toBe(0);      // the bug published 0.29 here
+    expect(s.buckets['2026-09-06']).toBe(0.29);   // and the rain still belongs to the 6th
+    expect(s.buckets['2026-09-05']).toBe(0.01);
+  });
+
+  // The guard that keeps the fix honest: a day with no reset inside it must behave EXACTLY as before, or this
+  // change would quietly rewrite every clean day in the season rather than only the polluted ones.
+  it('is unchanged on a day whose records never decrease', () => {
+    const clean = [
+      rec('2026-09-07T18:00:00-04:00', 0.40),
+      rec('2026-09-07T12:00:00-04:00', 0.25),
+      rec('2026-09-07T06:00:00-04:00', 0.05),
+    ];
+    const s = deriveStation({ mac: MAC, records: clean },
+                            { nowMs: ET('2026-09-07T18:01:00-04:00') });
+    expect(s.buckets['2026-09-07']).toBe(0.40);
+  });
+
+  // Order-independence. `recs` is documented newest-first; reading "the last decrease" against the wrong
+  // order would treat ordinary accumulation as a reset and zero out real rain.
+  it('gives the same answer whatever order the records arrive in', () => {
+    const shuffled = [...withCarryover].reverse();
+    const a = deriveStation({ mac: MAC, records: withCarryover }, { nowMs: ET('2026-09-07T17:56:00-04:00') });
+    const b = deriveStation({ mac: MAC, records: shuffled },      { nowMs: ET('2026-09-07T17:56:00-04:00') });
+    expect(b.buckets).toEqual(a.buckets);
+  });
+});

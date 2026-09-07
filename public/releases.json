@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.117.0",
+    "date": "2026-09-07",
+    "highlights": [
+      "The rain gauge no longer counts yesterday's rainfall as today's on the morning after a storm — the station resets its daily counter a few minutes after midnight, and those minutes were being read as today's total."
+    ]
+  },
+  {
     "version": "4.116.0",
     "date": "2026-09-07",
     "highlights": [

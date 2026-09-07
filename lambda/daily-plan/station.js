@@ -110,7 +110,26 @@ function deriveStation(raw, { nowMs }) {
 
   // Max dailyrainin per civil day == that day's total (accumulator peak before the midnight reset). Records
   // with a non-finite dailyrainin are skipped (not treated as 0) so a malformed point can't poison a bucket.
-  const buckets = {};
+  // BUG-GAUGERESETLAG-001 (2026-09-07) — THE RESET IS NOT EXACTLY AT MIDNIGHT, so a plain max over the civil
+  // day inherits the PREVIOUS day's total. Measured on Dave's WS-2902: the accumulator reset at 00:05:00 EDT
+  // on 2026-09-07, so the ~5 minutes of records from 00:00 to 00:04 still read 0.29" — yesterday's finished
+  // total — and `Math.max` faithfully carried it into today's bucket. The 05:30 plan that morning published
+  // `today_observed_in: 0.29` on a day the gauge finished at ZERO, and the live device confirmed it
+  // (dailyrainin 0, hourlyrainin 0, weeklyrainin 0).
+  //
+  // It is not a today-only bug: EVERY bucket's first few minutes precede that day's own reset. It simply
+  // cannot be SEEN on a day wetter than the one before it, because the day's own peak then exceeds the
+  // carryover and max returns the right number anyway. It shows up exactly when a dry day follows a wet one,
+  // which is also when it does the most damage — a spurious total RELEASES watering suppression, the same
+  // direction DRG-GAUGENEG-001's fabricated dry day was closed for.
+  //
+  // THE FIX USES THE ACCUMULATOR'S OWN SEMANTICS: dailyrainin is monotonic non-decreasing WITHIN a day and
+  // drops only at the reset. So a decrease inside a civil day IS the reset, and everything before it belongs
+  // to yesterday. Take the max only over records AFTER the last decrease. On a clean day there is no decrease
+  // and this is byte-identical to the previous behaviour — which is why it is a max-since-reset and not a
+  // simple "last record": the latter would also change every clean day, and would hand a late-day gap or an
+  // out-of-order sample a different answer than the one prod has been publishing correctly all season.
+  const byDay = {};
   const negSeen = new Set();
   for (const r of recs) {
     if (!Number.isFinite(r.dailyrainin)) continue;
@@ -123,7 +142,18 @@ function deriveStation(raw, { nowMs }) {
     // to midnight, so the day really is lost, whereas a negative cannot be an accumulator state at all and is
     // a transient bad sample — drop it and the day keeps its real total from the records that were fine.
     if (r.dailyrainin < RAIN_MIN_DAILY_IN) { negSeen.add(d); continue; }
-    buckets[d] = Math.max(buckets[d] ?? 0, r.dailyrainin);
+    (byDay[d] ||= []).push([r.dateutc, r.dailyrainin]);
+  }
+  const buckets = {};
+  for (const [d, pts] of Object.entries(byDay)) {
+    // Sort ASCENDING by time. `recs` is documented newest-first, and "the last decrease" is meaningless
+    // against an unknown order — reading it backwards would treat every genuine accumulation as a reset.
+    pts.sort((a, b) => a[0] - b[0]);
+    let from = 0;
+    for (let i = 1; i < pts.length; i++) if (pts[i][1] < pts[i - 1][1]) from = i;   // the reset
+    let v = 0;
+    for (let i = from; i < pts.length; i++) v = Math.max(v, pts[i][1]);
+    buckets[d] = v;
   }
   // DRG-GAUGESANITY-001 — drop any day whose total is physically impossible (see RAIN_MAX_DAILY_IN). Checking
   // the finished bucket rather than each record is exactly equivalent — a bucket IS the max of its records, so

@@ -1,9 +1,7 @@
 {
-  "version": "4.116.0",
+  "version": "4.117.0",
   "date": "2026-09-07",
   "highlights": [
-    "Editing a planting no longer erases which nursery or swap it came from",
-    "Planting quantities are now whole numbers end to end, refused with a clear message rather than silently rounded",
-    "Seed measurements on saved lots are guarded against overflowing their card"
+    "The rain gauge no longer counts yesterday's rainfall as today's on the morning after a storm — the station resets its daily counter a few minutes after midnight, and those minutes were being read as today's total."
   ]
 }
