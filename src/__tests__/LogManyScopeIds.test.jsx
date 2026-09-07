@@ -179,7 +179,17 @@ describe('S4 — the count assertion is VISIBLE, not just logged', () => {
     }
     await renderReady()
     fireEvent.click(commitButtons()[0])
-    const el = await screen.findByTestId('logmany-partial-warning')
+    // BUG-LOGMANYS4FLAKE-001: this one await, and only this one, outruns the global 5000ms
+    // asyncUtilTimeout on a loaded CI runner — three data points on 2026-09-04 failed at 5064ms and
+    // 5081ms, both within 100ms of the budget, with the DOM dump still showing the FORM state. Not
+    // an assertion mismatch: the success card simply had not rendered yet, because LogMany pulls the
+    // whole components/forms barrel on first paint. It failed ~2 of 3 runs and promote-gate's
+    // preflight is fail-closed on build-and-test, so it blocked every promote in the queue.
+    // The budget is raised HERE rather than globally: a global raise would slow every genuine
+    // failure in the suite to a 15s stall, and would hide a real regression in some other file
+    // behind the same wait. The assertion is unchanged and still fails if the warning never renders
+    // (mutation-checked by deleting the testid — see the commit body).
+    const el = await screen.findByTestId('logmany-partial-warning', {}, { timeout: 15000 })
     expect(el.textContent).toMatch(/2 of 8 selected plantings could not be logged/)
     // Both numbers, so the user can see the shortfall without doing the subtraction.
     expect(el.textContent).toMatch(/6 of 8 were logged/)
