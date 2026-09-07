@@ -1,0 +1,171 @@
+# gates.yml
+# V5-WXBACKFILLVARS-001 — five nullable numeric columns on public.weather_daily:
+# daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours.
+#
+# SEQUENCING: staging pre -> apply 0a -> rehearse 0r -> re-apply 0a -> staging post -> prod pre ->
+# apply 0a -> prod post -> THEN push -> deploy the daily-plan Lambda -> (optionally) run the
+# backfill. The DDL must land in BOTH environments BEFORE the branch reaches dev, for two
+# independent reasons:
+#
+#   1. gate-invariants.yml runs `--all --env {prod,staging} --phase post --continuous-only` on every
+#      push touching migrations/**, so an unapplied environment reds this file's post gates.
+#   2. schema-audit.yml (L-081) runs on push to dev over lambda/**/*.js and checks every INSERT
+#      column list against PROD's information_schema. handler.js's upsert names the five columns as
+#      of this slice, so on an unapplied prod that audit FAILS — advisory, but it fails.
+#
+# FAILURE MODE IF THE DDL DOES NOT LAND FIRST — asymmetric, as usual, and the hard direction is why
+# the ordering above is not ceremony:
+#   * New Lambda + old schema = the weather substrate silently stops accumulating. Every upsert
+#     raises "column daylight_s does not exist"; writeWeatherDaily's per-row catch swallows it, the
+#     nightly plan is completely unaffected (by design), and the ONLY symptom is a warning line in
+#     CloudWatch that nothing alarms on. Nothing 500s, nothing looks broken, and weather_daily just
+#     stops gaining rows.
+#   * Old Lambda + new schema = INERT. The deployed writer names its columns explicitly, so the five
+#     new ones simply stay NULL until the new zip ships. This is the safe window and it can be as
+#     long as it needs to be.
+#
+# NO `sweep` PHASE, deliberately. L-058 requires that every predicate a CHECK will enforce already
+# holds before it is armed — and this migration arms NO CHECK and NO NOT NULL, so that predicate set
+# is empty and a sweep gate here would assert nothing. The physical floors that a CHECK *would*
+# enforce are carried below as a standing post gate instead: same enforcement visibility, without
+# changing what the currently-running Lambda is permitted to write. Arming them is a separate
+# migration, sketched at the foot of 0a.
+#
+# ONE PARSE-TIME HAZARD, stated because it is the generalisation of the `::regclass` trap that
+# defeats self-arming gates: Postgres resolves COLUMN references when it parses a statement, before
+# it evaluates any WHERE. An `EXISTS (SELECT 1 FROM public.schema_version WHERE version = ...)`
+# guard therefore makes a gate vacuous only if the gate never names a new column AS A COLUMN — true
+# of the catalog gates below, which name them as string literals. The one gate here that reads
+# actual values, post_no_physically_impossible_value, would have ERRORed with 42703 on every
+# unapplied database; it reads them through `to_jsonb(w) ->> 'col'` instead, which is a string
+# lookup and parses everywhere. Every gate in this file is consequently vacuous-and-PASSING before
+# the apply, verified against live prod and staging on 2026-09-07, so pushing this directory ahead
+# of the apply cannot red the invariants workflow. The sequencing above still stands: the L-081
+# schema audit and the deployed Lambda both need the columns to exist.
+#
+# VERIFIED SHAPE, both environments, 2026-09-07 (before the apply): prod public.weather_daily has
+# the 10 columns v4-weatherdaily-001 created, 116 rows over 2026-05-14..2026-09-06 for one space;
+# staging has the same 10 columns and 0 rows. No env: scoping is needed anywhere in this file.
+
+pre:
+  - name: pre_weather_daily_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='weather_daily'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_five_columns_absent
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='weather_daily'
+         AND column_name IN ('daylight_s','sunshine_s','solar_mj_m2','wind_max_mph','precip_hours')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxbackfillvars-001'
+    expect: rowcount_eq
+    value: 0
+
+  # The table must be at exactly the 10 columns v4-weatherdaily-001 created, or 0a is widening a
+  # shape this file did not verify. continuous:false and apply-window-only, PERMANENTLY: the apply
+  # itself takes the count to 15, so leaving it continuous would make it self-falsifying the moment
+  # it succeeds (memory `frozen-count-gates-break-on-widening` — mark it window-only, never bump the
+  # number). The standing version of this assertion is post_original_ten_columns_intact, which is an
+  # IN-list and therefore survives every future widening.
+  - name: pre_weather_daily_column_count_10
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='weather_daily'
+    expect: scalar_eq
+    value: 10
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxbackfillvars-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS, SELF-ARMING ────────────────────────────────────────────────────────────
+  # Each is wrapped in `EXISTS (schema_version = this migration)`, so it is vacuously true before the
+  # apply and asserts for real, permanently, afterwards — with no follow-up edit. 0a writes that row
+  # in the same transaction as the DDL, so "applied" and "armed" are the same event.
+
+  - name: post_five_columns_exist
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxbackfillvars-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='weather_daily'
+                 AND column_name IN ('daylight_s','sunshine_s','solar_mj_m2','wind_max_mph','precip_hours')) <> 5
+    expect: rowcount_eq
+    value: 0
+
+  # NULLABLE, NO DEFAULT, numeric — the three shape decisions 0a's header argues for, pinned so they
+  # cannot drift back. A DEFAULT here would be the grown_as failure in miniature: 362 of 413
+  # cultivars carry a bulk-defaulted value that means nothing, and a defaulted weather column would
+  # be indistinguishable from a measured one on every row that never got written.
+  - name: post_five_columns_nullable_undefaulted_numeric
+    sql: |
+      SELECT c.column_name
+        FROM information_schema.columns c
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxbackfillvars-001')
+         AND c.table_schema = 'public' AND c.table_name = 'weather_daily'
+         AND c.column_name IN ('daylight_s','sunshine_s','solar_mj_m2','wind_max_mph','precip_hours')
+         AND (c.is_nullable <> 'YES' OR c.column_default IS NOT NULL OR c.data_type <> 'numeric')
+    expect: rowcount_eq
+    value: 0
+
+  # An IN-list, not a total count, so it keeps asserting through every future widening of this table
+  # — including the one this migration performs. What it catches is a destructive edit: a rollback
+  # that overshoots, or a "tidy-up" that drops a provenance column the conflict policy ranks on.
+  # Not self-armed, because it is equally true before and after the apply.
+  - name: post_original_ten_columns_intact
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='weather_daily'
+                 AND column_name IN ('space_id','date','et0_in','tmax_f','tmin_f','precip_in',
+                                     'precip_source','et0_source','created_at','updated_at')) <> 10
+    expect: rowcount_eq
+    value: 0
+
+  # THE CHECK THAT IS NOT ARMED, run as an assertion instead. Every predicate here is a physical
+  # fact: a duration cannot be negative or exceed the 86400 seconds in a day, a radiation sum and a
+  # wind speed cannot be negative, and a day cannot contain more than 24 hours of rain. A violation
+  # means a unit bug or a wrong-field read upstream, which is the failure this whole slice is most
+  # exposed to — five new fields taken from one JSON payload by name.
+  #
+  # NULL is not a violation and must never be one: absence of a reading is the normal state of every
+  # row written before 0a, and of any row the endpoint served incomplete. NULL comparisons yield
+  # NULL, so those rows are simply not selected — the same absence-is-not-a-value rule the writers
+  # follow.
+  #
+  # WHY THE VALUES ARE READ THROUGH to_jsonb INSTEAD OF AS COLUMNS. Written the obvious way —
+  # `w.daylight_s < 0` — this gate ERRORS with 42703 on any database where 0a has not been applied,
+  # because Postgres resolves column references when it PARSES the statement, before it evaluates the
+  # EXISTS guard above. That is the same trap as `::regclass` in a self-arming gate, one level down,
+  # and it was reproduced against prod on 2026-09-07 before this rewrite. `to_jsonb(w) ->> 'col'`
+  # names the column as a STRING, so it parses everywhere: it yields NULL for a key the row does not
+  # have, every comparison collapses to NULL, and the gate is genuinely vacuous until the apply
+  # rather than merely intended to be. Verified both ways — ERROR before, PASS after the rewrite.
+  - name: post_no_physically_impossible_value
+    sql: |
+      SELECT w."date"
+        FROM public.weather_daily w
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxbackfillvars-001')
+         AND (   (to_jsonb(w) ->> 'daylight_s')::numeric   < 0
+              OR (to_jsonb(w) ->> 'daylight_s')::numeric   > 86400
+              OR (to_jsonb(w) ->> 'sunshine_s')::numeric   < 0
+              OR (to_jsonb(w) ->> 'sunshine_s')::numeric   > 86400
+              OR (to_jsonb(w) ->> 'solar_mj_m2')::numeric  < 0
+              OR (to_jsonb(w) ->> 'wind_max_mph')::numeric < 0
+              OR (to_jsonb(w) ->> 'precip_hours')::numeric < 0
+              OR (to_jsonb(w) ->> 'precip_hours')::numeric > 24)
+    expect: rowcount_eq
+    value: 0

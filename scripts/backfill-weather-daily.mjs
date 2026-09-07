@@ -62,6 +62,9 @@
 //   node scripts/backfill-weather-daily.mjs --apply         # WRITES to prod
 //
 // The migration must already be applied to the target, or every upsert fails on a missing relation.
+// As of 2026-09-07 that means BOTH migrations/v4-weatherdaily-001 (the table) and
+// migrations/v5-wxbackfillvars-001 (daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours).
+// The dry run's `no daylight_s yet` line is the cheapest check that the second one landed.
 
 import { neon } from '@neondatabase/serverless';
 import { readFileSync } from 'fs';
@@ -138,8 +141,8 @@ async function fetchArchive(lat, lng, startDate, endDate) {
   const url = 'https://archive-api.open-meteo.com/v1/archive'
     + `?latitude=${lat}&longitude=${lng}`
     + `&start_date=${startDate}&end_date=${endDate}`
-    + '&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max'
-    + '&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America/New_York';
+    + '&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours'
+    + '&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York';
   const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) throw new Error(`archive ${res.status} ${await res.text().catch(() => '')}`.slice(0, 300));
   const j = await res.json();
@@ -153,6 +156,17 @@ async function fetchArchive(lat, lng, startDate, endDate) {
     tmin_f: Number.isFinite(d.temperature_2m_min?.[i]) ? round2(d.temperature_2m_min[i]) : null,
     // null, NEVER 0 — an absent value must not be recorded as an observed dry day.
     precip_in: Number.isFinite(d.precipitation_sum?.[i]) ? round2(d.precipitation_sum[i]) : null,
+    // V5-WXBACKFILLVARS-001 — the five appended fields, same names and same list order as the
+    // forecast call in lambda/daily-plan/index.js, read BY NAME against their own time[i] as
+    // everything else here is. Units verified against THIS endpoint on 2026-09-07 over
+    // 2026-05-14..2026-09-04: daily_units gave s / s / MJ/m² / mp/h / h and 114 of 114 days came
+    // back non-null in every one of the five. Durations stay in SECONDS, unconverted, exactly as the
+    // Lambda stores them.
+    daylight_s: Number.isFinite(d.daylight_duration?.[i]) ? round2(d.daylight_duration[i]) : null,
+    sunshine_s: Number.isFinite(d.sunshine_duration?.[i]) ? round2(d.sunshine_duration[i]) : null,
+    solar_mj_m2: Number.isFinite(d.shortwave_radiation_sum?.[i]) ? round2(d.shortwave_radiation_sum[i]) : null,
+    wind_max_mph: Number.isFinite(d.wind_speed_10m_max?.[i]) ? round2(d.wind_speed_10m_max[i]) : null,
+    precip_hours: Number.isFinite(d.precipitation_hours?.[i]) ? round2(d.precipitation_hours[i]) : null,
   }));
 }
 
@@ -188,11 +202,17 @@ for (const s of spaces) {
   if (!apply) {
     // Report what already exists so a dry run answers "is this worth running?" rather than just
     // echoing the fetch. The gauge count is the number this script would decline to touch.
+    // `wx_null` names the V5-WXBACKFILLVARS-001 gap this run would close — the rows that exist but
+    // carry no daylight_s. It is also the migration check: if v5-wxbackfillvars-001 has not been
+    // applied to this target, this query fails LOUDLY with "column daylight_s does not exist" rather
+    // than letting a dry run report success against a schema that cannot hold the write.
     const [existing] = await sql`select count(*)::int as n,
-             count(*) filter (where precip_source = 'gauge_merged')::int as gauge
+             count(*) filter (where precip_source = 'gauge_merged')::int as gauge,
+             count(*) filter (where daylight_s is null)::int as wx_null
         from weather_daily
        where space_id = ${s.id}::uuid and "date" >= ${startDate}::date and "date" <= ${endDate}::date`;
     console.log(`  existing rows in window: ${existing.n} (${existing.gauge} gauge_merged, which would be preserved)`);
+    console.log(`  of those, ${existing.wx_null} have no daylight_s yet (the V5-WXBACKFILLVARS-001 gap)`);
     console.log(`  WOULD UPSERT ${usable.length} rows\n`);
     totalWould += usable.length;
     continue;
@@ -207,10 +227,13 @@ for (const s of spaces) {
     // weather-daily-conflict-sync.test.js now compares the two texts, so the claim is enforced
     // rather than asserted. Edit one, edit both.
     const out = await sql`
-      insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source)
+      insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source,
+                                 daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours)
       values (${s.id}::uuid, ${r.date}::date, ${r.et0_in}::numeric, ${r.tmax_f}::numeric,
               ${r.tmin_f}::numeric, ${r.precip_in}::numeric,
-              ${r.precip_in == null ? null : SOURCE}::text, ${r.et0_in == null ? null : SOURCE}::text)
+              ${r.precip_in == null ? null : SOURCE}::text, ${r.et0_in == null ? null : SOURCE}::text,
+              ${r.daylight_s}::numeric, ${r.sunshine_s}::numeric, ${r.solar_mj_m2}::numeric,
+              ${r.wind_max_mph}::numeric, ${r.precip_hours}::numeric)
       on conflict (space_id, "date") do update set
            -- BUG-WXWRITEOVERWRITE-001 — QUALITY-RANKED, PER FIELD. This guard used to cover precip_in
            -- alone; et0_in, tmax_f and tmin_f were last-writer-wins, so any better-sourced value in
@@ -260,6 +283,42 @@ for (const s of spaces) {
                             > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
                          then weather_daily.tmin_f
                          else coalesce(excluded.tmin_f, weather_daily.tmin_f) end,
+           -- V5-WXBACKFILLVARS-001 — the five appended columns. They rank on et0_source for exactly
+           -- the reason tmax_f/tmin_f do: they arrive in the SAME Open-Meteo payload and have no
+           -- provenance column of their own, and no instrument on this site can produce a competing
+           -- value for any of them.
+           --
+           -- ONE DELIBERATE DIFFERENCE from the six arms above, in the OUTRANKED branch, and it is
+           -- what makes a backfill possible at all. Those six read 'then weather_daily.<col>': keep
+           -- whatever the better-sourced pass established, NULL included. That is correct for a value
+           -- a better source DID establish. It is wrong here, because these columns were NULL BY
+           -- CONSTRUCTION until the migration that added them — so on every existing row already
+           -- labelled openmeteo_live, the strict form would preserve that NULL forever and the ERA5
+           -- backfill would be a structural no-op on the entire table it exists to fill.
+           -- 'coalesce(weather_daily.<col>, excluded.<col>)' says the weaker source may FILL a hole
+           -- but may never overwrite a value: a NULL is not a contest. The protective half is
+           -- unchanged — once a live pass has written a real number here, no archive pass can
+           -- displace it.
+           daylight_s = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                             then coalesce(weather_daily.daylight_s, excluded.daylight_s)
+                             else coalesce(excluded.daylight_s, weather_daily.daylight_s) end,
+           sunshine_s = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                             then coalesce(weather_daily.sunshine_s, excluded.sunshine_s)
+                             else coalesce(excluded.sunshine_s, weather_daily.sunshine_s) end,
+           solar_mj_m2 = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                 > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                              then coalesce(weather_daily.solar_mj_m2, excluded.solar_mj_m2)
+                              else coalesce(excluded.solar_mj_m2, weather_daily.solar_mj_m2) end,
+           wind_max_mph = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                  > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                               then coalesce(weather_daily.wind_max_mph, excluded.wind_max_mph)
+                               else coalesce(excluded.wind_max_mph, weather_daily.wind_max_mph) end,
+           precip_hours = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                  > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                               then coalesce(weather_daily.precip_hours, excluded.precip_hours)
+                               else coalesce(excluded.precip_hours, weather_daily.precip_hours) end,
            updated_at = now()
       returning precip_source, et0_source`;
     totalWrote++;

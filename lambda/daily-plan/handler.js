@@ -131,6 +131,11 @@ async function backfillYesterdayActual(pg, userId, today, hy, prov) {
 // ── V4-WATERMATH-001 F1 (W-F2A-WX) — the weather_daily substrate ─────────────────────────────────
 // Canon: watering-cadence-math-design-V100-20260812.md Part 4. Migration: migrations/v4-weatherdaily-001.
 //
+// WIDENED 2026-09-07 by V5-WXBACKFILLVARS-001 (migrations/v5-wxbackfillvars-001): five more daily
+// quantities — daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours — ride the SAME
+// Open-Meteo call this writer already depended on. Substrate only, again: nothing reads them yet, and
+// readWeatherDaily's SELECT list is deliberately NOT widened until something does.
+//
 // F1 ships the SUBSTRATE only. Nothing here changes a single watering verdict — the engine does not
 // read weather_daily yet (that is F2, behind CARE_WATER_LEDGER_ENABLED) — and that is the point: the
 // ledger's demand term integrates over a 30-day window, so the series has to have been accumulating
@@ -223,6 +228,42 @@ const WEATHER_DAILY_CONFLICT_SET =
                             > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
                          then weather_daily.tmin_f
                          else coalesce(excluded.tmin_f, weather_daily.tmin_f) end,
+           -- V5-WXBACKFILLVARS-001 — the five appended columns. They rank on et0_source for exactly
+           -- the reason tmax_f/tmin_f do: they arrive in the SAME Open-Meteo payload and have no
+           -- provenance column of their own, and no instrument on this site can produce a competing
+           -- value for any of them.
+           --
+           -- ONE DELIBERATE DIFFERENCE from the six arms above, in the OUTRANKED branch, and it is
+           -- what makes a backfill possible at all. Those six read 'then weather_daily.<col>': keep
+           -- whatever the better-sourced pass established, NULL included. That is correct for a value
+           -- a better source DID establish. It is wrong here, because these columns were NULL BY
+           -- CONSTRUCTION until the migration that added them — so on every existing row already
+           -- labelled openmeteo_live, the strict form would preserve that NULL forever and the ERA5
+           -- backfill would be a structural no-op on the entire table it exists to fill.
+           -- 'coalesce(weather_daily.<col>, excluded.<col>)' says the weaker source may FILL a hole
+           -- but may never overwrite a value: a NULL is not a contest. The protective half is
+           -- unchanged — once a live pass has written a real number here, no archive pass can
+           -- displace it.
+           daylight_s = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                             then coalesce(weather_daily.daylight_s, excluded.daylight_s)
+                             else coalesce(excluded.daylight_s, weather_daily.daylight_s) end,
+           sunshine_s = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                             then coalesce(weather_daily.sunshine_s, excluded.sunshine_s)
+                             else coalesce(excluded.sunshine_s, weather_daily.sunshine_s) end,
+           solar_mj_m2 = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                 > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                              then coalesce(weather_daily.solar_mj_m2, excluded.solar_mj_m2)
+                              else coalesce(excluded.solar_mj_m2, weather_daily.solar_mj_m2) end,
+           wind_max_mph = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                  > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                               then coalesce(weather_daily.wind_max_mph, excluded.wind_max_mph)
+                               else coalesce(excluded.wind_max_mph, weather_daily.wind_max_mph) end,
+           precip_hours = case when coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(weather_daily.et0_source, '')), 0)
+                                  > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
+                               then coalesce(weather_daily.precip_hours, excluded.precip_hours)
+                               else coalesce(excluded.precip_hours, weather_daily.precip_hours) end,
            updated_at = now()`;
 
 // Upsert the completed days from one Space's hydrology bag. Returns the number of rows written; never
@@ -262,12 +303,20 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
         // Every parameter carries an explicit cast. Neon's driver cannot infer a type for a NULL bind
         // and answers "could not determine data type of parameter" — which, inside a catch, would
         // present as the weather substrate silently never populating.
+        // V5-WXBACKFILLVARS-001 APPENDS $9..$13 at the END of both lists. Existing positions are
+        // load-bearing in the suite (weatherdaily.test.js reads params[1], params[5], params[6] by
+        // index), and more importantly a re-ordered column list is the kind of edit that reads as
+        // cosmetic and silently writes tmin into precip.
         await pg.query(
-          `insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source)
-         values ($1::uuid, $2::date, $3::numeric, $4::numeric, $5::numeric, $6::numeric, $7::text, $8::text)
+          `insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source,
+                                      daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours)
+         values ($1::uuid, $2::date, $3::numeric, $4::numeric, $5::numeric, $6::numeric, $7::text, $8::text,
+                 $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13::numeric)
          ${WEATHER_DAILY_CONFLICT_SET}`,
           [spaceId, d.date, d.et0_in ?? null, d.tmax_f ?? null, d.tmin_f ?? null,
-           precip ?? null, precipSource, et0Source]);
+           precip ?? null, precipSource, et0Source,
+           d.daylight_s ?? null, d.sunshine_s ?? null, d.solar_mj_m2 ?? null,
+           d.wind_max_mph ?? null, d.precip_hours ?? null]);
         written++;
       } catch (e) {
         skipped++;

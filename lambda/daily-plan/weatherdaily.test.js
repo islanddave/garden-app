@@ -34,9 +34,19 @@ const DAY_BEFORE = '2026-08-10';
 // numbers rather than round ones keeps the fixture from drifting into a shape the API never produces —
 // note in particular that et0 differs between the two days in the THIRD decimal (0.186 vs 0.193), which
 // is precisely the resolution round2 would have destroyed.
+//
+// The five V5-WXBACKFILLVARS-001 keys are equally verbatim, but from the ARCHIVE endpoint, read at
+// the same coordinates on 2026-09-07: the forecast call carries past_days=2, so its own August
+// values are no longer retrievable and inventing plausible-looking ones is exactly what the
+// paragraph above warns against. Durations are SECONDS, not hours. The two surfaces disagree about
+// rain on these days — the archive gives 0.024"/0.004" where the forecast pass gave 0 — which is why
+// precip_hours: 5 sits next to precip_in: 0 below. That is real, and it is the same
+// forecast-vs-archive gap the conflict policy's rank order exists to arbitrate.
 const SETTLED = [
-  { date: DAY_BEFORE, et0_in: 0.186, tmax_f: 82.3, tmin_f: 58.0, precip_in: 0 },
-  { date: YESTERDAY, et0_in: 0.193, tmax_f: 81.1, tmin_f: 64.7, precip_in: 0 },
+  { date: DAY_BEFORE, et0_in: 0.186, tmax_f: 82.3, tmin_f: 58.0, precip_in: 0,
+    daylight_s: 50811.38, sunshine_s: 45182.15, solar_mj_m2: 24.0, wind_max_mph: 6.9, precip_hours: 5 },
+  { date: YESTERDAY, et0_in: 0.193, tmax_f: 81.1, tmin_f: 64.7, precip_in: 0,
+    daylight_s: 50666.91, sunshine_s: 49966.09, solar_mj_m2: 23.77, wind_max_mph: 10.3, precip_hours: 1 },
 ];
 
 const hydrology = (over = {}) => ({
@@ -81,20 +91,37 @@ const normalizeSql = (sql) => sql.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').
 // The exact shape every guarded column must take. Anything that is not this — a bare COALESCE, a
 // reordered rank array, a guard reading one provenance column on the stored side and another on the
 // incoming side — either fails to match (and trips the anti-vacuity count below) or throws.
+//
+// TWO OUTRANKED BRANCHES ARE LEGAL, and exactly two (V5-WXBACKFILLVARS-001):
+//   `then weather_daily.<col>`                          STRICT — keep what the better source wrote,
+//                                                       NULL included. The six original columns.
+//   `then coalesce(weather_daily.<col>, excluded.<col>)` FILL — a weaker source may fill a hole but
+//                                                       never overwrite a value. The five V5 columns,
+//                                                       which were NULL by construction until the
+//                                                       migration that added them, so under STRICT
+//                                                       the ERA5 backfill could never populate a row
+//                                                       the nightly writer had already touched.
+// Which column takes which branch is NOT left to the regex: the enumerated assertion below pins the
+// exact partition, so a column silently moving between the two fails.
 const CONFLICT_ARM = new RegExp(
   '(\\w+) = case when coalesce\\(array_position\\(array\\[([^\\]]*)\\], coalesce\\(weather_daily\\.(\\w+), \'\'\\)\\), 0\\)'
   + ' > coalesce\\(array_position\\(array\\[([^\\]]*)\\], coalesce\\(excluded\\.(\\w+), \'\'\\)\\), 0\\)'
-  + ' then weather_daily\\.\\1'
+  + ' then (weather_daily\\.\\1|coalesce\\(weather_daily\\.\\1, excluded\\.\\1\\))'
   + ' else coalesce\\(excluded\\.\\1, weather_daily\\.\\1\\) end', 'g');
 
 function parseConflictSet(sql) {
   const set = normalizeSql(sql).split(/on conflict \(space_id, "date"\) do update set /i)[1];
   if (!set) throw new Error('no ON CONFLICT (space_id, "date") DO UPDATE SET in the emitted statement');
   const out = {};
-  for (const [, col, orderStored, storedSrc, orderIncoming, incomingSrc] of set.matchAll(CONFLICT_ARM)) {
+  for (const [, col, orderStored, storedSrc, orderIncoming, incomingSrc, thenBranch] of set.matchAll(CONFLICT_ARM)) {
     if (storedSrc !== incomingSrc) throw new Error(`${col}: guard reads weather_daily.${storedSrc} but excluded.${incomingSrc}`);
     if (orderStored !== orderIncoming) throw new Error(`${col}: the two rank arrays differ`);
-    out[col] = { guard: storedSrc, order: orderStored.split(',').map((s) => s.trim().replace(/^'|'$/g, '')) };
+    out[col] = {
+      guard: storedSrc,
+      order: orderStored.split(',').map((s) => s.trim().replace(/^'|'$/g, '')),
+      // 'strict' | 'fill' — read off the branch, never assumed from the column name.
+      outranked: thenBranch.startsWith('coalesce(') ? 'fill' : 'strict',
+    };
   }
   // ANTI-VACUITY. Every top-level assignment must be one this parser understood, plus updated_at. An
   // arm the regex silently skipped is a column this test cannot see — which is precisely how one
@@ -109,10 +136,12 @@ function parseConflictSet(sql) {
 // yields NULL when absent, which the SQL coalesces to 0 — indexOf + 1 is the same function.
 function applyConflictSet(sql, stored, incoming) {
   const merged = { ...stored };
-  for (const [col, { guard, order }] of Object.entries(parseConflictSet(sql))) {
+  for (const [col, { guard, order, outranked }] of Object.entries(parseConflictSet(sql))) {
     const rank = (v) => order.indexOf(v == null ? '' : v) + 1;
     merged[col] = rank(stored[guard]) > rank(incoming[guard])
-      ? stored[col]
+      // The outranked branch, whichever of the two this column's arm actually carries — read from
+      // the emitted text, not chosen here. `?? ` is COALESCE for the fill form.
+      ? (outranked === 'fill' ? (stored[col] ?? incoming[col]) : stored[col])
       : (incoming[col] ?? stored[col]);
   }
   return merged;
@@ -173,6 +202,31 @@ describe('writeWeatherDaily — what reaches the database', () => {
     expect(et0).toBe(0.193);
     expect(tmax).toBe(81.1);
     expect(tmin).toBe(64.7);
+  });
+
+  it('carries the five V5 quantities through, in the order the column list declares', async () => {
+    const pg = recordingPg();
+    await writeWeatherDaily(pg, SPACE, TODAY, hydrology(), {});
+    const p = wdInserts(pg)[1].params;
+    expect(p[1]).toBe(YESTERDAY);
+    // $9..$13, appended after the eight that were already there. Asserted POSITIONALLY on purpose:
+    // the column list and the bind array are two separate literals in handler.js and nothing else in
+    // this suite would notice them drifting apart — five numerics of similar magnitude swap silently.
+    expect(p.slice(8)).toEqual([50666.91, 49966.09, 23.77, 10.3, 1]);
+    // And the seconds are seconds. 49966.09 s is 13.9 h; a writer that "helpfully" divided would put
+    // 13.88 here and nothing downstream could tell which unit it was looking at.
+    expect(p[9]).toBeGreaterThan(1000);
+  });
+
+  it('binds NULL, never 0, for a V5 quantity the endpoint omitted', async () => {
+    // A settled day from before the append — or from a response missing the field — has no such key
+    // at all. `?? null` must carry that through as SQL NULL: 0 sunshine seconds is a real overcast
+    // day, so a coerced 0 would be indistinguishable from a measurement on every row.
+    const pg = recordingPg();
+    await writeWeatherDaily(pg, SPACE, TODAY, hydrology({
+      settled_days: [{ date: YESTERDAY, et0_in: 0.193, tmax_f: 81.1, tmin_f: 64.7, precip_in: 0 }],
+    }), {});
+    expect(wdInserts(pg)[0].params.slice(8)).toEqual([null, null, null, null, null]);
   });
 
   it('labels D-1 gauge_merged when the on-site station covered it', async () => {
@@ -259,8 +313,16 @@ describe('writeWeatherDaily — what reaches the database', () => {
     const sql = wdInserts(pg)[0].sql;
     expect(sql).toMatch(/\$1::uuid/);
     expect(sql).toMatch(/\$2::date/);
-    for (const n of [3, 4, 5, 6]) expect(sql).toMatch(new RegExp(`\\$${n}::numeric`));
+    for (const n of [3, 4, 5, 6, 9, 10, 11, 12, 13]) expect(sql).toMatch(new RegExp(`\\$${n}::numeric`));
     for (const n of [7, 8]) expect(sql).toMatch(new RegExp(`\\$${n}::text`));
+    // Every placeholder in the statement is cast — counted, so an APPENDED column that forgot its
+    // cast cannot hide behind the enumeration above. $9..$13 are V5-WXBACKFILLVARS-001, and they are
+    // the ones most exposed to this: five columns that are NULL on almost every write until the
+    // backfill runs, and a NULL bind with no cast is the exact "could not determine data type of
+    // parameter" failure this test is named for.
+    const placeholders = new Set(sql.match(/\$\d+/g));
+    const cast = new Set((sql.match(/\$\d+::\w+/g) || []).map((s) => s.split('::')[0]));
+    expect([...placeholders].filter((p) => !cast.has(p))).toEqual([]);
   });
 
   it('the emitted upsert rank-guards EVERY measured column, not just precip_in', async () => {
@@ -278,16 +340,31 @@ describe('writeWeatherDaily — what reaches the database', () => {
     // ENUMERATED, not spot-checked. A column added to weather_daily and left off the SET list is
     // silently last-writer-wins, which is the whole defect — so the assertion is on the exact set.
     expect(Object.keys(policy).sort())
-      .toEqual(['et0_in', 'et0_source', 'precip_in', 'precip_source', 'tmax_f', 'tmin_f']);
+      .toEqual(['daylight_s', 'et0_in', 'et0_source', 'precip_hours', 'precip_in', 'precip_source',
+        'solar_mj_m2', 'sunshine_s', 'tmax_f', 'tmin_f', 'wind_max_mph']);
     // Each column is guarded by the provenance column that actually describes it. tmax_f/tmin_f have
     // none of their own and ride on et0_source — the payload they arrive in. If that pairing ever
-    // changes, this is the line that has to change with it.
+    // changes, this is the line that has to change with it. The five V5 columns are the same case:
+    // one Open-Meteo payload, no competing instrument, so et0_source is their provenance too.
     expect(policy.precip_in.guard).toBe('precip_source');
     expect(policy.precip_source.guard).toBe('precip_source');
     expect(policy.et0_in.guard).toBe('et0_source');
     expect(policy.et0_source.guard).toBe('et0_source');
     expect(policy.tmax_f.guard).toBe('et0_source');
     expect(policy.tmin_f.guard).toBe('et0_source');
+    for (const col of ['daylight_s', 'sunshine_s', 'solar_mj_m2', 'wind_max_mph', 'precip_hours']) {
+      expect(policy[col].guard, `${col} must rank on et0_source`).toBe('et0_source');
+    }
+    // THE PARTITION, pinned exactly (V5-WXBACKFILLVARS-001). Which columns take the STRICT outranked
+    // branch and which take the FILL one is a design decision with a live consequence — a V5 column
+    // flipped to STRICT makes the ERA5 backfill a silent no-op on every row the nightly writer has
+    // touched, and an original column flipped to FILL would let an archive pass write into a gap the
+    // gauge deliberately left. Neither shows up in any other assertion.
+    const byBranch = (b) => Object.keys(policy).filter((c) => policy[c].outranked === b).sort();
+    expect(byBranch('strict'))
+      .toEqual(['et0_in', 'et0_source', 'precip_in', 'precip_source', 'tmax_f', 'tmin_f']);
+    expect(byBranch('fill'))
+      .toEqual(['daylight_s', 'precip_hours', 'solar_mj_m2', 'sunshine_s', 'wind_max_mph']);
     // And the ranking itself, in the emitted text: worst first, best last.
     for (const col of Object.keys(policy)) {
       expect(policy[col].order).toEqual(['openmeteo_archive', 'openmeteo_live', 'gauge_merged']);
@@ -376,6 +453,56 @@ describe('writeWeatherDaily — what reaches the database', () => {
       expect(merged.tmin_f).toBe(55.0);
       expect(merged.et0_in).toBe(0.201);
       expect(merged.precip_in).toBe(0.31);
+    });
+
+    // ── V5-WXBACKFILLVARS-001 — the FILL branch, which is the whole reason the backfill can work ──
+    it('an ERA5 pass FILLS a null V5 column on a live-sourced row — the backfill is not a no-op', async () => {
+      const sql = await emitted();
+      // The exact shape of every row in prod on the day the migration lands: written by the nightly
+      // writer (so et0_source = openmeteo_live, rank 2), with all five V5 columns NULL because the
+      // columns did not exist when it wrote. The backfill arrives labelled openmeteo_archive (rank
+      // 1) and is therefore OUTRANKED on every arm. Under the strict branch the five would stay NULL
+      // for ever and `--apply` would report "upserted 114 rows" having changed nothing.
+      const merged = applyConflictSet(sql,
+        { tmax_f: 84.2, et0_in: 0.201, et0_source: 'openmeteo_live', precip_in: 0.31, precip_source: 'openmeteo_live',
+          daylight_s: null, sunshine_s: null, solar_mj_m2: null, wind_max_mph: null, precip_hours: null },
+        { tmax_f: 92.4, et0_in: 0.18, et0_source: 'openmeteo_archive', precip_in: 0.9, precip_source: 'openmeteo_archive',
+          daylight_s: 52498.66, sunshine_s: 7267.21, solar_mj_m2: 5.81, wind_max_mph: 9.3, precip_hours: 17 });
+      expect(merged.daylight_s).toBe(52498.66);
+      expect(merged.sunshine_s).toBe(7267.21);
+      expect(merged.solar_mj_m2).toBe(5.81);
+      expect(merged.wind_max_mph).toBe(9.3);
+      expect(merged.precip_hours).toBe(17);
+      // ...and the six original columns are NOT touched by the same outranked pass. This is the half
+      // that makes the fill safe: one statement, two policies, and the gauge/live values still stand.
+      expect(merged.tmax_f).toBe(84.2);
+      expect(merged.et0_in).toBe(0.201);
+      expect(merged.precip_in).toBe(0.31);
+    });
+
+    it('but an ERA5 pass may NOT overwrite a V5 value a live pass established', async () => {
+      const sql = await emitted();
+      const merged = applyConflictSet(sql,
+        { et0_source: 'openmeteo_live', daylight_s: 46690.77, sunshine_s: 35960.79,
+          solar_mj_m2: 19.35, wind_max_mph: 11.2, precip_hours: 1 },
+        { et0_source: 'openmeteo_archive', daylight_s: 46690.5, sunshine_s: 21600,
+          solar_mj_m2: 12.4, wind_max_mph: 8.1, precip_hours: 4 });
+      expect(merged.daylight_s).toBe(46690.77);
+      expect(merged.sunshine_s).toBe(35960.79);
+      expect(merged.solar_mj_m2).toBe(19.35);
+      expect(merged.wind_max_mph).toBe(11.2);
+      expect(merged.precip_hours).toBe(1);
+    });
+
+    it('a V5 zero is a MEASUREMENT and survives — 0 sunshine is a real overcast day', async () => {
+      const sql = await emitted();
+      // `??` and COALESCE both treat 0 as present; `||` would not. A stored 0 must not be treated as
+      // a hole an outranked archive pass may fill with its own number.
+      const merged = applyConflictSet(sql,
+        { et0_source: 'openmeteo_live', sunshine_s: 0, precip_hours: 0 },
+        { et0_source: 'openmeteo_archive', sunshine_s: 18000, precip_hours: 6 });
+      expect(merged.sunshine_s).toBe(0);
+      expect(merged.precip_hours).toBe(0);
     });
 
     it('an out-of-domain source string cannot outrank a real one (the CHECK-constraint backstop)', async () => {

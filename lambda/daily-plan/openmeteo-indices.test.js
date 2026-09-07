@@ -165,7 +165,13 @@ describe('F1 — et0_fao_evapotranspiration is APPENDED, never inserted', () => 
     const list = dailyList();
     expect(list.indexOf('et0_fao_evapotranspiration')).toBeGreaterThan(list.indexOf('temperature_2m_min'));
     expect(list.indexOf('temperature_2m_max')).toBeGreaterThan(list.indexOf('temperature_2m_min'));
-    expect(list).toHaveLength(5);
+    // The count assertion this line used to carry (`toHaveLength(5)`) was a FROZEN COUNT: it went
+    // red the moment V5-WXBACKFILLVARS-001 appended five more fields, despite the append being the
+    // very discipline this describe block exists to enforce, and the only available fix was to bump
+    // the number — which teaches the next author that the number is negotiable. The anti-splice
+    // guarantee lives entirely in the slice comparison above and in the V5 block below; both are
+    // exact, neither rots on a widening.
+    expect(list.length).toBeGreaterThanOrEqual(5);
   });
 
   it('fetches temperature_2m_max — without it weather_daily.tmax_f is NULL forever', () => {
@@ -211,6 +217,74 @@ describe('F1 — et0_fao_evapotranspiration is APPENDED, never inserted', () => 
   });
 });
 
+// ── V5-WXBACKFILLVARS-001 — five more appended fields, same discipline, one new URL parameter ─────
+//
+// The failure this block guards is the one the whole file is about, in a new place: five values read
+// BY NAME out of one JSON payload. Get a name wrong and Open-Meteo does not error — it omits the
+// field, the array reads empty, every value becomes null, and the column silently never populates.
+// Get the ORDER wrong relative to the archive call and the two surfaces stop being readable against
+// each other. Both are pinned below.
+describe('V5 — the five backfillable quantities are APPENDED, never inserted', () => {
+  const dailyList = () => {
+    const m = fetchPrecipBody.match(/&daily=([a-z0-9_,]+)/i);
+    expect(m, '`daily=` list present on the fetchPrecip URL').toBeTruthy();
+    return m[1].split(',');
+  };
+  const V5_FIELDS = ['daylight_duration', 'sunshine_duration', 'shortwave_radiation_sum',
+    'wind_speed_10m_max', 'precipitation_hours'];
+
+  it('the five PRE-EXISTING daily fields are still the first five, in their original order', () => {
+    // The anti-splice guarantee, exact and widening-proof: anything inserted ahead of these shifts
+    // the slice and fails, however many fields are appended after them.
+    expect(dailyList().slice(0, 5)).toEqual([
+      'precipitation_sum', 'precipitation_probability_max', 'temperature_2m_min',
+      'et0_fao_evapotranspiration', 'temperature_2m_max',
+    ]);
+  });
+
+  it('requests all five, each strictly after the pre-existing block', () => {
+    const list = dailyList();
+    for (const f of V5_FIELDS) {
+      expect(list.indexOf(f), `${f} present on the daily= list`).toBeGreaterThan(-1);
+      expect(list.indexOf(f)).toBeGreaterThan(list.indexOf('temperature_2m_max'));
+    }
+  });
+
+  it('sends wind_speed_unit=mph — the only new URL parameter, and wind_max_mph depends on it', () => {
+    // Without it Open-Meteo serves km/h and the column name becomes a lie, with no error anywhere:
+    // 15 km/h stored as 15 mph is a plausible number in the wrong unit, which is the failure class
+    // the ET0 "no 25.4 anywhere" assertion above exists for.
+    expect(fetchPrecipBody).toMatch(/wind_speed_unit=mph/);
+  });
+
+  it('carries the two durations in SECONDS, unconverted — a divide here is a silent 3600x', () => {
+    expect(fetchPrecipBody).toMatch(/daylight_s: Number\.isFinite\(daylight\[i\]\) \? round2\(daylight\[i\]\)/);
+    expect(fetchPrecipBody).toMatch(/sunshine_s: Number\.isFinite\(sunshine\[i\]\) \? round2\(sunshine\[i\]\)/);
+    expect(fetchPrecipBody).not.toMatch(/3600/);
+  });
+
+  it('settled_days carries all five, and an absent value becomes null, NEVER 0', () => {
+    // 0 sunshine seconds is a real overcast day and 0 precipitation_hours a real dry one, so the
+    // usual rule bites harder here than anywhere else in this file: a coerced 0 is indistinguishable
+    // from a measurement.
+    for (const [key, arr] of [['daylight_s', 'daylight'], ['sunshine_s', 'sunshine'],
+      ['solar_mj_m2', 'solar'], ['wind_max_mph', 'windmax'], ['precip_hours', 'preciph']]) {
+      expect(fetchPrecipBody).toMatch(new RegExp(`${key}: Number\\.isFinite\\(${arr}\\[i\\]\\) \\? round2\\(${arr}\\[i\\]\\) : null`));
+      expect(fetchPrecipBody).not.toMatch(new RegExp(`${arr}\\[i\\] \\|\\| 0`));
+    }
+  });
+
+  it('reads each of the five off j.daily BY NAME — a typo omits the field silently', () => {
+    for (const f of V5_FIELDS) {
+      expect(fetchPrecipBody).toMatch(new RegExp(`j\\.daily && j\\.daily\\.${f}`));
+    }
+  });
+
+  it('is still ONE request — the five ride the call that was already being made', () => {
+    expect((fetchPrecipBody.match(/api\.open-meteo\.com/g) || []).length).toBe(1);
+  });
+});
+
 describe('call site (1) — fetchNWS\'s weather_code call, previously unpinned', () => {
   const nwsBody = fnBody('fetchNWS');
 
@@ -248,10 +322,19 @@ describe('call site (3) — the archive backfill, a third positional surface', (
   });
 
   it('requests the same field names, in the same order, as the forecast call', () => {
-    expect(ARCHIVE).toMatch(
-      /daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max/);
+    // Compared as a LIST against the forecast call's own list, not as two hand-copied string
+    // literals. V5-WXBACKFILLVARS-001 appended five fields to both, and a pair of literals is
+    // exactly the shape where one gets updated and the other does not — which is how the two
+    // surfaces stop being readable against each other while every assertion here still passes.
+    const forecastList = fetchPrecipBody.match(/&daily=([a-z0-9_,]+)/i)[1].split(',');
+    const archiveList = ARCHIVE.match(/&daily=([a-z0-9_,]+)/i)[1].split(',');
+    expect(archiveList).toEqual(forecastList);
+    expect(archiveList).toContain('daylight_duration');
     expect(ARCHIVE).toMatch(/temperature_unit=fahrenheit/);
     expect(ARCHIVE).toMatch(/precipitation_unit=inch/);
+    // The archive honours wind_speed_unit too — verified live 2026-09-07, daily_units gave "mp/h".
+    // Without it this script would write km/h into a column called wind_max_mph.
+    expect(ARCHIVE).toMatch(/wind_speed_unit=mph/);
     expect(ARCHIVE).toMatch(/timezone=America\/New_York/);
   });
 
@@ -259,8 +342,18 @@ describe('call site (3) — the archive backfill, a third positional surface', (
     // The safe form: map over d.time and index the value arrays with the same i. There is no
     // "index 2 is today" assumption anywhere, which is what makes this call site drift-proof.
     expect(ARCHIVE).toMatch(/times\.map\(\(date, i\) =>/);
-    for (const f of ['et0_fao_evapotranspiration', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum']) {
+    for (const f of ['et0_fao_evapotranspiration', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum',
+      'daylight_duration', 'sunshine_duration', 'shortwave_radiation_sum', 'wind_speed_10m_max', 'precipitation_hours']) {
       expect(ARCHIVE).toMatch(new RegExp(`d\\.${f}\\?\\.\\[i\\]`));
+    }
+  });
+
+  it('emits the same five V5 row keys as the Lambda — the writers share one upsert', () => {
+    // The archive rows are handed to the SAME column list handler.js writes. A key named differently
+    // here (daylight_seconds, say) is not a type error in JS: it becomes `undefined`, the `??` turns
+    // it into NULL, and the backfill reports "upserted 114 rows" having written five NULL columns.
+    for (const k of ['daylight_s', 'sunshine_s', 'solar_mj_m2', 'wind_max_mph', 'precip_hours']) {
+      expect(ARCHIVE).toMatch(new RegExp(`${k}: Number\\.isFinite\\(`));
     }
   });
 

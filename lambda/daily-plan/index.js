@@ -140,14 +140,36 @@ async function fetchPrecip(lat, lng) {
     // THIS RUN FETCHES A DAILY MAX. NWS supplies highToday, which is TODAY's forecast high — the writer
     // persists COMPLETED days, so today's high is the wrong day by construction. Without this append
     // tmax_f would be NULL on every row ever written and the bag ramp would have no input.
+    // V5-WXBACKFILLVARS-001 — five more daily quantities APPENDED AT THE END of the `daily=` list,
+    // under exactly the discipline G5/H5/F1 established above and for the same reason: past_days is
+    // what sets D0's offset, so every index below (ps[0..4], pop[2..3], tmin[3..5]) still means the
+    // day it always meant. Nothing is inserted ahead of an existing field, and the archive backfill's
+    // list is kept in the same order — openmeteo-indices.test.js pins both.
+    //
+    // UNITS ARE NOT ASSUMED. Verified against the live endpoint at this Space's coordinates on
+    // 2026-09-07: daily_units reported daylight_duration = "s", sunshine_duration = "s",
+    // shortwave_radiation_sum = "MJ/m²", wind_speed_10m_max = "mp/h" (it honours wind_speed_unit,
+    // which is the only new URL parameter here) and precipitation_hours = "h". The weather_daily
+    // columns are named daylight_s / sunshine_s / solar_mj_m2 / wind_max_mph / precip_hours to carry
+    // those units, and NOTHING here converts: the two duration fields are stored in SECONDS exactly
+    // as served, because a seconds->hours divide in the writer is a silent 3600x waiting for the one
+    // consumer that forgets it. Divide at the point of display.
+    //
+    // wind_speed_unit=mph is a NEW parameter and it is scoped to wind alone — temperature_unit and
+    // precipitation_unit already govern every other field and are untouched. No existing value moves.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max&hourly=precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=4`;
+      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours&hourly=precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York&past_days=2&forecast_days=4`;
     const j = await (await fetch(url, { signal: AbortSignal.timeout(6000) })).json();
     const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2, D3]
     const pop = (j.daily && j.daily.precipitation_probability_max) || [];
     const tmin = (j.daily && j.daily.temperature_2m_min) || [];  // same indexing as ps
     const et0 = (j.daily && j.daily.et0_fao_evapotranspiration) || [];  // same indexing as ps
     const tmax = (j.daily && j.daily.temperature_2m_max) || [];         // same indexing as ps
+    const daylight = (j.daily && j.daily.daylight_duration) || [];      // same indexing as ps
+    const sunshine = (j.daily && j.daily.sunshine_duration) || [];      // same indexing as ps
+    const solar = (j.daily && j.daily.shortwave_radiation_sum) || [];   // same indexing as ps
+    const windmax = (j.daily && j.daily.wind_speed_10m_max) || [];      // same indexing as ps
+    const preciph = (j.daily && j.daily.precipitation_hours) || [];     // same indexing as ps
     const times = (j.daily && j.daily.time) || [];
     const tomorrow = ps[3] || 0;
     // Absence is NEVER coerced to a temperature: a missing entry stays null so evalAdvisory skips it
@@ -215,6 +237,16 @@ async function fetchPrecip(lat, lng) {
         // null, NEVER 0 — absence of data must not be recorded as "no rain fell". Same rule as
         // yesterday_precip_actual_in above, and the same reason: 0 is real data here.
         precip_in: Number.isFinite(ps[i]) ? round2(ps[i]) : null,
+        // V5-WXBACKFILLVARS-001. Same null-never-0 rule, and it bites hardest here: 0 sunshine
+        // seconds is a real overcast day and 0 precipitation_hours is a real dry one, so coercing an
+        // absent value would be indistinguishable from a measurement. round2 is the endpoint's own
+        // resolution for all five (52498.66 s, 7267.21 s, 5.81 MJ/m², 9.3 mph, 17.0 h on 2026-05-14),
+        // so it loses nothing — unlike ET0, which needs round3 because its useful range is 0.15-0.25.
+        daylight_s: Number.isFinite(daylight[i]) ? round2(daylight[i]) : null,
+        sunshine_s: Number.isFinite(sunshine[i]) ? round2(sunshine[i]) : null,
+        solar_mj_m2: Number.isFinite(solar[i]) ? round2(solar[i]) : null,
+        wind_max_mph: Number.isFinite(windmax[i]) ? round2(windmax[i]) : null,
+        precip_hours: Number.isFinite(preciph[i]) ? round2(preciph[i]) : null,
       })).filter((d) => d.date),
     };
   } catch (e) {

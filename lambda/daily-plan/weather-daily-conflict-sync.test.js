@@ -50,10 +50,17 @@ describe('weather_daily — one conflict policy, two writers', () => {
     expect(norm(backfillPolicy)).toBe(norm(handlerPolicy));
   });
 
+  // Every column the policy guards. V5-WXBACKFILLVARS-001 added the last five; they take the same
+  // rank guard as the six before them and differ only in the OUTRANKED branch (fill vs strict),
+  // which is weatherdaily.test.js's business, not this file's — here the question is only whether
+  // both copies say the same thing.
+  const GUARDED = ['precip_in', 'precip_source', 'et0_in', 'et0_source', 'tmax_f', 'tmin_f',
+    'daylight_s', 'sunshine_s', 'solar_mj_m2', 'wind_max_mph', 'precip_hours'];
+
   it('every measured column is rank-guarded, none left on a bare COALESCE', () => {
     // The defect in one line. `tmax_f = coalesce(excluded.tmax_f, ...)` is last-writer-wins for every
-    // non-null value, and it is what these six columns used to be.
-    for (const col of ['precip_in', 'precip_source', 'et0_in', 'et0_source', 'tmax_f', 'tmin_f']) {
+    // non-null value, and it is what six of these columns used to be.
+    for (const col of GUARDED) {
       expect(norm(handlerPolicy)).toMatch(new RegExp(`${col} = case when coalesce\\(array_position\\(`));
       expect(norm(handlerPolicy)).not.toMatch(new RegExp(`${col} = coalesce\\(excluded\\.${col}`));
     }
@@ -63,7 +70,11 @@ describe('weather_daily — one conflict policy, two writers', () => {
     // Ordering is the whole policy: reversed, this file would happily let the ERA5 archive overwrite
     // a gauge reading. The three strings are also the domain of weather_daily_precip_source_chk.
     const arrays = norm(handlerPolicy).match(/array\[[^\]]*\]/g) || [];
-    expect(arrays.length).toBe(12); // 6 columns x 2 sides
+    // DERIVED from the list above, not frozen at 12. The number is a consequence of the column count
+    // (two rank arrays per arm), so hardcoding it means every widening of this table lands on a
+    // failing assertion whose only available fix is to bump a literal — which teaches the next
+    // author that the literal is negotiable. What must hold is the RELATIONSHIP.
+    expect(arrays.length).toBe(GUARDED.length * 2);
     for (const a of arrays) expect(a).toBe("array['openmeteo_archive','openmeteo_live','gauge_merged']");
   });
 });
