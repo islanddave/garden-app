@@ -18,7 +18,7 @@ import SeedStageHistory from '../components/seed/SeedStageHistory.jsx'
 // chk_inventory_source_kind). preservationProvenance.test.js pins this list against the JS
 // canonical; the migration's post_vocabulary_exact gate pins the DB against it.
 import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
-import { formatQty } from '../lib/format.js'
+import { formatQtyExact } from '../lib/format.js'
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -103,20 +103,27 @@ export default function InventoryDetail() {
   }, [id, fetch])
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+  // BUG-INVQTYROUNDTRIP-001 — every quantity below is formatQtyExact, NEVER formatQty. These five are
+  // not renders: buildChanges() reads each one back through parseNum (parseFloat) and PUTs it, so a
+  // rounding formatter here makes merely OPENING an item and saving any other field rewrite the
+  // stored value. quantity_on_hand / reorder_threshold / reorder_quantity / quantity_purchased are
+  // numeric(10,3) on prod and five live rows were fractional when this was found; `quantity` is
+  // integer, and it is switched with them anyway because "which of these is safe to round" is not a
+  // fact a future edit should have to re-derive per field.
   function itemToForm(i) {
     return {
       name:               i.name              ?? '',
       type:               i.type              ?? 'consumable',
       category:           i.category          ?? '',
       status:             i.status            ?? 'active',
-      quantity_on_hand:   formatQty(i.quantity_on_hand),
-      quantity:           formatQty(i.quantity),
+      quantity_on_hand:   formatQtyExact(i.quantity_on_hand),
+      quantity:           formatQtyExact(i.quantity),
       unit:               i.unit              ?? '',
-      reorder_threshold:  formatQty(i.reorder_threshold),
-      reorder_quantity:   formatQty(i.reorder_quantity),
+      reorder_threshold:  formatQtyExact(i.reorder_threshold),
+      reorder_quantity:   formatQtyExact(i.reorder_quantity),
       condition:          i.condition         ?? '',
       unit_cost:          i.unit_cost         != null ? Number(i.unit_cost).toFixed(2)         : '',
-      quantity_purchased: formatQty(i.quantity_purchased),
+      quantity_purchased: formatQtyExact(i.quantity_purchased),
       purchase_date:      i.purchase_date     ?? '',
       source:             i.source            ?? '',
       source_url:         i.source_url        ?? '',
@@ -678,9 +685,19 @@ export default function InventoryDetail() {
             {/* Consumable quantity */}
             {isConsumable && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {/* BUG-INVQTYROUNDTRIP-001 — step="any" on all four numeric(10,3) boxes (here,
+                    both reorder_* below, and Qty purchased), and it is not cosmetic. type="number"
+                    defaults to step=1, so a box holding 4.4 reports validity.stepMismatch and the
+                    form is INVALID: this <form> carries noValidate, which is the ONLY reason a
+                    fractional save still submits. Measured, not assumed — PlantForm's quantity input
+                    has the same implicit step and NO noValidate, and there a fractional prefill makes
+                    the whole planting form unsubmittable (see PlantingEditor.formFromPlant). Declaring
+                    the step the column actually has removes the dependence on that one attribute.
+                    The durable Quantity box below keeps step="1": inventory_items.quantity is an
+                    integer column. */}
                 <Field label="Qty on hand" error={errors.quantity_on_hand}>
                   <Input
-                    type="number" min="0" step="1"
+                    type="number" min="0" step="any"
                     value={form.quantity_on_hand}
                     onChange={e => set('quantity_on_hand', e.target.value)}
                     error={!!errors.quantity_on_hand}
@@ -718,14 +735,14 @@ export default function InventoryDetail() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <Field label="Reorder when below">
                   <Input
-                    type="number" min="0" step="1"
+                    type="number" min="0" step="any"
                     value={form.reorder_threshold}
                     onChange={e => set('reorder_threshold', e.target.value)}
                   />
                 </Field>
                 <Field label="Reorder quantity">
                   <Input
-                    type="number" min="0" step="1"
+                    type="number" min="0" step="any"
                     value={form.reorder_quantity}
                     onChange={e => set('reorder_quantity', e.target.value)}
                   />
