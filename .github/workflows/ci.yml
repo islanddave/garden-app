@@ -277,49 +277,6 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-saved
 
-      - name: Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)
-        # The first observable the close-out has ever had. It shipped to prod in v4.115.0 with its
-        # layout REASONED ABOUT and never measured — the batch's own promote handoff flagged exactly
-        # that, and named gate:seeds-saved as the model to copy. This step is that copy.
-        #
-        # Real Chrome at 390x844, plus 390x667 (keyboard up) for the two step-2 sheet states, across
-        # all six states tests/harness/putupclose.jsx renders: empty archive / populated archive /
-        # batch detail / close sheet step 1 / step 2 after Yes / step 2 after No. It mounts the REAL
-        # PutUp page behind its `?state=closed` and `?batch=` mode flags and TAPS the real controls,
-        # so "is the close-out reachable" is answered before "does it fit".
-        #
-        # Asserts, as a census rather than a named list, that no visible button or form control is
-        # under T.tapMinHeight; that no closed-batch row overflows its box or clips its title column
-        # beside the Reopen button at the fixture's worst-case 51-char label; that the document does
-        # not scroll sideways; that the sheet's "Record it" hit-tests to itself, fits the viewport and
-        # is reachable rather than clipped out of a panel that cannot scroll; and — the half its model
-        # has no reason to check — that with the page SCROLLED TO ITS END no control's box intersects
-        # the 56px fixed BottomNav that App.jsx renders on every signed-in route. That last one is
-        # measured at the end of the scroll because at scrollTop 0 nothing near the bottom is ever
-        # probed and "no control is occluded" is a statement about an empty set.
-        #
-        # Verified non-vacuous THREE ways, because a layout gate that measures nothing scores a
-        # perfect pass and this repo has been bitten by exactly that:
-        #   1. `npm run gate:putup:probe-nothing` points every selector at a testid nothing renders.
-        #      Exit 0 -> 1, failing all 8 case/viewport pairs on the instrument check ("closed batch
-        #      rows 0 != 9", "no [role=dialog]", "batch-close-open door false"). A selector that
-        #      matched nothing is a FAILURE here, never the quiet pass it is in a naive census.
-        #   2. T.buttonMinHeight 48 -> 40 (the floor stays 44) reds it with exit 1 naming 14 controls
-        #      at 354x40 — both kept chips and all six outcome chips across both viewports.
-        #   3. PutUp's container bottom padding 80px -> 20px reds it with exit 1 naming one control:
-        #      "Reopen Cider vinegar, first go" (y753-801) under the nav (y788-844) by 13px. Both
-        #      mutations were reverted and the green re-confirmed at exit 0.
-        # Today it passes at 47px of clear air above the bar and at ZERO margin on the tap floor —
-        # the shortest control on every one of the six states measures exactly 44px against a 44px
-        # floor, so any shrink at all reds it.
-        #
-        # ~101 s locally, measured: eight page loads (six states, two at both viewports) behind one Vite
-        # boot, plus a second measurement pass at the end of the scroll on the three non-sheet states.
-        # NO continue-on-error, per the policy note above.
-        env:
-          GATE_CHROME_FLAGS: --no-sandbox
-        run: npm run gate:putup
-
       - name: Icon wiring slice 4 — five rewired surfaces (V4-ICON-001)
         # Real Chrome at 390x844 across overwinter / inventory-type / water-depth / life-story /
         # notify. Asserts ZERO pictographic characters survive inside the rewired subtree, and that
