@@ -3,12 +3,33 @@
 // Dave directive 2026-06-15: show INTEGERS everywhere for now (he'll re-add decimal precision
 // per-surface where he wants it). formatQty rounds to nearest integer: "3.000"→"3", "3.500"→"4",
 // "3.125"→"3". Returns '' for null/undefined/empty. Returns String(n) when not finite (defensive).
-// The DB column stays numeric(N,3); this is display-only rounding, no data is altered.
+// The DB column stays numeric(N,3); this is display-only rounding, no data is altered — TRUE only
+// while every caller is a render. An EDIT input seeds from formatQtyExact below; see its note.
 export function formatQty(n) {
   if (n == null || n === '') return ''
   const num = Number(n)
   if (!Number.isFinite(num)) return String(n)
   return String(Math.round(num))
+}
+
+// BUG-INVQTYROUNDTRIP-001 — the EDIT-form twin of formatQty, and the split is the whole point.
+// formatQty's rounding is display-only and stays that way, but an EDITABLE box seeded from it is not
+// a render: the value is read back with parseFloat and PUT, so merely opening an item and saving any
+// OTHER field rewrote the quantity to its rounded self — HTTP 200, no warning. Prod carried five such
+// rows when this landed (3 in quantity_on_hand incl. the 0.500-packet okra, 2 in quantity_purchased).
+//
+// The contract is REVERSIBILITY, not prettiness: parseFloat(formatQtyExact(v)) === Number(v) for
+// every finite v, which is what makes the round trip provable rather than merely plausible. Number()
+// then String() is all it takes — "0.500"→"0.5", "3.000"→"3", "4.400"→"4.4" — trailing zeros gone
+// (the readable-input half V3-QTYINT-001 actually wanted) with the value itself untouched. toFixed(3)
+// would read as more careful and be less: it re-rounds anything finer than the column's resolution,
+// which is the same class of silent write this function exists to stop.
+// Same contract as its siblings for the edges: '' for null/undefined/empty, String(n) when not finite.
+export function formatQtyExact(n) {
+  if (n == null || n === '') return ''
+  const num = Number(n)
+  if (!Number.isFinite(num)) return String(n)
+  return String(num)
 }
 
 // V5-SEEDQTY-001 — seed WEIGHT, and the one thing it must never be is formatQty. That function is

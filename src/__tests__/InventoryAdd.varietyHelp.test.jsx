@@ -15,6 +15,21 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 vi.mock('../hooks/useInventory.js', () => ({ useInventory: () => ({ createItem: vi.fn() }) }))
+// V5-SRCDISCLOSE-001 — picking 'seeds' now opens the "Add more details" pane, which mounts
+// SourcePicker -> useSources -> useApiFetch -> Clerk's useAuth, and throws "can only be used within
+// <ClerkProvider>" with no provider above. The unit under test here is still the hint's
+// aria-describedby, not the network.
+//
+// `fetch` MUST be a stable identity across renders, which is why it is hoisted instead of minted
+// inside the factory. useSources keys its effect on [fetch, enabled] (useSources.js:112) and the
+// real useApiFetch hands back a useCallback'd function (api.js:312); a double that returns a fresh
+// vi.fn() every render re-fires that effect on every render it causes, and the render loop eats the
+// 4GB heap. Not hypothetical — it is what InventoryAdd.seedDoor.test.jsx did.
+const { apiFetchMock } = vi.hoisted(() => ({ apiFetchMock: vi.fn(async () => []) }))
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({ fetch: apiFetchMock, getToken: vi.fn(async () => 'tok') }),
+  apiFetch: (...args) => apiFetchMock(...args),
+}))
 vi.mock('../components/VarietyPicker.jsx', () => ({
   default: ({ value, onChange, placeholder, required, ...cloned }) => (
     <input data-testid="variety-picker" placeholder={placeholder} required={required} readOnly {...cloned} />

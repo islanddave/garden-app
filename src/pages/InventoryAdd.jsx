@@ -108,10 +108,22 @@ export default function InventoryAdd() {
     ...seedFromParams(searchParams),
   })
 
-  const [showFull,      setShowFull]      = useState(false)
+  // V5-SRCDISCLOSE-001 — SEEDS OPEN THE PANE. `source_id` (the controlled vendor, ~:592) lives inside
+  // "Add more details", and for a seed packet the vendor is not optional detail: it is the fact that
+  // separates a genuine second packet from a duplicate row. Collapsed-by-default meant packets got
+  // entered with no vendor at all. Computed in the INITIALISER rather than an effect for the
+  // /seeds/saved door (`?category=seeds`), which mounts already in seeds — an effect would open it a
+  // paint later and the card would visibly jump on the phone. Reading `form` here is safe: a lazy
+  // initialiser runs on the FIRST render only, so this sees the initial form object above.
+  const [showFull,      setShowFull]      = useState(() => form.category === 'seeds')
   const [saving,        setSaving]        = useState(false)
   const [errors,        setErrors]        = useState({})
   const [typeWarning,   setTypeWarning]   = useState(false) // pending type switch
+
+  // V5-SRCDISCLOSE-001 — the auto-open latch, shared by the two effects below. Only the first
+  // render's value is kept (useRef ignores the argument thereafter), which is the whole point: this
+  // records whether the seeds auto-open has been SPENT, not what the category currently is.
+  const seedsAutoOpened = useRef(form.category === 'seeds')
 
   // V4-DIRTYGUARDSWEEP-001 — restore an interrupted draft, one-shot on mount. `showFull` rides along
   // so a restored draft whose only content is inside the collapsed "Add more details" pane does not
@@ -121,7 +133,25 @@ export default function InventoryAdd() {
     if (!draft?.form) return
     setForm(f => ({ ...f, ...draft.form }))
     if (draft.showFull) setShowFull(true)
+    // V5-SRCDISCLOSE-001 — a draft stashed ALREADY IN SEEDS with the pane shut can only record a
+    // collapse the user made by hand, because the auto-open below would otherwise have opened it. So
+    // spend the latch instead of springing it open again on the way back from an interruption. This
+    // adds no CLOSING power to the restore (the invariant above): a draft carried in through the
+    // `?category=seeds` door mounts open and stays open.
+    else if (draft.form.category === 'seeds') seedsAutoOpened.current = true
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // V5-SRCDISCLOSE-001 — the mid-entry half. `category` is a form field, so it can BECOME 'seeds'
+  // after mount: picked in the select, or arriving in the restored draft above. Fires AT MOST ONCE
+  // per mount, and that latch is what keeps the pane the user's afterwards — once he collapses it,
+  // no keystroke, no re-render, and no later seeds → other → seeds round trip re-opens it.
+  // It never auto-CLOSES either: switching away from seeds leaves the pane as it is, because closing
+  // it would hide whatever he has already typed in there — the same reason the restore only opens.
+  useEffect(() => {
+    if (form.category !== 'seeds' || seedsAutoOpened.current) return
+    seedsAutoOpened.current = true
+    setShowFull(true)
+  }, [form.category])
 
   // STASH predicate — BROAD, and unusually simple here because EVERY field of this form is empty on
   // a pristine mount (19 keys: 18 empty strings and `variety: null`). Nothing is seeded, so "any

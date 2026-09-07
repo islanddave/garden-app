@@ -15,10 +15,11 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 
-const { navigateSpy, searchParamsRef, createItemSpy } = vi.hoisted(() => ({
+const { navigateSpy, searchParamsRef, createItemSpy, apiFetchMock } = vi.hoisted(() => ({
   navigateSpy: vi.fn(),
   searchParamsRef: { current: new URLSearchParams() },
   createItemSpy: vi.fn(async () => ({ item: { id: 'inv-new' } })),
+  apiFetchMock: vi.fn(async () => []),
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -30,9 +31,17 @@ vi.mock('react-router-dom', () => ({
 // /api/varieties on mount and reaches Clerk through useApiFetch. Without this the seeds cases fail
 // on "useAuth can only be used within <ClerkProvider>", which would look like the param seeding not
 // working when it is the auth layer, not the form.
+//
+// V5-SRCDISCLOSE-001 — `fetch` is now HOISTED so its identity is STABLE across renders, and that is
+// load-bearing rather than tidying. Since seeds opens the "Add more details" pane on mount, this
+// suite also mounts SourcePicker -> useSources, which keys its effect on [fetch, enabled]
+// (useSources.js:112). The real useApiFetch returns a useCallback'd function (api.js:312), so
+// production is stable; the previous double minted a fresh vi.fn() on EVERY render, so the effect
+// re-fired on every render it caused. That loop ran the worker out of its 4GB heap — a FATAL OOM,
+// not a failed assertion.
 vi.mock('../lib/api.js', () => ({
-  useApiFetch: () => ({ fetch: vi.fn(async () => []), getToken: vi.fn(async () => 'tok') }),
-  apiFetch: vi.fn(async () => []),
+  useApiFetch: () => ({ fetch: apiFetchMock, getToken: vi.fn(async () => 'tok') }),
+  apiFetch: (...args) => apiFetchMock(...args),
 }))
 // VarietyPicker is STUBBED, not exercised. It is rendered only on the seeds branch — which is the
 // branch under test — and it drags useCachedFetch, the data cache and Clerk in behind it, which

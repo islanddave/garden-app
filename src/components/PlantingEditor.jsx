@@ -7,7 +7,7 @@
 // coercions for source/status, source_inventory_item_id passthrough on POST.
 import React, { useState, useEffect, useRef } from 'react'
 import { P } from '../lib/constants.js'
-import { formatQty } from '../lib/format.js'
+import { formatQty, formatQtyExact } from '../lib/format.js'
 import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
@@ -54,14 +54,33 @@ function formFromPlant(plant) {
     name:     plant.name,
     variety:  plant.variety_ref ?? null,
     varietyText: plant.variety_ref?.name ?? '',
+    // BUG-INVQTYROUNDTRIP-001 — LEFT ON formatQty DELIBERATELY, and this line is the one place in
+    // that sweep where the exact prefill is the wrong change. plants.quantity IS numeric(10,3), so
+    // the rounding is as dishonest here as it was in InventoryDetail; the difference is downstream.
+    // PlantForm renders this as <input type="number" min="1"> with NO step, so the implicit step=1
+    // makes 2.5 report validity.stepMismatch — and PlantForm's <form> has NO noValidate (unlike
+    // InventoryDetail's). MEASURED in qtyRoundTripPlanting.test.jsx: with a 2.500 prefill the submit
+    // event never fires and the ENTIRE planting form becomes unsavable — name, notes, status, all of
+    // it — which is a worse failure than the round it replaces. The honest fix is three coordinated
+    // parts (step on PlantForm's input, this prefill, parseFloat instead of parseInt in handleAdd/
+    // handleEdit), and PlantForm.jsx belongs to another lane's write partition. Prod holds ZERO
+    // fractional plants.quantity rows, so nothing is losing data here today.
     quantity: formatQty(plant.quantity ?? 1),
     notes:    plant.notes ?? '',
     status:   plant.status ?? '',
     sown_at:           (plant.sown_at ?? '').slice(0, 10),
     sown_at_approx:    !!plant.sown_at_approx,
-    qty_initial:       formatQty(plant.qty_initial),
-    // Plain String, not formatQty: these are whole seeds, and formatQty renders 20 as '20.000'
-    // for the quantity family (which is numeric). An integer round-trip must survive as typed.
+    // formatQtyExact, but a NO-OP one: plants.qty_initial is an integer column, so the two formatters
+    // agree on every value it can hold. Switched anyway so the seed does not read as a licensed use of
+    // the rounding formatter, and so it is already right if the column is ever widened.
+    qty_initial:       formatQtyExact(plant.qty_initial),
+    // Plain String, and the reason below is a CORRECTION (BUG-INVQTYROUNDTRIP-001). This comment used
+    // to read "formatQty renders 20 as '20.000'", which no version of formatQty has ever done: it was
+    // `num.toString()` at 4cfe19a and String(Math.round(n)) from dae6209 on. "20.000" is the RAW pg
+    // serialization of a numeric(N,3) column — format.js's own header line 2 says so — and the helper
+    // is what REMOVES it. The real reason stands unchanged: seeds_sown/seeds_germinated are integer
+    // columns holding a counted number of seeds, so there is nothing to trim and nothing to round,
+    // and a count must survive as typed.
     seeds_sown:        plant.seeds_sown == null ? '' : String(plant.seeds_sown),
     seeds_germinated:  plant.seeds_germinated == null ? '' : String(plant.seeds_germinated),
     source_type:       plant.source_type ?? '',

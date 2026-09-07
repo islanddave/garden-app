@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatQty, formatMoney, formatDate, formatSeedWeight } from '../lib/format.js'
+import { formatQty, formatQtyExact, formatMoney, formatDate, formatSeedWeight } from '../lib/format.js'
 
 describe('formatQty', () => {
   it('drops trailing zeros from string decimals (numeric column source)', () => {
@@ -131,18 +131,68 @@ describe('formatSeedWeight (V5-SEEDQTY-001)', () => {
   })
 })
 
+describe('formatQtyExact (BUG-INVQTYROUNDTRIP-001)', () => {
+  // THE REVERSIBILITY PAIR IS THE POINT OF THIS SUITE, in the same way the 0.1 boundary is the point
+  // of formatSeedWeight's. Everything else here would also pass under a formatter that quietly
+  // re-rounded at some decimal place; only parseFloat(out) === Number(in) states the actual contract,
+  // because parseFloat IS the read-back in InventoryDetail.parseNum and the whole defect was a
+  // prefill that did not survive it.
+  it('survives the parseFloat read-back that buildChanges() performs', () => {
+    for (const v of ['0.500', '4.400', '3.200', '3.000', 0.5, 12, 0, '9999999.999', '0.001']) {
+      expect(parseFloat(formatQtyExact(v))).toBe(Number(v))
+    }
+  })
+  // The three live prod rows this was found on, by their stored values: the okra packet, the pumice,
+  // and the mykos. Written as the DB serializes them (numeric(10,3) arrives as a STRING through the
+  // pg driver, never a number) — a suite fed only number literals would be green while every real
+  // render went through an untested path.
+  it('renders the fractional rows prod actually holds, exactly', () => {
+    expect(formatQtyExact('0.500')).toBe('0.5')   // Clemson Spineless 80 Okra, 0.5 packet
+    expect(formatQtyExact('4.400')).toBe('4.4')   // Horticultural Lava Pebbles, 4.4 lb
+    expect(formatQtyExact('3.200')).toBe('3.2')   // Xtreme Gardening Mykos, 3.2 lb
+  })
+  it('trims trailing zeros off whole values — the readable-input half V3-QTYINT-001 wanted', () => {
+    expect(formatQtyExact('1.000')).toBe('1')
+    expect(formatQtyExact('5.000')).toBe('5')
+    expect(formatQtyExact('12.000')).toBe('12')
+    expect(formatQtyExact(20)).toBe('20')
+  })
+  it('shares its siblings edge contract: blank in, blank out; non-finite passes through', () => {
+    expect(formatQtyExact(null)).toBe('')
+    expect(formatQtyExact(undefined)).toBe('')
+    expect(formatQtyExact('')).toBe('')
+    expect(formatQtyExact('500ml')).toBe('500ml')
+    expect(formatQtyExact(0)).toBe('0')           // a counted zero is not a blank
+  })
+  it('keeps negatives as stored (no rounding toward or away from zero)', () => {
+    expect(formatQtyExact(-3.4)).toBe('-3.4')
+    expect(formatQtyExact('-3.000')).toBe('-3')
+  })
+  it('differs from formatQty exactly where the defect lived', () => {
+    // Same input, two answers. The left one is a legitimate DISPLAY of "about 4 lb of pumice"; the
+    // right one is the only acceptable answer for a box whose contents get written back.
+    expect(formatQty('4.400')).toBe('4')
+    expect(formatQtyExact('4.400')).toBe('4.4')
+  })
+})
+
 describe('integer-quantity prefill contract (V3-QTYINT-001)', () => {
-  // Edit-form prefills (PlantingEditor.formFromPlant, InventoryDetail.itemToForm)
-  // route numeric(N,3) DB strings through formatQty so inputs never show "1.000".
+  // RE-POINTED, not deleted (BUG-INVQTYROUNDTRIP-001). This block used to assert the prefill contract
+  // against formatQty, and its comment said edit prefills route through it — that WAS the defect:
+  // formatQty was reached for because it trims trailing zeros, and its rounding came along unnoticed
+  // and rewrote data on save. The requirement V3-QTYINT-001 encoded is real and still holds (an edit
+  // box must never show "1.000"), so it is re-pointed at the formatter that now serves it. formatQty's
+  // own rounding contract is unchanged and stays proved in its own describe above, where the callers
+  // are renders.
   it('collapses numeric(N,3) DB strings to integers for edit prefills', () => {
-    expect(formatQty('1.000')).toBe('1')   // the planting-edit Quantity bug
-    expect(formatQty('5.000')).toBe('5')   // qty_initial
-    expect(formatQty('12.000')).toBe('12') // reorder/purchased
+    expect(formatQtyExact('1.000')).toBe('1')   // the planting-edit Quantity bug
+    expect(formatQtyExact('5.000')).toBe('5')   // qty_initial
+    expect(formatQtyExact('12.000')).toBe('12') // reorder/purchased
   })
   it('leaves a null quantity prefill empty (drops the != null guards cleanly)', () => {
-    expect(formatQty(null)).toBe('')
+    expect(formatQtyExact(null)).toBe('')
   })
   it('preserves free-text quantities (integer even when free text)', () => {
-    expect(formatQty('500ml')).toBe('500ml')
+    expect(formatQtyExact('500ml')).toBe('500ml')
   })
 })

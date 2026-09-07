@@ -92,12 +92,30 @@ post:
   - name: post_no_extra_columns
     note: >
       Paired with the gate above so the two together pin the column set EXACTLY. The IN-filter gate
-      alone passes happily on a table that also grew a column nobody intended.
+      alone passes happily on a table that also grew a column nobody intended. This one is the
+      other half: it asserts NO COLUMN EXISTS OUTSIDE the intended set, and projects the offender's
+      name so a red says which column rather than only how many.
+
+      DE-FROZEN 2026-09-06 (OPS-GATEFROZENCOUNT-001). Until this edit the gate counted the table's
+      columns UNFILTERED and asserted `value: 8` — an armed frozen TOTAL, which is a different and
+      worse thing than the sibling's `value: 8` above (that one is the length of its own inline
+      IN-list and cannot be moved by a column the list does not name). A frozen total reds on ANY
+      widening, including a legitimate one, and the tempting repair — 8 -> 9 — silently re-freezes
+      at the new number and teaches the next person to bump again. v5-seedqty-001's header names
+      this exact gate as the live instance of the hazard; v4-dtmbasisvar-001:41 is the one that
+      already fired (v_sow_candidates pinned at 33 columns, live 37, neutralised 2026-09-02).
+      The NOT-IN form fails on precisely the same unintended column and accommodates an intended
+      one by editing ONE list instead of a list plus a total.
+
+      The allowlist must stay NULL-free: `x NOT IN (…, NULL)` is NULL for every x, so a single NULL
+      element would make this gate return zero rows against ANY table shape and go vacuously green.
     sql: |
-      SELECT 1 FROM information_schema.columns
+      SELECT column_name FROM information_schema.columns
        WHERE table_schema='public' AND table_name='weather_cue_impression'
+         AND column_name NOT IN ('id','user_id','shown_on','cue','form','model_version',
+                                 'plan_generated_at','created_at')
     expect: rowcount_eq
-    value: 8
+    value: 0
     continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
 
   - name: post_no_created_by_column

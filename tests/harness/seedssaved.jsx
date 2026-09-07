@@ -41,11 +41,54 @@ const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
 // the PAGE-level crop filter renders only when the lots span more than one crop, so without
 // these the layout gate would never render the control it is supposed to be measuring. Four
 // lots across three crops keeps the filter live while leaving the pinned counts unambiguous.
+//
+// SEED MEASUREMENT — the three V5-SEEDQTY-001 columns, here because without them the layout gate
+// could not see the line it was extended to guard. These rows carried no `seed_count`,
+// `seed_weight_g` or `seed_count_estimated`, so V5-SEEDCOUNTCARD-001's `lot-seed-measure` rendered
+// on 0 of 4 cards: seeds-saved-clearance.mjs measured four cards WITHOUT the line, its four box
+// assertions were exercised by nothing, and the run printed PASS. A gate that cannot observe the
+// thing it guards is not a guard.
+//
+// Chosen for RENDERED LENGTH, which is what the 230.9px text column actually has to survive, and
+// held to values the database would accept and a packet could hold:
+//   i1  "121 seeds · 1.6 g"            a hand count with a weight beside it. 121 is prod's own
+//                                      Ukrainian Purple; Money Plant seed is a large flat disc at
+//                                      ~13mg, so 121 of them IS ~1.6 g.
+//   i2  no line at all                 both columns NULL — the control. A card WITHOUT the line has
+//                                      to stay on screen, or a regression that renders it
+//                                      unconditionally has nothing left to fail against.
+//   i3  "approx. 7000 seeds · 12.5 g"  the longest string this page can honestly produce: the
+//                                      vendor-claim prefix, a four-digit count and a two-digit
+//                                      weight, in the narrow column a card shares with its advance
+//                                      button. Mustard seed runs ~1.8mg, so 7000 seeds IS 12.5 g —
+//                                      bulk greens seed is sold BY WEIGHT with an approximate count
+//                                      printed on it, which is the fact seed_count_estimated exists
+//                                      to record.
+//   i4  "185 seeds"                    prod's exact shape, on prod's stage: all three of Dave's
+//                                      stored lots carry a hand count and no weight (1884=185,
+//                                      Sugar Baby=175, Ukrainian Purple=121).
+//
+// PAIRING, not decoration: inventory_items carries CHECK ((seed_count IS NULL) =
+// (seed_count_estimated IS NULL)) (migrations/v5-seedqty-001/0b), so a count without its flag is a
+// row no real database can hold — the same class of fixture-only row as the missing `status` above.
+// Every row here sets both or neither. Weights are STRINGS because numeric(10,3) serializes as one.
+//
+// TWO CASES DELIBERATELY NOT HERE. A weight with no count ("99 mg", both count columns NULL) is
+// legal and renders, but it is the SHORTEST string on the line and can never be the binding layout
+// case; src/__tests__/SavedSeeds.trackedMeasure.test.jsx owns it, where content is the question.
+// And `seed_count_estimated: true` is reachable today only through PUT
+// /api/inventory-items/:id/seed-measure — no in-app surface writes it (SaveSeedSheet and the card's
+// own count field both write false, deliberately). It is fixtured because the page RENDERS that
+// string and the column exists to be rendered, not because prod holds such a row yet.
 const TRACKED = [
-  { id: 'i1', name: 'Money Plant packet',   variety_name: 'Money Plant (self-saved, variety unrecorded)', crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(4) },
-  { id: 'i2', name: 'Cinderella packet',    variety_name: "Cinderella (Rouge Vif d'Etampes)",             crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(0) },
-  { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  crop_slug: 'mustard', status: 'active', seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12) },
-  { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 crop_slug: 'summer_squash', status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40) },
+  { id: 'i1', name: 'Money Plant packet',   variety_name: 'Money Plant (self-saved, variety unrecorded)', crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(4),
+    seed_count: 121,  seed_weight_g: '1.600',  seed_count_estimated: false },
+  { id: 'i2', name: 'Cinderella packet',    variety_name: "Cinderella (Rouge Vif d'Etampes)",             crop_slug: 'winter_squash', status: 'active', seed_stage: 'fermenting', seed_process: 'wet', updated_at: daysAgo(0),
+    seed_count: null, seed_weight_g: null,     seed_count_estimated: null },
+  { id: 'i3', name: 'Red Mustard packet',   variety_name: 'Red Mustard (heirloom, unspecified variety)',  crop_slug: 'mustard', status: 'active', seed_stage: 'drying',     seed_process: 'dry', updated_at: daysAgo(12),
+    seed_count: 7000, seed_weight_g: '12.500', seed_count_estimated: true },
+  { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 crop_slug: 'summer_squash', status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40),
+    seed_count: 185,  seed_weight_g: null,     seed_count_estimated: false },
 ]
 // `crop_slug` is the `pv.crop_type_slug` alias the list query added for V5-SEEDSAVEDFILTER-001, and
 // it is on these rows so the crop facet actually RENDERS under the gate. It would otherwise be
