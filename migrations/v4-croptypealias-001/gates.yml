@@ -25,11 +25,18 @@
 # alternative design for this feature WAS to edit display_name, so a future session reaching for that
 # again is the realistic regression.
 #
-# THE VACUITY HAZARD AND WHERE IT IS CLOSED. post_excluded_eight_have_no_alias is a violation count,
+# THE VACUITY HAZARD AND WHERE IT IS CLOSED. post_excluded_six_have_no_alias is a violation count,
 # and a violation count over rows that do not exist is also 0 — it cannot fail on staging for the
-# eight slugs staging lacks. What closes it on prod is post_melon_receipt, which asserts a target
-# tuple POSITIVELY, plus post_alias_row_count, which asserts the population size rather than the
-# absence of a violation. A green run on staging proves the column shape and nothing about the data.
+# slugs staging lacks. What closes it on prod is post_melon_receipt, which asserts a target tuple
+# POSITIVELY, plus post_own_53_aliases_intact, which asserts this migration's own writes are still
+# THERE rather than that no violation is present.
+#
+# Which of those two carries the weight depends on the invocation, and the sweep is the demanding
+# one: post_melon_receipt is continuous:false, so it does NOT run in the `--phase post
+# --continuous-only` pass gate-invariants.yml actually executes. In that mode post_own_53_aliases_
+# intact is the ONLY positive assertion in this file and is load-bearing for every violation gate
+# here. It must never be weakened into a violation count. A green run on staging proves the column
+# shape and nothing about the data.
 
 pre:
   # Existence of the target population. Stays true after the apply, so it is safe as a continuous
@@ -63,23 +70,83 @@ post:
     expect: scalar_eq
     value: 1
 
-  # POPULATION — the number of alias-bearing rows. env:prod; staging's subset is smaller and a
-  # hardcoded count would fail there permanently.
+  # POPULATION — a RECEIPT FOR THIS MIGRATION'S OWN WRITES, not a census of the table.
   #
-  # AMENDED 2026-08-29 by v4-croptypealias-002: 54 -> 56. Dave answered three of the eight decisions
-  # this migration held open. Only TWO of the three add a row — thunbergia and cilantro were NULL;
-  # winter_squash already carried 'butternut, acorn squash' and was already inside the 54, so
-  # appending 'pumpkin' to it moves no count. Measured on prod before and after. 57 would be wrong.
-  - name: post_alias_row_count
+  # RE-SCOPED 2026-09-07, replacing `post_alias_row_count`. That gate counted every alias-bearing row
+  # in crop_types and pinned one global total, which made a gate belonging to THIS migration a
+  # function of every alias anywhere in the table — so unrelated work moved it and the only repair on
+  # offer was to bump the number. It had already happened once: 54 -> 56 on 2026-08-29, and those two
+  # extra rows were cilantro and thunbergia, written and owned by v4-croptypealias-002, not by this
+  # migration. The comment that bump left behind ended "57 would be wrong". On 2026-09-07 prod
+  # reached 57 legitimately — a new crop type `penstemon` gained the alias `beardtongue`, its
+  # standard common name and precisely what this feature exists to make searchable. The alias was
+  # right and the gate was wrong: a claim about the whole table, exhaustive when written and stale
+  # the moment the table grew.
+  #
+  # WHY THE NEW FORM CANNOT DRIFT. The population is ENUMERATED, not queried open. A row can only
+  # enter this count by being named in the VALUES list below, so no crop type created later — with
+  # an alias or without one — can move it. That is the same closed-world shape as
+  # pre_all_54_target_slugs_exist and post_display_names_untouched above and below it, the two gates
+  # in this file that have never needed a bump, and the reason they haven't is structural not lucky.
+  #
+  # AND IT IS STRICTLY STRONGER, NOT WEAKER. The old gate tested only `search_aliases IS NOT NULL`,
+  # so a session that overwrote melon's alias with garbage still passed it. This pins the VALUE of
+  # every row it names, so a reword, a truncation, a soft-delete or a dropped row all red it. Pinning
+  # values is also what preserves the anti-vacuity duty the header assigns this gate: it counts rows
+  # that must BE there, so if the targets vanish the count falls, where a violation count would sit
+  # silently at 0.
+  #
+  # 53 AND NOT 54. winter_squash is the one target whose value this migration no longer owns —
+  # v4-croptypealias-002 appended 'pumpkin' by Dave's 2026-08-29 decision. Pinning the old value here
+  # would be false, and pinning the new one would re-import the very cross-migration coupling this
+  # re-scope removes. Its receipt is 002's post_winter_squash_alias_appended, which pins the entire
+  # string, is continuous, and is unscoped — verified passing against prod AND staging 2026-09-07 —
+  # so the row is not left uncovered. Any future amendment to a row below moves out the same way, to
+  # a receipt in the migration that amends it: a deliberate act with evidence, not a number bump.
+  #
+  # env:prod is unchanged and for the unchanged reason — staging carries 98 crop_types to prod's 150
+  # and holds only a subset of these slugs, so any count over them fails there permanently.
+  # continuous is unchanged (default true), and per the header must stay that way.
+  - name: post_own_53_aliases_intact
     env: prod
     sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL
-         AND search_aliases IS NOT NULL
+      SELECT count(*) FROM public.crop_types ct
+        JOIN (VALUES
+           ('geranium','pelargonium'), ('melon','cantaloupe, muskmelon, honeydew'),
+           ('bean','green bean, snap bean, string bean'), ('tomatillo','husk tomato'),
+           ('sedum','stonecrop'), ('coleus','plectranthus'),
+           ('fittonia','nerve plant'), ('squash','zucchini, courgette'),
+           ('beet','beetroot'), ('sage','salvia'),
+           ('tradescantia','spiderwort, inch plant'), ('arugula','rocket'),
+           ('eggplant','aubergine'), ('collard','collard greens'),
+           ('yarrow','achillea'), ('calibrachoa','million bells'),
+           ('bay','bay laurel'), ('bee_balm','monarda, bergamot'),
+           ('lemon_verbena','aloysia'), ('kohlrabi','german turnip'),
+           ('okra','lady''s finger, bhindi'), ('luffa','loofah, sponge gourd'),
+           ('bitter_melon','bitter gourd, karela'), ('cucamelon','mouse melon, mexican sour gherkin'),
+           ('foxglove','digitalis'), ('japanese_maple','acer'),
+           ('dogwood','cornus'), ('pothos','devil''s ivy, epipremnum'),
+           ('spider_plant','chlorophytum'), ('christmas_cactus','schlumbergera'),
+           ('crown_of_thorns','euphorbia milii'), ('lithops','living stones'),
+           ('pea','snap pea, snow pea, shelling pea'), ('morning_glory','ipomoea'),
+           ('bok_choy','pak choi, pac choi'), ('columbine','aquilegia'),
+           ('four_o_clock','mirabilis'), ('sunflower','helianthus'),
+           ('artichoke','globe artichoke'), ('hollyhock','alcea'),
+           ('milkweed','asclepias'), ('poppy','papaver'),
+           ('stock','matthiola'), ('viola','pansy, johnny jump-up'),
+           ('edelweiss','leontopodium'), ('tweedia','blue star, oxypetalum'),
+           ('blackberry_lily','belamcanda, leopard lily'), ('dracaena','corn plant'),
+           ('chard','swiss chard, silverbeet'), ('mizuna','japanese mustard'),
+           ('tatsoi','spinach mustard'), ('rhubarb','rheum'),
+           ('pineapple','ananas')
+             ) AS owned(slug, aliases)
+          ON owned.slug = ct.slug
+         AND owned.aliases = ct.search_aliases
+       WHERE ct.deleted_at IS NULL
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '4.64.1-croptypealias-001')
     expect: scalar_eq
-    value: 56
+    value: 53
 
   # THE POSITIVE RECEIPT — the tuple that motivated the whole item. Asserts presence of a value
   # rather than absence of a violation, which is what makes the violation-count gates non-vacuous
