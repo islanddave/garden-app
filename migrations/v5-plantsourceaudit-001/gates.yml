@@ -1,0 +1,137 @@
+# gates.yml — v5-plantsourceaudit-001
+#
+# BUG-SOURCEBACKFILLGATERED-001 observability half. Puts plants.source_id and
+# plants.acquired_from_source_id into trg_audit_plants_upd's watched set (49 -> 51).
+#
+# ── READING THE WATCHED SET IN SQL ──────────────────────────────────────────────────────────────
+# The set lives in the trigger's ARGUMENTS, not in a catalog table with one row per column, so every
+# gate here parses `pg_trigger.tgargs`. `encode(tgargs,'escape')` renders the NUL separators as the
+# four-character sequence \000, so `string_to_array(..., E'\\000')` yields the column names plus a
+# trailing empty element. PROVEN against live prod before these gates were written: the parse
+# returned 49 names, `source_ref` present (green control) and `source_id` absent (the gap) in the
+# same query — so the expression discriminates rather than merely returning something.
+#
+# ── POST GATES ARE IN VIOLATION-COUNT SHAPE, AND SELF-ARMING ────────────────────────────────────
+# Each post gate is `SELECT 1 WHERE EXISTS(<this migration's schema_version row>) AND <bad thing>`,
+# expecting 0. Before the apply the EXISTS is false, no rows come back and the gate is vacuously
+# green; after the apply it is a real assertion. That is what lets two of them be `continuous: true`
+# and swept against live prod AND staging without redding an environment that has not applied yet.
+#
+# ── THE MIGRATION ADDS NO COLUMN ────────────────────────────────────────────────────────────────
+# It is trigger-only, so neither frozen view-column-count gate can move — not v4-putupprov-001's and
+# not v5-phrecord-001's (the latter IS `continuous: true` despite gate-invariants.yml:28-31 claiming
+# otherwise; that comment is wrong and is a known trap).
+
+pre:
+  # If the trigger is absent, 0a's guarded DO block is a SILENT NO-OP: it succeeds, stamps
+  # schema_version, and watches nothing. That is the ordering mistake v4-germrate-001's header warns
+  # about (v4-plantingaudit-001 applied AFTER this would re-create the trigger with the OLD list).
+  # Counted, so a missing trigger reds here rather than passing quietly.
+  - name: pre_audit_trigger_armed
+    sql: |
+      SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+       WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+    expect: rowcount_eq
+    value: 1
+
+  # audit_stmt_update takes column NAMES as strings. A typo'd or dropped column would be watched in
+  # name only and would never fire — indistinguishable from working. Assert both exist on the table.
+  - name: pre_both_source_columns_exist_on_plants
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plants'
+         AND column_name IN ('source_id', 'acquired_from_source_id')
+      HAVING count(*) = 2
+    expect: rowcount_eq
+    value: 1
+
+  # Proves the migration has work to do. If this reds, the columns are ALREADY watched and someone
+  # else armed them — stop and find out who, rather than re-running a DROP + CREATE over their list.
+  - name: pre_source_columns_not_yet_watched
+    sql: |
+      SELECT 1
+        FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+       WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+         AND EXISTS (
+           SELECT 1 FROM unnest(string_to_array(encode(t.tgargs, 'escape'), E'\\000')) AS w(col)
+            WHERE w.col IN ('source_id', 'acquired_from_source_id'))
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantsourceaudit-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  # THE POINT OF THE MIGRATION. Continuous, because the failure mode it guards is RECURRENCE: any
+  # future DROP + CREATE of this trigger that forgets these two names silently restores the blind
+  # spot, with no error and every other gate green. That is exactly how source_id came to be
+  # unwatched in the first place.
+  - name: post_both_source_columns_watched
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantsourceaudit-001')
+         AND (SELECT count(*)
+                FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid,
+                     unnest(string_to_array(encode(t.tgargs, 'escape'), E'\\000')) AS w(col)
+               WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+                 AND w.col IN ('source_id', 'acquired_from_source_id')) <> 2
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  # A DROP + CREATE rewrites the ENTIRE list, so this file is the kind of change where omitting a
+  # name is invisible: the column simply stops being audited and nothing complains. Membership is
+  # asserted per name rather than by counting, deliberately — a frozen count would have to be edited
+  # every time the set legitimately widens, and bumping a count to get green is how a real loss would
+  # get waved through. This stays correct when a 52nd column is added later.
+  - name: post_no_watched_column_was_lost
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantsourceaudit-001')
+         AND EXISTS (
+           SELECT 1
+             FROM unnest(ARRAY[
+               'project_id','name','status','kind','location_id','variety_id',
+               'workspace_id','assignee_user_id','created_by','created_at',
+               'planted_at','sown_at','germinated_at','transplanted_at','planted_out_at',
+               'sown_at_approx','germinated_at_approx','transplanted_at_approx','planted_out_at_approx',
+               'quantity','qty_initial','qty_current','qty_harvested','qty_lost','loss_cause',
+               'seeds_sown','seeds_germinated',
+               'source_inventory_item_id','source_type','source_ref','source_generation',
+               'parent_plant_id','divergence_type','lineage_note',
+               'succession_group_id','succession_order',
+               'container_type','container_size',
+               'featured_photo_id','featured_image_id','notes','metadata','attr_override',
+               'rain_exposed','rain_exposed_source','acquired_mature','acquired_mature_source',
+               'deleted_at','archived_at']) AS want(col)
+            WHERE NOT EXISTS (
+              SELECT 1
+                FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid,
+                     unnest(string_to_array(encode(t.tgargs, 'escape'), E'\\000')) AS w(col)
+               WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+                 AND w.col = want.col))
+    expect: rowcount_eq
+    value: 0
+    continuous: true
+
+  # audit_stmt_update reads `old_rows`/`new_rows`. A re-arm that lost the transition tables, or that
+  # armed FOR EACH ROW, would raise at runtime on the first UPDATE rather than at apply time — so the
+  # shape is pinned here, not left to the CREATE statement being read correctly.
+  - name: post_trigger_shape_preserved
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantsourceaudit-001')
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+            WHERE c.relname = 'plants' AND t.tgname = 'trg_audit_plants_upd'
+              AND t.tgoldtable IS NOT NULL AND t.tgnewtable IS NOT NULL
+              AND (t.tgtype & 1) = 0)
+    expect: rowcount_eq
+    value: 0
+    continuous: false
