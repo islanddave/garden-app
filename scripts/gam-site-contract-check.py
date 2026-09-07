@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""
+gam-site-contract-check.py - will this schema change freeze the public website?
+
+WHY THIS EXISTS
+gam-site (private repo islanddave/gardens-at-mathews-rd) builds gardensatmathews.com from
+garden-app's PROD Neon. Its gate 1 (gam-site/tools/gates.py::gate1) enforces a CLOSED WORLD:
+every live column on every published table must appear in exactly one of `columns:` /
+`excluded:` in gam-site/public-export.yaml, or the build FAILs and the site freezes at its last
+publish. On 2026-09-03 seed-saving work added four plant_varieties columns and did exactly that.
+
+The contract was unilateral -- gam-site knew about garden-app, garden-app did not know gam-site
+existed (9 files mentioned it, all comments, zero enforcement). This script makes it bilateral:
+it runs gate 1's comparison here, in the repo making the change, at the moment the change lands
+on dev, so the person who added the column learns it before the site freezes rather than hours
+later from a red build in another repo.
+
+It mirrors ALL FOUR of gate 1's failure modes, not just the column-add that prompted it:
+  1. UNCLASSIFIED  a live column on a published table that the contract does not classify.
+                   The 2026-09-03 freeze. Caused by any additive migration, or a manual ALTER.
+  2. PHANTOM       a contract column that no longer exists in prod. A DROP or a RENAME (a rename
+                   trips 1 and 2 together). Worse than a freeze if the column was PUBLISHED --
+                   the live site loses data, not just its build.
+  3. RELKIND       a published base table replaced by a view. gate1 rejects views outright
+                   because views bypass RLS.
+  4. EVENT_TYPE    a DISTINCT event_log.event_type value in neither allowed_types nor
+                   denied_types. The sleeper: this freezes the site with NO schema change at
+                   all -- just a handler shipping a new event kind.
+
+READS pg_attribute, NOT information_schema.columns -- deliberately, and NOT matching this
+repo's other auditor (dev-main-schema-audit.py uses information_schema). gate1 reads
+pg_attribute because information_schema is privilege-filtered, so a column-level REVOKE (the
+natural reaction to "this new column is sensitive") hides that column from information_schema
+while gate1 still sees and still fails on it. A mirror that queried the filtered view could
+report all-clear on precisely the column that freezes the site. Mirror the gate, not the
+sibling script.
+
+WHY A VENDORED CONTRACT (the tradeoff, stated plainly)
+gam-site is a separate PRIVATE repo; garden-app's CI cannot check it out without a credential.
+The options were (a) vendor the contract here, (b) cross-repo checkout with a token, (c) fetch
+it from a published URL. Chose (a). (b) puts a standing cross-repo credential in garden-app's
+CI, and makes every migration push to dev depend on that token still being valid -- a lot of
+coupling and blast radius to buy an ADVISORY warning, and its expiry is a recurring silent-death
+mode. (c) is worse than it looks: the contract would be served by the very site that is FROZEN
+when this check matters, so it goes stale exactly in the failure case, and it would require
+changes in gam-site.
+
+(a)'s cost is a second copy that can drift. That cost is bounded by DIRECTION:
+  - vendored copy LAGS gam-site (gam-site classified a column we have not vendored) -> we count
+    it unclassified -> FALSE POSITIVE. Noisy, safe, self-announcing.
+  - vendored copy LEADS gam-site (we classify something gam-site has un-classified) -> false
+    negative. Requires gam-site to REMOVE a classification, which is not a normal edit, and when
+    it does happen it is paired with a column drop that trips PHANTOM from the other side.
+The failure that froze the site is additive, and additive drift fails toward noise. Drift is
+also made VISIBLE rather than silent: this script prints the contract's age and provenance on
+every run (see --verbose and the CI job summary), and scripts/refresh-gam-site-contract.py
+--check recomputes the digest against a live gam-site checkout on the one machine that has both.
+
+ADVISORY. This script's exit 1 means "gam-site's gate 1 will fail"; the CI job deliberately does
+NOT propagate it (see .github/workflows/schema-audit.yml). Freezing garden-app's pipeline to
+protect a garden website is a worse trade than the problem being solved.
+
+Usage:
+    python3 scripts/gam-site-contract-check.py [--repo-root PATH] [--env-file PATH]
+                                               [--contract PATH] [--max-age-days N] [--verbose]
+
+Exit codes:
+    0 = PASS  (prod schema is consistent with the contract; gate 1 should pass)
+    1 = FAIL  (gam-site's gate 1 will FAIL on this schema -- classify before the next publish)
+    2 = error (config / connection / contract unreadable -- INCONCLUSIVE, verified nothing)
+
+Contract: scripts/gam-site-column-contract.json, regenerated by
+scripts/refresh-gam-site-contract.py. Related: gam-site/tools/gates.py::gate1.
+"""
+import argparse
+import hashlib
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+CONTRACT_REL = "scripts/gam-site-column-contract.json"
+# Not an expiry -- nothing breaks at 90 days. It is the age past which "this mirror is still
+# accurate" stops being a safe default assumption and the run summary should say so out loud.
+DEFAULT_MAX_AGE_DAYS = 90
+
+
+def load_neon_url(env_path: Path | None) -> str | None:
+    """Resolve NEON_DATABASE_URL. Priority: env var (CI), then .env.local (local dev).
+    L-067: never inline creds; never accept a connection URL as a CLI argument."""
+    env_val = os.getenv("NEON_DATABASE_URL")
+    if env_val:
+        return env_val
+    if env_path and env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("NEON_DATABASE_URL="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+def query_relation(conn, table: str) -> tuple[set[str], str | None]:
+    """Live columns + relkind for public.<table>, from pg_attribute.
+
+    Returns (columns, relkind); relkind is None when the relation does not exist at all.
+    attnum > 0 drops system columns (ctid, xmin...); NOT attisdropped drops the tombstones
+    Postgres leaves behind after ALTER TABLE DROP COLUMN. Both filters are gate1's.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT a.attname, c.relkind "
+        "FROM pg_attribute a "
+        "JOIN pg_class c ON c.oid = a.attrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relname = %s "
+        "  AND a.attnum > 0 AND NOT a.attisdropped",
+        (table,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    if not rows:
+        return set(), None
+    return {r[0] for r in rows}, rows[0][1]
+
+
+def query_event_types(conn) -> set[str]:
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT event_type FROM event_log WHERE deleted_at IS NULL")
+    vals = {r[0] for r in cur.fetchall() if r[0] is not None}
+    cur.close()
+    return vals
+
+
+def compare_source(name: str, spec: dict, live: set[str], relkind: str | None) -> list[str]:
+    """Pure comparison for one source -- gate1's logic with no DB and no I/O, so the tests can
+    drive every branch deterministically. Returns a list of finding strings; empty == clean."""
+    table = spec["table"]
+    if relkind is None:
+        # gate1 hard-returns here. For us it is a finding, not an abort: a table this repo
+        # renamed is exactly the kind of break worth reporting alongside the others.
+        return [f"{name}: table `{table}` does not exist in prod (gate 1 aborts on this)"]
+
+    findings: list[str] = []
+    expected_relkind = spec.get("relkind", "r")
+    if relkind != expected_relkind:
+        findings.append(
+            f"{name}: `{table}` relkind={relkind}, contract expects {expected_relkind} "
+            f"(gate 1 rejects views -- they bypass RLS)"
+        )
+
+    classified = set(spec.get("classified") or [])
+    unclassified = sorted(live - classified)
+    phantom = sorted(classified - live)
+    if unclassified:
+        findings.append(
+            f"{name}: {len(unclassified)} UNCLASSIFIED column(s) on `{table}`: {unclassified}"
+        )
+    if phantom:
+        findings.append(
+            f"{name}: {len(phantom)} contract column(s) no longer exist on `{table}`: {phantom}"
+        )
+    return findings
+
+
+def compare_event_types(spec: dict, live: set[str]) -> list[str]:
+    unclassified = sorted(live - set(spec.get("allowed") or []) - set(spec.get("denied") or []))
+    if unclassified:
+        return [
+            f"event_types: {len(unclassified)} event_log.event_type value(s) in neither "
+            f"allowed_types nor denied_types: {unclassified}"
+        ]
+    return []
+
+
+def body_digest(contract: dict) -> str:
+    """sha256 over the contract's comparison body. Deliberately duplicates
+    refresh-gam-site-contract.py::digest rather than importing it (that file's hyphenated name
+    needs importlib, and CI should not depend on the generator at all). The two are pinned
+    together by test-gam-site-contract-check.py::digest-parity -- if they ever diverge the
+    self-consistency check silently inverts, so that test is not optional."""
+    body = {
+        "sources": contract.get("sources") or {},
+        "event_types": contract.get("event_types") or {},
+    }
+    blob = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def contract_age_days(contract: dict) -> float | None:
+    stamp = contract.get("generated_at")
+    if not stamp:
+        return None
+    try:
+        gen = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - gen).total_seconds() / 86400.0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", default=".",
+                        help="garden-app repo root (default: current directory)")
+    parser.add_argument("--env-file", default=None,
+                        help="env file with NEON_DATABASE_URL (default: {repo-root}/.env.local)")
+    parser.add_argument("--contract", default=None,
+                        help=f"contract JSON (default: {{repo-root}}/{CONTRACT_REL})")
+    parser.add_argument("--max-age-days", type=int, default=DEFAULT_MAX_AGE_DAYS,
+                        help=f"warn when the contract is older than this (default: "
+                             f"{DEFAULT_MAX_AGE_DAYS}; 0 disables)")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    repo = Path(args.repo_root).resolve()
+    contract_path = Path(args.contract) if args.contract else repo / CONTRACT_REL
+
+    if not contract_path.exists():
+        print(f"FAIL: contract not found at {contract_path}. Regenerate with "
+              f"scripts/refresh-gam-site-contract.py", file=sys.stderr)
+        return 2
+    try:
+        contract = json.loads(contract_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"FAIL: could not read {contract_path}: {exc}", file=sys.stderr)
+        return 2
+
+    sources = contract.get("sources") or {}
+    if not sources:
+        print(f"FAIL: {contract_path} declares no sources -- refusing to report a vacuous PASS.",
+              file=sys.stderr)
+        return 2
+
+    # The stored digest lives in the same file as the data it certifies, so it proves nothing
+    # on its own -- recompute it. A hand-edited body would otherwise produce a confident PASS
+    # against a contract that is no longer what the refresher generated. INCONCLUSIVE, not
+    # FAIL: we cannot say the schema is wrong, only that we cannot trust the basis.
+    recorded = contract.get("source_digest")
+    recomputed = body_digest(contract)
+    if recorded and recorded != recomputed:
+        print(f"FAIL: {contract_path.name} is INTERNALLY INCONSISTENT -- its body does not hash "
+              f"to its own recorded source_digest (recorded {recorded}, recomputed {recomputed}). "
+              f"Hand-edited or truncated; regenerate with scripts/refresh-gam-site-contract.py.",
+              file=sys.stderr)
+        return 2
+
+    # Provenance on EVERY run, pass or fail. A mirror whose age is only visible when someone
+    # goes looking is a mirror nobody checks.
+    age = contract_age_days(contract)
+    age_str = f"{age:.0f}d old" if age is not None else "age UNKNOWN"
+    print(f"Contract: {contract_path.name} ({age_str}, generated {contract.get('generated_at')} "
+          f"from {contract.get('source_repo')}@{str(contract.get('source_commit'))[:12]})")
+    print(f"          {contract.get('source_digest')}")
+
+    neon_url = load_neon_url(Path(args.env_file) if args.env_file else repo / ".env.local")
+    if not neon_url:
+        print("FAIL: NEON_DATABASE_URL not found in env var or .env.local", file=sys.stderr)
+        return 2
+
+    try:
+        import psycopg2
+    except ImportError:
+        print("FAIL: psycopg2 not installed. Install: pip install psycopg2-binary "
+              "--break-system-packages", file=sys.stderr)
+        return 2
+
+    try:
+        conn = psycopg2.connect(neon_url)
+    except psycopg2.Error as exc:
+        print(f"FAIL: could not connect to prod Neon: {exc}", file=sys.stderr)
+        return 2
+
+    findings: list[str] = []
+    checked = 0
+    try:
+        for name in sorted(sources):
+            spec = sources[name]
+            live, relkind = query_relation(conn, spec["table"])
+            findings.extend(compare_source(name, spec, live, relkind))
+            checked += 1
+            if args.verbose:
+                print(f"  {name}: {len(live)} live column(s) on {spec['table']}, "
+                      f"{len(spec.get('classified') or [])} classified")
+        ev = contract.get("event_types")
+        if ev:
+            live_types = query_event_types(conn)
+            findings.extend(compare_event_types(ev, live_types))
+            if args.verbose:
+                print(f"  event_types: {len(live_types)} distinct live, "
+                      f"{len(ev.get('allowed') or [])} allowed + "
+                      f"{len(ev.get('denied') or [])} denied")
+    except psycopg2.Error as exc:
+        print(f"FAIL: prod query failed: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        conn.close()
+
+    stale = args.max_age_days and age is not None and age > args.max_age_days
+    if stale:
+        print(f"\nNOTE: contract is {age:.0f} days old (>{args.max_age_days}). If gam-site has "
+              f"classified columns since, findings below may be stale. Refresh with "
+              f"scripts/refresh-gam-site-contract.py --check")
+
+    if findings:
+        print(f"\nFAIL: {len(findings)} finding(s) -- gam-site gate 1 will FAIL on this schema:")
+        for f in findings:
+            print(f"    - {f}")
+        print()
+        print("Classify each column in gam-site/public-export.yaml under the source's "
+              "`columns:` (published) or `excluded:` (with a reason), then rerun gam-site's "
+              "gate 1. Until then the public site stays frozen at its last publish.")
+        print("This is ADVISORY -- it does not block garden-app's pipeline.")
+        return 1
+
+    print(f"\nPASS: {checked} published relation(s) + event_type closed world consistent with "
+          f"the contract. gam-site gate 1 should pass.")
+    return 0
+
+
+if __name__ == "__main__":
+    # An unhandled traceback also exits 1, which CI would read as "gate 1 will fail" and report
+    # a schema break that was really a bug in this script. Exit codes carry meaning here, so a
+    # crash is funnelled to 2 (INCONCLUSIVE) -- still loud, never mistaken for a finding.
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 -- deliberate catch-all, see above
+        import traceback
+        traceback.print_exc()
+        print(f"FAIL: unexpected error in gam-site-contract-check ({type(exc).__name__}) -- "
+              f"INCONCLUSIVE, no determination made.", file=sys.stderr)
+        sys.exit(2)

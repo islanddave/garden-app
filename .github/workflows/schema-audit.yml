@@ -25,6 +25,56 @@ name: L-081 Schema Audit (dev)
 #
 # Audit script: scripts/dev-main-schema-audit.py (canonical here in garden-app/).
 # A reference copy lives in claude-ops/scripts/ for local sandbox invocation. Keep in sync.
+#
+# ---------------------------------------------------------------------------------------
+# Second job added 2026-09-07: gam-site contract check. Same trigger, same prod Neon
+# connection, opposite direction. The L-081 audit above asks "does prod have the columns
+# THIS repo's code needs?" The contract check asks "does prod have columns the PUBLIC
+# WEBSITE does not know about?"
+#
+# gam-site (private repo islanddave/gardens-at-mathews-rd) publishes gardensatmathews.com
+# from this database. Its gate 1 enforces a closed world: every live column on the 8
+# published tables must be classified in gam-site/public-export.yaml, or its build FAILs
+# and the site freezes at its last publish. On 2026-09-03 seed-saving work added four
+# plant_varieties columns and did exactly that. The contract was UNILATERAL — gam-site
+# knew about garden-app; garden-app had never heard of gam-site (9 files mentioned it,
+# all comments, zero enforcement), so CI here stayed green while the site sat frozen.
+#
+# THE TRADEOFF, since it is not free. gam-site is a separate PRIVATE repo and this CI
+# cannot check it out without a credential. Three options existed:
+#   (a) vendor the contract here as scripts/gam-site-column-contract.json  <- CHOSEN
+#   (b) cross-repo checkout with a token
+#   (c) fetch the contract from a published URL
+# (b) was rejected: it puts a standing cross-repo credential in garden-app's CI and makes
+# every migration push to dev depend on that token still being valid — a large coupling
+# and blast-radius cost to buy an advisory warning, with token expiry as a recurring
+# silent-death mode. (c) was rejected as worse than it looks: the contract would be served
+# by the very site that is FROZEN whenever this check matters, so it would go stale exactly
+# in the failure case — and it would require changes in gam-site.
+#
+# (a)'s cost is a second copy that can drift, so the drift is made DETECTABLE rather than
+# silent, three ways: the vendored file carries a sha256 over its own canonicalized body
+# (the checker recomputes it and refuses to report a confident PASS from a hand-edited
+# contract — INCONCLUSIVE instead); the contract's AGE and source commit print in the job
+# summary on EVERY run, pass or fail, so a stale mirror is visible without going looking;
+# and scripts/refresh-gam-site-contract.py --check recomputes the digest against a live
+# gam-site checkout on the one machine that has both repos. Drift also fails in a known
+# DIRECTION: a lagging copy over-reports (false positive, noisy, safe); under-reporting
+# needs gam-site to REMOVE a classification, which is not a normal edit.
+#
+# ADVISORY, AND STRICTLY SO — stricter than the job above. That job's genuine FAIL exits 1
+# and fails this workflow. The contract job NEVER exits non-zero, on any path. A finding
+# means another repo's build will fail; freezing garden-app's pipeline to protect a garden
+# website is a worse trade than the problem being solved, and a stale vendored contract
+# would produce exactly that freeze on a false positive. Signal is carried entirely by
+# ::error / ::warning annotations plus the job summary — loud, attributable to the commit
+# that caused it, and incapable of blocking a promote. Fail-soft paths hold the same line
+# as the job above: a missing secret, a missing contract, or an inconclusive run emits a
+# loud UNVERIFIED rather than passing quietly.
+#
+# Checker: scripts/gam-site-contract-check.py   Contract: scripts/gam-site-column-contract.json
+# Refresher (local, needs a gam-site checkout): scripts/refresh-gam-site-contract.py
+# Tests: scripts/test-gam-site-contract-check.py   Mirrors: gam-site/tools/gates.py::gate1
 
 on:
   push:
@@ -42,6 +92,12 @@ on:
       - 'migrations/**'
       - 'scripts/dev-main-schema-audit.py'
       - 'scripts/schema-audit-join-baseline.json'
+      # gam-site contract job. migrations/** and lambda/**/*.js above already cover the two
+      # ways a change here breaks the public site (a column add, and a handler emitting a new
+      # event_type); these two add the check's own sources, same reasoning as the 2026-08-28
+      # widening — a gate that does not run on the files it reads is a blind spot.
+      - 'scripts/gam-site-contract-check.py'
+      - 'scripts/gam-site-column-contract.json'
       - '.github/workflows/schema-audit.yml'
   workflow_dispatch:
 
@@ -104,3 +160,93 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
+  # Independent job, not a step in `audit` above: the two checks answer different questions and
+  # must stay separately readable. It also means this one cannot turn the L-081 audit red, and
+  # (because every path below exits 0) cannot turn the workflow red either.
+  gam-site-contract:
+    name: Will this schema change freeze the public website?
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout garden-app
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # setup-python pinned to major version v5 — advisory workflow, not deploy-tier discipline.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # psycopg2 only. The checker reads the vendored JSON contract and prod Neon — no PyYAML,
+      # no gam-site checkout, no cross-repo credential. That dependency-free property is the
+      # point of vendoring, so keep this list at one package.
+      - name: Install psycopg2-binary
+        run: pip install psycopg2-binary
+
+      - name: Check prod schema against the gam-site publish contract
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          if [[ ! -s scripts/gam-site-contract-check.py || ! -s scripts/gam-site-column-contract.json ]]; then
+            echo "::warning title=gam-site contract UNVERIFIED::UNVERIFIED — checker or contract file missing; nothing was compared. Green here verifies nothing."
+            {
+              echo "### ⚠️ UNVERIFIED — gam-site contract check did not run"
+              echo "scripts/gam-site-contract-check.py or scripts/gam-site-column-contract.json is missing or empty."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ -z "$NEON_DATABASE_URL" ]]; then
+            echo "::warning title=gam-site contract UNVERIFIED::UNVERIFIED — NEON_DATABASE_URL secret not set; contract check did NOT run. Green here verifies nothing."
+            {
+              echo "### ⚠️ UNVERIFIED — gam-site contract check did not run"
+              echo "NEON_DATABASE_URL is not configured (Settings → Secrets and variables → Actions). Prod schema was not compared against the publish contract this run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # No `set -o pipefail` here, deliberately: GitHub runs this with `bash -e`, so a
+          # pipefail'd pipeline whose python side exits 1 would kill the step before the
+          # branching below could translate that 1 into an advisory annotation. tee's own
+          # exit status keeps `-e` quiet; PIPESTATUS carries the real code. Same pattern as
+          # the L-081 job above.
+          python3 scripts/gam-site-contract-check.py --repo-root . --verbose 2>&1 | tee contract-output.txt
+          CHECK_EXIT=${PIPESTATUS[0]}
+          if [[ "$CHECK_EXIT" -eq 0 ]]; then
+            echo "::notice title=gam-site contract PASS::Prod schema is consistent with the public-site publish contract."
+            {
+              echo "### ✅ gam-site contract PASS"
+              echo "Prod schema is consistent with the publish contract; gam-site gate 1 should pass."
+              echo ''
+              echo '```'
+              head -3 contract-output.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$CHECK_EXIT" -eq 1 ]]; then
+            # ::error for visibility (red annotation on the commit), exit 0 for posture. This
+            # is the whole design: loud, attributable, non-blocking. Do not "fix" this to
+            # exit 1 — see the ADVISORY note in the header.
+            echo "::error title=gam-site contract BREAK::This schema will FAIL gam-site's gate 1 and freeze gardensatmathews.com at its last publish. Classify the columns in gam-site/public-export.yaml. ADVISORY — garden-app's pipeline is NOT blocked."
+            {
+              echo "### ❌ gam-site publish contract BREAK — the public site will freeze"
+              echo ""
+              echo "This schema change will fail **gam-site gate 1** (closed-world columns). gardensatmathews.com will stay frozen at its last successful publish until every column below is classified in \`gam-site/public-export.yaml\` under the source's \`columns:\` (published) or \`excluded:\` (with a reason)."
+              echo ""
+              echo '```'
+              cat contract-output.txt
+              echo '```'
+              echo ""
+              echo "**This is advisory.** garden-app's pipeline is not blocked and this job is green by design."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=gam-site contract UNVERIFIED::UNVERIFIED — check inconclusive (script exited $CHECK_EXIT: config/connection/contract failure). The publish contract was NOT verified this run."
+            {
+              echo "### ⚠️ UNVERIFIED — gam-site contract check inconclusive"
+              echo "Checker exited $CHECK_EXIT (config / connection / unreadable or hand-edited contract). No PASS/FAIL determination was made."
+              echo ""
+              echo '```'
+              cat contract-output.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Every path above lands here. This job is incapable of failing the workflow.
+          exit 0
