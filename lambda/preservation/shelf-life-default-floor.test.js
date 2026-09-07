@@ -105,6 +105,41 @@ describe('SHELF_LIFE_MONTHS — an unrecorded storage kind must not be read as "
     }
   })
 
+  // ── BUG-DEHYDRATESHELF-001. The dried-food rows, pinned by VALUE. ───────────────────────────────
+  //
+  // WHY BY VALUE, when almost nothing else here is. These two rows shipped wrong for weeks and no
+  // test could see it: the fridge rule above skips every shelf-stable-only method (`continue` on a
+  // missing fridge leg), and putUpMethodParity binds method NAMES, not figures. `dehydrate` read
+  // {12,12,12} — NCHFP's FRUIT figure at 60F applied to every dried food including peppers, which are
+  // a vegetable — with `pantry` equal to `cold_storage` though the published figure is explicitly
+  // temperature-dependent. `powder` read {18,18,18} citing "(NCHFP dehydrate)" for a number 1.5x that
+  // source's own ONE-YEAR ceiling; `git log -S` dates that line seven weeks BEFORE the evidence base
+  // it cites existed. A corrected number with no guard regresses the same silent way, so: pinned.
+  //
+  // Derivation, so a future editor can check the numbers rather than trust them — NCHFP via
+  // foodsafety-research.md §6.2: fruit 12mo @60F / 6mo @80F, "vegetables about half", envelope floor
+  // 4 months. pantry = warm anchor (6/2 = 3, raised to the printed 4-month floor rather than let this
+  // file's arithmetic undercut its own source); cold_storage = cool anchor (12/2 = 6); default = the
+  // shorter leg, per the rule the fridge block above states. Full ruling with the interpolation stress
+  // test: project-state/_build-batchclose-20260904/ruling-dehydrate-shelf.md (gardening-docs).
+  it.each([['dehydrate'], ['powder']])(
+    '%s carries the vegetable figures, not the fruit best case',
+    (method) => {
+      const row = rows[method]
+      expect(row, `${method} is missing from SHELF_LIFE_MONTHS`).toBeTruthy()
+      expect(row.pantry, `${method}.pantry must be the 80F vegetable leg at the printed 4-month floor`).toBe(4)
+      expect(row.cold_storage, `${method}.cold_storage must be the 60F vegetable leg (12/2)`).toBe(6)
+      expect(row.default, `${method}.default must be the SHORTER leg, not the cold one`).toBe(4)
+    },
+  )
+
+  it('powder inherits dehydrate exactly — grinding is not a preservation step', () => {
+    // A powder has more surface area than the slices it came from, is more hygroscopic, and CAKES as
+    // it reabsorbs moisture — NCHFP's named dried-food failure. So powder LONGER than dehydrate is
+    // backwards in mechanism as well as unsourced. Equal is already the generous reading.
+    expect(rows.powder).toEqual(rows.dehydrate)
+  })
+
   // The two honest-blank rows, asserted so a future "helpful" default cannot quietly appear. This is
   // the shipped pattern for a method with no defensible published figure, and it is the pattern a
   // house-sourced shelf life should take rather than a number with a disclaimer in a migration header.

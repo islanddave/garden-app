@@ -49,6 +49,8 @@ import NumberPad from '../components/NumberPad.jsx'
 // reason ?session=putup is a mode flag rather than a page: the app has a three-times-repeated
 // pattern for "a thing you are in the middle of" and it is never a new destination.
 import GoingNowView from '../components/putup/GoingNowView.jsx'
+import BatchDetailView from '../components/putup/BatchDetailView.jsx'
+import ClosedBatchesView from '../components/putup/ClosedBatchesView.jsx'
 import { useSuppressBottomNav } from '../hooks/useSuppressBottomNav.js'
 import {
   WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
@@ -205,10 +207,30 @@ function prettyDate(v) {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// BUG-GOINGNOWENVELOPE-001 — THE WIRE SHAPE, in one place, for every kitchen-batch LIST read.
+//
+// GET /api/kitchen-batches?state=… returns `{ state, batches }` (kitchenRoutes.js:172) and apiFetch
+// hands the parsed body back verbatim (api.js:152-160). This page shipped `Array.isArray(rows) ? rows
+// : []`, and an object is not an array, so `going` was set to [] on EVERY load: the segment rendered
+// "Nothing going right now." forever and the bare-open promote below could never fire. The entire
+// feature was inert in production. It was invisible because the client test fixture INVENTED a bare
+// array while the Lambda test asserted the envelope — both sides green, disagreeing about the wire.
+//
+// The bare-array arm is kept deliberately, matching src/lib/batches.js:38, which already defends
+// against exactly this shape on the unrelated event_log batch concept: coercing an unrecognised
+// payload straight to [] is what silently disabled the feature instead of failing loudly, and a
+// second route returning the bare form later would do it again. Anything else — null, a 500 body,
+// a string — still yields [], which is what keeps the route-unavailable case (see `going` below)
+// behaving exactly as it does today.
+export function batchRows(payload) {
+  return Array.isArray(payload) ? payload : (Array.isArray(payload?.batches) ? payload.batches : [])
+}
+
+
 export default function PutUp() {
   const location = useLocation()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   // V4-PUTUPSESSION-001. ONE derived predicate for the whole walk, so there is no way to ship half
   // of it — the same shape EventNew's `inHarvestSession = param && !inOverlay` uses, and for the
   // same reason: the walk's fixed bottom band and BottomNav suppression cannot survive inside a
@@ -243,11 +265,81 @@ export default function PutUp() {
   const loadGoing = useCallback(() => {
     setGoingLoading(true)
     pageFetch('/api/kitchen-batches?state=going')
-      .then(rows => { setGoing(Array.isArray(rows) ? rows : []); setGoingError(false) })
+      .then(rows => { setGoing(batchRows(rows)); setGoingError(false) })
       .catch(() => { setGoingError(true) })
       .finally(() => setGoingLoading(false))
   }, [pageFetch])
   useEffect(() => { loadGoing() }, [loadGoing])
+
+  // ── V5-BATCHCLOSE-001 — the batch detail and the closed list are MODE FLAGS, not child routes ───
+  //
+  // `?batch=<id>` and `?state=closed` on /put-up. NOT /put-up/batch/:id. /put-up is one of exactly
+  // four `overlayable: true` routes and the overlay tree is `routes.filter(r => r.overlayable)` with
+  // NO catch-all, so a child route entered from an overlay-opened PutUp matches nothing and renders a
+  // BLANK SCREEN on a dead tap — it would be the app's first child path of an overlayable parent,
+  // which is why the hole has never been hit. A query param leaves the route match untouched: the
+  // page never unmounts, the segment the user chose survives, Back pops the param rather than
+  // remounting onto 'stores', the onChanged -> loadGoing invalidation contract keeps working, and
+  // App.routes.test.jsx's 58-route freeze does not move.
+  //
+  // `batch` wins over `state`: opening a batch FROM the closed list must show that batch.
+  const batchId = searchParams.get('batch')
+  const closedMode = !batchId && searchParams.get('state') === 'closed'
+  const modeActive = !!batchId || closedMode
+
+  // ONE instant for the detail surface, collapsed once per opened batch — GoingNowView.jsx:221-225's
+  // rule applied at the page. PutUp is a route element and takes no props, so it cannot receive an
+  // injected clock; the injection point is BatchDetailView's own `nowMs` prop, which is where a test
+  // pins an age to a fixed literal.
+  const detailNowMs = useMemo(() => Date.now(), [batchId])
+
+  // The detail GET. Controlled surface: the PAGE owns the fetch and BatchDetailView issues none of
+  // its own, so one reload path invalidates both this and the list.
+  const [detail, setDetail] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState(false)
+  const loadDetail = useCallback(() => {
+    if (!batchId) { setDetail(null); setDetailError(false); return }
+    setDetailLoading(true)
+    pageFetch(`/api/kitchen-batches/${batchId}`)
+      .then(row => { setDetail(row && typeof row === 'object' ? row : null); setDetailError(false) })
+      .catch(() => { setDetailError(true) })
+      .finally(() => setDetailLoading(false))
+  }, [pageFetch, batchId])
+  useEffect(() => { loadDetail() }, [loadDetail])
+
+  // BOTH, always. A write from the detail surface changes the row the LIST renders too (a pause moves
+  // a card into the Paused group, a close removes it entirely), and a retry after a dropped response
+  // reports a delta rather than the truth — so the honest recovery is to re-read, never to trust what
+  // the write returned.
+  const onBatchChanged = useCallback(() => { loadGoing(); loadDetail() }, [loadGoing, loadDetail])
+
+  // The closed list. Fetched only in closed mode: on a normal open this page already issues one GET
+  // it did not used to, and a second unconditional one for a surface nobody asked for would be a
+  // round trip on rural LTE for nothing.
+  const [closed, setClosed] = useState(null)
+  const [closedLoading, setClosedLoading] = useState(false)
+  const [closedError, setClosedError] = useState(false)
+  const loadClosed = useCallback(() => {
+    if (!closedMode) return
+    setClosedLoading(true)
+    pageFetch('/api/kitchen-batches?state=closed')
+      .then(rows => { setClosed(batchRows(rows)); setClosedError(false) })
+      .catch(() => { setClosedError(true) })
+      .finally(() => setClosedLoading(false))
+  }, [pageFetch, closedMode])
+  useEffect(() => { loadClosed() }, [loadClosed])
+
+  // Reopening from the closed list moves a row back into `going`, so the list the user is NOT looking
+  // at is the one that goes stale. Both, for the same reason onBatchChanged does both.
+  const onClosedChanged = useCallback(() => { loadClosed(); loadGoing() }, [loadClosed, loadGoing])
+
+  // Leaving a mode drops only the mode keys, so ?session= and anything a future door adds survive.
+  const leaveMode = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('batch'); next.delete('state')
+    setSearchParams(next)
+  }, [searchParams, setSearchParams])
 
   // THE BARE-OPEN DEFAULT. A bare Put-Up open landing on "what have I got" is correct today and
   // wrong the moment batches exist, because the answer to "what is going on right now" would then be
@@ -298,6 +390,11 @@ export default function PutUp() {
   // Declared AFTER every hook above, so the walk branch cannot reorder them.
   if (inWalk) return <PutUpWalk />
 
+  // The segment bodies stand down while a mode is open. `view` itself is untouched, which is the
+  // whole point of the mode flag: leaving the mode restores the segment the user was on instead of
+  // remounting the page onto 'stores' behind a network round trip.
+  const seg = modeActive ? null : view
+
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 620, margin: '0 auto', padding: '24px 18px 80px' }}>
@@ -306,24 +403,42 @@ export default function PutUp() {
             weigh-in and it was reversed; this copies the reversal, not the original. */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: T.space.sm, margin: '0 0 4px' }}>
           <h1 style={{ margin: 0, flex: 1, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Put-Up</h1>
-          <button type="button" onClick={() => navigate(`/put-up?session=${WALK_PARAM}`)}
-            data-testid="putup-walk-door"
-            style={{ background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
-              color: P.green, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit',
-              padding: '6px 12px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
-            🧊 Freezer walk
-          </button>
+          {!modeActive && (
+            <button type="button" onClick={() => navigate(`/put-up?session=${WALK_PARAM}`)}
+              data-testid="putup-walk-door"
+              style={{ background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
+                color: P.green, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit',
+                padding: '6px 12px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
+              🧊 Freezer walk
+            </button>
+          )}
         </div>
-        <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.light }}>
-          What you&rsquo;ve preserved — your freezer, pantry and stores.
-        </p>
+
+        {/* THE WAY BACK, in the page rather than in the browser chrome. An installed PWA has no
+            address bar and no visible Back control (App.jsx records exactly this hazard for /admin/*),
+            so a mode with no in-page exit is a mode a user can be stuck in. History Back also works
+            and lands in the same place, because the mode is a search param on this same route. */}
+        {modeActive && (
+          <button type="button" onClick={leaveMode} data-testid="putup-mode-back"
+            style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+              background: 'none', border: 'none', padding: '2px 8px 2px 0', margin: '2px 0 8px',
+              cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
+            ← Going now
+          </button>
+        )}
+
+        {!modeActive && (
+          <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.light }}>
+            What you&rsquo;ve preserved — your freezer, pantry and stores.
+          </p>
+        )}
 
         {/* The "start something new" slot every other landing page has and this one did not:
             /harvests carries a full-width filled Weigh-in-session CTA above its view controls
             (V4-WEIGHINCTA-001 — "a doorway you have to already know about cannot buy that"). The
             segmented control below switches VIEWS; this starts the primary ACTION. Only rendered on
             the read view — on the form it would be a button that does nothing. */}
-        {view === 'stores' && (
+        {seg === 'stores' && (
           <button type="button" onClick={() => chooseView('log')} data-testid="putup-primary-cta"
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               width: '100%', minHeight: T.buttonMinHeight, marginBottom: 14, backgroundColor: P.green, color: P.white,
@@ -338,27 +453,29 @@ export default function PutUp() {
             inconsistent (a VERB beside a QUESTION) and a third label had to join it; "Going now"
             names the OBJECT's state, which is what the other two labels are really doing too.
             Three options is still inside the ≤4 the page holds itself to. */}
-        <div style={{ marginBottom: 18 }}>
-          <SegmentedControl
-            ariaLabel="Put-Up view"
-            value={view}
-            onChange={chooseView}
-            options={[
-              { value: 'going',  label: 'Going now' },
-              { value: 'log',    label: 'Log a put-up' },
-              { value: 'stores', label: "What's put up" },
-            ]}
-          />
-        </div>
+        {!modeActive && (
+          <div style={{ marginBottom: 18 }}>
+            <SegmentedControl
+              ariaLabel="Put-Up view"
+              value={view}
+              onChange={chooseView}
+              options={[
+                { value: 'going',  label: 'Going now' },
+                { value: 'log',    label: 'Log a put-up' },
+                { value: 'stores', label: "What's put up" },
+              ]}
+            />
+          </div>
+        )}
 
-        {view === 'log' && !hasPrefill && <RecentHarvestPicker onPick={pickHarvest} />}
+        {seg === 'log' && !hasPrefill && <RecentHarvestPicker onPick={pickHarvest} />}
 
         {/* The correction path. harvest_log_id has NO control on the form below — that invisibility
             is the whole substance of BUG-PUTUPSTASHHARVLINK-001 — so before this slice a wrong link
             could neither be seen nor cleared. Now that a mis-tap in the picker can create one, it
             needs an exit. Clearing navigates back to a BARE context, which remounts the form and
             brings the picker back. Also serves the older PreserveOffer path, which never had one. */}
-        {view === 'log' && hasPrefill && (
+        {seg === 'log' && hasPrefill && (
           <div data-testid="putup-prefill-strip"
             style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginBottom: 14, padding: '9px 12px',
               backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
@@ -374,11 +491,29 @@ export default function PutUp() {
           </div>
         )}
 
-        {view === 'going' && (
+        {seg === 'going' && (
           <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing} />
         )}
-        {view === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
-        {view === 'stores' && <StoresView />}
+        {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
+        {seg === 'stores' && <StoresView />}
+
+        {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
+            only invalidation path and it re-reads BOTH this row and the list. */}
+        {batchId && (
+          <div data-testid="putup-batch-mode">
+            <BatchDetailView
+              batch={detail} inputs={detail?.inputs ?? []} stages={detail?.stages ?? []}
+              outputs={detail?.outputs ?? []} loading={detailLoading} error={detailError}
+              nowMs={detailNowMs} onChanged={onBatchChanged} />
+          </div>
+        )}
+
+        {closedMode && (
+          <div data-testid="putup-closed-mode">
+            <ClosedBatchesView batches={closed} loading={closedLoading} error={closedError}
+              onReload={onClosedChanged} now={detailNowMs} />
+          </div>
+        )}
       </div>
     </div>
   )

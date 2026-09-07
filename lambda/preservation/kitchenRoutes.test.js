@@ -20,7 +20,10 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleKitchenRoute } from './kitchenRoutes.js';
-import { KITCHEN_BATCH_EDITABLE_COLUMNS } from './kitchenBatch.js';
+import {
+  KITCHEN_BATCH_EDITABLE_COLUMNS, KITCHEN_BATCH_CLOSE_COLUMNS,
+  KITCHEN_PREDICATE_MAX_SPAN_DAYS,
+} from './kitchenBatch.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct — the same decomment guard the sibling contract
@@ -58,8 +61,24 @@ function mockSql(queue = []) {
   return fn;
 }
 
+const JAR_B = '88888888-1111-2222-3333-444444444444';
+
 const OWNED = [{ id: BATCH, closed_at: null, suspended_at: null }];
+// THE TWO-USER PAIR ON EVERY OWNERSHIP ASSERTION, extended to the closed states. A single-owner
+// fixture cannot fail an ownership bug, and a fixture with no closed_at cannot fail a post-close
+// policy bug — every close/reopen assertion below names one of these rather than spreading OWNED.
+const OWNED_CLOSED = [{ id: BATCH, closed_at: '2026-09-01T12:00:00Z', suspended_at: null }];
+const OWNED_PAUSED = [{ id: BATCH, closed_at: null, suspended_at: '2026-08-20T12:00:00Z' }];
 const VIEW_ROW = [{ id: BATCH, user_id: DAVE, label: 'Pepper mash', current_stage_kind: 'started' }];
+const CLOSED_VIEW_ROW = [{
+  id: BATCH, user_id: DAVE, label: 'Pepper mash', current_stage_kind: 'finished',
+  closed_at: '2026-09-01T12:00:00Z', outcome: 'put_up', outcome_note: null,
+  suspended_at: null, output_count: '2',
+}];
+const REOPENED_VIEW_ROW = [{
+  id: BATCH, user_id: DAVE, label: 'Pepper mash', current_stage_kind: 'finished',
+  closed_at: null, outcome: null, outcome_note: null, suspended_at: null, output_count: '2',
+}];
 
 const call = (over = {}) => ({
   rawPath: '/api/kitchen-batches', method: 'GET', rawBody: null, query: {},
@@ -70,6 +89,21 @@ const call = (over = {}) => ({
 // predicate that is WRITTEN but not BOUND is exactly what a text assertion cannot tell apart.
 const boundHousehold = (c, ids = HOUSEHOLD) => c.values.some(
   (v) => Array.isArray(v) && v.length === ids.length && ids.every((id) => v.includes(id)));
+
+// The COLUMN NAMES of a SET clause, pulled out of a normalized statement. A mock driver cannot prove
+// a round-trip, only what a handler SENDS — so "close and reopen cannot drift apart" is assertable
+// only as set equality between these two clauses and one shared constant. The markers are passed in
+// rather than inferred: close's SET sits inside a CTE and reopen's does not, and a regex loose enough
+// to find both would also find one inside the other.
+function setColumnsOf(norm, startMarker, endMarker) {
+  const at = norm.indexOf(startMarker);
+  expect(at, `SET marker not found: ${startMarker}`).toBeGreaterThan(-1);
+  const from = at + startMarker.length;
+  const clause = norm.slice(from, norm.indexOf(endMarker, from));
+  // Anchor guard: a slice that matched nothing would make every set assertion below vacuously equal.
+  expect(clause.length, 'empty SET clause').toBeGreaterThan(10);
+  return clause.split(',').map((s) => s.trim().split(/\s*=/)[0]).filter((s) => /^[a-z_]+$/.test(s));
+}
 
 describe('the matcher does not annex the preservation routes', () => {
   // This Lambda serves BOTH path families. A matcher that claimed /api/preservation would take over
@@ -144,14 +178,16 @@ describe('GET /api/kitchen-batches', () => {
 });
 
 describe('GET /api/kitchen-batches/:id', () => {
-  it('returns the view row plus inputs and stages, each in its own order', async () => {
+  it('returns the view row plus inputs, stages and outputs, each in its own order', async () => {
     const inputs = [{ id: INPUT }];
     const stages = [{ id: 's1' }];
-    const sql = mockSql([OWNED, VIEW_ROW, inputs, stages]);
+    const outputs = [{ id: JAR, batch_id: BATCH }];
+    const sql = mockSql([OWNED, VIEW_ROW, inputs, stages, outputs]);
     const res = await handleKitchenRoute({ sql, ...call({ rawPath: `/api/kitchen-batches/${BATCH}` }) });
     expect(res.status).toBe(200);
     expect(res.body.inputs).toBe(inputs);
     expect(res.body.stages).toBe(stages);
+    expect(res.body.outputs).toBe(outputs);
     expect(res.body.label).toBe('Pepper mash');
   });
 
@@ -160,12 +196,45 @@ describe('GET /api/kitchen-batches/:id', () => {
     // entered_at AND created_at, which a "topped up + skimmed" double-tap produces, and without it
     // "current" is nondeterministic. That is seed_lot_stage_log's defect.
     // Mutation: delete `, id DESC` from the stage query.
-    const sql = mockSql([OWNED, VIEW_ROW, [], []]);
+    const sql = mockSql([OWNED, VIEW_ROW, [], [], []]);
     await handleKitchenRoute({ sql, ...call({ rawPath: `/api/kitchen-batches/${BATCH}` }) });
     const stageCall = sql.calls.find((c) => c.norm.includes('FROM kitchen_stage_log'));
     expect(stageCall.norm).toContain('ORDER BY entered_at DESC, id DESC');
     const inputCall = sql.calls.find((c) => c.norm.includes('FROM kitchen_batch_input'));
     expect(inputCall.norm).toContain('ORDER BY added_at DESC, id DESC');
+  });
+
+  // "Which jars came from that mash" was unanswerable before this: the view carries output_count, an
+  // integer, and preservation_log.batch_id was write-only.
+  // Mutation: delete the outputs query from getBatch — `res.body.outputs` goes undefined and the
+  // first assertion reds; delete `AND deleted_at IS NULL` and the second reds.
+  it('scopes outputs to this batch and to live rows, ordered newest put-up first', async () => {
+    const sql = mockSql([OWNED, VIEW_ROW, [], [], [{ id: JAR }]]);
+    const res = await handleKitchenRoute({ sql, ...call({ rawPath: `/api/kitchen-batches/${BATCH}` }) });
+    expect(res.body.outputs).toEqual([{ id: JAR }]);
+    const out = sql.calls.find((c) => c.norm.includes('FROM preservation_log'));
+    expect(out.norm).toContain('WHERE batch_id = ? ::uuid AND deleted_at IS NULL');
+    expect(out.norm).toContain('ORDER BY preserved_at DESC, id DESC');
+    expect(out.values).toContain(BATCH);
+  });
+
+  // ⚠ THE SHELF-STABILITY SUPPRESSION, asserted with a POSITIVE control on the SAME statement so the
+  // absence is about the projection and not about a mistyped selector. The shipped put-up row renders
+  // a warn-coloured "Use soon" / "Past use-by" chip off use_by_target; composed with a recorded
+  // outcome on the batch surface that becomes an endorsement this app does not make.
+  // Mutation: add `use_by_target` to the outputs projection.
+  it('does NOT project use_by_target on the batch surface, while projecting the rest of the jar', () => {
+    const at = SRC.indexOf('const outputs = await sql`');
+    expect(at, 'the outputs query moved or was renamed').toBeGreaterThan(-1);
+    const block = SRC.slice(at, SRC.indexOf('`;', at));
+    // The anchor guard: without a length floor a slice that matched nothing would satisfy the
+    // not.toMatch below and this test would pass over an empty string.
+    expect(block.length).toBeGreaterThan(200);
+    expect(block).toMatch(/\bmethod\b/);
+    expect(block).toMatch(/\bquantity_value\b/);
+    expect(block).toMatch(/\bpreserved_at\b/);
+    expect(block).not.toMatch(/\buse_by_target\b/);
+    expect(block).not.toMatch(/\buse_by_status\b/);
   });
 
   it('404s for a batch outside the household, with no existence oracle', async () => {
@@ -520,7 +589,7 @@ describe('POST /api/kitchen-batches/:id/inputs — predicate bulk add', () => {
   it('resolves the window inside ONE INSERT..SELECT, household-scoped', async () => {
     // The measured fan-in for one five-week pepper mash is 139 harvest_log rows across 30 plantings.
     // A read-then-write would leave a gap in which a harvest could be logged, archived or re-owned.
-    const sql = mockSql([OWNED, Array.from({ length: 139 }, (_, i) => ({ id: i }))]);
+    const sql = mockSql([OWNED, [{ matched_count: 139, inserted_count: 139 }]]);
     const res = await handleKitchenRoute({ sql, ...post({
       crop_type_slug: 'pepper', from: '2026-08-01', to: '2026-09-04',
     }) });
@@ -533,6 +602,17 @@ describe('POST /api/kitchen-batches/:id/inputs — predicate bulk add', () => {
     expect(ins.norm).toContain('h.deleted_at IS NULL');
     expect(ins.norm).toContain('ON CONFLICT DO NOTHING');
     expect(boundHousehold(ins)).toBe(true);
+    expect(sql.calls).toHaveLength(2);
+  });
+
+  // ON CONFLICT DO NOTHING is safe but SILENT: a retry after a dropped response reports inserted 0
+  // while 139 rows are already there, which reads as "nothing added". Reporting matched beside it is
+  // what lets the client say the true thing without a second round-trip.
+  // Mutation: drop the `matched` key from the commit body.
+  it('reports what MATCHED beside what landed, so a re-run does not read as a no-op', async () => {
+    const sql = mockSql([OWNED, [{ matched_count: 139, inserted_count: 0 }]]);
+    const res = await handleKitchenRoute({ sql, ...post({ from: '2026-08-01', to: '2026-09-04' }) });
+    expect(res.body).toEqual({ inserted: 0, matched: 139, predicate: { from: '2026-08-01', to: '2026-09-04' } });
   });
 
   it('compares the window as ET calendar days, both bounds inclusive', async () => {
@@ -566,6 +646,98 @@ describe('POST /api/kitchen-batches/:id/inputs — predicate bulk add', () => {
     const sql = mockSql([OWNED]);
     const res = await handleKitchenRoute({ sql, ...post({ from: '2026-09-04', to: '2026-08-01' }) });
     expect(res.status).toBe(400);
+    expect(sql.calls).toHaveLength(1);
+  });
+
+  // THE SPAN CAP, BOTH BOUNDS. A single-value test here is vacuous: "366 is rejected" is satisfied by
+  // a cap of 1. The pair is what pins the boundary to the number the constant names.
+  // Mutation (K7): raise KITCHEN_PREDICATE_MAX_SPAN_DAYS by one — the max+1 arm reds. Lower it by
+  // one and the max arm reds.
+  it('accepts a window exactly at the cap and refuses the next day, without a query', async () => {
+    const atCap = mockSql([OWNED, [{ matched_count: 3, inserted_count: 3 }]]);
+    // 2026-01-01 .. 2026-12-31 inclusive is 365; one more day reaches the 366 ceiling exactly.
+    const ok = await handleKitchenRoute({ sql: atCap, ...post({ from: '2026-01-01', to: '2027-01-01' }) });
+    expect(ok.status).toBe(201);
+    expect(atCap.calls).toHaveLength(2);
+
+    const overCap = mockSql([OWNED]);
+    const res = await handleKitchenRoute({ sql: overCap, ...post({ from: '2026-01-01', to: '2027-01-02' }) });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain(String(KITCHEN_PREDICATE_MAX_SPAN_DAYS));
+    // The point of the cap: the write never reaches Postgres.
+    expect(overCap.calls).toHaveLength(1);
+  });
+
+  it('refuses the unbounded window that inserts every household harvest in one tap', async () => {
+    // MEASURED on live prod 2026-09-04: this exact predicate selects 1,212 rows, and the undo is
+    // DELETE per row, 1,212 times.
+    const sql = mockSql([OWNED]);
+    const res = await handleKitchenRoute({ sql, ...post({ from: '2000-01-01', to: '2099-12-31' }) });
+    expect(res.status).toBe(400);
+    expect(sql.calls).toHaveLength(1);
+  });
+});
+
+describe('POST /api/kitchen-batches/:id/inputs — the dry run', () => {
+  const post = (body) => call({
+    rawPath: `/api/kitchen-batches/${BATCH}/inputs`, method: 'POST',
+    rawBody: JSON.stringify(body),
+  });
+  const WINDOW = { crop_type_slug: 'pepper', from: '2026-08-01', to: '2026-09-04' };
+
+  // ⚠ THE INVARIANT THE WHOLE DRY-RUN SHAPE EXISTS FOR. A preview built on a DIFFERENT route would
+  // enumerate a different row set from the one the POST inserts and nothing could catch the drift.
+  // Here both arms are ONE statement, so the two texts must be byte-identical and the ONLY bound
+  // difference is the preview flag. That is a proof they bind an identical predicate, not an argument.
+  // Mutation: give the preview arm its own SELECT — the text equality reds.
+  it('binds an IDENTICAL predicate on both arms — same statement, one flag apart', async () => {
+    const dry = mockSql([OWNED, [{ matched_count: 139, inserted_count: 0 }]]);
+    const wet = mockSql([OWNED, [{ matched_count: 139, inserted_count: 139 }]]);
+    await handleKitchenRoute({ sql: dry, ...post({ predicate: WINDOW, preview: true }) });
+    await handleKitchenRoute({ sql: wet, ...post({ predicate: WINDOW }) });
+    const d = dry.calls[1];
+    const w = wet.calls[1];
+    expect(d.norm).toBe(w.norm);
+    expect(d.norm).toContain('WHERE NOT ? ::boolean');
+    const differing = d.values
+      .map((v, i) => [v, w.values[i]])
+      .filter(([a, b]) => JSON.stringify(a) !== JSON.stringify(b));
+    expect(differing).toEqual([[true, false]]);
+  });
+
+  it('returns the matched count and inserts nothing', async () => {
+    const sql = mockSql([OWNED, [{ matched_count: 139, inserted_count: 0 }]]);
+    const res = await handleKitchenRoute({ sql, ...post({ predicate: WINDOW, preview: true }) });
+    // 200 and not 201: a dry run created nothing, and saying Created would be the lie the arm exists
+    // to prevent.
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ matched: 139, predicate: WINDOW });
+    expect(res.body).not.toHaveProperty('inserted');
+  });
+
+  it('still commits when preview is explicitly false — the flag is read, not merely present', async () => {
+    // Mutation: branch on `has(body,'preview')` instead of `body.preview === true`. This reds.
+    const sql = mockSql([OWNED, [{ matched_count: 2, inserted_count: 2 }]]);
+    const res = await handleKitchenRoute({ sql, ...post({ predicate: WINDOW, preview: false }) });
+    expect(res.status).toBe(201);
+    expect(res.body.inserted).toBe(2);
+  });
+
+  it('400s a preview on the explicit form, which has nothing to resolve', async () => {
+    const sql = mockSql([OWNED]);
+    const res = await handleKitchenRoute({ sql, ...post({
+      inputs: [{ input_kind: 'pantry', label: 'Kosher salt' }], preview: true,
+    }) });
+    expect(res).toEqual({ status: 400, body: { error: 'preview only applies to the predicate form' } });
+    expect(sql.calls).toHaveLength(1);
+  });
+
+  it('400s a non-boolean preview rather than treating a truthy string as a dry run', async () => {
+    // The is_byproduct lesson, one field over: "true" must never read as true, and here the failure
+    // direction is a client that believes it dry-ran a write that COMMITTED.
+    const sql = mockSql([OWNED]);
+    const res = await handleKitchenRoute({ sql, ...post({ predicate: WINDOW, preview: 'true' }) });
+    expect(res).toEqual({ status: 400, body: { error: 'preview must be true or false' } });
     expect(sql.calls).toHaveLength(1);
   });
 });
@@ -618,11 +790,24 @@ describe('POST /api/kitchen-batches/:id/close', () => {
     expect(stmt).toContain('AND closed_at IS NULL');
   });
 
-  it('is the ONLY route in this module that writes preservation_log', async () => {
-    // batch_id is deliberately absent from PRESERVATION_EDITABLE_COLUMNS. A second writer here would
-    // be a second way to set it and would reopen exactly what that omission closes.
-    // Mutation: add a preservation_log UPDATE to any other handler.
-    expect((SRC.match(/preservation_log/g) ?? [])).toHaveLength(1);
+  // WAS "the ONLY route that writes preservation_log", a count of 1 over the whole file. That claim
+  // is no longer true and it should not be: linking a jar used to require ENDING the batch, and the
+  // outputs routes exist to break that coupling. The invariant that MATTERS is unchanged and is what
+  // this now enumerates — every writer of preservation_log.batch_id is server-side, in THIS file, and
+  // named. batch_id stays out of PRESERVATION_EDITABLE_COLUMNS, so a stale cached bundle's
+  // full-replace PUT still cannot reach it (kitchen-batch-id-guard.test.js holds that half).
+  // Mutation: add a preservation_log UPDATE to any other handler in this file — the count reds.
+  it('writes preservation_log from exactly three statements, each one named', () => {
+    const writes = SRC.match(/(?:UPDATE|INSERT INTO|DELETE FROM)\s+preservation_log\b/g) ?? [];
+    expect(writes).toEqual(['UPDATE preservation_log', 'UPDATE preservation_log', 'UPDATE preservation_log']);
+    // close links, outputs links, outputs unlinks. No INSERT and no DELETE, ever: this module does
+    // not create or destroy a jar, only its batch pointer.
+    expect(SRC).toContain('SET batch_id = c.id');
+    expect(SRC).toContain('SET batch_id = ${batchId}::uuid');
+    expect(SRC).toContain('SET batch_id = NULL');
+    // The one READ. A fourth reference that is not one of the three writes or this read means a new
+    // surface appeared without a decision about what it projects.
+    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(1);
   });
 
   it('scopes BOTH arms to the household — the batch and the jars', async () => {
@@ -655,6 +840,354 @@ describe('POST /api/kitchen-batches/:id/close', () => {
     const res = await handleKitchenRoute({ sql, ...post({ outcome: 'finished' }) });
     expect(res.status).toBe(400);
     expect(sql.calls).toHaveLength(1);
+  });
+
+  // ⚠ BUG-JARSTEAL-001 (K2). Without `AND p.batch_id IS NULL`, closing batch B with a jar already
+  // linked to batch A RE-POINTS it: 200, linked_count counts it, and A's output_count silently drops
+  // with no error and no record. The sibling collision (a jar citing a single harvest) fails LOUDLY
+  // via a CHECK; this one had nothing behind it.
+  // Mutation (K2): delete the conjunct — this test reds and every other close test stays green.
+  it('refuses to steal a jar that already belongs to another batch', async () => {
+    const sql = mockSql([OWNED, [{ closed_count: 1, linked_count: 1 }], VIEW_ROW]);
+    const res = await handleKitchenRoute({ sql, ...post({
+      outcome: 'put_up', output_preservation_log_ids: [JAR, JAR_B],
+    }) });
+    const stmt = sql.calls[1].norm;
+    expect(stmt).toContain('AND p.batch_id IS NULL');
+    // The positive control on the same statement: the other three predicates are still there, so
+    // the assertion above is about the new conjunct and not about a statement that lost its WHERE.
+    expect(stmt).toContain('p.user_id = ANY( ? )');
+    expect(stmt).toContain('p.deleted_at IS NULL');
+    // A skipped jar is SILENT by design — the client compares the two numbers.
+    expect(res.status).toBe(200);
+    expect(res.body.linked_output_count).toBe(1);
+  });
+
+  // §5.4 — the close is the one consequential transition that could not record the observation that
+  // decided it. Written in the SAME statement, gated on `closed`, so a 409'd close writes no row.
+  // Mutation: move the stage INSERT out of the CTE into a second await — the one-statement
+  // assertion reds; drop `FROM closed c` and the gating assertion reds.
+  it('writes a finished stage row carrying cue_observed, in the same statement, gated on closed', async () => {
+    const sql = mockSql([OWNED, [{ closed_count: 1, linked_count: 0 }], VIEW_ROW]);
+    await handleKitchenRoute({ sql, ...post({
+      outcome: 'put_up', cue_observed: 'snapped clean instead of bending',
+    }) });
+    const stmt = sql.calls[1];
+    expect(stmt.norm).toContain('), finished AS ( INSERT INTO kitchen_stage_log');
+    expect(stmt.norm).toContain("'finished'::text");
+    expect(stmt.norm).toContain('FROM closed c');
+    expect(stmt.values).toContain('snapped clean instead of bending');
+    expect(stmt.values).toContain(DAVE);
+    // ONE statement: the close, the links and the stage row cannot land apart.
+    expect(sql.calls.filter((c) => c.norm.includes('INSERT INTO'))).toHaveLength(1);
+  });
+
+  it('writes the finished row with a NULL cue when nobody said how they knew', async () => {
+    // The transition happened either way. A row omitted here would make "we did not ask" and "they
+    // told us" the same absence; a NULL cue records the first without inventing the second.
+    const sql = mockSql([OWNED, [{ closed_count: 1, linked_count: 0 }], VIEW_ROW]);
+    await handleKitchenRoute({ sql, ...post({ outcome: 'abandoned' }) });
+    const stmt = sql.calls[1];
+    expect(stmt.norm).toContain('), finished AS ( INSERT INTO kitchen_stage_log');
+    expect(stmt.values).toContain(null);
+  });
+
+  // ⚠ THE REVERSIBILITY GATE (K4), and it is the whole thing that stops close and reopen drifting.
+  // Mutation (K4): add a fourth column to the close UPDATE without adding it to
+  // KITCHEN_BATCH_CLOSE_COLUMNS — the close arm reds. Drop outcome_note from reopen's NULL set — the
+  // reopen arm reds. Both directions, both statements, one constant.
+  it('close writes and reopen NULLs exactly KITCHEN_BATCH_CLOSE_COLUMNS — set equality both ways', async () => {
+    const closeSql = mockSql([OWNED, [{ closed_count: 1, linked_count: 0 }], VIEW_ROW]);
+    await handleKitchenRoute({ sql: closeSql, ...post({ outcome: 'put_up' }) });
+    const closeSet = setColumnsOf(closeSql.calls[1].norm, 'WITH closed AS ( UPDATE kitchen_batch SET ', 'WHERE id =');
+
+    const reopenSql = mockSql([OWNED_CLOSED, [{ id: BATCH }], REOPENED_VIEW_ROW]);
+    await handleKitchenRoute({ sql: reopenSql, ...call({
+      rawPath: `/api/kitchen-batches/${BATCH}/reopen`, method: 'POST', rawBody: '{}',
+    }) });
+    const reopenSet = setColumnsOf(reopenSql.calls[1].norm, 'UPDATE kitchen_batch SET ', 'WHERE id =');
+
+    // suspended_at is the one column close writes that is NOT part of the close's record — it is the
+    // pause being cleared because chk_kitchen_batch_suspend_exclusive forbids the pair — so it is
+    // excluded by name here rather than by silence, and the reopen deliberately does not restore it.
+    expect(closeSet.filter((c) => c !== 'suspended_at').sort())
+      .toEqual([...KITCHEN_BATCH_CLOSE_COLUMNS].sort());
+    expect(closeSet).toContain('suspended_at');
+    expect(reopenSet.sort()).toEqual([...KITCHEN_BATCH_CLOSE_COLUMNS].sort());
+  });
+});
+
+describe('POST /api/kitchen-batches/:id/reopen', () => {
+  const reopen = () => call({
+    rawPath: `/api/kitchen-batches/${BATCH}/reopen`, method: 'POST', rawBody: '{}',
+  });
+
+  it('NULLs the close columns, scoped to the household and to a CLOSED live row', async () => {
+    // Mutation (K5): drop `AND user_id = ANY(${householdIds})`. The text still reads plausibly; only
+    // the bound parameter proves the predicate is live — a stranger could otherwise reopen a batch
+    // the ownership gate had already refused them, if the gate were ever refactored away.
+    const sql = mockSql([OWNED_CLOSED, [{ id: BATCH }], REOPENED_VIEW_ROW]);
+    const res = await handleKitchenRoute({ sql, ...reopen() });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(REOPENED_VIEW_ROW[0]);
+    const upd = sql.calls[1];
+    expect(upd.norm).toContain('UPDATE kitchen_batch SET closed_at = NULL, outcome = NULL, outcome_note = NULL');
+    expect(upd.norm).toContain('AND user_id = ANY( ? ) AND deleted_at IS NULL AND closed_at IS NOT NULL');
+    expect(boundHousehold(upd)).toBe(true);
+  });
+
+  it('binds the STRANGER household when a stranger asks, so their reopen cannot match', async () => {
+    const sql = mockSql([[]]);
+    const res = await handleKitchenRoute({ sql, ...call({
+      rawPath: `/api/kitchen-batches/${BATCH}/reopen`, method: 'POST', rawBody: '{}',
+      householdIds: STRANGER,
+    }) });
+    expect(res).toEqual({ status: 404, body: { error: 'Not found' } });
+    expect(boundHousehold(sql.calls[0], STRANGER)).toBe(true);
+    expect(boundHousehold(sql.calls[0], HOUSEHOLD)).toBe(false);
+  });
+
+  it('409s a batch that is not closed, and the state gate is IN THE STATEMENT', async () => {
+    // The mirror of close's 409. Reporting 200 would tell the user their close was undone when
+    // nothing changed.
+    const sql = mockSql([OWNED, []]);
+    const res = await handleKitchenRoute({ sql, ...reopen() });
+    expect(res).toEqual({ status: 409, body: { error: 'This batch is not closed' } });
+    // ⚠ THE SECOND HALF, AND IT IS NOT DECORATION. A mock driver returns [] whatever the WHERE says,
+    // so the assertion above ALONE is satisfied by a handler carrying no state gate at all — the
+    // 409 would then be reporting "not closed" for a row that was closed and merely unmatched. The
+    // gate has to live in the statement, because a client-side check races by construction.
+    // Mutation: delete `AND closed_at IS NOT NULL` from reopenBatch — this reds.
+    expect(sql.calls[1].norm).toContain('AND closed_at IS NOT NULL');
+  });
+
+  // ⚠ NO output_count GATE, and its ABSENCE is asserted with a positive control on the same
+  // statement so this is about the predicate set and not about a mistyped selector. A "reopen only
+  // while nothing is linked" rule reads as safety and is not: output_count falls to 0 when the jars
+  // are soft-deleted, so the gate would open through an action with nothing to do with reopening.
+  // Mutation: add `AND (SELECT output_count ...) = 0` to the statement — the first arm reds while
+  // the controls stay green, which is what makes the absence non-vacuous.
+  it('is UNCONDITIONAL — no output_count predicate, on a batch that has outputs', async () => {
+    const sql = mockSql([OWNED_CLOSED, [{ id: BATCH }], CLOSED_VIEW_ROW]);
+    const res = await handleKitchenRoute({ sql, ...reopen() });
+    const upd = sql.calls[1].norm;
+    expect(upd).not.toMatch(/output_count|linked_output_count/);
+    expect(upd).toContain('closed_at IS NOT NULL');
+    expect(upd).toContain('user_id = ANY( ? )');
+    expect(res.status).toBe(200);
+  });
+
+  // It inverts the CLOSE, not the linking. A jar linked on an OPEN batch through POST /:id/outputs is
+  // a standalone assertion, and a reopen that cleared every link would destroy it.
+  // Mutation: add an `unlinked` CTE clearing batch_id — this reds.
+  it('does not touch the jars it produced', async () => {
+    const sql = mockSql([OWNED_CLOSED, [{ id: BATCH }], REOPENED_VIEW_ROW]);
+    await handleKitchenRoute({ sql, ...reopen() });
+    expect(sql.calls[1].norm).not.toContain('preservation_log');
+    expect(sql.calls[1].norm).toContain('UPDATE kitchen_batch SET');
+  });
+
+  // ⚠ THE PAUSE IS NOT RESTORED, and that is intended rather than overlooked. close sets
+  // suspended_at = NULL because chk_kitchen_batch_suspend_exclusive forbids a suspended closed batch,
+  // so paused -> closed -> reopened lands ACTIVE and the batch moves out of the Paused group. This
+  // test exists so that transition is a decision on the record, not a surprise in a card.
+  it('resumes a paused batch: paused -> closed -> reopened comes back ACTIVE', async () => {
+    const closeSql = mockSql([OWNED_PAUSED, [{ closed_count: 1, linked_count: 0 }], CLOSED_VIEW_ROW]);
+    const closed = await handleKitchenRoute({ sql: closeSql, ...call({
+      rawPath: `/api/kitchen-batches/${BATCH}/close`, method: 'POST',
+      rawBody: JSON.stringify({ outcome: 'put_up' }),
+    }) });
+    expect(closeSql.calls[1].norm).toContain('suspended_at = NULL');
+    expect(closed.body.suspended_at).toBeNull();
+
+    const reopenSql = mockSql([OWNED_CLOSED, [{ id: BATCH }], REOPENED_VIEW_ROW]);
+    const reopened = await handleKitchenRoute({ sql: reopenSql, ...reopen() });
+    expect(reopenSql.calls[1].norm).not.toContain('suspended_at');
+    expect(reopened.body.closed_at).toBeNull();
+    expect(reopened.body.suspended_at).toBeNull();
+  });
+
+  it('refuses every verb but POST', async () => {
+    for (const method of ['GET', 'PUT', 'DELETE']) {
+      const sql = mockSql([OWNED_CLOSED]);
+      const res = await handleKitchenRoute({ sql, ...call({
+        rawPath: `/api/kitchen-batches/${BATCH}/reopen`, method,
+      }) });
+      expect(res.status, method).toBe(405);
+    }
+  });
+});
+
+describe('POST /api/kitchen-batches/:id/outputs — link without closing', () => {
+  const post = (body) => call({
+    rawPath: `/api/kitchen-batches/${BATCH}/outputs`, method: 'POST', rawBody: JSON.stringify(body),
+  });
+
+  it('links jars on an OPEN batch, household-scoped, and reports both numbers', async () => {
+    // The coupling this breaks: close was the only writer of batch_id, so a partial draw-off from a
+    // batch that keeps going — the commonest real event in both processes — was unrepresentable.
+    const sql = mockSql([OWNED, [{ id: JAR }]]);
+    const res = await handleKitchenRoute({ sql, ...post({ preservation_log_ids: [JAR, JAR_B] }) });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ linked: 1, requested: 2 });
+    const upd = sql.calls[1];
+    expect(upd.norm).toContain('UPDATE preservation_log p SET batch_id = ? ::uuid, updated_at = NOW()');
+    expect(upd.norm).toContain('p.user_id = ANY( ? )');
+    expect(upd.norm).toContain('p.deleted_at IS NULL');
+    expect(boundHousehold(upd)).toBe(true);
+  });
+
+  // Mutation (K14, server half): delete `AND p.batch_id IS NULL` from linkOutputs. Without it this
+  // route becomes a second door for BUG-JARSTEAL-001 — the one close just had shut.
+  it('refuses to steal a jar that already belongs to another batch', async () => {
+    const sql = mockSql([OWNED, []]);
+    const res = await handleKitchenRoute({ sql, ...post({ preservation_log_ids: [JAR] }) });
+    expect(sql.calls[1].norm).toContain('AND p.batch_id IS NULL');
+    expect(sql.calls[1].norm).toContain('p.user_id = ANY( ? )');
+    expect(res.body).toEqual({ linked: 0, requested: 1 });
+  });
+
+  it('dedupes before it counts, so naming one jar twice asks for one link', async () => {
+    const sql = mockSql([OWNED, [{ id: JAR }]]);
+    const res = await handleKitchenRoute({ sql, ...post({ preservation_log_ids: [JAR, JAR] }) });
+    expect(res.body).toEqual({ linked: 1, requested: 1 });
+    expect(sql.calls[1].values[1]).toEqual([JAR]);
+  });
+
+  it('binds the STRANGER household so a stranger cannot link their way in', async () => {
+    const sql = mockSql([[]]);
+    const res = await handleKitchenRoute({ sql, ...call({
+      rawPath: `/api/kitchen-batches/${BATCH}/outputs`, method: 'POST',
+      rawBody: JSON.stringify({ preservation_log_ids: [JAR] }), householdIds: STRANGER,
+    }) });
+    expect(res.status).toBe(404);
+    expect(boundHousehold(sql.calls[0], STRANGER)).toBe(true);
+  });
+
+  it.each([
+    [{}, 'preservation_log_ids must be an array'],
+    [{ preservation_log_ids: [] }, 'preservation_log_ids must be a non-empty array'],
+    [{ preservation_log_ids: ['nope'] }, 'preservation_log_ids must all be uuids'],
+  ])('400s %j before any write', async (body, error) => {
+    const sql = mockSql([OWNED]);
+    const res = await handleKitchenRoute({ sql, ...post(body) });
+    expect(res).toEqual({ status: 400, body: { error } });
+    expect(sql.calls).toHaveLength(1);
+  });
+});
+
+describe('DELETE /api/kitchen-batches/:id/outputs/:plid — the repair path', () => {
+  const del = (plid) => call({
+    rawPath: `/api/kitchen-batches/${BATCH}/outputs/${plid}`, method: 'DELETE',
+  });
+
+  it('unlinks scoped by batch_id AS WELL AS id, with the household bound', async () => {
+    // Mutation: drop `AND p.batch_id = ${batchId}`. A jar linked to ANOTHER batch could then be
+    // unlinked through a batch the caller does own — the deleteInput hazard, one table over.
+    const sql = mockSql([OWNED_CLOSED, [{ id: JAR }]]);
+    const res = await handleKitchenRoute({ sql, ...del(JAR) });
+    expect(res).toEqual({ status: 200, body: { ok: true } });
+    const upd = sql.calls[1];
+    expect(upd.norm).toContain('SET batch_id = NULL, updated_at = NOW()');
+    expect(upd.norm).toContain('AND p.batch_id = ? ::uuid');
+    expect(upd.norm).toContain('p.user_id = ANY( ? )');
+    expect(boundHousehold(upd)).toBe(true);
+  });
+
+  it('404s a malformed jar id without sending it to Postgres', async () => {
+    const sql = mockSql([OWNED]);
+    const res = await handleKitchenRoute({ sql, ...del('nope') });
+    expect(res.status).toBe(404);
+    expect(sql.calls).toHaveLength(1);
+  });
+
+  it('404s when nothing matched — idempotent in state, not in status', async () => {
+    const sql = mockSql([OWNED, []]);
+    expect((await handleKitchenRoute({ sql, ...del(JAR) })).status).toBe(404);
+  });
+});
+
+// ⚠ THE POST-CLOSE WRITE POLICY, stated per route and EXECUTED. Before this, a closed batch accepted
+// every content write and the comment claiming two routes branched on closed_at described a branch
+// that did not exist. Each arm below is one cell of the state machine; the `stages` arm is the
+// green control that keeps the three refusals from being satisfied by a handler that refuses
+// everything.
+describe('what a CLOSED batch accepts', () => {
+  const on = (over) => call({ rawPath: `/api/kitchen-batches/${BATCH}`, ...over });
+
+  it('ALLOWS a stage — a jar going mouldy three weeks later is a fact about the process', async () => {
+    const sql = mockSql([OWNED_CLOSED, [{ id: 's9' }], CLOSED_VIEW_ROW]);
+    const res = await handleKitchenRoute({ sql, ...on({
+      rawPath: `/api/kitchen-batches/${BATCH}/stages`, method: 'POST',
+      rawBody: JSON.stringify({ stage_kind: 'failed', cue_observed: 'mould on the surface' }),
+    }) });
+    expect(res.status).toBe(201);
+  });
+
+  it('REFUSES an input add — 409, naming the door', async () => {
+    const sql = mockSql([OWNED_CLOSED]);
+    const res = await handleKitchenRoute({ sql, ...on({
+      rawPath: `/api/kitchen-batches/${BATCH}/inputs`, method: 'POST',
+      rawBody: JSON.stringify({ inputs: [{ input_kind: 'pantry', label: 'Kosher salt' }] }),
+    }) });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('reopen');
+    expect(sql.calls).toHaveLength(1);
+  });
+
+  it('REFUSES an input delete', async () => {
+    const sql = mockSql([OWNED_CLOSED]);
+    const res = await handleKitchenRoute({ sql, ...on({
+      rawPath: `/api/kitchen-batches/${BATCH}/inputs/${INPUT}`, method: 'DELETE',
+    }) });
+    expect(res.status).toBe(409);
+    expect(sql.calls).toHaveLength(1);
+  });
+
+  it('REFUSES the merge PUT', async () => {
+    const sql = mockSql([OWNED_CLOSED]);
+    const res = await handleKitchenRoute({ sql, ...on({
+      method: 'PUT', rawBody: JSON.stringify({ notes: 'rewriting history' }),
+    }) });
+    expect(res.status).toBe(409);
+    expect(sql.calls).toHaveLength(1);
+  });
+
+  // The fifth cell, and it is deliberately NOT a refusal. Closing as put_up with the wrong jars is
+  // the expensive mis-tap and was permanently unfixable; refusing an unlink here would re-create the
+  // trap the decoupling removed.
+  it('ALLOWS unlinking a jar — the repair path for the expensive mis-tap', async () => {
+    const sql = mockSql([OWNED_CLOSED, [{ id: JAR }]]);
+    const res = await handleKitchenRoute({ sql, ...on({
+      rawPath: `/api/kitchen-batches/${BATCH}/outputs/${JAR}`, method: 'DELETE',
+    }) });
+    expect(res).toEqual({ status: 200, body: { ok: true } });
+  });
+
+  // The OPEN-batch control on all four arms above. Without it, a handler that refused these routes
+  // unconditionally would pass every refusal test in this block.
+  it('accepts all four on an OPEN batch — the control that makes the refusals mean something', async () => {
+    const addSql = mockSql([OWNED, [{ id: 'i1' }]]);
+    expect((await handleKitchenRoute({ sql: addSql, ...on({
+      rawPath: `/api/kitchen-batches/${BATCH}/inputs`, method: 'POST',
+      rawBody: JSON.stringify({ inputs: [{ input_kind: 'pantry', label: 'Kosher salt' }] }),
+    }) })).status).toBe(201);
+
+    const delSql = mockSql([OWNED, [{ id: INPUT }]]);
+    expect((await handleKitchenRoute({ sql: delSql, ...on({
+      rawPath: `/api/kitchen-batches/${BATCH}/inputs/${INPUT}`, method: 'DELETE',
+    }) })).status).toBe(200);
+
+    const putSql = mockSql([OWNED, [{ id: BATCH }], VIEW_ROW]);
+    expect((await handleKitchenRoute({ sql: putSql, ...on({
+      method: 'PUT', rawBody: JSON.stringify({ notes: 'skimmed' }),
+    }) })).status).toBe(200);
+
+    const stageSql = mockSql([OWNED, [{ id: 's1' }], VIEW_ROW]);
+    expect((await handleKitchenRoute({ sql: stageSql, ...on({
+      rawPath: `/api/kitchen-batches/${BATCH}/stages`, method: 'POST',
+      rawBody: JSON.stringify({ stage_kind: 'tended' }),
+    }) })).status).toBe(201);
   });
 });
 

@@ -80,6 +80,23 @@ const AUDIT_COLUMNS = {
     'start_anchor_kind', 'start_precision', 'started_at', 'suspended_at', 'updated_at', 'user_id',
   ],
   event_log: ['deleted_at', 'event_date', 'id', 'plant_id'],
+  // V5-KBBATCHCLOSE. preservation_log was ALREADY a declared relation for this directory, through
+  // select-columns.test.js's AUDIT_TABLES form — so the outputs read and the two link/unlink writes
+  // in kitchenRoutes.js do not move uncovered_relations (it stands at 48; the correct edit is always
+  // a contract, never a raised baseline). This keyed entry is here anyway because that other file
+  // scans index.js's SQL only: without it, the columns kitchenRoutes.js names on this table are
+  // declared NOWHERE and a 42703 in the outputs projection would reach prod green. The two
+  // declarations are a set union per directory, so naming the table twice costs nothing.
+  //
+  // use_by_target is ABSENT, and that is the projection's own ruling rather than an oversight — see
+  // the outputs query's comment. A contract that named it would push a later editor towards adding
+  // it back.
+  preservation_log: [
+    'batch_id', 'consumed_at', 'created_at', 'crop_type_slug', 'deleted_at', 'harvest_log_id', 'id',
+    'method', 'method_other_text', 'notes', 'package_count', 'photo_id', 'plant_id', 'preserved_at',
+    'preserved_at_approx', 'quantity_unit', 'quantity_value', 'remaining_count',
+    'storage_location_id', 'updated_at', 'user_id', 'variety_id',
+  ],
 };
 
 // ── the migration, parsed ────────────────────────────────────────────────────────────────────────
@@ -163,10 +180,24 @@ describe('the contract matches the SQL that is actually issued', () => {
   it('references every column it declares, for the three relations named column by column', () => {
     // The direction that keeps a contract honest: an array naming columns the SQL no longer touches
     // keeps passing the prod audit while auditing nothing real.
-    for (const table of ['kitchen_batch', 'kitchen_batch_input', 'kitchen_stage_log', 'event_log']) {
+    for (const table of ['kitchen_batch', 'kitchen_batch_input', 'kitchen_stage_log', 'event_log',
+      'preservation_log']) {
       const missing = AUDIT_COLUMNS[table].filter((c) => !new RegExp(String.raw`\b${c}\b`).test(SQL));
       expect(missing, `${table} declares columns no statement references`).toEqual([]);
     }
+  });
+
+  // The other direction for the one relation whose contract carries a RULING. use_by_target lives on
+  // the read surfaces the pantry owns and must not reach the batch surface: composed with a recorded
+  // outcome it becomes a shelf-stability endorsement this app does not make. The positive control is
+  // the two columns that ARE declared — without it this is an absence over an empty list. The
+  // statement-level half is asserted in kitchenRoutes.test.js, against the outputs query itself.
+  // Mutation: add 'use_by_target' to the preservation_log contract.
+  it('keeps the shelf-life columns off the batch-surface contract', () => {
+    expect(AUDIT_COLUMNS.preservation_log).toContain('method');
+    expect(AUDIT_COLUMNS.preservation_log).toContain('preserved_at');
+    expect(AUDIT_COLUMNS.preservation_log).not.toContain('use_by_target');
+    expect(AUDIT_COLUMNS.preservation_log).not.toContain('use_by_status');
   });
 
   it('reads the view with SELECT *, which is what makes its 28-column contract true', () => {
@@ -194,7 +225,7 @@ describe('the contract matches the SQL that is actually issued', () => {
     const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
     expect(pairs.map((m) => m[1])).toEqual([
       'kitchen_batch', 'kitchen_batch_input', 'kitchen_stage_log', 'v_kitchen_batch_current',
-      'event_log',
+      'event_log', 'preservation_log',
     ]);
     for (const [, key, body] of pairs) {
       const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);

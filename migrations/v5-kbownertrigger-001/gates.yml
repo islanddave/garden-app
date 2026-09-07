@@ -1,0 +1,311 @@
+# gates.yml
+# V5-KBOWNERTRIGGER-001 — BUG-KBOWNERTRIGGER-001. Detach public.prevent_ownership_transfer() from
+# kitchen_batch (its body names OLD.created_by; this table's owner column is user_id, so every UPDATE
+# raised 42703) and attach public.prevent_kitchen_batch_ownership_transfer() in its place.
+#
+# SEQUENCING: staging apply (0a) -> gates -> rehearse 0r -> re-apply -> deploy-staging -> prod apply
+# -> gates -> promote. One file, one apply window; there is no companion 0b/0c.
+#
+# ⚠ WHY THE SHARED FUNCTION IS NOT TOUCHED, restated here because a gate file is what a later session
+# reads first. prevent_ownership_transfer() is attached to TEN tables; NINE have created_by and it is
+# CORRECT for all nine. kitchen_batch is the only outlier (measured on prod: tables carrying this
+# trigger that lack created_by = 1). Rewriting the shared body would risk nine working enforcement
+# points to fix one broken one, and would demote nine compile-time column references to a runtime
+# string lookup. post_shared_function_unchanged below is the gate that says so mechanically: the
+# shared function must still exist, must still name created_by, and must still be attached to at
+# least nine tables after this file runs.
+#
+# ⚠ WHY NO FROZEN COUNT GATE MOVES. THIS FILE ADDS NO COLUMNS TO ANY TABLE. The three continuous
+# count gates in this family are v4-putupsession-001 :: post_column_count_is_25,
+# v4-putupprov-001 :: post_column_count_is_25 (both pin preservation_log at 25 — not named here) and
+# v5-phrecord-001 :: post_view_gained_exactly_two, which asserts
+# cols(v_kitchen_batch_current) = cols(kitchen_batch) + 8. That last one LOOKS self-maintaining
+# because it is a delta and is NOT: the view is `SELECT b.*` and Postgres expands b.* at CREATE time,
+# so any column added to kitchen_batch raises the right side while the stored view stays frozen and
+# the gate reds on the continuous sweep against BOTH prod and staging. That is precisely why the fix
+# is a trigger swap rather than "add a created_by column to kitchen_batch" — the column would satisfy
+# the shared function AND red a gate on a migration this work never touched, on both databases, with
+# a message naming neither. pre_no_frozen_gate_moves below measures the invariant instead of
+# asserting it in prose.
+#
+# EVERY GATE READS CATALOGS ONLY. pg_trigger, pg_proc, information_schema — no query names a column
+# on kitchen_batch, so nothing here can raise 42703 against an unapplied database and report as an
+# ERROR when it means "not yet applied". Same self-arming rule v5-phrecord-001's header states.
+#
+# ⚠ THE ONE THING NO AUTOMATED GATE CAN DO. This migration's whole purpose is that an UPDATE to
+# kitchen_batch stops raising, and scripts/gate_runner.py sets `conn.read_only = True` on every
+# connection (its own words: "Layer-2 read-only enforcement: PostgreSQL itself now rejects any
+# write"). A gate that performed the UPDATE would come back 25006 read_only_sql_transaction, which
+# the runner reports as ERROR — a FAIL that means nothing about the trigger. So the write proof is a
+# `manual: true` runbook step with the exact SQL (post_update_actually_succeeds), and the automated
+# post gates prove the COMPATIBILITY invariant the UPDATE would demonstrate: the attached function
+# names a column that exists on the table it is attached to. That pairing — a machine gate on the
+# catalog property, a manual gate on the behaviour — is the honest split, and the catalog gate is the
+# one v5-inflightbatch-001 :: pre_trigger_functions_exist should have been (it asserted only that the
+# functions exist BY NAME, which is why this shipped).
+#
+# EVERY POST GATE IS continuous: false. They are one-shot TRANSITION assertions — "the old binding is
+# gone and the new one is here" is true at the apply and is not an invariant a weekly sweep should
+# re-litigate against both databases. Two of them (post_new_trigger_present,
+# post_trigger_function_column_exists) would be defensible as continuous invariants; they are not
+# marked so here because the build contract froze this file's post phase as one-shot, and adding a
+# continuous sweep is a decision that belongs to whoever owns the sweep budget.
+
+pre:
+  - name: pre_kitchen_batch_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='kitchen_batch'
+    expect: rowcount_eq
+    value: 1
+
+  # This file re-wires a trigger another migration created. Running it against an environment that
+  # never had that migration is not a fix, it is a different file.
+  - name: pre_inflightbatch_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.110.0-inflightbatch-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-kbownertrigger-20260904'
+    expect: rowcount_eq
+    value: 0
+
+  # THE DEFECT, ASSERTED PRESENT. Without this the file could be run against an environment somebody
+  # had already hand-repaired, and DROP TRIGGER would abort the apply on a missing trigger.
+  - name: pre_broken_trigger_attached
+    sql: |
+      SELECT 1 FROM pg_trigger t
+       WHERE t.tgrelid = 'public.kitchen_batch'::regclass
+         AND NOT t.tgisinternal
+         AND t.tgname = 'prevent_ownership_transfer'
+    expect: rowcount_eq
+    value: 1
+
+  # THE OTHER HALF OF THE DEFECT, and the half that makes it a defect rather than a working guard.
+  # A trigger body naming OLD.created_by is correct on the nine tables that HAVE the column. It is
+  # only broken here, and it is only broken because this column is absent.
+  - name: pre_kitchen_batch_has_no_created_by
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='kitchen_batch' AND column_name='created_by'
+    expect: rowcount_eq
+    value: 0
+
+  # The positive control on the gate above. Without it, "kitchen_batch has no created_by" would also
+  # be satisfied by a kitchen_batch that had lost every column, or by a typo in the table name — and
+  # the file would then create a trigger on user_id against a table that has no user_id either.
+  - name: pre_kitchen_batch_owner_is_user_id
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='kitchen_batch' AND column_name='user_id'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_new_trigger_absent
+    sql: |
+      SELECT 1 FROM pg_trigger t
+       WHERE t.tgrelid = 'public.kitchen_batch'::regclass
+         AND t.tgname = 'prevent_kitchen_batch_ownership_transfer'
+    expect: rowcount_eq
+    value: 0
+
+  # THE INSTRUMENT CHECK on the whole ruling, written as a violator count rather than a frozen
+  # number — a count of 10 would have to be re-pinned by the next migration that adds an ownership
+  # guard, and re-pinning is how a gate stops measuring. The invariant: kitchen_batch is the ONLY
+  # table where this shared function is attached to a table lacking the column its body names. If
+  # this returned 2, some other table has the same latent 42703 and this file does not fix it; if it
+  # returned 0, the reading of the trigger is wrong and nothing here should be applied.
+  - name: pre_kitchen_batch_is_the_only_outlier
+    sql: |
+      SELECT c.relname
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE t.tgfoid = 'public.prevent_ownership_transfer()'::regprocedure
+         AND NOT t.tgisinternal
+         AND n.nspname = 'public'
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns col
+                          WHERE col.table_schema='public' AND col.table_name = c.relname
+                            AND col.column_name='created_by')
+    expect: rowcount_eq
+    value: 1
+
+  # THE FROZEN-GATE PRECONDITION, measured rather than asserted in prose. Same shape as
+  # v5-phrecord-001 :: pre_view_star_expands_unchanged, and it is here for the opposite reason: this
+  # file must leave it holding. Captured pre so that if the post arm ever reds, the delta is
+  # attributable to this apply and not to some column another migration added first.
+  - name: pre_no_frozen_gate_moves
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='v_kitchen_batch_current')
+          <> (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='kitchen_batch') + 8
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058 asks that every predicate a new constraint will enforce already holds before it is armed.
+  # The new trigger's predicate is `OLD.user_id IS DISTINCT FROM NEW.user_id`, which is not a
+  # table-level invariant over stored rows — it is a rule about a TRANSITION, so there is nothing to
+  # sweep for violators. The nearest real precondition is that no deployed writer sets user_id, which
+  # is a source-level fact and not a query: verified by reading the three UPDATE statements in
+  # lambda/preservation/kitchenRoutes.js (updateBatch's fixed 13-column SET list, deleteBatch's
+  # deleted_at, closeBatch's four close columns) — none names user_id. Recorded as a manual gate
+  # rather than omitted, because an empty sweep phase reads as "nobody looked".
+  - name: sweep_no_deployed_writer_sets_user_id
+    manual: true
+    note: >
+      Confirm no currently-deployed statement writes kitchen_batch.user_id, which is the predicate
+      the new trigger will start enforcing. Command:
+      `grep -n "user_id *=" lambda/preservation/kitchenRoutes.js` — every hit must be a read
+      predicate (`user_id = ANY(...)`), never a SET assignment. Expected: zero SET assignments.
+      If a writer exists, this trigger will start rejecting it and the migration is NOT
+      backward-compatible with the deployed Lambda.
+
+post:
+  # Armed on the TRIGGER rather than on the version row: guarding "the row exists" with "the row
+  # exists" is circular and cannot self-arm. 0a writes both in one transaction, so a violation here
+  # means someone hand-applied the DDL or deleted the row — precisely the state that would silence
+  # every gate below it.
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid = 'public.kitchen_batch'::regclass
+                        AND tgname = 'prevent_kitchen_batch_ownership_transfer')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-kbownertrigger-20260904')
+    expect: rowcount_eq
+    value: 0
+
+  # The new binding exists, is ENABLED, is BEFORE UPDATE FOR EACH ROW, and has NO WHEN clause — the
+  # same shape as the trigger it replaces. tgenabled='O' is origin-enabled; a disabled trigger is
+  # indistinguishable from an absent one at runtime and identical to it in a bare name check.
+  - name: post_new_trigger_present_and_armed
+    continuous: false
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-kbownertrigger-20260904')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_trigger t
+                WHERE t.tgrelid = 'public.kitchen_batch'::regclass
+                  AND t.tgname = 'prevent_kitchen_batch_ownership_transfer'
+                  AND NOT t.tgisinternal
+                  AND t.tgenabled = 'O'
+                  AND t.tgqual IS NULL
+                  AND pg_get_triggerdef(t.oid) LIKE 'CREATE TRIGGER % BEFORE UPDATE ON public.kitchen_batch FOR EACH ROW%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_old_trigger_detached_from_kitchen_batch
+    continuous: false
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-kbownertrigger-20260904')
+         AND EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid = 'public.kitchen_batch'::regclass
+                        AND tgname = 'prevent_ownership_transfer')
+    expect: rowcount_eq
+    value: 0
+
+  # ⚠ THE SHARED FUNCTION MUST BE EXACTLY AS IT WAS. Three claims in one violator count: it still
+  # exists, its body still names created_by (i.e. nobody "helpfully" generalized it while they were
+  # in here), and it is still attached to at least nine tables. `>= 9` and not `= 9` deliberately —
+  # a floor is widening-safe, while a frozen 9 would have to be re-pinned by the next migration that
+  # adds an ownership guard, and re-pinning is how a gate stops measuring.
+  - name: post_shared_function_unchanged
+    continuous: false
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-kbownertrigger-20260904')
+         AND (
+           NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                        WHERE n.nspname='public' AND p.proname='prevent_ownership_transfer')
+           OR NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                           WHERE n.nspname='public' AND p.proname='prevent_ownership_transfer'
+                             AND p.prosrc LIKE '%created_by%')
+           OR (SELECT count(DISTINCT t.tgrelid) FROM pg_trigger t
+                WHERE t.tgfoid = 'public.prevent_ownership_transfer()'::regprocedure
+                  AND NOT t.tgisinternal) < 9
+         )
+    expect: rowcount_eq
+    value: 0
+
+  # ⚠ THE GATE THAT SHOULD HAVE EXISTED, and the reason this whole migration was needed. The defect
+  # was never "a trigger is missing" — it was a trigger whose FUNCTION BODY names a column the TABLE
+  # does not have, which no existence check can see. Stated as a violator count over every non-
+  # internal trigger on kitchen_batch: for each one, every `OLD.<ident>` / `NEW.<ident>` its body
+  # references must be a real column of kitchen_batch. Under the old binding this returns a row
+  # (created_by); under the new one it must return none.
+  #
+  # Scoped to kitchen_batch rather than the whole schema on purpose: a schema-wide version is the
+  # right permanent invariant and it belongs to whoever owns the continuous sweep, not to a one-shot
+  # transition gate on one table.
+  - name: post_trigger_function_columns_exist_on_this_table
+    continuous: false
+    sql: |
+      SELECT t.tgname, ref.col
+        FROM pg_trigger t
+        JOIN pg_proc p ON p.oid = t.tgfoid
+        CROSS JOIN LATERAL (
+          SELECT DISTINCT (regexp_matches(p.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1] AS col
+        ) ref
+       WHERE t.tgrelid = 'public.kitchen_batch'::regclass
+         AND NOT t.tgisinternal
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema='public' AND c.table_name='kitchen_batch'
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  # THE BEHAVIOURAL PROOF, and it cannot be automated here — gate_runner.py sets conn.read_only, so
+  # any gate that performed this UPDATE would report 25006 rather than anything about the trigger.
+  # Run it by hand in the apply window, on the same connection that just applied 0a.
+  - name: post_update_actually_succeeds
+    manual: true
+    continuous: false
+    note: |
+      THE ONE THAT MATTERS. Prove an UPDATE to kitchen_batch no longer raises 42703, and that the new
+      guard still refuses an owner change. Run on STAGING as written; on PROD (0 kitchen_batch rows
+      as of 2026-09-04) run the same block, which creates and rolls back its own probe row.
+
+      Do NOT wrap 0a itself in BEGIN/ROLLBACK to "rehearse" it — the file's own COMMIT ends your
+      outer transaction and the DDL becomes durable. This block is standalone and safe.
+
+        BEGIN;
+          INSERT INTO public.kitchen_batch (user_id, label)
+          VALUES ('probe-kbownertrigger', 'probe') RETURNING id \gset
+          -- (1) must report UPDATE 1. Under the defect this raised
+          --     ERROR 42703: record "old" has no field "created_by"
+          UPDATE public.kitchen_batch SET notes = 'probe' WHERE id = :'id';
+          -- (2) must RAISE: 'user_id cannot be changed after creation'. If this SUCCEEDS the new
+          --     trigger is not firing and the guard is decorative.
+          UPDATE public.kitchen_batch SET user_id = 'probe-other' WHERE id = :'id';
+        ROLLBACK;
+
+      Then verify nothing persisted — a printed ROLLBACK is not evidence:
+        SELECT count(*) FROM public.kitchen_batch WHERE user_id LIKE 'probe-%';   -- expect 0
+
+  # The frozen count gate this file must leave exactly where it found it. Same query as
+  # pre_no_frozen_gate_moves; the pair is what makes "this migration adds no columns" a measurement
+  # instead of a claim in a header comment.
+  - name: post_no_frozen_gate_moved
+    continuous: false
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-kbownertrigger-20260904')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='v_kitchen_batch_current')
+          <> (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='kitchen_batch') + 8
+    expect: rowcount_eq
+    value: 0

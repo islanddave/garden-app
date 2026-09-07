@@ -22,6 +22,9 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const fetchMock = vi.fn()
 const navigateMock = vi.fn()
@@ -40,7 +43,7 @@ vi.mock('react-router-dom', async (orig) => {
   return { ...actual, useNavigate: () => navigateMock }
 })
 
-import PutUp from '../pages/PutUp.jsx'
+import PutUp, { batchRows } from '../pages/PutUp.jsx'
 import { P } from '../lib/constants.js'
 import GoingNowView from '../components/putup/GoingNowView.jsx'
 import {
@@ -48,7 +51,10 @@ import {
   precisionRank, UNRANKED_PRECISION, startPromptState, isSuspended, sortGoing, partitionGoing,
   submersionPrompt, SUBMERSION_PROMPT,
   START_CHIPS, startChipPatch, pickedDatePatch, ymdToInstant, startPatchViolatesPairing,
+  pausePatch, PAUSE_CTA, RESUME_CTA, OPEN_BATCH_CTA, CLOSED_DOOR_CTA,
 } from '../components/putup/goingNow.js'
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 // jsdom normalises every inline colour to `rgb(r, g, b)`, so a regex over the palette's HEX values
 // matches NOTHING and passes no matter what colour the element is. Both "never a warning colour"
@@ -60,7 +66,25 @@ const toRgb = (hex) => {
 }
 // The app's three alarm inks. None may appear anywhere on a Going-now card.
 const ALARM_INKS = [P.terra, P.warnBorder, P.severityUrgent].map(toRgb)
-const hasNoAlarmInk = (el) => ALARM_INKS.every(ink => !el.outerHTML.includes(ink))
+// ⚠ NARROWED 2026-09-04 BY V5-BATCHCLOSE-001, and narrowed by an EXPLICIT per-element opt-out rather
+// than by shrinking the scope, which is the difference between a guard and a hole.
+//
+// The ruling this sweep enforces (goingNow.js:21-24) is that the card BODY never reddens for a batch
+// that is fine — "a card that reddens for a thing that is fine teaches the user that red means
+// nothing". It is NOT a ban on an error string looking like an error: P.terra is the house error ink
+// and GoingNowView.jsx:93 has always painted a role="alert" line with it inside the start editor. The
+// pause control adds a second such line, so left unnarrowed a FAILED WRITE would red a test whose
+// stated subject is the missing-start CTA — a wrong-reason red, and the fix for that is the test.
+//
+// Only nodes carrying data-alarm-ink-exempt are dropped, and the swept element itself is NEVER
+// dropped, so an alarm-coloured card BORDER still kills. Mutations M33 (submersion line in P.terra),
+// M34 (P.warnBorder card edge) and M35 (title in P.severityUrgent) were re-run against THIS version
+// and all three still kill; the instrument test below is the standing proof.
+const hasNoAlarmInk = (el) => {
+  const clone = el.cloneNode(true)
+  clone.querySelectorAll('[data-alarm-ink-exempt]').forEach(n => n.remove())
+  return ALARM_INKS.every(ink => !clone.outerHTML.includes(ink))
+}
 
 // The fixed "now" every age below is measured against. Zoneless => local.
 const NOW = new Date('2026-09-04T09:00:00').getTime()
@@ -136,6 +160,19 @@ const JEN_BATCH = {
   ...CANDY, id: 'kb-jen', user_id: 'user_jen', label: "Jen's plum butter",
   started_at: local('2026-09-01T09:00:00'), current_stage_kind: 'started', current_stage_label: null,
   current_stage_entered_at: local('2026-09-01T09:00:00'), input_count: 0,
+}
+// Two CLOSED rows, and the numerics are STRINGS because that is what the wire sends: the neon driver
+// hands back numeric/bigint columns as strings, and only `linked_output_count` is a real number. A
+// fixture that types them as numbers is an invented wire, which is the whole class BUG-GOINGNOWENVELOPE-001
+// belongs to. Rendering a closed ROW is ClosedBatchesView's contract (lane L5) and is not asserted
+// here; these exist so this lane's plumbing carries a realistic two-user payload.
+const CLOSED_PUTUP = {
+  ...CANDY, id: 'kb-closed', label: 'Peach butter, done', closed_at: '2026-08-30T12:00:00.000Z',
+  outcome: 'put_up', outcome_note: null, input_count: '3', output_count: '2',
+}
+const JEN_CLOSED = {
+  ...CLOSED_PUTUP, id: 'kb-jen-closed', user_id: 'user_jen', label: "Jen's plum butter, done",
+  closed_at: '2026-09-01T12:00:00.000Z', input_count: '0', output_count: '1',
 }
 
 // `now` is INJECTED, never left to the wall clock. The first draft of this helper omitted it: the
@@ -556,11 +593,23 @@ describe('GoingNowView — no readiness affordance anywhere', () => {
 })
 
 describe('GoingNowView — Start a batch sits at the BOTTOM', () => {
+  // ⚠ STRENGTHENED, NOT WEAKENED, 2026-09-04. `lastElementChild` was standing in for the claim in the
+  // test's own name, and the two are not the same claim: it would keep passing if a card were ever
+  // rendered outside the view's direct children, and it reds for the WRONG reason the moment anything
+  // legitimate is appended. Both assertions are now made, so neither can rot into the other. Mutation
+  // M13 ("Start-a-batch moved above the cards") was re-run against this version and still kills.
   it('is the last element of the view, below every card', () => {
     renderView([CANDY, PAUSED])
     const view = screen.getByTestId('going-now-view')
     const btn = screen.getByTestId('start-a-batch')
     expect(view.lastElementChild).toBe(btn)
+    const cards = screen.getAllByTestId('going-batch')
+    expect(cards).toHaveLength(2)   // instrument check: the loop below is not over an empty set
+    for (const card of cards) {
+      expect(`${card.getAttribute('data-batch-id')} precedes the button: `
+        + `${!!(card.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING)}`)
+        .toBe(`${card.getAttribute('data-batch-id')} precedes the button: true`)
+    }
     expect(btn.textContent).toBe('🍲Start a batch')
   })
 
@@ -571,10 +620,14 @@ describe('GoingNowView — Start a batch sits at the BOTTOM', () => {
     expect(btn.style.position).not.toBe('absolute')
   })
 
-  it('is present on an empty list too, under the empty state', () => {
+  it('is present on an empty list too, under the empty state and under the closed door', () => {
     renderView([])
     expect(screen.getByTestId('going-empty')).toBeTruthy()
-    expect(screen.getByTestId('going-now-view').lastElementChild).toBe(screen.getByTestId('start-a-batch'))
+    const btn = screen.getByTestId('start-a-batch')
+    expect(screen.getByTestId('going-now-view').lastElementChild).toBe(btn)
+    // Same strengthening as above, against the one other thing that now precedes it.
+    expect(!!(screen.getByTestId('going-closed-door')
+      .compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
   })
 
   it('routes to the camera-first capture flow', () => {
@@ -628,12 +681,215 @@ describe('GoingNowView — setting a start date after the fact', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe('the alarm-ink sweep is an instrument, not a formality', () => {
+  // The sweep above was narrowed this session, and a narrowed absence assertion that has not been
+  // re-proved is a vacuous one by default. This is the proof, standing: it must catch every ink it
+  // claims to catch, drop exactly what is marked, and never drop the element it was handed.
+  const painted = (style, attrs = {}) => {
+    const el = document.createElement('span')
+    for (const [prop, v] of Object.entries(style)) el.style[prop] = v
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+    return el
+  }
+
+  it('catches all three inks, in the two ways a card can carry one', () => {
+    for (const hex of [P.terra, P.warnBorder, P.severityUrgent]) {
+      const host = document.createElement('div')
+      host.appendChild(painted({ color: hex }))
+      expect(`${hex} as text: ${hasNoAlarmInk(host)}`).toBe(`${hex} as text: false`)
+      // M34's shape: the ink on an edge, written as the shorthand the component actually uses.
+      expect(`${hex} as an edge: ${hasNoAlarmInk(painted({ border: `1px solid ${hex}` }))}`)
+        .toBe(`${hex} as an edge: false`)
+    }
+    // The green control: an ordinary card ink is not a false positive.
+    const clean = document.createElement('div')
+    clean.appendChild(painted({ color: P.mid }))
+    expect(hasNoAlarmInk(clean)).toBe(true)
+  })
+
+  it('drops only what is explicitly marked, and never the element being swept', () => {
+    const one = document.createElement('div')
+    one.appendChild(painted({ color: P.terra }, { 'data-alarm-ink-exempt': 'error' }))
+    expect(hasNoAlarmInk(one)).toBe(true)
+    // A marked node does not cover for an unmarked sibling.
+    const two = document.createElement('div')
+    two.appendChild(painted({ color: P.terra }, { 'data-alarm-ink-exempt': 'error' }))
+    two.appendChild(painted({ color: P.terra }))
+    expect(hasNoAlarmInk(two)).toBe(false)
+    // And an element cannot exempt ITSELF — otherwise one attribute on the card would blind the sweep.
+    expect(hasNoAlarmInk(painted({ border: `1px solid ${P.warnBorder}` }, { 'data-alarm-ink-exempt': 'x' })))
+      .toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe('GoingNowView — the one explicit door, and a card that stays inert', () => {
+  it('renders exactly one door per card, in the action slot, with no arrow-free ambiguity', () => {
+    renderView([CANDY, PAUSED])
+    const doors = screen.getAllByTestId('going-open-batch')
+    expect(doors).toHaveLength(2)
+    expect(doors.map(d => d.textContent)).toEqual([OPEN_BATCH_CTA, OPEN_BATCH_CTA])
+    expect(OPEN_BATCH_CTA).toBe('Open this batch →')
+    // Same tap floor as the two inline expanders it is a sibling of.
+    expect(doors[0].style.minHeight).toBe('44px')
+  })
+
+  it('hands the door the id of the card it sits on, in a two-user list', () => {
+    const opened = []
+    renderView([CANDY, JEN_BATCH])
+    const cards = screen.getAllByTestId('going-batch')
+    // Jen's row sorts first (started Sep 1 vs Aug 23), which is exactly why the wrong id would be
+    // invisible in a single-owner fixture.
+    expect(cards.map(c => c.getAttribute('data-batch-id'))).toEqual(['kb-jen', 'kb-candy'])
+    for (const card of cards) {
+      within(card).getByTestId('going-open-batch').click()
+      opened.push(card.getAttribute('data-batch-id'))
+    }
+    expect(opened).toEqual(['kb-jen', 'kb-candy'])
+  })
+})
+
+describe('GoingNowView — pause, the reversible give-up that had no writer', () => {
+  it('PUTs exactly suspended_at, at the INJECTED instant, and merges nothing else', async () => {
+    fetchMock.mockResolvedValue({ ...CANDY, suspended_at: new Date(NOW).toISOString() })
+    const onReload = vi.fn()
+    renderView([CANDY], { onReload })
+    expect(screen.getByTestId('going-pause').textContent).toBe(PAUSE_CTA)
+    expect(PAUSE_CTA).toBe('Pause this batch')
+    fireEvent.click(screen.getByTestId('going-pause'))
+    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1))
+    // The whole call as one literal. ph-style: the instant is the view's injected `now`, so this
+    // assertion is stable under the blocking TZ re-run instead of racing the wall clock.
+    expect(fetchMock).toHaveBeenCalledWith('/api/kitchen-batches/kb-candy', {
+      method: 'PUT', body: JSON.stringify({ suspended_at: new Date(NOW).toISOString() }),
+    })
+    expect(Object.keys(JSON.parse(fetchMock.mock.calls[0][1].body))).toEqual(['suspended_at'])
+  })
+
+  it('offers the way back on a paused card and NULLs the column', async () => {
+    fetchMock.mockResolvedValue({ ...PAUSED, suspended_at: null })
+    const onReload = vi.fn()
+    renderView([PAUSED], { onReload })
+    expect(screen.getByTestId('going-pause').textContent).toBe(RESUME_CTA)
+    expect(RESUME_CTA).toBe('Pick it back up')
+    fireEvent.click(screen.getByTestId('going-pause'))
+    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1))
+    expect(fetchMock).toHaveBeenCalledWith('/api/kitchen-batches/kb-paused', {
+      method: 'PUT', body: JSON.stringify({ suspended_at: null }),
+    })
+  })
+
+  it('pauses the row you tapped, not the first one on screen', async () => {
+    fetchMock.mockResolvedValue({})
+    renderView([CANDY, JEN_BATCH])
+    const cards = screen.getAllByTestId('going-batch')
+    expect(cards[0].getAttribute('data-batch-id')).toBe('kb-jen')
+    fireEvent.click(within(cards[1]).getByTestId('going-pause'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/kitchen-batches/kb-candy')
+  })
+
+  it('keeps the row and says so when the write fails — and the alert is not a card-body alarm', async () => {
+    fetchMock.mockRejectedValue(new Error('boom'))
+    renderView([CANDY])
+    fireEvent.click(screen.getByTestId('going-pause'))
+    await waitFor(() => expect(screen.getByTestId('going-pause-error').textContent)
+      .toBe("Couldn't save that — try again."))
+    // Nothing was discarded: the row is exactly as it was. There is no offline queue in this app and
+    // none is possible, so a clear failure is the honest answer — but it must not also lose state.
+    expect(screen.getByTestId('going-batch-title').textContent).toBe('Candied ginger')
+    expect(screen.getByTestId('going-pause').textContent).toBe(PAUSE_CTA)
+    // POSITIVE ASSERTION over the same query on the same render: the ink really IS P.terra, so the
+    // sweep below is exempting something that exists rather than passing over an empty carve-out.
+    expect(screen.getByTestId('going-pause-error').style.color).toBe(toRgb(P.terra))
+    expect(screen.getByTestId('going-pause-error').getAttribute('role')).toBe('alert')
+    expect(hasNoAlarmInk(screen.getByTestId('going-batch'))).toBe(true)
+  })
+
+  it('pausePatch is a pure function of the injected clock and refuses a bad one', () => {
+    expect(pausePatch(false, NOW)).toEqual({ suspended_at: new Date(NOW).toISOString() })
+    expect(pausePatch(true, NOW)).toEqual({ suspended_at: null })
+    expect(pausePatch(true, NaN)).toEqual({ suspended_at: null })   // resuming needs no clock
+    expect(pausePatch(false, NaN)).toBeNull()
+  })
+})
+
+describe('goingNow — a paused batch is not questioned', () => {
+  // The card asked a PAUSED ferment whether it was still under the brine: the app questioning a batch
+  // the user had explicitly set down. Both arms carry their own green control on the same fixture, so
+  // neither absence can pass because the selector was wrong.
+  const stale = { ...FERMENT_EXACT, current_stage_entered_at: local('2026-08-21T09:00:00') }
+
+  it('submersionPrompt goes silent under suspension, and speaks without it', () => {
+    expect(submersionPrompt(stale, NOW)).toBe(SUBMERSION_PROMPT)
+    expect(submersionPrompt({ ...stale, suspended_at: '2026-08-25T12:00:00.000Z' }, NOW)).toBeNull()
+  })
+
+  it('renders the question on the active ferment and not on its set-down twin, in ONE render', () => {
+    const setDown = { ...stale, id: 'kb-setdown', label: 'Set down', suspended_at: '2026-08-25T12:00:00.000Z' }
+    renderView([stale, setDown])
+    const byId = Object.fromEntries(screen.getAllByTestId('going-batch')
+      .map(c => [c.getAttribute('data-batch-id'), c]))
+    expect(within(byId['kb-ferment']).getByTestId('going-batch-submersion').textContent)
+      .toBe(SUBMERSION_PROMPT)
+    expect(within(byId['kb-setdown']).queryByTestId('going-batch-submersion')).toBeNull()
+  })
+})
+
+describe('GoingNowView — the door to closed batches', () => {
+  it('renders exactly one door, INSIDE the empty state, when nothing is going', () => {
+    renderView([])
+    const doors = screen.getAllByTestId('going-closed-door')
+    expect(doors).toHaveLength(1)
+    expect(doors[0].textContent).toBe(CLOSED_DOOR_CTA)
+    expect(CLOSED_DOOR_CTA).toBe('Closed batches →')
+    // The finding, asserted: the state in which a user hunts a six-week-old batch is the state that
+    // used to hide the door entirely.
+    expect(within(screen.getByTestId('going-empty')).getByTestId('going-closed-door')).toBeTruthy()
+  })
+
+  it('renders exactly one door, above Start a batch, when the list is populated', () => {
+    renderView([CANDY, PAUSED])
+    const doors = screen.getAllByTestId('going-closed-door')
+    expect(doors).toHaveLength(1)
+    expect(screen.queryByTestId('going-empty')).toBeNull()
+    expect(!!(doors[0].compareDocumentPosition(screen.getByTestId('start-a-batch'))
+      & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+  })
+})
+
+describe('GoingNowView — the counts arrive as STRINGS', () => {
+  // Only linked_output_count is a real number on this wire; every other numeric comes back from the
+  // driver as a string. `Number(...) === 1` across that boundary is the singular/plural branch, so a
+  // number-typed fixture would certify a comparison the wire never makes.
+  it('renders the singular and plural branches off string counts', () => {
+    renderView([{ ...MASH, input_count: '139' }, { ...CANDY, id: 'kb-one', input_count: '1' }])
+    expect(screen.getAllByTestId('going-batch-inputs').map(l => l.textContent))
+      .toEqual(['1 pick in', '139 picks in'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// THE WIRE SHAPE, in ONE place. BUG-GOINGNOWENVELOPE-001: kitchenRoutes.js:172 returns
+// `{ state, batches }` and apiFetch hands the parsed body back verbatim, so a list fixture that
+// resolves a BARE ARRAY is an invented wire. This file's original fixture did exactly that, which is
+// why 74 green tests could not see that PutUp.jsx set `going` to [] on every load in production.
+// Every list fixture below goes through this helper so no test can drift back to the bare shape.
+const listEnvelope = (batches, state = 'going') => ({ state, batches })
+
 // THE BARE-OPEN DEFAULT — the whole discoverability fix, and one line of it.
-function wirePage({ batches = [], batchesFail = false } = {}) {
+const DETAIL_ROUTE = /^\/api\/kitchen-batches\/[^/?]+$/
+function wirePage({ batches = [], batchesFail = false, closed = [], detail = null, detailFail = false } = {}) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
+    if (path.startsWith('/api/kitchen-batches?state=closed')) {
+      return Promise.resolve(listEnvelope(closed, 'closed'))
+    }
+    if (DETAIL_ROUTE.test(path) && method === 'GET') {
+      return detailFail ? Promise.reject(new Error('no such row')) : Promise.resolve(detail)
+    }
     if (path.startsWith('/api/kitchen-batches')) {
-      return batchesFail ? Promise.reject(new Error('no such table')) : Promise.resolve(batches)
+      return batchesFail ? Promise.reject(new Error('no such table')) : Promise.resolve(listEnvelope(batches))
     }
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
     if (path.startsWith('/api/plants?')) return Promise.resolve([])
@@ -642,10 +898,13 @@ function wirePage({ batches = [], batchesFail = false } = {}) {
   })
 }
 
-function renderPage(prefill) {
-  const entry = prefill ? { pathname: '/put-up', state: { prefill } } : { pathname: '/put-up' }
+function renderPage(prefill, search = '') {
+  const entry = prefill ? { pathname: '/put-up', search, state: { prefill } } : { pathname: '/put-up', search }
   return render(<MemoryRouter initialEntries={[entry]}><PutUp /></MemoryRouter>)
 }
+// GETs only: the pause PUT lands on the same path as the detail GET, and a path-only census would
+// let a write stand in for the read this page is being asserted to make.
+const getPaths = () => fetchMock.mock.calls.filter(([, o]) => (o?.method ?? 'GET') === 'GET').map(([p]) => p)
 
 // Scoped to the VIEW toggle by its aria-label: StoresView renders a second radiogroup (its own
 // group-by facet), so an unscoped getAllByRole('radio') silently mixes the two.
@@ -696,7 +955,7 @@ describe('PutUp — the bare-open default lands on "Going now" when something is
   it('never overrides a segment the user picked while the fetch was in flight', async () => {
     let release
     fetchMock.mockImplementation((path) => {
-      if (path.startsWith('/api/kitchen-batches')) return new Promise(r => { release = () => r([CANDY]) })
+      if (path.startsWith('/api/kitchen-batches')) return new Promise(r => { release = () => r(listEnvelope([CANDY])) })
       if (path === '/api/storage-locations') return Promise.resolve([])
       if (path.startsWith('/api/plants?')) return Promise.resolve([])
       if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve({ group_by: 'storage', groups: [] })
@@ -723,5 +982,191 @@ describe('PutUp — the bare-open default lands on "Going now" when something is
     await waitFor(() => expect(activeSegment()).toBe("What's put up"))
     fireEvent.click(screen.getByRole('radio', { name: 'Going now' }))
     expect(within(screen.getByTestId('going-now-view')).getByTestId('going-empty')).toBeTruthy()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// BUG-GOINGNOWENVELOPE-001 — the payload the page actually receives.
+//
+// The bug was not a typo. Both sides were internally consistent and both were tested, and they
+// disagreed about the shape of the thing BETWEEN them: kitchenRoutes.js asserted the envelope in its
+// own suite while this file's fixture invented a bare array, so 74 green tests certified a page that
+// set `going` to [] on every load in production. Nothing could see the gap because nothing crossed it.
+describe('PutUp — the going list is read off the envelope the Lambda actually sends', () => {
+  it('renders cards from { state, batches } and promotes the bare open off its length', async () => {
+    wirePage({ batches: [CANDY, MASH] })
+    renderPage()
+    await waitFor(() => expect(activeSegment()).toBe('Going now'))
+    expect(screen.getAllByTestId('going-batch-title').map(t => t.textContent))
+      .toEqual(['Candied ginger', 'Pepper mash'])
+  })
+
+  it('still accepts a bare array, and still treats anything else as "no answer"', () => {
+    // The defensive arm, kept deliberately (src/lib/batches.js:38 does the same): coercing an
+    // unrecognised payload straight to [] is exactly what disabled the feature silently instead of
+    // failing loudly, so the recognised shapes are named and everything else is one branch.
+    expect(batchRows({ state: 'going', batches: [MASH] })).toEqual([MASH])
+    expect(batchRows([MASH])).toEqual([MASH])
+    expect(batchRows(null)).toEqual([])
+    expect(batchRows({ state: 'going' })).toEqual([])
+    expect(batchRows({ state: 'going', batches: 'nope' })).toEqual([])
+    expect(batchRows('nope')).toEqual([])
+  })
+})
+
+// The guard across the two deploy artifacts. They cannot import each other, so the only thing a unit
+// test can do is read the other side's source and bind the literal. Model: startChipParity.test.js.
+describe('the going-list wire shape is BOUND to the Lambda, not assumed', () => {
+  const LAMBDA = readFileSync(resolve(REPO, 'lambda/preservation/kitchenRoutes.js'), 'utf8')
+  const PAGE = readFileSync(resolve(REPO, 'src/pages/PutUp.jsx'), 'utf8')
+  const ENVELOPE = /return \{ status: 200, body: \{ state, (\w+): rows \} \};/
+
+  it('the list handler returns a named-key envelope, and the key is `batches`', () => {
+    // INSTRUMENT CHECK FIRST — prove we are reading the list handler before claiming anything about
+    // its return, or a moved file / renamed path passes every assertion below over the wrong text.
+    expect(LAMBDA).toContain('GET /api/kitchen-batches?state=going|closed|all')
+    const found = LAMBDA.match(ENVELOPE)
+    expect(found === null ? 'the list handler no longer returns { status: 200, body: { state, <key>: rows } } — '
+      + 're-anchor this test against the real return rather than deleting it' : found[1]).toBe('batches')
+  })
+
+  it('the client unwraps THAT key, by name', () => {
+    const key = LAMBDA.match(ENVELOPE)[1]
+    expect(PAGE).toContain('export function batchRows(payload)')
+    expect(new RegExp(`Array\\.isArray\\(payload\\?\\.${key}\\)\\s*\\?\\s*payload\\.${key}`).test(PAGE))
+      .toBe(true)
+    // Non-vacuity: the same probe must NOT find a key the Lambda does not send.
+    expect(new RegExp('Array\\.isArray\\(payload\\?\\.rows\\)\\s*\\?\\s*payload\\.rows').test(PAGE))
+      .toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// `?batch=<id>` AND `?state=closed` — MODE FLAGS on /put-up, never child routes.
+describe('PutUp — the batch detail is a mode flag on this page', () => {
+  const CANDY_DETAIL = { ...CANDY, inputs: [], stages: [], outputs: [] }
+
+  it('the card\'s door opens the detail and asks the server for THAT batch', async () => {
+    wirePage({ batches: [CANDY], detail: CANDY_DETAIL })
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('going-open-batch')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('going-open-batch'))
+    await waitFor(() => expect(screen.getByTestId('putup-batch-mode')).toBeTruthy())
+    expect(getPaths()).toContain('/api/kitchen-batches/kb-candy')
+    // The list surface stands down and the way back is in the PAGE, because an installed PWA has no
+    // address bar to offer one.
+    expect(screen.queryByTestId('going-now-view')).toBeNull()
+    expect(screen.getByTestId('putup-mode-back').textContent).toBe('← Going now')
+    // NOT a route: nothing navigated. useNavigate is a no-op spy in this file, so on its own that
+    // assertion would be worth nothing — the positive half is the line above it, which proves the
+    // surface opened anyway.
+    expect(navigateMock).not.toHaveBeenCalled()
+  })
+
+  it('opens straight from the URL, so a deep link and a tap land in the same place', async () => {
+    wirePage({ batches: [CANDY], detail: CANDY_DETAIL })
+    renderPage(null, '?batch=kb-candy')
+    await waitFor(() => expect(screen.getByTestId('putup-batch-mode')).toBeTruthy())
+    expect(getPaths()).toContain('/api/kitchen-batches/kb-candy')
+    // Both loaders are live in this mode — which is what makes onChanged able to re-read both.
+    expect(getPaths()).toContain('/api/kitchen-batches?state=going')
+  })
+
+  it('the CARD itself is inert — only the labelled door opens anything', async () => {
+    wirePage({ batches: [CANDY], detail: CANDY_DETAIL })
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('going-batch')).toBeTruthy())
+    for (const id of ['going-batch', 'going-batch-title', 'going-batch-meta']) {
+      fireEvent.click(screen.getByTestId(id))
+    }
+    expect(screen.queryByTestId('putup-batch-mode')).toBeNull()
+    expect(getPaths()).not.toContain('/api/kitchen-batches/kb-candy')
+    // GREEN CONTROL, same queries, same render: the door DOES open it, so the three absences above
+    // are about a card that is genuinely inert rather than about a click that never landed.
+    fireEvent.click(screen.getByTestId('going-open-batch'))
+    await waitFor(() => expect(screen.getByTestId('putup-batch-mode')).toBeTruthy())
+    expect(getPaths()).toContain('/api/kitchen-batches/kb-candy')
+  })
+
+  it('leaving the mode restores the segment the user was on, with no remount', async () => {
+    wirePage({ batches: [CANDY], detail: CANDY_DETAIL })
+    renderPage()
+    await waitFor(() => expect(activeSegment()).toBe('Going now'))
+    fireEvent.click(screen.getByTestId('going-open-batch'))
+    await waitFor(() => expect(screen.getByTestId('putup-batch-mode')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('putup-mode-back'))
+    await waitFor(() => expect(screen.getByTestId('going-now-view')).toBeTruthy())
+    // The failure this shape exists to avoid: a child route unmounts PutUp, `view` re-initialises to
+    // 'stores', and the recovery is a network round trip that does not even fire on an empty list.
+    expect(activeSegment()).toBe('Going now')
+    expect(screen.queryByTestId('putup-batch-mode')).toBeNull()
+  })
+
+  it('a failed detail read says so and leaves the way back', async () => {
+    wirePage({ batches: [CANDY], detailFail: true })
+    renderPage(null, '?batch=kb-candy')
+    await waitFor(() => expect(screen.getByTestId('putup-batch-mode')).toBeTruthy())
+    expect(screen.getByTestId('putup-mode-back')).toBeTruthy()
+  })
+
+  // The invalidation contract, asserted where it can be: a write from a card re-reads the LIST. The
+  // detail half of onChanged is bound below as source text, because BatchDetailView belongs to
+  // another lane and this branch carries a placeholder for it — see the report.
+  it('a write from the card re-reads the list rather than mutating it locally', async () => {
+    wirePage({ batches: [CANDY] })
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('going-pause')).toBeTruthy())
+    const before = getPaths().filter(p => p === '/api/kitchen-batches?state=going').length
+    expect(before).toBe(1)
+    fireEvent.click(screen.getByTestId('going-pause'))
+    await waitFor(() => expect(getPaths().filter(p => p === '/api/kitchen-batches?state=going').length)
+      .toBe(before + 1))
+  })
+
+  it('onChanged on the detail surface re-reads BOTH the row and the list', () => {
+    const PAGE = readFileSync(resolve(REPO, 'src/pages/PutUp.jsx'), 'utf8')
+    const bodyOf = (name) => PAGE.match(new RegExp(`const ${name} = useCallback\\(\\(\\) => \\{([^}]*)\\}`))?.[1]
+    // Green control: the handler is what the detail surface is actually given, and the probe finds a
+    // body to look at. Without both, the two assertions below pass over `undefined`.
+    expect(PAGE).toContain('onChanged={onBatchChanged}')
+    expect(typeof bodyOf('onBatchChanged')).toBe('string')
+    expect(bodyOf('onBatchChanged')).toContain('loadGoing()')
+    expect(bodyOf('onBatchChanged')).toContain('loadDetail()')
+    // Reopening from the closed list moves a row back into `going`, so that handler owes both too.
+    expect(bodyOf('onClosedChanged')).toContain('loadClosed()')
+    expect(bodyOf('onClosedChanged')).toContain('loadGoing()')
+    // Non-vacuity: the probe does not report a call that is not there.
+    expect(bodyOf('onBatchChanged')).not.toContain('loadClosed()')
+  })
+})
+
+describe('PutUp — the closed list is the same kind of mode flag', () => {
+  it('the door switches the page over and asks the server for closed rows', async () => {
+    wirePage({ batches: [CANDY], closed: [JEN_CLOSED, CLOSED_PUTUP] })
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('going-closed-door')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('going-closed-door'))
+    await waitFor(() => expect(screen.getByTestId('putup-closed-mode')).toBeTruthy())
+    expect(getPaths()).toContain('/api/kitchen-batches?state=closed')
+    expect(screen.queryByTestId('going-now-view')).toBeNull()
+    expect(screen.getByTestId('putup-mode-back')).toBeTruthy()
+  })
+
+  it('does NOT fetch the closed list on an ordinary open', async () => {
+    wirePage({ batches: [CANDY] })
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('going-now-view')).toBeTruthy())
+    expect(getPaths()).not.toContain('/api/kitchen-batches?state=closed')
+    // Green control over the same query on the same render: the page IS issuing list GETs, so the
+    // absence above is about the closed one specifically.
+    expect(getPaths()).toContain('/api/kitchen-batches?state=going')
+  })
+
+  it('opens straight from the URL, and `batch` wins when both are present', async () => {
+    wirePage({ batches: [CANDY], closed: [CLOSED_PUTUP], detail: { ...CANDY, inputs: [], stages: [], outputs: [] } })
+    renderPage(null, '?state=closed&batch=kb-candy')
+    await waitFor(() => expect(screen.getByTestId('putup-batch-mode')).toBeTruthy())
+    // Opening a batch FROM the closed list must show that batch, not the list it came from.
+    expect(screen.queryByTestId('putup-closed-mode')).toBeNull()
   })
 })

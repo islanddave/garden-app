@@ -184,6 +184,18 @@ const SHEET_SITES = [
   'components/planting/OverwinterPrompt.jsx',
   'components/planting/SaveSeedSheet.jsx',
   'components/planting/TransplantDatePrompt.jsx',
+  // V5-BATCHCLOSEOUT-001 — a DELIBERATE addition, and the first <Sheet> under components/putup/.
+  // The two shipped affordances on the Going-now card (SetStartDate, PhReadingField) expand INLINE
+  // precisely to avoid a dismissable layer, and that reasoning still holds for them: they are
+  // one-tap, single-datum, check-in posture. Closing a batch is not — it is a six-way terminal
+  // choice plus a note, a cue and a multi-select jar picker, which measurably does not fit a card at
+  // 390px with the keyboard open. That is the same desk-vs-hands-wet posture split StorageField
+  // already makes with `manageable`. It renders the shared <Sheet>, so the registered role="dialog"
+  // surface is Sheet's and no DIALOG_SURFACES entry is owed. `busy={saving}` blocks dismissal while
+  // the POST is in flight — V4-SHEETBUSY-001 applied at mint time, and load-bearing here because
+  // close is NOT idempotent: a second POST returns 409, so a backdrop tap mid-write would discard
+  // the surface over a write that may already have committed.
+  'components/putup/BatchCloseField.jsx',
   'components/today/CareNeeded.jsx',
   'pages/AddSeeds.jsx',
   'pages/EventDetail.jsx',

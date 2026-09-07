@@ -21,10 +21,12 @@ import {
   KITCHEN_OUTCOMES,
   KITCHEN_STAGE_KINDS, KITCHEN_INPUT_KINDS, KITCHEN_QTY_UNITS,
   KITCHEN_BATCH_EDITABLE_COLUMNS, KITCHEN_BATCH_SERVER_OWNED_COLUMNS,
+  KITCHEN_BATCH_CLOSE_COLUMNS, KITCHEN_PREDICATE_MAX_SPAN_DAYS,
   STAGE_LOG_ORDER, INPUT_ORDER, BATCH_LIST_ORDER,
   parseKitchenRoute, parseBatchState, normalizeText, batchUpdatePatch,
   validateBatchCreate, validateBatchUpdate, validateStage, validateInputPayload,
   normalizeInputRows, harvestIdsIn, validateClose, outputIdsIn, kitchenErrorMessage,
+  validateOutputsPayload, outputLogIdsIn, predicateSpanDays,
 } from './kitchenBatch.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -97,7 +99,7 @@ describe('every CHECK this schema ships has words a cook can act on', () => {
 describe('parseKitchenRoute — the route table, executed', () => {
   // Mutation: swap the `sub === 'stages'` and `sub === 'inputs'` arms. The collection/batch cases stay
   // green, which is why every shape is asserted rather than a representative one.
-  it('matches the six shapes and nothing else', () => {
+  it('matches the nine shapes and nothing else', () => {
     expect(parseKitchenRoute('/api/kitchen-batches')).toEqual({ kind: 'collection' });
     expect(parseKitchenRoute('/api/kitchen-batches/B1')).toEqual({ kind: 'batch', id: 'B1' });
     expect(parseKitchenRoute('/api/kitchen-batches/B1/stages')).toEqual({ kind: 'stages', id: 'B1' });
@@ -105,6 +107,35 @@ describe('parseKitchenRoute — the route table, executed', () => {
     expect(parseKitchenRoute('/api/kitchen-batches/B1/inputs/I9'))
       .toEqual({ kind: 'input', id: 'B1', inputId: 'I9' });
     expect(parseKitchenRoute('/api/kitchen-batches/B1/close')).toEqual({ kind: 'close', id: 'B1' });
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/reopen')).toEqual({ kind: 'reopen', id: 'B1' });
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/outputs')).toEqual({ kind: 'outputs', id: 'B1' });
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/outputs/J7'))
+      .toEqual({ kind: 'output', id: 'B1', outputId: 'J7' });
+  });
+
+  // ⚠ THE GUARD clientRouteLambdaContract.test.js STRUCTURALLY CANNOT BE. That file registers this
+  // module's ONE catch-all regex as a pattern, and the regex absorbs any 1-to-3-segment path — so a
+  // client typo (`/closed`, `/finish`, `/reopn`, `/output`) renders as a dynamic segment, MATCHES,
+  // and passes GREEN while parseKitchenRoute returns null and the route 404s at runtime. It is also
+  // path-only, never method, so a verb mistake ships green and surfaces as a silent 405. These are
+  // the exact literals the client builds; asserting them here is the only place a misspelling reds.
+  // Mutation: rename the 'reopen' arm to 'reopened' — this reds and nothing else in the repo does.
+  it.each([
+    ['close', 'close'], ['reopen', 'reopen'], ['outputs', 'outputs'],
+  ])('binds the literal client sub-path /%s to kind %s', (segment, kind) => {
+    expect(parseKitchenRoute(`/api/kitchen-batches/B1/${segment}`)).toEqual({ kind, id: 'B1' });
+  });
+
+  it('returns null for the near-miss spellings a client typo produces', () => {
+    // The positive control is the assertion above: the same shapes with the right spelling DO parse,
+    // so this absence is about the literal and not about a matcher that stopped matching anything.
+    for (const p of ['closed', 'finish', 'reopn', 're-open', 'output', 'outputs2']) {
+      expect(parseKitchenRoute(`/api/kitchen-batches/B1/${p}`), p).toBeNull();
+    }
+    // A tail is meaningful for `outputs` and meaningless for `reopen`/`close` — asserted rather than
+    // assumed, because the regex admits a third segment on every sub-path.
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/reopen/x')).toBeNull();
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/close/x')).toBeNull();
   });
 
   it('returns null for every path that is not ours', () => {
@@ -631,6 +662,135 @@ describe('the predicate window — fixed zoneless local date literals, both boun
   });
 });
 
+// ⚠ THE SPAN CAP. Not a performance bound — a 1,212-row INSERT..SELECT is nothing to Postgres. It is
+// a REPAIRABILITY bound: the undo is DELETE per row, and the predicate form discards its RETURNING
+// ids so even a targeted undo needs a full before/after GET diff over the whole payload.
+describe('the predicate span cap — both bounds, never one', () => {
+  const ok = (p) => validateInputPayload({ predicate: p });
+
+  it('counts an inclusive calendar span, so from == to is one day', () => {
+    // Mutation (K7 variant): drop the `+ 1`. Every cap assertion below shifts by a day and the
+    // single-day case reports 0, which no window can be.
+    expect(predicateSpanDays({ from: '2026-08-01', to: '2026-08-01' })).toBe(1);
+    expect(predicateSpanDays({ from: '2026-08-01', to: '2026-08-02' })).toBe(2);
+    // Across a DST transition in ET and across a leap day — both parsed as UTC midnights, so neither
+    // can lose or gain an hour and round to the wrong day.
+    expect(predicateSpanDays({ from: '2026-03-07', to: '2026-03-09' })).toBe(3);
+    expect(predicateSpanDays({ from: '2024-02-28', to: '2024-03-01' })).toBe(3);
+  });
+
+  it('accepts a window exactly at the cap and refuses the next day', () => {
+    // A single-value test here is vacuous — "366 days is rejected" is satisfied by a cap of 1. The
+    // PAIR is what pins the boundary to the number the constant names.
+    // Mutation (K7): raise KITCHEN_PREDICATE_MAX_SPAN_DAYS by one — the second arm reds. Lower it by
+    // one — the first arm reds.
+    expect(predicateSpanDays({ from: '2026-01-01', to: '2027-01-01' }))
+      .toBe(KITCHEN_PREDICATE_MAX_SPAN_DAYS);
+    expect(ok({ from: '2026-01-01', to: '2027-01-01' })).toBeNull();
+    expect(ok({ from: '2026-01-01', to: '2027-01-02' }))
+      .toBe('that window covers 367 days — a bulk add takes at most 366, so narrow it or add the picks in two passes');
+  });
+
+  it('leaves a full grow season inside the cap — the one window control the client ships', () => {
+    // HarvestTimeframeChips' season chip spans a Nov-Oct grow year. A cap that rejected it would
+    // break the only window selector the design ships, so the number is not free to be tightened
+    // without replacing that control.
+    expect(ok({ from: '2025-11-01', to: '2026-10-31' })).toBeNull();
+  });
+
+  it('refuses the unbounded window that inserts every household harvest in one tap', () => {
+    // MEASURED against live prod 2026-09-04: 1,212 rows, one tap, and no bulk-remove route exists.
+    expect(ok({ from: '2000-01-01', to: '2099-12-31' })).toContain('a bulk add takes at most 366');
+  });
+
+  it('checks the SHAPE before the span, so a malformed date reports the malformed date', () => {
+    // Mutation: move the span check above the DATE_RE tests. NaN > cap is false, so a garbage `to`
+    // would sail past the cap and then report a date error anyway — but a garbage `from` with a real
+    // `to` would report the cap message, naming the wrong problem.
+    expect(ok({ from: 'yesterday', to: '2099-12-31' })).toBe('predicate.from must be a YYYY-MM-DD date');
+  });
+});
+
+describe('the preview flag belongs to the predicate form and is a strict boolean', () => {
+  const W = { from: '2026-08-01', to: '2026-09-04' };
+
+  it('accepts true and false on the predicate form', () => {
+    expect(validateInputPayload({ predicate: W, preview: true })).toBeNull();
+    expect(validateInputPayload({ predicate: W, preview: false })).toBeNull();
+    // The control: an absent flag is still valid, so the assertions below are about the VALUE.
+    expect(validateInputPayload({ predicate: W })).toBeNull();
+  });
+
+  it('refuses a preview on the explicit form, which has nothing to resolve', () => {
+    expect(validateInputPayload({
+      inputs: [{ input_kind: 'pantry', label: 'Salt' }], preview: true,
+    })).toBe('preview only applies to the predicate form');
+  });
+
+  it('refuses a truthy non-boolean rather than dry-running a write that commits', () => {
+    // The is_byproduct lesson one field over — "true" must never read as true. Here the failure
+    // direction is worse: a client believes it previewed, and 139 rows landed.
+    // Mutation: relax to `Boolean(body.preview)`. Both arms below go green and the route commits on
+    // a body that asked for a dry run.
+    for (const v of ['true', 1, 'yes', {}]) {
+      expect(validateInputPayload({ predicate: W, preview: v }), String(v))
+        .toBe('preview must be true or false');
+    }
+  });
+});
+
+describe('validateOutputsPayload — linking jars without closing the batch', () => {
+  const A = '11111111-1111-1111-1111-111111111111';
+  const B = '22222222-2222-2222-2222-222222222222';
+
+  it('accepts a non-empty list of uuids', () => {
+    expect(validateOutputsPayload({ preservation_log_ids: [A, B] })).toBeNull();
+  });
+
+  it('refuses a body with nothing to link', () => {
+    // An empty array is legal on CLOSE (a close that links nothing is the abandoned case) and is
+    // meaningless here: this route exists only to link. Distinct messages so the client can tell a
+    // missing key from an empty selection.
+    expect(validateOutputsPayload({})).toBe('preservation_log_ids must be an array');
+    expect(validateOutputsPayload({ preservation_log_ids: [] }))
+      .toBe('preservation_log_ids must be a non-empty array');
+    expect(validateOutputsPayload({ preservation_log_ids: 'abc' }))
+      .toBe('preservation_log_ids must be an array');
+    expect(validateOutputsPayload({ preservation_log_ids: [A, 'jar-2'] }))
+      .toBe('preservation_log_ids must all be uuids');
+    expect(validateOutputsPayload(null)).toBe('body required');
+    expect(validateOutputsPayload([A])).toBe('body required');
+  });
+
+  it('dedupes, matching outputIdsIn — one jar named twice asked for one link', () => {
+    expect(outputLogIdsIn({ preservation_log_ids: [A, A, B] })).toEqual([A, B]);
+    expect(outputLogIdsIn({})).toEqual([]);
+  });
+});
+
+// ⚠ THE REVERSIBILITY CONTRACT, at the constant. The statement-level half — close writes exactly this
+// set, reopen NULLs exactly this set — lives in kitchenRoutes.test.js, which is where the SQL is.
+describe('KITCHEN_BATCH_CLOSE_COLUMNS', () => {
+  it('is exactly the three columns a close records', () => {
+    expect(KITCHEN_BATCH_CLOSE_COLUMNS).toEqual(['closed_at', 'outcome', 'outcome_note']);
+  });
+
+  it('is a strict subset of the server-owned set, so no client can write one', () => {
+    // If a close column ever became client-writable the PUT would be a second, ungated closer.
+    for (const c of KITCHEN_BATCH_CLOSE_COLUMNS) {
+      expect(KITCHEN_BATCH_SERVER_OWNED_COLUMNS, c).toContain(c);
+      expect(KITCHEN_BATCH_EDITABLE_COLUMNS, c).not.toContain(c);
+    }
+  });
+
+  it('does NOT contain suspended_at, which close writes and reopen deliberately does not restore', () => {
+    // The positive control: suspended_at IS editable, so the pause is re-settable with one PUT —
+    // which is the reason losing it through a close is acceptable rather than merely unavoidable.
+    expect(KITCHEN_BATCH_CLOSE_COLUMNS).not.toContain('suspended_at');
+    expect(KITCHEN_BATCH_EDITABLE_COLUMNS).toContain('suspended_at');
+  });
+});
+
 describe('normalizeInputRows — a re-run of the same request is a no-op, honestly reported', () => {
   const A = '11111111-1111-1111-1111-111111111111';
   const B = '22222222-2222-2222-2222-222222222222';
@@ -700,6 +860,16 @@ describe('validateClose — closed_at and outcome are inseparable', () => {
     const A = '11111111-1111-1111-1111-111111111111';
     expect(outputIdsIn({ output_preservation_log_ids: [A, A] })).toEqual([A]);
     expect(outputIdsIn({})).toEqual([]);
+  });
+
+  // cue_observed rides on the close body and is NOT validated, deliberately: free text, never a
+  // picklist, never range-checked, never read back into a decision. Validating it — a length cap, a
+  // vocabulary, anything — is the first step to it becoming an assessment rather than a record.
+  it('accepts any cue_observed, including none, and never rejects one', () => {
+    expect(validateClose({ outcome: 'put_up', cue_observed: 'snapped clean' })).toBeNull();
+    expect(validateClose({ outcome: 'put_up', cue_observed: '   ' })).toBeNull();
+    expect(validateClose({ outcome: 'put_up', cue_observed: 'x'.repeat(5000) })).toBeNull();
+    expect(validateClose({ outcome: 'put_up' })).toBeNull();
   });
 });
 

@@ -18,7 +18,18 @@
 // exact failure the preserved_at_approx COALESCE at index.js:597-604 was written to prevent, and the
 // same one the source_kind deviation documents at length.
 //
-// batch_id is set ONCE, by POST /api/kitchen-batches/:id/close, which is the only writer.
+// batch_id is written by THREE server-side statements, all of them in kitchenRoutes.js: the close
+// route's `linked` CTE, POST /:id/outputs, and DELETE /:id/outputs/:plid. It was one until
+// V5-KBBATCHCLOSE, and the change is deliberate rather than a relaxation: close being the ONLY writer
+// meant a jar could not be linked to a batch without ENDING the batch, which makes the commonest real
+// event in both of Dave's processes — a partial draw-off from a batch that keeps going —
+// unrepresentable. What did NOT change, and is what this file actually guards, is that every writer
+// is SERVER-SIDE and none of them is reachable through the full-replace PUT.
+//
+// It is also now READABLE: projectRow returns it (BUG-JARSTEAL-001 — a picker that cannot see
+// batch_id cannot tell a linked jar from an unlinked one, and a close that re-points another batch's
+// jar is undetectable by any client). Readable is not writable, and the assertions below are about
+// the write path only.
 //
 // LANE: the root `npm test` run (vitest run --coverage), which is blocking.
 import { describe, it, expect } from 'vitest';
@@ -54,12 +65,33 @@ describe('preservation_log.batch_id is not client-writable, and that is delibera
     expect(PRESERVATION_EDITABLE_COLUMNS).not.toContain('batch_id');
   });
 
-  it('is written by the batch close-out route and by nothing else in this Lambda', () => {
+  it('is written by three named kitchen-batch statements and by nothing else in this Lambda', () => {
     // The other half of the claim. "Absent from the editable set" would be an argument for deleting
-    // the column entirely if nothing wrote it; the point is that ONE server-side route does.
-    // Mutation: delete the `SET batch_id = c.id` line in kitchenRoutes.js closeBatch.
-    expect(KITCHEN).toContain('SET batch_id = c.id');
-    expect((KITCHEN.match(/batch_id = c\.id/g) ?? [])).toHaveLength(1);
+    // the column entirely if nothing wrote it; the point is that a bounded, named, server-side set of
+    // routes does. Enumerated rather than counted at 1, because the count changed for a reason and a
+    // bare number would have to be re-pinned by whoever changes it next without saying which writer.
+    // Mutation: delete the `SET batch_id = c.id` line in closeBatch — the first arm reds. Add a
+    // fourth writer anywhere in this Lambda — the last arm reds.
+    expect(KITCHEN).toContain('SET batch_id = c.id');                 // close, the `linked` CTE
+    expect(KITCHEN).toContain('SET batch_id = ${batchId}::uuid');     // POST /:id/outputs
+    expect(KITCHEN).toContain('SET batch_id = NULL');                 // DELETE /:id/outputs/:plid
+    expect((KITCHEN.match(/\bSET batch_id\b/g) ?? [])).toHaveLength(3);
+    // index.js writes it NOWHERE — the assertion below covers the INSERT and the full-replace PUT
+    // specifically; this covers every other statement in that file at once.
+    expect((INDEX.match(/\bbatch_id\s*=/g) ?? [])).toEqual([]);
+  });
+
+  it('IS readable through projectRow, which is what makes the link observable at all', () => {
+    // BUG-JARSTEAL-001's other half. projectRow is the ONLY projection for all four preservation GET
+    // routes, so while batch_id was absent from it a linked jar was indistinguishable from an
+    // unlinked one on every read surface — the jar picker could not grey it and a silent re-point was
+    // undetectable. Readable, never writable: the assertion above holds the write side.
+    // Mutation: delete the batch_id line from projectRow.
+    const at = INDEX.indexOf('function projectRow(r) {');
+    expect(at).toBeGreaterThan(-1);
+    const block = INDEX.slice(at, INDEX.indexOf('use_by_status:', at));
+    expect(block.length).toBeGreaterThan(200);
+    expect(block).toContain('batch_id: r.batch_id');
   });
 
   it('never appears in the full-replace PUT or the INSERT in index.js', () => {

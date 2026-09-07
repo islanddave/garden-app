@@ -22,7 +22,7 @@
 // never scored, never coloured, never compared to anything, never counted, and never gates anything.
 // The reasoning, and the reversal's audit trail, are at the top of ./goingNow.js and ./PhReadingField.jsx.
 import React, { useState, useMemo, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -31,6 +31,7 @@ import {
   partitionGoing, describeAge, describeStage, describeExpectedWindow, startPromptState,
   submersionPrompt, START_CHIPS, startChipPatch, pickedDatePatch, startPatchViolatesPairing,
   phPrompt, describeLastPhReading, phRecorderVisible,
+  PAUSE_CTA, RESUME_CTA, OPEN_BATCH_CTA, CLOSED_DOOR_CTA, pausePatch,
 } from './goingNow.js'
 import PhReadingField from './PhReadingField.jsx'
 
@@ -129,11 +130,58 @@ function SetStartDate({ batch, fetch, onChanged }) {
   )
 }
 
+// ── pause / pick back up ─────────────────────────────────────────────────────────────────────────
+// A one-tap MERGE PUT on suspended_at, the card's only write that is not an expand-then-save. No
+// confirm: it is reversible by the same control it was taken with, and a confirm on a reversible act
+// is the tax that teaches people to stop reading confirms. Same ink, type size and tap floor as the
+// two inline expanders — it is an ordinary line on the card, not a destructive one, because pausing
+// is a DIFFERENT ANSWER and not a worse one (see the dashed edge above).
+function PauseToggle({ batch, nowMs, fetch, onChanged, paused }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const toggle = useCallback(async () => {
+    const patch = pausePatch(paused, nowMs)
+    if (!patch) { setErr("Couldn't save that — try again."); return }
+    setBusy(true); setErr(null)
+    try {
+      await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(patch) })
+      onChanged?.()
+    } catch {
+      // The row stays exactly as it was and says so. There is no offline queue in this app and none
+      // is possible (apiFetch needs a Clerk bearer minted by a React hook), so a clear failure is the
+      // honest answer — but it must not also discard the state the user was looking at.
+      setErr("Couldn't save that — try again.")
+    } finally { setBusy(false) }
+  }, [batch.id, fetch, nowMs, onChanged, paused])
+
+  return (
+    <>
+      <button type="button" data-testid="going-pause" disabled={busy} onClick={toggle}
+        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+          background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: busy ? 'default' : 'pointer',
+          fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
+        {paused ? RESUME_CTA : PAUSE_CTA}
+      </button>
+      {/* P.terra is the house ERROR ink and this is a role="alert" string, which is the one permitted
+          use of it on this surface (GoingNowView.jsx:93 already does exactly this inside the start
+          editor). data-alarm-ink-exempt marks it for the card-scoped alarm-ink sweep, which is about
+          the card BODY never reddening for a batch that is fine — not about forbidding an error to
+          look like an error. The attribute is explicit and per-element, so the carve-out cannot widen
+          by accident: anything unmarked is still swept. */}
+      {err && (
+        <div role="alert" data-alarm-ink-exempt="error" data-testid="going-pause-error"
+          style={{ color: P.terra, fontSize: '0.78rem', marginTop: 4 }}>{err}</div>
+      )}
+    </>
+  )
+}
+
 // ── one batch ────────────────────────────────────────────────────────────────────────────────────
 // Leads with WHAT IS KNOWN, never with the gap. The meta line is one joined string on purpose: it is
 // the thing a test can assert as a full literal with both bounds and every separator, which is the
 // standard this repo adopted after shipping an assertion that passes on a value ten days wrong.
-function BatchCard({ batch, nowMs, fetch, onChanged, paused }) {
+function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
   const age = describeAge(batch, nowMs)
   const stage = describeStage(batch, nowMs)
   const window = describeExpectedWindow(batch)
@@ -214,6 +262,23 @@ function BatchCard({ batch, nowMs, fetch, onChanged, paused }) {
       {phRecorderVisible(batch) && (
         <PhReadingField batch={batch} fetch={fetch} onChanged={onChanged} nowMs={nowMs} />
       )}
+      {/* THE ONE EXPLICIT DOOR to the batch's own surface, and the card itself deliberately stays
+          INERT. The card holds up to nine interactive descendants — six start chips, a date input,
+          three buttons in the start editor, the pH recorder — with zero propagation guards, so a
+          whole-card tap handler would make every one of them do two things, and wrapping the card in
+          a <button> is invalid nesting. On a 390px screen with wet hands a stray tap on the chrome
+          beside a chip would navigate away mid-edit. Worse, useNavigate is a no-op spy in every test
+          that renders this file, so NOT ONE of the 112 shipped tests could have caught that
+          regression. So: one labelled affordance in the card's action slot, a SIBLING of the two
+          inline expanders rather than their ancestor — the shipped "Set parent plant →" pattern this
+          card already cites, same ink, same type size, same tap floor. */}
+      <button type="button" data-testid="going-open-batch" onClick={() => onOpen?.(batch.id)}
+        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+          background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
+          fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
+        {OPEN_BATCH_CTA}
+      </button>
+      <PauseToggle batch={batch} nowMs={nowMs} fetch={fetch} onChanged={onChanged} paused={paused} />
     </div>
   )
 }
@@ -230,6 +295,49 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
   const { active, paused } = useMemo(() => partitionGoing(batches), [batches])
   const empty = !loading && !error && active.length === 0 && paused.length === 0
 
+  // The two doors, collapsed ONCE here for the same reason nowMs is: every card writes the mode
+  // through the same callback, so no card can disagree with its sibling about what "open" means.
+  //
+  // A SEARCH PARAM ON THIS SAME ROUTE, never a child route — /put-up is overlayable and the overlay
+  // tree has no catch-all, so a child route renders a blank screen on a dead tap when PutUp was
+  // opened as a flyover. A param leaves the route match alone: the page never unmounts, the segment
+  // survives, and Back pops the param. The other keys are preserved rather than replaced so ?session=
+  // and anything a future door adds ride through untouched.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const openBatch = useCallback((id) => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('state'); next.set('batch', id)
+    setSearchParams(next)
+  }, [searchParams, setSearchParams])
+  const openClosed = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('batch'); next.set('state', 'closed')
+    setSearchParams(next)
+  }, [searchParams, setSearchParams])
+
+  // THE DOOR TO THE CLOSED LIST, rendered inside the empty block when the list is empty and above
+  // "Start a batch" when it is not. Exactly one instance either way.
+  //
+  // Placement is the whole finding: the state in which a user hunts a six-week-old batch is the state
+  // that currently hides the door — a doorway behind a segment whose own empty state reads "Nothing
+  // going right now." has INVERTED scent, and the bare-open promote does not even select this segment
+  // when the going list is empty. Above "Start a batch" rather than below it, deliberately: the
+  // bottom-placement ruling for that button is asserted as literal last-child, and moving it would
+  // red a test about something else entirely.
+  //
+  // Labelled with its object, not as the bare adjective "Closed" — that predicts nothing about its
+  // destination. NOT "Finished batches", which the seat proposed: `finished` is a live, re-enterable
+  // stage_kind on this very card (a tended row legitimately follows a finished one), so a list of
+  // CLOSED batches under that word would exclude batches the user would read as finished.
+  const closedDoor = (
+    <button type="button" data-testid="going-closed-door" onClick={openClosed}
+      style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+        background: 'none', border: 'none', padding: '2px 8px 2px 0', marginTop: T.space.sm,
+        cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
+      {CLOSED_DOOR_CTA}
+    </button>
+  )
+
   return (
     <div data-testid="going-now-view">
       {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
@@ -242,11 +350,12 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
           <div style={{ fontSize: '0.85rem', color: P.light }}>
             A ferment, a dehydrator run, a pot of syrup — start one and it&rsquo;ll wait for you here.
           </div>
+          {closedDoor}
         </div>
       )}
 
       {active.map(b => (
-        <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} />
+        <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch} />
       ))}
 
       {paused.length > 0 && (
@@ -257,10 +366,12 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
             Paused
           </h2>
           {paused.map(b => (
-            <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} paused />
+            <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch} paused />
           ))}
         </>
       )}
+
+      {!empty && closedDoor}
 
       {/* Start a batch. Deliberately at the BOTTOM, deliberately not a floating button, deliberately
           not in the header row and deliberately not in the ＋ sheet — that sheet has a hard 4-cap
