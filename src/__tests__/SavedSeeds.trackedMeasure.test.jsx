@@ -225,3 +225,52 @@ describe('lotMeasure — the pure rule, asserted without a render', () => {
     expect(lotMeasure({ seed_count: 25, seed_count_estimated: true })).toBe('approx. 25 seeds')
   })
 })
+
+/**
+ * THE CEILING, and the one number a layout gate elsewhere is calibrated against.
+ *
+ * `lot-seed-measure` sets no `white-space`, so an over-long value does not clip — it WRAPS and the
+ * card grows under it. scripts/layout-gate/seeds-saved-clearance.mjs therefore bounds the line at
+ * MEASURE_MAX_LINES = 2, and 2 is not a taste call: it is what the string below measures to in real
+ * Chrome (255.4px of ink in the 230.4px column a card shares with its advance button, at 390px).
+ * That derivation is only sound while THIS is still the widest string the columns can produce.
+ *
+ * These assertions cannot see a pixel — jsdom returns 0 from every getBoundingClientRect() and this
+ * whole file is green at a 0x0 viewport. They are the cheap, seconds-not-minutes half: if a
+ * formatter change makes the ceiling string longer, this reds and NAMES the cause, before the gate
+ * reds in pixels at a fixture row and leaves you to find it.
+ */
+describe('lotMeasure — the widest string inventory_items can produce', () => {
+  // integer, CHECK (seed_count >= 0) -> 0..2147483647, printed by formatQty with no separators.
+  const MAX_COUNT = 2147483647
+  // numeric(10,3) tops out at 9999999.999, but formatSeedWeight rounds to 2dp and strips trailing
+  // zeros, so .999 renders as the SHORTER "10000000 g". The widest RENDERED weight is not the
+  // widest STORED one, which is the sort of thing only spelling it out catches.
+  const WIDEST_WEIGHT = '9999999.990'
+
+  it('is 39 characters, and this exact string', () => {
+    expect(lotMeasure({ seed_count: MAX_COUNT, seed_count_estimated: true, seed_weight_g: WIDEST_WEIGHT }))
+      .toBe('approx. 2147483647 seeds · 9999999.99 g')
+    expect('approx. 2147483647 seeds · 9999999.99 g'.length).toBe(39)
+  })
+
+  it('is not beaten by the column maximum, because that value rounds shorter', () => {
+    const atStoredMax = lotMeasure({ seed_count: MAX_COUNT, seed_count_estimated: true, seed_weight_g: '9999999.999' })
+    expect(atStoredMax).toBe('approx. 2147483647 seeds · 10000000 g')
+    expect(atStoredMax.length).toBeLessThan(39)
+  })
+
+  it('is not beaten by anything else the columns can hold', () => {
+    // Every shape the two columns and the flag can take, at their own extremes. None may exceed the
+    // ceiling — if one does, the gate's budget was derived against the wrong string.
+    const others = [
+      { seed_count: MAX_COUNT, seed_count_estimated: false, seed_weight_g: WIDEST_WEIGHT },
+      { seed_count: MAX_COUNT, seed_count_estimated: true },
+      { seed_weight_g: WIDEST_WEIGHT },
+      { seed_count: 0, seed_count_estimated: true, seed_weight_g: '0.000' },
+      // The mg branch: under a decigram formatSeedWeight switches unit, and 99 mg is its longest.
+      { seed_count: MAX_COUNT, seed_count_estimated: true, seed_weight_g: '0.099' },
+    ]
+    for (const row of others) expect(lotMeasure(row).length).toBeLessThanOrEqual(39)
+  })
+})

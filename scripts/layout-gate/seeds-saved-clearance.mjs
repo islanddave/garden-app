@@ -13,10 +13,10 @@
 //   (b) CARD INTEGRITY — no seed-lot card overflows its own box horizontally or vertically, its
 //       text column does not clip its content, and the advance button's rect does not intersect
 //       that column. Plus: the document does not scroll sideways. V5-SEEDCOUNTCARD-001 added the
-//       seed-measure line to that column, so it gets its own box read: clipping, viewport fit,
-//       visibility by checkVisibility(), and non-intersection with the advance button. HOW MANY
-//       cards carry it is asserted EXACTLY, like the card and section counts and for the same
-//       reason — see the fixture note under SCOPE.
+//       seed-measure line to that column, so it gets its own box read: LINE-BOX COUNT against a
+//       measured budget, clipping, viewport fit, visibility by checkVisibility(), and
+//       non-intersection with the advance button. HOW MANY cards carry it is asserted EXACTLY, like
+//       the card and section counts and for the same reason — see the fixture note under SCOPE.
 //   (c) ACTION CLEARANCE — in the two sheet states, the primary action hit-tests to itself, sits
 //       inside the 390px viewport, and is reachable: either painted within the panel or inside a
 //       panel that genuinely scrolls. A Save that is clipped out of a non-scrolling panel is
@@ -46,11 +46,23 @@
 // report beside a green exit is still a green exit.
 //
 // The fixture now carries three measured lots and one deliberately unmeasured one ("121 seeds ·
-// 1.6 g", no line, "approx. 7000 seeds · 12.5 g", "185 seeds"), so the checks in (b) read a real box
-// on every populated case, and `measureLines` is an EXACT per-case expectation below. Drop those
-// columns again and this gate goes RED rather than back to reporting its own blindness. The
-// unmeasured lot is not slack: it keeps a card WITHOUT the line on screen, so a regression that
-// renders it unconditionally has something to fail against.
+// 1.6 g", no line, "approx. 2147483647 seeds · 9999999.99 g", "185 seeds"), so the checks in (b)
+// read a real box on every populated case, and `measureLines` is an EXACT per-case expectation
+// below. Drop those columns again and this gate goes RED rather than back to reporting its own
+// blindness. The unmeasured lot is not slack: it keeps a card WITHOUT the line on screen, so a
+// regression that renders it unconditionally has something to fail against.
+//
+// AND THE HOLE INSIDE THAT FIX, closed 2026-09-07. The four box checks read like overflow guards
+// and only one of them was: `lot-seed-measure` sets no `white-space`, so an over-long value does not
+// clip — it WRAPS and the card grows under it. `clips` (scrollWidth > clientWidth) therefore cannot
+// fire for any value the columns can hold, and the card has no fixed height or overflow:hidden, so
+// `overflowY` cannot either. A string long enough to need two lines simply made the card 15px taller
+// and passed. So the gate now counts LINE BOXES on that element and asserts them against
+// MEASURE_MAX_LINES, derived from the widest string the two columns can produce; and the fixture's
+// i3 carries that exact ceiling, so the bound is measured at its boundary rather than a line short
+// of it. `clips` is kept and re-scoped in place: it guards an unbreakable token and a future
+// nowrap/ellipsis. It was a guard for a change nobody has made; `lines` is the guard for what the
+// page does today.
 //
 // THE INSTRUMENT CHECK, and why it is not optional. A layout gate that measures nothing scores a
 // perfect pass — every "all targets clear the floor" is trivially true of a page with no targets.
@@ -83,6 +95,23 @@ import { resolveWebSocket } from './cdp-socket.mjs'
 // Read from the token, never spelled here: a gate carrying its own copy of the floor is a gate that
 // keeps passing after someone lowers the real one.
 const TAP_MIN_HEIGHT_PX = T.tapMinHeight
+
+// The seed-measure line's line-box budget, DERIVED BY MEASUREMENT and not a taste call.
+// `inventory_items.seed_count` is `integer` (CHECK >= 0, so 0..2147483647) and `seed_weight_g` is
+// `numeric(10,3)` (0..9999999.999); with seed_count_estimated true the widest string the two can
+// produce through seedCountLabel/formatSeedWeight is "approx. 2147483647 seeds · 9999999.99 g" —
+// 39 characters, 255.4px of ink, which does not fit the 230.4px column a card shares with its
+// advance button and lands on exactly TWO line boxes at 390px (measured, both 844 and 667). So 2 is
+// the ceiling of the DATA, and the fixture carries that exact row so the bound is exercised at its
+// boundary rather than with a line of slack.
+//
+// WHEN THIS FIRES, the string got wider than the columns can make it, which means something other
+// than the data changed — the formatter (a thousands separator, a longer unit), the font or its
+// size, the column's width (a wider advance button, a new control in the row), or the DB column's
+// TYPE. Every one of those is a layout decision worth taking deliberately. Raising this number is
+// that decision, and it is only honest after re-measuring the new ceiling; bumping it to whatever
+// the run just printed converts the guard into a record of the regression.
+const MEASURE_MAX_LINES = 2
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5316)
@@ -234,6 +263,25 @@ const MEASURE = (c) => `(() => {
   // checkVisibility(), not offsetParent: a collapsed <details> or a zero-opacity ancestor reports a
   // parent and reads as visible through offsetParent.
   const shown = el => (!el.checkVisibility || el.checkVisibility()) && el.getBoundingClientRect().height > 0
+  // HOW MANY LINES a block of text actually occupies, and how wide its ink is — both read from a
+  // Range over the live contents, which hands back one rect PER LINE BOX. No clone, no style
+  // mutation, no off-screen copy: a gate that edits the document to measure it is a gate measuring
+  // its own instrument. Counted by distinct rounded top rather than by rect count, so a future
+  // nested <span> on the line does not read as an extra line; and by line COUNT rather than by
+  // pixel height, which would be a frozen number the next font or line-height change invalidates.
+  const lineRects = el => {
+    const rg = d.createRange(); rg.selectNodeContents(el)
+    return [...rg.getClientRects()].filter(r => r.width > 0.5 && r.height > 0.5)
+  }
+  const lineBoxes = el => new Set(lineRects(el).map(r => Math.round(r.top))).size
+  // The widest line box: the whole string's width while it still fits on one line — so column width
+  // minus this IS the headroom — and merely the longest of the wrapped lines once it does not (the
+  // ceiling string measures 255.4px unwrapped and reports 167px as two lines). Read it WITH lines,
+  // never alone: a shrinking number can mean either more room or less.
+  const textWidth = el => {
+    const rs = lineRects(el)
+    return rs.length ? Math.round(Math.max(...rs.map(r => r.width)) * 10) / 10 : 0
+  }
   const hitsSelf = (el, r) => {
     const x = (r.l + r.r) / 2, y = (r.t + r.b) / 2
     if (x < 0 || y < 0 || x > w.innerWidth || y > w.innerHeight) return null  // never probed != not occluded
@@ -276,7 +324,20 @@ const MEASURE = (c) => `(() => {
       measure: meas ? {
         text: (meas.textContent || '').trim().replace(/\\s+/g, ' '),
         w: mr.w, h: mr.h,
+        // WRAP is what this line actually does, and these two are what make it observable. The
+        // element sets no white-space, so an over-long value never overflows — it takes another
+        // line and the card grows under it, silently. \`lines\` is the assertion's input; \`textW\`
+        // is the headroom while it is still 1 (column width minus ink).
+        lines: lineBoxes(meas),
+        textW: textWidth(meas),
         shown: shown(meas),
+        // KEPT, and narrower than it looks. On a WRAPPING element scrollWidth can only exceed
+        // clientWidth when a single unbreakable token is wider than the column — and every token
+        // this line can emit is short ("2147483647", "9999999.99", "approx.", "seeds", "g"), so no
+        // value seed_count/seed_weight_g can hold will ever trip it. It guards two other things:
+        // an unbreakable token arriving from somewhere new, and a future white-space:nowrap or
+        // text-overflow:ellipsis, under which it becomes the primary check and \`lines\` the
+        // reported one. Today's overflow guard is \`lines\`, below.
         clips: meas.scrollWidth > meas.clientWidth + 1,
         fitsX: mr.l >= -0.5 && mr.r <= w.innerWidth + 0.5,
         overlapsAdvance: ar ? !(ar.l >= mr.r || ar.r <= mr.l || ar.t >= mr.b || ar.b <= mr.t) : false,
@@ -396,6 +457,12 @@ try {
       if (!e.sheet && m.counts.candidates) mismatch.push(`${m.counts.candidates} candidates on a case with no picker open`)
       if (e.advanceBtns != null && m.counts.advanceBtns !== e.advanceBtns) mismatch.push(`advance buttons ${m.counts.advanceBtns} != ${e.advanceBtns}`)
       if (m.counts.measureLines !== e.measureLines) mismatch.push(`seed-measure lines ${m.counts.measureLines} != ${e.measureLines} — the fixture's tracked rows stopped carrying seed_count/seed_weight_g, so the clearance checks below would read a card that has no such line and report a pass about nothing`)
+      // The same decay one level in. MEASURE_MAX_LINES is only a budget while something on screen
+      // actually reaches it: water i3's count back down to four digits and the bound below is
+      // satisfied by three one-line strings and proves nothing. Only the SHORT direction is checked
+      // here — over budget is a layout failure and has its own message, with the card height in it.
+      const maxMeasureLines = Math.max(0, ...m.cardMetrics.filter(cd => cd.measure).map(cd => cd.measure.lines))
+      if (e.measureLines > 0 && maxMeasureLines < MEASURE_MAX_LINES) mismatch.push(`the widest seed-measure line occupies ${maxMeasureLines} line box(es), short of the ${MEASURE_MAX_LINES} the budget is set at — the fixture stopped carrying the column-ceiling string ("approx. 2147483647 seeds · 9999999.99 g"), so the line-box bound below would be exercised by nothing`)
       if (m.counts.controls < e.minControls) mismatch.push(`${m.counts.controls} interactive controls, expected >=${e.minControls}`)
       if (m.emptyState !== e.emptyState) mismatch.push(`empty state ${m.emptyState}, expected ${e.emptyState}`)
       if (e.sheet && !m.sheet) mismatch.push('no [role="dialog"] — the sheet this case exists to measure never opened')
@@ -439,6 +506,9 @@ try {
         if (ms) {
           if (!ms.shown) fail(`${at}: card "${cd.label}": the seed-measure line "${ms.text}" is in the document but not visible — a rendered measurement nobody can read is the defect this line exists to fix, one layer down`)
           if (ms.clips) fail(`${at}: card "${cd.label}": the seed-measure line "${ms.text}" clips its own content — the count is on screen and cut off`)
+          // The guard for what this line ACTUALLY does when it runs out of room. See
+          // MEASURE_MAX_LINES for where 2 comes from and why bumping it is a decision.
+          if (ms.lines > MEASURE_MAX_LINES) fail(`${at}: card "${cd.label}": the seed-measure line "${ms.text}" wraps to ${ms.lines} line boxes, over the budget of ${MEASURE_MAX_LINES}, and the card is ${cd.h}px tall — it does not clip, it GROWS. The widest string seed_count/seed_weight_g can produce fits in ${MEASURE_MAX_LINES}, so this is the formatter, the font, or the column's width, not the data`)
           if (!ms.fitsX) fail(`${at}: card "${cd.label}": the seed-measure line sits outside the ${vw}px viewport`)
           if (ms.overlapsAdvance) fail(`${at}: card "${cd.label}": the seed-measure line's rect intersects the advance button`)
         }
@@ -472,7 +542,7 @@ try {
         // measureLines expectation above and the run stops at the mismatch, which is the point of
         // asserting a count that used to be reported.
         const withMeasure = m.cardMetrics.filter(cd => cd.measure)
-        console.log(`[seeds-saved] ${at}: seed-measure line on ${withMeasure.length}/${m.cardMetrics.length} card(s) · ${withMeasure.map(cd => `"${cd.measure.text}" ${cd.measure.w}x${cd.measure.h}`).join(' / ')} · clipped ${withMeasure.filter(cd => cd.measure.clips).length}`)
+        console.log(`[seeds-saved] ${at}: seed-measure line on ${withMeasure.length}/${m.cardMetrics.length} card(s) · ${withMeasure.map(cd => `"${cd.measure.text}" ${cd.measure.w}x${cd.measure.h} ink ${cd.measure.textW}px/${cd.measure.lines}L`).join(' / ')} · clipped ${withMeasure.filter(cd => cd.measure.clips).length} · max ${Math.max(0, ...withMeasure.map(cd => cd.measure.lines))}L of ${MEASURE_MAX_LINES}`)
       }
       if (m.sheet) {
         console.log(`[seeds-saved] ${at}: sheet y${m.sheet.top}-${m.sheet.bottom} h${m.sheet.height} · scrollable ${m.sheet.scrollable} (${m.sheet.hiddenBelowPx}px below the fold) · candidate list scroll ${m.sheet.candidateListScrollPx ?? '—'}px · narrowing control ${m.sheet.hasFilterControl ? 'present' : 'NONE'}`)
