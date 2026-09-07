@@ -122,7 +122,8 @@ function apiKeys(sqlText) {
 }
 
 // Read off live prod 2026-08-17: json_object_keys of an unscoped-list row, minus the stripped
-// storage path, plus the two substituted URL keys. 44 keys then; 46 since V4-SEEDGERMRATE-001.
+// storage path, plus the two substituted URL keys. 44 keys then; 46 since V4-SEEDGERMRATE-001;
+// 48 since BUG-SRCIDLEAK-001.
 const DEFAULT_KEYS = [
   'id', 'name', 'quantity', 'status', 'notes', 'project_id', 'variety_id',
   'source_inventory_item_id', 'metadata', 'featured_photo_id', 'featured_is_explicit',
@@ -136,6 +137,14 @@ const DEFAULT_KEYS = [
   // not — a tile shows no seed counts, and the "drops the wide-shape columns" test below is what
   // keeps that true.
   'seeds_sown', 'seeds_germinated',
+  // BUG-SRCIDLEAK-001 — 46 keys became 48, and this widening is the SEEDGERMRATE note above with
+  // the timing made worse. There the read gap overwrote a stored number "on the next save"; these
+  // two are cleared by a PRESENCE sentinel rather than COALESCE-merged, so the absent key erased the
+  // column on the FIRST save of every planting. 7 prod rows lost their provenance that way before
+  // the projection was fixed. The GRID and PICKER projections still do NOT gain them and must not —
+  // neither surface feeds an editor, and the "drops the wide-shape columns" test below is what
+  // keeps that true.
+  'source_id', 'acquired_from_source_id',
   'source_type', 'source_ref', 'source_generation', 'parent_plant_id', 'divergence_type',
   'lineage_note', 'succession_group_id', 'succession_order', 'assignee_user_id',
   'container_type', 'container_size', 'location_id', 'acquired_mature', 'acquired_mature_source',
@@ -167,7 +176,7 @@ describe('GET /api/plants — the DEFAULT response shape is unchanged (V4-PLANTS
   // THE regression guard of this change. `?view=grid` is opt-in precisely so that Search,
   // PhotoLibrary, Favorites, ProjectDetail, Findings, CaptureFlow, EventNew, CatchUpBadge,
   // PlantingSelect, StorageDeadlineAlert and CareNeeded keep the shape they were written against.
-  it('the unscoped list returns all 46 prod keys, and no others', () => {
+  it('the unscoped list returns all 48 prod keys, and no others', () => {
     expect(apiKeys(UNSCOPED_SQL).sort()).toEqual([...DEFAULT_KEYS].sort());
   });
 

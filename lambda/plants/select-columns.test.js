@@ -139,6 +139,31 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
     });
   }
 
+  // BUG-SRCIDLEAK-001 (2026-09-07): the two source FKs, and this is the guard whose ABSENCE let a
+  // live data-loss bug ship and stay green for its whole lifetime. PROJ_RESCOPE above lists the
+  // three TEXT source columns (source_type/source_ref/source_generation) and stops there, so the
+  // omission of source_id/acquired_from_source_id from all 5 reads was unasserted by construction.
+  //
+  // Worse than the BUG-PLANTREAD-001 class this file already guards, because these two are not
+  // COALESCE-merged on write — they are cleared by a PRESENCE sentinel (index.js:874). A read that
+  // drops them does not merely render blank: PlantingEditor seeds '' from the absent key, submits
+  // `form.source_id || null`, and the sentinel takes that present null as a deliberate clear. So the
+  // read gap ERASES the column on the next save. 7 prod rows lost their provenance this way,
+  // measured in audit_events; 160 of 271 live plantings were still exposed when this was fixed.
+  //
+  // Guarded across all 5 reads for the same reason as ACQUIRED_MATURE above — a read that opted out
+  // while the count stayed at 5 would drain the guard rather than satisfy it — and separately from
+  // PROJ_RESCOPE so the sentinel rationale travels with the columns it is about.
+  const SOURCE_FK_COLUMNS = ['source_id', 'acquired_from_source_id'];
+  for (const col of SOURCE_FK_COLUMNS) {
+    it(`every SELECT block includes p.${col} (BUG-SRCIDLEAK-001)`, () => {
+      for (const [idx, block] of selectBlocks.entries()) {
+        const present = new RegExp(`\\bp\\.${col}\\b`).test(block);
+        expect(present, `SELECT block #${idx} missing p.${col}`).toBe(true);
+      }
+    });
+  }
+
   // Lambda 2.0.5 cleanup — VARIETY-REF S3 prep.
   // The 3 legacy text columns are removed from every SELECT clause in 2.0.5;
   // the subsequent VARIETY-REF S3 destructive DDL drops them from the table

@@ -40,6 +40,42 @@ const PLANT_FORM_FIELDS = [
 
 const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', seeds_sown: '', seeds_germinated: '', source_type: '', source_ref: '', source_id: '', acquired_from_source_id: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
 
+// BUG-SRCIDLEAK-001 — the PUT half of the two source FKs, and the reason it is a function instead of
+// two more lines in the payload literal.
+//
+// These two are NOT COALESCE-merged on the server. They are cleared by a PRESENCE sentinel
+// (lambda/plants/index.js:874): the key appearing in the body IS the clear. So the plain
+// `source_id: form.source_id || null` that used to sit in handleEdit said "erase this" for a field
+// the form had never loaded — the GET projection omitted both columns, formFromPlant seeded '', and
+// the FIRST edit of any planting erased its provenance. 7 prod rows lost theirs before the
+// projection was fixed; 160 of 271 live plantings were still exposed.
+//
+// The projection fix is primary and lives in the Lambda. This is a SECOND, independent layer, and
+// the independence is the point: select-columns.test.js proves the columns are read, this proves the
+// client never asserts an opinion it does not hold. A future read that drops them again goes red
+// there and is merely inert here, instead of silently destroying data the way it just did.
+//
+// DELIBERATELY NOT A SERVER CHECK. The Lambda receives `{source_id: null}` and holds nothing that
+// separates "the user removed the source" from "the client never had it" — so any server-side
+// refusal of that null would break the deliberate clear the sentinel exists to make possible
+// (index.js:865-871), and would be a second clearing policy for one column, which validate.js's
+// tier-3 block forbids by name. The client is the only side that knows which of the two it meant.
+//
+// Omit ONLY when BOTH are true: the loaded row did not carry the key, and the form holds nothing.
+// A key the row carried stays sendable, so clearing a source still works; a value the user picked
+// stays sendable, so setting one still works even from a payload that did not carry the column.
+// handleAdd is untouched and must stay so — a POST has no prior row to preserve, which the INSERT's
+// own comment says in as many words.
+const SOURCE_SENTINEL_KEYS = ['source_id', 'acquired_from_source_id']
+function sourceSentinelPatch(form, plant) {
+  const patch = {}
+  for (const key of SOURCE_SENTINEL_KEYS) {
+    const loaded = plant != null && Object.prototype.hasOwnProperty.call(plant, key)
+    if (loaded || form[key]) patch[key] = form[key] || null
+  }
+  return patch
+}
+
 // BUG-SILENTFAILSWEEP-001 — one line per verb, each naming the state the planting is actually LEFT
 // in. Not interchangeable: a failed Remove leaves a live planting in the garden, a failed Archive
 // leaves it visible in the garden it was being put away from, and telling someone the wrong one
@@ -305,8 +341,10 @@ export default function PlantingEditor({
           // replace: the picker records WHERE it came from, the free text keeps the order number,
           // lot code and date that have no column anywhere in this design. `|| null` and not
           // `.trim()` — these are ids, and '' is the picker's own empty, not whitespace.
-          source_id:               form.source_id               || null,
-          acquired_from_source_id: form.acquired_from_source_id || null,
+          // BUG-SRCIDLEAK-001: the two bare bindings that used to be here are now conditional —
+          // the key is a CLEAR on this verb, so it is sent only when the editor has an opinion.
+          // Full reasoning at sourceSentinelPatch.
+          ...sourceSentinelPatch(form, plant),
           source_ref:        form.source_ref.trim() || null,
           source_generation: form.source_generation.trim() || null,
           lineage_note:      form.lineage_note.trim() || null,

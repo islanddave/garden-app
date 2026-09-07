@@ -273,6 +273,11 @@ export const handler = async (event) => {
                p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                p.seeds_sown, p.seeds_germinated,
                p.source_type, p.source_ref, p.source_generation,
+               -- BUG-SRCIDLEAK-001 — full rationale on the by-id GET below. No editor reads this
+               -- list today, so this pair is here for the reason the block header already gives:
+               -- a plant row returned to a client is a plant row. A read that opts out is the one
+               -- that gets copied into the next surface that DOES feed an editor.
+               p.source_id, p.acquired_from_source_id,
                p.parent_plant_id, p.divergence_type, p.lineage_note,
                p.succession_group_id, p.succession_order,
                p.container_type, p.container_size, p.location_id,
@@ -337,6 +342,10 @@ export const handler = async (event) => {
                p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                p.seeds_sown, p.seeds_germinated,
                p.source_type, p.source_ref, p.source_generation,
+               -- BUG-SRCIDLEAK-001 — full rationale on the by-id GET below, same call as the
+               -- /deleted list above: no editor reads this one either, and it carries the pair for
+               -- the same reason it carries the rest of the set.
+               p.source_id, p.acquired_from_source_id,
                p.parent_plant_id, p.divergence_type, p.lineage_note,
                p.succession_group_id, p.succession_order,
                p.container_type, p.container_size, p.location_id,
@@ -614,6 +623,25 @@ export const handler = async (event) => {
                  p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                  p.seeds_sown, p.seeds_germinated,
                  p.source_type, p.source_ref, p.source_generation,
+                 -- BUG-SRCIDLEAK-001 — THE read this omission cost data on, and the omission was
+                 -- silent both ways. The PUT below clears these two through a PRESENCE sentinel
+                 -- (:874, and read the note there before touching this line), so "the key is in the
+                 -- body" IS the clear. PlantingEditor seeds its form from THIS projection, lists
+                 -- both keys in PLANT_FORM_FIELDS, and bound source_id to form.source_id || null --
+                 -- so a key this read did not send came back as an explicit null, and the sentinel
+                 -- obeyed it. NO BACKTICKS in these comments: one terminates the template literal
+                 -- and the file stops parsing (the variety_ref block below says the same thing).
+                 -- Every first edit of a planting erased its provenance. MEASURED on prod: 7 rows in
+                 -- audit_events with a non-null before.source_id and a null after, four of them in
+                 -- 15 minutes on 2026-09-07, all by a signed-in user.
+                 --
+                 -- lambda/inventory-items has the identical sentinel and the identical client
+                 -- binding and lost NOTHING, because its read is a star projection, SELECT i.*
+                 -- (:1255). That is the whole difference, which is why the fix is here and not in the
+                 -- sentinel. select-columns.test.js now asserts both columns across all 5 reads;
+                 -- it asserted the three TEXT source columns and not these two, which is how this
+                 -- shipped green and stayed green.
+                 p.source_id, p.acquired_from_source_id,
                  p.parent_plant_id, p.divergence_type, p.lineage_note,
                  p.succession_group_id, p.succession_order, p.assignee_user_id,
                  p.container_type, p.container_size, p.location_id,
@@ -1586,6 +1614,10 @@ export const handler = async (event) => {
                    p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                    p.seeds_sown, p.seeds_germinated,
                    p.source_type, p.source_ref, p.source_generation,
+                   -- BUG-SRCIDLEAK-001 — full rationale on the by-id GET above. This one is NOT
+                   -- decorative: Garden.jsx holds this list and PlantingDetail re-reads by id, so
+                   -- both editor hosts resolve their plant prop from a read in this family.
+                   p.source_id, p.acquired_from_source_id,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
                    p.container_type, p.container_size, p.location_id,
@@ -1693,6 +1725,10 @@ export const handler = async (event) => {
                    p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                    p.seeds_sown, p.seeds_germinated,
                    p.source_type, p.source_ref, p.source_generation,
+                   -- BUG-SRCIDLEAK-001 — full rationale on the by-id GET above. This one is NOT
+                   -- decorative: Garden.jsx holds this list and PlantingDetail re-reads by id, so
+                   -- both editor hosts resolve their plant prop from a read in this family.
+                   p.source_id, p.acquired_from_source_id,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
                    p.container_type, p.container_size, p.location_id,
