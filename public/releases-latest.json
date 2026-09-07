@@ -1,8 +1,10 @@
 {
-  "version": "4.114.0",
+  "version": "4.115.0",
   "date": "2026-09-06",
   "highlights": [
-    "Today's weather card now shows the rain your gauge actually measured, alongside how much more is still expected — instead of a probability-weighted forecast that could read near zero on a morning it had already rained.",
-    "A plain quarter inch of rain now counts as watering for small pots and trays, which previously needed more than a third of an inch before the list would clear them."
+    "Editing an inventory item no longer rounds a fractional quantity — saving any field used to rewrite 0.5 packets to 1",
+    "Saved seed lots now show their seed count and weight on the card, not just in the picker",
+    "Adding seed inventory opens the vendor/source fields by default so provenance gets recorded",
+    "Migration gates no longer freeze a table's column count, and one gate that could never fail now can"
   ]
 }
