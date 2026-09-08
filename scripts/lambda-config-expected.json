@@ -66,7 +66,7 @@
       "DRY_RUN": "false",
       "SYSTEM_CLERK_SUB": true,
       "OWNER_FALLBACK_SUB": true,
-      "FROST_TOPIC_ARN": true,
+      "FROST_TOPIC_ARN": "arn:aws:sns:us-east-1:769788341849:garden-ops-alerts",
       "FROST_ALERT_ENABLED": "true",
       "CARE_CADENCE_SCOPES_ENABLED": "true",
       "CARE_TODAY_AWARE_ENABLED": "true",

@@ -57,7 +57,24 @@ function hourET() {
 // DELIBERATELY NOT wrapped in try/catch, unlike every other fetcher in this file: design §3-7 makes a
 // swallowed frost publish the one failure this feature cannot have. handler.run catches it, logs at ERROR,
 // finishes writing the plan, then throws so garden-daily-plan-errors (Errors > 0) pages.
-const FROST_TOPIC_ARN = process.env.FROST_TOPIC_ARN || 'arn:aws:sns:us-east-1:769788341849:garden-frost-alerts';
+//
+// BUG-FROSTTOPICDEFAULT-001 (2026-09-07): this default was `garden-frost-alerts`, WHICH DOES NOT EXIST.
+// `aws sns list-topics` returns exactly two topics in the account — garden-alerts and garden-ops-alerts —
+// so the comment above ("the defaults are the live topics") was false for this one line, which is how it
+// survived review. Nothing was broken in practice only because the live garden-daily-plan env sets
+// FROST_TOPIC_ARN to garden-ops-alerts; that override was the sole thing standing between us and
+// `Topic does not exist` on every frost publish. The D3 "separate topic" intent was never realised —
+// frost and ops both resolve to garden-ops-alerts, which is where Dave's CONFIRMED email subscription
+// lives (rehearsed end-to-end 2026-09-07, email received). The default now matches reality, so removing
+// the env var degrades to a topic that still reaches him rather than to one that throws.
+//
+// Why this could not be caught: scripts/lambda-config-expected.json declared FROST_TOPIC_ARN with the
+// `true` sentinel — MUST BE PRESENT, ANY VALUE — so the drift guard checked presence and never the value.
+// Anyone "tidying" the live env to match the old code default would have killed frost alerting with the
+// guard still green, and it would have failed at first use: the night of the first frost. Now declared as
+// an exact string, per that manifest's own rule that a value which must not drift is a reviewable repo
+// change. Do not put the sentinel back.
+const FROST_TOPIC_ARN = process.env.FROST_TOPIC_ARN || 'arn:aws:sns:us-east-1:769788341849:garden-ops-alerts';
 const OPS_TOPIC_ARN = process.env.OPS_TOPIC_ARN || 'arn:aws:sns:us-east-1:769788341849:garden-ops-alerts';
 let _sns;
 async function publishAlert({ topic, subject, message }) {

@@ -405,10 +405,27 @@ describe('SNS publish path (F3) — deliberately NOT fail-soft', () => {
     expect(publishBody).not.toMatch(/catch/);
   });
 
-  it('routes the ops topic separately from the frost topic (D3: a separate topic)', () => {
+  // BUG-FROSTTOPICDEFAULT-001 (2026-09-07). This test used to pin the FROST default to
+  // `garden-frost-alerts` — A TOPIC THAT HAS NEVER EXISTED. `aws sns list-topics` returns exactly
+  // two topics in the account: garden-alerts and garden-ops-alerts. So the test was green, specific,
+  // and asserting a value that would have thrown `Topic does not exist` on every frost publish had
+  // the live env not overridden it. A characterization test pins whatever the code says; it cannot
+  // tell you the code is wrong, and here it actively defended the defect against exactly the reading
+  // that would have caught it.
+  //
+  // The routing assertion still means something and stays: two named constants, chosen by `topic`.
+  // What changed is the DEFAULT they fall back to. D3's "separate topic" intent was never realised
+  // in the account — frost and ops both resolve to garden-ops-alerts, which carries Dave's confirmed
+  // email subscription (rehearsed end to end 2026-09-07). The test name no longer claims otherwise.
+  it('routes frost and ops through separate constants, both defaulting to a topic that EXISTS', () => {
     expect(publishBody).toMatch(/topic === 'ops' \? OPS_TOPIC_ARN : FROST_TOPIC_ARN/);
-    expect(SRC).toMatch(/FROST_TOPIC_ARN = process\.env\.FROST_TOPIC_ARN \|\| 'arn:aws:sns:us-east-1:\d+:garden-frost-alerts'/);
+    expect(SRC).toMatch(/FROST_TOPIC_ARN = process\.env\.FROST_TOPIC_ARN \|\| 'arn:aws:sns:us-east-1:\d+:garden-ops-alerts'/);
     expect(SRC).toMatch(/OPS_TOPIC_ARN = process\.env\.OPS_TOPIC_ARN \|\| 'arn:aws:sns:us-east-1:\d+:garden-ops-alerts'/);
+    // The point of the fix: no topic constant may DEFAULT to a topic outside the account's real set.
+    // Scoped to the assignment rather than the whole file on purpose — the BUG-FROSTTOPICDEFAULT-001
+    // note above the constants names the dead topic to explain the history, and a blanket negative
+    // would forbid recording why the bug happened. Ban the code path, not the word.
+    expect(SRC).not.toMatch(/TOPIC_ARN\s*=\s*process\.env\.[A-Z_]+\s*\|\|\s*'[^']*garden-frost-alerts'/);
   });
 
   it('the ET hour is passed into run() — G3 run identity has no other source', () => {
