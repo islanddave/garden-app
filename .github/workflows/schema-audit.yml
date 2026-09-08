@@ -25,6 +25,12 @@ name: L-081 Schema Audit (dev)
 #
 # Audit script: scripts/dev-main-schema-audit.py (canonical here in garden-app/).
 # A reference copy lives in claude-ops/scripts/ for local sandbox invocation. Keep in sync.
+#
+# Parser guard wired in 2026-09-08 (BUG-SCHEMAAUDITRED-001): scripts/test-schema-audit-phase1.py
+# existed since 2026-07-22 but was referenced nowhere in .github/, so it gated nothing and had
+# been RED unobserved on dev. It was red only because a frozen count pin (29) had gone stale
+# against a legitimate widening to 31 columns -- the parser was correct. Repaired to per-name
+# assertions and given a step below.
 
 on:
   push:
@@ -41,6 +47,7 @@ on:
       - 'lambda/**/*.js'
       - 'migrations/**'
       - 'scripts/dev-main-schema-audit.py'
+      - 'scripts/test-schema-audit-phase1.py'
       - 'scripts/schema-audit-join-baseline.json'
       - '.github/workflows/schema-audit.yml'
   workflow_dispatch:
@@ -74,6 +81,20 @@ jobs:
         run: |
           test -s scripts/dev-main-schema-audit.py || { echo "::error::scripts/dev-main-schema-audit.py missing or empty"; exit 1; }
           head -1 scripts/dev-main-schema-audit.py | grep -q python3 || { echo "::error::audit script header malformed"; exit 1; }
+
+      # Runs BEFORE the audit and independently of it: the suite needs no DB and no
+      # psycopg2 (verified 2026-09-08 with the import blocked), so it is the only step
+      # here that still verifies something when NEON_DATABASE_URL is absent -- the case
+      # where every step below exits 0 having checked nothing.
+      #
+      # It guards the parser the audit depends on. That matters because a Phase-1
+      # regression is SILENT downstream: dropping a column group from one file leaves
+      # the table still covered, so the Phase-4 ratchet sees nothing and the audit
+      # reports "PASS: 2040 column refs" at exit 0 while 10 refs go unaudited
+      # (reproduced against prod Neon, 2026-09-08). Hard-fails: deterministic, no
+      # network, no secret.
+      - name: Phase 1 parser unit tests
+        run: python3 scripts/test-schema-audit-phase1.py
 
       - name: Run L-081 schema audit
         env:

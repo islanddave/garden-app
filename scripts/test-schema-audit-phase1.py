@@ -115,25 +115,64 @@ const X_COLUMNS = ['sown_at'];
 check("LEGACY_COLUMNS_REMOVED_IN_2_0_5 excluded from audit",
       len(res) == 1 and res[0][1] == ["sown_at"])
 
-# 9. Real repo files: all 3 select-columns.test.js must parse with the declared tables.
+# 9. Real repo files: all 3 select-columns.test.js must parse to the exact
+#    (table, column) set below -- named, not counted.
+#
+#    Why names and not a count: the count pin went RED twice for the same
+#    non-reason (24 -> 29 on 2026-08-28 when the contract gained 5 columns;
+#    29 -> 31 on 2026-09-08 when 249b0d6 added the source_id/
+#    acquired_from_source_id FK guard), and both times the parser was fine --
+#    only the pin was stale. Bumping a frozen count to green a legitimate
+#    widening is how a gate stops catching anything: it breaks on every
+#    intended change, so everyone learns to bump it without looking.
+#
+#    With names, an intended widening is a one-line list edit and an
+#    unintended one still reds -- and reds naming the column that moved.
+#    The union is the right granularity: main() audits the union of the
+#    per-file groups, so how the parser distributes columns across groups is
+#    an implementation detail, but which columns it resolves is the contract.
 real = {
-    "lambda/varieties/select-columns.test.js": ("cultivar", 14),
-    # 24 -> 29 on 2026-08-28: the contract legitimately gained 5 columns and this pin was not
-    # updated with it, so the Phase 1 suite was RED on dev. Verified before changing: all 29 are
-    # real garden_node columns and the live audit PASSES on them -- the contract was right and the
-    # pin was stale, not the reverse. A bare count rots on every legitimate column addition; it
-    # catches wholesale parser collapse and little else.
-    "lambda/plants/select-columns.test.js": ("garden_node", 29),
-    "lambda/projects/select-columns.test.js": ("plant_projects", 3),
+    "lambda/varieties/select-columns.test.js": {
+        "cultivar": [
+            "day_length_response", "days_to_germ_max", "days_to_germ_min",
+            "determinacy", "direct_sow_timing", "grown_as", "row_spacing_in",
+            "seed_spacing_in", "sow_depth_in", "sow_notes", "sow_season",
+            "start_indoor_weeks_max", "start_indoor_weeks_min", "start_method",
+        ],
+    },
+    "lambda/plants/select-columns.test.js": {
+        "garden_node": [
+            "acquired_from_source_id", "acquired_mature",
+            "acquired_mature_set_at", "acquired_mature_source",
+            "container_size", "container_type", "divergence_type",
+            "germinated_at", "germinated_at_approx", "lineage_note",
+            "location_id", "loss_cause", "parent_plant_id", "planted_out_at",
+            "planted_out_at_approx", "qty_current", "qty_harvested",
+            "qty_initial", "qty_lost", "seeds_germinated", "seeds_sown",
+            "source_generation", "source_id", "source_ref", "source_type",
+            "sown_at", "sown_at_approx", "succession_group_id",
+            "succession_order", "transplanted_at", "transplanted_at_approx",
+        ],
+    },
+    "lambda/projects/select-columns.test.js": {
+        "plant_projects": ["kind", "kind_set_at", "target_end_date"],
+    },
 }
-for rel, (want_table, want_cols) in real.items():
-    p = REPO_ROOT / rel
-    parsed = audit.parse_test_file(p)
-    tables = {t for t, _ in parsed}
-    ncols = sum(len(c) for _, c in parsed)
-    check(f"real file {rel}: parses to table {want_table}",
-          parsed and tables == {want_table})
-    check(f"real file {rel}: {want_cols} audited columns", ncols == want_cols)
+for rel, want in real.items():
+    parsed = audit.parse_test_file(REPO_ROOT / rel)
+    got_pairs = {(t, c) for t, cols in parsed for c in cols}
+    want_pairs = {(t, c) for t, cols in want.items() for c in cols}
+    check(f"real file {rel}: parses to table(s) {sorted(want)}",
+          parsed and {t for t, _ in parsed} == set(want))
+    lost = sorted(want_pairs - got_pairs)
+    gained = sorted(got_pairs - want_pairs)
+    detail = ""
+    if lost:
+        detail += f" | NOT resolved: {['.'.join(x) for x in lost]}"
+    if gained:
+        detail += f" | unexpected: {['.'.join(x) for x in gained]}"
+    check(f"real file {rel}: exact audited column set ({len(want_pairs)} cols){detail}",
+          got_pairs == want_pairs)
 
 # 10. Empty-relation guard: resolved table with ZERO information_schema columns
 #     -> main() returns 2 (inconclusive), never 1 (false-FAIL). Uses a fake
