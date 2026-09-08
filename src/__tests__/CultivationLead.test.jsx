@@ -12,6 +12,14 @@
 // CONTENT — no urgency lines are invented — while additionally pinning that the door survives each
 // of those states. A fetch error degrading to a working link rather than to nothing is the point of
 // the change; deleting these would have hidden exactly that.
+//
+// AMENDED 2026-09-08 — two of those four (empty candidates, open-but-not-closing) gated on
+// `waitFor(fetchMock called)`, which is satisfied the instant the request is ISSUED, and then
+// asserted 'Sow now', which the region holds before AND after resolve alike. Both therefore passed
+// with the payload discarded entirely — measured, not inferred. Both now carry a positive control.
+// The fetch-error and pre-resolve cases are deliberately untouched: the first has a real negative
+// assertion, and the second asserts the pre-resolve state ON PURPOSE, so a resolve gate would
+// destroy what it exists to pin.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -178,21 +186,55 @@ describe('CultivationLead component', () => {
     expect(region.style.color, 'a Link wrapping an Icon must set its own color').not.toBe('')
   })
 
+  // THE CONTROL INSTANCE IS THE ASSERTION'S ONLY TEETH — do not simplify it back to one render
+  // gated on `waitFor(fetchMock called)`. This case cannot be given an in-payload control the way
+  // its neighbour below can: `items` null (pre-resolve) and `items` [] (resolved-but-empty) both
+  // return [] from cultivationLines, so they render byte-identical DOM and no assertion confined to
+  // a single instance can tell "processed an empty list" from "never processed anything". There is
+  // no diverted variety_name to assert absent here either — the list is the empty one. So the
+  // control is a SECOND instance fed a closing packet: its line cannot exist until a resolved
+  // payload has been through setItems, and it mounts after the subject, so the subject's own empty
+  // payload has already been processed by the time that line appears. Mutation-checked 2026-09-08 by
+  // discarding the payload in CultivationLead's .then — this reds, and did NOT before the control.
   it('keeps the /sow door when the engine yields no content (empty candidates)', async () => {
-    fetchMock.mockResolvedValue({ items: [] })
-    renderLead({ todayISO: TODAY })
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
-    const region = screen.getByTestId('cultivation-lead')
+    fetchMock.mockResolvedValueOnce({ items: [] })          // subject, mounted first
+    fetchMock.mockResolvedValueOnce({ items: [lettuce()] }) // control, mounted second
+    render(
+      <MemoryRouter>
+        <CultivationLead todayISO={TODAY} />
+        <CultivationLead todayISO={TODAY} />
+      </MemoryRouter>
+    )
+    await screen.findByText('Sow Winter Density by Aug 18.')
+    expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates')
+    const [region] = screen.getAllByTestId('cultivation-lead')
     expect(region.getAttribute('href')).toBe('/sow')
     // Names its destination when it is the only thing in the row — self-explanatory on a cold open.
     expect(region.textContent).toBe('Sow now')
   })
 
-  it('invents no line when every window is open-but-not-closing', async () => {
-    fetchMock.mockResolvedValue({ items: [lettuce({ days_to_maturity_max: 30 })] })
+  // POSITIVE CONTROL IN THE PAYLOAD, which is the shape the STORED-lot note below prescribes: the
+  // closing packet's line is what proves the response was PROCESSED rather than merely requested,
+  // and only against a row that demonstrably rendered does the absent one mean anything. This
+  // asserted `textContent === 'Sow now'` against an all-open payload until 2026-09-08 — a value the
+  // region holds before AND after resolve alike, so it stayed green with the payload thrown away.
+  // Pinning the mixed list rather than the all-open one is the same trade the pure engine's "drops
+  // only the empty packet from a mixed list" makes above: the all-open case still has its pure test
+  // there, and the bare-door render it used to stand in for is pinned by the empty-candidates case
+  // above — neither is lost, and this now proves the exclusion the old assertion only implied.
+  it('invents no line for a window that is open but not closing', async () => {
+    fetchMock.mockResolvedValue({
+      items: [
+        lettuce({ variety_name: 'Still Open', days_to_maturity_max: 30 }),  // close Sep 15, 34 days out
+        lettuce({ variety_name: 'Closing Now', days_to_maturity_max: 67 }), // close Aug 18, 6 days out
+      ],
+    })
     renderLead({ todayISO: TODAY })
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(screen.getByTestId('cultivation-lead').textContent).toBe('Sow now')
+    await screen.findByText('Sow Closing Now by Aug 18.')
+    const region = screen.getByTestId('cultivation-lead')
+    expect(region.textContent, 'Today invented an imperative for a window 34 days from closing')
+      .not.toMatch(/Still Open/)
+    expect(region.getAttribute('href')).toBe('/sow')
   })
 
   it('swallows a fetch error — degrades to the bare door, never throws onto Today', async () => {
