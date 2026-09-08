@@ -833,7 +833,12 @@ function frostWeatherFacts(d) {
   if (!d) return {};
   if (d.tier === 'imminent') {
     const lowF = d.imminentGlobal ? d.imminentGlobal.lowF : null;
-    return lowF == null ? {} : { lowF, dayOffset: 0 };
+    // V5-RADIATIVEFROST-001 — the trip BASIS is the column the 2027 learned-offset corpus is for. The
+    // rich observability block goes only to a CloudWatch console.log, which is subject to retention;
+    // THIS is the durable store, and without the basis a radiative WATCH and a threshold PROTECT are
+    // indistinguishable in the history the fitting will read.
+    return lowF == null ? {}
+      : { lowF, dayOffset: 0, ...(d.imminent && d.imminent.radiativeOnly ? { trip: 'radiative' } : {}) };
   }
   if (d.tier === 'advisory' && d.advisory) {
     const { minLowF, dayOffset, date } = d.advisory;
@@ -846,8 +851,13 @@ function frostWeatherFacts(d) {
 // SNS Subject is email-only (SMS ignores it) and is capped at 100 ASCII chars with no newlines, so it is
 // built separately from the message body rather than sliced off it.
 function frostSubject(d) {
+  // V5-RADIATIVEFROST-001: a radiative-only trip fires ABOVE the trip point, so "Frost protect tonight
+  // (low 39F)" would assert a threshold crossing at a number that did not cross it — the same
+  // copy-that-lies failure imminentMessage guards against, in the one place that does not read from it.
+  const radiativeOnly = !!(d.imminent && d.imminent.radiativeOnly);
   const label = d.tier === 'imminent'
-    ? (d.level === 'hard_freeze' ? 'HARD FREEZE tonight' : 'Frost protect tonight')
+    ? (d.level === 'hard_freeze' ? 'HARD FREEZE tonight'
+      : (radiativeOnly ? 'Frost watch tonight' : 'Frost protect tonight'))
     : (d.tier === 'advisory' ? 'Frost advisory' : 'Heat advisory');
   const low = d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : '';
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);

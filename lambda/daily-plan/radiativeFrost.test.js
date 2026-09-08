@@ -136,6 +136,31 @@ describe('nightsFrom — bucketing and the absence rule', () => {
   });
 });
 
+describe('BOUNDARY: the cloud and wind ceilings themselves', () => {
+  // MUTATION THIS CLOSES: CLOUD_MAX_PCT 40 -> 70 survived the original suite entirely. It is the single
+  // constant setting this feature's alert budget AND it is env-settable on a deployed Lambda
+  // (FROST_RADIATIVE_CLOUD_MAX_PCT), so an unguarded move is a live config lever with no code-side
+  // check. Measured cost of exactly that move: radiative nights 117 -> 173 (+48%), added alerts 11 ->
+  // 15, worst added alert 40.8°F -> 41.9°F. Alert fatigue is the documented rejection criterion in
+  // frostClass.js:47-65, so the budget needs a guard.
+  const at = (cloud, wind) =>
+    nightsFrom(block(nightRows('2026-10-09', '2026-10-10', { cloud, wind })))[0].radiative;
+
+  it('cloud: 39.9 and 40.0 straddle the ceiling', () => {
+    expect(at(39.9, 2)).toBe(true);
+    expect(at(40, 2)).toBe(false);      // strict <, so exactly 40 is NOT radiative
+    expect(at(40.1, 2)).toBe(false);
+    expect(at(70, 2)).toBe(false);      // the mutant's value must not read as clear
+  });
+
+  it('wind: 5.9 and 6.0 straddle the ceiling', () => {
+    expect(at(5, 5.9)).toBe(true);
+    expect(at(5, 6)).toBe(false);
+    expect(at(5, 6.1)).toBe(false);
+    expect(at(5, 15)).toBe(false);
+  });
+});
+
 describe('radiativeTrips — three conditions, all required', () => {
   const rad = { date: '2026-10-09', minDewpointF: 33, meanCloudPct: 5, meanWindMph: 2, radiative: true };
 
@@ -171,6 +196,19 @@ describe('radiativeTrips — three conditions, all required', () => {
     expect(radiativeTrips(rad, null, 38)).toBe(false);
     expect(radiativeTrips(rad, 39, null)).toBe(false);
     expect(radiativeTrips({ ...rad, minDewpointF: null }, 39, 38)).toBe(false);
+  });
+
+  it('BOUNDARY: dewpoint EXACTLY at the trip point still trips', () => {
+    // MUTATION THIS CLOSES: `dew <= trip` -> `dew < trip`. Not hypothetical — across 380 measured
+    // nights the minTemp-minDewpoint gap has p05 = 0.0°F and min = 0.0°F, so exact equality is an
+    // OBSERVED value at this site, not a synthetic edge.
+    expect(radiativeTrips({ ...rad, minDewpointF: 38 }, 39, 38)).toBe(true);
+    expect(radiativeTrips({ ...rad, minDewpointF: 38.1 }, 39, 38)).toBe(false);
+  });
+
+  it('BOUNDARY: the low EXACTLY at trip + proximity still trips', () => {
+    expect(radiativeTrips(rad, 42, 38)).toBe(true);
+    expect(radiativeTrips(rad, 42.1, 38)).toBe(false);
   });
 
   it('nightFor finds by date and returns null (not undefined) for a miss', () => {

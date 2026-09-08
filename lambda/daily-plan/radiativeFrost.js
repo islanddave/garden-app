@@ -125,7 +125,9 @@ function nightsFrom(hourly) {
   for (const [date, rows] of [...buckets.entries()].sort()) {
     if (rows.length < MIN_HOURS) continue;
     const mean = (idx) => rows.reduce((a, r) => a + r[idx], 0) / rows.length;
-    const minDewpointF = Math.min(...rows.map((r) => r[0]));
+    // reduce, not Math.min(...spread): this function is exported and the obvious next consumer
+    // is a multi-season replay harness, where a spread over ~200k elements throws RangeError.
+    const minDewpointF = rows.reduce((a, r) => Math.min(a, r[0]), Infinity);
     const meanCloudPct = mean(1);
     const meanWindMph = mean(2);
     out.push({
@@ -150,12 +152,13 @@ const nightFor = (nights, date) =>
 //
 // Returns false — never throws, never null — on any missing input. Absence of a radiative signal must
 // degrade to "existing behaviour", never to a trip.
-function radiativeTrips(night, lowF, tripF, opts = {}) {
+function radiativeTrips(night, lowF, tripF, opts) {
+  const o = opts || {};   // a default only covers `undefined`; an explicit null would throw
   if (!night || !night.radiative) return false;
   const low = finite(lowF), trip = finite(tripF);
   const dew = finite(night.minDewpointF);
   if (low == null || trip == null || dew == null) return false;
-  const prox = finite(opts.proximityF) != null ? Number(opts.proximityF) : DEFAULTS.PROXIMITY_F;
+  const prox = finite(o.proximityF) != null ? Number(o.proximityF) : DEFAULTS.PROXIMITY_F;
   return dew <= trip && low <= trip + prox;
 }
 

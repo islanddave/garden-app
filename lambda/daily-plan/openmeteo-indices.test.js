@@ -350,6 +350,65 @@ describe('V5 RADIATIVE — the three radiative-frost inputs ride the hourly list
     }
   });
 
+  it('REALLY RETURNS the block — a source regex cannot tell a shape from a value', async () => {
+    // THE HOLE THIS CLOSES, and why it needs an unusual instrument. Every other assertion in this file
+    // is a regex over index.js's SOURCE TEXT, because the module cannot be imported (it pulls AWS/neon
+    // at load — see this file's header). A reviewer demonstrated the consequence: wrapping the
+    // hourly_frost guard in `false &&` so it ALWAYS emits null left all 320 tests green. The string
+    // shape still matched; the value was inverted. That is the "shipped feature that never ran" class,
+    // and no amount of extra regex fixes it — the next inversion just takes a different form.
+    //
+    // So: compile the REAL source of fetchPrecip into a callable and invoke it with a stubbed fetch.
+    // This executes the actual code without importing the module, which is the only way to assert on
+    // the VALUE. Extraction is guarded below so a future refactor fails loudly rather than vacuously.
+    // Cut at the function's own closing brace at column 0 — not at the next `async function`, which
+    // overshoots into the trailing comment block and would swallow the appended `return` into it.
+    const src = SRC.slice(SRC.indexOf('async function fetchPrecip'));
+    const end = src.indexOf('\n}\n');
+    expect(end, 'fetchPrecip closing brace found').toBeGreaterThan(-1);
+    const body = src.slice(0, end + 3);
+    expect(body, 'fetchPrecip source extracted').toMatch(/hourly_frost:/);
+    expect(body.trimEnd().endsWith('}'), 'extraction ends at the closing brace').toBe(true);
+    expect(body.length).toBeGreaterThan(500);
+
+    const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+    const round3 = (n) => Math.round((n + Number.EPSILON) * 1000) / 1000;
+    const hours = ['2026-10-09T18:00', '2026-10-09T19:00', '2026-10-10T03:00'];
+    const payload = {
+      timezone: 'America/New_York',
+      daily: {
+        time: ['a', 'b', 'c', 'd', 'e', 'f'],
+        precipitation_sum: [0, 0, 0, 0, 0, 0], precipitation_probability_max: [0, 0, 0, 0, 0, 0],
+        temperature_2m_min: [40, 40, 40, 40, 40, 40], et0_fao_evapotranspiration: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+        temperature_2m_max: [60, 60, 60, 60, 60, 60], daylight_duration: [1, 1, 1, 1, 1, 1],
+        sunshine_duration: [1, 1, 1, 1, 1, 1], shortwave_radiation_sum: [1, 1, 1, 1, 1, 1],
+        wind_speed_10m_max: [5, 5, 5, 5, 5, 5], precipitation_hours: [0, 0, 0, 0, 0, 0],
+      },
+      hourly: {
+        time: hours, precipitation: [0, 0, 0],
+        dew_point_2m: [33, 33, 32], cloud_cover: [4, 5, 6], wind_speed_10m: [2, 2, 3],
+      },
+    };
+    const make = new Function('round2', 'round3', 'fetch', 'AbortSignal', 'console',
+      `${body}\nreturn fetchPrecip;`);
+    const fetchPrecip = make(round2, round3,
+      async () => ({ json: async () => payload }),
+      { timeout: () => undefined }, { warn() {} });
+
+    const out = await fetchPrecip(42.5, -72.6);
+    expect(out.hourly_frost, 'hourly_frost must be the real block, not null').not.toBeNull();
+    expect(out.hourly_frost.time).toEqual(hours);
+    expect(out.hourly_frost.dew_point_2m).toEqual([33, 33, 32]);
+    expect(out.hourly_frost.cloud_cover).toEqual([4, 5, 6]);
+    expect(out.hourly_frost.wind_speed_10m).toEqual([2, 2, 3]);
+    expect(out.hourly_frost.timezone).toBe('America/New_York');
+    // and the absence branch really returns null, from the same real code
+    const bare = { ...payload, hourly: { time: hours, precipitation: [0, 0, 0] } };
+    const fp2 = make(round2, round3, async () => ({ json: async () => bare }),
+      { timeout: () => undefined }, { warn() {} });
+    expect((await fp2(42.5, -72.6)).hourly_frost).toBeNull();
+  });
+
   it('is STILL one request — the three ride the call that was already being made', () => {
     expect((fetchPrecipBody.match(/api\.open-meteo\.com/g) || []).length).toBe(1);
   });

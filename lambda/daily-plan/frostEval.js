@@ -17,7 +17,7 @@
 // Env override lets F5's forced-trigger rehearsal raise/lower a trip point on a deployed Lambda without a
 // code change (design §5 F5: "a prod dry-run with the threshold temporarily raised to a value today's
 // forecast exceeds"). For the per-crop bands the equivalent lever is FROST_THRESHOLD_OFFSET_F (frostClass).
-const { radiativeTrips, nightFor, RADIATIVE_ENABLED } = require('./radiativeFrost');
+const { radiativeTrips, nightFor, prevDate, RADIATIVE_ENABLED } = require('./radiativeFrost');
 
 const numEnv = (name, fallback) => {
   const v = Number(process.env[name]);
@@ -404,7 +404,11 @@ function frostEval(input = {}, opts = {}) {
   // V5-RADIATIVEFROST-001. OFF by default. When off, both night objects resolve to null and
   // radiativeTrips returns false on a null night, so every path below is byte-identical to pre-V5 —
   // which is asserted by test, not inferred from this comment.
-  const radiativeEnabled = opts.radiativeEnabled != null ? !!opts.radiativeEnabled : RADIATIVE_ENABLED;
+  // Read at CALL time, not module load. A module-load constant cannot be moved on a deployed Lambda
+  // without a cold start, and — the reason it changed — it is unreachable from an end-to-end test,
+  // which is precisely how the delivery seam below went unguarded.
+  const radiativeEnabled = opts.radiativeEnabled != null ? !!opts.radiativeEnabled
+    : String(process.env.FROST_RADIATIVE_ENABLED || 'false') === 'true';
   // The caller hands the whole night ARRAY, not two resolved nights, because the advisory's night is
   // not knowable until evalAdvisory has picked the coldest of D1..D3 — resolving it caller-side would
   // duplicate that selection and the two copies would drift.
@@ -414,13 +418,35 @@ function frostEval(input = {}, opts = {}) {
   const radTonight = radNights ? nightFor(radNights, input.eventDate) : null;
 
   const advisory = evalAdvisory(input.forecastLows, input.forecastDates, T);
-  const radAdvisory = radNights ? nightFor(radNights, advisory.date) : null;
+  // OFF-BY-ONE-NIGHT, and it is not obvious: `advisory.date` is a CIVIL DAY label and
+  // `temperature_2m_min[D]` is that day's minimum — which on a radiative night is set shortly after
+  // SUNRISE, i.e. by the night that STARTED on D-1. nightsFrom keys a night by the date it starts on.
+  // So the night that produces the D minimum is keyed D-1, not D.
+  //
+  // Measured at this Space's coordinates over 5 autumns (380 nights): the daily minimum falls at hour
+  // <=08:00 on 295/380 = 77.6% of days, and the `radiative` verdict of night(D) vs night(D-1)
+  // DISAGREES on 137/380 = 36.1% of pairs — 68 false alarms and 69 misses. The wrong pairing also made
+  // D3 unresolvable (nightsFrom can only key D-2..D2 from this URL), which looked like a coverage gap
+  // and was really this bug wearing a disguise: D3's advisory needs night D2, which exists.
+  const radAdvisory = radNights ? nightFor(radNights, prevDate(advisory.date)) : null;
   const advisoryCrops = crops ? evalAdvisoryCrops(advisory.minLowF, crops, T, radAdvisory) : null;
   const imminentGlobal = evalImminent(input.tonightLow, T);
   const imminent = crops ? evalImminentCrops(input.tonightLow, crops, T, radTonight) : imminentGlobal;
   const heat = evalHeat(input.highToday, T, heatEnabled);
   const advisoryRadiative = !!(advisoryCrops && Array.isArray(advisoryCrops.tripped)
     && advisoryCrops.tripped.some((c) => c && c.trip === 'radiative'));
+  // When the tier opens ONLY because of a radiative trip, name ONLY the radiatively-tripped crops.
+  // `advisory.fires` is the GLOBAL gate; a crop whose own band sits ABOVE it (settable via
+  // FROST_BAND_THRESHOLDS_JSON — frostClass.js records tropical 52/50/40 and chill_sensitive 47/45/36
+  // as "the thing to restore") can satisfy advisoryCrops.fires while the global gate holds the tier
+  // shut. Without this filter the disjunct would CONDITIONALLY resurrect that suppressed crop — it
+  // would be alerted or not depending on whether some UNRELATED crop happened to have a clear night,
+  // which is indefensible either way. Whether the global gate should suppress it at all is a real
+  // question and a pre-existing one; it is NOT this feature's to settle silently.
+  const advisoryNamed = (advisory.fires || !advisoryCrops) ? advisoryCrops : {
+    ...advisoryCrops,
+    tripped: advisoryCrops.tripped.filter((c) => c && c.trip === 'radiative'),
+  };
 
   // §3-7 fail loud: a null tonightLow inside frost season is NOT "no frost tonight". The caller publishes
   // a `frost_eval_degraded` ops alert on this flag. Outside frost season it is merely noted.
@@ -433,6 +459,19 @@ function frostEval(input = {}, opts = {}) {
   if (imminent.fires) {
     tier = 'imminent'; level = imminent.level; message = imminentMessage(imminent, exposure);
     trippedCrops = imminent.tripped || null;
+    // MESSAGE-MONOTONICITY, which is a different and stronger property than count-monotonicity.
+    // "Highest-severity tier wins the single outbound message" means a radiative imminent trip — by
+    // construction the LEAST certain trip in the system, since it only fires when the forecast low is
+    // ABOVE the trip point — would otherwise DELETE a hard-forecast advisory about a genuinely colder
+    // future night, and the advisory's dedup key is never written, so the Tier-1 lead time §3-3 exists
+    // to provide is lost for that day. Adding an alert while removing a better one is a regression, not
+    // a monotone improvement. Carrying the clause keeps ONE outbound message (D6) and loses neither.
+    if (imminent.radiativeOnly && advisory.fires && finite(advisory.minLowF) != null
+        && finite(imminent.lowF) != null && Number(advisory.minLowF) < Number(imminent.lowF)) {
+      const when = advisory.dayOffset === 1 ? 'tomorrow night' : `in ${advisory.dayOffset} days`;
+      message = truncate(`${message} Colder ahead: ${advisory.minLowF}°F ${when}` +
+        `${advisory.date ? `, ${advisory.date}` : ''} — harvest ahead and stage row cover.`);
+    }
   } else if ((advisory.fires || advisoryRadiative) && (!crops || (advisoryCrops && advisoryCrops.fires))) {
     // With a crop breakdown the advisory only fires if some crop's OWN advisory point is met — otherwise a
     // 40°F window would page about a bed of kale.
@@ -443,8 +482,8 @@ function frostEval(input = {}, opts = {}) {
     // the feature was dead — every per-crop assertion passed while the tier stayed null. Caught by
     // test, not by reading. The second clause is UNCHANGED, so crop-level agreement is still required
     // and the kale case stays closed.
-    tier = 'advisory'; level = 'advisory'; message = advisoryMessage(advisory, exposure, advisoryCrops, radAdvisory);
-    trippedCrops = (advisoryCrops && advisoryCrops.tripped) || null;
+    tier = 'advisory'; level = 'advisory'; message = advisoryMessage(advisory, exposure, advisoryNamed, radAdvisory);
+    trippedCrops = (advisoryNamed && advisoryNamed.tripped) || null;
   } else if (heat.fires) {
     tier = 'heat'; level = 'heat'; message = heatMessage(heat, exposure);
   }
@@ -481,6 +520,14 @@ function frostEval(input = {}, opts = {}) {
       // from Dave's own station observations. A row only written when the feature fires would be
       // selected on the outcome and useless for fitting.
       radiativeEnabled,
+      // Recorded UNCONDITIONALLY, from `input` rather than from the flag-gated `radNights`. Two
+      // mutations that severed the delivery seam entirely — handler passing `nightsFrom(null)`, and
+      // index.js emitting a null `hourly_frost` — both survived the whole suite, because every
+      // assertion about that seam was a regex over SOURCE TEXT (index.js cannot be imported; it pulls
+      // AWS/neon at module load) and the string shape still matched while the value was inverted.
+      // This is the one number that says the data actually ARRIVED, it is observable flag-off, and it
+      // lands in the frost-eval CloudWatch line so the seam is checkable in prod as well as in test.
+      radiativeNightsAvailable: Array.isArray(input.radiativeNights) ? input.radiativeNights.length : null,
       radiativeTonight: radTonight ? {
         date: radTonight.date, minDewpointF: radTonight.minDewpointF,
         meanCloudPct: radTonight.meanCloudPct, meanWindMph: radTonight.meanWindMph,

@@ -150,60 +150,164 @@ describe('the copy explains itself (failure mode 4)', () => {
   });
 });
 
-describe('the advisory tier gets the same treatment, on its own night', () => {
-  it('trips the advisory radiatively when a FUTURE night is clear, calm and dewpoint-floored', () => {
-    // D1 is 2026-10-10 at 42F — above the 40F advisory point, so threshold alone is silent.
+describe('the advisory tier resolves the night that MAKES its minimum', () => {
+  // These two cases previously ENCODED AN OFF-BY-ONE as expected behaviour, and actively defended it:
+  // a mutation correcting the pairing was killed BY THEM. `advisory.date` is a CIVIL DAY and its
+  // `temperature_2m_min` is set shortly after sunrise, so the night that produces it is keyed D-1.
+  // Measured over 380 nights at the site: 77.6% of daily minima fall at hour <=08:00, and the two
+  // keyings disagree on 36.1% of pairs.
+  it('pairs advisory date D with the night keyed D-1', () => {
+    // D1 = 2026-10-10 at 42F. The night that makes that minimum STARTS 2026-10-09.
     const on = run({
-      tonightLow: 55,                                   // imminent tier out of the picture entirely
+      tonightLow: 55,                                   // imminent tier out of the picture
       forecastLows: [42, 50, 51],
-      radiativeNights: [{ ...RAD, date: '2026-10-10', minDewpointF: 34 }],
+      radiativeNights: [{ ...RAD, date: '2026-10-09', minDewpointF: 34 }],
     });
     expect(on.tier).toBe('advisory');
-    expect(on.advisoryCrops.fires).toBe(true);
     expect(on.advisoryCrops.tripped[0].trip).toBe('radiative');
     expect(on.advisoryCrops.tripped[0].level).toBe('advisory');
   });
 
-  it('does not trip the advisory on a night that is not the coldest one', () => {
-    // The radiative night is D2, but evalAdvisory picks D1 as the coldest. Resolving the night
-    // caller-side instead of from advisory.date is how these two would drift apart.
+  it('does NOT pair it with the night keyed D — the night that makes the NEXT day\'s minimum', () => {
     const on = run({
       tonightLow: 55,
       forecastLows: [42, 50, 51],
-      radiativeNights: [{ ...RAD, date: '2026-10-11', minDewpointF: 34 }],
+      radiativeNights: [{ ...RAD, date: '2026-10-10', minDewpointF: 34 }],
     });
     expect(on.alert).toBe(false);
   });
+
+  it('resolves D3, which the wrong pairing could NEVER reach', () => {
+    // Coldest is D3 = 2026-10-12, so the night needed is 2026-10-11 — key D2, which the real
+    // past_days=2&forecast_days=4 window DOES produce. The old pairing asked for key D3, which that
+    // window cannot produce at all, so one third of the advisory horizon was silently uncovered.
+    const on = run({
+      tonightLow: 55,
+      forecastLows: [50, 51, 42],
+      radiativeNights: [{ ...RAD, date: '2026-10-11', minDewpointF: 34 }],
+    });
+    expect(on.tier).toBe('advisory');
+    expect(on.advisory.dayOffset).toBe(3);
+    expect(on.advisoryCrops.tripped[0].trip).toBe('radiative');
+  });
+
+  it('a MIXED advisory still FIRES — losing it would lose the radiative crop entirely', () => {
+    // MUTATION THIS CLOSES: `advisoryRadiative` `.some` -> `.every`. The global gate is SHUT here
+    // (43 > 40), so the tier opens only via the radiative disjunct. Under `.every`, one
+    // non-radiative crop in the tripped set flips it false and the whole tier goes silent — pepper's
+    // genuine radiative alert is lost. Basil is correctly NOT named: its own band is met but the
+    // global gate suppresses it, and a radiative night for a different crop must not resurrect it.
+    const chill = { ADVISORY_LOW_F: 47, IMMINENT_LOW_F: 45, HARD_FREEZE_LOW_F: 36 };
+    const on = run({
+      tonightLow: 55,
+      forecastLows: [43, 50, 51],
+      radiativeNights: [{ ...RAD, date: '2026-10-09', minDewpointF: 34 }],
+      exposure: { tender: 9, unknown: 0, atRisk: 9, byCropType: [
+        tender(),
+        tender({ slug: 'basil', label: 'basil', count: 4, thresholds: chill }),
+      ] },
+    });
+    expect(on.tier).toBe('advisory');
+    expect(on.advisoryCrops.tripped.map((c) => c.slug).sort()).toEqual(['basil', 'pepper']);
+    expect(on.trippedCrops.map((c) => c.slug)).toEqual(['pepper']);   // named set is filtered
+    expect(on.message).not.toMatch(/basil/);
+  });
+
+  it('when the GLOBAL gate is open, a mixed set is named in full and gets the PLAIN copy', () => {
+    // MUTATION THIS CLOSES: advisoryMessage's `radOnly` `.every` -> `.some`. Here the gate is open
+    // (39 <= 40) so nothing is filtered; the set is genuinely mixed, so the radiative wording would be
+    // a lie about a night where a real threshold WAS crossed.
+    const cold = { ADVISORY_LOW_F: 36, IMMINENT_LOW_F: 34, HARD_FREEZE_LOW_F: 30 };
+    const on = run({
+      tonightLow: 55,
+      forecastLows: [39, 50, 51],
+      radiativeNights: [{ ...RAD, date: '2026-10-09', minDewpointF: 34 }],
+      exposure: { tender: 9, unknown: 0, atRisk: 9, byCropType: [
+        tender(),                                                            // 39 <= 40 threshold
+        tender({ slug: 'chard', label: 'chard', count: 4, thresholds: cold }), // 39 > 36, radiative
+      ] },
+    });
+    expect(on.tier).toBe('advisory');
+    expect(on.trippedCrops.map((c) => c.slug).sort()).toEqual(['chard', 'pepper']);
+    expect(on.message).toMatch(/frost possible/);
+    expect(on.message).not.toMatch(/looks clear and calm/);
+  });
+
+  it('a crop suppressed by the GLOBAL gate is not resurrected by an unrelated crop\'s clear night', () => {
+    // The disjunct opens the tier on a radiative trip. Without the filter, a crop whose own band sits
+    // above the global gate — suppressed flag-off — would be alerted purely because SOME OTHER crop
+    // had a clear night. Whether the global gate should suppress it at all is a real pre-existing
+    // question; it is not this feature's to settle by side effect.
+    const chill = { ADVISORY_LOW_F: 47, IMMINENT_LOW_F: 45, HARD_FREEZE_LOW_F: 36 };
+    const args = {
+      tonightLow: 55,
+      forecastLows: [43, 50, 51],                       // 43 > 40 global, <= 47 basil's own band
+      radiativeNights: [{ ...RAD, date: '2026-10-09', minDewpointF: 34 }],
+      exposure: { tender: 9, unknown: 0, atRisk: 9, byCropType: [
+        tender({ slug: 'basil', label: 'basil', count: 4, thresholds: chill }),
+      ] },
+    };
+    expect(run(args, { radiativeEnabled: false }).tier).toBeNull();   // suppressed flag-off
+    const on = run(args);                                            // pepper absent, so nothing radiative
+    expect(on.tier).toBeNull();                                      // still suppressed flag-on
+  });
 });
 
-describe('MONOTONICITY — flag-on never produces fewer alerts than flag-off', () => {
-  it('holds across a sweep of lows, dewpoints and sky states', () => {
-    let strictlyMore = 0;
+
+describe('MONOTONICITY — and count-monotonicity is NOT the property that matters', () => {
+  // The original sweep asserted only that flag-on trips >= flag-off trips. That is structurally blind
+  // to the failure a review found: a radiative IMMINENT trip — by construction the least certain trip
+  // in the system, since it fires only when the forecast low is ABOVE the trip point — outranks the
+  // advisory tier and would DELETE a hard-forecast advisory about a genuinely colder future night.
+  // Count went UP, the operator's information went DOWN. The sweep also pinned forecastLows at
+  // [45,46,47], so the advisory path was never inside it at all.
+  it('never silences, never escalates, never drops a crop, never loses a colder night', () => {
+    let strictlyMore = 0, displaced = 0, advisoryCases = 0;
     for (const tonightLow of [28, 33, 36, 38, 39, 41, 44, 50]) {
-      for (const minDewpointF of [20, 28, 33, 37, 41, 48]) {
-        for (const radiative of [true, false]) {
-          for (const byCropType of [[tender()], [tender(), hardy()], [hardy()], []]) {
-            const args = {
-              tonightLow,
-              radiativeNights: [{ ...RAD, minDewpointF, radiative }],
-              exposure: { tender: 5, unknown: 0, atRisk: 5, byCropType },
-            };
-            const on = run(args);
-            const off = run(args, { radiativeEnabled: false });
-            const nOn = (on.imminent.tripped || []).length;
-            const nOff = (off.imminent.tripped || []).length;
-            expect(nOn, `low=${tonightLow} dp=${minDewpointF} rad=${radiative}`).toBeGreaterThanOrEqual(nOff);
-            if (off.alert) expect(on.alert).toBe(true);     // never silences
-            // and never escalates an alert that already fired
-            if (off.alert && off.level === 'protect') expect(on.level).not.toBe('hard_freeze');
-            if (nOn > nOff) strictlyMore++;
+      for (const forecastLows of [[45, 46, 47], [36, 46, 47], [39, 42, 44], [30, 35, 50]]) {
+        for (const minDewpointF of [20, 28, 33, 37, 41, 48]) {
+          for (const radiative of [true, false]) {
+            for (const byCropType of [[tender()], [tender(), hardy()], [hardy()], []]) {
+              const args = {
+                tonightLow, forecastLows,
+                radiativeNights: [
+                  { ...RAD, date: '2026-10-09', minDewpointF, radiative },
+                  { ...RAD, date: '2026-10-10', minDewpointF, radiative },
+                ],
+                exposure: { tender: 5, unknown: 0, atRisk: 5, byCropType },
+              };
+              const on = run(args);
+              const off = run(args, { radiativeEnabled: false });
+              const ctx = `low=${tonightLow} fc=${forecastLows} dp=${minDewpointF} rad=${radiative}`;
+
+              const nOn = (on.imminent.tripped || []).length;
+              const nOff = (off.imminent.tripped || []).length;
+              expect(nOn, ctx).toBeGreaterThanOrEqual(nOff);
+              if (off.alert) expect(on.alert, ctx).toBe(true);
+              if (off.alert && off.level === 'protect') expect(on.level, ctx).not.toBe('hard_freeze');
+
+              // Every crop named flag-off is still named flag-on.
+              const named = (d) => new Set((d.trippedCrops || []).map((c) => c.slug));
+              for (const slug of named(off)) expect(named(on).has(slug), `${ctx} dropped ${slug}`).toBe(true);
+
+              // INFORMATION-monotonicity: if the flag displaces an advisory, the colder night's
+              // temperature must still appear in the outbound message.
+              if (off.tier === 'advisory' && on.tier === 'imminent') {
+                displaced++;
+                expect(on.message, `${ctx} lost the advisory temperature`)
+                  .toContain(String(off.advisory.minLowF));
+              }
+              if (off.tier === 'advisory' || on.tier === 'advisory') advisoryCases++;
+              if (nOn > nOff) strictlyMore++;
+            }
           }
         }
       }
     }
-    // Guard against a vacuous pass: if the flag changed nothing anywhere, >= is trivially true and
-    // this whole sweep proves nothing.
-    expect(strictlyMore, 'the sweep must contain cases where the flag actually adds an alert')
-      .toBeGreaterThan(0);
+    // Non-vacuity: a sweep in which the flag never acts, never displaces, and never reaches the
+    // advisory path proves nothing, and >= would hold trivially.
+    expect(strictlyMore, 'sweep must contain cases where the flag adds an alert').toBeGreaterThan(0);
+    expect(displaced, 'sweep must contain the tier-displacement case').toBeGreaterThan(0);
+    expect(advisoryCases, 'sweep must exercise the advisory path').toBeGreaterThan(0);
   });
 });

@@ -48,10 +48,25 @@ function pgStub({ plantings = PLANTINGS, storedItems = null } = {}) {
 }
 
 const wx = (tonightLow) => async () => ({ tonightLow, highToday: 70, code: 1, unit: 'F', short: 'Clear' });
-const precip = (lows = [null, null, null]) => async () => ({
+// V5-RADIATIVEFROST-001 — a clear, calm 18:00->08:00 night keyed on `date`, in the verbatim shape
+// index.js:fetchPrecip carries through. Present by DEFAULT so every case in this file drives the real
+// delivery seam rather than a null.
+const clearNight = (date = DATE, next = '2026-09-21', { dew = 33, cloud = 4, wind = 2 } = {}) => {
+  const hours = [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8];
+  const time = hours.map((h) => `${h >= 18 ? date : next}T${String(h).padStart(2, '0')}:00`);
+  return {
+    time,
+    dew_point_2m: time.map(() => dew),
+    cloud_cover: time.map(() => cloud),
+    wind_speed_10m: time.map(() => wind),
+    timezone: 'America/New_York',
+  };
+};
+const precip = (lows = [null, null, null], hourlyFrost = clearNight()) => async () => ({
   forecast_lows: lows, forecast_dates: ['2026-09-21', '2026-09-22', '2026-09-23'],
   recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0,
   tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0,
+  hourly_frost: hourlyFrost,
 });
 
 async function drive(opts = {}) {
@@ -60,7 +75,7 @@ async function drive(opts = {}) {
   const res = await run({
     pg, today: opts.today || DATE, dryRun: opts.dryRun ?? false,
     geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
-    fetchNWS: wx('tonightLow' in opts ? opts.tonightLow : 30), fetchPrecip: precip(opts.forecastLows), fetchStation: async () => null,
+    fetchNWS: wx('tonightLow' in opts ? opts.tonightLow : 30), fetchPrecip: precip(opts.forecastLows, 'hourlyFrost' in opts ? opts.hourlyFrost : clearNight()), fetchStation: async () => null,
     publishAlert, etHour: opts.etHour ?? PM_HOUR, event: opts.event || {},
   });
   return { res, pg, publishAlert };
@@ -70,6 +85,68 @@ const logLines = (spy) => spy.mock.calls
   .map(([l]) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+describe('V5-RADIATIVEFROST-001 — the DATA DELIVERY SEAM, end to end through the real run()', () => {
+  // WHY THIS EXISTS. Two mutations that severed the feature completely both SURVIVED the entire suite:
+  // handler passing `nightsFrom(null)`, and index.js emitting a null `hourly_frost`. Every existing
+  // assertion about that seam is a regex over index.js's SOURCE TEXT (the file cannot be imported — it
+  // pulls AWS/neon at module load), so the string shape matched while the value was inverted. The unit
+  // tests proved the URL asks for the data and the module computes from it; nothing proved the data
+  // ever travelled between them. This is the "shipped feature that never ran" class.
+  it('the nights reach frostEval — asserted FLAG-OFF, so the seam is guarded independently of the feature', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await drive({ tonightLow: 30, forecastLows: [30, 40, 40] });
+    const evalLine = logLines(spy).find((l) => l.msg === 'frost-eval');
+    expect(evalLine, 'frost-eval line emitted').toBeTruthy();
+    expect(evalLine.radiativeEnabled).toBe(false);
+    // MUTATION THIS CLOSES (both of them): 15 hours arrive -> exactly one night is derived.
+    expect(evalLine.radiativeNightsAvailable).toBe(1);
+  });
+
+  it('an absent hourly block reads as ZERO nights, not as a clear calm one', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await drive({ tonightLow: 30, forecastLows: [30, 40, 40], hourlyFrost: null });
+    expect(logLines(spy).find((l) => l.msg === 'frost-eval').radiativeNightsAvailable).toBe(0);
+  });
+
+  it('flag ON, a clear calm night publishes a FROST WATCH the threshold path would have missed', async () => {
+    // The full path: URL shape -> hourly_frost -> nightsFrom -> radiativeTrips -> tier -> SNS.
+    // tonightLow 39 is ABOVE the 38F trip point, so nothing fires on threshold alone.
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.stubEnv('FROST_RADIATIVE_ENABLED', 'true');
+    const { publishAlert } = await drive({ tonightLow: 39, forecastLows: [45, 46, 47] });
+    expect(publishAlert).toHaveBeenCalled();
+    const [{ message, subject }] = publishAlert.mock.calls.map(([a]) => a);
+    expect(message).toMatch(/FROST WATCH TONIGHT/);
+    expect(message).toMatch(/dewpoint is 33°F/);
+    // The SNS Subject is built separately from the body and would otherwise assert a threshold
+    // crossing at a number that did not cross it.
+    expect(subject).toMatch(/Frost watch tonight/);
+    expect(subject).not.toMatch(/protect/i);
+  });
+
+  it('flag ON with the SAME inputs but a cloudy night publishes nothing', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.stubEnv('FROST_RADIATIVE_ENABLED', 'true');
+    const { publishAlert } = await drive({
+      tonightLow: 39, forecastLows: [45, 46, 47],
+      hourlyFrost: clearNight(DATE, '2026-09-21', { cloud: 95, wind: 12 }),
+    });
+    expect(publishAlert).not.toHaveBeenCalled();
+  });
+
+  it('the durable alert row records the trip BASIS — the corpus column this feature exists for', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.stubEnv('FROST_RADIATIVE_ENABLED', 'true');
+    const { pg } = await drive({ tonightLow: 39, forecastLows: [45, 46, 47] });
+    const stored = pg.writes[pg.writes.length - 1];
+    const sent = (stored && stored.alerts_sent) || [];
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent[sent.length - 1].trip).toBe('radiative');
+  });
+});
 
 describe('F6 feature flag — FROST_ALERT_ENABLED is OFF by default and genuinely inert', () => {
   it('publishes nothing when the flag is unset, even on a 30°F night in frost season', async () => {
