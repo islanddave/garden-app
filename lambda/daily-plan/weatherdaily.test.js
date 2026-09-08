@@ -81,6 +81,13 @@ function recordingPg({ throwOnWeatherDaily = false, weatherRows = [] } = {}) {
 const wd = (pg) => pg.calls.filter((c) => /weather_daily/.test(c.sql));
 const wdSelects = (pg) => wd(pg).filter((c) => /^\s*select/i.test(c.sql));
 const wdInserts = (pg) => wd(pg).filter((c) => /^\s*insert\s+into\s+weather_daily/i.test(c.sql));
+// V5-LEGACYEXCEPTIONCARE-001 added a THIRD reader of this table (droughtSignal.readDroughtSeries),
+// deliberately UNGATED — see the scope note below. The two readers are told apart by their select
+// lists: the water-ledger fold needs et0_in, the drought counter reads date + precip_in and nothing
+// else. Discriminating here rather than loosening the counts is what keeps every ledger-gating claim
+// in this file as strict as it was; a mis-gated ledger read still reds.
+const ledgerSelects = (pg) => wdSelects(pg).filter((c) => /et0_in/.test(c.sql));
+const droughtSelects = (pg) => wdSelects(pg).filter((c) => !/et0_in/.test(c.sql));
 const planWrites = (pg) => pg.calls.filter((c) => /insert into daily_plan/.test(c.sql));
 
 // ── BUG-WXWRITEOVERWRITE-001 — reading the conflict policy back out of the emitted statement ──────
@@ -610,37 +617,39 @@ describe('readWeatherDaily — flag-gated, and fail-open when it does run', () =
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // THE HEADLINE PROOF. Every assertion here counts statements that run() genuinely issued.
-// SCOPE NOTE (2026-08-28): every claim below is about the WATER-LEDGER reader specifically, not
-// about weather_daily reads in general — drive() suppresses the rain logger, which is a second and
-// independently-gated reader of the same table. The distinction matters: CARE_WATER_LEDGER_ENABLED
-// arms only on the exact string 'true' because its read could blank the nightly plan, whereas
-// RAIN_AUTOLOG_ENABLED defaults ON because its read is fail-open and runs after the plan is durable.
-// Two readers, two risk profiles, two flags.
+// SCOPE NOTE (2026-08-28, extended 2026-09-08): every claim below is about the WATER-LEDGER reader
+// specifically, not about weather_daily reads in general — drive() suppresses the rain logger, which
+// is a second and independently-gated reader of the same table. The distinction matters:
+// CARE_WATER_LEDGER_ENABLED arms only on the exact string 'true' because its read could blank the
+// nightly plan, whereas RAIN_AUTOLOG_ENABLED defaults ON because its read is fail-open and runs after
+// the plan is durable. V5-LEGACYEXCEPTIONCARE-001 adds a THIRD: the drought counter, ungated, covered
+// by its own describe below. Three readers, three risk profiles. Assertions here use ledgerSelects()
+// so the ledger's gating claims stay exactly as strict as they were.
 describe('CARE_WATER_LEDGER_ENABLED — flag OFF issues ZERO water-ledger weather_daily reads', () => {
-  it('flag OFF, dry run: not one statement mentions weather_daily', async () => {
+  it('flag OFF, dry run: not one LEDGER statement mentions weather_daily', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const { pg } = await drive({ dryRun: true });
-    expect(wd(pg)).toHaveLength(0);
+    expect(ledgerSelects(pg)).toHaveLength(0);
+    expect(wdInserts(pg)).toHaveLength(0);
   });
 
-  it('flag OFF, LIVE: the writer runs, and the number of READS is exactly zero', async () => {
+  it('flag OFF, LIVE: the writer runs, and the number of LEDGER READS is exactly zero', async () => {
     // This is the shape that matters. The write is intentionally NOT flag-gated — the substrate has
     // to accumulate before F2 can consume it — so weather_daily statements DO appear on a live run.
-    // What must not appear, at all, is a SELECT: that is the ungated-read-of-a-missing-relation that
-    // blanked the nightly plan in BUG-SEEDEDGATE-001.
+    // What must not appear, at all, is the FOLD's SELECT: that is the ungated-read-of-a-missing-
+    // relation that blanked the nightly plan in BUG-SEEDEDGATE-001.
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const { pg } = await drive();
     expect(wdInserts(pg).length).toBeGreaterThan(0);
-    expect(wdSelects(pg)).toHaveLength(0);
-    expect(wd(pg).length).toBe(wdInserts(pg).length);
+    expect(ledgerSelects(pg)).toHaveLength(0);
   });
 
   it('flag ON, LIVE: exactly one read per space appears, over the 30-day window', async () => {
     vi.stubEnv('CARE_WATER_LEDGER_ENABLED', 'true');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const { pg } = await drive();
-    expect(wdSelects(pg)).toHaveLength(1);
-    expect(wdSelects(pg)[0].params).toEqual([SPACE, weatherWindowStart(TODAY), YESTERDAY]);
+    expect(ledgerSelects(pg)).toHaveLength(1);
+    expect(ledgerSelects(pg)[0].params).toEqual([SPACE, weatherWindowStart(TODAY), YESTERDAY]);
   });
 
   it('only the exact string "true" arms it — a truthy-looking value must stay OFF', async () => {
@@ -650,7 +659,7 @@ describe('CARE_WATER_LEDGER_ENABLED — flag OFF issues ZERO water-ledger weathe
       vi.stubEnv('CARE_WATER_LEDGER_ENABLED', v);
       vi.spyOn(console, 'log').mockImplementation(() => {});
       const { pg } = await drive();
-      expect(wdSelects(pg), `flag value ${JSON.stringify(v)} must not arm the read`).toHaveLength(0);
+      expect(ledgerSelects(pg), `flag value ${JSON.stringify(v)} must not arm the read`).toHaveLength(0);
     }
   });
 
@@ -661,7 +670,39 @@ describe('CARE_WATER_LEDGER_ENABLED — flag OFF issues ZERO water-ledger weathe
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const { pg } = await drive({ dryRun: true });
     expect(wdInserts(pg)).toHaveLength(0);
-    expect(wdSelects(pg)).toHaveLength(1);
+    expect(ledgerSelects(pg)).toHaveLength(1);
+  });
+});
+
+// V5-LEGACYEXCEPTIONCARE-001 — the drought counter's series, and why it is NOT behind the flag.
+// CARE_WATER_LEDGER_ENABLED is absent from the live garden-daily-plan env, so a gated drought read
+// would be null in every production run and the trigger would be an inert branch. Flipping that flag
+// to unblock it would arm the whole Water Ledger fold for both users at once, which the crucible
+// verdict forbids as an opening move. The seededgate reasoning that justifies gating the fold's read
+// does not transfer: this same handler already writes weather_daily unconditionally on every live run,
+// so the relation is known to exist by the time this SELECT is issued.
+describe('the drought series reads UNCONDITIONALLY, and touches nothing the ledger owns', () => {
+  it('flag OFF, LIVE: exactly one drought read per space, over its own window', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { pg } = await drive();
+    expect(droughtSelects(pg)).toHaveLength(1);
+    expect(droughtSelects(pg)[0].params).toEqual([SPACE, weatherWindowStart(TODAY), YESTERDAY]);
+    expect(droughtSelects(pg)[0].sql).not.toMatch(/et0_in|tmax_f|tmin_f/);   // date + precip_in only
+  });
+
+  it('flag OFF, DRY run: the read still happens — a diff must see the same signal a live run does', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { pg } = await drive({ dryRun: true });
+    expect(droughtSelects(pg)).toHaveLength(1);
+    expect(wdInserts(pg)).toHaveLength(0);
+  });
+
+  it('flag ON does not duplicate or displace it — the two readers coexist, one each', async () => {
+    vi.stubEnv('CARE_WATER_LEDGER_ENABLED', 'true');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { pg } = await drive();
+    expect(droughtSelects(pg)).toHaveLength(1);
+    expect(ledgerSelects(pg)).toHaveLength(1);
   });
 });
 

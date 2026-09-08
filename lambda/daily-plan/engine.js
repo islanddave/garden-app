@@ -16,6 +16,10 @@ const fc = require('./frostClass');
 // planting out of the summer water/feed cadence and gives it a REDUCED-cadence moisture check instead;
 // the window is a pure function of the date, so the exit needs no writer. See overwinter.js header.
 const ow = require('./overwinter');
+// V5-LEGACYEXCEPTIONCARE-001 — the drought signal (consecutive days with no >=0.60in deep soak). Read on
+// the dormancy_suppressed arm only, and INERT unless the handler threads a state in: an un-updated caller
+// passes nothing, droughtNote returns null, and the emitted row is byte-identical.
+const dr = require('./droughtSignal');
 // DRG-WXPROB-001 — display gate for the nightly rain-AMOUNT callout (mirrors the Today widget). Presentation only.
 const RAIN_POP_DISPLAY_THRESHOLD = 30; // percent
 // DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
@@ -856,7 +860,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 // generatePlan — {enabled, eventsByPlant, weatherByDate, weatherRowCount, effNowMs}. Null/absent ->
 // byte-identical legacy path; the fold requires BOTH the flag and a real event window (a failed
 // event-window read degrades the whole run to flag-OFF, per the canon fail-to-today's-model rule).
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false){
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[], feedSuppressed=[];
   let overwinterHeld=0, overwinterDeferred=0;
@@ -896,11 +900,23 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // the BRANCH ORDER rather than this expression.
     const _ow = _wsup ? null : ow.overwinterState(p, c, today);
     if(_wsup){
+      // V5-LEGACYEXCEPTIONCARE-001 — the drought signal rides HERE, appended to the reason and mirrored
+      // as a structured key. It does NOT amend the suppression rule: the shipped policy stays "water only
+      // on plant signals, never by interval", and a 20-day absence of any root-zone-wetting rain IS a
+      // plant signal, which is the one thing this profile class had no way to receive. No branch above or
+      // below reads it, so a suppressed planting is still never routed to water_due by weather alone.
+      // Both keys are ADDITIVE on an existing row -> PLAN_SCHEMA_VERSION deliberately NOT bumped (every
+      // reader selects named keys; a bump nulls the plan in three reader Lambdas with no regeneration
+      // path — crucible Verdict 4).
+      const _dnote = dr.droughtNote(droughtState);
       waterSuppressed.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,rule:_wsup,
         moisture:(p.db_cadence&&p.db_cadence.soil_moisture_target)||c.soil_moisture_target||null,
-        reason:_wsup==='no_calendar_water'
+        reason:(_wsup==='no_calendar_water'
           ? 'Watering suppressed — profile: NO calendar watering; water only on plant signals, never by interval'
-          : 'Watering suppressed — profile: growth-gated; water only during active growth, never by interval'});
+          : 'Watering suppressed — profile: growth-gated; water only during active growth, never by interval')
+          + (_dnote ? ` — ${_dnote}` : ''),
+        ...(_dnote ? {drought:{dry_days:droughtState.dryDays, deep_soak_in:droughtState.deepSoakIn,
+          last_deep_soak:droughtState.lastDeepSoakDate, truncated:droughtState.truncated}} : {})});
     } else if(_ow && _ow.active){
       // HELD OUT of water_due / no_history / rain_skipped, and given a reduced-cadence MOISTURE CHECK —
       // NOT a skip. A cover sheds the rain that would have reached the bed and indoor heat dries a pot
@@ -1227,7 +1243,7 @@ function hydrologyStatus(hy){
 // handler threads through (weatherDaily was already passed as the F1 seam; it is consumed now).
 // All default to inert — an un-updated caller is byte-identical, and enabled-without-events stays
 // legacy (the handler passes enabled=false when the event-window read fails).
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null}){
   const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
     ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
     : null;
@@ -1245,7 +1261,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const rainComing = _todayComing || _tomorrowComing;
   const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState);
     users[u]=up; }
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
@@ -1261,4 +1277,4 @@ module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQu
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
   FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered, bagHeatDemoteCredit,
   dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,
-  overwinter: ow};
+  overwinter: ow, drought: dr};

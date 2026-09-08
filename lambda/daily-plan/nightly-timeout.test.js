@@ -118,7 +118,15 @@ describe('run() progress markers', () => {
       fetchNWS: async () => null, fetchPrecip: async () => null, fetchStation: async () => null,
     });
     expect(res.rows).toBe(0);
-    expect(pg.query).toHaveBeenCalledTimes(2); // dry run: no upsert
+    // "dry run: no upsert" — asserted as the PROPERTY, not as a frozen total. It was
+    // toHaveBeenCalledTimes(2) until V5-LEGACYEXCEPTIONCARE-001 added a third READ (the drought
+    // series); a bare count reds on any widening, which teaches the next lane to bump the number and
+    // quietly deletes the no-write guarantee this line exists for.
+    const sqls = pg.query.mock.calls.map(([s]) => s);
+    // Anchored to the leading verb: an unanchored /delete/ matches `deleted_at is null` in the
+    // plantings SELECT and the guard passes for the wrong reason.
+    expect(sqls.some((s) => /^\s*(insert|update|delete)\b/i.test(s))).toBe(false);
+    expect(sqls.length).toBeGreaterThanOrEqual(2);
     const msgs = spy.mock.calls
       .map(([l]) => { try { return JSON.parse(l); } catch { return null; } })
       .filter(Boolean);
