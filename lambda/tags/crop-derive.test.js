@@ -348,3 +348,72 @@ describe('computeDerivedTags — grown_as must not reach the lifecycle chip (BUG
       .toEqual({ facet: 'lifecycle', slug: 'perennial', label: 'Perennial' });
   });
 });
+
+// ── BUG-VARIETYGENUSUI-001 — what a USER-SUPPLIED genus can and cannot move ──────────────────────
+//
+// Bounding the blast radius of letting a human type genus on the VarietyPicker create stage. The
+// premise this block was written to test was that genus is one of the signals deciding
+// `crop_type_slug`, so a typed genus could re-file a variety under a different crop type and change
+// every type-grouped view. Read against the source, that premise is WRONG, and these tests are the
+// standing proof of the narrower truth:
+//
+//   · `computeDerivedTags` READS `cultivar.crop_type_slug` (it is the `type:` facet) and never
+//     computes it. The POST/PUT in lambda/varieties/index.js bind the column straight from
+//     `body.crop_type_slug` with no inference step. NOTHING anywhere in the varieties Lambda derives
+//     a crop type from a genus — grep genus across lambda/varieties/: every hit is a SELECT column,
+//     an INSERT/UPDATE bind, the CLEARABLE list, or `beanType`.
+//   · genus reaches exactly ONE derivation: `beanType`, gated to `crop_type_slug === 'bean'`. So the
+//     entire user-facing risk surface of a typed genus is the `bean_type:` facet on beans.
+//
+// The disagreement cases below are the ones a user can actually create.
+describe('computeDerivedTags — a user-typed genus cannot re-file the crop type (BUG-VARIETYGENUSUI-001)', () => {
+  const CT = {
+    tomato: { slug: 'tomato', display_name: 'Tomato', default_lifecycle: 'tender_perennial' },
+    pepper: { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial' },
+    bean:   { slug: 'bean',   display_name: 'Bean',   default_lifecycle: 'annual' },
+  };
+
+  it('genus flatly contradicting the chosen crop type does not move the type: facet', () => {
+    // The user picked Tomato and typed the genus of a pepper. The chip still says Tomato — the crop
+    // type is the user's other explicit choice, and the deriver has no vote.
+    const out = computeDerivedTags(
+      { crop_type_slug: 'tomato', genus: 'Capsicum', species: 'annuum', name: 'Confused Cultivar' }, CT);
+    expect(out).toContainEqual({ facet: 'type', slug: 'tomato', label: 'Tomato' });
+    expect(out.some(t => t.slug === 'pepper')).toBe(false);
+    expect(out.filter(t => t.facet === 'type')).toHaveLength(1);
+  });
+
+  it('the identical row with genus REMOVED derives the same tags — genus is inert off beans', () => {
+    const withGenus = computeDerivedTags({ crop_type_slug: 'pepper', genus: 'Solanum', scoville_max: 5000 }, CT);
+    const without   = computeDerivedTags({ crop_type_slug: 'pepper', scoville_max: 5000 }, CT);
+    expect(withGenus).toEqual(without);
+  });
+
+  it('on a BEAN, a typed genus DOES move bean_type — the one real interaction, named', () => {
+    // Not a defect: reading the structured genus/species columns is beanType's documented job. But it
+    // is the one facet a create-stage typo can flip, so it is pinned rather than assumed harmless.
+    const soy = computeDerivedTags({ crop_type_slug: 'bean', genus: 'Glycine', species: 'max', name: 'Chiba Green' }, CT);
+    expect(soy).toContainEqual({ facet: 'bean_type', slug: 'soybean', label: 'Soybean / edamame' });
+    // Same row, genus omitted: the facet is simply absent. It degrades to silence, never to a guess.
+    const bare = computeDerivedTags({ crop_type_slug: 'bean', name: 'Chiba Green' }, CT);
+    expect(bare.some(t => t.facet === 'bean_type')).toBe(false);
+    // And the type: facet is Bean in both — even the bean case cannot re-file the crop.
+    expect(soy).toContainEqual({ facet: 'type', slug: 'bean', label: 'Bean' });
+    expect(bare).toContainEqual({ facet: 'type', slug: 'bean', label: 'Bean' });
+  });
+
+  it('a nonsense genus on a bean yields no bean_type rather than a wrong one', () => {
+    const out = computeDerivedTags({ crop_type_slug: 'bean', genus: 'asdf', species: 'qwer', name: 'Typo' }, CT);
+    expect(out.some(t => t.facet === 'bean_type')).toBe(false);
+    expect(out).toContainEqual({ facet: 'type', slug: 'bean', label: 'Bean' });
+  });
+
+  it('species is the same story: it reaches basil_use, and only on basil', () => {
+    const basil = { basil: { slug: 'basil', display_name: 'Basil', default_lifecycle: 'annual' } };
+    expect(computeDerivedTags({ crop_type_slug: 'basil', species: 'tenuiflorum' }, basil))
+      .toContainEqual({ facet: 'basil_use', slug: 'tulsi', label: 'Tulsi' });
+    // Off basil, the same species value changes nothing.
+    expect(computeDerivedTags({ crop_type_slug: 'tomato', species: 'tenuiflorum' }, CT))
+      .toEqual(computeDerivedTags({ crop_type_slug: 'tomato' }, CT));
+  });
+});

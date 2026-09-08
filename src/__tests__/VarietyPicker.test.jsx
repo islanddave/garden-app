@@ -958,3 +958,217 @@ describe('VarietyPicker — crop chooser reachability (CROPTYPEREACH)', () => {
     }
   })
 })
+
+// ── BUG-VARIETYGENUSUI-001: botanical identity on the CREATE path ───────────────────────────────
+// The edit form (forms/VarietyEditor.jsx) has exposed Genus and Species since 2026-08-07. This
+// component — the app's ONLY variety-create surface — could send neither: `genus` appeared nowhere in
+// the file and `species` came only from the non-interactive `speciesFilter` prop, which has zero call
+// sites. Both of Dave's app-driven creates (Snapdragon 2026-09-07, Penstemon 2026-09-08) landed genus
+// NULL, and an out-of-band `system` actor patched one of them two minutes later.
+describe('VarietyPicker — create-stage identity (GENUSCREATE)', () => {
+  const CROPS = [
+    { slug: 'penstemon', display_name: 'Penstemon', default_lifecycle: 'perennial', category: 'ornamental', sort_order: 0 },
+    { slug: 'bean', display_name: 'Bean', default_lifecycle: 'annual', category: 'vegetable', sort_order: 1 },
+  ]
+
+  // `created` is what the POST resolves to; null leaves the POST unmocked so a test can assert it
+  // never happened.
+  function mockVocab(created = { id: 'v-new', name: 'Penstemon', crop_type_slug: 'penstemon' }) {
+    fetchSpy.mockImplementation((path, opts) => {
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      if (path === '/api/varieties' && opts?.method === 'POST') return Promise.resolve(created)
+      return Promise.resolve([])
+    })
+  }
+
+  async function openChooser(name = 'Husker Red') {
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: name } })
+    await waitFor(() => screen.getByText(/Create/))
+    await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+    await waitFor(() => screen.getByText('Penstemon'))
+  }
+
+  const postBody = () => {
+    const call = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')
+    return call ? JSON.parse(call[1].body) : null
+  }
+  const pickCrop = async (label = 'Penstemon') => {
+    await act(async () => { fireEvent.click(screen.getByText(label).closest('li')) })
+  }
+
+  it('renders NO identity inputs by default — the other four hosts are untouched', async () => {
+    // PutUp, AddSeeds, InventoryAdd and SaveSeedSheet render this picker without the prop. Two
+    // unconditional fields would land in a jar log and a seed-packet transcription too.
+    mockVocab()
+    setup()
+    await openChooser()
+    expect(screen.queryByTestId('variety-identity-fields')).toBeNull()
+    expect(screen.queryByLabelText('Genus')).toBeNull()
+    expect(screen.queryByLabelText('Species')).toBeNull()
+    // The chooser itself is unchanged.
+    expect(screen.getByLabelText('Filter crop types')).toBeDefined()
+  })
+
+  it('renders both inputs when allowIdentity is on', async () => {
+    mockVocab()
+    setup({ allowIdentity: true })
+    await openChooser()
+    const genus = screen.getByLabelText('Genus')
+    const species = screen.getByLabelText('Species')
+    expect(genus).toBeDefined()
+    expect(species).toBeDefined()
+    // Caps are enforced in the browser by the attribute as well as at submit — mirrors validate.js.
+    expect(genus.maxLength).toBe(120)
+    expect(species.maxLength).toBe(200)
+  })
+
+  it('shows the inputs only on the create stage, never on the search listbox', async () => {
+    // The picker's normal state is a search box; identity belongs to the act of creating.
+    mockVocab()
+    setup({ allowIdentity: true })
+    fireEvent.focus(screen.getByRole('combobox'))
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Husker Red' } })
+    await waitFor(() => screen.getByText(/Create/))
+    expect(screen.queryByLabelText('Genus')).toBeNull()
+  })
+
+  it('sends a typed genus and species in the create POST — the defect, fixed', async () => {
+    mockVocab()
+    const { onChange } = setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Genus'), { target: { value: 'Penstemon' } })
+    fireEvent.change(screen.getByLabelText('Species'), { target: { value: 'digitalis' } })
+    await pickCrop()
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const body = postBody()
+    expect(body.name).toBe('Husker Red')
+    expect(body.genus).toBe('Penstemon')
+    expect(body.species).toBe('digitalis')
+    // The crop type the user picked still travels — identity is additive, not a replacement.
+    expect(body.crop_type_slug).toBe('penstemon')
+    expect(body.lifecycle).toBe('perennial')
+  })
+
+  it('trims, and OMITS a blank field rather than sending an empty string', async () => {
+    // The POST binds `body.genus ?? null`; '' would store '' in a column whose absence means unknown.
+    mockVocab()
+    const { onChange } = setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Genus'), { target: { value: '  Penstemon  ' } })
+    fireEvent.change(screen.getByLabelText('Species'), { target: { value: '   ' } })
+    await pickCrop()
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const body = postBody()
+    expect(body.genus).toBe('Penstemon')
+    expect('species' in body).toBe(false)
+  })
+
+  it('REGRESSION: a create with the fields left blank is byte-identical to the old payload', async () => {
+    mockVocab()
+    const { onChange } = setup({ allowIdentity: true })
+    await openChooser()
+    await pickCrop()
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(postBody()).toEqual({ name: 'Husker Red', crop_type_slug: 'penstemon', lifecycle: 'perennial' })
+  })
+
+  it('REGRESSION: with the prop off the payload keeps its old shape exactly', async () => {
+    mockVocab()
+    const { onChange } = setup()
+    await openChooser()
+    await pickCrop()
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(postBody()).toEqual({ name: 'Husker Red', crop_type_slug: 'penstemon', lifecycle: 'perennial' })
+  })
+
+  it('"No crop type" still creates, and carries the identity with it', async () => {
+    mockVocab({ id: 'v-nc', name: 'Husker Red' })
+    const { onChange } = setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Genus'), { target: { value: 'Penstemon' } })
+    await act(async () => { fireEvent.click(screen.getByText(/No crop type/).closest('li')) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const body = postBody()
+    expect(body.genus).toBe('Penstemon')
+    expect(body.crop_type_slug).toBeUndefined()
+  })
+
+  it('refuses an over-length genus client-side and never POSTs', async () => {
+    // Mirrors lambda/varieties/validate.js. maxLength stops this by hand; paste and voice do not go
+    // through the keyboard, so the submit-time check is the one that has to hold.
+    mockVocab(null)
+    setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Genus'), { target: { value: 'A'.repeat(121) } })
+    await pickCrop()
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Genus must be 120 characters or fewer/))
+    expect(fetchSpy.mock.calls.some(c => c[1]?.method === 'POST')).toBe(false)
+    // The panel stays up with the typing intact, so the error is fixable in place.
+    expect(screen.getByLabelText('Genus').value).toHaveLength(121)
+  })
+
+  it('refuses an over-length species client-side and never POSTs', async () => {
+    mockVocab(null)
+    setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Species'), { target: { value: 'B'.repeat(201) } })
+    await pickCrop()
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Species must be 200 characters or fewer/))
+    expect(fetchSpy.mock.calls.some(c => c[1]?.method === 'POST')).toBe(false)
+  })
+
+  it('accepts a value exactly at the cap', async () => {
+    mockVocab()
+    const { onChange } = setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Genus'), { target: { value: 'A'.repeat(120) } })
+    await pickCrop()
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(postBody().genus).toHaveLength(120)
+  })
+
+  it('survives the mint-a-crop-type detour', async () => {
+    // The identity fields are on the crop stage; minting a type navigates AWAY from that stage and
+    // back into the same create. The typed genus has to still be there when the POST finally fires.
+    fetchSpy.mockImplementation((path, opts) => {
+      if (path === '/api/varieties/crop-types' && opts?.method === 'POST') {
+        return Promise.resolve({ id: 'ct-1', slug: 'beardtongue', display_name: 'Beardtongue', default_lifecycle: 'perennial' })
+      }
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      if (path === '/api/varieties' && opts?.method === 'POST') return Promise.resolve({ id: 'v-m', name: 'Husker Red' })
+      return Promise.resolve([])
+    })
+    const { onChange } = setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Genus'), { target: { value: 'Penstemon' } })
+
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    fireEvent.change(screen.getByPlaceholderText('e.g. Hibiscus'), { target: { value: 'Beardtongue' } })
+    await act(async () => { fireEvent.click(screen.getByText('Create crop type')) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const body = postBody()
+    expect(body.genus).toBe('Penstemon')
+    expect(body.crop_type_slug).toBe('beardtongue')
+  })
+
+  it('clears the identity between creates — one plant\'s genus must not label the next', async () => {
+    mockVocab()
+    setup({ allowIdentity: true })
+    await openChooser()
+    fireEvent.change(screen.getByLabelText('Genus'), { target: { value: 'Penstemon' } })
+    // Back out to the search box, then start a different create.
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Provider' } })
+    await waitFor(() => screen.getByText(/Create/))
+    await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+    await waitFor(() => screen.getByLabelText('Genus'))
+    expect(screen.getByLabelText('Genus').value).toBe('')
+  })
+})
