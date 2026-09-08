@@ -82,21 +82,30 @@
 --     history the row exists to keep. It costs one text column and it cannot be recovered later.
 --     Four values, coarsest to finest: origin < crop < planting < harvest.
 --
---   * D4 — preservation_log_id is ON DELETE CASCADE, diverging from V100 §7.1's "NO CASCADE
---     (Soft-Delete-Only)". Evidence for the divergence, all checked rather than assumed:
---       (i)   the app never hard-deletes a put-up. lambda/preservation/index.js:790-799 answers
---             DELETE with `UPDATE preservation_log SET deleted_at = NOW()`. The cascade is therefore
---             UNREACHABLE from the product, and "no cascade" would be protecting against a path
---             that does not exist.
---       (ii)  the integration suites DO hard-delete. tests/integration/_cleanup.js and both
---             preservation suites delete preservation_log rows directly and FIRST (recorded in
---             v4-archpreservguard-001/0c-guard.sql:77-79). A NO ACTION FK would turn every teardown
---             that had written a source row into a 23503, in a suite that has nothing to do with
---             this feature.
---       (iii) the sibling join table already settled this. kitchen_batch_input_batch_id_fkey is
---             ON DELETE CASCADE against a parent that is likewise soft-deleted in the app.
+--   * D4 — preservation_log_id is ON DELETE RESTRICT. REVISED 2026-09-07 (BUG-PUTUPSRCCASCADE-001)
+--     after the original CASCADE reddened tests/integration/cascade-sweep.int.test.js on dev. The
+--     original three arguments are kept below because two of them still hold and the third is the
+--     reason the reversal is safe:
+--       (i)   STILL TRUE — the app never hard-deletes a put-up. lambda/preservation/index.js:790-799
+--             answers DELETE with `UPDATE preservation_log SET deleted_at = NOW()`. So RESTRICT is
+--             equally unreachable from the product: this change costs the user nothing.
+--       (ii)  STILL TRUE, AND NOW HANDLED — the integration suites DO hard-delete, parents first
+--             (tests/integration/_cleanup.js). RESTRICT alone would 23503 that teardown, exactly as
+--             the original note predicted. Fixed at the source rather than worked around: _cleanup.js
+--             now deletes preservation_source BEFORE preservation_log, the same child-first step
+--             share_log already carries there for the same reason (its RESTRICT to photos).
+--       (iii) FALSE, and this is what settles it — kitchen_batch_input_batch_id_fkey is indeed
+--             CASCADE, but kitchen_batch_input has NO deleted_at column (verified on live prod,
+--             2026-09-07). The guard fires on CASCADE *into a table carrying deleted_at*, which is
+--             precisely the axis on which the two differ. The sibling is not a precedent for this
+--             table; preservation_source is the first to hold both.
+--     Why not the guard's ALLOWED list instead: its stated criterion is "derived caches and closure
+--     rows, rebuilt from live data, correct to die with their parent". A source row is user-entered
+--     provenance — what went into this jar — and is rebuildable from nothing. Adding it there would
+--     break the allowlist's own rule rather than take the exception it offers.
 --     Soft-delete remains the product behaviour; deleted_at on this table mirrors the parent's so a
---     single source can be retracted without disturbing its siblings' ordinals.
+--     single source can be retracted without disturbing its siblings' ordinals — and RESTRICT is what
+--     makes that column's promise true rather than decorative.
 --
 --   * D5 — plant_id and harvest_log_id are ON DELETE SET NULL, matching preservation_log's own two
 --     (v4-archpreservguard-001 names both). Safe here only because of D2. variety_id and
@@ -164,8 +173,8 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS public.preservation_source (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 
-  -- D4. CASCADE because the product soft-deletes and only test teardown hard-deletes.
-  preservation_log_id uuid NOT NULL REFERENCES public.preservation_log(id) ON DELETE CASCADE,
+  -- D4 (REVISED 2026-09-07 — see the decision block above). RESTRICT, not CASCADE.
+  preservation_log_id uuid NOT NULL REFERENCES public.preservation_log(id) ON DELETE RESTRICT,
 
   -- Mirrors the parent's owner column, and is the spelling every predicate in the handler binds.
   -- NOT created_by (D6) — that spelling is the inventory/event family's and the shared ownership

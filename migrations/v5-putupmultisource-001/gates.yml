@@ -290,10 +290,13 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # D4. The parent FK is CASCADE ('c'). Asserted because the choice diverges from V100 §7.1 on
-  # measured grounds (the app soft-deletes; only test teardown hard-deletes) and a silent revert to
-  # NO ACTION would 23503 the integration suites' teardown rather than this feature.
-  - name: post_parent_fk_is_cascade
+  # D4. The parent FK is RESTRICT ('r'). REVISED 2026-09-07 (BUG-PUTUPSRCCASCADE-001): this gate
+  # asserted CASCADE ('c') until the original choice reddened cascade-sweep.int.test.js, whose class
+  # guard forbids a CASCADE into any table carrying deleted_at. Now pinned the other way, and for the
+  # same reason the original was pinned — so a future sweep cannot silently flip it back. The
+  # teardown hazard the old note named is real and is handled at its source: _cleanup.js deletes
+  # preservation_source before preservation_log, the child-first step share_log already carries.
+  - name: post_parent_fk_is_restrict
     continuous: true
     sql: |
       SELECT 1
@@ -304,7 +307,7 @@ post:
                            JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname='public'
                            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
                           WHERE t.relname='preservation_source' AND c.contype='f'
-                            AND a.attname='preservation_log_id' AND c.confdeltype='c')
+                            AND a.attname='preservation_log_id' AND c.confdeltype='r')
     expect: rowcount_eq
     value: 0
 

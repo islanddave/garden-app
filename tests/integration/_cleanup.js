@@ -105,6 +105,11 @@ const SAMPLE_PRED = `created_by LIKE ${NS} OR cultivar_id IN (${NS_VARIETIES}) O
 // plant_projects / crop_types / entity / event_log / harvest_log / cultivar_weight_sample is covered.
 const STEPS = [
   ['cultivar_weight_void',        `DELETE FROM cultivar_weight_void WHERE created_by LIKE ${NS} OR sample_id IN (SELECT id FROM cultivar_weight_sample WHERE ${SAMPLE_PRED})`],
+  // BUG-PUTUPSRCCASCADE-001: preservation_source.preservation_log_id is ON DELETE RESTRICT (it
+  // carries deleted_at, so cascade-sweep's class guard forbids a CASCADE into it), which means a
+  // source row must go before its parent put-up or this DELETE 23503s. Same shape, same reason, as
+  // the share_log step below.
+  ['preservation_source',         `DELETE FROM preservation_source WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST}) OR preservation_log_id IN (SELECT id FROM preservation_log WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST}))`],
   ['preservation_log',            `DELETE FROM preservation_log WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST})`],
   // V4-CASCADESWEEP-001: share_log.photo_id is ON DELETE RESTRICT (it is a LEDGER pointer — a post
   // to an external page cannot be retracted by deleting our record of it, per photoDelete.js DD4),
