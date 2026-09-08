@@ -304,11 +304,43 @@ describe('CareNeeded — Slice 7', () => {
       expect(screen.getByRole('button', { name: /^Log all watering \(120\)$/i })).toBeTruthy()
     })
 
-    it('a fresh record leaves the list uncapped and unannotated, however long it is', () => {
-      // Live 2026-08-15: 134 due at median days_since 2 — the wi=1 cohort really is due.
+    // V5-TODAYCAP-001 — INVERTED, deliberately. This case previously asserted "a fresh record leaves
+    // the list uncapped and unannotated, HOWEVER LONG IT IS", which was the shipped decision and is
+    // the one the Today crucible overturned (BOSS-PASS §4.1): page length is a UI question and record
+    // staleness is an honesty question, and they were sharing one switch. On Dave's live data the
+    // median is 2 days, so the old predicate never fired and the lead group rendered all 70 rows —
+    // 73% of the page — with the "Show N more" button on screen as dead code.
+    // Kept rather than deleted, with its 116-row fixture, because fresh-AND-long is the exact case
+    // that regressed and nothing else covers it.
+    it('caps a long list even when the record is fresh — length and staleness are different questions', () => {
+      // Live 2026-08-15: 134 due at median days_since 2 — the wi=1 cohort really is due. The cap does
+      // not dispute that; it withholds rows from the DISPLAY only.
       render(<CareNeeded plan={bigPlan({ daysSince: 2 })} />)
+      expect(screen.getByText('Bag 19')).toBeTruthy()
+      expect(screen.queryByText('Bag 115')).toBeNull()
+      expect(screen.getByRole('button', { name: /Show 96 more/i })).toBeTruthy()
+      expect(screen.getByText(/Showing the longest-waiting 20 per group/i)).toBeTruthy()
+      // The rows are withheld from the list, NOT from the garden: the bulk action still logs all 120.
+      expect(screen.getByRole('button', { name: /^Log all watering \(120\)$/i })).toBeTruthy()
+    })
+
+    // The guard for the bug that arrived WITH the fix above. Once the cap is always armed, `capping`
+    // stops meaning "rows were withheld", so a note keyed on it announces "Showing the longest-waiting
+    // 20 per group" over a list showing all of itself. Keyed on the real withheld count instead.
+    // Mutation-checked: reverting the note's gate to `capping` reds this and nothing else.
+    it('says nothing about withholding when a short list withheld nothing', () => {
+      const shortPlan = {
+        hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10 },
+        rain_skipped: [],
+        water_due: Array.from({ length: 3 }, (_, i) => ({
+          id: 'bag' + i, name: 'Bag ' + i, project: 'Bag Area',
+          project_id: 'prBag', overdue_by: 2, days_since: 2, in_ground: false,
+        })),
+        no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
+      }
+      render(<CareNeeded plan={shortPlan} />)
+      expect(screen.getByText('Bag 2')).toBeTruthy()
       expect(screen.queryByText(/Showing the longest-waiting/i)).toBeNull()
-      expect(screen.getByText('Bag 115')).toBeTruthy()
       expect(screen.queryByRole('button', { name: /Show \d+ more/i })).toBeNull()
     })
   })

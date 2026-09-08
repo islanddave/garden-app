@@ -380,7 +380,31 @@ export default function CareNeeded({ plan }) {
   // through that one action, so taxing it to make a display point would be the wrong trade.
   const staleness = useMemo(() => waterStaleness(plan), [plan])
   const [showCapped, setShowCapped] = useState(false)
-  const capping = staleness.stale && !showCapped
+  // V5-TODAYCAP-001 — cap by LENGTH always, not only when the record is stale.
+  //
+  // Page length and record staleness are two different questions that were sharing one switch, and
+  // the switch was wired to the wrong one. `waterStaleness` asks "is this list resting on
+  // absence-of-record?" — an honesty question, median days_since >= 3. How many rows a phone should
+  // render is a UI question and has nothing to do with it.
+  //
+  // The cost of conflating them, measured on live prod: Dave's median days_since is 2, so
+  // `staleness.stale` is FALSE, so nothing capped, so the lead group rendered all 70 water rows —
+  // 4,564px of a 6,232px page, 73% of Today — while `Show {group.hidden} more` sat on screen as dead
+  // code, because `hidden` is only ever non-zero when capping ran. Inverted on a stale day: a 5-row
+  // group would be "capped" at 20, a no-op. The affordance was built for a different question.
+  //
+  // Capping ALWAYS makes both cases right and removes ~2,450px. Deliberately narrow:
+  //   · `capStaleRows` withholds `water_due` rows ONLY. never-watered, pest, feed and cold rows are
+  //     not on the watering clock and all still render.
+  //   · Rows arrive most-overdue-first, so the 20 kept are the longest-waiting — King of the North at
+  //     26 days stays visible, its 71 identical siblings at 2 days are what collapses.
+  //   · The group header keeps the TRUE count and `bulkRows` stays UNCAPPED, so "Log all watering
+  //     (194)" still logs everything. The cap withholds rows from the display, not from the garden.
+  //   · Still an input to `pinnedGroups` below, computed from the arrival snapshot, so this does NOT
+  //     re-open BUG-TODAYCAREREORDER-001 (a section sliding out from under his finger).
+  // Staleness keeps its real job — the "last watered Nd ago" honesty labels — and no longer decides
+  // page length. Zero watering-LOGIC changes, per the crucible boss ruling: the work is legibility.
+  const capping = !showCapped
   // BD-036 — the pinned layout, computed once per (plan, mode, capping) from `orderingRows`. It
   // supplies BOTH the group order and the auto-expand set, because both were functions of the
   // draining list: autoExpandKeys walks groups filling a row budget, so logging rows out of a group
@@ -405,6 +429,15 @@ export default function CareNeeded({ plan }) {
       return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length, bulkRows: g.rows }
     })
   }, [enrichedRows, mode, capping, pinnedOrder])
+  // Rows ACTUALLY withheld, which is not the same as "the cap is armed" — and the disclosure note
+  // below has to key on this one. Before V5-TODAYCAP-001 `capping` was only ever true on a stale day
+  // with a long list, so the two were interchangeable and the note keyed on `capping` safely. Now
+  // that the cap is always armed, `capping` is true on a five-row day where nothing is withheld, and
+  // keying the note on it would announce "Showing the longest-waiting 20 per group" over a list
+  // showing all of itself. That is a false statement about the screen, and this note's whole job is
+  // that the visible list never silently under-reports the garden — a note that cries wolf on quiet
+  // days is how the real disclosure stops being read.
+  const hiddenTotal = useMemo(() => groups.reduce((n, g) => n + (g.hidden || 0), 0), [groups])
   const total = rows.length
   const autoKeys = useMemo(() => autoExpandKeys(pinnedGroups, EXPAND_ROW_BUDGET), [pinnedGroups])
 
@@ -581,8 +614,11 @@ export default function CareNeeded({ plan }) {
               explaining its own reasoning — the same class as the bulk-water arithmetic, and the
               staleness is already legible from the rows themselves.
               Prints only while capping is actually in effect: with nothing withheld there is
-              nothing to disclose, and the old copy appeared on stale-but-uncapped days too. */}
-          {capping && (
+              nothing to disclose, and the old copy appeared on stale-but-uncapped days too.
+              V5-TODAYCAP-001 — keyed on `hiddenTotal`, NOT on `capping`. Those were interchangeable
+              while the cap only armed on a stale day; now that it is always armed they are not, and
+              `capping` would print this over a list that is showing all of itself. */}
+          {hiddenTotal > 0 && (
             <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, padding: '0 2px' }}>
               Showing the longest-waiting {WATER_STALE_CAP} per group.
             </div>
