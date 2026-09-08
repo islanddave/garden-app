@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Today page — layout measurement at 390x844</title>
+    <script>
+      // ── PINNED CLOCK (V5-TODAYSHAPE-001 item 6) ────────────────────────────────────────────────
+      // Inline and in <head>, NOT in the module entry: static imports are evaluated before any
+      // statement in the importing module runs, so a shim installed in todaymeasure.jsx would land
+      // AFTER every module-level `Date.now()` in React, the app and the app's own libs had already
+      // read the real clock. This is the only position that is unambiguously first.
+      //
+      // WHY IT MATTERS ENOUGH TO DO. Three things on this page move with the wall clock, and each
+      // one moves scroll-height or ink-%: ComposeHarvestBand is gated on an 18h MAX_BATCH_AGE_MS
+      // (65px band, present or absent); the "Plan from overnight · as of …" stamp is relative; and
+      // the date subtitle is today's date. A gate whose budget drifts by a band-height depending on
+      // when it runs gets switched off as flaky inside a month, which is the failure mode this
+      // whole lane is trying to prevent.
+      //
+      // OFFSET, NOT FROZEN. Time still advances at 1x from the pinned instant. Freezing Date.now()
+      // outright makes every duration read as 0, which is a different page — transitions that
+      // never complete, and any `elapsed > n` branch permanently false. Shifting keeps every
+      // duration honest and only moves the epoch.
+      //
+      // Opt out with ?clock=live (the recorder's characterisation runs may want the real day);
+      // override with ?clock=<ISO 8601>.
+      (function () {
+        var p = new URLSearchParams(location.search)
+        var raw = p.get('clock')
+        if (raw === 'live') return
+        // 2026-09-08T15:54Z = 11:54 America/New_York — the instant the original characterisation
+        // run (_lane-todaymeasure-20260908.md) measured, so the promoted baseline and the lane
+        // report describe the same page rather than two pages an hour apart.
+        var PIN = Date.parse(raw || '2026-09-08T15:54:00.000Z')
+        if (!isFinite(PIN)) return
+        var Real = Date
+        var boot = Real.now()
+        var delta = PIN - boot
+        var now = function () { return Real.now() + delta }
+        var Shim = function Date() {
+          if (!(this instanceof Shim)) return new Real(now()).toString()
+          return arguments.length === 0 ? new Real(now()) : new Real(...arguments)
+        }
+        Shim.prototype = Real.prototype
+        Shim.now = now
+        Shim.parse = Real.parse
+        Shim.UTC = Real.UTC
+        window.Date = Shim
+        window.__pinnedClock = { iso: new Real(PIN).toISOString(), deltaMs: delta }
+      })()
+    </script>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      /* NOTHING here may style the page under test. #root is bare so Today owns 100% of its own
+         geometry; the app's real global stylesheet is injected by the harness vite config. */
+      #hbadge {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 99999;
+        font: 600 9px/1.3 ui-monospace, SFMono-Regular, monospace; color: #fff; background: #2d6a4f;
+        padding: 3px 5px; white-space: pre-wrap; opacity: 0.92;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="hbadge">booting…</div>
+    <script type="module" src="/tests/harness/todaymeasure.jsx"></script>
+  </body>
+</html>

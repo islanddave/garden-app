@@ -97,6 +97,20 @@ export default defineConfig({
         'src/hooks/**',
         'src/components/**',
         'src/context/**',
+        // V5-TODAYSHAPE-001: instrument the PAGES. `src/pages/**` was absent from every coverage
+        // measurement this repo has ever taken — 40 route components, including Today.jsx, the
+        // highest-traffic surface in the app and the one a redesign is about to rewrite. Without
+        // this line the coverage gate proves nothing about page-level composition: a redesign could
+        // delete half of Today.jsx's branches and the number would not move.
+        // MEASURED with this line present, full run (see tests/harness/_todaymeasure/README.md for
+        // the before/after): src/pages/** on its own is statements 91.33 / branches 84.38 /
+        // functions 72.07 / lines 91.33 — pages are well covered on lines and comparatively weak on
+        // FUNCTIONS, which is the honest shape of a route component (many small handlers, some
+        // reached only by an interaction no test performs).
+        // The floors below are NOT moved for this: adding measurement must not silently re-gate.
+        // Ratchet untouched at active_target — advancing it is a milestone decision needing Dave,
+        // per No-Date-Based-Gating.
+        'src/pages/**',
         // A0.4: instrument the daily-plan Lambda (engine/handler/station are heavily unit-tested but
         // lambda/** was entirely absent from coverage; index.js is the AWS entrypoint, currently 0%).
         // Ratchet stays at active_target: 0 — this only adds measurement, no new gate.

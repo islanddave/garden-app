@@ -346,7 +346,10 @@ export default function WeatherWidget({
   }
 
   return (
-    <div style={{
+    // V5-TODAYSHAPE-001 — region anchor for the Today layout gate's ordered census. See the note on
+    // HarvestWatchBand's section element: testid, not heading text, so a copy rename reds the census
+    // rather than emptying it.
+    <div data-testid="today-weather" style={{
       width: '100%', maxWidth: '100%', boxSizing: 'border-box', margin: '0 auto',
       borderRadius: tokens.radius.card, padding: tokens.space.md,
       background: PAL.cardBg, border: `1px solid ${PAL.cardBorder}`, fontFamily: 'Inter, system-ui, sans-serif',

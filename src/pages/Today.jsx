@@ -48,14 +48,20 @@ export default function Today() {
   // display-only, the watering recommendation stays the nightly plan. No coords/offline -> nightly snapshot.
   const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
 
+  // V5-TODAYSHAPE-001 — the `data-testid` attributes threaded through this render are the region
+  // anchors for scripts/layout-gate/today-shape.mjs. They add no DOM node, no style and no
+  // behaviour; what they buy is that the gate's ORDERED CENSUS identifies each region by a stable
+  // id rather than by its heading text, so a copy change reds the census instead of quietly
+  // emptying it. A redesign of this page is expected to carry them forward; dropping one is a gate
+  // failure by design, which is the point — it forces the redesign to say which region it deleted.
   return (
-    <div style={{ padding: 16, paddingBottom: 32, maxWidth: 640, margin: '0 auto' }}>
+    <div data-testid="today-page" style={{ padding: 16, paddingBottom: 32, maxWidth: 640, margin: '0 auto' }}>
       {/* V4-TOPCHROMEACTIONS-001 (BD-027): the green labelled Snap pill that sat here is gone —
           Snap is now a header action on every surface. It and Garden.jsx's ghost-icon slug pointed
           at the same /capture route in two different visual languages; the header is the single
           treatment. The h1 no longer needs the flex row it shared with the pill. */}
-      <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>Today</h1>
-      <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
+      <h1 data-testid="today-title" style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>Today</h1>
+      <p data-testid="today-date" style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
         {formatDate(data?.plan_date) || 'Your garden, at a glance'}
       </p>
 
@@ -81,7 +87,7 @@ export default function Today() {
       {error && <div style={{ padding: 20, color: '#b94a3a', textAlign: 'center' }}>{error}</div>}
 
       {!loading && !error && !hasPlan && (
-        <div style={{
+        <div data-testid="today-noplan-card" style={{
           padding: '28px 18px', textAlign: 'center', color: P.mid,
           background: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
         }}>
@@ -96,7 +102,7 @@ export default function Today() {
       )}
 
       {!loading && !error && hasPlan && plan && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div data-testid="today-plan-stack" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* BUG-TODAYWATER-001 honesty guard — the widget's headline and <CareNeeded>'s list are two
               independently-thresholded verdicts on the same plan, and they demonstrably disagreed
               (08-03, 08-08). Handing the widget the SAME list it sits above is what lets it stop
@@ -120,7 +126,7 @@ export default function Today() {
               (on_hold=false). The DrG "Today's reasoning" panel still surfaces the full note as a
               WHY — that surface explains, this one asks for action. */}
           {plan.substrate?.msg && !plan.substrate?.on_hold && (
-            <div style={{
+            <div data-testid="today-substrate-note" style={{
               fontSize: '0.82rem', color: P.mid, lineHeight: 1.45,
               background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '10px 12px',
             }}>
@@ -135,7 +141,7 @@ export default function Today() {
               honest presentation V3-WXFRESH-001 established for the weather card, applied to the
               part whose staleness actually has consequences. Reuses asOfLabel for one vocabulary. */}
           {asOfLabel(data?.generated_at) && (
-            <div style={{ fontSize: '0.75rem', color: P.light, marginBottom: -6 }}>
+            <div data-testid="today-basis-stamp" style={{ fontSize: '0.75rem', color: P.light, marginBottom: -6 }}>
               Plan from overnight &middot; as of {asOfLabel(data.generated_at)}
             </div>
           )}
@@ -198,9 +204,10 @@ export default function Today() {
           whether or not the current user has their own plan today. Reuses CareNeeded so logging on
           another caretaker's planting goes through the identical one-tap events path. */}
       {!loading && !error && canShowOthers && (
-        <div style={{ marginTop: 16 }}>
+        <div data-testid="today-household" style={{ marginTop: 16 }}>
           <button
             type="button"
+            data-testid="today-household-toggle"
             onClick={toggleOthers}
             aria-pressed={showOthers}
             style={{

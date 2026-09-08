@@ -350,6 +350,61 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:iconwire4
 
+      - name: Today-shape fixture preflight (V5-TODAYSHAPE-001)
+        # Runs FIRST of this pair and without a browser, in ~200ms. The Today-shape fixtures are
+        # dumped from live Neon; dumped verbatim they carry Clerk subs and the site's real
+        # coordinates. Every other check in this file guards something a later commit can undo.
+        # This one guards the thing it cannot: once a live-shaped identifier is in a git object it
+        # stays there. So it is ordered before the gate and is also step 0 INSIDE the gate.
+        # Refuses on `user_[A-Za-z0-9]{10,}`, on sk_live_/pk_live_, on a JWT header, on a Postgres
+        # URL, and structurally (walking the parsed JSON, not the bytes) on any lat/lng/lon key whose
+        # value is not the single declared synthetic site. Refuses an unparseable .json rather than
+        # skipping it — an unscannable file is where something would hide — and refuses an EMPTY
+        # corpus, because "clean" over zero files is a statement about an empty set.
+        # Its own failure path is executed, not asserted: `--self-test` runs every matcher against a
+        # known positive built in the file (never sampled from the corpus it guards, which would be
+        # green by construction) and a known negative, and exits 1 unless all of them fire and none
+        # false-positive. Both arms run here. NO continue-on-error, per the policy note above.
+        run: npm run gate:today-shape:preflight:self-test && npm run gate:today-shape:preflight
+
+      - name: Today page shape and density (V5-TODAYSHAPE-001)
+        # THE MEASURED FACT THIS CLOSES. Adding `style={{height:0,overflow:'hidden'}}` to
+        # src/components/today/CareNeeded.jsx's row panel — the container holding all 70 care rows,
+        # 73.2% of the Today page — left 9,239 unit tests passing and 0 failing. `display:none` on
+        # the IDENTICAL line kills 18. jsdom has no layout engine, so the suite can see "removed from
+        # the DOM" and cannot see "present, mounted, queryable, accessible, and occupying no space",
+        # which is the shape every density/collapse redesign of this page takes.
+        #
+        # Real Chrome at a TRUE 390x844 (CDP emulation, not --window-size: macOS Chrome floors an OS
+        # window at ~500px and would lay the page out at 500 while cropping the capture to 390),
+        # across four states the harness renders from prod-derived fixtures: busyfull / busy / quiet /
+        # noplan. Determinism is enforced, not hoped for — the clock is pinned to 2026-09-08T15:54Z
+        # by an inline shim ahead of every module, the timezone and locale are forced at the browser,
+        # and Open-Meteo is stubbed at the wire; without those three the scroll-height moves with the
+        # weather and the band clocks, and the gate gets switched off as flaky inside a month.
+        #
+        # Asserts per state: every care row checkVisibility()s AND has a non-zero rect (the assertion
+        # that kills clipRowPanel, and the one no vitest test can make); exact care-row, group,
+        # expanded-panel and region-headcount censuses; a per-region height FLOOR; whole-page
+        # scroll-height and last-painted-pixel FLOORS before any ceiling (a pure ceiling on a density
+        # metric rewards deleting content, and an empty page scores best on every metric here); ink-%
+        # and control-count floors; VISUAL region order read from rects rather than
+        # compareDocumentPosition, which a CSS reorder passes unchanged; and no horizontal overflow.
+        #
+        # Verified non-vacuous three ways: `npm run gate:today-shape:probe-nothing` points every
+        # region selector at a testid nothing renders and exits 1 on the census check; the run refuses
+        # outright unless the page self-reports 390x844; and `npm run mutate:today-shape` applies 14
+        # real defects in memory and asserts the gate reds on >=2 independent killers for each — the
+        # full matrix is in project-state/_lane-layoutgate-20260908.md. That command is deliberately
+        # NOT run here: it is ~10 minutes because it boots the gate 15 times, and it is a command to
+        # run when the gate, the anchors or the Today composition change.
+        #
+        # ~110 s locally: four page loads behind one Vite boot, each with a 2.5s settle for the
+        # self-fetching bands. NO continue-on-error, per the policy note above.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:today-shape
+
       - name: Weigh-in Save-band stability (V4-HARVESTFRAME-001)
         # The "it doesn't jump around" invariant, and the only gate here that drives a FULL four-entry
         # harvest session rather than a single render. Real Chrome at 390x500 with the keyboard up.
@@ -455,6 +510,25 @@ jobs:
         run: npx vitest run --no-coverage
         env:
           TZ: America/New_York
+
+      - name: Storage-deadline guards — mutation proof (crucible D3/D4)
+        # WIRED 2026-09-08 (V5-TODAYSHAPE-001). scripts/mutate-storage-deadlines-check.mjs was
+        # written for exactly this purpose on 2026-08-17 and was in NO npm script and NO workflow,
+        # so it had never run in CI. A mutation check that is not run is a comment.
+        #
+        # It applies eight defects to src/data/storageDeadlines.json — including reverting to the
+        # 09-25 date a crucible overturned, and pushing the deadline past the median first frost so
+        # it stops being a backstop — runs the two suites that guard it, and asserts each one turns
+        # the suite RED. The guard it replaced was green for five days while the date it "guarded"
+        # was 15-44 days wrong, because it could not fail.
+        #
+        # 55 s measured locally, 8/8 RED. It writes the data file and restores it in a `finally`;
+        # the `git diff --exit-code` after is the cheap proof the restore actually happened, so a
+        # mutated fixture cannot leak into the steps below.
+        # NO continue-on-error, per the policy note above.
+        run: |
+          npm run mutate:storage-deadlines
+          git diff --exit-code -- src/data/storageDeadlines.json
 
       - name: Coverage ratchet — measured floor (WS-B M4)
         # The pre-test ratchet step above compares only the CONFIG thresholds to

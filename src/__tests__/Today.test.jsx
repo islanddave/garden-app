@@ -6,9 +6,28 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 
-const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
+const { planState, fetchMock, toastMock, getTokenMock } = vi.hoisted(() => ({
   planState: { current: null },
   fetchMock: vi.fn(async () => ({ id: 'ev' })),
+  // V5-TODAYSHAPE-001 — this mock USED TO OMIT getToken while CareNeeded destructures it
+  // (`const { fetch, getToken } = useApiFetch()`, CareNeeded.jsx) and hands it to
+  // fetchNotificationPrefs.
+  //
+  // SCOPED DOWN 2026-09-08, because the first version of this comment overclaimed and the
+  // overclaim is more interesting than the fix. It said the suite was "GREEN OVER A BROKEN
+  // DEPENDENCY". Measured, the defect is LATENT, not active: fetchNotificationPrefs returns at
+  // `if (!CRITTER_BASE) return null` (notificationPrefsClient.js:163), and VITE_API_CRITTERS is
+  // absent from the env block in vitest.config.ts — so under unit test the function exits before
+  // it ever reaches the `typeof getToken === 'function'` check, which is its SECOND branch, not
+  // its first. Nothing was silently doing nothing here; nothing ran at all.
+  //
+  // The repair is still right — the mock should honour the contract its consumer destructures, and
+  // the latent defect becomes an active one the moment that env var is set. But "a green suite over
+  // a broken dependency" describes a bug this repo did not have, and a comment that overstates its
+  // own finding is the thing that gets a real one dismissed later.
+  // The durable assertion lives in Today.apiFetchContract.test.jsx; it guards the product contract,
+  // NOT this mock. Deleting getToken from THIS object still leaves all four Today files green.
+  getTokenMock: vi.fn(async () => 'harness-token'),
   toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
 }))
 
@@ -21,7 +40,7 @@ vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: '/today' }),
   useNavigate: () => vi.fn(),
 }))
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }) }))
 vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
 
 import Today from '../pages/Today.jsx'

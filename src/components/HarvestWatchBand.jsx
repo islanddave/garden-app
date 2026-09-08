@@ -395,6 +395,10 @@ export default function HarvestWatchBand() {
   return (
     <section
       aria-label="Worth checking soon"
+      // V5-TODAYSHAPE-001 — the Today layout gate's region anchor. Its ordered census identifies
+      // this band by testid, not by heading text, so renaming the copy cannot silently drop it from
+      // the census (a text-anchored census goes vacuous on a rename; this one goes red).
+      data-testid="today-watch-band"
       style={{
         backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
         padding: '14px 16px', marginTop: 16,

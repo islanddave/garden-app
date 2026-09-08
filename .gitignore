@@ -36,3 +36,10 @@ harvest-ratchet-report.json
 # They used to be written to an absolute /Users/davenichols/... path, which is what kept the gates
 # out of CI; the npm scripts now point --out/--outdir here.
 artifacts/
+
+# V5-TODAYSHAPE-001 — the Today measurement recorder writes ~22 MB of PNG captures and raw
+# JSON here on every run (tests/harness/_todaymeasure/drive.mjs). The FIXTURES and the budget in
+# that directory ARE tracked; only this output subdirectory is not. Anchored with a leading slash
+# and no trailing slash on the parent: a trailing-slash pattern on a path that is ever a symlink
+# stops matching, and this repo has been bitten by that.
+/tests/harness/_todaymeasure/out/

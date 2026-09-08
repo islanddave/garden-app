@@ -17,9 +17,15 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
-const { planState, fetchMock, toastMock, engineState } = vi.hoisted(() => ({
+const { planState, fetchMock, toastMock, engineState, getTokenMock } = vi.hoisted(() => ({
   planState: { current: null },
   fetchMock: vi.fn(),
+  // V5-TODAYSHAPE-001 — see the note in Today.test.jsx, and note it has been SCOPED DOWN: omitting
+  // getToken here is a latent contract break, not an active one. Under unit test
+  // fetchNotificationPrefs returns early on an unset CRITTER_BASE and never reaches the getToken
+  // check at all, so nothing was short-circuiting and no failure was being swallowed. The mock is
+  // corrected because its consumer destructures the field, not because a bug was observed.
+  getTokenMock: vi.fn(async () => 'harness-token'),
   toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
   engineState: { closing: [] },
 }))
@@ -30,7 +36,7 @@ vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: '/today' }),
   useNavigate: () => vi.fn(),
 }))
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }) }))
 vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
 vi.mock('../lib/sowEngine.js', () => ({ bucketize: () => ({ window_closing: engineState.closing }) }))
 
