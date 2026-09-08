@@ -96,6 +96,19 @@ function feedPhase(wk){
   return 'needs_feed_24wk_plus';
 }
 function isAcidLover(crop){ return /blueberr|vaccinium/i.test(crop||''); }
+// LEAKY BY CONSTRUCTION — KEPT, NOT WIDENED. Measured against prod 2026-09-08: it suppresses 3 of the 9
+// live Mediterranean-herb plantings. The other 6 (Greek Oregano, Oregano, French Tarragon, Russian
+// Tarragon — crop "herb"; Garden Sage — "herb (Salvia officinalis)"; Rosemary — "herb (Salvia
+// rosmarinus)") were carded, because `crop` is uncontrolled free text: 265 cultivar profiles carry 149
+// DISTINCT crop strings and nothing anywhere constrains the vocabulary. Two of those misses sat on the
+// live plan the day this was written, with intervals 30 and 60, cardable via `never`.
+// The obvious repair — match the name+variety surface too, the isCucurbit/isLeek idiom below — was
+// tried against all 271 live plantings: it catches all 6 misses AND newly catches "Creme Sausage"
+// (variety "Banana Creme", crop "tomato") on sau-SAGE, silently never-feeding a heavy feeder. Widening
+// a substring regex over free text buys 6 fixes and an unbounded, unenumerable false-negative class.
+// The real fix is DATA, per-cultivar and explicit: no_calendar_feed:true (feedSuppression, :787), which
+// says the thing this regex is trying to infer. This stays as the legacy net for the 3 it does catch —
+// deleting it would un-suppress them before those rows carry the key.
 function isMedHerb(crop){ return /oregano|rosemary|sage|thyme|tarragon|lavender/i.test(crop||''); }
 function isHeavyFeeder(crop){ return /pepper|tomato|squash|melon|cucumber|broccoli|cabbage|eggplant|tomatillo/i.test(crop||''); }
 function isLeafy(crop){ return /lettuce|spinach|arugula|chard|endive|basil|kale|parsley/i.test(crop||''); }
@@ -583,6 +596,25 @@ function saturationSuppressed(rcls, hy, opts){
 
 // Returns a fertilize recommendation object IF one is warranted now, else null. Substrate-aware.
 function fertilizeRec(p, c, fm, today){
+  // BUG-CAREFEEDINHERIT-001 — profile-declared never-feed. FIRST, ahead of the phase gate.
+  //
+  // NO INTERVAL VALUE CAN EXPRESS "NEVER FEED", so this had to be a branch. `never` at :672 cards any
+  // planting with no feed history whatever `iv` says, and the recency gate at :651 only holds a card
+  // DOWN once a feed exists — so the largest interval anyone can write still produces the first card.
+  // Measured live 2026-09-08: prod carded "Greek Oregano" (interval 30) and "Oregano" (interval 60)
+  // that same day, both never=true. A cultivar author reaching for 365 or 9999 is writing a number the
+  // engine cannot read as a refusal.
+  //
+  // WHY THE KEY, not an omitted interval: v_resolved_care merges system||cultivar||leaf with the jsonb
+  // || operator — shallow, top-level, right-wins — and the system row carries fertilize_interval_days:14.
+  // A cultivar row that OMITS the key therefore silently INHERITS 14 (51 cultivar rows / 52 live
+  // plantings on prod). Omission is not expressible either; only a key that is READ can refuse.
+  //
+  // Mirrors the shipped no_calendar_water arm (feedSuppression, :787, below waterSuppression). AHEAD of
+  // the phase gate at :622 deliberately, for two reasons: never-feed is a property of the plant, not of
+  // its substrate age; and a guard sitting behind a gate that already returns null for all five
+  // ticket plantings (they are in establishment_0_2wk) is a guard no test can see fail.
+  if(feedSuppression(p,c)) return null;
   const wk=weeksSince(today, p.substrate_start);
   const phase=feedPhase(wk);
   const am=fm.amendments_in_inventory;
@@ -590,7 +622,19 @@ function fertilizeRec(p, c, fm, today){
   if(phase==='establishment_0_2wk' || phase==='mg_active_3_12wk' || phase==='unknown') return null;
   // Tapering / spent: feed heavy feeders, or anything past its cadence interval with a fert history.
   const dF=daysBetween(today,p.last_fert);
-  const iv=(typeof c.fertilize_interval_days==='number')?c.fertilize_interval_days:null;
+  // A NON-POSITIVE INTERVAL IS NOT A CADENCE — it is normalized to null (unknown), never carried.
+  // fertilize_interval_days:0 read as "feed every day", the inverse of any plausible intent: the
+  // recency gate below needs dF<0 and can never fire, and `due` is dF>=0 which is true the moment the
+  // plant is fed at all, so the card returns every morning. Prod carries exactly one such row (Lithops,
+  // 0) and it is the Lithops class — the no_calendar_water/growth_gated profile whose author was
+  // plainly reaching for "no calendar feeding", not "daily". The engine does NOT read 0 as that
+  // refusal: an overloaded numeric sentinel is what made this ambiguous in the first place, and
+  // no_calendar_feed now says it in words. Not invented here either — daily-plan-read/doneEvents.js:93
+  // already refuses to price a cadence it cannot use (`if (!(iv > 0)) return false;`), so this makes
+  // the engine agree with its own downstream reader instead of emitting a number that reader discards.
+  // NaN falls out for free (typeof NaN === 'number', NaN > 0 is false).
+  const _ivRaw=(typeof c.fertilize_interval_days==='number')?c.fertilize_interval_days:null;
+  const iv=(_ivRaw!=null && _ivRaw>0)?_ivRaw:null;
   // BUG-FEEDRECENCY-001 — RECENCY GATE, ahead of every qualifying branch below.
   //
   // `due` was only ever ONE of three ORed reasons to recommend a feed. The other two — a heavy feeder
@@ -628,7 +672,7 @@ function fertilizeRec(p, c, fm, today){
   const never = (dF==null);
   const heavy=isHeavyFeeder(c.crop);
   if(!(due || never || (heavy && ['flowering','fruiting'].includes(p.status)) || (phase==='needs_feed_24wk_plus'))) return null;
-  if(isMedHerb(c.crop)) return null;            // Mediterranean herbs: never force-feed
+  if(isMedHerb(c.crop)) return null;            // Mediterranean herbs: never force-feed (leaky — see :112)
   // pick amendment by crop/stage
   let rec;
   if(isAcidLover(c.crop)) rec={item:'acidic fertilizer (Holly-Tone — NOT in inventory; acquire)', apply:'top-dress; use rainwater', note:'acid-lover; hard well water raises pH'};
@@ -724,6 +768,28 @@ function waterSuppression(p, c){
   return null;
 }
 
+// ── BUG-CAREFEEDINHERIT-001 — profile-declared feeding suppression ──
+// The feed-arm twin of waterSuppression, and deliberately its exact shape. `no_calendar_feed:true` in a
+// care_profile means "this plant is never fed on a calendar" — the only way to say so, because the merge
+// that builds the profile cannot express a refusal as a number (see the header on fertilizeRec).
+// care_profile.profile is unconstrained jsonb, so the key needed no migration; it is inert until rows
+// carry it. There is no growth_gated twin: that rule is about when water is USABLE, and the feed arm has
+// no equivalent second mode to name. One rule, one label -> 'no_calendar_feed' | null.
+//
+// THE TWO-SOURCE READ IS LOAD-BEARING, NOT BELT-AND-BRACES — same exposure as the water arm, verbatim.
+// resolveCadence adopts db_cadence only when a scope contributed a WATER cadence key (cadence_scopes;
+// `_seeded` on the flag-OFF path). A profile can declare no_calendar_feed while carrying no watering
+// interval at all -> cadence_scopes = [] -> the bundled JSON wins -> `c` is the fallback object and never
+// contains the key. Checking `c` alone would drop the signal through exactly the path that killed the
+// Lithops on the water side. Read `c` first so a leaf-scope override still wins where one exists.
+// `===true` (not truthiness) for the same reason the water arm uses it: the string "yes" is a typo, not
+// a refusal, and silently never-feeding a plant on a typo is the dangerous direction.
+function feedSuppression(p, c){
+  const srcs=[c, p&&p.db_cadence];
+  for(const s of srcs){ if(s && s.no_calendar_feed===true) return 'no_calendar_feed'; }
+  return null;
+}
+
 // ── V4-WATERMATH-001 F2 — per-planting ledger verdict (only reached when the flag is ON) ──────────
 // Computes wi_eff (RETIRES the >=88F heat gate and the maxdays ceiling in-flag — canon legacy-term
 // table: keeping them next to ET scaling double-counts heat; tray class hard-caps at 1 day), the
@@ -772,7 +838,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 // event-window read degrades the whole run to flag-OFF, per the canon fail-to-today's-model rule).
 function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
-  const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[];
+  const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[], feedSuppressed=[];
   let overwinterHeld=0, overwinterDeferred=0;
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
@@ -1025,6 +1091,18 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // of daylight has no growth to feed. Uniform across the four regimes on purpose — one boolean, not
     // a fifth per-regime knob to get wrong. Pest and cold still run below: scale and spider mites are
     // the classic indoor-overwintering losses, and a protected plant still needs its cold card.
+    // BUG-CAREFEEDINHERIT-001: suppression is LOUD, never silent — a plant nobody ever feeds should be
+    // distinguishable from a plant everybody forgot. REPORTING ONLY: the suppression itself happens once,
+    // inside fertilizeRec, and this line does NOT also skip the call. That is deliberate anti-redundancy —
+    // two guards on one decision means mutating either leaves the other holding, and the test can never
+    // watch a guard fail. Here, breaking feedSuppression breaks the bucket AND releases the card; breaking
+    // the guard inside fertilizeRec puts the planting in BOTH lists, which is visibly wrong.
+    // Reported regardless of overwintering (which stops feeding for its own, temporary reason) because
+    // this is a POPULATION, like dormancy_suppressed: every planting whose profile refuses calendar
+    // feeding, not just the ones that would have been carded today.
+    const _fsup=feedSuppression(p,c);
+    if(_fsup) feedSuppressed.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,rule:_fsup,
+      reason:'Feeding suppressed — profile: NO calendar feeding; feed only on plant signals, never by interval'});
     const fr=(_ow && _ow.active) ? null : fertilizeRec(p,c,fm,today); if(fr) fertilize.push(fr);
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
     if(pw&&pw.active){ const txt=((p.name||'')+' '+(p.variety||'')+' '+(c.crop||'')).toLowerCase();
@@ -1059,11 +1137,24 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
   // a silent revert of the very feature it is supposed to lock, and inertness-until-used is a stronger,
   // directly-testable property (overwinter-engine.test.js "is completely inert"). The same conditional
   // shape is already used for hydrology.today_observed_in a few lines below, for the same reason.
+  // BUG-CAREFEEDINHERIT-001: `feed_suppressed` follows V4-OVERWINTER-001's CONDITIONAL spread, not
+  // dormancy_suppressed's unconditional zero — the two shapes are both in this return and the file has
+  // already argued the question once, in favour of conditional. Absent (not present-and-zero) when
+  // nothing in the run is suppressed, so today's plan payload is BYTE-IDENTICAL to the pre-change engine
+  // and all 25 parity goldens stay green with no regeneration. That is worth more here than "a zero
+  // proves the gate ran": no prod row carries the key yet, so an unconditional zero would have forced a
+  // mass golden regeneration to record a feature that changes nothing — and a regenerated golden can
+  // hide a silent revert of the very thing it locks. Inertness-until-used is the stronger property and
+  // is directly tested (neverfeed.test.js "the key set is inert"). Additive either way, so
+  // PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers select named keys).
   const _owOn = overwinterHeld>0 || overwintering.length>0;
+  const _fsOn = feedSuppressed.length>0;
   return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length,dormancy_suppressed:waterSuppressed.length,
-      ...(_owOn?{overwintering:overwintering.length,overwinter_held:overwinterHeld,overwinter_deferred:overwinterDeferred}:{})},
+      ...(_owOn?{overwintering:overwintering.length,overwinter_held:overwinterHeld,overwinter_deferred:overwinterDeferred}:{}),
+      ...(_fsOn?{feed_suppressed:feedSuppressed.length}:{})},
     substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant,rain_skipped:rainSkipped,dormancy_suppressed:waterSuppressed,
-      ...(_owOn?{overwintering}:{})}};
+      ...(_owOn?{overwintering}:{}),
+      ...(_fsOn?{feed_suppressed:feedSuppressed}:{})}};
 }
 
 // Compute the single weather callout (action only) from temp + hydrology. Priority order; null = no callout (no filler).
@@ -1146,7 +1237,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
       rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression, feedSuppression, isMedHerb,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
   FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered, bagHeatDemoteCredit,
   dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,
