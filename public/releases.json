@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.118.1",
+    "date": "2026-09-08",
+    "highlights": [
+      "Internal: the schema-column checks now run in CI, and two tests that could not fail were given a positive control"
+    ]
+  },
+  {
     "version": "4.118.0",
     "date": "2026-09-07",
     "highlights": [
