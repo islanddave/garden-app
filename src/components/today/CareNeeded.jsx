@@ -688,6 +688,63 @@ function bulkVerb(etype) {
   return 'Check'
 }
 
+// AmbientList / AmbientRow — the shell under all three ambient lists (Dormant, Drought,
+// FeedSuppressed). Extracted on the fourth pass, as the third lane recommended: three near-identical
+// containers had accumulated, and the next one would have been a fourth copy of a shape nobody had
+// stated out loud.
+//
+// AMBIENT is the contract, not a style: informational, never a card, never an interrupt, no severity
+// colour, and rendered OUTSIDE the `total === 0` ternary in CareNeeded because these are most useful
+// on a quiet day. That placement is a real property with a mutation proof behind it — move any of
+// the three renders into the non-empty arm and that list's empty-state test reddens while its
+// busy-day test survives. The asymmetry is what distinguishes "outside both arms" from "inside one
+// of them"; a test that only checked the busy day would pass either way and prove nothing.
+//
+// The shell owns ONLY what is genuinely the same in all three: the column container, and the
+// heading+blurb pair for the two lists that lead with one. It deliberately owns none of what
+// differs, because those differences are each load-bearing:
+//   · Dormant carries a Resume action. Drought and FeedSuppressed carry NONE, by design — "not on
+//     calendar watering and it has been dry" is context, and a button there would make it read as
+//     work. The trailing slot is a child, so the shell can neither add an affordance nor take one.
+//   · FeedSuppressed leads with a collapse TOGGLE rather than a heading (`header`), and renders name
+//     CHIPS rather than rows: nine unchanging rows would cost ~400px of Today every single day.
+//   · Emptiness is each list's own question. Dormant and Drought ask "no rows"; FeedSuppressed asks
+//     the absent/none/listed triple, where absent and none render the same nothing for DIFFERENT
+//     reasons. Folding those together is precisely how `absent` would start claiming what `none`
+//     says, so the shell never decides whether to render — each list still returns null itself.
+//
+// `testId` is optional and inert. It exists so the Tier-V layout gate on lane-layoutgate-20260908,
+// which anchors on `data-testid="care-dormant"` at this container, keeps its anchor across this
+// extraction rather than losing it to a silent textual merge.
+function AmbientList({ testId, title, blurb, header, children }) {
+  return (
+    <div data-testid={testId} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+      {header}
+      {title && <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>{title}</h3>}
+      {blurb && <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>{blurb}</div>}
+      {children}
+    </div>
+  )
+}
+
+// One ambient row: the planting name as a way IN to the record, plus whatever the list puts after it.
+// minWidth:0 + ellipsis is what keeps an unbreakable long name from widening the page at 390px
+// rather than shrinking it — the same treatment Row above uses, and the reason fcd4265 exists.
+// A <Link>, never a <span>: each name links to its planting in all three lists, asserted in each.
+function AmbientRow({ plantingId, name, children }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 8, flexWrap: 'wrap', minHeight: 44 }}>
+      <Link to={'/plantings/' + plantingId} style={{ fontSize: '0.85rem', color: P.dark,
+        textDecoration: 'none', flex: '1 1 auto', minWidth: 0,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {name}
+      </Link>
+      {children}
+    </div>
+  )
+}
+
 // V4-DORMANTRESUME-001 — the dormant plantings the engine emits and nothing has ever rendered.
 // Ambient, like RainNote: dormancy is not work, so this is never a card and never an interrupt.
 // It exists because dormant is excluded from the care engine AND from every dashboard arm, which
@@ -727,21 +784,12 @@ function DormantList({ plan }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
-      <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dormant</h3>
-      <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
-        Resting — no routine care. Resume one when it starts growing again.
-      </div>
+    <AmbientList testId="care-dormant" title="Dormant"
+      blurb="Resting — no routine care. Resume one when it starts growing again.">
       {rows.map(row => (
-        <div key={row.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          gap: 8, flexWrap: 'wrap', minHeight: 44 }}>
-          {/* Same name treatment as Row above: minWidth:0 + ellipsis is what keeps an unbreakable
-              long name from widening the page at 390px rather than shrinking. */}
-          <Link to={'/plantings/' + row.plantingId} style={{ fontSize: '0.85rem', color: P.dark,
-            textDecoration: 'none', flex: '1 1 auto', minWidth: 0,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {row.name}
-          </Link>
+        <AmbientRow key={row.key} plantingId={row.plantingId} name={row.name}>
+          {/* The ONE ambient list with an action. `resumable` is fail-closed upstream in dormantRows:
+              only a human-set status resumes, never the Lithops profile cadence. */}
           {row.resumable && (
             <button type="button" onClick={() => resume(row)} disabled={pending.has(row.plantingId)}
               aria-label={'Resume ' + row.name}
@@ -751,9 +799,9 @@ function DormantList({ plan }) {
               Resume
             </button>
           )}
-        </div>
+        </AmbientRow>
       ))}
-    </div>
+    </AmbientList>
   )
 }
 
@@ -776,27 +824,20 @@ function DroughtList({ plan }) {
   if (rows.length === 0) return null
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
-      <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dry — no deep soak</h3>
-      <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
-        These aren’t on calendar watering, and it has been dry. Check the soil at root depth.
-      </div>
+    <AmbientList testId="care-drought" title="Dry — no deep soak"
+      blurb="These aren’t on calendar watering, and it has been dry. Check the soil at root depth.">
       {rows.map(row => (
-        <div key={row.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          gap: 8, flexWrap: 'wrap', minHeight: 44 }}>
-          {/* Same name treatment as Row/DormantList: minWidth:0 + ellipsis is what keeps an
-              unbreakable long name from widening the page at 390px rather than shrinking. */}
-          <Link to={'/plantings/' + row.plantingId} style={{ fontSize: '0.85rem', color: P.dark,
-            textDecoration: 'none', flex: '1 1 auto', minWidth: 0,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {row.name}
-          </Link>
+        <AmbientRow key={row.key} plantingId={row.plantingId} name={row.name}>
           {/* P.light, never a severity colour: gold means "needed today" everywhere else in this
-              component and this is the opposite claim. The text carries the whole signal (SC 1.4.1). */}
+              component and this is the opposite claim. The text carries the whole signal (SC 1.4.1).
+              A span, never a button — see the AmbientList header on why the trailing slot is a child.
+              `row.reason` is the sentence droughtRows built ("No deep soak (≥0.60 in) in N days") and
+              is NOT reworded here: "no rain" / "no measurable rain" are the category slip that
+              falsified the first crucible verdict, and both are asserted absent. */}
           <span style={{ flex: '0 0 auto', fontSize: '0.78rem', color: P.light }}>{row.reason}</span>
-        </div>
+        </AmbientRow>
       ))}
-    </div>
+    </AmbientList>
   )
 }
 
@@ -824,8 +865,11 @@ function FeedSuppressedList({ plan }) {
   const n = rows.length
   const label = (open ? 'Hide the ' : 'Show the ') + n + ' planting' + (n > 1 ? 's' : '') + ' with no feed schedule'
 
+  // `header`, not `title`/`blurb`: this list's summary line IS its toggle, so the heading slot would
+  // put a static <h3> above a control that already says the same thing. The AmbientList shell keeps
+  // the container identical to the other two; everything below it stays this list's own.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+    <AmbientList testId="care-feed-suppressed" header={
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-label={label}
         style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, width: '100%',
           padding: '2px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer' }}>
@@ -840,6 +884,7 @@ function FeedSuppressedList({ plan }) {
           {open ? 'Hide' : 'Show'}
         </span>
       </button>
+    }>
       {open && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 2px 4px' }}>
           {/* Chips, not full-width rows: nine names cost ~3 wrapped lines at 390px instead of nine
@@ -857,7 +902,7 @@ function FeedSuppressedList({ plan }) {
           ))}
         </div>
       )}
-    </div>
+    </AmbientList>
   )
 }
 

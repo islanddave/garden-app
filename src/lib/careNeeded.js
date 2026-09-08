@@ -346,6 +346,28 @@ export function splitContainersBeds(rows) {
   return { beds, containers }
 }
 
+// The identity half of an ambient row — the six fields that ask the same question in all three
+// ambient selectors ("which planting is this, and where does it live?"), written once so the name
+// fallback chain and the project shape cannot drift apart across them. `suffix` namespaces the React
+// key, which is why it is a parameter rather than derived: the same planting can legitimately appear
+// in two ambient lists at once and the keys must not collide.
+//
+// It maps IDENTITY ONLY, and deliberately holds no opinion on whether a row belongs in a list. That
+// judgement stays with each selector, because in droughtRows it is a REFUSAL — a helper that
+// supplied any per-row default would be the exact mechanism that turns a dropped row into a guessed
+// one. Everything discriminating stays with its own selector too: `resumable` gates an action,
+// `reason` is a built sentence, `dryDays` is a measured claim. None of them means the same twice.
+function ambientIdentity(it, suffix) {
+  return {
+    key: it.id + ':' + suffix,
+    plantingId: it.id,
+    name: it.name || it.crop || 'Planting',
+    crop: it.crop || null,
+    project: it.project || null,
+    projectId: it.project_id || null,
+  }
+}
+
 // V4-DORMANTRESUME-001 — the dormant bucket, which the engine has always emitted and no surface has
 // ever read. Deliberately NOT part of buildCareNeeded: dormancy carries no action, so folding it
 // into the actionable list would put a row on the care list that nothing can be logged against.
@@ -363,12 +385,7 @@ export function splitContainersBeds(rows) {
 export function dormantRows(plan) {
   const items = (plan && Array.isArray(plan.dormant)) ? plan.dormant : []
   return items.filter(Boolean).map(it => ({
-    key: it.id + ':dormant',
-    plantingId: it.id,
-    name: it.name || it.crop || 'Planting',
-    crop: it.crop || null,
-    project: it.project || null,
-    projectId: it.project_id || null,
+    ...ambientIdentity(it, 'dormant'),
     note: it.note || null,
     resumable: it.reason === 'status',
   }))
@@ -404,12 +421,7 @@ export function feedSuppressedRows(plan) {
   const raw = plan ? plan.feed_suppressed : undefined
   if (!Array.isArray(raw)) return { state: FEED_SUPPRESSED_ABSENT, rows: [] }
   const rows = raw.filter(Boolean).map(it => ({
-    key: it.id + ':feed_suppressed',
-    plantingId: it.id,
-    name: it.name || it.crop || 'Planting',
-    crop: it.crop || null,
-    project: it.project || null,
-    projectId: it.project_id || null,
+    ...ambientIdentity(it, 'feed_suppressed'),
     rule: it.rule || null,
     reason: it.reason || null,
   }))
@@ -448,13 +460,11 @@ export function droughtRows(plan) {
     if (!d || typeof d.dry_days !== 'number' || !isFinite(d.dry_days) || d.dry_days <= 0) continue
     const depth = (typeof d.deep_soak_in === 'number' && isFinite(d.deep_soak_in))
       ? ' (≥' + d.deep_soak_in.toFixed(2) + ' in)' : ''
+    // `ambientIdentity` is reached ONLY past the `continue` above, which is the whole point of the
+    // gate sitting in this loop rather than inside the helper: the refusal is per-row and must stay
+    // upstream of anything that could supply a value for a row that failed it.
     rows.push({
-      key: it.id + ':drought',
-      plantingId: it.id,
-      name: it.name || it.crop || 'Planting',
-      crop: it.crop || null,
-      project: it.project || null,
-      projectId: it.project_id || null,
+      ...ambientIdentity(it, 'drought'),
       rule: it.rule || null,
       dryDays: d.dry_days,
       truncated: !!d.truncated,
