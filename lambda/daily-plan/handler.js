@@ -7,6 +7,7 @@ const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine'
 const { deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
 const { frostEval, isFrostSeason, resolveFrostRun } = require('./frostEval');    // V4-FROST-001 F1/F3
+const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 
 // The machine actor for rows this Lambda writes on nobody's behalf. Same source as the SYSTEM_SUBS
@@ -1446,6 +1447,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
         forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
         forecastDates: hy ? hy.forecast_dates : null,
         lowSource: prov.low_source || (wx ? 'forecast' : 'forecast_absent'),
+        // V5-RADIATIVEFROST-001 — per-night dewpoint/cloud/wind derived from the hourly block
+        // index.js already carries. [] (not null) when the block is absent, which reads downstream as
+        // "no radiative signal for any night" and leaves every existing trip point untouched.
+        radiativeNights: nightsFrom(hy ? hy.hourly_frost : null),
         exposure, spaceId, eventDate: today,
       }, { frostSeason });
       // §3-8 — emitted on EVERY evaluation, alert or not. This log is also the 2026 corpus for the 2027

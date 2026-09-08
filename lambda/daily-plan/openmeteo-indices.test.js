@@ -285,6 +285,76 @@ describe('V5 — the five backfillable quantities are APPENDED, never inserted',
   });
 });
 
+// ── V5-RADIATIVEFROST-001 — three fields appended to the HOURLY list ──────────────────────────────
+//
+// The safest append in this function's history, for a structural reason: `hourly` is a separate
+// response object from `daily`, so it cannot shift ps[]/pop[]/tmin[]. That is exactly the argument
+// BUG-RAINACTUAL-001 H5 made, and the assertions below are what stop a future edit from quietly
+// invalidating it by folding these into `daily=` instead.
+describe('V5 RADIATIVE — the three radiative-frost inputs ride the hourly list', () => {
+  const hourlyList = () => {
+    const m = fetchPrecipBody.match(/&hourly=([a-z0-9_,]+)/i);
+    expect(m, '`hourly=` list present on the fetchPrecip URL').toBeTruthy();
+    return m[1].split(',');
+  };
+
+  it('requests dewpoint, cloud cover and wind — none of which was fetched anywhere before', () => {
+    for (const f of ['dew_point_2m', 'cloud_cover', 'wind_speed_10m']) {
+      expect(hourlyList(), `${f} present on the hourly= list`).toContain(f);
+    }
+  });
+
+  it('precipitation is STILL FIRST on the hourly list — these are appended, never spliced', () => {
+    // Same anti-splice guarantee the daily list gets, and it matters for the same reason: the hourly
+    // block is read by name downstream, and a reorder is the kind of edit that looks harmless.
+    expect(hourlyList()[0]).toBe('precipitation');
+  });
+
+  it('the DAILY list is untouched by this change — the archive backfill mirrors it field-for-field', () => {
+    const daily = fetchPrecipBody.match(/&daily=([a-z0-9_,]+)/i)[1].split(',');
+    for (const f of ['dew_point_2m', 'cloud_cover', 'wind_speed_10m']) {
+      expect(daily, `${f} must NOT be on the daily list`).not.toContain(f);
+    }
+    expect(daily.slice(0, 5)).toEqual([
+      'precipitation_sum', 'precipitation_probability_max', 'temperature_2m_min',
+      'et0_fao_evapotranspiration', 'temperature_2m_max',
+    ]);
+  });
+
+  it('sends wind_speed_unit=mph and temperature_unit=fahrenheit — the hourly fields honour both', () => {
+    // Verified live 2026-09-08: hourly_units gave dew_point_2m "°F", cloud_cover "%",
+    // wind_speed_10m "mp/h". Drop either parameter and the values silently change unit with no error,
+    // which for wind flips a 14 km/h night (not calm) into a "14 mph" reading that still is not calm —
+    // but a 9 km/h night (5.6 mph, calm) reads as 9 mph and stays calm for the wrong reason.
+    expect(fetchPrecipBody).toMatch(/wind_speed_unit=mph/);
+    expect(fetchPrecipBody).toMatch(/temperature_unit=fahrenheit/);
+  });
+
+  it('carries hourly_frost VERBATIM with its timezone — the night bucketing depends on the stamps', () => {
+    expect(fetchPrecipBody).toMatch(/hourly_frost:/);
+    for (const f of ['dew_point_2m', 'cloud_cover', 'wind_speed_10m']) {
+      expect(fetchPrecipBody).toMatch(new RegExp(`${f}: j\\.hourly\\.${f}`));
+    }
+    expect(fetchPrecipBody).toMatch(/hourly_frost:[\s\S]{0,600}?timezone: j\.timezone/);
+  });
+
+  it('an absent block becomes null, NEVER {} — absence must not read as a clear calm night', () => {
+    // The strongest form of this codebase's null-never-0 rule. The trip condition is cloud and wind at
+    // or near ZERO, so coercing absence into an object of zeros would MANUFACTURE the positive case,
+    // on exactly the nights when the data is missing.
+    expect(fetchPrecipBody).toMatch(/hourly_frost:[\s\S]{0,600}?\n\s*:\s*null,/);
+    expect(fetchPrecipBody).not.toMatch(/hourly_frost:[\s\S]{0,600}?\n\s*:\s*\{\},/);
+    // and every one of the three arrays must be checked, not just the first
+    for (const f of ['dew_point_2m', 'cloud_cover', 'wind_speed_10m']) {
+      expect(fetchPrecipBody).toMatch(new RegExp(`Array\\.isArray\\(j\\.hourly\\.${f}\\)`));
+    }
+  });
+
+  it('is STILL one request — the three ride the call that was already being made', () => {
+    expect((fetchPrecipBody.match(/api\.open-meteo\.com/g) || []).length).toBe(1);
+  });
+});
+
 describe('call site (1) — fetchNWS\'s weather_code call, previously unpinned', () => {
   const nwsBody = fnBody('fetchNWS');
 

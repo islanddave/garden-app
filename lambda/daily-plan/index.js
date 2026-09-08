@@ -174,8 +174,25 @@ async function fetchPrecip(lat, lng) {
     //
     // wind_speed_unit=mph is a NEW parameter and it is scoped to wind alone — temperature_unit and
     // precipitation_unit already govern every other field and are untouched. No existing value moves.
+    // V5-RADIATIVEFROST-001 — three quantities APPENDED to the `hourly=` list: dew_point_2m,
+    // cloud_cover, wind_speed_10m. This is the SAFEST append in this function's history and for a
+    // structural reason: `hourly` is a SEPARATE response object from `daily`, so it cannot shift
+    // ps[]/pop[]/tmin[] by even one slot, exactly as BUG-RAINACTUAL-001 H5 argued when it appended
+    // `hourly=precipitation`. The `daily=` list is UNTOUCHED here — deliberately, because the archive
+    // backfill mirrors that list field-for-field and the two must stay readable against each other.
+    //
+    // UNITS ARE NOT ASSUMED. Verified against the live endpoint at this Space's coordinates on
+    // 2026-09-08: hourly_units reported dew_point_2m = "°F" (it honours temperature_unit),
+    // cloud_cover = "%", wind_speed_10m = "mp/h" (it honours wind_speed_unit). Sample row
+    // 2026-09-08T02:00 -> 54.3°F / 45.5°F dewpoint / 4% cloud / 1.6 mph. NOTHING below converts.
+    //
+    // WHY THESE THREE: they are the classical inputs to radiative frost and NONE of them was fetched
+    // anywhere in this system before now. The frost path evaluated one grid-forecast number against a
+    // fixed trip point, and a grid cell cannot represent radiational frost at this site — the
+    // documented ERA5 error is ~+8F on sub-32F minima, missing ~62% of real frost nights
+    // (src/lib/sowEngine.js:63-68). See lambda/daily-plan/radiativeFrost.js for what is derived.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours&hourly=precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York&past_days=2&forecast_days=4`;
+      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours&hourly=precipitation,dew_point_2m,cloud_cover,wind_speed_10m&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York&past_days=2&forecast_days=4`;
     const j = await (await fetch(url, { signal: AbortSignal.timeout(6000) })).json();
     const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2, D3]
     const pop = (j.daily && j.daily.precipitation_probability_max) || [];
@@ -228,6 +245,25 @@ async function fetchPrecip(lat, lng) {
       // labels it, rather than reading "no more rain coming".
       hourly_precip: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.precipitation))
         ? { time: j.hourly.time, precipitation: j.hourly.precipitation, timezone: j.timezone || null }
+        : null,
+      // V5-RADIATIVEFROST-001 — the three radiative-frost inputs, carried VERBATIM alongside their
+      // local ISO timestamps so radiativeFrost.nightsFrom can bucket them into 18:00->08:00 overnight
+      // windows by string arithmetic (the DST-safe method station.remainingHourlyIn already uses).
+      // Passed through untransformed on purpose, for the same reason hourly_precip is.
+      //
+      // null (never {}, never []) when Open-Meteo omits any of them, so a missing block degrades to
+      // "no radiative signal" -> existing frost behaviour, rather than to a night that reads as 0%
+      // cloud and 0 mph wind. That coercion would not merely be wrong here: 0/0 is the EXACT positive
+      // case this feature looks for, so it would manufacture the trip it is supposed to detect.
+      hourly_frost: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.dew_point_2m)
+        && Array.isArray(j.hourly.cloud_cover) && Array.isArray(j.hourly.wind_speed_10m))
+        ? {
+          time: j.hourly.time,
+          dew_point_2m: j.hourly.dew_point_2m,
+          cloud_cover: j.hourly.cloud_cover,
+          wind_speed_10m: j.hourly.wind_speed_10m,
+          timezone: j.timezone || null,
+        }
         : null,
       // V4-WATERMATH-001 F1 — the COMPLETED days in this response, as the rows weather_daily will hold.
       // Indices 0 and 1 are D-2 and D-1; index 2 is D0, which is deliberately EXCLUDED. Today is still

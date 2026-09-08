@@ -17,6 +17,8 @@
 // Env override lets F5's forced-trigger rehearsal raise/lower a trip point on a deployed Lambda without a
 // code change (design §5 F5: "a prod dry-run with the threshold temporarily raised to a value today's
 // forecast exceeds"). For the per-crop bands the equivalent lever is FROST_THRESHOLD_OFFSET_F (frostClass).
+const { radiativeTrips, nightFor, RADIATIVE_ENABLED } = require('./radiativeFrost');
+
 const numEnv = (name, fallback) => {
   const v = Number(process.env[name]);
   return Number.isFinite(v) ? v : fallback;
@@ -125,7 +127,7 @@ function evalImminent(tonightLow, T) {
 // did not supply per-crop numbers and gets the global set.
 const cropThresholds = (c, fallbackT) => ('thresholds' in c ? c.thresholds : fallbackT);
 
-function evalImminentCrops(tonightLow, byCropType, fallbackT) {
+function evalImminentCrops(tonightLow, byCropType, fallbackT, radiativeNight) {
   const low = finite(tonightLow);
   const rows = Array.isArray(byCropType) ? byCropType : [];
   if (low == null) return { fires: false, reason: 'no_tonight_low', lowF: null, level: null, tripped: [], untripped: [] };
@@ -138,7 +140,23 @@ function evalImminentCrops(tonightLow, byCropType, fallbackT) {
     if (!t) { untripped.push({ ...c, level: null }); continue; }
     if (low <= t.HARD_FREEZE_LOW_F) tripped.push({ ...c, level: 'hard_freeze' });
     else if (low <= t.IMMINENT_LOW_F) tripped.push({ ...c, level: 'protect' });
-    else untripped.push({ ...c, level: null });
+    // V5-RADIATIVEFROST-001. Deliberately the LAST branch and deliberately INSIDE this loop.
+    //
+    // Inside, because the two guards above it are the ones that must not be bypassed: the hardy
+    // `continue` (a hardy crop is never alerted, radiative or not) and the per-crop threshold `t`
+    // (a radiative trip is judged against the crop's OWN trip point, not the global one). A separate
+    // pass over `rows` would have to re-implement both, and the failure mode of getting it wrong is
+    // paging Dave about a bed of kale.
+    //
+    // Last, and at 'protect' ONLY, because the level feeds `siteLevel` -> the alert HEADLINE. The
+    // rejected alternative was to lower the input `low` until it tripped: that crosses
+    // fallbackT.HARD_FREEZE_LOW_F on a 39F night and rewrites the headline to "HARD FREEZE TONIGHT —
+    // Harvest what you want to keep; cover will not save", i.e. it instructs an IRREVERSIBLE action on
+    // a night that was never forecast below 38F. Count-monotone, severity-catastrophic. `low` stays the
+    // true forecast value everywhere in this function for exactly that reason.
+    else if (radiativeTrips(radiativeNight, low, t.IMMINENT_LOW_F)) {
+      tripped.push({ ...c, level: 'protect', trip: 'radiative' });
+    } else untripped.push({ ...c, level: null });
   }
   if (!tripped.length) {
     return { fires: false, reason: rows.length ? 'above_all_crop_thresholds' : 'no_crops_at_risk', lowF: low, level: null, siteLevel: null, cropLevel: null, tripped, untripped };
@@ -150,10 +168,19 @@ function evalImminentCrops(tonightLow, byCropType, fallbackT) {
   //               the "harvest now" clause, not what the headline says.
   const siteLevel = (fallbackT && low <= fallbackT.HARD_FREEZE_LOW_F) ? 'hard_freeze' : 'protect';
   const cropLevel = tripped.some((c) => c.level === 'hard_freeze') ? 'hard_freeze' : 'protect';
-  return { fires: true, reason: 'crop_threshold', lowF: low, level: siteLevel, siteLevel, cropLevel, tripped, untripped };
+  // `low` is untouched, so siteLevel cannot be escalated by a radiative trip: a radiative trip only
+  // happens when low > IMMINENT_LOW_F, and IMMINENT_LOW_F (38) > HARD_FREEZE_LOW_F (33). Guarded by
+  // test rather than left to that reading.
+  const radiativeOnly = tripped.every((c) => c.trip === 'radiative');
+  return {
+    fires: true,
+    reason: radiativeOnly ? 'radiative_threshold' : 'crop_threshold',
+    lowF: low, level: siteLevel, siteLevel, cropLevel, tripped, untripped,
+    radiativeOnly, radiativeNight: radiativeNight || null,
+  };
 }
 
-function evalAdvisoryCrops(minLowF, byCropType, fallbackT) {
+function evalAdvisoryCrops(minLowF, byCropType, fallbackT, radiativeNight) {
   const low = finite(minLowF);
   const rows = Array.isArray(byCropType) ? byCropType : [];
   if (low == null) return { fires: false, tripped: [], untripped: [] };
@@ -162,7 +189,11 @@ function evalAdvisoryCrops(minLowF, byCropType, fallbackT) {
     if (!c) continue;
     const t = cropThresholds(c, fallbackT);   // explicit null = hardy = never advised (§3-4)
     if (t && low <= t.ADVISORY_LOW_F) tripped.push({ ...c, level: 'advisory' });
-    else untripped.push({ ...c, level: null });
+    // V5-RADIATIVEFROST-001 — same discipline as the imminent path: inside the loop so the hardy
+    // sentinel and the per-crop trip point both still apply, and at the tier's own level only.
+    else if (t && radiativeTrips(radiativeNight, low, t.ADVISORY_LOW_F)) {
+      tripped.push({ ...c, level: 'advisory', trip: 'radiative' });
+    } else untripped.push({ ...c, level: null });
   }
   return { fires: tripped.length > 0, tripped, untripped };
 }
@@ -223,10 +254,19 @@ function truncate(msg, max = MAX_MESSAGE_CHARS) {
   return msg.length <= cap ? msg : `${msg.slice(0, cap - 1).trimEnd()}…`;
 }
 
-function advisoryMessage(a, exposure, cropResult) {
+function advisoryMessage(a, exposure, cropResult, radiativeNight) {
   const when = a.dayOffset === 1 ? 'tomorrow night' : `in ${a.dayOffset} days`;
   const on = a.date ? `, ${a.date}` : '';
-  const head = `FROST ADVISORY — frost possible ${when} (low ${a.lowF ?? a.minLowF}°F${on}).`;
+  // V5-RADIATIVEFROST-001 — same rule as imminentMessage: when the ONLY reason this fired is the
+  // radiative signal, the forecast low printed here sits ABOVE the trip point and needs its reason
+  // stated, or the reader is left to wonder why 42°F produced an advisory.
+  const radOnly = !!(cropResult && Array.isArray(cropResult.tripped) && cropResult.tripped.length
+    && cropResult.tripped.every((c) => c && c.trip === 'radiative'));
+  const head = radOnly
+    ? `FROST ADVISORY — ${when} looks clear and calm (low ${a.lowF ?? a.minLowF}°F${on}` +
+      `${radiativeNight && radiativeNight.minDewpointF != null ? `, dewpoint ${radiativeNight.minDewpointF}°F` : ''}), ` +
+      'so it can fall further than the forecast.'
+    : `FROST ADVISORY — frost possible ${when} (low ${a.lowF ?? a.minLowF}°F${on}).`;
   if (cropResult && cropResult.tripped && cropResult.tripped.length) {
     return truncate(`${head} At risk: ${cropListPhrase(cropResult.tripped)}. ${totalsPhrase(cropResult.tripped, exposure)} ` +
       'Harvest ahead and stage row cover.');
@@ -235,6 +275,19 @@ function advisoryMessage(a, exposure, cropResult) {
 }
 
 function imminentMessage(im, exposure) {
+  // V5-RADIATIVEFROST-001. When EVERY tripped crop tripped on radiative grounds, the threshold copy
+  // would be actively misleading: it prints `im.lowF`, so it would read "FROST PROTECT TONIGHT — low
+  // 39.8F" on a night whose trip point is 38F, i.e. it states a number that does not explain itself.
+  // This alert has a different reason and says so, naming the dewpoint as the floor it could reach.
+  if (im && im.radiativeOnly && Array.isArray(im.tripped) && im.tripped.length) {
+    const n = im.radiativeNight || {};
+    const dew = n.minDewpointF != null ? `${n.minDewpointF}°F` : 'below the trip point';
+    const sky = [n.meanCloudPct != null ? `${Math.round(n.meanCloudPct)}% cloud` : null,
+      n.meanWindMph != null ? `wind ${n.meanWindMph} mph` : null].filter(Boolean).join(', ');
+    return truncate(`FROST WATCH TONIGHT — forecast low ${im.lowF}°F, but clear and calm` +
+      `${sky ? ` (${sky})` : ''} and the dewpoint is ${dew}, so it can fall further than the forecast. ` +
+      `Cover, or bring containers in: ${cropListPhrase(im.tripped)}. ${totalsPhrase(im.tripped, exposure)}`);
+  }
   // D6 coalesced path — one message, every tripped crop type named, each having tripped its own threshold.
   if (im && Array.isArray(im.tripped) && im.tripped.length) {
     const hard = im.tripped.filter((c) => c.level === 'hard_freeze');
@@ -348,11 +401,26 @@ function frostEval(input = {}, opts = {}) {
   // passes no byCropType key and keeps the pre-D6 behaviour.
   const crops = exposure && Array.isArray(exposure.byCropType) ? exposure.byCropType : null;
 
+  // V5-RADIATIVEFROST-001. OFF by default. When off, both night objects resolve to null and
+  // radiativeTrips returns false on a null night, so every path below is byte-identical to pre-V5 —
+  // which is asserted by test, not inferred from this comment.
+  const radiativeEnabled = opts.radiativeEnabled != null ? !!opts.radiativeEnabled : RADIATIVE_ENABLED;
+  // The caller hands the whole night ARRAY, not two resolved nights, because the advisory's night is
+  // not knowable until evalAdvisory has picked the coldest of D1..D3 — resolving it caller-side would
+  // duplicate that selection and the two copies would drift.
+  const radNights = radiativeEnabled && Array.isArray(input.radiativeNights) ? input.radiativeNights : null;
+  // Tonight's window is keyed on the PLAN DATE, because nightsFrom labels a night by the date it
+  // STARTS on: 22:00 today and 03:00 tomorrow are the same night, labelled today.
+  const radTonight = radNights ? nightFor(radNights, input.eventDate) : null;
+
   const advisory = evalAdvisory(input.forecastLows, input.forecastDates, T);
-  const advisoryCrops = crops ? evalAdvisoryCrops(advisory.minLowF, crops, T) : null;
+  const radAdvisory = radNights ? nightFor(radNights, advisory.date) : null;
+  const advisoryCrops = crops ? evalAdvisoryCrops(advisory.minLowF, crops, T, radAdvisory) : null;
   const imminentGlobal = evalImminent(input.tonightLow, T);
-  const imminent = crops ? evalImminentCrops(input.tonightLow, crops, T) : imminentGlobal;
+  const imminent = crops ? evalImminentCrops(input.tonightLow, crops, T, radTonight) : imminentGlobal;
   const heat = evalHeat(input.highToday, T, heatEnabled);
+  const advisoryRadiative = !!(advisoryCrops && Array.isArray(advisoryCrops.tripped)
+    && advisoryCrops.tripped.some((c) => c && c.trip === 'radiative'));
 
   // §3-7 fail loud: a null tonightLow inside frost season is NOT "no frost tonight". The caller publishes
   // a `frost_eval_degraded` ops alert on this flag. Outside frost season it is merely noted.
@@ -365,10 +433,17 @@ function frostEval(input = {}, opts = {}) {
   if (imminent.fires) {
     tier = 'imminent'; level = imminent.level; message = imminentMessage(imminent, exposure);
     trippedCrops = imminent.tripped || null;
-  } else if (advisory.fires && (!crops || (advisoryCrops && advisoryCrops.fires))) {
+  } else if ((advisory.fires || advisoryRadiative) && (!crops || (advisoryCrops && advisoryCrops.fires))) {
     // With a crop breakdown the advisory only fires if some crop's OWN advisory point is met — otherwise a
     // 40°F window would page about a bed of kale.
-    tier = 'advisory'; level = 'advisory'; message = advisoryMessage(advisory, exposure, advisoryCrops);
+    //
+    // V5-RADIATIVEFROST-001: `advisory.fires` is the GLOBAL threshold gate, and it short-circuits. A
+    // radiative trip happens precisely when the forecast low is ABOVE the trip point, so without the
+    // disjunct the per-crop radiative result could never reach this branch and the advisory half of
+    // the feature was dead — every per-crop assertion passed while the tier stayed null. Caught by
+    // test, not by reading. The second clause is UNCHANGED, so crop-level agreement is still required
+    // and the kale case stays closed.
+    tier = 'advisory'; level = 'advisory'; message = advisoryMessage(advisory, exposure, advisoryCrops, radAdvisory);
     trippedCrops = (advisoryCrops && advisoryCrops.tripped) || null;
   } else if (heat.fires) {
     tier = 'heat'; level = 'heat'; message = heatMessage(heat, exposure);
@@ -400,6 +475,18 @@ function frostEval(input = {}, opts = {}) {
       cropTypesTripped: trippedCrops ? summarizeCrops(trippedCrops) : null,
       thresholds: T,
       heatEnabled,
+      // V5-RADIATIVEFROST-001 — the 2026 corpus for the 2027 learned offset. Logged on EVERY
+      // evaluation, trip or no trip, and whether or not the flag is on: the whole point is to
+      // accumulate paired (forecast, conditions) rows against which a site offset can later be fitted
+      // from Dave's own station observations. A row only written when the feature fires would be
+      // selected on the outcome and useless for fitting.
+      radiativeEnabled,
+      radiativeTonight: radTonight ? {
+        date: radTonight.date, minDewpointF: radTonight.minDewpointF,
+        meanCloudPct: radTonight.meanCloudPct, meanWindMph: radTonight.meanWindMph,
+        hours: radTonight.hours, radiative: radTonight.radiative,
+      } : null,
+      radiativeTripped: !!(imminent && imminent.radiativeOnly),
     },
     dedupKey: tier ? dedupKey({ spaceId: input.spaceId, eventDate: input.eventDate, tier, level, crops: trippedCrops }) : null,
   };
