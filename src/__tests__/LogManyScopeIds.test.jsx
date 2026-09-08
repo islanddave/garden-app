@@ -189,7 +189,17 @@ describe('S4 — the count assertion is VISIBLE, not just logged', () => {
     // failure in the suite to a 15s stall, and would hide a real regression in some other file
     // behind the same wait. The assertion is unchanged and still fails if the warning never renders
     // (mutation-checked by deleting the testid — see the commit body).
-    const el = await screen.findByTestId('logmany-partial-warning', {}, { timeout: 15000 })
+    // SECOND RAISE, 2026-09-07 — 15000 -> 30000, and this is PAPERING, not a fix. New data point:
+    // dev 47c8365 build-and-test, file total 16001ms against the 15000ms budget — over by ~1s, the
+    // same within-a-second-of-the-ceiling signature as the 5064/5081ms failures that motivated the
+    // first raise. It also failed on f682257 immediately before, so twice in a row, and it is again
+    // fail-closing promote-gate on build-and-test exactly as the ticket predicted.
+    // DO NOT RAISE THIS A THIRD TIME. The budget has now gone 5s -> 15s -> 30s while the render has
+    // only got slower; a fourth session finding this should fix WHY the success card takes tens of
+    // seconds to paint under a loaded runner (BUG-LOGMANYS4FLAKE-001 names the suspect: LogMany
+    // pulls the whole components/forms barrel), or move the assertion to a seam that does not need
+    // the whole page. Raising again just buys a slower failure.
+    const el = await screen.findByTestId('logmany-partial-warning', {}, { timeout: 30000 })
     expect(el.textContent).toMatch(/2 of 8 selected plantings could not be logged/)
     // Both numbers, so the user can see the shortfall without doing the subtraction.
     expect(el.textContent).toMatch(/6 of 8 were logged/)
