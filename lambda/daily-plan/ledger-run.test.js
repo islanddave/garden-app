@@ -30,18 +30,31 @@ const hydrology = () => ({
   tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0, settled_days: [],
 });
 
-// The ledger event-window statement is the only SQL in this Lambda that selects water_depth.
-const isLedgerEventsSql = (sql) => /water_depth/.test(sql);
+// TWO statements in this Lambda now mention water_depth, and telling them apart is load-bearing.
+// V5-DROUGHTSPACE-001 added an UNCONDITIONAL deep-watering read for the drought signal, which does not
+// ride CARE_WATER_LEDGER_ENABLED and must not — the signal is the honesty fix for a counter that would
+// otherwise tell Dave his garden is dry on a day he watered it, and gating it behind that flag would
+// ship it dead. The guards below keep their ORIGINAL strictness (flag OFF still issues ZERO of the
+// LEDGER statement); they are discriminated by SELECT LIST, exactly as weatherdaily.test.js
+// discriminates its two weather_daily readers, rather than by loosening a count.
+//   ledger  — aliases the column (`as water_depth`) and carries t_ms; window over three event types.
+//   drought — compares the column, buckets in America/New_York, and reads 'watering' only.
+const isLedgerEventsSql = (sql) => /water_depth/.test(sql) && /as water_depth/.test(sql);
+const isDroughtWaterSql = (sql) => /water_depth/.test(sql) && /America\/New_York/.test(sql);
 
 function recordingPg({ throwOnLedgerEvents = false, eventRows = [] } = {}) {
   const calls = [];
   const pg = {
     query: vi.fn(async (sql, params) => {
       calls.push({ sql, params });
+      // Narrow matcher, deliberately: `throwOnLedgerEvents` must break the LEDGER read only. If it
+      // also broke the drought signal's deep-watering read, the degrade tests below would be proving
+      // two different fail-safes at once and neither cleanly.
       if (isLedgerEventsSql(sql)) {
         if (throwOnLedgerEvents) throw new Error('boom: event window unavailable');
         return { rows: eventRows };
       }
+      if (isDroughtWaterSql(sql)) return { rows: [] };
       if (/weather_daily/.test(sql)) return { rows: [] };
       if (/from plants/.test(sql)) return { rows: PLANTINGS };
       if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
@@ -52,6 +65,7 @@ function recordingPg({ throwOnLedgerEvents = false, eventRows = [] } = {}) {
   return pg;
 }
 const ledgerQ = (pg) => pg.calls.filter((c) => isLedgerEventsSql(c.sql));
+const droughtWaterQ = (pg) => pg.calls.filter((c) => isDroughtWaterSql(c.sql));
 const planWrites = (pg) => pg.calls.filter((c) => /insert into daily_plan/.test(c.sql));
 const storedItems = (pg) => planWrites(pg).map((c) => { const o = JSON.parse(c.params[2]); delete o.generated_at; return o; });
 
@@ -91,6 +105,27 @@ describe('CARE_WATER_LEDGER_ENABLED — flag OFF issues ZERO event-window querie
       const { pg } = await drive();
       expect(ledgerQ(pg), `flag value ${JSON.stringify(v)}`).toHaveLength(0);
     }
+  });
+
+  // V5-DROUGHTSPACE-001 — the other water_depth reader. It is UNCONDITIONAL by design, and these pin
+  // that it neither rides the flag nor duplicates/displaces the ledger read on either flag state.
+  it('the drought deep-watering read is issued exactly ONCE with the flag OFF — it does not ride it', async () => {
+    const { pg } = await drive();
+    expect(ledgerQ(pg)).toHaveLength(0);
+    expect(droughtWaterQ(pg)).toHaveLength(1);
+  });
+  it('...and still exactly ONCE with the flag ON, alongside (not instead of) the ledger read', async () => {
+    vi.stubEnv('CARE_WATER_LEDGER_ENABLED', 'true');
+    const { pg } = await drive();
+    expect(ledgerQ(pg)).toHaveLength(1);
+    expect(droughtWaterQ(pg)).toHaveLength(1);
+  });
+  it('the two matchers are disjoint — neither statement can be counted as the other', async () => {
+    vi.stubEnv('CARE_WATER_LEDGER_ENABLED', 'true');
+    const { pg } = await drive();
+    const both = pg.calls.filter((c) => isLedgerEventsSql(c.sql) && isDroughtWaterSql(c.sql));
+    expect(both).toHaveLength(0);
+    expect(pg.calls.filter((c) => /water_depth/.test(c.sql))).toHaveLength(2);
   });
 });
 
