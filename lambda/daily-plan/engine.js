@@ -716,7 +716,27 @@ function coldFor(p, cad, low){
     if(low<45) return ['flowering','fruiting'].includes(p.status) ? {level:'optional', text:`optional: protect flowering plant (low ${low}°F)`} : null;
     return null;
   }
-  if(/houseplant|succulent|cactus/i.test(c.crop||'')) return null;
+  // BUG-COLDCARDDISCARD-001 — a free-text `/houseplant|succulent|cactus/i.test(c.crop)` early return
+  // stood here and is REMOVED, not re-keyed. It shipped with this file (2026-06-17), two months before
+  // V4-TROPICALCOLD-001 authored COLD_BY_CROP_TYPE, so it discarded the thresholds that item was written
+  // FOR. Measured on prod 2026-09-08: all 18 live plantings it matched returned null at EVERY temperature,
+  // 12 of them carrying an explicit protect_below_F — 6 from the DB profile (Fittonia ×3 at 55/60/60,
+  // Pothos 50, Tradescantia ×2 at 45) and 6 from the crop-type fallback (Jade 45, Christmas Cactus 45,
+  // Echeveria ×2 / Haworthia / Lithops at 40). Not hypothetical: observed tmin was 45.6°F on 2026-09-07
+  // and 53.4°F on 09-06, under four of those numbers on both nights. (11 change behaviour today; Christmas
+  // Cactus is status='dormant' and drops at :861 before this function runs.)
+  // It keyed on `crop`, which is uncontrolled free text (see :102-104), so the SAME crop_type_slug got
+  // opposite protection on wording alone — `Neon Pothos` (no crop match -> slug `pothos` -> 50°F) protected,
+  // `Pothos` (crop "houseplant", same slug, same 50°F) never.
+  // NOT re-expressed on crop_type_slug, because there is nothing left for it to do: the resolution below
+  // already returns null for every planting with no protect_below_F. Verified on prod — the 6 branch-mates
+  // with no threshold on any surface (Gymnocalycium, Copper Stonecrop, Golden Sedum, Graptosedum, Love's
+  // Fire, Pachyphytum; slugs cactus/sedum/succulent, deliberately unmapped in frostClass.UNCERTAIN_SLUGS)
+  // stay silent through the profile path, so removing this widens protection to exactly the plants that
+  // already carried a number and to nobody else. A slug-keyed restatement would be the redundant second
+  // guard :1096-1099 argues against: mutate either and the other holds, and no test can watch one fail.
+  // The nightly-nag mitigation V4-TROPICALCOLD-001 calls a precondition of correctness is the broughtInside
+  // check immediately below, which sits ABOVE profile resolution and so covers these 12 identically.
   // V4-TROPICALCOLD-001 — already indoors? Then there is nothing to carry in, at any temperature.
   // `done` (doneEvents.js) only retires a task for the CALENDAR DAY, so without this the card returns
   // every night the low is under the threshold, all winter, for a plant already on the windowsill —

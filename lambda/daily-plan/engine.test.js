@@ -538,3 +538,102 @@ describe('V4-GINGERCOLD-001 — the 55F profile on the AUTHORITATIVE variety tie
     expect(coldRows(planFor([inside], { tonightLow: 44, highToday: 60 })).map(r => r.name)).not.toContain('Ginger');
   });
 });
+
+describe('BUG-COLDCARDDISCARD-001 — an explicit protect_below_F is no longer discarded on a crop string', () => {
+  // coldFor used to return null for any planting whose resolved `crop` matched /houseplant|succulent|cactus/,
+  // BEFORE reading any cold profile. That predicate shipped 2026-06-17, two months before
+  // V4-TROPICALCOLD-001 authored the thresholds it was swallowing. Measured on prod 2026-09-08: 18 live
+  // plantings hit it, 12 with an explicit protect_below_F, and observed tmin was 45.6F on 2026-09-07 —
+  // under four of those numbers, with no card produced. Nothing covered the behaviour, so the suite was
+  // green throughout: the whole houseplant + soft-succulent half of COLD_BY_CROP_TYPE had never once
+  // produced a card for the plantings it was written for.
+  const planFor = (ps, weather) => generatePlan({
+    plantings: ps.map((p, i) => ({
+      id: 'cd-' + i, project: 'Houseplants', project_id: 'ph', status: 'vegetative',
+      substrate_start: '2026-05-01', last_water: '2026-09-01', last_fert: null, db_cadence: null,
+      container_type: 'plastic_pot', ...p,
+    })),
+    cadence: cad, fertModel: fm, today: '2026-09-08', weather: { unit: 'F', ...weather }, ownerFallback: 'dave',
+  });
+  const coldRows = (plan) => Object.values(plan.users).flatMap(u => u.tasks.cold);
+  // The live prod shape of the six DB-profile rows: cadence_scopes non-empty (CARE_CADENCE_SCOPES_ENABLED
+  // is "true" on the deployed Lambda), so resolveCadence adopts db_cadence _via:'db' — crop "houseplant",
+  // authored threshold, and until now no card at any temperature.
+  const FITTONIA = {
+    name: 'Green Fittonia', variety: 'Green Fittonia', genus: null, crop_type_slug: 'fittonia',
+    cadence_scopes: ['cultivar'],
+    db_cadence: { crop: 'houseplant', cold: { tender: true, protect_below_F: 55 },
+      water_interval_days_container: 7, fertilize_interval_days: 30 },
+  };
+
+  it('a "houseplant" with an explicit protect_below_F cards below it (it carded at NO temperature before)', () => {
+    const rows = coldRows(planFor([FITTONIA], { tonightLow: 45, highToday: 70 }));
+    const row = rows.find(r => r.name === 'Green Fittonia');
+    expect(row, 'the free-text discard dropped this planting before any profile was read').toBeTruthy();
+    expect(row.level).toBe('protect');
+    expect(row.text).toMatch(/bring in tonight/);
+  });
+
+  it('it trips at exactly its own threshold, not at a frost band', () => {
+    // Both sides pinned, so this is a threshold assertion and not a "something fired" assertion.
+    expect(coldRows(planFor([FITTONIA], { tonightLow: 56, highToday: 70 })).map(r => r.name)).not.toContain('Green Fittonia');
+    expect(coldRows(planFor([FITTONIA], { tonightLow: 55, highToday: 70 })).map(r => r.name)).toContain('Green Fittonia');
+  });
+
+  it('THE BUG: same crop_type_slug, opposite outcome decided by the wording of a free-text label', () => {
+    // Both of these are live prod plantings on crop_type_slug 'pothos' with the same 50F threshold, and
+    // both fixtures come from shipped data rather than being hand-built: cadence-data-v2.json's
+    // by_variety['Golden Pothos'] carries crop "houseplant" + cold 50, while 'Neon Pothos' has no
+    // by_variety entry at all and so reaches frostClass.COLD_BY_CROP_TYPE.pothos — also 50. Before this
+    // fix only the one with no crop string was protected. That divergence, not the missing card, is the
+    // defect: protection depended on how somebody worded a label.
+    const golden = { name: 'Golden Pothos', variety: 'Golden Pothos', genus: null, crop_type_slug: 'pothos' };
+    const neon   = { name: 'Neon Pothos',   variety: 'Neon Pothos',   genus: null, crop_type_slug: 'pothos' };
+    expect(resolveCadence({ ...golden, db_cadence: null }, cad).crop).toBe('houseplant');
+    expect(resolveCadence({ ...neon, db_cadence: null }, cad).crop).not.toMatch(/houseplant/);
+
+    const rows = coldRows(planFor([golden, neon], { tonightLow: 48, highToday: 70 }));
+    expect(rows.map(r => r.name).sort()).toEqual(['Golden Pothos', 'Neon Pothos']);
+    expect(rows.map(r => r.level)).toEqual(['protect', 'protect']);
+    // Same slug, same threshold -> byte-identical verdict text. Comparing the texts (not just presence)
+    // is what pins the two paths to ONE answer rather than to two that happen to both be non-empty.
+    expect(rows[0].text).toBe(rows[1].text);
+    expect(rows[0].text).toMatch(/50°F/);
+  });
+
+  it('NOT WIDENED: a succulent with no threshold on any surface stays silent at a hard freeze', () => {
+    // Copper Stonecrop's live shape. Its slug sits in frostClass.UNCERTAIN_SLUGS — deliberately unmapped
+    // — and its DB profile carries no `cold` key, so both tiers say UNKNOWN. Removing the free-text
+    // return must release the plantings that HAVE a number and nobody else; on prod that is 12 of the 18
+    // it used to swallow, and this pins the other 6.
+    const sedum = { name: 'Copper Stonecrop', variety: 'Copper Stonecrop', genus: null, crop_type_slug: 'sedum',
+      cadence_scopes: ['cultivar'],
+      db_cadence: { crop: 'succulent (Sedum)', water_interval_days_container: 14, fertilize_interval_days: 60 } };
+    expect(coldRows(planFor([sedum], { tonightLow: 20, highToday: 35 })).map(r => r.name)).not.toContain('Copper Stonecrop');
+  });
+
+  it('SUPPRESSION covers the newly-released plantings — no nightly nag on one already indoors', () => {
+    // Load-bearing for the fix being correct rather than merely present: coldFor runs nightly, and `done`
+    // retires a cold task for the calendar day only, so a plant already on the windowsill would otherwise
+    // be re-carded all winter — the nag the 2026-08-07 band decision rejected. The indoors check sits
+    // ABOVE profile resolution, so it covers these 12 exactly as it covers ginger. This assertion was
+    // VACUOUS before the fix (the free-text return answered first, so nothing reached the check); it is
+    // load-bearing only now that these plantings can produce a card at all.
+    const inside = { ...FITTONIA, last_brought_inside: '2026-08-30' };
+    expect(coldRows(planFor([inside], { tonightLow: 40, highToday: 60 })).map(r => r.name)).not.toContain('Green Fittonia');
+    const backOut = { ...inside, last_brought_outside: '2027-05-20' };
+    expect(coldRows(planFor([backOut], { tonightLow: 40, highToday: 60 })).map(r => r.name)).toContain('Green Fittonia');
+  });
+
+  it('the card stays on the SILENT channel — tasks.cold only, counted, never an alert', () => {
+    // frostClass.js:206-210 (design G2): protect_below_F drives the in-app Today/CareNeeded card with its
+    // one-tap brought_inside; the outbound frost alert reads BANDS via frostClass.summarize, which
+    // handler.js feeds from resolveCadence directly (:1406 cadenceTenderFor), never from coldFor. coldFor
+    // has exactly one runtime call site (engine.js:1110 -> tasks.cold), so releasing these 12 cannot
+    // change alert volume. Pinned here so a future edit that routes cold rows anywhere else is visible.
+    const plan = planFor([FITTONIA], { tonightLow: 45, highToday: 70 });
+    const u = plan.users.dave;
+    expect(u.tasks.cold.map(r => r.name)).toEqual(['Green Fittonia']);
+    expect(u.counts.cold).toBe(1);
+  });
+});
