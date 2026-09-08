@@ -116,11 +116,28 @@ post:
 
       The allowlist must stay NULL-free: `x NOT IN (…, NULL)` is NULL for every x, so a single NULL
       element would make this gate return zero rows against ANY table shape and go vacuously green.
+
+      WIDENED 2026-09-07 (V5-WXBACKFILLVARS-001) with the five Open-Meteo daily quantities
+      daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours. This is the edit the
+      DE-FROZEN note above anticipates — ONE list, no total to move — and it is what the gate is
+      FOR: the migration that widens the table names its columns here in the same change, so an
+      unintended column still reds.
+
+      It did not happen in the same change, and that is the lesson. V5-WXBACKFILLVARS-001 carried
+      its own `post_original_ten_columns_intact` and a `pre_weather_daily_column_count_10`, so the
+      widening looked fully gated from inside its own directory — but a closed-world assertion
+      lives in the migration that CREATED the table, not in the one that extends it, and nothing
+      makes the author of the second look at the first. Prod and staging DDL had already been
+      applied when `gate-invariants.yml` went red with `rowcount=5`; the five columns are intended
+      and the repair is naming them, never neutralising the gate. Before widening any table, grep
+      migrations/*/gates.yml for its name and read every closed-world gate you find.
     sql: |
       SELECT column_name FROM information_schema.columns
        WHERE table_schema='public' AND table_name='weather_daily'
          AND column_name NOT IN ('space_id','date','et0_in','tmax_f','tmin_f','precip_in',
-                                 'precip_source','et0_source','created_at','updated_at')
+                                 'precip_source','et0_source','created_at','updated_at',
+                                 'daylight_s','sunshine_s','solar_mj_m2','wind_max_mph',
+                                 'precip_hours')
     expect: rowcount_eq
     value: 0
     continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
