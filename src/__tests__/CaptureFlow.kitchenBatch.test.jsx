@@ -88,11 +88,13 @@ describe('CaptureFlow — Something in the kitchen (V5-INFLIGHTBATCH-001)', () =
     await waitFor(() => expect(screen.getByTestId('capture-input')).toBeDefined())
     const file = new File(['x'], 'snap.jpg', { type: 'image/jpeg' })
     await act(async () => { fireEvent.change(screen.getByTestId('capture-input'), { target: { files: [file] } }) })
-    // Full ordered literal: ADDITIVE (nothing displaced), the standing "inventory stays LAST" rule
-    // survives a third append, and the new card is fourth rather than sixth. Order only — jsdom has
-    // no layout engine, so the fold argument in MODES' own comment is not testable here.
+    // Full ordered literal. The ORDER here is no longer this row's to argue — V5-SNAPMENUORDER-001
+    // (Dave, verbatim) now owns all seven positions and CaptureFlow.menuOrder.test.jsx is its guard.
+    // What THIS row still owns and still asserts is that its card is PRESENT, is still FOURTH, and
+    // displaced none of the other six. Order only — jsdom has no layout engine, so the fold argument
+    // in MODES' own comment is not testable here.
     expect(Array.from(document.querySelectorAll('[data-testid^="mode-"]')).map(b => b.getAttribute('data-testid'))).toEqual([
-      'mode-planting', 'mode-event', 'mode-location', 'mode-kitchen', 'mode-replace', 'mode-attachonly', 'mode-inventory',
+      'mode-replace', 'mode-attachonly', 'mode-planting', 'mode-kitchen', 'mode-event', 'mode-location', 'mode-inventory',
     ])
     expect(screen.getByTestId('mode-kitchen').textContent).toContain('Something in the kitchen')
   })

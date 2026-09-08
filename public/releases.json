@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.119.0",
+    "date": "2026-09-08",
+    "highlights": [
+      "Snap's options are in a new order, with the photo choices you use most at the top — and \"Update a photo\" is now called \"Update Featured\", which is what it always did."
+    ]
+  },
+  {
     "version": "4.118.1",
     "date": "2026-09-08",
     "highlights": [
