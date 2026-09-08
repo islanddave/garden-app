@@ -1,0 +1,164 @@
+# gates.yml
+# BUG-REKEYSTRANDSPROFILE-001 — the CLASS, not the instance. The instance (Snapdragon) is already fixed.
+#
+# THE CLASS. An agent researches a cultivar and writes a care_profile keyed to its variety id. A human
+# then edits that planting's Variety field through VarietyPicker, which does NOT rename the variety —
+# submitCreate (src/components/VarietyPicker.jsx:306-332) MINTS A NEW plant_varieties ROW and points
+# the form at it (selectVariety at :330). Saving writes the new id straight through:
+#
+#     UPDATE public.garden_node p SET cultivar_id = CASE WHEN <hasVariety> THEN <new> ELSE p.cultivar_id END
+#     (lambda/plants/index.js:1098-1101 — a bare column assignment, no dependent-row logic of any kind)
+#
+# The agent's research is now attached to a variety nothing is growing. Nothing warns, nothing carries it
+# forward, and care_profile.scope_id has NO foreign key, so the database cannot even see the reference.
+#
+# GUARD, NOT PREVENTION. This detects; it does not stop the re-key. Prevention options (widen the 409
+# duplicate check, carry dependents forward at the PUT, warn in the picker) are a product decision on the
+# ticket, deliberately not made here — see README §Prevention.
+#
+# WHY THE PREDICATE IS "LOST A PLANTING TO AN OBSERVED RE-KEY", NOT "HAS NO LIVE PLANTING".
+# The broad predicate is unusable as a standing gate. Measured on live prod 2026-09-08, "keyed to a
+# variety with no live planting" holds for ~1200 rows: 640 entity_tag, 253 inventory_items (seed packets
+# you own but have not sown — entirely correct), 34 care_profile of which 30 are a legitimate 2026-06-18
+# bulk write for unplanted seed cultivars. A gate red at 1200 findings trains everyone to ignore the
+# runner, which is the exact disease gate-invariants.yml:32-42 documents. Scoping to varieties that an
+# audit_events row PROVES lost a planting takes the candidate set from ~1200 to 4.
+#
+# ENV — VERIFIED, NOT ASSUMED (2026-09-08). The recon could not reach staging and recommended env: prod
+# as the safe choice. Staging WAS reachable from this lane (NEON_STAGING_URL) and carries every substrate
+# this gate touches: audit_events, care_profile, plants and schema_version all exist as real tables
+# (relkind 'r'), and trg_audit_plants_upd / trg_audit_plants_del are both installed on public.plants. So
+# these gates run on BOTH environments and no env: is declared on them. Only the pre gate, which asserts
+# a prod-specific starting state, is env-scoped.
+#
+# RLS. plants and schema_version both carry row-level security; care_profile and audit_events do not.
+# gate_runner connects with NEON_DATABASE_URL / NEON_STAGING_URL (owner, RLS-exempt, conn.read_only=True)
+# and therefore gets the true answer. Reading these predicates as garden_ro can under-count live plantings
+# and so OVER-report strands — the same trap v4-entitytagorphan-001's header records. Every count in this
+# file and in the README was confirmed against the owner DSN through the runner, not just via psql-ro.
+#
+# WHAT THIS CANNOT SEE, stated rather than left to be discovered. The plants audit trigger was armed
+# 2026-08-27 00:27:29, so no re-key before that date is detectable — this guard is forward-looking by
+# construction. Three older strands found by a _source sweep (cowork_care_audit_20260709 — Vietnamese
+# Coriander, Dracaena, Lithops) are a one-time decision for Dave, not something a gate can reach. README
+# §Historical blind spot lists them.
+
+pre:
+  - name: pre_rekey_strands_exist_before_the_decision
+    note: >
+      The starting state this guard is built against, measured on live prod 2026-09-08 — two cultivars
+      whose only planting was re-keyed away and whose agent-written care_profile stayed behind. Snapdragon
+      411e7cf8 (the ticket, _source lane-penstemon-20260907) and Palmetto Punch 81951ffd (a second,
+      independently discovered instance of the same class). env prod NOT because staging lacks re-key
+      history — it has 39 such events, from the integration suite — but because none of those 39 varieties
+      carries a cultivar care_profile, so staging has zero STRANDS and this rowcount_gte 1 would fail there
+      while describing nothing wrong. continuous false because this is a measurement of a moment, not an
+      invariant: applying 0a does not change it, and resolving the two findings drives it to zero.
+    env: prod
+    continuous: false
+    sql: |
+      WITH rekeyed AS (
+        SELECT DISTINCT (a.before_jsonb->>'variety_id')::uuid AS old_v
+          FROM public.audit_events a
+         WHERE a.table_name = 'plants' AND a.action = 'UPDATE'
+           AND (a.before_jsonb->>'variety_id') IS DISTINCT FROM (a.after_jsonb->>'variety_id')
+           AND (a.before_jsonb->>'variety_id') IS NOT NULL
+      )
+      SELECT 1
+        FROM rekeyed r
+        JOIN public.care_profile cp ON cp.scope = 'cultivar' AND cp.scope_id = r.old_v
+       WHERE NOT EXISTS (SELECT 1 FROM public.plants p
+                          WHERE p.variety_id = r.old_v
+                            AND p.deleted_at IS NULL AND p.archived_at IS NULL)
+         AND cp.profile->>'_retained' IS NULL
+    expect: rowcount_gte
+    value: 1
+
+post:
+  - name: post_no_rekey_stranded_care_profile
+    note: >
+      THE GUARD. A variety that an audit_events row proves lost a planting to a re-key, and that now has
+      zero live plantings, must not still carry a cultivar care_profile — unless the retention is labelled
+      in the data as a decision. Violation-count shape and self-armed on this migration's own
+      schema_version row, so it is vacuously green on a migrations/** push and becomes a real standing
+      invariant the moment 0a is applied. Deliberately NOT filtered by plant_varieties.deleted_at — a
+      profile hanging off a soft-deleted variety is more stranded, not less.
+    sql: |
+      WITH rekeyed AS (
+        SELECT DISTINCT (a.before_jsonb->>'variety_id')::uuid AS old_v
+          FROM public.audit_events a
+         WHERE a.table_name = 'plants' AND a.action = 'UPDATE'
+           AND (a.before_jsonb->>'variety_id') IS DISTINCT FROM (a.after_jsonb->>'variety_id')
+           AND (a.before_jsonb->>'variety_id') IS NOT NULL
+      )
+      SELECT 1
+        FROM rekeyed r
+        JOIN public.care_profile cp ON cp.scope = 'cultivar' AND cp.scope_id = r.old_v
+       WHERE NOT EXISTS (SELECT 1 FROM public.plants p
+                          WHERE p.variety_id = r.old_v
+                            AND p.deleted_at IS NULL AND p.archived_at IS NULL)
+         AND cp.profile->>'_retained' IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-rekeystrand-20260908')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_rekey_audit_trigger_still_feeds_the_guard
+    note: >
+      THE ANTI-VACUITY GATE, and the one that earns its keep. The guard above reads audit_events for
+      variety_id changes on plants. Drop trg_audit_plants_upd, or drop 'variety_id' from its tracked
+      column list, and the CTE goes empty — the guard then reports GREEN forever while detecting nothing,
+      which is worse than having no guard at all. This pins the detector's feed rather than its output, so
+      a silenced instrument reds HERE instead of hiding there. Both halves are asserted because either one
+      alone is enough to blind it.
+
+      WRITTEN AS NOT EXISTS RATHER THAN AS A PRESENCE COUNT, and that is not a style choice. The obvious
+      spelling is `SELECT 1 FROM pg_trigger WHERE ... AND EXISTS (receipt)` with rowcount_eq 1. It is
+      WRONG: before apply the receipt clause makes it return zero rows, which fails a presence gate, so
+      the gate would red the moment it was pushed — the exact CI failure gate-invariants.yml:166-171
+      forbids. Only violation-count shape survives self-arming, because there `no rows` reads as healthy
+      in both the unapplied and the applied-and-fine cases. Caught by running it, not by reading it.
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (
+               SELECT 1 FROM pg_trigger
+                WHERE NOT tgisinternal
+                  AND tgrelid = 'public.plants'::regclass
+                  AND tgname = 'trg_audit_plants_upd'
+                  AND pg_get_triggerdef(oid) LIKE '%''variety_id''%'
+             )
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-rekeystrand-20260908')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_retained_marker_states_a_reason
+    note: >
+      The release valve must stay a DECISION and not become a mute off-switch. _retained is the only way
+      to clear the guard without deleting the profile, so the cheapest way to silence a real finding is
+      _retained true. That is the same laundering v4-cadencerefill-001's judgement-label gate exists to
+      stop. This requires the marker to be a JSON STRING and non-empty after trimming, so a boolean, a
+      number, a null or an empty string reds instead of passing. It CANNOT judge whether the sentence is
+      any good — README §The _retained marker states what a reviewer must check, and that part is human.
+    sql: |
+      SELECT 1
+        FROM public.care_profile cp
+       WHERE cp.scope = 'cultivar'
+         AND cp.profile ? '_retained'
+         AND (jsonb_typeof(cp.profile->'_retained') <> 'string'
+              OR btrim(cp.profile->>'_retained') = '')
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-rekeystrand-20260908')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: >
+      Apply-time receipt. continuous false — an apply record, not a standing invariant, and it cannot be
+      self-armed without becoming a tautology. Same call every guard-only migration in this tree makes.
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '5.0.0-rekeystrand-20260908'
+    expect: rowcount_eq
+    value: 1
