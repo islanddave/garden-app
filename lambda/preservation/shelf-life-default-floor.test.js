@@ -119,6 +119,18 @@ describe('SHELF_LIFE_MONTHS — an unrecorded storage kind must not be read as "
   // The freeze-family carve-out, by CONSTRUCTION and not by name list: a row is exempt only while
   // every leg it declares is a freezer kind. A freeze method that later grows a pantry or fridge leg
   // stops being exempt on its own, with nobody needing to remember this file exists.
+  //
+  // WHY THE EXEMPTION IS CORRECT HERE, settled by Dave 2026-09-08 and recorded because the code
+  // previously asserted it without a reason, which is what got it re-raised. The four freeze rows
+  // default to 10 months while declaring a `fridge_freezer` leg of 4 — read cold, that is the same
+  // overstatement `cure_store` was just fixed for, and a reviewer SHOULD flag it. It is not, because
+  // of a fact about this garden that is not in the table: **nothing is stored in a fridge freezer.
+  // Every store goes to a deep freezer at -15 to -30F.** So the default IS the route actually used,
+  // and flooring these to 4 would understate real shelf life on every jar Dave owns.
+  //
+  // The `fridge_freezer` leg stays in the table as a documented figure for a route he does not use —
+  // do not delete it to "resolve" this, and do not floor the defaults to it. If the storage setup
+  // ever changes, this exemption is the thing to revisit first.
   const frozenOnly = (legs) => {
     const s = storageLegs(legs)
     return s.length > 0 && s.every(([kind]) => FREEZER_KINDS.includes(kind))
