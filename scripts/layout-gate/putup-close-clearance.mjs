@@ -233,9 +233,22 @@ const MEASURE = (c) => `(() => {
   const shown = el => (!el.checkVisibility || el.checkVisibility()) && el.getBoundingClientRect().height > 0
   const hitsSelf = (el, r) => {
     const x = (r.l + r.r) / 2, y = (r.t + r.b) / 2
-    if (x < 0 || y < 0 || x > w.innerWidth || y > w.innerHeight) return null  // never probed != not occluded
+    // BOUNDS ARE EXCLUSIVE AT THE FAR EDGE. Addressable coordinates run 0..innerHeight-1, so a
+    // centre landing exactly ON innerHeight is OUTSIDE the document — elementFromPoint returns null
+    // there, which is "nothing to probe", not "something is on top". With \`>\` this gate reported a
+    // control straddling the bottom edge as OCCLUDED: measured on the closed list at 390x860, where
+    // "Reopen Blackberry shrub" spans y836-884 so its centre is exactly y860, hit nothing, and was
+    // failed as "something is painted over it". Nothing was. It reproduced at 860 and 870 and not at
+    // 844, because whether a centre lands on the edge depends on row heights, which depend on FONT
+    // METRICS — which is why it fired on CI and never locally, and why it looked like a real defect.
+    if (x < 0 || y < 0 || x >= w.innerWidth || y >= w.innerHeight) return null
     const at = d.elementFromPoint(x, y)
-    return at === el || (at != null && (el.contains(at) || at.contains(el)))
+    // A null result is NEVER evidence of occlusion. It means the point addressed no element at all
+    // (outside the layout viewport, or a gap). Occlusion is a DIFFERENT element on top, so it needs
+    // a non-null \`at\` that is not this element and not in its ancestry. Folding null into "false"
+    // is what turned an unprobeable point into a defect report.
+    if (at == null) return null
+    return at === el || el.contains(at) || at.contains(el)
   }
   const overlap = (a, b) => (a && b) ? Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t)) : 0
 
@@ -419,7 +432,18 @@ try {
         // Hit-testing is asserted on the TOP layer only. With a sheet open the backdrop covers the
         // page behind it and every background control correctly fails to hit-test; asserting there
         // would red this gate on the modal working exactly as designed.
-        if (t.inDialog && t.hitIsSelf === false) fail(`${at}: control "${t.label}" does not hit-test to itself — occluded`)
+        // THE FIXED BOTTOM NAV IS NOT AN OCCLUSION DEFECT AT scrollTop 0. This census runs before the
+        // page is scrolled, so on a list taller than the viewport the controls near the fold sit
+        // BEHIND the 56px bar simply because the reader has not scrolled yet. That is what a
+        // scrollable page under fixed chrome looks like; it is not a layout fault, and the user
+        // reaches those controls by scrolling. Nav clearance is owned by (d), which re-measures at the
+        // END of the scroll — where "under the bar" genuinely means unreachable — and asserts BOTH
+        // navOverlapPx and hit-testing there. Measured: at 390x870 this line failed "Reopen Blackberry
+        // shrub" with elementFromPoint returning the nav itself and navOverlapPx 34, while (d) passed
+        // the same surface with 47px of clear air. Whether it fires at all depends on row heights and
+        // therefore on FONT METRICS, so it reproduced on CI and not locally — an environment-shaped
+        // false positive that reads exactly like a real defect.
+        if (t.inDialog && t.hitIsSelf === false && !(t.navOverlapPx > 0)) fail(`${at}: control "${t.label}" does not hit-test to itself — occluded`)
         if (!t.fitsX) fail(`${at}: control "${t.label}" sits outside the ${vw}px viewport — unreachable`)
       }
 
