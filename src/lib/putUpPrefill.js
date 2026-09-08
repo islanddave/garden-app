@@ -18,16 +18,23 @@
 // Harvest vocabulary is src/lib/harvest-constants.js HARVEST_UNITS:
 //   ['lb','oz','kg','g','count','bunch','cup','head']
 // Put-Up vocabulary is PutUp.jsx UNIT_GROUPS flattened:
-//   ['lbs','oz','count','cups','pints','quarts','bushels','half-bushels','pecks','flats','jars','bags']
+//   ['g','kg','lbs','oz','count','cups','pints','quarts','bushels','half-bushels','pecks','flats','jars','bags']
 //
-// 'kg' and 'g' are ABSENT ON PURPOSE, not overlooked: mapping either one needs an arithmetic
-// conversion into lbs/oz, which is the guess this module refuses to write. Both are zero-row on prod
-// today (count 699 / cup 105 / head 17 / bunch 6, live query 2026-08-22), so this is a defensive
-// branch — but a crop later logged in grams must not silently become that number of pounds.
+// 'kg' and 'g' USED TO BE ABSENT ON PURPOSE. The original reason still stands as a rule: mapping
+// either one needed an arithmetic conversion into lbs/oz, and that is the guess this module refuses
+// to write — a crop logged in grams must never silently become that number of pounds.
+//
+// V4-GRAMSUNIVERSAL-001 DISSOLVED the problem rather than solving it. Put-Up's Weight group now
+// offers 'g' and 'kg' itself, so each maps to ITSELF: no arithmetic, no guess, nothing lost. The
+// refusal is intact and simply has nothing left to refuse. This is precisely why those two options
+// were spelled singular against Put-Up's plural house style — had they been 'grams'/'kilograms'
+// this would still be a rename, and a rename is a place a bug can live.
 //
 // 'bunch' and 'head' -> 'count' preserves the NUMBER exactly and loses only the noun, which the crop
 // name already carries. That is lossless in the column the UI does arithmetic on.
 export const HARVEST_TO_PUTUP_UNIT = Object.freeze({
+  g: 'g',
+  kg: 'kg',
   lb: 'lbs',
   oz: 'oz',
   count: 'count',

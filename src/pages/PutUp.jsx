@@ -154,8 +154,26 @@ const HOUSE_ESTIMATE_CLAIM =
 // units into this vocabulary, and the guard that every mapped value is a REAL option here has to
 // read the real list — a hand-copied duplicate in the test would drift silently and certify nothing
 // (L-384: don't duplicate a constant to dodge a dependency). Nothing in src/ imports it.
+//
+// V4-GRAMSUNIVERSAL-001 — 'g' and 'kg' added, leading the Weight group. This was the ONE surface in
+// the app where a weight could not be entered in grams: harvest weights are stored, computed and
+// displayed in grams throughout (harvest_log.weight_grams via formatGrams), and Put-Up offered lbs
+// and oz and nothing else. Grams lead because grams are the house unit; lbs and oz stay because
+// Dave's kitchen scale reads them and this list is what he picks from, not what gets stored.
+//
+// SINGULAR 'g'/'kg', against this list's plural house style ('lbs','cups'), deliberately: they match
+// harvest_log.unit's CHECK vocabulary exactly, and that is what turns the prefill mapping in
+// putUpPrefill.js into an IDENTITY for these two instead of the arithmetic conversion that module
+// documents itself as refusing to write. Matching the SOURCE vocabulary is worth more than matching
+// the local plural — the plural is cosmetic, the mapping is not.
+//
+// NO MIGRATION NEEDED, and that is verified rather than inherited from the paragraph above:
+// preservation_log.unit carries no CHECK on live Neon (queried 2026-09-08 — the only unit CHECKs
+// returned for these tables are inventory_items'). inventory_items.unit, by contrast, IS pinned to
+// an 11-value CHECK with no g/kg, so the same widening there needs a migration and is deliberately
+// NOT smuggled into this commit.
 export const UNIT_GROUPS = [
-  { group: 'Weight',     options: ['lbs', 'oz'] },
+  { group: 'Weight',     options: ['g', 'kg', 'lbs', 'oz'] },
   { group: 'Count',      options: ['count'] },
   { group: 'Volume',     options: ['cups', 'pints', 'quarts'] },
   { group: 'Bulk',       options: ['bushels', 'half-bushels', 'pecks', 'flats'] },

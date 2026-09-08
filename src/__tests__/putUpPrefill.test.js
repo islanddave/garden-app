@@ -55,11 +55,27 @@ describe('mapHarvestUnit — the two vocabularies genuinely differ', () => {
     expect(mapHarvestUnit('count')).toBe('count')
   })
 
-  it('returns null for mass units that would need an arithmetic conversion', () => {
-    // Not "unsupported" — REFUSED. Converting kg to lbs writes a computed guess into a column the
-    // UI renders as a fact, which PutUp.jsx's Bulk-units comment rejects explicitly.
-    expect(mapHarvestUnit('kg')).toBeNull()
-    expect(mapHarvestUnit('g')).toBeNull()
+  it('maps g and kg to THEMSELVES — the refusal was dissolved, not relaxed', () => {
+    // WAS: `expect(mapHarvestUnit('kg')).toBeNull()`. That assertion encoded a DECISION, not a
+    // requirement — kg was refused because Put-Up had no metric option, so the only way to map it
+    // was arithmetic into lbs, and a computed guess must not land in a column the UI renders as
+    // fact. V4-GRAMSUNIVERSAL-001 added 'g'/'kg' to Put-Up's Weight group, so the mapping is now an
+    // identity and the refusal has nothing left to refuse. The rule below is unchanged and still
+    // enforced; only its subject went away.
+    expect(mapHarvestUnit('kg')).toBe('kg')
+    expect(mapHarvestUnit('g')).toBe('g')
+  })
+
+  it('STILL refuses any unit it cannot map losslessly', () => {
+    // The guard the test above used to carry, kept alive on purpose. Every one of today's eight
+    // HARVEST_UNITS now maps, so this rule has no in-vocabulary subject left and would go VACUOUS
+    // if it were only asserted through them. It is exercised here through out-of-vocabulary units
+    // instead, because the rule outlives the current vocabulary: if a harvest unit is ever added
+    // that needs arithmetic to reach Put-Up — a 'bushel', a 'pint' — this is where it must come
+    // back null rather than being converted.
+    expect(mapHarvestUnit('bushel')).toBeNull()
+    expect(mapHarvestUnit('stone')).toBeNull()
+    expect(mapHarvestUnit('ml')).toBeNull()
   })
 
   it('is case- and whitespace-insensitive, and null-safe', () => {
@@ -88,11 +104,16 @@ describe('the map is pinned to both real vocabularies, not to hand-copied lists'
     }
   })
 
-  it('covers every harvest unit that is mappable without arithmetic', () => {
+  it('covers EVERY harvest unit — the map is now total over the harvest vocabulary', () => {
     const unmapped = HARVEST_UNITS.filter(u => !(u in HARVEST_TO_PUTUP_UNIT))
-    // Exactly the two mass units, and nothing else. A new harvest unit added upstream without a
-    // decision here shows up as a failure rather than as silently-dropped quantities.
-    expect(unmapped.sort()).toEqual(['g', 'kg'])
+    // WAS `toEqual(['g','kg'])`. Since V4-GRAMSUNIVERSAL-001 put 'g'/'kg' in Put-Up's Weight group,
+    // every one of the eight harvest units maps losslessly and the exception list is empty.
+    //
+    // The POINT of this assertion is unchanged and is the reason it stays: a new harvest unit added
+    // upstream without a decision here fails this test rather than silently dropping quantities on
+    // the Put-Up prefill. Empty is a stricter expectation than ['g','kg'], not a weaker one — it
+    // now fails on ANY new unmapped unit instead of tolerating exactly two.
+    expect(unmapped).toEqual([])
   })
 })
 
@@ -108,8 +129,20 @@ describe('prefillFromHarvestEntry', () => {
     })
   })
 
-  it('drops the quantity PAIR when the unit cannot be mapped, keeping identity', () => {
+  it('carries a kg harvest across as kg, quantity intact', () => {
+    // The other half of dissolving the refusal: kg used to lose its quantity here because it could
+    // not be mapped. It maps to itself now, so the pair survives and Dave stops re-typing it.
     const out = prefillFromHarvestEntry(entry({ unit: 'kg', quantity: '2.5' }))
+    expect(out.quantity_unit).toBe('kg')
+    expect(out.quantity_value).toBe(2.5)
+  })
+
+  it('drops the quantity PAIR when the unit cannot be mapped, keeping identity', () => {
+    // Uses an OUT-OF-VOCABULARY unit deliberately. Every current harvest unit maps now, so asserting
+    // this branch through one of them is impossible — and asserting it through a unit that maps
+    // would silently invert the test. 'bushel' is a real Put-Up unit that harvest cannot produce,
+    // which is exactly the shape of the next unit likely to arrive here.
+    const out = prefillFromHarvestEntry(entry({ unit: 'bushel', quantity: '2.5' }))
     expect(out.quantity_value).toBeUndefined()
     expect(out.quantity_unit).toBeUndefined()
     // Identity survives — the user still skips the crop/variety/planting pickers.
