@@ -92,6 +92,55 @@ function dayBefore(dayStr) {
 // Open-Meteo + uncertainty. Never coerces an absent field to 0.0 (V200 B7). A day whose accumulator exceeds
 // RAIN_MAX_DAILY_IN is dropped outright (DRG-GAUGESANITY-001) and surfaces as implausibleDays[]; a record
 // below RAIN_MIN_DAILY_IN is dropped individually (DRG-GAUGENEG-001) and surfaces as negativeDays[], which
+// ── V5-RADIATIVEFROST-001 — the OVERNIGHT MINIMUM, which is the corpus's truth column ──────────────
+//
+// WHY THIS EXISTS. `tempF` above is `newest.tempf` — the reading at FETCH time. The three daily runs
+// land at 02:00, 05:30 and 15:30 ET, so NONE of them observes the night's actual minimum, which falls
+// shortly after sunrise. That was fine for its own job (flooring the forecast low in
+// mergeStationWeather) and useless for the one this feature needs: a site-truth minimum to fit a local
+// bias correction against.
+//
+// The data was already here. This function derives the minimum from the ~3 civil days of 5-minute
+// records the fetch ALREADY pulls and previously discarded down to one value.
+//
+// NOTHING CAN BE BACKFILLED, which is why this is urgent rather than tidy: `weather_daily.tmin_f` is
+// Open-Meteo's model value (never station-sourced) and the AWN API serves only a rolling ~3-day
+// window. Every night that passes unrecorded is unrecoverable, and frost season runs Sep 1 - Nov 15.
+//
+// Night key = the date the night STARTS on, matching radiativeFrost.nightsFrom, so a night's observed
+// minimum and its forecast conditions join on the same key without either side re-deriving it.
+const OVERNIGHT_MIN_SAMPLES = Number(process.env.AWN_OVERNIGHT_MIN_SAMPLES || 24);   // 2h of 5-min records
+function overnightMins(recs, tz) {
+  const out = {};
+  if (!Array.isArray(recs) || !tz) return out;
+  for (const r of recs) {
+    if (!r || !Number.isFinite(r.dateutc) || !Number.isFinite(r.tempf)) continue;
+    const day = civilDay(r.dateutc, tz);
+    const hour = civilHour(r.dateutc, tz);
+    if (hour == null) continue;
+    let key = null;
+    if (hour >= 18) key = day;
+    else if (hour <= 8) key = dayBefore(day);
+    if (!key) continue;
+    const b = out[key] || (out[key] = { minF: null, samples: 0, endHour: null });
+    b.samples += 1;
+    if (b.minF == null || r.tempf < b.minF) b.minF = r.tempf;
+    // The LAST morning hour seen. Tracks only hours <= 8, so it stays null when the night has no
+    // morning coverage at all — which is the honest signal that the minimum may not have been
+    // observed yet, since a radiative minimum lands shortly after sunrise. (An earlier form seeded
+    // this from the first record and latched on hour 18 forever.)
+    if (hour <= 8 && (b.endHour == null || hour > b.endHour)) b.endHour = hour;
+  }
+  // A night observed for a couple of hours is not a minimum — it is whatever the gauge happened to be
+  // doing. Drop it rather than publishing a number that reads like a measurement. Same discipline as
+  // radiativeFrost's MIN_HOURS gate, and the same reason: absence must not be dressed as data.
+  for (const k of Object.keys(out)) {
+    if (out[k].samples < OVERNIGHT_MIN_SAMPLES || out[k].minF == null) delete out[k];
+    else out[k].minF = Math.round(out[k].minF * 10) / 10;
+  }
+  return out;
+}
+
 // costs the whole day only when nothing plausible is left to bucket.
 function deriveStation(raw, { nowMs }) {
   if (!raw || !Array.isArray(raw.records) || !raw.records.length) return null;
@@ -107,6 +156,8 @@ function deriveStation(raw, { nowMs }) {
   const dataAgeMin = Math.round((nowMs - newest.dateutc) / 60000);
   const fresh = dataAgeMin <= FRESHNESS_MAX_MIN;
   const tempF = Number.isFinite(newest.tempf) ? newest.tempf : null;
+  // V5-RADIATIVEFROST-001 — the site-truth column. See overnightMins above for why `tempF` is not it.
+  const nightMins = overnightMins(recs, tz);
 
   // Max dailyrainin per civil day == that day's total (accumulator peak before the midnight reset). Records
   // with a non-finite dailyrainin are skipped (not treated as 0) so a malformed point can't poison a bucket.
@@ -200,7 +251,7 @@ function deriveStation(raw, { nowMs }) {
   const todayPrecipIn = Number.isFinite(buckets[D0]) ? round2(buckets[D0]) : null;
   const yesterdayPrecipIn = Number.isFinite(buckets[D1]) ? round2(buckets[D1]) : null;
 
-  return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, recentPrecipIn, coversLookback, buckets, uncertainty,
+  return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, nightMins, recentPrecipIn, coversLookback, buckets, uncertainty,
     day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays, negativeDays };
 }
 
@@ -387,7 +438,13 @@ function mergeStationHydrology(hy, st, opts) {
     // only => the total was over the ceiling; both => the day was lost to negative samples; negative only =>
     // bad samples were dropped and the day's published total is still real. Folding them would have made every
     // rejection look like a stuck bucket. Unconditional, for the same reason the line above is.
-    if (st.negativeDays && st.negativeDays.length) prov.station_negative_days = st.negativeDays; }
+    if (st.negativeDays && st.negativeDays.length) prov.station_negative_days = st.negativeDays;
+    // V5-RADIATIVEFROST-001 — the observed overnight minima, keyed by the night's START date so they
+    // join a forecast night's conditions without either side re-deriving the key. Carried into the
+    // stored plan payload (daily_plan.items), which is the DURABLE store — the observability block
+    // goes only to a CloudWatch log and is subject to retention, and this is the half that cannot be
+    // reconstructed from anywhere else afterwards. At most ~3 nights, so it costs nothing.
+    if (st.nightMins && Object.keys(st.nightMins).length) prov.station_overnight_mins = st.nightMins; }
   return { merged, prov };
 }
 
@@ -410,4 +467,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL };
+module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL };

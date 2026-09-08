@@ -50,10 +50,29 @@ describe('flag OFF is byte-identical — the feature ships dark', () => {
     expect(off.imminent.fires).toBe(false);
   });
 
-  it('records the corpus row even when the flag is off — a row written only when the feature fires would be selected on its own outcome', () => {
+  it('THE CORPUS FILLS FLAG-OFF — this is the whole reason the feature can ship dark', () => {
+    // The stated purpose of the observability block is "the 2026 corpus for the 2027 learned offset".
+    // Recording the conditions only when the flag is ON would fill it exclusively on nights the
+    // feature was already enabled for — selected on its own outcome — and would leave it EMPTY for as
+    // long as the flag stays off, which is correct-and-indefinite until there is site truth to justify
+    // enabling it. Nothing here can be backfilled: weather_daily.tmin_f is Open-Meteo's model value
+    // and the AWN API serves a rolling ~3-day window, so a night not recorded is gone.
     const off = run({}, { radiativeEnabled: false });
     expect(off.observability.radiativeEnabled).toBe(false);
-    expect(off.observability).toHaveProperty('radiativeTripped', false);
+    expect(off.observability.radiativeTripped).toBe(false);
+    expect(off.alert).toBe(false);                       // and it still does not act
+    // ...but every conditions value IS recorded.
+    expect(off.observability.radiativeNightsAvailable).toBe(1);
+    expect(off.observability.radiativeTonight).toEqual({
+      date: '2026-10-09', minDewpointF: 33, meanCloudPct: 5, meanWindMph: 2,
+      hours: undefined, radiative: true,
+    });
+  });
+
+  it('records nothing rather than a placeholder when no night arrives', () => {
+    const off = run({ radiativeNights: [] }, { radiativeEnabled: false });
+    expect(off.observability.radiativeNightsAvailable).toBe(0);
+    expect(off.observability.radiativeTonight).toBeNull();
   });
 });
 

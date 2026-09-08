@@ -412,7 +412,13 @@ function frostEval(input = {}, opts = {}) {
   // The caller hands the whole night ARRAY, not two resolved nights, because the advisory's night is
   // not knowable until evalAdvisory has picked the coldest of D1..D3 — resolving it caller-side would
   // duplicate that selection and the two copies would drift.
-  const radNights = radiativeEnabled && Array.isArray(input.radiativeNights) ? input.radiativeNights : null;
+  // Two views of the same array, deliberately separate. `allNights` is what ARRIVED and feeds the
+  // corpus; `radNights` is what may TRIP and is flag-gated. Recording only the gated one meant the
+  // corpus filled exclusively on nights the feature was already enabled for — selected on its own
+  // outcome, and empty for as long as the flag stays off, which is correct-and-indefinite until there
+  // is site truth to justify enabling it. Nothing here can be backfilled later.
+  const allNights = Array.isArray(input.radiativeNights) ? input.radiativeNights : null;
+  const radNights = radiativeEnabled ? allNights : null;
   // Tonight's window is keyed on the PLAN DATE, because nightsFrom labels a night by the date it
   // STARTS on: 22:00 today and 03:00 tomorrow are the same night, labelled today.
   const radTonight = radNights ? nightFor(radNights, input.eventDate) : null;
@@ -528,10 +534,12 @@ function frostEval(input = {}, opts = {}) {
       // This is the one number that says the data actually ARRIVED, it is observable flag-off, and it
       // lands in the frost-eval CloudWatch line so the seam is checkable in prod as well as in test.
       radiativeNightsAvailable: Array.isArray(input.radiativeNights) ? input.radiativeNights.length : null,
-      radiativeTonight: radTonight ? {
-        date: radTonight.date, minDewpointF: radTonight.minDewpointF,
-        meanCloudPct: radTonight.meanCloudPct, meanWindMph: radTonight.meanWindMph,
-        hours: radTonight.hours, radiative: radTonight.radiative,
+      // UNCONDITIONAL — resolved from `allNights`, not the flag-gated view. This is the conditions half
+      // of the (conditions, observed minimum) pair a 2027 bias correction has to be fitted on; the
+      // observed half is station.js:overnightMins, carried on the durable plan payload.
+      radiativeTonight: (allNights ? nightFor(allNights, input.eventDate) : null) ? {
+        ...(({ date, minDewpointF, meanCloudPct, meanWindMph, hours, radiative }) =>
+          ({ date, minDewpointF, meanCloudPct, meanWindMph, hours, radiative }))(nightFor(allNights, input.eventDate)),
       } : null,
       radiativeTripped: !!(imminent && imminent.radiativeOnly),
     },
