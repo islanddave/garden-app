@@ -162,7 +162,14 @@ const SHELF_LIFE_MONTHS = {
   can_pressure:   { pantry: 12, cold_storage: 12, default: 12 },   // low-acid pressure-canned: ~12 mo
   jam_preserve:   { pantry: 12, cold_storage: 18, default: 12 },
   ferment:        { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 }, // fridge ferment 4–8 mo
-  cure_store:     { cold_storage: 4, pantry: 3, default: 4 },      // squash 3–6, garlic 6–8, potatoes 4–9 (crop-varying; conservative default)
+  // DEFAULT CORRECTED 4 -> 3, 2026-09-08 (BUG-SHELFDEFAULTGUARDGAP-001). It was the COLD_STORAGE
+  // figure — the LONGER of the two legs this row declares — so a cure-and-store logged with no
+  // storage kind was read as "somebody put this somewhere cool", which is the pantry/cold_storage
+  // form of the exact error hot_sauce was corrected for four days earlier. No new source and no new
+  // number: 3 is this row's own already-cited pantry figure, and the legs are untouched. It shipped
+  // this way because shelf-life-default-floor.test.js only checked rows that declare a FRIDGE leg,
+  // and this row declares none; that gate is now a floor over the shortest declared route.
+  cure_store:     { cold_storage: 4, pantry: 3, default: 3 },      // squash 3–6, garlic 6–8, potatoes 4–9 (crop-varying; default = the shorter declared leg)
   cold_store:     { cold_storage: 6, fridge: 4, default: 4 },
   // ── V4-PUTUPTAXONOMY-001 (BD-034). ───────────────────────────────────────────────────────────
   // A CITED ENTRY HERE IS A HARD PRECONDITION FOR A NEW METHOD, not a nicety. shelfLifeMonths()
