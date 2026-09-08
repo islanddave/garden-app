@@ -6,7 +6,9 @@
 // PlantingSelect.jsx (`cropUniverse` + `pinnedSlugs`, entangled with bandOrder's recents band) and
 // TWICE inside SavedSeeds.jsx (`cropOptions`/`cropPinned` for the packet picker and
 // `trackedCropOptions`/`trackedCropPinned` for the page). Photos would have been the fourth copy and
-// Log Many's crop filter the fifth. This is the seam; the copies are a tracked follow-up rather than
+// Log Many's crop filter the fifth — ScopeChecklist.jsx ADOPTED this hook instead
+// (V4-LOGMANYCROPFILTER-001), which is what put the controlled `display_name` on its chips in place
+// of a titleized slug. This is the seam; the remaining copies are a tracked follow-up rather than
 // part of this change, because PlantingSelect's pins are NOT simply the top two (it layers a recents
 // band and a tie-preference on top) and re-pointing a chooser that eight surfaces open is its own
 // regression surface. Adopting it in SavedSeeds is a drop-in and is deliberately left to the lane
@@ -47,6 +49,19 @@ export function useCropFacetOptions(rows, slugOf, { pinCount = DEFAULT_CROP_PIN_
     for (const t of cropTypes ?? []) if (t?.slug) m.set(t.slug, t.display_name || prettySlug(t.slug))
     return m
   }, [cropTypes])
+  // V4-LOGMANYCROPFILTER-001 — the ROWS, not just their labels, and additive so PhotoLibrary's
+  // destructure is untouched. A chip row and the search box beside it must answer to the same
+  // vocabulary: ScopeChecklist labels a chip "Summer Squash" from `labelBySlug` and then feeds
+  // `looseIncludesCropType(slug, q, bySlug.get(slug))` — the ONE crop-type matcher Search,
+  // PlantingSelect and VarietyPicker already share (comboboxInput.js) — so typing that same label,
+  // or an alias ('cantaloupe' for melon), finds the row. Exposing the row here rather than calling
+  // useCropTypes a second time at the call site is the point: two calls are two GETs of the same
+  // endpoint, and search_aliases lives only on the row.
+  const bySlug = useMemo(() => {
+    const m = new Map()
+    for (const t of cropTypes ?? []) if (t?.slug) m.set(t.slug, t)
+    return m
+  }, [cropTypes])
 
   const counts = useMemo(() => {
     const m = new Map()
@@ -70,5 +85,5 @@ export function useCropFacetOptions(rows, slugOf, { pinCount = DEFAULT_CROP_PIN_
   // month into the source. `options` is already count-descending, so the head is the answer.
   const pinned = useMemo(() => options.slice(0, pinCount).map(o => o.value), [options, pinCount])
 
-  return { options, pinned, labelBySlug, counts }
+  return { options, pinned, labelBySlug, counts, bySlug }
 }

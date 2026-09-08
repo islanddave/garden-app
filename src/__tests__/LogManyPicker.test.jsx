@@ -19,7 +19,13 @@ vi.mock('react-router-dom', () => ({
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
   Link: ({ children }) => children,
 }))
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(() => Promise.resolve([])) }) }))
+// V4-LOGMANYCROPFILTER-001 — `fetch` MUST be a module-level spy, not an inline `vi.fn()`.
+// ScopeChecklist now calls useCropTypes (through useCropFacetOptions), whose effect deps are
+// [fetch, enabled] and whose .then SETS STATE. A factory that mints a fresh fn per call gives a
+// new identity every render, so the effect refires forever and the test hangs rather than fails.
+// The real useApiFetch returns a useCallback'd fetch, so this is a mock artifact, not a defect.
+const apiFetch = vi.fn(() => Promise.resolve([]))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetch }) }))
 // Stub ScopeChecklist — its own dry-run fetch/render is out of scope for the selector test.
 vi.mock('../components/forms', async (importOriginal) => {
   const actual = await importOriginal()

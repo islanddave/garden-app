@@ -50,6 +50,12 @@ import { useApiFetch } from '../../lib/api.js'
 import { fetchNotificationPrefs, saveLogManyAllSelected } from '../../lib/notificationPrefsClient.js'
 import { T, inputChrome } from './formStyles.js'
 import FilterChipRow from './FilterChipRow.jsx'
+import TagFilterBar from './TagFilterBar.jsx'
+import { useCropFacetOptions } from '../../hooks/useCropFacetOptions.js'
+// The vocabulary's documented degrade path, imported rather than re-written: a fifth local titleizer
+// is exactly the drift useCropFacetOptions exists to stop. It is a pure slug→Title Case string fn
+// that happens to live beside the photo filters.
+import { prettySlug } from '../../lib/photoFilters.js'
 // bandOrder is a PURE exported function (the computePlacement discipline — PlantingSelect.jsx:94),
 // already unit-tested on its own in PlantingSelectBandOrder.test.js. Imported rather than
 // re-implemented: a second copy of the pins→recents→alphabetical rule is how the two crop chip rows
@@ -60,7 +66,8 @@ import { useHandedness } from '../../hooks/useHandedness.js'
 import { useDismissable } from '../../context/DismissRegistry.jsx'
 import { LAYER } from '../../lib/dismissLayers.js'
 import {
-  useComboboxInput, looseIncludes, kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingStyle,
+  useComboboxInput, looseIncludes, looseIncludesCropType,
+  kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingStyle,
 } from '../../lib/comboboxInput.js'
 
 // FIX-3: per-DEVICE default selection (true=start all selected [Dave], false=start none [Jen]).
@@ -86,8 +93,16 @@ const TRAY_MAX_H = 184
 // get a chip of their own rather than becoming unreachable the moment any chip is active.
 const UNGROUPED = '__ungrouped__'
 const slugOf = (pl) => pl?.crop_type_slug || UNGROUPED
-const titleizeSlug = s => String(s).split(/[-_]/).map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')
-const chipLabel = s => (s === UNGROUPED ? 'Ungrouped' : titleizeSlug(s))
+// V4-LOGMANYCROPFILTER-001 — the crop LABEL is no longer derived from the slug here. It was
+// `titleizeSlug(slug)`, which is a mechanical transform of the storage key and not the name Dave
+// uses: `squash` read "Squash" next to a "Winter Squash" chip when the vocabulary calls it SUMMER
+// squash, and `bunching_onion` read "Bunching Onion" when the vocabulary (and Dave) say
+// "Onion (bunching / scallion)". Measured against prod: 15 crop types with LIVE plants label
+// differently under the controlled vocabulary than under the titleizer. The ledger row names this
+// exactly — "label chips with Dave's vocabulary" — so the label now comes from
+// useCropFacetOptions' `labelBySlug` (crop_types.display_name), whose own degrade path is
+// prettySlug, i.e. byte-identical to the titleizer this replaces. UNGROUPED stays owned HERE: it is
+// this file's synthetic bucket, not a crop, and the vocabulary must never get to name it.
 // V4-LOGMANYUXREFRESH-001 S4 — the location axis's own fallback bucket, exactly parallel to
 // UNGROUPED. A planting whose location_id is null (or names a location this client never loaded)
 // matches no zone chip, so with a zone filter on it would become unreachable — the same
@@ -377,21 +392,33 @@ export default function ScopeChecklist({
   // deliberate divergence from PlantingSelect (which does close on blur).
   void isDeliberateBlur
 
-  const cropUniverse = useMemo(() => {
-    const counts = new Map()
-    for (const pl of plantings) counts.set(slugOf(pl), (counts.get(slugOf(pl)) ?? 0) + 1)
-    return [...counts]
-  }, [plantings])
+  // V4-LOGMANYCROPFILTER-001 — THE SHARED DERIVATION, not a fourth private copy of it. What stood
+  // here was the same twelve lines useCropFacetOptions.js was minted to end (its header names this
+  // file as the fifth copy it was about to become); the hook owns the count-descending universe, the
+  // controlled vocabulary and the counts bandOrder needs. `slugOf` is a module const, so it is
+  // already the referentially-stable accessor the hook's memo deps require.
+  //
+  // NOT gated by `enabled`. The obvious gate — wait for a preview so an empty scope pays no GET —
+  // resolves one round-trip AFTER the plantings land, which renders the chip row and the group
+  // headers with slug labels and then re-labels them under the user's thumb. Every other caller of
+  // useCropTypes fetches on mount for the same reason.
+  const {
+    options: cropOptions, labelBySlug, counts: cropCounts, bySlug: cropTypeBySlug,
+  } = useCropFacetOptions(plantings, slugOf)
+  const chipLabel = useCallback(
+    (s) => (s === UNGROUPED ? 'Ungrouped' : labelBySlug.get(s) || prettySlug(s)),
+    [labelBySlug],
+  )
   // Pins are DATA-DRIVEN (top-2 by live count), not a hardcoded crop list: on measured prod data
   // that is tomato + pepper, 35% of the garden behind two chips, and it re-derives itself as the
-  // garden changes. Ungrouped is never pinned — it is a fallback bucket, not a crop.
+  // garden changes. Ungrouped is never pinned — it is a fallback bucket, not a crop. Sliced off the
+  // hook's already-count-descending `options` rather than re-sorting the counts here: a second sort
+  // rule for the same order is how the chip row and the tray start disagreeing about what is pinned.
   const pinnedSlugs = useMemo(
-    () => cropUniverse.filter(([s]) => s !== UNGROUPED)
-      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
-      .slice(0, PIN_COUNT).map(([s]) => s),
-    [cropUniverse],
+    () => cropOptions.filter(o => o.value !== UNGROUPED).slice(0, PIN_COUNT).map(o => o.value),
+    [cropOptions],
   )
-  const chipsEligible = cropUniverse.length >= CHIPS_MIN_CROPS && total >= CHIPS_MIN_ROWS
+  const chipsEligible = cropOptions.length >= CHIPS_MIN_CROPS && total >= CHIPS_MIN_ROWS
   // The rank ledger is READ here and never written — cropLogLedger.js:15-19 excludes Log Many from
   // writing to it on purpose, because a 40-planting watering pass would mark every crop in the
   // garden "recently logged" and flatten the ranking into noise for every other surface.
@@ -403,12 +430,15 @@ export default function ScopeChecklist({
     () => (rankNonce === 0 ? null : readCropRank({ windowDays: RANK_WINDOW_DAYS })),
     [rankNonce],
   )
+  // Re-labelled through `chipLabel` rather than taken from the hook's own `label`, for ONE slug: the
+  // hook cannot know about UNGROUPED, this file's synthetic bucket. Every other option gets exactly
+  // the hook's answer.
   const chipOptions = useMemo(
     () => bandOrder({
-      options: cropUniverse.map(([s]) => ({ value: s, label: chipLabel(s) })),
-      pinned: pinnedSlugs, rank: cropRank, counts: new Map(cropUniverse),
+      options: cropOptions.map(o => ({ value: o.value, label: chipLabel(o.value) })),
+      pinned: pinnedSlugs, rank: cropRank, counts: cropCounts,
     }),
-    [cropUniverse, pinnedSlugs, cropRank],
+    [cropOptions, chipLabel, pinnedSlugs, cropRank, cropCounts],
   )
   const toggleChip = useCallback((slug) => {
     setChipSelection(prev => { const n = new Set(prev); if (n.has(slug)) n.delete(slug); else n.add(slug); return n })
@@ -459,12 +489,74 @@ export default function ScopeChecklist({
   }, [])
   const clearLocs = useCallback(() => setLocSelection(new Set()), [])
 
+  // ── V4-LOGMANYCROPFILTER-001: the ACTIVE-FILTER BREADCRUMB ──────────────────────────────────
+  // BD-073 (2) is "location AND crop type together", and the two axes have composed since S4 — but
+  // only the ARITHMETIC of that was on screen ("34 hidden by filters"), never the terms. Both chip
+  // rows collapse behind `More`, so the chip doing the hiding can itself be off-screen: the user
+  // sees a short list, a number, and no way to tell which of two axes shortened it. That is the
+  // same invisible-filter trap the `shownNote` was added for, one level up — a count says THAT
+  // something is filtered, a breadcrumb says WHAT.
+  //
+  // Same primitive, same shape and the same per-pill `×` the Photos library got in
+  // V5-PHOTOFILTERPARITY-001 (PhotoLibrary.jsx's activePills/removeFilterPill/clearAllFilters), so
+  // the two surfaces read as one app. Facets are the hued ones TagChip understands — crop on
+  // `type`, zone on `location` — which is what makes a mixed row distinguishable by more than
+  // reading order, and TagChip's `${facet}: ${label}` grammar names the axis to TalkBack.
+  //
+  // THE QUERY IS DELIBERATELY NOT A PILL. Photos has no search field; this surface does, and its
+  // text is already on screen in its own box directly above. A chip can hide in the More tray; a
+  // typed query cannot, so it needs no breadcrumb — and a pill whose `×` empties a field the user
+  // is still typing in is a second control for one input.
+  const activePills = useMemo(() => {
+    const pills = []
+    if (chipsEligible) {
+      for (const slug of chipSelection) pills.push({ facet: 'type', slug, label: chipLabel(slug), kind: 'crop' })
+    }
+    if (locEligible) {
+      // NO_ZONE is this file's bucket, not a location row, so it is labelled here for the same
+      // reason UNGROUPED is — locLabelOf would answer "Somewhere else" for an id it has never seen.
+      //
+      // The id rides UNSTRINGIFIED, unlike PhotoLibrary's `String(locationId)`. That page's remove
+      // handler throws the value away (`selectLocationFilter('')`); this one deletes it back out of
+      // `locSelection`, so a coerced copy would be a `Set.delete` that silently misses and a `×`
+      // that does nothing.
+      for (const id of locSelection) {
+        pills.push({ facet: 'location', slug: id, label: id === NO_ZONE ? 'No zone' : locLabelOf(id), kind: 'zone' })
+      }
+    }
+    return pills
+  }, [chipsEligible, chipSelection, chipLabel, locEligible, locSelection, locLabelOf])
+  // Switching on the stamped `kind` rather than re-parsing a composite id — PhotoLibrary's rule: a
+  // third axis added to the builder above leaves a visible gap here instead of a silent no-op.
+  const removeFilterPill = useCallback((tag) => {
+    if (tag?.kind === 'crop') setChipSelection(prev => { const n = new Set(prev); n.delete(tag.slug); return n })
+    else if (tag?.kind === 'zone') setLocSelection(prev => { const n = new Set(prev); n.delete(tag.slug); return n })
+  }, [])
+  // The one-tap escape. It clears the QUERY too, even though the query has no pill: this is the
+  // control whose whole promise is "show me everything again", and leaving a typed word behind to
+  // keep narrowing the list after the user cleared the filters would break exactly that promise.
+  // Neither this nor any pill touches a DECISION — the filters narrow the view, never the batch.
+  const clearAllFilters = useCallback(() => {
+    setQuery(''); setChipSelection(new Set()); setLocSelection(new Set())
+  }, [])
+
   const shown = useMemo(() => {
     let list = plantings
     const q = query.trim()
     // looseIncludes, not toLowerCase().includes(): voice returns "sun ray" for "Sunray". The crop
-    // slug is in the haystack so typing "pepper" narrows even where no name carries the word.
-    if (q) list = list.filter(pl => looseIncludes(pl.name, q) || looseIncludes(pl.crop_type_slug, q))
+    // type is in the haystack so typing "pepper" narrows even where no name carries the word.
+    //
+    // V4-LOGMANYCROPFILTER-001 — through `looseIncludesCropType` now, not slug-only. This is the
+    // FOURTH surface on V4-SEARCHCROPTYPE-001's shared matcher (Search, PlantingSelect and
+    // VarietyPicker adopted it; this one was missed), and adopting it here is what keeps the chip
+    // row and the field beside it answering to one vocabulary: a chip that reads "Summer Squash"
+    // was unfindable by typing those words while the haystack held only `squash`. The row's
+    // crop_types row carries display_name AND search_aliases, so "scallion" reaches bunching_onion
+    // and "cantaloupe" reaches melon — the sentence BD-072 was filed from.
+    if (q) {
+      list = list.filter(pl => looseIncludes(pl.name, q)
+        || looseIncludesCropType(pl.crop_type_slug, q, cropTypeBySlug.get(pl.crop_type_slug)))
+    }
     if (chipsEligible && chipSelection.size > 0) list = list.filter(pl => chipSelection.has(slugOf(pl)))
     // THE INTERSECTION. ANDed across axes, ORed within one — the same grammar PlantingSelect uses
     // for chips + text, so "bag area + tomatoes" is 46 tomatoes narrowed to the ones in that area
@@ -478,7 +570,7 @@ export default function ScopeChecklist({
       })
     }
     return list
-  }, [plantings, query, chipSelection, chipsEligible, locSelection, locEligible, chainOf])
+  }, [plantings, query, cropTypeBySlug, chipSelection, chipsEligible, locSelection, locEligible, chainOf])
   const hiddenCount = total - shown.length
 
   // Session-scoped bulk selection. NEITHER of these writes a preference: the only clear-all on this
@@ -555,7 +647,7 @@ export default function ScopeChecklist({
         return (bandRank.get(a.slug) ?? Number.MAX_SAFE_INTEGER) - (bandRank.get(b.slug) ?? Number.MAX_SAFE_INTEGER)
           || a.label.localeCompare(b.label)
       })
-  }, [candidates, bandRank])
+  }, [candidates, bandRank, chipLabel])
 
   // Switching modes is a MODEL switch, so it moves the baseline and drops the decisions taken under
   // the old model. PICK starts empty (§5.1 "starts empty, you add"); BULK returns to the user's own
@@ -696,6 +788,17 @@ export default function ScopeChecklist({
       />
     </div>
   ) : null
+  // Authored once and rendered on BOTH surfaces, beside the chip rows it reports on — same reason
+  // `searchField` and `chipRow` are. `clearLabel="Clear all"` is the additive prop
+  // V5-PHOTOFILTERPARITY-001 put on TagFilterBar for this exact collision: each FilterChipRow above
+  // carries its own `Clear` that wipes ONE axis, and a second button also reading "Clear" but
+  // meaning EVERY axis is a control the user has to guess at.
+  // No wrapper element and no length guard: TagFilterBar renders null on an empty list, and track 1
+  // of the PICK frame is a fixed track where every pixel comes out of the chooser below it.
+  const filterBreadcrumb = (
+    <TagFilterBar filters={activePills} onRemove={removeFilterPill} onClear={clearAllFilters}
+      clearLabel="Clear all" style={{ marginTop: T.space.sm }} />
+  )
   // The LOUD ACTIVE-FILTER SIGNAL. A filter that silently narrows a selection list is how a user
   // concludes a planting is gone; the count is always stated, and it is stated as HIDDEN (not as
   // "showing N") so the missing rows are the subject.
@@ -831,6 +934,7 @@ export default function ScopeChecklist({
               <div style={{ marginTop: 10 }}>
                 {searchField}
                 {chipRow}
+                {filterBreadcrumb}
                 {shownNote}
                 {/* SESSION-SCOPED, and that is the whole point: the only clear-all this screen had
                     was the "Start with everything selected" checkbox, which writes a preference to
@@ -938,6 +1042,7 @@ export default function ScopeChecklist({
             {searchField}
             {chipRow}
             {locChipRow}
+            {filterBreadcrumb}
             {/* §5.3's answer to "search returns 46 tomatoes": state the number, then offer the BULK
                 exit from inside pick mode rather than more scrolling. Only while a filter is
                 actually narrowing — with nothing hidden it would read as "select all 239".

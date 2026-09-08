@@ -19,7 +19,14 @@ vi.mock('../lib/featureFlags.js', async (importActual) => ({
 // V4-LOGMANY-001: ScopeChecklist now reads getToken (via useApiFetch, the documented Clerk seam at
 // api.js:160) to sync the per-user default selection. Without this mock the real useApiFetch pulls
 // in @clerk/react and every case here fails on "useAuth can only be used within <ClerkProvider />".
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(), getToken: vi.fn(async () => null) }) }))
+// V4-LOGMANYCROPFILTER-001 — `fetch` MUST be a module-level spy, not an inline `vi.fn()`.
+// ScopeChecklist now calls useCropTypes (through useCropFacetOptions), whose effect deps are
+// [fetch, enabled] and whose .then SETS STATE. A factory that mints a fresh fn per call gives a
+// new identity every render, so the effect refires forever and the test hangs rather than fails.
+// The real useApiFetch returns a useCallback'd fetch, so this is a mock artifact, not a defect.
+const apiFetch = vi.fn()
+const getTokenMock = vi.fn(async () => null)
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetch, getToken: getTokenMock }) }))
 
 import ScopeChecklist from '../components/forms/ScopeChecklist.jsx'
 

@@ -22,7 +22,14 @@ import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(), getToken: vi.fn(async () => null) }) }))
+// V4-LOGMANYCROPFILTER-001 — `fetch` MUST be a module-level spy, not an inline `vi.fn()`.
+// ScopeChecklist now calls useCropTypes (through useCropFacetOptions), whose effect deps are
+// [fetch, enabled] and whose .then SETS STATE. A factory that mints a fresh fn per call gives a
+// new identity every render, so the effect refires forever and the test hangs rather than fails.
+// The real useApiFetch returns a useCallback'd fetch, so this is a mock artifact, not a defect.
+const apiFetch = vi.fn()
+const getTokenMock = vi.fn(async () => null)
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetch, getToken: getTokenMock }) }))
 vi.mock('../lib/notificationPrefsClient.js', () => ({
   fetchNotificationPrefs: vi.fn(async () => null),
   saveLogManyAllSelected: vi.fn(),
