@@ -205,7 +205,12 @@ describe('S4 — the count assertion is VISIBLE, not just logged', () => {
     expect(el.textContent).toMatch(/6 of 8 were logged/)
     // It is the one thing on a success screen that is not success.
     expect(el.getAttribute('role')).toBe('alert')
-  })
+    // 45000 — the TEST's own timeout, and it has to sit ABOVE the findByTestId budget inside it.
+    // The first attempt at this raise moved only the inner wait (15000 -> 30000) and left this at
+    // vitest's 20000ms default, so the test died at 20s before the wait it was supposed to be
+    // waiting on could even expire: strictly worse than 15s, because the failure stopped naming the
+    // element it could not find. An inner budget above the outer ceiling is unreachable.
+  }, 45000)
 
   it('a normal batch shows no warning at all — this is not a permanent scold', async () => {
     await renderReady()
