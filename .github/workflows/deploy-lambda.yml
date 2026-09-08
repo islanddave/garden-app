@@ -437,6 +437,34 @@ jobs:
             echo "ADMIN_CLERK_SUBS set on $FN"
           fi
 
+      - name: Ensure ADMIN_CLERK_SUBS env for critter
+        if: matrix.function == 'critter'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
+        run: |
+          # V5-ADMINCENTER-001 / BUG-ADMINCENTERNOGATE-001. Without this step the admin gate on the
+          # app_config route fail-closes for EVERYONE, permanently: the route reads ADMIN_CLERK_SUBS,
+          # which is set per-function and was never set on garden-critter. Fail-closed is the safe
+          # direction, but it renders the page a placard forever and reads as a bug rather than a
+          # missing config. The gate is the ONLY authorization control on a now-GLOBAL setting
+          # (Dave ruling 2026-09-08: nav_tabs is installation-wide), so it must be armed, not skipped.
+          FN="garden-critter"
+          EXPECTED="user_3D2gM0hIl03gjW3JM2DjtPzm0jI"
+          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.ADMIN_CLERK_SUBS' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "ADMIN_CLERK_SUBS already correct on $FN"
+          else
+            # OPS-LAMBDAENVWIPE-001: test EXIT STATUS, not emptiness (rationale on the household step).
+            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null); then
+              echo "::warning::could not read env for $FN; leaving config untouched rather than risking a wipe"
+              exit 1
+            fi
+            UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {ADMIN_CLERK_SUBS: $v}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-critter-admin.json
+            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-critter-admin.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "ADMIN_CLERK_SUBS set on $FN"
+          fi
+
       - name: Ensure Function URL exists for ${{ matrix.function }}
         if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan' && matrix.function != 'photocdn-derivative'  # xp-reconcile/daily-plan EventBridge; photocdn-derivative INTERNAL-INVOKE ONLY (spec-B2: NO public AuthType-NONE URL)
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role

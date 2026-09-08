@@ -10,8 +10,12 @@
  *   2. THE EDITOR CAN ONLY REORDER. Every affordance is a move; nothing removes a row. That is v1's
  *      scope and it is enforced at the resolver, but a UI that offered a delete button would be
  *      writing configs the renderer silently ignores, which is worse than not offering it.
- *   3. THE SAVE TELLS THE TRUTH. The column is authored and not applied, so today the PATCH is
- *      refused 400. The page says that; it does not report a save it did not make.
+ *   3. THE SAVE TELLS THE TRUTH. A refusal, a rejected order and an outage are three different
+ *      outcomes and the page distinguishes all three. It never reports a save it did not make.
+ *
+ * The store is GLOBAL (public.app_config, keyed by `key` alone) as of Dave's 2026-09-08 ruling, not
+ * per-user — which is what turns property 1 from a nicety into a privilege boundary: a save here
+ * changes Jen's bar too.
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -19,9 +23,9 @@ import { render, screen, fireEvent, act, within } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const { saveSpy, prefsRef, refreshSpy } = vi.hoisted(() => ({
-  saveSpy: vi.fn(async () => ({ ok: true, prefs: {} })),
-  prefsRef: { current: null },
+const { saveSpy, configRef, refreshSpy } = vi.hoisted(() => ({
+  saveSpy: vi.fn(async () => ({ ok: true, config: {} })),
+  configRef: { current: null },
   refreshSpy: vi.fn(async () => null),
 }))
 
@@ -31,10 +35,10 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: vi.fn(), getToken: vi.fn(async () => 'token') }),
 }))
-vi.mock('../context/PrefsContext.jsx', () => ({
-  usePrefs: () => ({ prefs: prefsRef.current, prefsLoaded: true, refreshPrefs: refreshSpy }),
+vi.mock('../context/AppConfigContext.jsx', () => ({
+  useAppConfig: () => ({ appConfig: configRef.current, appConfigLoaded: true, refreshAppConfig: refreshSpy }),
 }))
-vi.mock('../lib/notificationPrefsClient.js', () => ({ saveNavTabs: saveSpy }))
+vi.mock('../lib/appConfigClient.js', () => ({ saveNavTabs: saveSpy }))
 
 import AdminConfig from '../pages/AdminConfig.jsx'
 import { DEFAULT_NAV_TABS } from '../lib/navConfig.js'
@@ -44,8 +48,8 @@ const moveDown = (label) => fireEvent.click(screen.getByLabelText(`Move ${label}
 const moveUp = (label) => fireEvent.click(screen.getByLabelText(`Move ${label} up`))
 
 beforeEach(() => {
-  prefsRef.current = null
-  saveSpy.mockClear().mockResolvedValue({ ok: true, prefs: {} })
+  configRef.current = null
+  saveSpy.mockClear().mockResolvedValue({ ok: true, config: {} })
   refreshSpy.mockClear()
 })
 
@@ -56,7 +60,7 @@ describe('AdminConfig — the editor', () => {
   })
 
   it('opens on the stored order when one is configured', () => {
-    prefsRef.current = { nav_tabs: ['harvests', 'today', 'create', 'garden', 'put-up'] }
+    configRef.current = { nav_tabs: ['harvests', 'today', 'create', 'garden', 'put-up'] }
     render(<AdminConfig />)
     expect(rows()).toEqual(['harvests', 'today', 'create', 'garden', 'put-up'])
   })
@@ -65,7 +69,7 @@ describe('AdminConfig — the editor', () => {
   // is not presented here as though it were live. Showing the stored-but-rejected value would make
   // the page disagree with the nav for reasons a user cannot see.
   it('opens on the shipped order when the stored value is one the bar rejects', () => {
-    prefsRef.current = { nav_tabs: ['today', 'today', 'garden', 'create', 'harvests'] }
+    configRef.current = { nav_tabs: ['today', 'today', 'garden', 'create', 'harvests'] }
     render(<AdminConfig />)
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
   })
@@ -104,7 +108,7 @@ describe('AdminConfig — the editor', () => {
   })
 
   it('Reset restores the shipped order', () => {
-    prefsRef.current = { nav_tabs: ['harvests', 'today', 'create', 'garden', 'put-up'] }
+    configRef.current = { nav_tabs: ['harvests', 'today', 'create', 'garden', 'put-up'] }
     render(<AdminConfig />)
     fireEvent.click(screen.getByText('Reset'))
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
@@ -127,7 +131,7 @@ describe('AdminConfig — the write', () => {
     expect(saveSpy.mock.calls[0][0].tabs).toEqual(['garden', 'today', 'create', 'harvests', 'put-up'])
   })
 
-  it('re-reads prefs after a successful save rather than trusting the echo', async () => {
+  it('re-reads the config after a successful save rather than trusting the echo', async () => {
     render(<AdminConfig />)
     moveDown('Today')
     await act(async () => { fireEvent.click(screen.getByText('Save order')) })
@@ -149,16 +153,16 @@ describe('AdminConfig — the write', () => {
   })
 
   // A refusal must not be reported as a failure of the same kind as an outage, and neither may be
-  // reported as a save. The 400 case is TODAY's real behaviour: the column is authored and not
-  // applied, so the Lambda's allowlist rejects the key.
-  it('names the pre-migration 400 instead of claiming a save', async () => {
+  // reported as a save. 400 is the route rejecting the ORDER — anything that is not a permutation of
+  // the shipped five, since v1 is reorder-only.
+  it('reports a rejected order instead of claiming a save', async () => {
     saveSpy.mockResolvedValue({ ok: false, status: 400 })
     render(<AdminConfig />)
     moveDown('Today')
     await act(async () => { fireEvent.click(screen.getByText('Save order')) })
     const msg = screen.getByRole('status').textContent
     expect(msg).toMatch(/Not saved/)
-    expect(msg).toMatch(/v5-admincenter-001/)
+    expect(msg).toMatch(/rejected this order/)
     expect(refreshSpy).not.toHaveBeenCalled()
   })
 

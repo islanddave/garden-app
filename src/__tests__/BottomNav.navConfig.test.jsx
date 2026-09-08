@@ -1,14 +1,18 @@
 /**
  * src/__tests__/BottomNav.navConfig.test.jsx
  *
- * V5-ADMINCENTER-001 — the tab bar under user config.
+ * V5-ADMINCENTER-001 — the tab bar under INSTALLATION config.
+ *
+ * Global, not per-user (Dave's 2026-09-08 ruling): the order comes from public.app_config, which is
+ * keyed by `key` alone, so Dave and Jen render the same bar. The chain moved off PrefsProvider —
+ * user_notification_prefs is keyed by created_by and cannot hold an installation-wide fact.
  *
  * WHAT THIS FILE OWNS THAT ITS SIBLINGS CANNOT. BottomNav.test.jsx renders <BottomNav /> bare, so
  * every assertion in it is about the DEFAULT config — including the six-slot count that is the tab
  * bar's only cap. Nothing there can set a config, so nothing there can prove the cap survives one.
- * This file is the other half: it drives the REAL chain — PrefsProvider → fetchNotificationPrefs →
- * resolveNavTabs → the rendered bar — with a stubbed prefs response, which is the only place the
- * provider, the resolver and the renderer are exercised together.
+ * This file is the other half: it drives the REAL chain — AppConfigProvider → fetchAppConfig →
+ * resolveNavTabs → the rendered bar — with a stubbed response, which is the only place the provider,
+ * the resolver and the renderer are exercised together.
  *
  * The unit-level guards live in navConfig.test.js with their killing mutations named. What is
  * asserted here is that they are actually WIRED: a resolver that rejects a bad config is worth
@@ -18,9 +22,9 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 
-const { prefsRef, fetchPrefsSpy } = vi.hoisted(() => {
-  const prefsRef = { current: null }
-  return { prefsRef, fetchPrefsSpy: vi.fn(async () => prefsRef.current) }
+const { configRef, fetchConfigSpy } = vi.hoisted(() => {
+  const configRef = { current: null }
+  return { configRef, fetchConfigSpy: vi.fn(async () => configRef.current) }
 })
 
 vi.mock('react-router-dom', () => ({
@@ -44,30 +48,32 @@ vi.mock('../lib/mode.js', () => ({
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
 
-// The ONLY stub in the chain under test. Everything from PrefsProvider inward is the real code —
+// The ONLY stub in the chain under test. Everything from AppConfigProvider inward is the real code —
 // stubbing useNavTabs instead would have left the provider and the resolver untested and turned
 // these into assertions about the mock.
-vi.mock('../lib/notificationPrefsClient.js', () => ({
-  fetchNotificationPrefs: fetchPrefsSpy,
+vi.mock('../lib/appConfigClient.js', () => ({
+  fetchAppConfig: fetchConfigSpy,
 }))
 
 import BottomNav from '../components/BottomNav.jsx'
-import { PrefsProvider } from '../context/PrefsContext.jsx'
+import { AppConfigProvider } from '../context/AppConfigContext.jsx'
 
 // The nav's own children, in render order. Text rather than testids because that is what the
 // existing suite pins and what a human reads off the bar.
 const labels = () => [...screen.getByLabelText('Main navigation').children]
   .map(c => c.getAttribute('aria-label') === 'Create' ? 'Create' : c.textContent)
 
+// `undefined` stands for the live state: app_config has zero rows, so the GET answers
+// { nav_tabs: null } and nothing has ever been configured.
 async function renderWithConfig(navTabs) {
-  prefsRef.current = navTabs === undefined ? null : { nav_tabs: navTabs }
-  await act(async () => { render(<PrefsProvider><BottomNav /></PrefsProvider>) })
+  configRef.current = navTabs === undefined ? { nav_tabs: null } : { nav_tabs: navTabs }
+  await act(async () => { render(<AppConfigProvider><BottomNav /></AppConfigProvider>) })
 }
 
-beforeEach(() => { fetchPrefsSpy.mockClear() })
+beforeEach(() => { fetchConfigSpy.mockClear() })
 
 describe('BottomNav — config-driven order', () => {
-  it('renders the shipped order when the column is unset', async () => {
+  it('renders the shipped order when no app_config row exists', async () => {
     await renderWithConfig(undefined)
     expect(labels()).toEqual(['Today', 'Garden', 'Create', 'Harvests', 'Put-Up', 'More'])
   })
@@ -140,20 +146,28 @@ describe('BottomNav — config-driven order', () => {
   })
 })
 
-describe('PrefsProvider — one read, not nine', () => {
-  it('reads prefs once for the whole tree', async () => {
-    prefsRef.current = { nav_tabs: null }
+describe('AppConfigProvider — one read at boot, not one per consumer', () => {
+  it('reads the config once for the whole tree', async () => {
+    configRef.current = { nav_tabs: null }
     await act(async () => {
-      render(<PrefsProvider><BottomNav /></PrefsProvider>)
+      render(<AppConfigProvider><BottomNav /></AppConfigProvider>)
     })
-    expect(fetchPrefsSpy).toHaveBeenCalledTimes(1)
+    expect(fetchConfigSpy).toHaveBeenCalledTimes(1)
   })
 
-  // Not a decoration: this is the degradation path the whole design rests on. A prefs read that
+  // Not a decoration: this is the degradation path the whole design rests on. A config read that
   // fails must leave the app with its shipped nav, not with no nav.
-  it('a failed prefs read still renders the shipped bar', async () => {
-    fetchPrefsSpy.mockResolvedValueOnce(null)
-    await act(async () => { render(<PrefsProvider><BottomNav /></PrefsProvider>) })
+  it('a failed config read still renders the shipped bar', async () => {
+    fetchConfigSpy.mockResolvedValueOnce(null)
+    await act(async () => { render(<AppConfigProvider><BottomNav /></AppConfigProvider>) })
+    expect(labels()).toEqual(['Today', 'Garden', 'Create', 'Harvests', 'Put-Up', 'More'])
+  })
+
+  // The no-row case stated end to end, because it is the state prod is actually in: app_config has
+  // zero rows, so this is the response every boot gets today.
+  it('an app_config with no nav_tabs row renders the shipped bar', async () => {
+    fetchConfigSpy.mockResolvedValueOnce({ nav_tabs: null })
+    await act(async () => { render(<AppConfigProvider><BottomNav /></AppConfigProvider>) })
     expect(labels()).toEqual(['Today', 'Garden', 'Create', 'Harvests', 'Put-Up', 'More'])
   })
 })

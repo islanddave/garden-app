@@ -9,6 +9,7 @@ const { summarize } = require('./frostClass');                                  
 const { frostEval, isFrostSeason, resolveFrostRun } = require('./frostEval');    // V4-FROST-001 F1/F3
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
+const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
 
 // The machine actor for rows this Lambda writes on nobody's behalf. Same source as the SYSTEM_SUBS
 // set built further down, and FIRST-of-list because that variable is documented as accepting a
@@ -1264,6 +1265,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const ledgerEvents = waterLedgerEnabled ? await readLedgerEvents(pg, weatherWindowStart(today), today) : null;
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
   const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {}, wxDailyBySpace = {};
+  const droughtBySpace = {};   // V5-LEGACYEXCEPTIONCARE-001 — its OWN series, unconditional; see below.
   for (const s of spaces) {
     let wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
     let hy = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
@@ -1299,6 +1301,24 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     wxDailyBySpace[s.id] = waterLedgerEnabled
       ? await readWeatherDaily(pg, s.id, weatherWindowStart(today), prevPlanDate(today))
       : null;
+    // V5-LEGACYEXCEPTIONCARE-001 — the drought signal's OWN series, deliberately NOT riding the line
+    // above. That one is gated on CARE_WATER_LEDGER_ENABLED, which is absent from the live
+    // garden-daily-plan env (verified in AWS 2026-09-08), so weatherDaily is null in every production
+    // run and the only unconditional weather input is hydrology.recent_precip_in — TWO days, nowhere
+    // near 20. Flipping the flag to unblock this would arm the whole Water Ledger fold for both users at
+    // once; the crucible verdict's "What NOT to do" forbids that as an opening move. So: a second,
+    // narrower read (date + precip_in only) that works with the flag off and changes nothing the ledger
+    // path does when the flag is on. Same window bounds, same settled-days-only semantics.
+    //
+    // The window ASKED FOR and the window RETURNED are different questions — evaluateDrought re-derives
+    // its own coverage from the rows and refuses rather than counting a dry run over a short array.
+    const _drSeries = await drought.readDroughtSeries(pg, s.id, drought.windowStart(today), prevPlanDate(today));
+    droughtBySpace[s.id] = drought.evaluateDrought(_drSeries, { asOfDate: prevPlanDate(today) });
+    // Emitted on EVERY run, firing or not — same discipline as 'frost-eval'. A signal that silently
+    // reads `insufficient` every night (a gap in weather_daily, a failed read) must be visible in
+    // CloudWatch, because "never fired" and "could never fire" are indistinguishable from the plan alone.
+    console.log(JSON.stringify({ msg: 'drought-signal', space: s.id, plan_date: today,
+      rows: Array.isArray(_drSeries) ? _drSeries.length : null, ...droughtBySpace[s.id] }));
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
   // DRG-WXSTATION-001 observability (V200 §3): one structured line per run — chosen source, recent value,
@@ -1426,7 +1446,8 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
     // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
     const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled,
-      waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now() });
+      waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now(),
+      droughtState: droughtBySpace[spaceId] || null });
     // Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
     // types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings
     // already under cover are excluded (frostClass.summarize's covered filter).

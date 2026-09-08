@@ -26,7 +26,19 @@ name: harvest-weight-ratchet (V4-HARVRATCHET-001)
 # this job must run unattended.
 #
 # ALERT SINK: a blocked run exits 1 -> conclusion=failure, the same signal integrity-weekly.yml
-# already established for the morning brief. The report artifact carries the reason.
+# already established for the morning brief. The report artifact carries the reason — in that
+# workflow's OWN report shape ({status, alerts[], warnings[], ...}) as of OPS-RATCHETREPORTDARK-001,
+# because until then this job copied only the exit-code half of the contract. A collector built to
+# the documented hookup (download the artifact, surface report.alerts[] verbatim) would have read
+# this artifact and found nothing to say.
+#
+# REPORTING IS SPLIT FROM ENFORCEMENT (OPS-RATCHETREPORTDARK-001). The runs of 2026-08-24, 08-31 and
+# 09-07 all blocked correctly and all produced a full report, and nobody noticed for three weeks: a
+# fail-closed guard whose verdict is the job's only escaping signal makes "a factor needs your
+# judgement" indistinguishable from "the job is broken", and both from silence. So the report step
+# cannot fail the job — it produces and publishes — and a terminal `Enforce` step owns the red. The
+# job's conclusion is unchanged (failure when blocked); what changed is that the Actions UI now names
+# which of the two happened, and publication no longer depends on `if: always()` surviving an edit.
 
 on:
   schedule:
@@ -50,35 +62,46 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Run the ratchet
+      - name: Produce the weekly report
         # OPS-SCHEMACHECKAPT-001: no psql install step. The ubuntu runner image ships a
         # postgresql client on PATH (16.14 on ubuntu-24.04, 18.4 on 26.04), and this job
         # only ever runs psql — which, unlike pg_dump/pg_restore, has no major-version
         # match requirement against the PG 17 Neon server. Fetching one from apt was a
         # ship-time network dependency for a binary already on the box.
-        id: run
+        #
+        # THIS STEP NEVER FAILS THE JOB. It records the script's exit code and hands it to the
+        # Enforce step at the bottom. Reporting that can be cut short by its own findings is the
+        # defect OPS-RATCHETREPORTDARK-001 fixed.
+        id: report
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           MAX_TOTAL_DROP_PCT: ${{ github.event.inputs.max_total_drop_pct || '25' }}
           OUT: harvest-ratchet-report.json
+          APPLY_INPUT: ${{ github.event.inputs.apply }}
         run: |
           set +e
-          if [ "${{ github.event.inputs.apply }}" = "true" ]; then
+          if [ "$APPLY_INPUT" = "true" ]; then
             bash scripts/harvest-weight-ratchet.sh --apply
           else
             bash scripts/harvest-weight-ratchet.sh
           fi
           rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          exit $rc
+          exit 0
 
       - name: Summarise
         if: always()
+        env:
+          APPLY_INPUT: ${{ github.event.inputs.apply }}
         run: |
           {
             echo "### V4-HARVRATCHET-001 — harvest weight ratchet"
             echo
             if [ -f harvest-ratchet-report.json ]; then
+              # Lead with the verdict and the alert lines. A raw JSON blob is what a reader skips,
+              # and skipping is how three blocked runs went unread.
+              python3 scripts/harvest_ratchet_verdict.py --markdown harvest-ratchet-report.json
+              echo
               echo '```json'
               cat harvest-ratchet-report.json
               echo '```'
@@ -86,7 +109,7 @@ jobs:
               echo "_No report produced — the analysis query failed before writing one._"
             fi
             echo
-            echo "Mode: **$([ "${{ github.event.inputs.apply }}" = "true" ] && echo APPLY || echo 'REPORT ONLY')**"
+            echo "Mode: **$([ "$APPLY_INPUT" = "true" ] && echo APPLY || echo 'REPORT ONLY')**"
             echo
             echo "A non-zero exit means the run was BLOCKED and nothing was written — either an"
             echo "unreviewed outlier among the factors the resolver actually uses, or a one-step"
@@ -99,3 +122,27 @@ jobs:
           name: harvest-ratchet-report
           path: harvest-ratchet-report.json
           retention-days: 90
+
+      - name: Enforce the ratchet guards
+        # The red lives here, AFTER the report has been summarised and uploaded, and it says which
+        # of the two failures happened. Exit 1 (BLOCKED, a decision is waiting) and exit 2 (ERROR,
+        # the job could not measure anything) both flatten to conclusion=failure — GitHub has no
+        # richer verdict — so the distinction is carried by an ::error:: annotation, which shows on
+        # the run page without opening a log or downloading an artifact.
+        if: always()
+        env:
+          RC: ${{ steps.report.outputs.rc }}
+        run: |
+          case "$RC" in
+            0)
+              echo "OK — nothing blocking."
+              ;;
+            1)
+              echo "::error title=Ratchet BLOCKED — a decision is waiting::Unreviewed outlier factor(s) or an oversized one-step total move. Nothing was written. See the run summary and the harvest-ratchet-report artifact (.alerts[])."
+              exit 1
+              ;;
+            *)
+              echo "::error title=Ratchet ERROR — the job could not measure anything::The analysis or the report writer failed (rc=$RC); this is not a data finding. See the log."
+              exit 1
+              ;;
+          esac

@@ -21,19 +21,25 @@
 // enforcement is not in this UI: resolveNavTabs accepts a permutation of the shipped five and
 // nothing else, so even a hand-written database value cannot empty the bar.
 //
-// ⚠️ THE SAVE IS INERT UNTIL THE COLUMN LANDS, and the page says so instead of pretending.
-// user_notification_prefs.nav_tabs is authored and NOT applied (migrations/v5-admincenter-001), and
-// the critter Lambda's HAS_UPDATABLE allowlist does not carry the key yet, so today the PATCH comes
-// back 400. This is the same posture V4-HANDEDNESSCONTROLS-001 shipped in on the same table. The
-// page needs no change when the column and the Lambda land — it starts saving.
+// THE SETTING IS GLOBAL, AND THE COPY BELOW SAYS SO. Dave ruled 2026-09-08 that there is one nav
+// order for the installation, not one per person — so a save here changes Jen's bar too. The first
+// implementation of this page wrote user_notification_prefs.nav_tabs, a per-user row that cannot
+// hold an installation-wide fact; it now writes public.app_config, which already existed in prod as
+// a global key/value store and needed no migration at all. migrations/v5-admincenter-001 was
+// WITHDRAWN rather than rewritten: there was never any DDL to apply.
+//
+// Because the store is shared, the ADMIN_CLERK_SUBS gate is a PREREQUISITE of this page rather than
+// an adjacent tidy-up. Under the old per-user store the write bound created_by to the caller's own
+// token id, so every write was self-scoped by construction and an ungated route was harmless. A
+// self-scoped write to a shared row is not self-scoped.
 import React, { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { useApiFetch } from '../lib/api.js'
-import { usePrefs } from '../context/PrefsContext.jsx'
+import { useAppConfig } from '../context/AppConfigContext.jsx'
 import { DEFAULT_NAV_TABS, TAB_REGISTRY, resolveNavTabs } from '../lib/navConfig.js'
-import { saveNavTabs } from '../lib/notificationPrefsClient.js'
+import { saveNavTabs } from '../lib/appConfigClient.js'
 
 const card = {
   background: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
@@ -67,10 +73,10 @@ function MoveButton({ label, glyph, onClick, disabled }) {
 
 export default function AdminConfig() {
   const { getToken } = useApiFetch()
-  const { prefs, refreshPrefs } = usePrefs()
+  const { appConfig, refreshAppConfig } = useAppConfig()
   // Seeded from the resolved config, so the editor opens on exactly what the bar is rendering —
   // including the fallback, when the stored value is missing or malformed.
-  const saved = useMemo(() => resolveNavTabs(prefs?.nav_tabs), [prefs])
+  const saved = useMemo(() => resolveNavTabs(appConfig?.nav_tabs), [appConfig])
   const [order, setOrder] = useState(saved)
   const [status, setStatus] = useState(null)   // null | 'saving' | {ok, detail}
   const [forbidden, setForbidden] = useState(false)
@@ -93,22 +99,25 @@ export default function AdminConfig() {
     const res = await saveNavTabs({ getToken, tabs: order })
     if (res.ok) {
       // Re-read rather than trusting the echo, so the bar and this page agree on one source.
-      await refreshPrefs()
-      setStatus({ ok: true, detail: 'Saved. The tab bar picks it up next time the app starts.' })
+      await refreshAppConfig()
+      setStatus({ ok: true, detail: 'Saved. Every tab bar picks it up next time the app starts.' })
       return
     }
+    // 403 is the SERVER saying "not an admin" — including the fail-closed case where
+    // ADMIN_CLERK_SUBS is simply not set on the critter Lambda, which refuses everyone. Both land on
+    // the neutral placard: a non-admin learns nothing about the surface either way.
     if (res.status === 403) { setForbidden(true); return }
     setStatus({
       ok: false,
       detail: res.status === 400
-        // Named exactly, because "save failed" would send the next session hunting a bug that is not
-        // there: the column and the Lambda allowlist are both pending by design.
-        ? 'Not saved — the server does not accept this setting yet (migrations/v5-admincenter-001 is authored, not applied).'
+        // Named exactly, because "save failed" would send the next session hunting a bug. The route
+        // refuses anything that is not a permutation of the shipped five — v1 is reorder-only.
+        ? 'Not saved — the server rejected this order.'
         : res.status === 401 ? 'Not saved — not signed in.'
         : res.status === 0 ? 'Not saved — could not reach the server.'
         : `Not saved — server returned ${res.status}.`,
     })
-  }, [getToken, order, refreshPrefs])
+  }, [getToken, order, refreshAppConfig])
 
   if (forbidden) return <NeutralPlacard />
 
@@ -116,7 +125,8 @@ export default function AdminConfig() {
     <div style={{ padding: 16, paddingBottom: 40, maxWidth: 640, margin: '0 auto' }}>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>App configuration</h1>
       <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
-        Settings that change how the app is put together, rather than what it holds.
+        Settings that change how the app is put together, rather than what it holds. These apply to
+        the whole app, for everyone who uses it.
       </p>
 
       <h2 style={{ fontSize: '0.78rem', fontWeight: 700, color: P.light, letterSpacing: '0.05em', textTransform: 'uppercase', margin: '20px 0 8px' }}>
@@ -146,6 +156,7 @@ export default function AdminConfig() {
 
       <p style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, marginTop: 0 }}>
         Every tab keeps its place in the bar — this changes the order only. “More” always sits last.
+        This is the order for everyone using the app, not just for you.
       </p>
 
       <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>

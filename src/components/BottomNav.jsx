@@ -14,7 +14,7 @@ import { useMode } from '../lib/mode.js'
 import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
-import { useNavTabs } from '../context/PrefsContext.jsx'
+import { useNavTabs } from '../context/AppConfigContext.jsx'
 
 // BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·Put-Up·More (V4-PUTUPENGINE-001,
 // 2026-08-21; was Today·Garden·＋·Harvests·More per V4-NAVHARVEST-001, 2026-08-10, which itself
@@ -53,11 +53,12 @@ import { useNavTabs } from '../context/PrefsContext.jsx'
 // (EventNew PreserveOffer, PutUpFromPlanting, PutUpUseSoonBand). PutUp already defaults a BARE open
 // to its 'stores' view, so the tab lands on "what have I got", not on an empty form.
 // V5-ADMINCENTER-001 — THE FIVE ROWS THAT USED TO BE HERE NOW LIVE IN src/lib/navConfig.js, and the
-// ORDER they render in is user config (user_notification_prefs.nav_tabs, read once at boot by
-// PrefsProvider). Nothing about the bar's CONTENTS moved: v1 is reorder-only, and resolveNavTabs
-// accepts a config only if it is a permutation of the shipped five, so config can shuffle these
-// slots and can neither drop nor add one. Null config — including a missing column, a failed prefs
-// GET, or an offline boot — renders the exact bar above unchanged.
+// ORDER they render in is INSTALLATION config (public.app_config key 'nav_tabs', read once at boot
+// by AppConfigProvider). Global, not per-user: Dave ruled 2026-09-08 that there is one nav order for
+// the app, so Dave and Jen see the same bar. Nothing about the bar's CONTENTS moved: v1 is
+// reorder-only, and resolveNavTabs accepts a config only if it is a permutation of the shipped five,
+// so config can shuffle these slots and can neither drop nor add one. Null config — including an
+// absent app_config row, a failed GET, or an offline boot — renders the exact bar above unchanged.
 // The +LOG FAB is still identified by `highlight`, and "More" is still emitted after the map below
 // as a hardcoded button, so it stays pinned last by being outside the array entirely.
 

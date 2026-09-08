@@ -2,7 +2,7 @@
 // Canonical spec: mvp-critter-pre-build-revision-V001-20260528.md §2 (Lambda routes + handlers).
 // Binding parent: reward-ux-guideline-V100-20260518.1830.md (CONTENT-LOCKED).
 //
-// Routes (11):
+// Routes (12 declared; POST /api/critters is retired — see the tombstone in the handler):
 //   POST   /api/critters                           Award critter for action-completion event (MVP plant-only)
 //   GET    /api/critters/active                    Unviewed + unfaded list for household
 //   GET    /api/critters/collection             Per-user lifetime stickerbook summary (Collection page Phase 2 wiring)
@@ -14,7 +14,12 @@
 //   PATCH  /api/notifications/prefs                Persist toggle change
 //   POST   /api/notifications/coachmark-dismissed  One-shot: writes coachmark_seen_at = now()
 //   POST   /api/notifications/opt-in-dismissed     One-shot: writes opt_in_prompt_seen_at = now() (suppression-flag fix §3.8)
+//   GET    /api/app-config                         GLOBAL installation config — ungated read, no row = shipped default
+//   PATCH  /api/app-config                         GLOBAL installation config — ADMIN_CLERK_SUBS gated (V5-ADMINCENTER-001)
 //
+// Scope: every route except the two /api/app-config ones is PER-USER (householdScope / created_by).
+// Those two are the exception and the only ones here that write a row no user owns — see the block
+// above them for why that makes the admin gate a prerequisite of the feature rather than a polish.
 // Scope: ZERO RLS in current Neon. Lambda enforces via householdScope(clerk_sub) → created_by = ANY(${ids}).
 // Idempotency: POST /api/critters relies on UNIQUE INDEX idx_critter_state_source_event_id.
 //   PG 23505 (unique_violation) caught + returns existing row → idempotent success (revision §3.27).
@@ -27,7 +32,8 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { householdScope } from './household.js'
 import {
   validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
-  validateMarkViewedPatchBody, UUID_RE,
+  validateMarkViewedPatchBody, validateAppConfigPatchBody,
+  adminRefusal, projectAppConfig, APP_CONFIG_KEYS, UUID_RE,
 } from './validators.js'
 
 // Deploy marker — fires once per cold start. Smoke step greps last 5min CloudWatch for this string.
@@ -449,6 +455,61 @@ export const handler = async (event) => {
       return resp(200, rows[0])
     }
 
+    // ── Routes 11+12: /api/app-config — GLOBAL config (V5-ADMINCENTER-001) ──────
+    //
+    // WHY THIS PATH IS ON THIS LAMBDA. It is a new rawPath on an already-warm origin, not a new
+    // origin. The preconnect budget is closed at four and bootPaint.static.test.js asserts the set
+    // equals WARM_PATHS — but it dedupes by ORIGIN, not by path (warmOrigins.js:92-93), so this
+    // costs zero preconnects, zero new VITE_API_* variables and zero new Function URLs. Same move,
+    // and same reasoning, as Instagram reusing the Facebook Function URL (api.js:71-76). The nav
+    // already talks to this origin: BottomNavDot fetches /api/critters/active on mount.
+    //
+    // EVERY OTHER ROUTE ON THIS LAMBDA IS PER-USER; THESE TWO ARE NOT. public.app_config is keyed by
+    // `key` alone — no created_by, no user_id — so a write here changes the nav for the whole
+    // installation. That is Dave's 2026-09-08 ruling, and it is what makes the gate below a
+    // prerequisite of the feature rather than a tidy-up: under a per-user store the upsert bound
+    // created_by to the caller's own token id and every write was self-scoped by construction. A
+    // self-scoped write to a SHARED row is not self-scoped. RLS cannot help — app_config's policies
+    // admit any authenticated caller, and this Lambda connects as a role that bypasses them anyway.
+    if (rawPath === '/api/app-config' && method === 'GET') {
+      // UNGATED ON PURPOSE, and only the read. Every client needs the nav order at boot, including
+      // the non-admin one: gating this would render Jen an empty-or-default bar while Dave's differs,
+      // which is the opposite of an installation-wide setting. Nav layout is not a secret.
+      //
+      // NO ROW = SHIPPED DEFAULT. app_config has zero rows, so "never configured" is already the
+      // natural state and needs no seeding. Every key is reported explicitly as null when absent
+      // rather than omitted, so the client sees "unset" instead of "undefined" — and resolveNavTabs
+      // maps null to the shipped bar. A failed read degrades to today's nav, never to an empty one.
+      const rows = await sql`
+        SELECT key, value FROM public.app_config WHERE key = ANY(${APP_CONFIG_KEYS})
+      `
+      return resp(200, projectAppConfig(rows))
+    }
+
+    if (rawPath === '/api/app-config' && method === 'PATCH') {
+      // GATE FIRST, BEFORE THE BODY IS EVEN PARSED — the order facebook-share/index.js:9 documents
+      // ("auth -> admin gate -> kill switch -> validate"). A non-admin is refused without the
+      // payload being read. This is the ONLY thing standing between either household member and the
+      // installation's nav; there is no client-side admin list and adding one would reverse a
+      // decision recorded in three files (DebugMenu.jsx:18-26).
+      const refusal = adminRefusal(userId, process.env)
+      if (refusal) return resp(refusal.status, { error: refusal.error })
+      let body
+      try { body = JSON.parse(event.body ?? '{}') } catch { return resp(400, { error: 'malformed JSON body' }) }
+      const vErr = validateAppConfigPatchBody(body)
+      if (vErr) return resp(vErr.status, { error: vErr.error })
+      // updated_at is maintained by the live set_updated_at BEFORE UPDATE trigger, so it is not
+      // named here. app_config carries no actor column: "which admin changed the nav" is not
+      // recorded by this table, and adding a per-key actor column to a generic k/v store would be
+      // the wrong shape — if it is ever wanted it is an audit_events write from here.
+      const rows = await sql`
+        INSERT INTO public.app_config (key, value)
+        VALUES ('nav_tabs', ${JSON.stringify(body.nav_tabs)}::jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        RETURNING key, value
+      `
+      return resp(200, { nav_tabs: rows[0]?.value ?? null })
+    }
 
     return resp(404, { error: `route not found: ${method} ${rawPath}` })
   } catch (err) {

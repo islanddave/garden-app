@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest'
 
 const ROOT = path.resolve(__dirname, '../..')
 const SH = fs.readFileSync(path.join(ROOT, 'scripts/harvest-weight-ratchet.sh'), 'utf8')
+const VERDICT = fs.readFileSync(path.join(ROOT, 'scripts/harvest_ratchet_verdict.py'), 'utf8')
 const ACK = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/harvest-weight-ratchet-ack.json'), 'utf8'))
 const WF = fs.readFileSync(path.join(ROOT, '.github/workflows/harvest-weight-ratchet.yml'), 'utf8')
 
@@ -47,15 +48,24 @@ describe('it is fail-closed, not fail-open', () => {
     expect(SH).toMatch(/\[ "\$APPLY" -eq 0 \][\s\S]{0,120}exit 0/)
   })
 
+  // Both blocking conditions moved into harvest_ratchet_verdict.py (OPS-RATCHETREPORTDARK-001) and
+  // the shell now RELAYS the verdict instead of computing it. Both halves are pinned: a guard that
+  // survives on only one side of the split is not a guard, and a re-point that drops the shell half
+  // would leave the decision computed and then discarded.
   it('an unreviewed outlier BLOCKS and exits 1 without writing', () => {
-    expect(SH).toMatch(/N_OUT.*-gt 0/)
-    expect(SH).toMatch(/BLOCK=1/)
+    expect(VERDICT).toMatch(/if outliers:/)
+    expect(VERDICT).toMatch(/return 1 if report\['status'\] == STATUS_ALERT else 0/)
+    expect(SH).toMatch(/\|\| BLOCK=\$\?/)
     expect(SH).toMatch(/BLOCKED — nothing written[\s\S]{0,40}exit 1/)
   })
 
   it('an oversized one-step total move BLOCKS — the reward-inversion guard', () => {
-    expect(SH).toMatch(/MAX_TOTAL_DROP_PCT/)
-    expect(SH).toMatch(/reward-inversion/i)
+    // The threshold is still the shell's to read and must still reach the verdict — an env var the
+    // split quietly stopped forwarding is a limit that silently becomes the hardcoded default.
+    expect(SH).toMatch(/^python3 "\$HERE\/harvest_ratchet_verdict\.py"[\s\S]{0,120}\$MAX_TOTAL_DROP_PCT/m)
+    expect(VERDICT).toMatch(/reward-inversion/i)
+    // Sign for sign, as the shell made it: a DROP deeper than the limit blocks; a rise never has.
+    expect(VERDICT).toMatch(/drop < -float\(max_total_drop_pct\)/)
   })
 
   // The outlier scan must look at the factors the resolver ACTUALLY uses. Scanning every derived
@@ -81,12 +91,60 @@ describe('it is fail-closed, not fail-open', () => {
   // both reported. Advisory rather than blocking: neither can propagate a factor the outlier scan
   // has not already seen, so blocking on them would stall the job over a labelling concern.
   it('reports one-ratio factors and cross-unit duplicates without blocking on them', () => {
-    expect(SH).toMatch(/degenerate_promoted/)
+    expect(SH).toMatch(/degenerate_promoted/)   // the SQL that finds them is still the shell's
     expect(SH).toMatch(/crossunit_suspects/)
-    expect(SH).toMatch(/ONE-RATIO/)
-    expect(SH).toMatch(/CROSS-UNIT/)
-    // BLOCK is set only by the outlier count and the total-move guard.
-    expect(SH).not.toMatch(/degenerate[\s\S]{0,80}BLOCK=1/)
+    expect(VERDICT).toMatch(/ONE-RATIO/)        // the lines that report them are the verdict's
+    expect(VERDICT).toMatch(/CROSS-UNIT/)
+    // The single line that decides blocking. Only alerts[] can reach ALERT, so an advisory finding
+    // appended to the wrong list cannot start stalling the job over a labelling concern.
+    expect(VERDICT).toMatch(
+      /report\['status'\] = STATUS_ALERT if alerts else \(STATUS_WARN if warnings else STATUS_OK\)/
+    )
+  })
+})
+
+describe('the report survives enforcement (OPS-RATCHETREPORTDARK-001)', () => {
+  // Three scheduled runs — 2026-08-24, 08-31, 09-07 — blocked correctly, uploaded a complete
+  // artifact, and read as three weeks of silence: the verdict existed only as the exit code, which
+  // cannot tell "a factor needs your judgement" apart from "the job is broken". What the verdict
+  // SAYS is tested in scripts/test_harvest_ratchet_verdict.py; what is only checkable here is the
+  // wiring that has to hold for it to be said at all.
+
+  // Anchored at line start, here and below. The script NAMES the verdict script in its own header
+  // comment, so an unanchored match is satisfied by prose: commenting the invocation out left this
+  // whole block green when it was first written. A guard that a `#` defeats is not a guard.
+  const CALL = /^python3 "\$HERE\/harvest_ratchet_verdict\.py"/m
+
+  it('writes the verdict into the report BEFORE the shell decides to exit', () => {
+    const call = SH.match(CALL)
+    expect(call, 'the verdict is never invoked').not.toBeNull()
+    const wrote = SH.indexOf('> "$OUT"')
+    const blocked = SH.indexOf('BLOCKED — nothing written')
+    expect(wrote).toBeGreaterThan(-1)
+    expect(call.index).toBeGreaterThan(wrote)
+    expect(blocked).toBeGreaterThan(call.index)
+  })
+
+  it('lets the verdict exit non-zero without set -e aborting the run', () => {
+    expect(SH).toMatch(/^set -euo pipefail$/m)
+    // Bare, the exit 1 that MEANS "blocked" would kill the script before it could report why.
+    expect(SH).toMatch(/^python3 "\$HERE\/harvest_ratchet_verdict\.py"[\s\S]{0,120}\|\| BLOCK=\$\?/m)
+    // An rc the split does not recognise is an ERROR, never a quiet pass.
+    expect(SH).toMatch(/\[ "\$BLOCK" -le 1 \][\s\S]{0,80}exit 2/)
+  })
+
+  it('publishes on a step that cannot fail the job, and enforces last', () => {
+    const reportStep = WF.slice(WF.indexOf('id: report'), WF.indexOf('- name: Summarise'))
+    expect(reportStep).toMatch(/set \+e/)
+    expect(reportStep).toMatch(/exit 0$/m)      // NOT exit $rc — the red is the Enforce step's job
+    expect(reportStep).not.toMatch(/exit \$rc/)
+    // Publication ahead of enforcement is what stops a dropped `if: always()` from going dark —
+    // and the artifact keeps its own always() as the second layer, not the only one.
+    expect(WF.indexOf('- name: Enforce')).toBeGreaterThan(WF.indexOf('upload-artifact'))
+    expect(WF).toMatch(/upload-artifact[\s\S]{0,60}if: always\(\)/)
+    expect(WF).toMatch(/RC: \$\{\{ steps\.report\.outputs\.rc \}\}/)
+    // The summary leads with the verdict; a raw JSON blob is what a reader skips.
+    expect(WF).toMatch(/harvest_ratchet_verdict\.py --markdown/)
   })
 })
 

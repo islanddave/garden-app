@@ -373,3 +373,95 @@ export function dormantRows(plan) {
     resumable: it.reason === 'status',
   }))
 }
+
+// BUG-CAREFEEDINHERIT-001 — the feed-suppressed POPULATION (engine.js:1103-1105/1151-1157), which
+// the engine emits and no surface has ever read. Twin of dormantRows above and, like it,
+// deliberately NOT part of buildCareNeeded: a suppressed planting has no action to log, so folding
+// it in would put a row on the actionable list that nothing can be logged against. Nine live
+// plantings (herbs + two natives, verified against prod 2026-09-08) produce NO Feed card, ever,
+// which on Today is indistinguishable from nine plantings everybody forgot.
+//
+// THREE states, not two, and that is the whole point of the shape. `feed_suppressed` follows
+// V4-OVERWINTER-001's CONDITIONAL spread, NOT dormancy_suppressed's unconditional zero: the key is
+// ABSENT — not present-and-zero — whenever nothing in the run is suppressed, and every plan row
+// stored before the feature shipped is absent too.
+//   'absent' — no key. We do not know whether the gate ran. Asserts NOTHING.
+//   'none'   — key present, empty. The gate RAN and suppressed nobody. That is a fact.
+//   'listed' — rows.
+// Collapsing absent into none is the defect this exists to prevent: it would let a surface claim
+// "every planting is on calendar feeding" from a stored plan that never evaluated the question.
+// Both no-row states render nothing today (there is no planting to name), so the distinction is
+// currently invisible — it is kept in the DATA so no later consumer can borrow the wrong one.
+//
+// A non-array value is 'absent', never 'none': a malformed payload is not evidence the gate found
+// nothing. An array of only junk entries maps to zero rows and so reports 'none' — the gate ran and
+// produced nothing nameable, which is what the surface can honestly say. Pure; preserves engine order.
+export const FEED_SUPPRESSED_ABSENT = 'absent'
+export const FEED_SUPPRESSED_NONE = 'none'
+export const FEED_SUPPRESSED_LISTED = 'listed'
+
+export function feedSuppressedRows(plan) {
+  const raw = plan ? plan.feed_suppressed : undefined
+  if (!Array.isArray(raw)) return { state: FEED_SUPPRESSED_ABSENT, rows: [] }
+  const rows = raw.filter(Boolean).map(it => ({
+    key: it.id + ':feed_suppressed',
+    plantingId: it.id,
+    name: it.name || it.crop || 'Planting',
+    crop: it.crop || null,
+    project: it.project || null,
+    projectId: it.project_id || null,
+    rule: it.rule || null,
+    reason: it.reason || null,
+  }))
+  return { state: rows.length ? FEED_SUPPRESSED_LISTED : FEED_SUPPRESSED_NONE, rows }
+}
+
+// V5-LEGACYEXCEPTIONCARE-001 — the drought signal the engine writes onto the dormancy_suppressed
+// bucket (engine.js:911-919) and no surface has ever read. Third of the ambient selectors, after
+// dormantRows and feedSuppressedRows, and deliberately their shape: a suppressed planting has no
+// action to log, so `dormancy_suppressed` stays OUT of NEED_ORDER — folding it in would put a one-tap
+// Water on the exact plantings whose profile says never water by interval.
+//
+// PER-ITEM gate, not per-bucket, which is why this needs no absent/none/listed triple like
+// feedSuppressedRows. `dormancy_suppressed` is spread UNCONDITIONALLY (empty array when nobody is
+// suppressed), so the key's presence asserts nothing; the `drought` key is written per item and ONLY
+// when the space's signal is `dry`. A space reading `ok` or `insufficient` therefore emits the bucket
+// with no `drought` on any item -> zero rows -> nothing rendered, which is the correct silence.
+//
+// THE DAY COUNT IS THE CLAIM. A row whose dry_days is not a positive finite number is DROPPED, never
+// rendered with a guess: the engine is the only thing that knows how long the run is, and a note that
+// says something slightly wrong about a dry plant is worse than no note. `deep_soak_in` is a clarifier
+// rather than the claim, so a missing one only drops the parenthetical and keeps the row.
+//
+// WORDING IS PART OF DAVE'S RULING (2026-09-08) and mirrors droughtSignal.js: 0.60 in is the in-ground
+// `deep` class of RAIN_DEPTH_TIERS, not light rain and not a gauge's resolution, so the statistic is
+// "no DEEP SOAK in N days" and must NEVER be reworded to "no rain in N days" — that category slip is
+// what falsified the first version of the crucible verdict this feature came from. The depth is read
+// off the payload rather than restated as a constant here, so a retune moves both together.
+// `truncated` means the run is at least this long (it ran past the engine's read window). Pure;
+// preserves engine order.
+export function droughtRows(plan) {
+  const items = (plan && Array.isArray(plan.dormancy_suppressed)) ? plan.dormancy_suppressed : []
+  const rows = []
+  for (const it of items) {
+    const d = it && it.drought
+    if (!d || typeof d.dry_days !== 'number' || !isFinite(d.dry_days) || d.dry_days <= 0) continue
+    const depth = (typeof d.deep_soak_in === 'number' && isFinite(d.deep_soak_in))
+      ? ' (≥' + d.deep_soak_in.toFixed(2) + ' in)' : ''
+    rows.push({
+      key: it.id + ':drought',
+      plantingId: it.id,
+      name: it.name || it.crop || 'Planting',
+      crop: it.crop || null,
+      project: it.project || null,
+      projectId: it.project_id || null,
+      rule: it.rule || null,
+      dryDays: d.dry_days,
+      truncated: !!d.truncated,
+      lastDeepSoak: d.last_deep_soak || null,
+      reason: 'No deep soak' + depth + ' in ' + (d.truncated ? 'at least ' : '')
+        + d.dry_days + ' day' + (d.dry_days === 1 ? '' : 's'),
+    })
+  }
+  return rows
+}

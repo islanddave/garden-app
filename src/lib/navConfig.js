@@ -14,14 +14,23 @@
 //   1. Hiding a tab removes the only door to a page, which is the exact defect class
 //      DebugMenu.reachability.test.jsx exists to catch, arriving by a different route. The
 //      hide-vs-reorder question is reserved for Dave (design §7) and is unanswered.
-//   2. It makes the renderer TOTAL over user data. nav_tabs is a jsonb column an admin writes; it
-//      is not validated by a CHECK and never can be against a key list that lives in JS. Every
-//      malformed value therefore has to have a defined, non-destructive rendering, and "the bar you
-//      already had" is the only one that cannot strand Dave.
+//   2. It makes the renderer TOTAL over stored data. nav_tabs is the jsonb `value` of one row in
+//      public.app_config; app_config is a generic key/value table, so there is no CHECK behind it
+//      and there never can be against a key list that lives in JS. Every malformed value therefore
+//      has to have a defined, non-destructive rendering, and "the bar you already had" is the only
+//      one that cannot strand Dave. The Lambda validator refuses the same set at WRITE time
+//      (lambda/critter/validators.js), so a bad order 400s rather than saving and silently no-opping;
+//      appConfig.parity.test.js asserts the two guards agree. This one is the guard that cannot be
+//      bypassed, because a row can be written to Neon by hand.
 //
-// NULL MEANS SHIPPED DEFAULT — the property the whole row rests on. A missing column, a failed
-// prefs GET, an offline boot and a never-configured user all arrive here as null/undefined and all
-// degrade to today's exact bar. See src/context/PrefsContext.jsx for the read side.
+// NULL MEANS SHIPPED DEFAULT — the property the whole row rests on. An absent app_config row (the
+// live state: zero rows), a failed GET, an offline boot and a never-configured installation all
+// arrive here as null/undefined and all degrade to today's exact bar. See
+// src/context/AppConfigContext.jsx for the read side.
+//
+// THE ORDER IS GLOBAL, NOT PER-USER (Dave's ruling, 2026-09-08): one nav order for the installation,
+// so Dave and Jen see the same bar. Nothing in this file changes with that — the resolver is a pure
+// function of a stored value — but do not reintroduce a per-user read above it.
 
 export const TAB_REGISTRY = {
   today:      { to: '/today',    label: 'Today',    iconName: 'nav.today' },
