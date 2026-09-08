@@ -373,3 +373,45 @@ export function dormantRows(plan) {
     resumable: it.reason === 'status',
   }))
 }
+
+// BUG-CAREFEEDINHERIT-001 — the feed-suppressed POPULATION (engine.js:1103-1105/1151-1157), which
+// the engine emits and no surface has ever read. Twin of dormantRows above and, like it,
+// deliberately NOT part of buildCareNeeded: a suppressed planting has no action to log, so folding
+// it in would put a row on the actionable list that nothing can be logged against. Nine live
+// plantings (herbs + two natives, verified against prod 2026-09-08) produce NO Feed card, ever,
+// which on Today is indistinguishable from nine plantings everybody forgot.
+//
+// THREE states, not two, and that is the whole point of the shape. `feed_suppressed` follows
+// V4-OVERWINTER-001's CONDITIONAL spread, NOT dormancy_suppressed's unconditional zero: the key is
+// ABSENT — not present-and-zero — whenever nothing in the run is suppressed, and every plan row
+// stored before the feature shipped is absent too.
+//   'absent' — no key. We do not know whether the gate ran. Asserts NOTHING.
+//   'none'   — key present, empty. The gate RAN and suppressed nobody. That is a fact.
+//   'listed' — rows.
+// Collapsing absent into none is the defect this exists to prevent: it would let a surface claim
+// "every planting is on calendar feeding" from a stored plan that never evaluated the question.
+// Both no-row states render nothing today (there is no planting to name), so the distinction is
+// currently invisible — it is kept in the DATA so no later consumer can borrow the wrong one.
+//
+// A non-array value is 'absent', never 'none': a malformed payload is not evidence the gate found
+// nothing. An array of only junk entries maps to zero rows and so reports 'none' — the gate ran and
+// produced nothing nameable, which is what the surface can honestly say. Pure; preserves engine order.
+export const FEED_SUPPRESSED_ABSENT = 'absent'
+export const FEED_SUPPRESSED_NONE = 'none'
+export const FEED_SUPPRESSED_LISTED = 'listed'
+
+export function feedSuppressedRows(plan) {
+  const raw = plan ? plan.feed_suppressed : undefined
+  if (!Array.isArray(raw)) return { state: FEED_SUPPRESSED_ABSENT, rows: [] }
+  const rows = raw.filter(Boolean).map(it => ({
+    key: it.id + ':feed_suppressed',
+    plantingId: it.id,
+    name: it.name || it.crop || 'Planting',
+    crop: it.crop || null,
+    project: it.project || null,
+    projectId: it.project_id || null,
+    rule: it.rule || null,
+    reason: it.reason || null,
+  }))
+  return { state: rows.length ? FEED_SUPPRESSED_LISTED : FEED_SUPPRESSED_NONE, rows }
+}

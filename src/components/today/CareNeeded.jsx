@@ -12,7 +12,7 @@ import PhotoView from '../photo/PhotoView.jsx'
 import { TIER } from '../../lib/photoModel.js'
 import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
-  dormantRows,
+  dormantRows, feedSuppressedRows, FEED_SUPPRESSED_LISTED,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
 } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
@@ -630,6 +630,10 @@ export default function CareNeeded({ plan }) {
           needs care today, so it must render in the empty state too. */}
       <DormantList plan={plan} />
 
+      {/* Outside the ternary for the same reason, and BELOW Dormant: a dormant row carries an
+          action (Resume), a feed-suppressed one carries none, so the actionable list stays higher. */}
+      <FeedSuppressedList plan={plan} />
+
       {/* V4-BACKNAV-001 Slice P (extended) — close-in-place: setBulkType(null) never navigates. */}
       <Sheet armsBack open={!!bulkType} onClose={() => setBulkType(null)} busy={!!bulkProgress} title={bulkType ? 'Log all ' + bulkLabel(bulkType) : ''}>
         {bulkType && (
@@ -744,6 +748,67 @@ function DormantList({ plan }) {
           )}
         </div>
       ))}
+    </div>
+  )
+}
+
+// BUG-CAREFEEDINHERIT-001 — the plantings whose profile refuses calendar feeding. Ambient, like
+// DormantList and RainNote: "never feed this by the calendar" is not work, so this is never a card
+// and never an interrupt. It exists because a suppressed planting produces NO Feed card ever, which
+// on this screen is indistinguishable from a planting everybody forgot — the engine routes it
+// LOUDLY to tasks.feed_suppressed with a rule + reason and, until now, nothing read that.
+//
+// Renders ONLY for state 'listed'. 'absent' and 'none' both render nothing, for DIFFERENT reasons:
+// absent means we do not know whether the gate ran (see feedSuppressedRows), so the surface must
+// not speak; none means it ran and found nobody, so there is no planting to name. Neither may ever
+// become "0 plantings are on signal-only feeding" without splitting these two apart first.
+//
+// COLLAPSED BY DEFAULT, via mount/unmount — not <details>, not display:none. Two reasons: nine
+// unchanging information-only rows would push ~400px of non-work down Today every single day
+// (the V4-TODAYVERBIAGE-001 noise budget), and a CSS/`open`-hidden list is still in the DOM, so a
+// test asserting it is hidden false-passes. The summary line IS the toggle: one control, one tap,
+// 44px, inline — never a modal, so this needs no DismissRegistry layer (that registry arbitrates
+// Escape/Back across modal surfaces; there is no surface here to arbitrate).
+function FeedSuppressedList({ plan }) {
+  const { state, rows } = useMemo(() => feedSuppressedRows(plan), [plan])
+  const [open, setOpen] = useState(false)
+  if (state !== FEED_SUPPRESSED_LISTED) return null
+  const n = rows.length
+  const label = (open ? 'Hide the ' : 'Show the ') + n + ' planting' + (n > 1 ? 's' : '') + ' with no feed schedule'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-label={label}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, width: '100%',
+          padding: '2px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer' }}>
+        {/* care.feed is the same glyph the fertilizing care chip carries, tinted P.green rather than
+            the gold needTier gives a due feed row — gold in this app means "needed today", and this
+            is the opposite claim. Colour is additive: the sentence says it too (SC 1.4.1). */}
+        <Icon name="care.feed" size={18} decorative style={{ color: P.green, flex: '0 0 auto' }} />
+        <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
+          No feed schedule for {n} planting{n > 1 ? 's' : ''} — fed on plant signals, never by the calendar.
+        </span>
+        <span aria-hidden="true" style={{ flex: '0 0 auto', fontSize: '0.78rem', fontWeight: 700, color: P.green }}>
+          {open ? 'Hide' : 'Show'}
+        </span>
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 2px 4px' }}>
+          {/* Chips, not full-width rows: nine names cost ~3 wrapped lines at 390px instead of nine
+              44px rows, and each is still its own tap target INTO the planting record. Same
+              minWidth:0 + ellipsis treatment as Row/DormantList for an unbreakable long name. */}
+          {rows.map(row => (
+            <Link key={row.key} to={'/plantings/' + row.plantingId}
+              aria-label={row.name + ' — no feed schedule'}
+              style={{ display: 'inline-flex', alignItems: 'center', minHeight: 36, maxWidth: '100%',
+                padding: '6px 12px', borderRadius: 999, border: '1px solid ' + P.border,
+                backgroundColor: P.white, color: P.dark, fontSize: '0.8rem', textDecoration: 'none',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {row.name}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
