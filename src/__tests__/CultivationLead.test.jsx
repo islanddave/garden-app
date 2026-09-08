@@ -20,6 +20,13 @@
 // The fetch-error and pre-resolve cases are deliberately untouched: the first has a real negative
 // assertion, and the second asserts the pre-resolve state ON PURPOSE, so a resolve gate would
 // destroy what it exists to pin.
+//
+// AMENDED AGAIN, same day — the THREE seed-divert cases at the foot of the file carried the
+// identical defect and were left out of the first pass for headroom, not because they were sound.
+// Each now takes an in-payload control. Mutation-checked as a set by discarding the payload in
+// CultivationLead's `.then`: all three red, and none of them did before. The whole render suite is
+// now non-vacuous — every case that claims a resolved payload waits on content that only a resolved
+// payload can produce.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -253,15 +260,27 @@ describe('CultivationLead component', () => {
     expect(screen.getByTestId('cultivation-lead').textContent).toBe('Sow now')
   })
 
-  // V4-SEEDZEROVIEW-001 — the rendered half of the pure assertions above. Today must degrade to the
-  // bare door, not to an imperative to sow a packet Dave has none of.
-  it('degrades to the bare door when the only closing packet is empty', async () => {
-    fetchMock.mockResolvedValue({ items: [lettuce({ quantity_on_hand: 0 })] })
+  // V4-SEEDZEROVIEW-001 — the rendered half of the pure assertions above. Today must not raise an
+  // imperative to sow a packet Dave has none of.
+  //
+  // AMENDED 2026-09-08 — took an in-payload positive control, and with it the SAME TRADE the
+  // open-but-not-closing case above made: the payload is a mixed list now, so this case no longer
+  // stands in for the bare-door render and its name no longer says "only". Nothing is lost — the
+  // bare door is pinned by the empty-candidates case above, and the depletion divert is now PROVEN
+  // here rather than implied. It asserted `textContent === 'Sow now'` until today, a value the
+  // region holds before AND after resolve alike, so it stayed green with the payload discarded.
+  it('drops a depleted packet from the rendered lead', async () => {
+    fetchMock.mockResolvedValue({
+      items: [
+        lettuce({ quantity_on_hand: 0 }),          // subject — diverted to sowed_previously
+        lettuce({ variety_name: 'Closing Now' }),  // control — its line is the proof of processing
+      ],
+    })
     renderLead({ todayISO: TODAY })
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
+    await screen.findByText('Sow Closing Now by Aug 18.')
     const region = screen.getByTestId('cultivation-lead')
-    expect(region.textContent).toBe('Sow now')
-    expect(region.textContent).not.toMatch(/Winter Density/)
+    expect(region.textContent, 'Today told Dave to sow a packet with nothing in it')
+      .not.toMatch(/Winter Density/)
     expect(region.getAttribute('href')).toBe('/sow')
   })
 
@@ -280,23 +299,35 @@ describe('CultivationLead component', () => {
   // pin it rather than reporting it. Both diversions are covered, because they arrive by different
   // routes: seed_stage for a lot being processed, provenance-plus-zero for one never started.
 
-  it('a lot still drying does not put an imperative on Today', async () => {
-    fetchMock.mockResolvedValue({ items: [lettuce({ seed_stage: 'drying' })] })
+  it('a lot still drying earns no line of its own', async () => {
+    fetchMock.mockResolvedValue({
+      items: [
+        lettuce({ seed_stage: 'drying' }),         // subject — diverted by seed_stage
+        lettuce({ variety_name: 'Closing Now' }),  // control
+      ],
+    })
     renderLead({ todayISO: TODAY })
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
+    await screen.findByText('Sow Closing Now by Aug 18.')
     const region = screen.getByTestId('cultivation-lead')
-    expect(region.textContent).toBe('Sow now')
     expect(region.textContent, 'Today told Dave to sow seed that is still on a screen in the shed')
       .not.toMatch(/Winter Density/)
   })
 
   it('BUG-SEEDZEROSOWABLE-001 — nor does a lot saved today and not yet started', async () => {
     fetchMock.mockResolvedValue({
-      items: [lettuce({ quantity_on_hand: 0, seed_stage: null, source_plant_id: 'pl-1' })],
+      items: [
+        // subject — zero on hand AND provenance, the pair that routes it to the saved-seed divert
+        lettuce({ quantity_on_hand: 0, seed_stage: null, source_plant_id: 'pl-1' }),
+        lettuce({ variety_name: 'Closing Now' }),  // control
+      ],
     })
     renderLead({ todayISO: TODAY })
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates'))
-    expect(screen.getByTestId('cultivation-lead').textContent).toBe('Sow now')
+    await screen.findByText('Sow Closing Now by Aug 18.')
+    // This case carried NO absence assertion at all until 2026-09-08 — only `textContent ===
+    // 'Sow now'`, which the pre-resolve region also satisfies. It pinned nothing in either axis.
+    expect(screen.getByTestId('cultivation-lead').textContent,
+      'Today told Dave to sow a lot he saved today and has not started')
+      .not.toMatch(/Winter Density/)
   })
 
   it('but a STORED lot with seed in it is back on Today — the divert is not a one-way door', async () => {
@@ -317,13 +348,14 @@ describe('CultivationLead component', () => {
     // waiting on the content closes the gap the old gate left open, which is why this is a
     // strengthening rather than a loosening.
     //
-    // Its siblings above are immune to this for a reason worth knowing before you copy their shape:
-    // they assert 'Sow now', which is what the region holds BEFORE and AFTER resolve alike. That
-    // makes them un-flakeable AND vacuous-passable — each would stay green if the payload never
-    // arrived at all, so none of them actually proves its divert fires. Fixing that means giving them
-    // a positive control (a second, undiverted candidate whose line you wait for, then assert the
-    // diverted variety_name is absent), which is a redesign of what they pin rather than a
-    // synchronisation fix, so it is deliberately NOT bundled into this red-clearing change.
+    // Its siblings above WERE immune to this, and the reason was not a good one: they asserted
+    // 'Sow now', which is what the region holds BEFORE and AFTER resolve alike. That made them
+    // un-flakeable AND vacuous-passable — each would have stayed green if the payload never arrived,
+    // so none of them proved its divert fires. RESOLVED 2026-09-08: each took the positive control
+    // this note prescribed (a second, undiverted candidate whose line you wait for, then assert the
+    // diverted variety_name is absent), so they are now synchronised the same way this one is and
+    // are no longer immune — which is the point. Do not "simplify" any of them back to a bare
+    // `waitFor(fetch called)` gate; that is the exact shape that made them vacuous.
     fetchMock.mockResolvedValue({
       items: [lettuce({ seed_stage: 'stored', quantity_on_hand: 20, source_plant_id: 'pl-1' })],
     })
