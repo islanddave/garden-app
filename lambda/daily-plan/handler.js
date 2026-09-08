@@ -1266,6 +1266,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
   const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {}, wxDailyBySpace = {};
   const droughtBySpace = {};   // V5-LEGACYEXCEPTIONCARE-001 — its OWN series, unconditional; see below.
+  // V5-DROUGHTSPACE-001 — the drought line is a GARDEN-WIDE claim, so the denominator of its
+  // watering-reset rule must be the population the plan actually speaks for. Built from `plantings`
+  // (this run's own SELECT, already filtered to live/non-ended/non-planning) rather than from a second
+  // query, so the numerator and the denominator cannot drift apart into a mismatched fraction.
+  const popBySpace = {};
+  for (const p of plantings) (popBySpace[p.workspace_id] ||= new Set()).add(String(p.id));
+  // ONE read for every Space — the per-Space split is the set intersection below, not a second query.
+  // null = the read failed, which is NOT "he did not water" (see evaluateDrought's refusal branch).
+  const deepWaterRows = await drought.readDeepWaterDays(pg, drought.windowStart(today), prevPlanDate(today));
   for (const s of spaces) {
     let wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
     let hy = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
@@ -1313,12 +1322,21 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // The window ASKED FOR and the window RETURNED are different questions — evaluateDrought re-derives
     // its own coverage from the rows and refuses rather than counting a dry run over a short array.
     const _drSeries = await drought.readDroughtSeries(pg, s.id, drought.windowStart(today), prevPlanDate(today));
-    droughtBySpace[s.id] = drought.evaluateDrought(_drSeries, { asOfDate: prevPlanDate(today) });
+    // V5-DROUGHTSPACE-001 — the second reset source. Scoped and denominated by this Space's own plan
+    // population, so "a third of the garden" means a third of THIS garden.
+    const _drWater = drought.deepWaterResetDays(deepWaterRows, popBySpace[s.id]);
+    droughtBySpace[s.id] = drought.evaluateDrought(_drSeries, { asOfDate: prevPlanDate(today),
+      waterResetDays: _drWater.days, waterEventsUnavailable: _drWater.unavailable });
     // Emitted on EVERY run, firing or not — same discipline as 'frost-eval'. A signal that silently
     // reads `insufficient` every night (a gap in weather_daily, a failed read) must be visible in
     // CloudWatch, because "never fired" and "could never fire" are indistinguishable from the plan alone.
+    // The watering half carries its own numbers for the same reason: a reset rule that never fires, and
+    // one that fires every day, both look like silence from the plan row.
     console.log(JSON.stringify({ msg: 'drought-signal', space: s.id, plan_date: today,
-      rows: Array.isArray(_drSeries) ? _drSeries.length : null, ...droughtBySpace[s.id] }));
+      rows: Array.isArray(_drSeries) ? _drSeries.length : null, ...droughtBySpace[s.id],
+      water_population: _drWater.population, water_required: _drWater.required,
+      water_coverage: _drWater.coverage, water_reset_days: [..._drWater.days].sort(),
+      water_unavailable: _drWater.unavailable }));
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
   // DRG-WXSTATION-001 observability (V200 §3): one structured line per run — chosen source, recent value,
@@ -1448,6 +1466,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled,
       waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now(),
       droughtState: droughtBySpace[spaceId] || null });
+    // V5-DROUGHTSPACE-001 — the garden-wide line, computed ONCE per Space and written onto every user's
+    // row in it. null on every day the signal does not fire, which is what keeps the key absent.
+    const gardenDrought = drought.gardenDrought(droughtBySpace[spaceId] || null);
     // Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
     // types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings
     // already under cover are excluded (frostClass.summarize's covered filter).
@@ -1555,7 +1576,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
-          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...userPlan.tasks })]);
+          // V5-DROUGHTSPACE-001 `drought`: a SPACE-level key, spread CONDITIONALLY so a non-firing day
+          // writes a byte-identical row. Both users in a Space get the same object because it is a fact
+          // about the garden, not about a caretaker — which is exactly what makes it one line rather
+          // than a per-plant note. Additive on an existing row, read by name, so PLAN_SCHEMA_VERSION is
+          // NOT bumped: three reader Lambdas pin that literal and deploy in one unordered wave.
+          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...(gardenDrought ? { drought: gardenDrought } : {}), ...userPlan.tasks })]);
         // BUG-TODAYWATER-001: record yesterday's observed rain on yesterday's row. Fail-open (returns
         // false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final.
         await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId], stationProvBySpace[spaceId]);

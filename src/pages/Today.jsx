@@ -3,6 +3,7 @@ import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import WeatherCueLine from '../components/today/WeatherCueLine.jsx'
 import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
+import DroughtLine from '../components/today/DroughtLine.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
@@ -122,6 +123,15 @@ export default function Today() {
               because the freeze cue above already covers it. Renders nothing on a day with no
               advisory, and nothing for entries stored before the handler persisted lowF. */}
           <FrostAlertLine alertsSent={plan.alerts_sent} />
+
+          {/* V5-LEGACYEXCEPTIONCARE-001 — the garden-wide drought line. MOUNTED HERE DELIBERATELY:
+              without this one line the whole signal is inert — droughtSignal.js computes it, the
+              handler persists it and DroughtLine renders it, and nobody would ever see any of it.
+              That is this project's signature failure and it was caught in review, not in testing,
+              because every layer below passes its own tests while unmounted.
+              Below FrostAlertLine because frost is tonight and can kill; drought is a standing
+              condition measured over 20 days. Renders nothing unless the plan says `dry`. */}
+          <DroughtLine plan={plan} />
 
           {/* V4-TODAYHOLD-001 — Today is an ACTION surface: show the substrate/feeding note only
               when it is actionable. `substrate.on_hold` is true exactly when there are zero feed
