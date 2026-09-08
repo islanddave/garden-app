@@ -83,12 +83,43 @@ They are worth their own look. Do not fold them in by loosening the threshold �
   this guard becomes redundant for the case it was written for. **Re-evaluate it then** rather than
   leaving it as folklore.
 
-## The standing hazard this does not remove
+## The ratchet — what it writes, and a claim this file got wrong
 
-`harvest-weight-ratchet.yml` dispatched with `apply=true` writes learned figures **into** the curated
-layer. That would promote 42.55 g over 500 g permanently and destroy the reference this guard depends
-on. All three runs to date were scheduled and report-only, so the curated layer is intact — verified.
-**Do not dispatch it with `apply=true` until BD-007 lands.**
+**Corrected 2026-09-08.** An earlier version of this section said `harvest-weight-ratchet.yml`
+dispatched with `apply=true` "writes learned figures **into** the curated layer" and would "promote
+42.55 g over 500 g permanently and destroy the reference this guard depends on." **That is false.**
+It was inherited by citation from `design-dualharvest-V100` §4, which mis-described a script it cited
+by line number; the same wrong sentence also reached `BUG-SAMPLEPRODUCTBLEND-001`'s ledger row. The
+ratchet cannot reach the curated layer at all.
+
+**What it actually writes.** `scripts/harvest-weight-ratchet.sh` has exactly two write statements,
+both inside the `--apply` branch and both against `harvest_log`: a `CREATE TABLE :"snap" AS`
+pre-image snapshot of every in-scope row (`:248`), then `UPDATE public.harvest_log` setting
+`weight_grams`, `weight_estimated`, `weight_basis`, `updated_at` (`:261-269`). It re-derives those
+stored weights by calling `resolve_harvest_weight` — this function — rather than reimplementing the
+ladder, so it cannot drift from the live write path.
+
+**Why it cannot touch `unit_weights`.** `plant_varieties` and `crop_types` appear once each, at
+`:119-120`, as `LEFT JOIN`s supplying `ref_g` to the divergence scan (`:115-116`) — reads, and reads
+inside a `BEGIN TRANSACTION READ ONLY` (`:68`). `resolve_harvest_weight` is `LANGUAGE sql STABLE`
+(`0a-function.sql:20-21`), so it cannot execute DML on any path either. Nor is anything else
+automated writing that layer: `scripts/cal1/apply-measured-samples.mjs` and `gen-refweight-seed.mjs`
+*emit* their `UPDATE public.plant_varieties SET unit_weights=…` to stdout for a human to review and
+apply (`apply-measured-samples.mjs:83` writes the string, `:94` prints it), and migrations do the
+rest. The 500 g reference this guard depends on is safe from the ratchet **by construction**.
+
+**The real hazard, which is smaller and reversible.** `--apply` re-prices stored `harvest_log` rows
+through whatever resolver is live at the time — the workflow's own estimate is ~146 of 367 rows on
+the first run. Dispatched *before* this guard landed, it would have written the 42.55 g side-shoot
+blend into the broccoli rows in scope: stored numbers Dave reads, not the reference. With the guard
+live those same rows re-derive through the demotion and fall back to the curated reference instead.
+Either way the run snapshots first and prints its own undo `UPDATE` (`:272-273`), and it is
+fail-closed on an unreviewed outlier and on an oversized one-step total move — both exit 1 before the
+`--apply` branch is reached (`:219-233`).
+
+So dispatching with `apply=true` is still a deliberate decision rather than a routine one, per "Does
+not rewrite history" above — but it is a decision about `harvest_log`, not a threat to the reference
+layer, and nothing about it is gated on BD-007.
 
 ## Verification
 
