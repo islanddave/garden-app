@@ -123,6 +123,17 @@ describe('PhotoLibrary — the Untagged count', () => {
     mountWith([attachedToProject('d'), attachedToEvent('e')])
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
     await act(async () => { await Promise.resolve() })
+    // POSITIVE CONTROL, and without it this test cannot fail for the reason it exists.
+    // Its expected state — chip reading "Untagged", no count segment — is EXACTLY what the very next
+    // test asserts for the case where the list has NOT landed. So the two tests expect an identical
+    // observable for opposite conditions, which means waiting on the fetch SPY proves nothing: the
+    // spy is satisfied the moment the request is issued, not when its data arrives and renders.
+    // Two photos were served, so two cards must be on screen. That is the cheapest thing that is
+    // FALSE before the list lands and TRUE after — which is exactly what the chip assertions below
+    // cannot distinguish on their own. Assert the data arrived before asserting what it means.
+    // (The quicktag carousel would have been the neater control, but it does not render when there
+    // is nothing to tag — which is this test's whole premise.)
+    expect(screen.getAllByTestId('pl-photo-card')).toHaveLength(2)
     expect(chip().textContent).toBe('Untagged')
     expect(countSeg()).toBeNull()
   })
