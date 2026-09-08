@@ -12,7 +12,7 @@ import PhotoView from '../photo/PhotoView.jsx'
 import { TIER } from '../../lib/photoModel.js'
 import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
-  dormantRows, feedSuppressedRows, FEED_SUPPRESSED_LISTED,
+  dormantRows, feedSuppressedRows, FEED_SUPPRESSED_LISTED, droughtRows,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
 } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
@@ -630,6 +630,11 @@ export default function CareNeeded({ plan }) {
           needs care today, so it must render in the empty state too. */}
       <DormantList plan={plan} />
 
+      {/* Outside the ternary for the same reason, and BETWEEN the two: a drought note carries no
+          action (Dormant's Resume stays above it), but it is a passing weather condition rather than
+          a standing profile fact, so it leads the permanent "no feed schedule" list below. */}
+      <DroughtList plan={plan} />
+
       {/* Outside the ternary for the same reason, and BELOW Dormant: a dormant row carries an
           action (Resume), a feed-suppressed one carries none, so the actionable list stays higher. */}
       <FeedSuppressedList plan={plan} />
@@ -746,6 +751,49 @@ function DormantList({ plan }) {
               Resume
             </button>
           )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// V5-LEGACYEXCEPTIONCARE-001 — the drought signal on plantings held off calendar watering. Ambient,
+// like DormantList and RainNote, and that is the design rather than a style choice: "this plant is not
+// on calendar watering, and it has been dry" is CONTEXT, not a task. Their profile refuses interval
+// watering — that policy is unchanged and this list must never read as work to do, so there is no
+// card, no interrupt, no action and no log button on any row.
+//
+// ALWAYS EXPANDED, unlike FeedSuppressedList, which collapses because nine unchanging rows would cost
+// ~400px of Today every single day. This fires only while a space has actually gone 20+ days without a
+// deep soak — a handful of rows, during a drought, and hiding the day count behind a tap is most of
+// the way back to the signal being invisible, which is the whole defect this closes.
+//
+// Renders the reason the SELECTOR built (careNeeded.js droughtRows) rather than the engine's `reason`
+// string: that field is the suppression clause with the note concatenated onto it, and splitting a
+// joined sentence back apart is how the wording drifts. Numbers come off the structured `drought` key.
+function DroughtList({ plan }) {
+  const rows = useMemo(() => droughtRows(plan), [plan])
+  if (rows.length === 0) return null
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+      <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dry — no deep soak</h3>
+      <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
+        These aren’t on calendar watering, and it has been dry. Check the soil at root depth.
+      </div>
+      {rows.map(row => (
+        <div key={row.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 8, flexWrap: 'wrap', minHeight: 44 }}>
+          {/* Same name treatment as Row/DormantList: minWidth:0 + ellipsis is what keeps an
+              unbreakable long name from widening the page at 390px rather than shrinking. */}
+          <Link to={'/plantings/' + row.plantingId} style={{ fontSize: '0.85rem', color: P.dark,
+            textDecoration: 'none', flex: '1 1 auto', minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {row.name}
+          </Link>
+          {/* P.light, never a severity colour: gold means "needed today" everywhere else in this
+              component and this is the opposite claim. The text carries the whole signal (SC 1.4.1). */}
+          <span style={{ flex: '0 0 auto', fontSize: '0.78rem', color: P.light }}>{row.reason}</span>
         </div>
       ))}
     </div>
