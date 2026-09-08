@@ -1,7 +1,11 @@
 {
-  "version": "4.117.0",
+  "version": "4.118.0",
   "date": "2026-09-07",
   "highlights": [
-    "The rain gauge no longer counts yesterday's rainfall as today's on the morning after a storm — the station resets its daily counter a few minutes after midnight, and those minutes were being read as today's total."
+    "Photos page gains the same filtering and sorting as the Garden page",
+    "The Save-seed sheet lets you name which source a seed came from",
+    "Weather records five more daily quantities",
+    "Frost alerts were pointing at a notification topic that did not exist",
+    "A misidentified planting corrected — the Snapdragon is a Penstemon, and now has penstemon care"
   ]
 }

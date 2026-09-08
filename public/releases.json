@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.118.0",
+    "date": "2026-09-07",
+    "highlights": [
+      "Photos page gains the same filtering and sorting as the Garden page",
+      "The Save-seed sheet lets you name which source a seed came from",
+      "Weather records five more daily quantities",
+      "Frost alerts were pointing at a notification topic that did not exist",
+      "A misidentified planting corrected — the Snapdragon is a Penstemon, and now has penstemon care"
+    ]
+  },
+  {
     "version": "4.117.0",
     "date": "2026-09-07",
     "highlights": [
