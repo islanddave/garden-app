@@ -178,7 +178,27 @@ describe('S4 — the count assertion is VISIBLE, not just logged', () => {
       warning: '2 of 8 selected plantings could not be logged',
     }
     await renderReady()
+    // ROOT CAUSE, 2026-09-08 (BUG-LOGMANYS4FLAKE-001). THIS WAIT is the fix; the timeout never was.
+    //
+    // LogMany.jsx:585 renders the commit button `disabled={saving || committedCount === 0}`, and
+    // fireEvent.click on a DISABLED button is a silent no-op in jsdom — no handler, no POST, no
+    // `result`, so the success card never renders and the page stays in FORM state. renderReady()
+    // awaits only the "Review N plantings" heading, which paints BEFORE committedCount is populated.
+    // On a slow runner this test therefore clicked a dead button and then waited for a card that
+    // could never arrive. That is why three budget raises (5s -> 15s -> 30s) all failed: the race
+    // completes BEFORE the wait begins, so no timeout can reach it. The CI DOM dump still showing
+    // form state at 30s is the tell — 30s is not "slow", it is "never".
+    //
+    // Every PASSING commit path in this file already waits: pickAndCommit blocks until the button
+    // reads `Log watered on N`. S4 was the only one that skipped it, which is exactly why it was the
+    // only one that flaked.
+    await waitFor(() => {
+      const b = commitButtons()[0]
+      expect(b, 'commit button not rendered yet').toBeTruthy()
+      expect(b.disabled, 'commit button still disabled — committedCount is still 0').toBe(false)
+    })
     fireEvent.click(commitButtons()[0])
+    // HISTORICAL, kept because it records how the wrong theory looked from inside:
     // BUG-LOGMANYS4FLAKE-001: this one await, and only this one, outruns the global 5000ms
     // asyncUtilTimeout on a loaded CI runner — three data points on 2026-09-04 failed at 5064ms and
     // 5081ms, both within 100ms of the budget, with the DOM dump still showing the FORM state. Not
@@ -199,18 +219,20 @@ describe('S4 — the count assertion is VISIBLE, not just logged', () => {
     // seconds to paint under a loaded runner (BUG-LOGMANYS4FLAKE-001 names the suspect: LogMany
     // pulls the whole components/forms barrel), or move the assertion to a seam that does not need
     // the whole page. Raising again just buys a slower failure.
-    const el = await screen.findByTestId('logmany-partial-warning', {}, { timeout: 30000 })
+    // 15000, back INSIDE vitest's 20000ms default testTimeout. The 30000 that briefly stood here was
+    // unreachable — above the outer ceiling, so the test died with a bare "Test timed out" instead of
+    // naming the element it could not find, which is strictly less diagnosable. This budget is now
+    // headroom, not the mechanism: with the enabled-wait above, the card renders promptly.
+    const el = await screen.findByTestId('logmany-partial-warning', {}, { timeout: 15000 })
     expect(el.textContent).toMatch(/2 of 8 selected plantings could not be logged/)
     // Both numbers, so the user can see the shortfall without doing the subtraction.
     expect(el.textContent).toMatch(/6 of 8 were logged/)
     // It is the one thing on a success screen that is not success.
     expect(el.getAttribute('role')).toBe('alert')
-    // 45000 — the TEST's own timeout, and it has to sit ABOVE the findByTestId budget inside it.
-    // The first attempt at this raise moved only the inner wait (15000 -> 30000) and left this at
-    // vitest's 20000ms default, so the test died at 20s before the wait it was supposed to be
-    // waiting on could even expire: strictly worse than 15s, because the failure stopped naming the
-    // element it could not find. An inner budget above the outer ceiling is unreachable.
-  }, 45000)
+    // No custom test timeout: back to vitest's 20000ms default, with the 15000ms inner budget safely
+    // inside it. That ordering is the invariant — an inner wait above the outer ceiling can never
+    // fire, and reports a bare "Test timed out" instead of naming the element it could not find.
+  })
 
   it('a normal batch shows no warning at all — this is not a permanent scold', async () => {
     await renderReady()
