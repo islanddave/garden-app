@@ -108,10 +108,11 @@ describe('BottomNav — V3-IA layout', () => {
   // have to argue for itself here the same way this one did.
   //
   // V5-ADMINCENTER-001 — WHAT THIS ASSERTION NOW MEANS, CHANGED DELIBERATELY AND IN THE SAME COMMIT
-  // AS THE CODE THAT CHANGED IT. The order is user config (user_notification_prefs.nav_tabs) as of
-  // this row, and this suite renders <BottomNav /> with no PrefsProvider — so what is pinned below
-  // is no longer "the shipped bar" but "the bar the DEFAULT config renders", which is the same six
-  // slots and is what every unconfigured user, every failed prefs read and every offline boot gets.
+  // AS THE CODE THAT CHANGED IT. The order is INSTALLATION config (public.app_config key
+  // 'nav_tabs' — global, one order for the whole app per Dave's 2026-09-08 ruling), and this suite
+  // renders <BottomNav /> with no AppConfigProvider — so what is pinned below is no longer "the
+  // shipped bar" but "the bar the DEFAULT config renders", which is the same six slots and is what
+  // an unconfigured installation, a failed config read and an offline boot all get.
   //
   // THE CAP SURVIVES AS A CAP, which was the condition for making the nav configurable at all. It
   // just moved: the arity rule in resolveNavTabs() means the rendered bar is a permutation of the

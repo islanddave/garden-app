@@ -401,47 +401,13 @@ export async function saveHandedness({ getToken, value } = {}) {
   }
 }
 
-// V5-ADMINCENTER-001 — the nav tab ORDER, per user (user_notification_prefs.nav_tabs, jsonb).
-//
-// THE ONE WRITER ON THIS CLIENT THAT REPORTS ITS OUTCOME, and the deviation is deliberate. Every
-// other function in this file is fire-and-forget returning null-on-anything, which is correct for
-// them: the caller has already applied the change locally and a failed sync must cost the user
-// nothing. This one is the opposite — it is a user-initiated Save on a page whose ONLY job is that
-// write, and a save that silently reports nothing is a save that lies. So it returns a discriminated
-// result and the admin page renders what actually happened, including the 403 that means "the server
-// says you are not an admin".
-//
-// ⚠️ INERT UNTIL THE COLUMN LANDS — same posture as saveHandedness above, and for the same reason.
-// user_notification_prefs.nav_tabs does not exist yet (migrations/v5-admincenter-001 — AUTHORED, NOT
-// APPLIED to staging or prod), and the critter Lambda's HAS_UPDATABLE allowlist
-// (lambda/critter/validators.js:102) does not carry the key. Until BOTH land this PATCH returns 400
-// "no updatable fields present" and this function reports `{ ok: false, status: 400 }`, which the
-// page states plainly rather than claiming a save it did not make. `nav_tabs` is sent as the ONLY
-// key for exactly the reason saveHandedness gives: batching it with a live preference would carry
-// that preference into a request the server is about to reject whole.
-//
-// Validated client-side before the request as well as server-side after it. The client check is not
-// the security boundary — the Lambda's ADMIN_CLERK_SUBS gate is — it just refuses to spend a
-// round-trip on a payload the renderer would reject anyway.
-export async function saveNavTabs({ getToken, tabs } = {}) {
-  if (!CRITTER_BASE) return { ok: false, status: 0 }
-  if (!Array.isArray(tabs) || tabs.some(t => typeof t !== 'string')) return { ok: false, status: 0 }
-  try {
-    const token = await (typeof getToken === 'function' ? getToken() : null)
-    if (!token) return { ok: false, status: 401 }
-    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ nav_tabs: tabs }),
-    })
-    if (!res.ok) return { ok: false, status: res.status }
-    return { ok: true, prefs: await res.json().catch(() => null) }
-  } catch {
-    // status 0 is the house convention for "never reached the server" (api.js:284), kept so the
-    // page can distinguish a refusal from an outage.
-    return { ok: false, status: 0 }
-  }
-}
+// V5-ADMINCENTER-001 — saveNavTabs USED TO LIVE HERE and deliberately does not any more. It PATCHed
+// user_notification_prefs.nav_tabs, a per-user row; Dave ruled 2026-09-08 that the nav order is
+// GLOBAL, one order for the installation. It now lives in src/lib/appConfigClient.js over
+// public.app_config. Do not re-add a nav_tabs writer to this file: every function in it is per-user
+// because the table it writes is keyed by created_by, and that is the property the ruling turned on.
+// `nav_tabs` is likewise absent from the critter Lambda's HAS_UPDATABLE allowlist and must stay
+// absent — PATCH /api/notifications/prefs is the wrong door regardless of ordering.
 
 // V4-USERPREFS-001 (V4-WHATSNEW-002) — last-seen release version, per user.
 // whatsNew.js's header said cross-device sync was "deferred to V4-WHATSNEW-002"; this is it.

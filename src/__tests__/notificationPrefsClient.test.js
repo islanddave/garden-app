@@ -128,42 +128,17 @@ describe('notificationPrefsClient', () => {
     })
   })
 
-  // V5-ADMINCENTER-001 — the nav order writer. The ONE writer in this module that reports its
-  // outcome instead of collapsing everything to null: it backs a user-initiated Save, and the page
-  // has to be able to tell a refusal (403 — not an admin) from an outage from the 400 that means
-  // the column is not live yet.
-  describe('saveNavTabs', () => {
-    it('PATCHes nav_tabs as the ONLY key', async () => {
-      const mod = await loadModule('https://staging.example.com')
-      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
-      const res = await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: ['garden', 'today'] })
-      expect(res.ok).toBe(true)
-      const [url, init] = global.fetch.mock.calls[0]
-      expect(url).toBe('https://staging.example.com/api/notifications/prefs')
-      expect(init.method).toBe('PATCH')
-      // Alone, for the reason saveHandedness sends handedness alone: batching it with a live
-      // preference would carry that preference into a request the server rejects whole.
-      expect(JSON.parse(init.body)).toEqual({ nav_tabs: ['garden', 'today'] })
-    })
-
-    it('reports the refusal status rather than a bare null', async () => {
-      const mod = await loadModule('https://staging.example.com')
-      global.fetch.mockResolvedValueOnce({ ok: false, status: 403 })
-      expect(await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: ['today'] })).toEqual({ ok: false, status: 403 })
-    })
-
-    it('reports status 0 — never reached the server — on a network failure, and NEVER throws', async () => {
-      const mod = await loadModule('https://staging.example.com')
-      global.fetch.mockRejectedValueOnce(new Error('offline'))
-      expect(await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: ['today'] })).toEqual({ ok: false, status: 0 })
-    })
-
-    it('refuses a payload that is not a list of strings without spending a round trip', async () => {
-      const mod = await loadModule('https://staging.example.com')
-      expect((await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: 'today' })).ok).toBe(false)
-      expect((await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: [1, 2] })).ok).toBe(false)
-      expect(global.fetch).not.toHaveBeenCalled()
-    })
+  // V5-ADMINCENTER-001 — saveNavTabs USED TO LIVE HERE and its tests moved with it to
+  // src/__tests__/appConfigClient.test.js. Dave ruled 2026-09-08 that the nav order is GLOBAL, so it
+  // is no longer a user_notification_prefs write at all. This assertion is what stops it coming back
+  // by habit: every writer in this module is per-user because the table is keyed by created_by.
+  it('exports no nav_tabs writer — that scope belongs to appConfigClient', async () => {
+    const mod = await loadModule('https://staging.example.com')
+    expect(mod.saveNavTabs).toBeUndefined()
+    // Anti-vacuity: the module still loads and still exports its per-user writers, so the assertion
+    // above is about one missing export and not about a failed import.
+    expect(typeof mod.fetchNotificationPrefs).toBe('function')
+    expect(typeof mod.patchNotificationPrefs).toBe('function')
   })
 
   describe('patchNotificationPrefs', () => {

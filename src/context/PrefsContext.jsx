@@ -2,30 +2,29 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, u
 import { useAuth } from './AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { fetchNotificationPrefs } from '../lib/notificationPrefsClient.js'
-import { TAB_REGISTRY, resolveNavTabs } from '../lib/navConfig.js'
 
-// PrefsContext — V5-ADMINCENTER-001. The app-level read of user_notification_prefs.
+// PrefsContext — V5-ADMINCENTER-001. The app-level, once-at-boot read of user_notification_prefs.
 // Design: project-state/design-admincentre-V100-20260908.md §3, §4.
 //
-// WHY A PROVIDER AND NOT ANOTHER fetch(). GET /api/notifications/prefs is already this app's
-// per-user cross-device preference store (~10 columns of pure UI state live on it), so nav config
-// belongs there rather than behind a new endpoint — a new Lambda costs a measured ~1.7s cold start
-// plus a 167-696ms handshake on an origin that CANNOT be preconnected, because the preconnect budget
-// is closed at four and bootPaint.static.test.js asserts the set (warmOrigins.js:57-62). The prefs
-// origin is the SAME function BottomNavDot already calls on mount, so this read adds zero
-// connections. What it must not add is another uncoordinated request: dedup lives in
-// fetchNotificationPrefs itself (single flight), so this provider's boot read JOINS whatever the
-// eight existing callers have already started rather than becoming a ninth.
+// PER-USER, AND ONLY PER-USER. This provider held useNavTabs until Dave ruled on 2026-09-08 that the
+// nav order is GLOBAL — one order for the installation, not one per person. The nav config moved to
+// AppConfigContext over public.app_config; user_notification_prefs is keyed by created_by and cannot
+// express an installation-wide fact. Do not route a global setting back through here: the table's
+// key is the reason, not convention.
 //
-// "READ ONCE AT BOOT, EFFECTIVE ON REFRESH" — the row's own words, and both halves are satisfied
-// structurally. Once at boot: this effect, keyed on identity. On refresh: sw.js:258-262 routes
-// Lambda-origin GETs networkFirst with a 12s bound, so a config change is picked up on the next cold
-// start with nothing further to build. Note the trap recorded in the design (§4) so nobody re-opens
-// it: an installed PWA has no reliable refresh TRIGGER for a change that does not move
-// __APP_VERSION__, so a config edit takes effect the next time the app starts, not on a prompt. That
-// is fine for nav layout and must not be generalised to config whose staleness would be harmful.
-// `refreshPrefs` exists so the admin centre can re-read immediately after its own save; it is a
-// deliberate second read on one surface, not a poll.
+// WHY A PROVIDER AND NOT ANOTHER fetch(). GET /api/notifications/prefs is this app's per-user
+// cross-device preference store (~10 columns of pure UI state live on it) and it had EIGHT
+// independent callers each fetching on their own mount, three of them in the same frame on /today —
+// inside the boot window three consecutive perf rows were spent clearing, against a measured 1,706ms
+// cold start (warmOrigins.js:3-5). Dedup lives in fetchNotificationPrefs itself (single flight), so
+// this provider's boot read JOINS whatever those callers have already started rather than becoming a
+// ninth. That collapse is a net improvement to the boot path, which is why the provider pays for
+// itself independently of the row that introduced it.
+//
+// "READ ONCE AT BOOT, EFFECTIVE ON REFRESH" — both halves satisfied structurally. Once at boot: this
+// effect, keyed on identity. On refresh: sw.js:258-262 routes Lambda-origin GETs networkFirst with a
+// 12s bound. `refreshPrefs` exists so a surface can re-read immediately after its own save; it is a
+// deliberate second read, not a poll.
 const DEFAULT = { prefs: null, prefsLoaded: false, refreshPrefs: async () => null }
 const PrefsContext = createContext(DEFAULT)
 
@@ -75,15 +74,4 @@ export function PrefsProvider({ children }) {
 // is the correct answer anyway — no config means the shipped bar.
 export function usePrefs() {
   return useContext(PrefsContext)
-}
-
-// useNavTabs — the tab bar's rows, config-ordered. Returns tab OBJECTS in render order.
-//
-// Every failure mode collapses to one branch: null prefs, a missing column, a failed GET, an offline
-// boot and a malformed value all resolve to DEFAULT_NAV_TABS inside resolveNavTabs. That is why
-// BottomNav needs no loading state — it renders the shipped bar until config says otherwise, which
-// is also what it renders if config never arrives.
-export function useNavTabs() {
-  const { prefs } = usePrefs()
-  return useMemo(() => resolveNavTabs(prefs?.nav_tabs).map(k => TAB_REGISTRY[k]), [prefs])
 }

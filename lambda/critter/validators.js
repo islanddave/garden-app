@@ -105,6 +105,105 @@ export function validatePrefsPatchBody(body) {
   return null
 }
 
+// ─── /api/app-config — GLOBAL, installation-wide config (V5-ADMINCENTER-001) ───────────────────
+//
+// A DIFFERENT SCOPE FROM EVERYTHING ABOVE, and that is the whole reason it is a separate route
+// rather than another key on validatePrefsPatchBody. Dave ruled 2026-09-08 that nav_tabs is GLOBAL —
+// one nav order for the installation, not one per person. Every other validator in this file guards
+// a write to public.user_notification_prefs, which is keyed by created_by and cannot express an
+// installation-wide fact. `nav_tabs` is deliberately NOT in HAS_UPDATABLE at the top of this file
+// and must not be added there: that route is the wrong door regardless of ordering.
+//
+// The store is public.app_config (key text PK | value jsonb | updated_at), which already existed in
+// live prod — created 2026-04-23 in the Supabase era, 0 rows, 0 code references until this row. No
+// DDL was written for this feature. Its RLS policies are already global (any authenticated caller
+// may read AND write), so RLS cannot express the admin restriction — which is the structural reason
+// the gate below is mandatory rather than defence-in-depth.
+
+// The write-side key allowlist. An unrecognised key 400s BEFORE any SQL is built, which is the
+// safety property V101 §3 identified as load-bearing: the guard is the allowlist, not the storage.
+export const APP_CONFIG_KEYS = ['nav_tabs']
+
+// The shipped tab vocabulary. Byte-identical to DEFAULT_NAV_TABS in src/lib/navConfig.js, which is
+// the client's copy and the renderer's authority; appConfig.parity.test.js asserts the two agree, in
+// the house pattern critterSpecies.parity.test.js established for the same class of duplication.
+export const NAV_TAB_KEYS = ['today', 'garden', 'create', 'harvests', 'put-up']
+
+// The allowlist, parsed at CALL TIME rather than cached at module init — so a Lambda config change
+// takes effect on the next invocation instead of on the next cold start.
+function adminSubs(env) {
+  return (env?.ADMIN_CLERK_SUBS ?? '').split(',').map(s => s.trim()).filter(Boolean)
+}
+
+// Fail-CLOSED admin gate. Unset/empty ADMIN_CLERK_SUBS -> nobody is admin -> 403 for everyone,
+// including Dave. That is the safe failure and it will look like a bug: ADMIN_CLERK_SUBS is
+// per-function Lambda runtime config, so this function needs the var set ON IT (it is set on
+// facebook-share, projects, tags and ux-events, and was never set here) before the gate admits
+// anyone. Copied from lambda/tags/validate.js:56-60 rather than reinvented — four Lambdas, one
+// idiom, and this is the fifth.
+export function isAdmin(userId, env) {
+  const subs = adminSubs(env)
+  return subs.length > 0 && subs.includes(userId)
+}
+
+// The refusal, split in two the way lambda/projects/index.js:598-605 splits it: "not configured" and
+// "not you" are different operational facts and collapsing them costs a deploy-debugging session.
+// Built ON isAdmin rather than beside it — a second copy of the split-and-trim would be a redundant
+// suppression that hides a mutation in the first.
+export function adminRefusal(userId, env) {
+  if (adminSubs(env).length === 0) return { status: 403, error: 'Admin route not configured' }
+  if (!isAdmin(userId, env)) return { status: 403, error: 'Not authorized' }
+  return null
+}
+
+// The GET's row -> response projection. EXTRACTED SO IT CAN BE TESTED: importing
+// lambda/critter/index.js is impossible in this suite (its Lambda runtime deps are deliberately not
+// installed), so a projection left inline there would be asserted by nothing.
+//
+// NO ROW = SHIPPED DEFAULT, made explicit here rather than implied. Every allowlisted key is
+// reported — absent ones as null — so the client sees "unset" rather than a key simply missing from
+// the object, and resolveNavTabs maps null to the shipped bar. app_config has zero rows in prod, so
+// "never configured" is already the natural state and no seeding row is needed or wanted.
+export function projectAppConfig(rows) {
+  const out = Object.fromEntries(APP_CONFIG_KEYS.map(k => [k, null]))
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (APP_CONFIG_KEYS.includes(r?.key)) out[r.key] = r.value ?? null
+  }
+  return out
+}
+
+// PATCH /api/app-config body validator.
+//
+// GUARD ORDER MIRRORS resolveNavTabs (src/lib/navConfig.js) DELIBERATELY — array, then vocabulary,
+// then duplicate, then arity. Two enforcement points on one contract, the same shape today_skipped
+// carries above: this one turns a bad write into a 400 the admin page can state, and the client
+// resolver is the total renderer that cannot be bypassed by a hand-written database row. There is no
+// third point: app_config is a generic k/v table and a nav_tabs-specific CHECK would be the wrong
+// shape on it.
+//
+// V1 IS REORDER-ONLY, enforced here as a permutation rule. A short array (including []) is a hide
+// attempt and a long one is an add; both are refused whole rather than partly applied. Hiding a tab
+// removes the only door to a page — the defect class DebugMenu.reachability.test.jsx exists to
+// catch, arriving by another route — and the hide-vs-reorder question is still Dave's (design §7).
+export function validateAppConfigPatchBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { status: 400, error: 'body required' }
+  const unknown = Object.keys(body).filter(k => !APP_CONFIG_KEYS.includes(k))
+  if (unknown.length > 0) return { status: 400, error: `unknown config key: ${unknown.join(', ')}` }
+  if (body.nav_tabs === undefined) return { status: 400, error: 'no updatable fields present' }
+  const tabs = body.nav_tabs
+  if (!Array.isArray(tabs)) return { status: 400, error: 'nav_tabs must be an array of tab keys' }
+  // Membership also rejects non-string entries (numbers, nulls, nested objects), so a separate
+  // typeof pass would be a redundant suppression hiding mutations in this one.
+  if (tabs.some(k => !NAV_TAB_KEYS.includes(k))) {
+    return { status: 400, error: `nav_tabs entries must be one of: ${NAV_TAB_KEYS.join(', ')}` }
+  }
+  if (new Set(tabs).size !== tabs.length) return { status: 400, error: 'nav_tabs must not repeat a tab' }
+  if (tabs.length !== NAV_TAB_KEYS.length) {
+    return { status: 400, error: `nav_tabs must list all ${NAV_TAB_KEYS.length} tabs — v1 is reorder-only` }
+  }
+  return null
+}
+
 // PATCH /api/critters/species-prefs body validator (D-INV-1 Option A)
 export function validateSpeciesPrefsPatchBody(body) {
   if (!body || typeof body !== 'object') return { status: 400, error: 'body required' }

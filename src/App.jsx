@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from '
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { FavoritesProvider } from './context/FavoritesContext.jsx'
 import { PrefsProvider } from './context/PrefsContext.jsx'
+import { AppConfigProvider } from './context/AppConfigContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
 import TopChrome from './components/TopChrome.jsx'
@@ -507,16 +508,23 @@ export default function App() {
           and every route, and moving it would change nothing except the diff. */}
       <SplashScreen />
       <ModeProvider>
-        {/* V5-ADMINCENTER-001 — the once-at-boot read of user_notification_prefs, sibling of
-            FavoritesProvider because it is the same shape of thing: one app-level fetch replacing a
-            per-consumer fan-out. Inside FavoritesProvider rather than outside for no reason beyond
-            diff size; the two are independent and neither reads the other. It needs AuthProvider
-            above it (identity keys the read) and nothing below it. */}
+        {/* V5-ADMINCENTER-001 — two once-at-boot reads, siblings of FavoritesProvider because they
+            are the same shape of thing: one app-level fetch replacing a per-consumer fan-out. Both
+            need AuthProvider above them (identity keys the read) and nothing below them.
+
+            TWO PROVIDERS, NOT ONE, BECAUSE THEY ARE TWO SCOPES. PrefsProvider reads
+            user_notification_prefs (per-user, keyed by created_by); AppConfigProvider reads
+            app_config (global, keyed by `key` alone — one nav order for the installation, per Dave's
+            2026-09-08 ruling). They are independent, neither reads the other, and the nesting order
+            between them carries no meaning. Merging them would give one provider two scopes, which
+            is the category error that ruling exists to prevent. */}
         <FavoritesProvider>
           <PrefsProvider>
-            <ToastProvider>
-              <AppRoutes />
-            </ToastProvider>
+            <AppConfigProvider>
+              <ToastProvider>
+                <AppRoutes />
+              </ToastProvider>
+            </AppConfigProvider>
           </PrefsProvider>
         </FavoritesProvider>
       </ModeProvider>
