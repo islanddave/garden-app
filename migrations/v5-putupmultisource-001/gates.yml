@@ -1,0 +1,429 @@
+# gates.yml
+# V5-PUTUPMULTISOURCE-001 — BD-058. One new table, preservation_source. No change to preservation_log.
+#
+# ── SEQUENCING: MIGRATION FIRST, THEN THE CODE ───────────────────────────────────────────────────
+#   1. STAGING: pre -> sweep -> apply 0a -> post -> rehearse 0r -> re-apply 0a -> post.
+#   2. PROD:    pre -> sweep -> apply 0a -> post.
+#   3. THEN promote the release carrying the /api/preservation/:id/sources routes. Within that
+#      release the LAMBDA half is the only half that touches this table; there is no frontend
+#      dependency in this cut, so there is no picker-before-API window to order.
+#
+#   THE ORDERING IS REQUIRED BUT NOT DELICATE, and the difference matters when judging risk.
+#   Required: handler SQL naming preservation_source before the table exists raises 42P01 on every
+#   sources request. Not delicate: this migration adds NOTHING to preservation_log, so every
+#   pre-existing put-up route — create, edit, mark-used, whats-put-up, use-soon, the batch close —
+#   is byte-for-byte unaffected in both orderings. Contrast v4-putupprov-001, whose header had to
+#   warn that a new Lambda against a column-less prod would kill every existing write while reads
+#   kept working. Nothing here can produce that state.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── WHY EVERY post GATE BELOW IS SELF-ARMING ─────────────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and
+#   .github/workflows/gate-invariants.yml runs `gate_runner.py --all --phase post --continuous-only`
+#   against LIVE PROD AND LIVE STAGING on every migrations/** push, with no skip-if-unapplied logic
+#   anywhere. A naive `post_table_exists` therefore goes red the moment this directory reaches the
+#   branch and stays red until Dave applies it — reddening the workflow for every OTHER migration
+#   too. That is not hypothetical; it is what v5-inflightbatch-001's first push did.
+#
+#   THE SHAPE, inherited verbatim from v5-inflightbatch-001/gates.yml: each gate returns rows only
+#   when the migration IS applied AND the invariant is violated. Vacuously true before the apply,
+#   asserting for real and permanently afterwards, with no follow-up edit to forget. It cannot rot
+#   into permanent vacuity because 0a writes the schema_version row in the SAME transaction as the
+#   DDL — "applied" and "armed" are one event — and post_schema_version_recorded proves it landed.
+#
+#   ⚠ NO `::regclass` ANYWHERE BELOW. A regclass cast is evaluated even under a false WHERE, so
+#   `'public.preservation_source'::regclass` would ERROR on an unapplied database rather than
+#   returning zero rows — turning a vacuous gate into a hard failure and defeating the arming. The
+#   catalog joins are longer and they are the reason this works.
+#
+# ── WHAT THESE GATES DO NOT COVER, stated so the coverage is not overread ────────────────────────
+#   * They cannot see the ordinal-0 CACHE INVARIANT, which is the load-bearing half of the design's
+#     "no parent change" decision (0a header D1). "The parent's source columns mirror the ordinal-0
+#     child" is maintained by the handler, is asserted in lambda/preservation/putUpSources.test.js
+#     and sourceRoutes.test.js, and no SQL gate here can reach it. If that invariant is ever broken
+#     by a writer, the parent's own chk_preservation_log_source_plant is the backstop that fires.
+#   * They cannot see the JavaScript vocabularies. The eight source kinds and four grades are
+#     mirrored in the handler; putUpSources.test.js text-reads them out of THIS DDL and asserts set
+#     equality, which is where that coupling is caught.
+#   * post_ps_no_rows is correct ONLY until the feature is used once. It is a pre-first-use apply
+#     receipt, and is the one gate here marked `continuous: false` for that reason.
+
+pre:
+  # The parent must exist and must be untouched by this migration. If preservation_log is missing,
+  # something is very wrong and the FK would fail anyway — fail early with a readable name.
+  - name: pre_preservation_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: rowcount_eq
+    value: 1
+
+  # Both FK targets for the internal-provenance columns.
+  - name: pre_harvest_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='harvest_log'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_plants_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_table_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_source'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='5.0.0-putupmultisource-001'
+    expect: rowcount_eq
+    value: 0
+
+  # D1's premise, checked rather than assumed. The whole "no parent change" decision rests on
+  # chk_preservation_log_source_plant being present and correct BEFORE this runs — because this
+  # migration keeps it in force rather than dropping it as V100 §9.2 proposed. If a prior session
+  # already dropped it, the cache-semantics argument in the 0a header no longer describes reality
+  # and the design must be re-read before applying.
+  - name: pre_parent_source_plant_check_in_force
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_source_plant' AND convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # The parent's 8-value source vocabulary is what D7 copies verbatim. If it has widened since, this
+  # DDL's list is stale and the two would silently disagree.
+  - name: pre_parent_source_kind_vocab_is_eight
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_source_kind'
+         AND pg_get_constraintdef(oid) LIKE '%own_garden%'
+         AND pg_get_constraintdef(oid) LIKE '%u_pick%'
+         AND pg_get_constraintdef(oid) LIKE '%farm_stand%'
+         AND pg_get_constraintdef(oid) LIKE '%csa%'
+         AND pg_get_constraintdef(oid) LIKE '%store%'
+         AND pg_get_constraintdef(oid) LIKE '%gift%'
+         AND pg_get_constraintdef(oid) LIKE '%foraged%'
+         AND pg_get_constraintdef(oid) LIKE '%other%'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # No name collision on any object this DDL creates. A pre-existing index of the same name on a
+  # different table would make CREATE INDEX IF NOT EXISTS a silent no-op and leave the read path
+  # unindexed with every gate still green.
+  - name: sweep_no_index_name_collisions
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public'
+         AND indexname IN ('idx_ps_parent','uq_ps_parent_ordinal','idx_ps_plant','idx_ps_harvest')
+    expect: rowcount_eq
+    value: 0
+
+  # Same for the constraint names. ADD CONSTRAINT is guarded by a NOT EXISTS lookup that is keyed on
+  # conname ALONE and is not scoped to a table, so a same-named constraint anywhere in the database
+  # would make the guard skip a constraint this table needs.
+  - name: sweep_no_constraint_name_collisions
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_ps_source_kind','chk_ps_provenance_grade','chk_ps_label_nonblank',
+                         'chk_ps_label_len','chk_ps_source_label_nonblank','chk_ps_source_label_len',
+                         'chk_ps_garden_only','chk_ps_qty_pairing','chk_ps_qty_positive',
+                         'chk_ps_qty_unit','chk_ps_ordinal_nonneg')
+    expect: rowcount_eq
+    value: 0
+
+  # THE CROSS-DIRECTORY GATE THIS CHANGE COULD HAVE TRIPPED, run BEFORE the apply so its post-apply
+  # reading has a baseline. v4-evtanchordel-001/gates.yml carries post_no_setnull_fk_inside_an_
+  # anchor_check as a continuous WHOLE-CLASS assertion over every table in public: zero SET NULL FK
+  # columns may appear in a CHECK whose definition matches '%IS NOT NULL) OR %'. This migration adds
+  # two SET NULL FKs (plant_id, harvest_log_id). It stays out of the class because chk_ps_garden_only
+  # is written as "... OR (plant_id IS NULL AND harvest_log_id IS NULL)". Establish the class is
+  # empty first, so a post-apply non-zero is unambiguously ours.
+  - name: sweep_setnull_anchor_class_empty_before
+    sql: |
+      WITH setnull_fk AS (
+        SELECT c.conrelid AS reloid, unnest(c.conkey) AS attnum
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         WHERE c.contype = 'f' AND c.confdeltype IN ('n','d')
+      ), anchor_check AS (
+        SELECT c.conrelid AS reloid, unnest(c.conkey) AS attnum
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         WHERE c.contype = 'c'
+           AND (pg_get_constraintdef(c.oid) LIKE '%IS NOT NULL) OR %'
+                OR pg_get_constraintdef(c.oid) LIKE '%IS NOT NULL))::integer%')
+      )
+      SELECT 1 FROM setnull_fk f
+        JOIN anchor_check k ON k.reloid = f.reloid AND k.attnum = f.attnum
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # SELF-ARMING, EVERY ONE EXCEPT THE LAST. See the header block for why that is a house authoring
+  # requirement rather than a style choice.
+
+  # ARMED ON THE DDL, NOT ON ITSELF, and the distinction is the whole reason this gate works.
+  # Guarding "the version row exists" with "the version row exists" is circular, so the obvious
+  # form cannot self-arm and returns FAIL against an unapplied database — which is exactly what the
+  # first draft of this file did when run with `--phase post` before the apply. Guarding it with
+  # "the TABLE exists" is not circular. v5-inflightbatch-001 reached the same fix on 2026-09-04 after
+  # shipping this gate as `continuous: false` and discovering that --continuous-only SKIPS it, so the
+  # one gate meant to stop every other gate rotting into vacuity was the one the sweep never ran.
+  # A skipped gate reads exactly like a passing one.
+  # 0a writes the DDL and the row in ONE transaction, so a violation here means someone hand-applied
+  # the DDL or deleted the row — precisely the state that would silence every EXISTS-guarded gate
+  # below. Catalog join, not ::regclass.
+  - name: post_schema_version_recorded
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'preservation_source')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-putupmultisource-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_table_exists
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.tables
+                          WHERE table_schema='public' AND table_name='preservation_source')
+    expect: rowcount_eq
+    value: 0
+
+  # D2, THE KEYSTONE, asserted as schema rather than as intent. If display_label ever becomes
+  # nullable, the identity rule is gone and the 23514 deferral blocker is back — silently, because
+  # nothing else would fail until a planting was deleted.
+  - name: post_display_label_not_null
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='preservation_source'
+                            AND column_name='display_label' AND is_nullable='NO')
+    expect: rowcount_eq
+    value: 0
+
+  # D3. provenance_grade must be NOT NULL for the same reason: a nullable grade is a derivable grade,
+  # and derivation is exactly what loses "he knew, and the planting is gone".
+  - name: post_provenance_grade_not_null
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='preservation_source'
+                            AND column_name='provenance_grade' AND is_nullable='NO')
+    expect: rowcount_eq
+    value: 0
+
+  # D2 AS A CLASS, LOCAL COPY. No CHECK on this table may reference a column an FK can null, except
+  # chk_ps_garden_only in its SET NULL-safe form. This is the assertion that stops a future edit from
+  # reintroducing the 2026-08-24 chk_ps_identified shape. Matched on the same substring
+  # v4-evtanchordel-001's whole-class gate matches on, restricted to this table, so the two agree by
+  # construction rather than by someone remembering the other exists.
+  - name: post_ps_not_a_setnull_anchor_offender
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND EXISTS (
+           WITH setnull_fk AS (
+             SELECT c.conrelid AS reloid, unnest(c.conkey) AS attnum
+               FROM pg_constraint c
+               JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
+               JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+              WHERE c.contype = 'f' AND c.confdeltype IN ('n','d')
+                AND t.relname = 'preservation_source'
+           ), anchor_check AS (
+             SELECT c.conrelid AS reloid, unnest(c.conkey) AS attnum
+               FROM pg_constraint c
+               JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
+               JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+              WHERE c.contype = 'c' AND t.relname = 'preservation_source'
+                AND (pg_get_constraintdef(c.oid) LIKE '%IS NOT NULL) OR %'
+                     OR pg_get_constraintdef(c.oid) LIKE '%IS NOT NULL))::integer%')
+           )
+           SELECT 1 FROM setnull_fk f
+             JOIN anchor_check k ON k.reloid = f.reloid AND k.attnum = f.attnum
+         )
+    expect: rowcount_eq
+    value: 0
+
+  # D5. Both internal pointers must be SET NULL ('n'). If either were made RESTRICT, deleting a
+  # planting or a pick would abort on a jar's provenance row — the lock D2 was designed to prevent,
+  # arrived at from the other side.
+  - name: post_internal_fks_are_setnull
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND (SELECT count(*) FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname='public'
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+               WHERE t.relname='preservation_source' AND c.contype='f'
+                 AND c.confdeltype='n'
+                 AND a.attname IN ('plant_id','harvest_log_id')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  # D4. The parent FK is CASCADE ('c'). Asserted because the choice diverges from V100 §7.1 on
+  # measured grounds (the app soft-deletes; only test teardown hard-deletes) and a silent revert to
+  # NO ACTION would 23503 the integration suites' teardown rather than this feature.
+  - name: post_parent_fk_is_cascade
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname='public'
+                           JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+                          WHERE t.relname='preservation_source' AND c.contype='f'
+                            AND a.attname='preservation_log_id' AND c.confdeltype='c')
+    expect: rowcount_eq
+    value: 0
+
+  # D9. The partial unique index is what makes "the parent caches the ordinal-0 row" a statement
+  # about ONE row. Without it the cache has no well-defined referent and D1's argument for leaving
+  # preservation_log alone collapses.
+  - name: post_ordinal_unique_index_present
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_indexes
+                          WHERE schemaname='public' AND tablename='preservation_source'
+                            AND indexname='uq_ps_parent_ordinal'
+                            AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%deleted_at IS NULL%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_read_indexes_present
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND (SELECT count(*) FROM pg_indexes
+               WHERE schemaname='public' AND tablename='preservation_source'
+                 AND indexname IN ('idx_ps_parent','idx_ps_plant','idx_ps_harvest')) <> 3
+    expect: rowcount_eq
+    value: 0
+
+  # Bare conname existence passes on a permanently-NOT VALID constraint. All eleven must be validated.
+  - name: post_all_checks_validated
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('chk_ps_source_kind','chk_ps_provenance_grade','chk_ps_label_nonblank',
+                                 'chk_ps_label_len','chk_ps_source_label_nonblank','chk_ps_source_label_len',
+                                 'chk_ps_garden_only','chk_ps_qty_pairing','chk_ps_qty_positive',
+                                 'chk_ps_qty_unit','chk_ps_ordinal_nonneg')
+                 AND convalidated) <> 11
+    expect: rowcount_eq
+    value: 0
+
+  # D6. NO TRIGGERS. Specifically not prevent_ownership_transfer, whose body reads OLD.created_by
+  # while this table's owner column is user_id — attaching it would raise 42703 on every UPDATE and
+  # be invisible to the mock-sql suites, which is exactly how BUG-KBOWNERTRIGGER-001 shipped.
+  - name: post_no_triggers_attached
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND EXISTS (SELECT 1 FROM pg_trigger g
+                       JOIN pg_class t ON t.oid = g.tgrelid
+                       JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname='public'
+                      WHERE t.relname='preservation_source' AND NOT g.tgisinternal)
+    expect: rowcount_eq
+    value: 0
+
+  # D1, THE WHOLE POINT, asserted from the other side: preservation_log gained nothing. Its column
+  # count is pinned at 25 by v4-putupprov-001/gates.yml post_column_count_is_25 — a continuous gate
+  # in a directory this change does not own, and one whose own comment records that three sessions
+  # have already failed to maintain it. Re-asserted HERE so the coupling is visible from the change
+  # that had to respect it, rather than only from the change that created it.
+  - name: post_parent_column_count_unchanged
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='preservation_log') <> 25
+    expect: rowcount_eq
+    value: 0
+
+  # D1 again: the constraint V100 §9.2 would have dropped is still here and still validated. A green
+  # post_parent_column_count_unchanged with this dropped would mean the parent was relaxed by some
+  # other route.
+  - name: post_parent_source_plant_check_survives
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-putupmultisource-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint
+                          WHERE conname='chk_preservation_log_source_plant' AND convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # ── THERE IS DELIBERATELY NO ROW-LEVEL POST GATE, and the reason is mechanical, not a judgement ──
+  #
+  # EVERY post gate above is CATALOG-ONLY. That is forced, not stylistic: a gate that SELECTs from
+  # preservation_source cannot be made self-arming by any guard, because Postgres resolves relation
+  # names at PARSE time and raises 42P01 before a WHERE or an EXISTS is ever evaluated. Measured on
+  # PG 17.10 (2026-09-07), the fully-guarded form
+  #
+  #   SELECT 1 WHERE EXISTS (…pg_class lookup for preservation_source…)
+  #              AND (SELECT count(*) FROM public.preservation_source) > 0
+  #
+  # still errors `relation "public.preservation_source" does not exist` on an unapplied database.
+  # This is the same mechanism the ::regclass warning in the header describes, arriving by a
+  # different route, and it means the "vacuous before apply" trick works for catalog assertions and
+  # for those ONLY. A data invariant on a new table has nowhere safe to live until the table exists
+  # everywhere it will be checked. v5-inflightbatch-001's post block is catalog-only for the same
+  # reason; its one row-level assertion is a `sweep`, run against the pre-apply database.
+  #
+  # WHAT THAT LEAVES UNGATED, named so the coverage is not overread: "user_id on a source row matches
+  # its parent's" and "at most one live ordinal-0 row per jar" are both real invariants. The second
+  # is enforced structurally by uq_ps_parent_ordinal (gated above). The first is a handler invariant
+  # and is asserted in lambda/preservation/sourceRoutes.test.js instead.
+  #
+  # The rollback WINDOW check — `SELECT count(*) FROM public.preservation_source` must be 0 before
+  # 0r is safe — is NOT here either. An earlier draft had it as a `continuous: false` post gate,
+  # which was wrong three ways: it errored pre-apply (above), --continuous-only skips it so the
+  # standing sweep would never run it, and it is BY DESIGN false the moment Dave records his first
+  # multi-source jar. A gate designed to stop being true is not a gate. It lives in
+  # 0r-rollback.sql's header, as a manual verify step, which is where a manual Dave-gated procedure
+  # belongs.

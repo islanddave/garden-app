@@ -20,6 +20,10 @@ import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.j
 // cannot be. See that file's header.
 import { handleKitchenRoute } from './kitchenRoutes.js';
 import { kitchenErrorMessage } from './kitchenBatch.js';
+// V5-PUTUPMULTISOURCE-001 — /api/preservation/:id/sources lives in its own importable module for
+// the same reason the kitchen routes do: this file loads @neondatabase/serverless and
+// @clerk/backend at module scope and therefore cannot be imported by vitest.
+import { handleSourceRoute, sourceErrorMessage } from './sourceRoutes.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -531,6 +535,22 @@ export const handler = async (event) => {
     });
     if (kitchen) return resp(kitchen.status, kitchen.body);
 
+    // ── /api/preservation/:id/sources (V5-PUTUPMULTISOURCE-001), delegated whole. ──
+    // Placed HERE, above the literal sub-routes, and it is safe there because parseSourceRoute
+    // matches ONLY /api/preservation/{uuid}/sources — the uuid shape is part of the pattern, so
+    // '/api/preservation/whats-put-up/sources' returns null from it and falls through to the
+    // existing handling rather than being claimed. Same null-for-not-mine contract as the kitchen
+    // delegation above, and the same argument object, deliberately.
+    const sources = await handleSourceRoute({
+      sql,
+      rawPath,
+      method,
+      rawBody: event.body,
+      userId,
+      householdIds,
+    });
+    if (sources) return resp(sources.status, sources.body);
+
     // ── Literal sub-routes, checked BEFORE /api/preservation/:id so 'whats-put-up' / 'use-soon'
     //    are not mis-parsed as a row id (mirrors the inventory-items SEEDINV precedent). ──
 
@@ -898,6 +918,11 @@ export const handler = async (event) => {
     // is chk_preservation_log_one_provenance, which only the batch close-out route can violate.
     const kitchenMsg = kitchenErrorMessage(err);
     if (kitchenMsg) return resp(400, { error: kitchenMsg });
+    // V5-PUTUPMULTISOURCE-001: the preservation_source CHECKs, given words. Same null-for-not-mine
+    // contract, and it cannot shadow the kitchen mapper above or the two putupprov mappings below —
+    // its constraint names are all chk_ps_* and share no spelling with either set.
+    const sourceMsg = sourceErrorMessage(err);
+    if (sourceMsg) return resp(400, { error: sourceMsg });
     // 42P01 = relation missing, the OTHER half of the 42703 case below and the expected failure in the
     // window this feature's sequencing creates: old schema + new Lambda 500s on every batch route.
     // Without this the operator gets a bare "Internal server error" during exactly that window.

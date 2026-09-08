@@ -459,6 +459,22 @@ const NOT_IN_SITES = [
   // full-replace preservation PUT cannot reach it either (lambda/preservation/kitchen-batch-id-guard
   // .test.js). Same class as photos::featured_photo_id above.
   'preservation::batch_id',
+  // preservation_log_id — NOT BODY-SETTABLE, V5-PUTUPMULTISOURCE-001. Every write of it is
+  // `${putUp.id}` where `putUp` is the row returned by sourceRoutes.js's loadOwnedPutUp, whose
+  // predicate is `id = <route param> AND user_id = ANY(householdIds) AND deleted_at IS NULL` and
+  // which returns null — answered as a bare 404 — for absent, malformed, out-of-household and
+  // soft-deleted alike. The route param is the ONLY origin for the value; the request body is read
+  // exclusively for the `sources` array, and normalizeSourceRows' allowlist (PS_WRITABLE_COLUMNS in
+  // putUpSources.js) does not contain this column, so a caller-supplied `preservation_log_id` inside
+  // a source row is dropped before the INSERT is built rather than silently honoured. Same class as
+  // preservation::batch_id and photos::featured_photo_id above: the id is the ROUTE's, and its
+  // household ownership was proven by a pre-read before any statement was constructed.
+  // Asserted by EXECUTION, not by a static call-site scan: lambda/preservation/sourceRoutes.test.js
+  // runs both verbs against a mock driver and asserts the household array is BOUND on the ownership
+  // read, that a STRANGER household 404s, and — the ownership case a single-owner fixture cannot
+  // reach — that the INSERT copies user_id from the PARENT row rather than from the caller, so one
+  // household member editing another's jar cannot re-own its sources.
+  'preservation::preservation_log_id',
   // ── The id being READ, not written: a `WHERE id = ${...}` inside the SET-clause slice, or the
   //    handler's own row id / route param. Nothing crosses a household boundary. ──
   // photos::photo_id is NO LONGER read-only as of W-DEL: photoDelete.js NULLs plant_varieties.photo_id
