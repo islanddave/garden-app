@@ -811,6 +811,37 @@ async function readAlertsSent(pg, userId, planDate) {
   }
 }
 
+// BUG-FROSTALERTNOAPP-001 — the WHEN and HOW COLD, persisted so a client can word the alert.
+//
+// Until now an alerts_sent entry carried key/tier/level/at only. Every one of those is about the
+// NOTIFICATION; none is about the weather, so the app could at best have said "an advisory was sent
+// at 11:27pm" — which raises the question it cannot answer. frostEval already computes both facts
+// and they were being discarded one line later.
+//
+// WHY THIS IS NOT REDUNDANT WITH THE WEATHER CUE ON TODAY, which does render a freeze line: the cue
+// keys on `weather.tonightLow` and speaks ONLY about tonight, while an advisory is the coldest night
+// in the D1..D3 window (frostEval evalAdvisory). They are different nights. Measured: on 2026-09-07
+// the stored plan had tonightLow 55 and callout NULL — Today said nothing — and an advisory fired
+// anyway, because a night inside the window was <= 40F. The lead time IS the advisory's whole value
+// and it had no surface at all.
+//
+// `dayOffset` is 0 for an imminent (tonight) alert and 1..3 for an advisory, matching the offsets
+// advisoryMessage already words as "tomorrow night" / "in N days" — same vocabulary, so the SNS text
+// and the in-app line cannot drift apart.
+function frostWeatherFacts(d) {
+  if (!d) return {};
+  if (d.tier === 'imminent') {
+    const lowF = d.imminentGlobal ? d.imminentGlobal.lowF : null;
+    return lowF == null ? {} : { lowF, dayOffset: 0 };
+  }
+  if (d.tier === 'advisory' && d.advisory) {
+    const { minLowF, dayOffset, date } = d.advisory;
+    if (minLowF == null) return {};
+    return { lowF: minLowF, ...(dayOffset != null ? { dayOffset } : {}), ...(date ? { date } : {}) };
+  }
+  return {};   // heat carries no low; its cue is already on Today (computeCallout high >= 88)
+}
+
 // SNS Subject is email-only (SMS ignores it) and is capped at 100 ASCII chars with no newlines, so it is
 // built separately from the message body rather than sliced off it.
 function frostSubject(d) {
@@ -1471,7 +1502,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
               try {
                 await publishAlert({ topic: 'frost', subject: frostSubject(frostDecision), message: frostDecision.message });
                 frostPublished.add(dk);
-                alertsSent = [...alertsSent, { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString() }].slice(-ALERTS_SENT_MAX);
+                alertsSent = [...alertsSent, { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), ...frostWeatherFacts(frostDecision) }].slice(-ALERTS_SENT_MAX);
                 console.log(JSON.stringify({ msg: 'frost alert PUBLISHED', space: spaceId, user: user_id, dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level }));
               } catch (e) {
                 // §3-7: a swallowed frost alert is the failure mode this feature exists to prevent. Log at
@@ -1556,7 +1587,7 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   return { dryRun, today, ping: !!(event && event.ping === true), flagOverrides };
 }
 
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX,
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, frostWeatherFacts, ALERTS_SENT_MAX,
   writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS,
   readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS, sweepSupersededAnchors,
   COVER_INHERIT_CTE, COVER_INHERIT_JOIN, COVER_INHERIT_ARM,

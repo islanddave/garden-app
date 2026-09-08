@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import WeatherCueLine from '../components/today/WeatherCueLine.jsx'
+import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
@@ -111,6 +112,16 @@ export default function Today() {
               is not. Directly under the weather card because it is a weather statement; deliberately
               NOT in the gold/warn family — see the component header. */}
           <WeatherCueLine callout={plan.weather?.callout} generatedAt={data?.generated_at} planDate={data?.plan_date} />
+
+          {/* BUG-FROSTALERTNOAPP-001 — the frost ADVISORY the engine already texted, which had no
+              surface here at all. Directly under the cue because they are both weather statements
+              and the order is deliberate: the cue speaks about TONIGHT, this speaks about the
+              coldest night in the next three, so tonight-then-ahead is the reading order. It is not
+              a second copy of the cue — an advisory can never refer to tonight (evalAdvisory's
+              dayOffset starts at 1), and the imminent tier, which does, is excluded precisely
+              because the freeze cue above already covers it. Renders nothing on a day with no
+              advisory, and nothing for entries stored before the handler persisted lowF. */}
+          <FrostAlertLine alertsSent={plan.alerts_sent} />
 
           {/* V4-TODAYHOLD-001 — Today is an ACTION surface: show the substrate/feeding note only
               when it is actionable. `substrate.on_hold` is true exactly when there are zero feed
