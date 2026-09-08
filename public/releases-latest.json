@@ -1,7 +1,7 @@
 {
-  "version": "4.123.0",
+  "version": "4.124.0",
   "date": "2026-09-08",
   "highlights": [
-    "The Snap menu is in a new order, with the photo choices you use most at the top. The first option is still called \"Update a photo\"."
+    "Internal: the nav tab order can now be set from a new Admin page (Debug & smoke → Admin config). The setting does not save yet — the database column is authored but not applied — and the page says so."
   ]
 }
