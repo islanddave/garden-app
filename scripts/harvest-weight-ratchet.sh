@@ -43,6 +43,8 @@
 #   2 = ERROR (input/DB unusable)
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 : "${DATABASE_URL:?DATABASE_URL required}"
 ACK_FILE="${ACK_FILE:-scripts/harvest-weight-ratchet-ack.json}"
 OUT="${OUT:-harvest-ratchet-report.json}"
@@ -191,45 +193,25 @@ REPORT="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAt \
   || { echo "FATAL: analysis query failed" >&2; exit 2; }
 
 echo "$REPORT" > "$OUT"
-python3 - "$OUT" <<'PY'
-import json, sys
-r = json.load(open(sys.argv[1]))
-print(f"  rows in scope : {r['rows_in_scope']}")
-print(f"  rows changed  : {r['rows_changed']}   demotions: {r['demotions']}")
-print(f"  total grams   : {r['old_total_g']} -> {r['new_total_g']}  ({r['total_change_pct']}%)")
-print(f"  basis after   : {r['basis_composition_after']}")
-for o in r['unreviewed_outliers']:
-    print(f"  OUTLIER {o['name']} ({o['unit']}): {o['sample_g']}g vs ref {o['reference_g']}g "
-          f"= {o['ratio']}x  n={o['sample_n']} {o['confidence']}  id={o['cultivar_id']}")
-# Advisory, not blocking. These cannot propagate a factor the outlier scan above has not already
-# seen; they say the CONFIDENCE behind a propagating factor rests on less evidence than n implies.
-for d in r.get('degenerate_promoted', []):
-    print(f"  ONE-RATIO {d['name']} ({d['unit']}): {d['sample_g']}g from {d['sample_n']} row(s) / "
-          f"{d['independent_n']} independent observation(s), all identical — {d['confidence']}")
-for x in r.get('crossunit_suspects', []):
-    print(f"  CROSS-UNIT {x['name']}: {x['grams_per_unit']}g per unit on {x['date']} logged under "
-          f"BOTH {x['units']} — one weighing, two units. Void the wrong one "
-          f"(cultivar_weight_void); do not merge.")
-PY
 
+# ── Verdict. Written INTO the report first, returned as an exit code second. ───────────────────────
+#
+# OPS-RATCHETREPORTDARK-001. This was four inline python one-liners whose only durable output was
+# $?, so the artifact described the data without ever recording what the job had DECIDED about it.
+# The runs of 2026-08-24, 08-31 and 09-07 each blocked correctly, each uploaded a complete report,
+# and together read as three weeks of silence — because the one bit that leaves the Actions UI, the
+# run conclusion, is owned by enforcement and cannot tell "a factor needs your judgement" apart from
+# "the job is broken". harvest_ratchet_verdict.py now writes status/alerts[]/warnings[] into the
+# report in integrity-weekly's shape, so the finding survives in the artifact, the step summary and
+# the log independently of the exit code. The BLOCK is unchanged: same two conditions, same exit 1,
+# same nothing-written — it is now a consequence of the report rather than its only carrier.
 BLOCK=0
-N_OUT="$(python3 -c "import json;print(len(json.load(open('$OUT'))['unreviewed_outliers']))")"
-DROP="$(python3 -c "import json;print(json.load(open('$OUT'))['total_change_pct'])")"
+python3 "$HERE/harvest_ratchet_verdict.py" \
+  "$OUT" "$OUTLIER_FACTOR" "$MAX_TOTAL_DROP_PCT" "$ACK_FILE" || BLOCK=$?
+# Anything other than 0/1 means the verdict itself failed, which is an ERROR, never a quiet pass.
+[ "$BLOCK" -le 1 ] || { echo "FATAL: report writer failed (rc=$BLOCK)" >&2; exit 2; }
 
-if [ "$N_OUT" -gt 0 ]; then
-  echo "ALERT: $N_OUT promoted cultivar factor(s) diverge from their reference by more than ${OUTLIER_FACTOR}x and are unreviewed." >&2
-  echo "  These are the factors resolve_harvest_weight will USE. Review each, then either correct the" >&2
-  echo "  samples (void-don't-edit: cultivar_weight_void) or add the cultivar id to $ACK_FILE." >&2
-  BLOCK=1
-fi
-if python3 -c "import sys;sys.exit(0 if float('$DROP') < -float('$MAX_TOTAL_DROP_PCT') else 1)"; then
-  echo "ALERT: applying would move the stored harvest total by ${DROP}% in one step (limit ${MAX_TOTAL_DROP_PCT}%)." >&2
-  echo "  A single large drop is the reward-inversion failure this guard exists to prevent. Decide" >&2
-  echo "  deliberately: calibrate the catalogue first, or re-run with MAX_TOTAL_DROP_PCT raised." >&2
-  BLOCK=1
-fi
-
-if [ "$BLOCK" -eq 1 ]; then echo "BLOCKED — nothing written." >&2; exit 1; fi
+if [ "$BLOCK" -eq 1 ]; then echo "BLOCKED — nothing written. See .alerts[] in $OUT." >&2; exit 1; fi
 if [ "$APPLY" -eq 0 ]; then echo "DRY RUN — nothing written. Pass --apply to propagate."; exit 0; fi
 
 # ── Apply. Same CTE shape as 0c so the two cannot drift. ──────────────────────────────────────────
