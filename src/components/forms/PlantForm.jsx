@@ -116,6 +116,13 @@ export default function PlantForm({
           value={v.variety}
           onChange={(variety) => set({ variety })}
           placeholder="Search or create a variety…"
+          // BUG-VARIETYGENUSUI-001 — the ONE host that gets the create-stage Genus/Species inputs.
+          // This is the re-key surface: the user is standing over the plant, correcting what it is
+          // (Snapdragon -> Penstemon, 2026-09-07), which is the moment botanical identity is both
+          // known and load-bearing. The other four pickers (Put-Up, AddSeeds, InventoryAdd,
+          // SaveSeedSheet) are transcription flows — a jar label or a seed packet — where the crop
+          // and cultivar are what the user has and a genus box is two more fields to skip past.
+          allowIdentity
         />
       </Field>
 

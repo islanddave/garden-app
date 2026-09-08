@@ -5,6 +5,7 @@
 //   value:           variety object or null (current selection — parent state)
 //   onChange:        (variety|null) => void
 //   allowCreate:     boolean (default true) — show "Create '<query>'" footer
+//   allowIdentity:   boolean (default FALSE) — offer Genus/Species inputs on the create stage
 //   speciesFilter:   string|undefined — restrict create payload to this species
 //   required:        boolean — adds aria-required, shows red error border if blank on blur
 //   disabled:        boolean
@@ -51,6 +52,13 @@ const LIFECYCLE_OPTIONS = [
 // truncation is now VISIBLE (footer below) so a capped list can never again read as "that's all".
 const MAX_RESULTS = 200
 
+// BUG-VARIETYGENUSUI-001 — mirrors the caps in lambda/varieties/validate.js. Duplicated for the same
+// reason LIFECYCLE_OPTIONS is (src/ must not reach into lambda/); the server re-validates, so a drift
+// here is a 400, never a bad row. Client-side they buy an error the user can fix in place instead of
+// a round-trip that discards the typing.
+const GENUS_MAX = 120
+const SPECIES_MAX = 200
+
 // V4-CROPTYPEREACH-001 — crop-chooser row indices. Module scope, not component scope, because the
 // highlight-reset effect below reads them and runs before the component body's own consts would be
 // in scope. Row 0 is the MINT row (see the chooser render for why it moved to the top).
@@ -61,6 +69,12 @@ export default function VarietyPicker({
   value = null,
   onChange,
   allowCreate = true,
+  // BUG-VARIETYGENUSUI-001 — Genus/Species inputs on the create stage. Default OFF: this component is
+  // the app's only variety-create surface and is rendered by five hosts, so two unconditional inputs
+  // would land in a Put-Up jar log and a seed-packet transcription as well as the one flow where they
+  // belong. ON only where the user is looking at the plant (PlantForm — the re-key path). The edit
+  // form (forms/VarietyEditor.jsx) has carried both since 2026-08-07; only CREATE was missing them.
+  allowIdentity = false,
   speciesFilter,
   // Optional crop scoping (V4-HARVESTCENTER-001): when set, only varieties of that crop_type_slug
   // are offered — e.g. Put-Up picks "pepper" so you choose Jalapeño vs Habanero, not all 398.
@@ -91,6 +105,11 @@ export default function VarietyPicker({
   // plant with no matching type could only be saved as "No crop type" — which drops it out of
   // every type-grouped view (the reason this was reprioritised).
   const [createStage, setCreateStage] = useState(null)
+  // Botanical identity for the in-flight create (allowIdentity only). Lives beside the crop chooser
+  // rather than on its own stage: picking a crop row IS the commit, so anything the create should
+  // carry has to be typed before that tap.
+  const [newGenus, setNewGenus] = useState('')
+  const [newSpecies, setNewSpecies] = useState('')
   const [newCropName, setNewCropName] = useState('')
   const [newCropCategory, setNewCropCategory] = useState('')
   const [newCropLifecycle, setNewCropLifecycle] = useState('')
@@ -294,6 +313,8 @@ export default function VarietyPicker({
     setQuery('')
     setCreateErr(null)
     setCreateStage(null)
+    setNewGenus('')
+    setNewSpecies('')
     setTouched(true)
   }, [onChange])
 
@@ -309,10 +330,25 @@ export default function VarietyPicker({
     // Remember the chosen crop so a 409 "Create anyway" re-submits with the same type.
     if (!allowDuplicate) pendingCropRef.current = { slug: cropSlug, lifecycle: cropLifecycle }
     const crop = allowDuplicate ? pendingCropRef.current : { slug: cropSlug, lifecycle: cropLifecycle }
+    // BUG-VARIETYGENUSUI-001. Blank -> the key is OMITTED, never sent as '': the POST binds
+    // `body.genus ?? null`, so an empty string would store '' in a column whose absence means
+    // "unknown" — and validate.js refuses it anyway. Only read when allowIdentity is on, so a host
+    // that never renders the inputs cannot ship stale state from a previous mount.
+    const genus = allowIdentity ? newGenus.trim() : ''
+    const species = allowIdentity ? newSpecies.trim() : ''
+    // Mirror of the server caps. Checked here so the user gets the message with their typing still on
+    // screen; maxLength on the inputs stops this being reachable by hand, not by paste or by voice.
+    if (genus.length > GENUS_MAX) { setCreateErr(`Genus must be ${GENUS_MAX} characters or fewer.`); return }
+    if (species.length > SPECIES_MAX) { setCreateErr(`Species must be ${SPECIES_MAX} characters or fewer.`); return }
     setCreating(true)
     setCreateErr(null)
     const payload = { name }
-    if (speciesFilter) payload.species = speciesFilter
+    // A typed species beats the speciesFilter prop: the prop is a LIST SCOPE the host set, the typed
+    // value came from the person holding the plant. No host sets both today (speciesFilter has zero
+    // call sites), so this only fixes the precedence before someone hits it.
+    const speciesOut = species || speciesFilter
+    if (speciesOut) payload.species = speciesOut
+    if (genus) payload.genus = genus
     if (crop.slug) {
       payload.crop_type_slug = crop.slug
       if (crop.lifecycle) payload.lifecycle = crop.lifecycle
@@ -329,14 +365,22 @@ export default function VarietyPicker({
     }
     selectVariety(res.variety)
     setConflict(null)
-  }, [query, speciesFilter, createVariety, selectVariety])
+  }, [query, speciesFilter, allowIdentity, newGenus, newSpecies, createVariety, selectVariety])
 
   // Commit to creating a new variety: enter the crop-type chooser, or (no vocab) create directly.
   // Highlight starts on NO_CROP_ROW, not on the mint row: the mint is placed first for REACHABILITY,
   // and defaulting the highlight onto it would turn a stray Enter into an accidental crop type.
   const beginCreate = useCallback(() => {
-    if (cropTypes.length > 0) { setCropFilter(''); setCreateStage('crop'); setHighlight(NO_CROP_ROW) }
-    else submitCreate(false)
+    // The identity clears live in THIS branch, not above the if: the else branch submits synchronously
+    // and would read the pre-clear values off the closure, not the '' just queued. It can only ever
+    // carry '' anyway (the inputs render on the crop stage alone), so scoping them here is both
+    // correct and honest about where the state can exist.
+    if (cropTypes.length > 0) {
+      // Each create attempt starts with an empty identity: these describe THIS name, and carrying them
+      // over from an abandoned create would silently mislabel the next one.
+      setNewGenus(''); setNewSpecies('')
+      setCropFilter(''); setCreateStage('crop'); setHighlight(NO_CROP_ROW)
+    } else submitCreate(false)
   }, [cropTypes.length, submitCreate])
 
   // Open the mint-a-crop-type form. Deliberately does NOT prefill from `query`: `query` is the
@@ -721,6 +765,46 @@ export default function VarietyPicker({
           <div style={cropHeaderRow} aria-hidden="true">
             Crop type for <strong>"{query.trim()}"</strong>
           </div>
+          {/* BUG-VARIETYGENUSUI-001 — botanical identity, ABOVE the list on purpose. Picking a crop
+              row commits the create, so anything typed below it would never be reached; the same
+              below-the-fold geometry is how Kousa Dogwood landed untyped (see the mint row's note).
+              One two-up row, not two stacked fields: at 390px this panel already carries a header, a
+              filter and a 232px scrollport, and the whole point of the ticket is a control the user
+              can SEE, so a <details> disclosure would re-create the discoverability failure it fixes.
+              Escape/arrows are deliberately NOT bound here — these are free-text fields, and stealing
+              their keys would make the genus box un-typeable. */}
+          {allowIdentity && (
+            <div style={identityRow} data-testid="variety-identity-fields">
+              <div style={{ flex: 1 }}>
+                <label style={fieldLabelStyle} htmlFor={`${listboxId}-genus`}>Genus</label>
+                <input
+                  id={`${listboxId}-genus`}
+                  type="text"
+                  value={newGenus}
+                  onChange={e => { setNewGenus(e.target.value); setCreateErr(null) }}
+                  maxLength={GENUS_MAX}
+                  placeholder="e.g. Penstemon"
+                  style={inputStyle(false, false)}
+                  autoComplete="off"
+                  autoCapitalize="words"
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={fieldLabelStyle} htmlFor={`${listboxId}-species`}>Species</label>
+                <input
+                  id={`${listboxId}-species`}
+                  type="text"
+                  value={newSpecies}
+                  onChange={e => { setNewSpecies(e.target.value); setCreateErr(null) }}
+                  maxLength={SPECIES_MAX}
+                  placeholder="e.g. digitalis"
+                  style={inputStyle(false, false)}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                />
+              </div>
+            </div>
+          )}
           <div style={cropFilterRow}>
             <input
               ref={cropFilterRef}
@@ -745,7 +829,12 @@ export default function VarietyPicker({
           <ul
             id={listboxId}
             role="listbox"
-            style={cropListStyle}
+            // The identity row costs ~78px of panel height, so the scrollport gives most of it back:
+            // this panel is absolutely positioned under the field on a 390px phone, and letting it
+            // grow by a third would push the crop rows off the bottom on the one host that shows the
+            // row. Neither reachability mechanism is touched — the mint row is still row 0, and the
+            // filter above is still how you reach the other 141.
+            style={allowIdentity ? { ...cropListStyle, maxHeight: 176 } : cropListStyle}
             onMouseDown={e => e.preventDefault() /* keep focus where it is */}
           >
             {/* The mint row is FIRST. It is the only row that cannot be reached any other way —
@@ -1044,6 +1133,17 @@ const cropPanelStyle = {
 }
 
 const cropFilterRow = {
+  padding: '8px 10px',
+  borderBottom: `1px solid ${P.border}`,
+  backgroundColor: P.white,
+}
+
+// BUG-VARIETYGENUSUI-001 — the Genus/Species pair, two-up. Same geometry as the mint panel's
+// Category/Lifecycle row (flex, gap 8) rather than a new pattern, and the same padding as the filter
+// row below it so the two read as one stacked header block.
+const identityRow = {
+  display: 'flex',
+  gap: 8,
   padding: '8px 10px',
   borderBottom: `1px solid ${P.border}`,
   backgroundColor: P.white,

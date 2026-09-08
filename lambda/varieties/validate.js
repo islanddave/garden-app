@@ -82,6 +82,21 @@ export function validateBody(body, { requireName = true } = {}) {
   // different questions: only the first is optional on a partial update.
   if (requireName && body.name == null) return 'name is required';
   if (body.name != null && (typeof body.name !== 'string' || !body.name.trim())) return 'name cannot be blank';
+  // BUG-VARIETYGENUSUI-001 — the botanical identity pair. Unchecked free text until now, which was
+  // survivable only because nothing but an agent ever wrote them; the VarietyPicker create stage now
+  // takes both from a human, so they get the same shape check every other user-typed string gets.
+  // Same guard shape as crop_type_slug below (non-empty string or null) plus a cap: BLANK is refused
+  // rather than stored, because `clear` is the channel for emptying these (CLEARABLE_FIELDS above)
+  // and a '' genus reads as "set" to every consumer while meaning nothing. The caps are far above
+  // any real binomial — they exist to stop a pasted paragraph landing in a column crop-derive.js
+  // substring-matches (beanType), not to police taxonomy — and are deliberately loose enough that no
+  // existing row can become un-editable on PUT.
+  for (const [k, cap] of [['genus', 120], ['species', 200]]) {
+    if (body[k] != null) {
+      if (typeof body[k] !== 'string' || !body[k].trim()) return `${k} must be a non-empty string or null`;
+      if (body[k].length > cap) return `${k} must be <= ${cap} characters`;
+    }
+  }
   if (body.sun_requirements != null && !VALID_SUN.includes(body.sun_requirements)) {
     return `sun_requirements must be one of: ${VALID_SUN.join(', ')}`;
   }

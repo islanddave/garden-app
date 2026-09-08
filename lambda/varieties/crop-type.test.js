@@ -60,6 +60,47 @@ describe('validateBody — PLANTTYPE fields', () => {
   });
 });
 
+// BUG-VARIETYGENUSUI-001 — genus/species had NO validateBody branch at all before this change: both
+// columns were unchecked free text on POST and PUT, which was tolerable only while nothing but an
+// agent wrote them. The VarietyPicker create stage now takes both from a human.
+describe('validateBody — botanical identity (BUG-VARIETYGENUSUI-001)', () => {
+  it('accepts a genus/species pair', () => {
+    expect(validateBody({ name: 'Mystic Spires', genus: 'Salvia', species: 'longispicata' })).toBeNull();
+  });
+  it('accepts them absent or explicitly null (both stay optional)', () => {
+    expect(validateBody({ name: 'Mystery' })).toBeNull();
+    expect(validateBody({ name: 'Mystery', genus: null, species: null })).toBeNull();
+  });
+  it('accepts a full binomial in species — the column is free text, not an epithet field', () => {
+    // 380/512 live rows carry species and many hold the whole binomial; a validator that only took
+    // an epithet would make those rows un-saveable through the editor.
+    expect(validateBody({ name: 'Genovese', species: 'Ocimum basilicum var. thyrsiflora' })).toBeNull();
+  });
+  it('rejects blank/whitespace rather than storing an empty string', () => {
+    // `clear` is the channel for emptying these. '' would read as "set" to every consumer.
+    expect(validateBody({ name: 'X', genus: '' })).toMatch(/genus must be a non-empty string/);
+    expect(validateBody({ name: 'X', genus: '   ' })).toMatch(/genus must be a non-empty string/);
+    expect(validateBody({ name: 'X', species: '' })).toMatch(/species must be a non-empty string/);
+  });
+  it('rejects non-strings', () => {
+    expect(validateBody({ name: 'X', genus: 42 })).toMatch(/genus must be a non-empty string/);
+    expect(validateBody({ name: 'X', species: ['Solanum'] })).toMatch(/species must be a non-empty string/);
+  });
+  it('caps length — the guard is against a pasted paragraph, not against taxonomy', () => {
+    expect(validateBody({ name: 'X', genus: 'A'.repeat(120) })).toBeNull();
+    expect(validateBody({ name: 'X', genus: 'A'.repeat(121) })).toMatch(/genus must be <= 120 characters/);
+    expect(validateBody({ name: 'X', species: 'A'.repeat(200) })).toBeNull();
+    expect(validateBody({ name: 'X', species: 'A'.repeat(201) })).toMatch(/species must be <= 200 characters/);
+  });
+  it('runs on the PUT shape too (requireName:false)', () => {
+    // The edit form has exposed both since 2026-08-07 and reaches validateBody by this door; a guard
+    // that only ran on create would leave the older, more-used path unchecked (the BUG-BLANKNAME-001
+    // shape, where one flag silently disabled a check on the PUT).
+    expect(validateBody({ genus: '' }, { requireName: false })).toMatch(/genus must be a non-empty string/);
+    expect(validateBody({ genus: 'Cornus', species: 'kousa' }, { requireName: false })).toBeNull();
+  });
+});
+
 describe('varieties Lambda — crop-types vocab route', () => {
   it('handles GET /api/varieties/crop-types BEFORE the :id route', () => {
     const cropIdx = SRC.indexOf("rawPath === '/api/varieties/crop-types'");
