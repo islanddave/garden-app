@@ -106,7 +106,21 @@ describe('BottomNav — V3-IA layout', () => {
   // widening it is a deliberate act, not a test repair: an add-without-displacement, taken because
   // nothing in the previous four is displaceable for put-up. Keep it exact — a 7th slot should
   // have to argue for itself here the same way this one did.
-  it('FAB keeps the center slot: tab order is Today · Garden · ＋ · Harvests · Put-Up · More', () => {
+  //
+  // V5-ADMINCENTER-001 — WHAT THIS ASSERTION NOW MEANS, CHANGED DELIBERATELY AND IN THE SAME COMMIT
+  // AS THE CODE THAT CHANGED IT. The order is user config (user_notification_prefs.nav_tabs) as of
+  // this row, and this suite renders <BottomNav /> with no PrefsProvider — so what is pinned below
+  // is no longer "the shipped bar" but "the bar the DEFAULT config renders", which is the same six
+  // slots and is what every unconfigured user, every failed prefs read and every offline boot gets.
+  //
+  // THE CAP SURVIVES AS A CAP, which was the condition for making the nav configurable at all. It
+  // just moved: the arity rule in resolveNavTabs() means the rendered bar is a permutation of the
+  // shipped five plus the pinned More button, WHATEVER the config says, so a seven-key config
+  // renders six slots rather than seven. That property is not observable from this file — nothing
+  // here can set a config — so it is pinned in BottomNav.navConfig.test.jsx alongside the reorder
+  // cases, and the two files are the cap together. A 7th slot still has to argue for itself: in
+  // DEFAULT_NAV_TABS, in this count, and in that file's cap case.
+  it('FAB keeps the center slot: the DEFAULT config renders Today · Garden · ＋ · Harvests · Put-Up · More', () => {
     render(<BottomNav />)
     const nav = screen.getByLabelText('Main navigation')
     expect(nav.children.length).toBe(6)

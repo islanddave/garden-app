@@ -77,6 +77,95 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  // V5-ADMINCENTER-001 — SINGLE FLIGHT. This route had eight independent callers each fetching on
+  // their own mount, three of which mount in the same frame on /today, and the admin centre's nav
+  // config read would have been a ninth. The dedup lives here rather than at any call site so all
+  // nine collapse with no call-site change.
+  describe('fetchNotificationPrefs — single flight', () => {
+    it('collapses concurrent callers into ONE request, and gives them all the same answer', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      mod.__resetPrefsFlight()
+      // A deferred response, so all three calls are genuinely in flight together — resolving
+      // immediately would let each one settle before the next started and the case would pass
+      // against a resolver with no latch at all.
+      let release
+      global.fetch.mockReturnValue(new Promise(r => { release = () => r({ ok: true, json: async () => PREFS_OK }) }))
+      const calls = [
+        mod.fetchNotificationPrefs({ getToken: async () => TOKEN }),
+        mod.fetchNotificationPrefs({ getToken: async () => TOKEN }),
+        mod.fetchNotificationPrefs({ getToken: async () => TOKEN }),
+      ]
+      await Promise.resolve()
+      release()
+      const results = await Promise.all(calls)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+      for (const r of results) expect(r).toEqual(PREFS_OK)
+    })
+
+    // DEDUP, NOT CACHE — the property that makes this safe to drop under eight existing callers.
+    // A caller that re-reads after its own PATCH (SettingsNotifications, the admin centre) must
+    // still hit the network. If this ever reds, the latch has become a cache and eight surfaces
+    // that never asked for one are serving stale prefs.
+    it('does NOT cache: a call after the first settles refetches', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      mod.__resetPrefsFlight()
+      global.fetch.mockResolvedValue({ ok: true, json: async () => PREFS_OK })
+      await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+    })
+
+    // The latch must clear on the failure path too, or one blip at boot leaves every later caller
+    // joined to a settled null for the life of the page.
+    it('clears the latch after a failure, so the next caller can retry', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      mod.__resetPrefsFlight()
+      global.fetch.mockRejectedValueOnce(new Error('network blip'))
+      expect(await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })).toBeNull()
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => PREFS_OK })
+      expect(await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })).toEqual(PREFS_OK)
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  // V5-ADMINCENTER-001 — the nav order writer. The ONE writer in this module that reports its
+  // outcome instead of collapsing everything to null: it backs a user-initiated Save, and the page
+  // has to be able to tell a refusal (403 — not an admin) from an outage from the 400 that means
+  // the column is not live yet.
+  describe('saveNavTabs', () => {
+    it('PATCHes nav_tabs as the ONLY key', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      const res = await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: ['garden', 'today'] })
+      expect(res.ok).toBe(true)
+      const [url, init] = global.fetch.mock.calls[0]
+      expect(url).toBe('https://staging.example.com/api/notifications/prefs')
+      expect(init.method).toBe('PATCH')
+      // Alone, for the reason saveHandedness sends handedness alone: batching it with a live
+      // preference would carry that preference into a request the server rejects whole.
+      expect(JSON.parse(init.body)).toEqual({ nav_tabs: ['garden', 'today'] })
+    })
+
+    it('reports the refusal status rather than a bare null', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: false, status: 403 })
+      expect(await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: ['today'] })).toEqual({ ok: false, status: 403 })
+    })
+
+    it('reports status 0 — never reached the server — on a network failure, and NEVER throws', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockRejectedValueOnce(new Error('offline'))
+      expect(await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: ['today'] })).toEqual({ ok: false, status: 0 })
+    })
+
+    it('refuses a payload that is not a list of strings without spending a round trip', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      expect((await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: 'today' })).ok).toBe(false)
+      expect((await mod.saveNavTabs({ getToken: async () => TOKEN, tabs: [1, 2] })).ok).toBe(false)
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+  })
+
   describe('patchNotificationPrefs', () => {
     it('returns null when VITE_API_CRITTERS unset', async () => {
       const mod = await loadModule('')

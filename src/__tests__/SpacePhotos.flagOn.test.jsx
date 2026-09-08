@@ -76,8 +76,11 @@ describe('flag ON — the /space routes appear', () => {
     // flag-independent — it has nothing to do with SPACE_PHOTOS_ENABLED; it moves both counts by
     // one because it is an unconditional route, which is exactly why this pair is asserted on both
     // sides of the flag rather than once.
-    expect(paths).toHaveLength(58)
-    expect(new Set(paths).size).toBe(58)
+    // 58 -> 59: V5-ADMINCENTER-001 adds /admin/config, the admin centre (see the flag-OFF
+    // counterpart, which moves 56 -> 57 for the same route). Flag-independent, so both sides move
+    // together and the delta stays 2.
+    expect(paths).toHaveLength(59)
+    expect(new Set(paths).size).toBe(59)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {

@@ -14,6 +14,7 @@ import { useMode } from '../lib/mode.js'
 import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
+import { useNavTabs } from '../context/PrefsContext.jsx'
 
 // BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·Put-Up·More (V4-PUTUPENGINE-001,
 // 2026-08-21; was Today·Garden·＋·Harvests·More per V4-NAVHARVEST-001, 2026-08-10, which itself
@@ -51,13 +52,14 @@ import Icon from './Icon.jsx'
 // `overlayable: true` in App.jsx, so the three PREFILL doors that need the flyover keep it
 // (EventNew PreserveOffer, PutUpFromPlanting, PutUpUseSoonBand). PutUp already defaults a BARE open
 // to its 'stores' view, so the tab lands on "what have I got", not on an empty form.
-const TABS = [
-  { to: '/today',    label: 'Today',    iconName: 'nav.today' },
-  { to: '/garden',   label: 'Garden',   iconName: 'nav.garden' },
-  { to: '/log',      label: 'Create',   iconName: 'nav.plus', highlight: true },
-  { to: '/harvests', label: 'Harvests', iconName: 'nav.harvests' },
-  { to: '/put-up',   label: 'Put-Up',   iconName: 'nav.putup' },
-]
+// V5-ADMINCENTER-001 — THE FIVE ROWS THAT USED TO BE HERE NOW LIVE IN src/lib/navConfig.js, and the
+// ORDER they render in is user config (user_notification_prefs.nav_tabs, read once at boot by
+// PrefsProvider). Nothing about the bar's CONTENTS moved: v1 is reorder-only, and resolveNavTabs
+// accepts a config only if it is a permutation of the shipped five, so config can shuffle these
+// slots and can neither drop nor add one. Null config — including a missing column, a failed prefs
+// GET, or an offline boot — renders the exact bar above unchanged.
+// The +LOG FAB is still identified by `highlight`, and "More" is still emitted after the map below
+// as a hardcoded button, so it stays pinned last by being outside the array entirely.
 
 // +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
 // Log + Log many are the two rapid-capture verbs — Log many stays FIRST-CLASS (a direct
@@ -261,6 +263,9 @@ export default function BottomNav() {
   // Field-mode swaps the +LOG center button for a mic -> /field. Desk-mode unchanged.
   // toggleMode powers the More-menu mode mirror row.
   const { isField, toggleMode } = useMode()
+  // V5-ADMINCENTER-001 — the tab rows, config-ordered. Falls back to the shipped five with no
+  // provider mounted, which is what every isolated component test renders against.
+  const tabs = useNavTabs()
   const [showMore, setShowMore]             = useState(false)
   const [showCreate, setShowCreate]         = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
@@ -581,7 +586,7 @@ export default function BottomNav() {
         // Chrome, not a reward surface: plain visibility, no transition (Reward UX V102).
         visibility: kbSuppressed ? 'hidden' : 'visible',
       }}>
-        {TABS.map(tab => {
+        {tabs.map(tab => {
           const active = isActive(tab.to)
           if (tab.highlight) {
             // Field mode: center button becomes a mic -> /field (no create sheet).

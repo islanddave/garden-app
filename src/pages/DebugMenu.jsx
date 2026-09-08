@@ -41,6 +41,16 @@ const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 
 // Every diagnostic surface in the app. ADD A ROW HERE when you add an /admin/* route — see the
 // header note on why a missing row means an unreachable page.
 const LINKS = [
+  // V5-ADMINCENTER-001. FIRST because it is the only row here that is not a diagnostic — it is a
+  // surface Dave uses on purpose rather than one he opens when something is wrong. It is also the
+  // row that makes the admin centre exist at all: /admin/config with no line in this array fails
+  // DebugMenu.reachability.test.jsx, and would ship a page an installed PWA cannot open.
+  {
+    to: '/admin/config',
+    icon: 'action.settings',
+    label: 'App configuration',
+    blurb: 'How the app is put together — starting with the order of the tab bar',
+  },
   {
     to: '/admin/voice-debug',
     icon: 'media.mic',
@@ -192,7 +202,7 @@ export default function DebugMenu() {
       </div>
 
       <h2 style={{ fontSize: '0.78rem', fontWeight: 700, color: P.light, letterSpacing: '0.05em', textTransform: 'uppercase', margin: '20px 0 8px' }}>
-        Diagnostic pages
+        Configuration &amp; diagnostics
       </h2>
 
       {LINKS.map(l => (

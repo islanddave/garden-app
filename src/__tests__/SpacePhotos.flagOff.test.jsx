@@ -109,8 +109,12 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
     // "exactly 2 below the flag-ON pin" delta this file exists to protect is untouched.
     // 55 -> 56: V5-HARVESTONEDOOR-001 adds /log/harvest, the combined harvest page — unconditional,
     // so it moves the flag-OFF count by one exactly as it moves the flag-ON count.
-    expect(paths).toHaveLength(56)
-    expect(new Set(paths).size).toBe(56)
+    // 56 -> 57: V5-ADMINCENTER-001 adds /admin/config, the admin centre — unconditional and
+    // flag-independent (it has nothing to do with SPACE_PHOTOS_ENABLED), so it moves the flag-OFF
+    // count by one exactly as it moves the flag-ON count and the "exactly 2 below the flag-ON pin"
+    // delta this file exists to protect is untouched.
+    expect(paths).toHaveLength(57)
+    expect(new Set(paths).size).toBe(57)
   })
 
   it('adds NO route to the overlay tree either', async () => {

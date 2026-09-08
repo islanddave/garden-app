@@ -49,6 +49,15 @@ import BottomNav from '../components/BottomNav.jsx'
 
 const INDICATOR = '[data-testid="nav-active-indicator"]'
 // label -> the route that makes that tab active. The FAB has no route and is not a destination.
+//
+// V5-ADMINCENTER-001 — RE-SCOPED, NOT REPAIRED. Tab order is user config as of that row, and this
+// suite renders <BottomNav /> with no PrefsProvider, so this list is the DEFAULT config's four
+// non-FAB destinations rather than "the tabs". Every case below is order-independent by
+// construction — each one sets a route and asks which slot lit up, never which slot is at index n —
+// so the property under test (the indicator tracks the route) holds for any permutation, and this
+// list only has to stay in sync with DEFAULT_NAV_TABS' membership. If a future row makes a tab
+// hideable rather than merely movable, THAT is when this needs rethinking: a hidden tab has no slot
+// to light and `slotOf` would throw rather than fail an assertion.
 const TABS = [['Today', '/today'], ['Garden', '/garden'], ['Harvests', '/harvests'], ['Put-Up', '/put-up']]
 
 const slotOf = (label) => within(screen.getByRole('navigation')).getByText(label).parentElement

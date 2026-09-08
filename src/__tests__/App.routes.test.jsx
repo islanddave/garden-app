@@ -75,8 +75,14 @@ describe('App route table (single source of truth)', () => {
     // default, weigh-in session behind its selector). /log/voice is NOT removed — it stays in the
     // table as a redirect, because the installed PWA caches its manifest in the launcher for days
     // and a bookmark or restored tab can name it indefinitely. So this is +1, not a swap.
-    expect(paths).toHaveLength(58)
-    expect(new Set(paths).size).toBe(58)
+    // 58 -> 59: V5-ADMINCENTER-001 adds /admin/config, the admin centre. It is under /admin/*
+    // deliberately and not for tidiness: DebugMenu.reachability.test.jsx fails the build for an
+    // /admin/<segment> route with no row on the debug menu, and this surface WANTS that gate —
+    // /settings/admin would have escaped it and could have shipped with no door in an installed PWA.
+    // Registered exactly once; the uniqueness assert below is what proves this bump is a new route
+    // rather than a duplicate registration.
+    expect(paths).toHaveLength(59)
+    expect(new Set(paths).size).toBe(59)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {

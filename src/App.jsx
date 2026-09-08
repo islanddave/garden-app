@@ -2,6 +2,7 @@ import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { FavoritesProvider } from './context/FavoritesContext.jsx'
+import { PrefsProvider } from './context/PrefsContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
 import TopChrome from './components/TopChrome.jsx'
@@ -44,6 +45,7 @@ import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
 import VoiceDebug from './pages/VoiceDebug.jsx'
 import DebugMenu from './pages/DebugMenu.jsx'
+import AdminConfig from './pages/AdminConfig.jsx'
 import GardenHelper from './pages/GardenHelper.jsx'
 import FieldCapture from './pages/FieldCapture.jsx'
 import Settings from './pages/Settings.jsx'
@@ -364,6 +366,13 @@ export function renderRoutes({ overlay, user, loading }) {
     // BUG-VOICEDUPE-002 raw Web Speech capture. Unlinked + Jen-invisible, same convention as
     // /admin/garden-activity. Shows only this browser's own localStorage — no server call.
     { path: '/admin/voice-debug', element: <Protected><VoiceDebug /></Protected> },
+    // V5-ADMINCENTER-001 — the admin centre. It lives under /admin/* for ONE reason and it is not
+    // taste: DebugMenu.reachability.test.jsx fails the build if an /admin/<segment> route has no row
+    // in DebugMenu's LINKS, and Dave runs an installed PWA with no address bar, so a surface with no
+    // door does not exist for him. /settings/admin would have escaped that gate entirely. The path
+    // string must stay SINGLE-QUOTED — the gate's regex is /path:\s*'(\/admin\/[^']*)'/ and a
+    // double-quoted or templated path passes it vacuously by not being seen at all.
+    { path: '/admin/config', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><AdminConfig /></ErrorBoundary></Protected> },
     // OPS-DEBUGMENU-001 — the index for the three routes above. They were all built "unlinked,
     // reachable by URL", which in an INSTALLED PWA means not reachable at all: there is no address
     // bar on Dave's home-screen app. This page is the address bar. Any new /admin/* route must get a
@@ -498,10 +507,17 @@ export default function App() {
           and every route, and moving it would change nothing except the diff. */}
       <SplashScreen />
       <ModeProvider>
+        {/* V5-ADMINCENTER-001 — the once-at-boot read of user_notification_prefs, sibling of
+            FavoritesProvider because it is the same shape of thing: one app-level fetch replacing a
+            per-consumer fan-out. Inside FavoritesProvider rather than outside for no reason beyond
+            diff size; the two are independent and neither reads the other. It needs AuthProvider
+            above it (identity keys the read) and nothing below it. */}
         <FavoritesProvider>
-          <ToastProvider>
-            <AppRoutes />
-          </ToastProvider>
+          <PrefsProvider>
+            <ToastProvider>
+              <AppRoutes />
+            </ToastProvider>
+          </PrefsProvider>
         </FavoritesProvider>
       </ModeProvider>
     </AuthProvider>

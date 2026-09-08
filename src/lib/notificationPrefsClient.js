@@ -135,24 +135,60 @@ export async function saveGardenHelperRung1({ getToken } = {}) {
   }
 }
 
-// fetchNotificationPrefs — GETs current prefs.
+// V5-ADMINCENTER-001 — SINGLE FLIGHT over the prefs GET.
+//
+// This route had NINE independent callers coming (SettingsNotifications, Collection, GardenHelper,
+// Garden, useWhatsNew, CareNeeded, useHandedness, ScopeChecklist, and the nav-config read this row
+// adds), each firing its own bare fetch on its own mount. On /today three of them mount in the same
+// frame, so the app was asking the same Lambda the same question three times inside the boot window
+// three consecutive perf rows were spent clearing — against a measured 1,706ms cold start
+// (warmOrigins.js:3-5). Adding a tenth uncoordinated call was not acceptable, so this collapses all
+// of them instead, in the one place every caller already goes through: no call site changes.
+//
+// DEDUP, NOT CACHE — and the distinction is the whole safety argument. `inFlight` is cleared the
+// moment the request settles, so a call made AFTER a response has landed still hits the network.
+// Callers that read prefs following their own PATCH (SettingsNotifications re-reads to confirm; the
+// admin centre refreshes after a save) therefore see fresh data exactly as before. A time-windowed
+// cache would have changed that, silently, for eight surfaces that never asked for it.
+//
+// The latch is keyed on nothing because the token is per-signed-in-user and there is exactly one
+// signed-in user per document: two concurrent callers in one page are by construction asking for the
+// same row. The token is resolved INSIDE the shared promise for the same reason — resolving it first
+// would serialise the callers on getToken() before they could join.
+let inFlight = null
+
+// fetchNotificationPrefs — GETs current prefs, joining any request already in flight.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
 export async function fetchNotificationPrefs({ getToken } = {}) {
   if (!CRITTER_BASE) return null
-  try {
-    const token = await (typeof getToken === 'function' ? getToken() : null)
-    if (!token) return null
-    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) return null
-    const json = await res.json().catch(() => null)
-    return json && typeof json === 'object' ? json : null
-  } catch {
-    return null
-  }
+  if (inFlight) return inFlight
+  inFlight = (async () => {
+    try {
+      const token = await (typeof getToken === 'function' ? getToken() : null)
+      if (!token) return null
+      const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return null
+      const json = await res.json().catch(() => null)
+      return json && typeof json === 'object' ? json : null
+    } catch {
+      return null
+    } finally {
+      // In `finally` rather than after the await at the call site: a caller that never awaits (or
+      // an unmount that drops the promise) must not leave the latch stuck holding a settled
+      // response forever, which would turn dedup into a permanent cache.
+      inFlight = null
+    }
+  })()
+  return inFlight
 }
+
+// Test seam. The latch is module state and vitest does not reset modules between cases in a file;
+// without this a suite's second case would silently join the first case's settled promise.
+// Mirrors __resetHandednessSync() in hooks/useHandedness.js.
+export function __resetPrefsFlight() { inFlight = null }
 
 // patchNotificationPrefs — PATCHes a partial prefs object.
 // Inputs:
@@ -362,6 +398,48 @@ export async function saveHandedness({ getToken, value } = {}) {
     return await res.json().catch(() => null)
   } catch {
     return null
+  }
+}
+
+// V5-ADMINCENTER-001 — the nav tab ORDER, per user (user_notification_prefs.nav_tabs, jsonb).
+//
+// THE ONE WRITER ON THIS CLIENT THAT REPORTS ITS OUTCOME, and the deviation is deliberate. Every
+// other function in this file is fire-and-forget returning null-on-anything, which is correct for
+// them: the caller has already applied the change locally and a failed sync must cost the user
+// nothing. This one is the opposite — it is a user-initiated Save on a page whose ONLY job is that
+// write, and a save that silently reports nothing is a save that lies. So it returns a discriminated
+// result and the admin page renders what actually happened, including the 403 that means "the server
+// says you are not an admin".
+//
+// ⚠️ INERT UNTIL THE COLUMN LANDS — same posture as saveHandedness above, and for the same reason.
+// user_notification_prefs.nav_tabs does not exist yet (migrations/v5-admincenter-001 — AUTHORED, NOT
+// APPLIED to staging or prod), and the critter Lambda's HAS_UPDATABLE allowlist
+// (lambda/critter/validators.js:102) does not carry the key. Until BOTH land this PATCH returns 400
+// "no updatable fields present" and this function reports `{ ok: false, status: 400 }`, which the
+// page states plainly rather than claiming a save it did not make. `nav_tabs` is sent as the ONLY
+// key for exactly the reason saveHandedness gives: batching it with a live preference would carry
+// that preference into a request the server is about to reject whole.
+//
+// Validated client-side before the request as well as server-side after it. The client check is not
+// the security boundary — the Lambda's ADMIN_CLERK_SUBS gate is — it just refuses to spend a
+// round-trip on a payload the renderer would reject anyway.
+export async function saveNavTabs({ getToken, tabs } = {}) {
+  if (!CRITTER_BASE) return { ok: false, status: 0 }
+  if (!Array.isArray(tabs) || tabs.some(t => typeof t !== 'string')) return { ok: false, status: 0 }
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return { ok: false, status: 401 }
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ nav_tabs: tabs }),
+    })
+    if (!res.ok) return { ok: false, status: res.status }
+    return { ok: true, prefs: await res.json().catch(() => null) }
+  } catch {
+    // status 0 is the house convention for "never reached the server" (api.js:284), kept so the
+    // page can distinguish a refusal from an outage.
+    return { ok: false, status: 0 }
   }
 }
 
