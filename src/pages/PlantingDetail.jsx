@@ -655,14 +655,23 @@ export default function PlantingDetail() {
     // Rendered only when variety_ref.id is present: `id` is the first key of the by-id GET's
     // variety_ref jsonb_build_object (lambda/plants/index.js:537), so it is there whenever a variety
     // is joined at all, and the row itself already only renders when `variety` is truthy.
+    //
+    // BUG-VARIETYDOORTAPFLOOR-001 — the door shipped as bare inline text at T.type.xs and measured
+    // 66.3 × 17.3 px in a real browser at 390×844 (lane varietyeditdrive-20260908, CDP device
+    // emulation, not a resized window). 17.3px is under half the 44px floor T.tapMinHeight names and
+    // that inputChrome/selectChrome/adoptButtonStyle already enforce, and under WCAG 2.5.8's 24px
+    // minimum outright. It is now a bordered pill on the shared token — a control that looks like a
+    // control, at a size a thumb can hit. `alignItems` moves baseline -> center because a 44px-tall
+    // pill baseline-aligned against a one-line label sits visibly low.
     ['Variety', variety
-      ? <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: T.space.sm, flexWrap: 'wrap' }}>
+      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: T.space.sm, flexWrap: 'wrap' }}>
           <span>{variety}</span>
           {pl.variety_ref?.id && (
             <Link
               to={`/varieties/${pl.variety_ref.id}/edit`}
               data-testid="planting-variety-edit-link"
-              style={{ color: P.green, textDecoration: 'none', fontSize: T.type.xs, fontWeight: 700 }}
+              aria-label={`Edit variety ${variety}`}
+              style={varietyEditLinkStyle}
             >
               Edit variety
             </Link>
@@ -1529,6 +1538,20 @@ function Shell({ children }) {
 
 const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: 24 }
 const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: T.type.sm2, fontWeight: 600, display: 'inline-block' }
+// BUG-VARIETYDOORTAPFLOOR-001 — the "Edit variety" door, hoisted out of the JSX so the tap floor is
+// a guardable declaration rather than an inline literal (same shape as VarietyPicker's
+// adoptButtonStyle, which VarietyPicker.tapFloor.test.js pins). minHeight AND minWidth both route
+// through T.tapMinHeight: a 44px-tall strip of text 66px wide is still a miss on the vertical axis,
+// and WCAG 2.5.8 measures the smaller dimension. No numeric literal — a number that happens to be 44
+// today is a number that drifts.
+const varietyEditLinkStyle = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  minHeight: T.tapMinHeight, minWidth: T.tapMinHeight,
+  padding: `0 ${T.space.sm}px`,
+  border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton, backgroundColor: P.white,
+  color: P.green, textDecoration: 'none', fontSize: T.type.sm, fontWeight: 700,
+  whiteSpace: 'nowrap',
+}
 // V4-PLANTINGRAWDETAIL-001 — the Details value cell, hoisted out of the JSX now that the All tab
 // needs a second variant. detailValueStyle is byte-identical to the inline object it replaces.
 const detailValueStyle = { fontSize: T.type.base, color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }
