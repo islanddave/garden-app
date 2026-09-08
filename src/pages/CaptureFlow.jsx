@@ -68,55 +68,49 @@ const EVENT_DEST_TYPES = creatableEventTypes({
 // predication rule still applies wherever an event IS written — EventNew, ProjectDetail,
 // EventTypePicker — each of which calls creatableEventTypes itself.
 
-// WHY EACH DESTINATION EXISTS (the order they sit in is the separate rule below).
-//
-// V4-SNAPDEST-001 (BD0806-08) — 'location' is the destination that row was actually missing. Snap
+// V4-SNAPDEST-001 (BD0806-08) — 'location' is the destination this row was actually missing. Snap
 // could only ever aim a photo at a PLANTING or an inventory item, so anything about the place itself
 // — a bed edge washing out, a trellis leaning, a new fence line — had no home and got logged against
 // whichever planting happened to be nearby, which is a lie about what the photo shows.
 //
-// V5-INFLIGHTBATCH-001 — 'kitchen' is THE CARD WITH NO PLANT IN IT. Every other destination here is
-// plant-shaped: four of the six demand a planting and the fifth demands a place. A pepper mash drawn
-// from thirty plantings plus bought peppers plus salt fits none of them, so the first question this
-// picker asked had NO CORRECT ANSWER — the measured mechanism behind a mash that sat three weeks and
-// produced no record at all (0 preservation_log rows since 2026-08-21, at maximum discoverability).
-//
-// V4-SNAPPHOTOONLY-001 (BD-065) — 'attachonly' is Dave's "I just want the photo attached to the
-// plant. It is not the hero shot and it does not need to be an event." Its two neighbours each made
-// him pay for something he had not asked for: 'event' routes through the full event picker, and
-// 'replace' overwrites the planting's main picture. Neither can be narrowed without taking away
-// something he uses, so it is a THIRD option beside them ("I wanna keep the added to a planting and
-// be able to select events if I want to").
-//
-// ORDER IS DAVE'S, VERBATIM — V5-SNAPMENUORDER-001 (BD0901-02), which SUPERSEDES the orderings
-// V4-SNAPDEST-001 / V5-INFLIGHTBATCH-001 / V4-SNAPPHOTOONLY-001 each argued for as they appended.
-// He dictated all seven positions top to bottom, and this array is that list in that order. It is
-// not derived, so do not re-derive it: a future append does NOT get to reason its way to a slot the
-// way the three rows above did. Put a new destination where Dave says, or ask him.
-//
-// The prior orderings' own constraints all SURVIVE his list, which is why nothing below argues with
-// it: 'inventory' is still LAST (V4-SNAPDEST-001's "Add Inventory to the bottom" — and it is still
-// the only destination creating a supply record rather than a garden observation); 'replace' and
-// 'attachonly' are still ADJACENT (V4-SNAPPHOTOONLY-001's pair — same KIND of act, a photo aimed at
-// a planting that already exists, differing by one line of hint text); 'event' and 'location' are
-// still ADJACENT (V4-SNAPDEST-001's "same KIND of act — log something that happened"); and 'kitchen'
-// is still FOURTH. What his order changes is which GROUP leads: the two direct photo-at-a-planting
-// paths come first, ahead of the create and log-an-event work.
-//
-// FOLD: unmeasured, and unchanged by this commit. The retake control's comment below carries the one
-// real measurement (360x660, fifth card at y=608); nothing in the repo instruments this list, and a
-// reorder moves no card past the count that measurement covered.
+// ORDER IS PART OF THE ROW. 'location' sits directly after 'planting'/'event' because it is the same
+// KIND of act (log something that happened), and 'inventory' stays LAST — the row asks for "Add
+// Inventory to the bottom" and it is the only destination that creates a supply record rather than a
+// garden observation. Appending 'location' after it would have quietly undone that.
 const MODES = [
-  // 'Update Featured' was 'Update a photo' until V5-SNAPMENUORDER-001. LABEL ONLY — the id, the
-  // destination and the behaviour are untouched, deliberately: Dave has repeatedly called
-  // update-the-featured-photo the UX benchmark for Snap (V4-SNAPPHOTOONLY-001), so the rename says
-  // more plainly what it already does rather than changing it.
-  { id: 'replace',   label: 'Update Featured',   hint: 'Set this as an existing planting’s photo' },
-  { id: 'attachonly', label: 'Add to a planting', hint: 'Attach the photo and nothing else — no event, and it stays off the main picture' },
   { id: 'planting',  label: 'New planting',      hint: 'Create a planting, this photo becomes its picture' },
-  { id: 'kitchen',   label: 'Something in the kitchen', hint: 'A mash, a ferment, a batch drying — no planting, no date, no method needed' },
   { id: 'event',     label: 'Log on a planting', hint: 'Attach this photo to an event (Watered, Harvested…)' },
   { id: 'location',  label: 'Log on a location', hint: 'Attach this photo to a bed, area or structure — no planting needed' },
+  // V5-INFLIGHTBATCH-001 — THE CARD WITH NO PLANT IN IT, and the reason the row exists. Every other
+  // destination here is plant-shaped: four of the six demand a planting and the fifth demands a
+  // place. A pepper mash drawn from thirty plantings plus bought peppers plus salt fits none of
+  // them, so the first question this picker asked had NO CORRECT ANSWER — which is the measured
+  // mechanism behind a mash that sat three weeks and produced no record at all (0 preservation_log
+  // rows since 2026-08-21, at maximum discoverability).
+  //
+  // ORDER, against the two rules this list already carries. 'inventory' stays LAST, untouched. This
+  // sits fourth because that is the seam between the two existing groups — 'planting'/'event'/
+  // 'location' log something that happened, 'replace'/'attachonly' aim a photo at a planting that
+  // already exists — and because of the fold. What is MEASURED is in the retake control's comment
+  // below: at 360x660 the fifth and last card sat at y=608 with 660 of viewport. That a SIXTH card
+  // would clear the fold is an EXTRAPOLATION from one card's height, not a second measurement —
+  // nothing in the repo instruments this list (the log-chooser layout gate measures Log Event's
+  // chooser, not Snap's cards). Fourth position needs no such argument either way: it renders where
+  // 'replace' already renders today, which is measured ground.
+  { id: 'kitchen',   label: 'Something in the kitchen', hint: 'A mash, a ferment, a batch drying — no planting, no date, no method needed' },
+  { id: 'replace',   label: 'Update a photo',    hint: 'Set this as an existing planting’s photo' },
+  // V4-SNAPPHOTOONLY-001 (BD-065) — Dave: "I just want the photo attached to the plant. It is not
+  // the hero shot and it does not need to be an event." The two neighbouring destinations each made
+  // him pay for something he had not asked for: 'event' routes through the full event picker, and
+  // 'replace' overwrites the planting's main picture. Neither can be narrowed without taking away
+  // something he uses, so this is a THIRD option beside them, exactly as the row specifies
+  // ("I wanna keep the added to a planting and be able to select events if I want to").
+  //
+  // ORDER, per the rule this list already carries: 'inventory' stays LAST, and this sits beside
+  // 'replace' because the two are the same KIND of act — a photo aimed at a planting that already
+  // exists, with nothing else created. They are the surface's two direct paths and they read as a
+  // pair; the difference between them is one line of hint text, which is the whole point.
+  { id: 'attachonly', label: 'Add to a planting', hint: 'Attach the photo and nothing else — no event, and it stays off the main picture' },
   { id: 'inventory', label: 'Add inventory',     hint: 'Create a supply/equipment item with this photo' },
 ]
 // V4-SNAPTOAST-001 (BD-008 + BD0806-09) — "go to the thing I just saved", per destination.

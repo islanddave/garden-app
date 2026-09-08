@@ -1,9 +1,7 @@
 {
-  "version": "4.121.0",
+  "version": "4.122.0",
   "date": "2026-09-08",
   "highlights": [
-    "When you create a new variety, you can now record its Genus and Species — the botanical name that settles what a plant actually is.",
-    "Plants that should never be fed on a schedule can now say so. Rosemary, sage, oregano, both tarragons, goldenrod, yarrow and horseweed have stopped asking to be fertilised every two weeks.",
-    "Internal: a standing check catches care research left stranded when a rename mints a new variety row, plus a guard that fails loudly if the audit trigger it relies on is ever removed."
+    "The Snap menu is back to its previous order, and the first option is called \"Update a photo\" again."
   ]
 }

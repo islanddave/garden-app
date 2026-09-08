@@ -96,7 +96,7 @@ describe('CaptureFlow — add to a planting (V4-SNAPPHOTOONLY-001)', () => {
     expect(opts.parentId).toBe('pl-1')
   })
 
-  it('does NOT change the planting\'s featured photo — the whole difference from "Update Featured"', async () => {
+  it('does NOT change the planting\'s featured photo — the whole difference from "Update a photo"', async () => {
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-attachonly')
     await pickPlanting('pl-1')
