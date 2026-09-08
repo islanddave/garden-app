@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.123.0",
+    "date": "2026-09-08",
+    "highlights": [
+      "The Snap menu is in a new order, with the photo choices you use most at the top. The first option is still called \"Update a photo\"."
+    ]
+  },
+  {
     "version": "4.122.0",
     "date": "2026-09-08",
     "highlights": [
