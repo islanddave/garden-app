@@ -17,6 +17,9 @@ import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } f
 // lambda/provenance-copies-sync.test.js guards the values, and also checks the migration's DB CHECK
 // membership against them.
 import { VALID_SOURCE_KINDS } from './source-kinds.js';
+// BUG-INVREFSTRAND-001 — pre-delete reference check. Its own module because the DELETE arm is the
+// only caller and the relation list is shared vocabulary with migrations/v5-invrefstrand-001.
+import { deletePreflight, blockingMessage } from './delete-guard.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -1196,6 +1199,32 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
+        // BUG-INVREFSTRAND-001. The FKs on this table cannot protect it: two are RESTRICT, but the
+        // delete below is an UPDATE, and an FK guards DELETEs. Without this preflight a delete
+        // strands every referencing row on a record no read path can resolve — and answers 200.
+        // See delete-guard.js for the four relations and the measured live damage.
+        const { found, blocking } = await deletePreflight(sql, itemId, householdIds);
+        // 404 BEFORE 409, and that ordering is the authorization boundary rather than a courtesy:
+        // answering 409 for an id the caller does not own would confirm the row exists and leak its
+        // reference counts. Same reasoning as the loadOwned* short-circuits elsewhere in this file.
+        if (!found) return resp(404, { error: 'Not found' });
+        // The escape hatch is explicit and it is LOUD. Some lots legitimately need to go while
+        // carrying history (a mis-entered saved-seed lot whose stage log the app offers no way to
+        // remove), so a refusal with no override would trap the one person able to fix it. The
+        // console.warn is what keeps `force` from being a silent re-arm of the defect: it lands in
+        // CloudWatch, and the standing gate catches the strand afterwards regardless.
+        const force = event.queryStringParameters?.force === 'true';
+        if (blocking.length && !force) {
+          return resp(409, {
+            error: blockingMessage(blocking),
+            blocking: blocking.map(({ table, column, count }) => ({ table, column, count })),
+          });
+        }
+        if (blocking.length) {
+          console.warn('inventory-items DELETE forced over live references', JSON.stringify({
+            userId, itemId, blocking: blocking.map(({ table, count }) => ({ table, count })),
+          }));
+        }
         const rows = await sql`
           UPDATE inventory_items
           SET deleted_at = NOW()

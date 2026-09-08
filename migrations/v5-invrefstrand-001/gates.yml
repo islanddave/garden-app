@@ -1,0 +1,182 @@
+# gates.yml
+# BUG-INVREFSTRAND-001 — rows left pointing at a soft-deleted inventory_items row.
+#
+# THE CLASS. Four foreign keys point at inventory_items, two of them ON DELETE RESTRICT:
+#
+#     plants.source_inventory_item_id        RESTRICT     photos.inventory_item_id            RESTRICT
+#     seed_lot_stage_log.inventory_item_id   NO ACTION    event_log.treatment_product_id      NO ACTION
+#
+# None of them can ever fire, because the app does not hard-delete. lambda/inventory-items/index.js
+# implements DELETE as `UPDATE inventory_items SET deleted_at = NOW()`, and an FK guards DELETEs, not
+# UPDATEs. The parent row survives with its children intact and technically valid — and every read
+# path filters `deleted_at IS NULL`, so the pointer stops resolving. Silently, on a 200.
+#
+# THE COST, in this repo's own code. The /seed-stage GET joins `inventory_items i ... AND
+# i.deleted_at IS NULL` and then `resp(200, rows)`: soft-delete the lot and its stage history comes
+# back as HTTP 200 + [], indistinguishable from "this lot has no history". lambda/plants/index.js
+# returns source_inventory_item_id raw with no join, so a planting keeps an id that resolves to
+# nothing and seed -> plant provenance breaks with nothing to see.
+#
+# THE PREDICATE IS PARENT-SIDE (`i.deleted_at IS NOT NULL`), NOT AN ANTI-JOIN, AND THAT IS THE WHOLE
+# CORRECTNESS ARGUMENT OF THIS FILE. Reading this as garden_ro the natural spelling is
+# `LEFT JOIN inventory_items i ... WHERE i.id IS NULL` — RLS on inventory_items carries
+# `deleted_at IS NULL`, so a soft-deleted parent simply is not there and the anti-join finds it.
+# gate_runner connects with NEON_DATABASE_URL / NEON_STAGING_URL, which is the OWNER and RLS-exempt.
+# For that connection the parent row IS visible, the FK guarantees it exists, and the anti-join
+# returns ZERO ROWS FOREVER while the damage sits right there. A gate written from a psql-ro session
+# would have read GREEN over both live findings below. Verified both ways through the runner
+# 2026-09-08 — see README §Proving the gate moves. Do not "simplify" this join.
+#
+# ENV — VERIFIED, NOT ASSUMED (2026-09-08). All four referencing tables plus inventory_items and
+# schema_version exist as real tables on BOTH prod and staging, and the guard was executed against
+# each through gate_runner. No env: is declared on the standing gates. Only the pre gate, which
+# asserts a prod-specific starting state, is env-scoped: staging has zero strands, so a
+# rowcount_gte 1 there would fail while describing nothing wrong.
+#
+# LIVE REFERRERS ONLY, and the scoping is shared with the preventer on purpose.
+# lambda/inventory-items/delete-guard.js refuses a delete over the same four counts with the same
+# `deleted_at IS NULL` filter on the three tables that carry the column. A detector that counted
+# soft-deleted referrers would report findings the preventer considers fine — and would pin an item
+# as permanently undeletable to protect a row nobody can see. seed_lot_stage_log has no deleted_at.
+#
+# WHAT THIS CANNOT SEE. There is no audit trail on inventory_items (`audit_events WHERE
+# table_name='inventory_items'` -> 0 rows), so neither this gate nor anything else can say WHEN a
+# given parent was deleted or by which route. The gate reports the strand, not its history.
+
+pre:
+  - name: pre_reference_strands_exist_before_the_decision
+    note: >
+      The starting state this guard is built against, measured on live prod 2026-09-08 through
+      gate_runner against the owner DSN — two live rows pointing at a soft-deleted inventory item.
+      One archived planting 7ca159f5 "Hungarian" (Black Hungarian) -> item 5ea890a3, and one
+      seed_lot_stage_log row 4bb986e7 stage 'fermenting' entered 2026-09-07 -> item 4074e59e, whose
+      lot history therefore already answers 200 with []. env prod because staging carries zero
+      strands. continuous false because this is a measurement of a moment, not an invariant:
+      applying 0a does not change it, and resolving the two findings drives it to zero.
+    env: prod
+    continuous: false
+    sql: |
+      SELECT p.id FROM public.plants p
+        JOIN public.inventory_items i ON i.id = p.source_inventory_item_id
+       WHERE p.deleted_at IS NULL AND i.deleted_at IS NOT NULL
+      UNION ALL
+      SELECT ph.id FROM public.photos ph
+        JOIN public.inventory_items i ON i.id = ph.inventory_item_id
+       WHERE ph.deleted_at IS NULL AND i.deleted_at IS NOT NULL
+      UNION ALL
+      SELECT s.id FROM public.seed_lot_stage_log s
+        JOIN public.inventory_items i ON i.id = s.inventory_item_id
+       WHERE i.deleted_at IS NOT NULL
+      UNION ALL
+      SELECT e.id FROM public.event_log e
+        JOIN public.inventory_items i ON i.id = e.treatment_product_id
+       WHERE e.deleted_at IS NULL AND i.deleted_at IS NOT NULL
+    expect: rowcount_gte
+    value: 1
+
+post:
+  - name: post_no_live_row_references_a_deleted_inventory_item
+    note: >
+      THE GUARD. No live row on any of the four referencing relations may point at an inventory_items
+      row whose deleted_at is set. Violation-count shape and self-armed on this migration's own
+      schema_version row, so it is vacuously green on a migrations/** push and becomes a real
+      standing invariant the moment 0a is applied — gate-invariants.yml fires on that path and would
+      red the job immediately otherwise (gate-invariants.yml:166-171). Identical predicate to the pre
+      gate plus the receipt clause; they are written out rather than shared because a gates.yml has
+      no include mechanism, and the test in lambda/inventory-items/delete-gate-coverage.test.js pins
+      them against each other so the two cannot drift.
+    sql: |
+      SELECT p.id FROM public.plants p
+        JOIN public.inventory_items i ON i.id = p.source_inventory_item_id
+       WHERE p.deleted_at IS NULL AND i.deleted_at IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-invrefstrand-20260908')
+      UNION ALL
+      SELECT ph.id FROM public.photos ph
+        JOIN public.inventory_items i ON i.id = ph.inventory_item_id
+       WHERE ph.deleted_at IS NULL AND i.deleted_at IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-invrefstrand-20260908')
+      UNION ALL
+      SELECT s.id FROM public.seed_lot_stage_log s
+        JOIN public.inventory_items i ON i.id = s.inventory_item_id
+       WHERE i.deleted_at IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-invrefstrand-20260908')
+      UNION ALL
+      SELECT e.id FROM public.event_log e
+        JOIN public.inventory_items i ON i.id = e.treatment_product_id
+       WHERE e.deleted_at IS NULL AND i.deleted_at IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-invrefstrand-20260908')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_inventory_fk_census_is_unchanged
+    note: >
+      THE ANTI-VACUITY GATE. The guard above enumerates four relations BY HAND, so a fifth foreign
+      key to inventory_items — V5-SOURCEENTITY-001 is actively attaching source columns to this table
+      — would be uncovered and the guard would go on reporting GREEN about a surface it no longer
+      spans. That is the L-081 join-ratchet class: a new relation is its own contract. This reds the
+      moment pg_constraint disagrees with the hand-written list, forcing the guard to be widened
+      rather than silently outgrown.
+      ALSO PINS confdeltype, because the RESTRICT on plants and photos is the belief this whole
+      migration exists to correct: someone reading `ON DELETE RESTRICT` concludes the database is
+      protecting them. Weakening either to CASCADE or SET NULL is a real decision about data loss and
+      must not pass unremarked — v4-softdelcascade-001's README recorded photos_inventory_item_id_fkey
+      as CASCADE, and it reads RESTRICT today, so this surface does move.
+      Widening is the correct response when it reds; bumping it to make the red go away without
+      widening the guard above is the failure mode. README §If the census gate reds.
+    sql: |
+      SELECT con.conname, con.confdeltype
+        FROM pg_constraint con
+        JOIN pg_class tgt ON tgt.oid = con.confrelid
+        JOIN pg_namespace n ON n.oid = tgt.relnamespace
+       WHERE con.contype = 'f' AND n.nspname = 'public' AND tgt.relname = 'inventory_items'
+         AND (con.conname, con.confdeltype) NOT IN (
+               ('plants_source_inventory_item_id_fkey',      'r'),
+               ('photos_inventory_item_id_fkey',             'r'),
+               ('seed_lot_stage_log_inventory_item_id_fkey', 'a'),
+               ('event_log_treatment_product_id_fkey',       'a'))
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-invrefstrand-20260908')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_inventory_fk_census_still_finds_all_four
+    note: >
+      THE OTHER HALF OF THE CENSUS, and it is not redundant with the gate above. That one is a
+      NOT IN violation count, so it also reports zero when pg_constraint returns NOTHING — a
+      dropped FK, a renamed table, or a schema move would DISARM the census silently while reading
+      green. This asserts the feed instead of the output: exactly the four known constraints must
+      still be present. The same reasoning as v5-rekeystrand-001's trigger gate — a silenced
+      instrument must red HERE rather than hide there. Written as a violation count so it survives
+      self-arming; a presence count with rowcount_eq 4 would fail before the apply and red the
+      migrations/** push.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM pg_constraint con
+                JOIN pg_class tgt ON tgt.oid = con.confrelid
+                JOIN pg_namespace n ON n.oid = tgt.relnamespace
+               WHERE con.contype = 'f' AND n.nspname = 'public'
+                 AND tgt.relname = 'inventory_items'
+                 AND con.conname IN ('plants_source_inventory_item_id_fkey',
+                                     'photos_inventory_item_id_fkey',
+                                     'seed_lot_stage_log_inventory_item_id_fkey',
+                                     'event_log_treatment_product_id_fkey')) <> 4
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-invrefstrand-20260908')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: >
+      Apply-time receipt. continuous false — an apply record, not a standing invariant, and it cannot
+      be self-armed without becoming a tautology. Same call every guard-only migration in this tree
+      makes.
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '5.0.0-invrefstrand-20260908'
+    expect: rowcount_eq
+    value: 1
