@@ -194,7 +194,7 @@ describe('picking a harvest prefills the form — and writes the MAPPED unit', (
     expect(body.harvest_log_id).toBe('h-1')
   })
 
-  it('picking a kg harvest carries identity but NOT a converted quantity', async () => {
+  it('picking a kg harvest carries the quantity across AS kg', async () => {
     harvestsResponse = { entries: [harvest({ unit: 'kg', quantity: '2.5' })] }
     renderPage()
     openLogForm()
@@ -202,9 +202,13 @@ describe('picking a harvest prefills the form — and writes the MAPPED unit', (
     fireEvent.click(picks()[0])
 
     await screen.findByRole('combobox', { name: 'Crop' })
-    // Quantity stays empty rather than becoming 2.5 lbs or 5.5 lbs — both would be a guess written
-    // into a column the UI renders as fact.
-    expect(qtyField().value).toBe('')
+    // WAS `expect(qtyField().value).toBe('')`, because kg had no Put-Up option, so the only way to
+    // carry it was arithmetic into lbs — a guess written into a column the UI renders as fact.
+    // V4-GRAMSUNIVERSAL-001 gave Put-Up 'g'/'kg', so 2.5 kg simply arrives as 2.5 kg. NO conversion
+    // happens: the number is untouched, which is exactly why this is not the guess the old
+    // assertion refused. That refusal is intact and now lives in putUpPrefill.test.js, asserted
+    // against a unit that genuinely cannot map.
+    expect(qtyField().value).toBe('2.5')
     // Identity still saved the user three pickers.
     expect(screen.getByRole('combobox', { name: 'Crop' }).value).toBe('tomato')
   })

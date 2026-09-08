@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.120.0",
+    "date": "2026-09-08",
+    "highlights": [
+      "Put-Up now takes grams and kilograms, so a harvest weighed in grams carries straight over instead of arriving with the number blanked out."
+    ]
+  },
+  {
     "version": "4.119.0",
     "date": "2026-09-08",
     "highlights": [
