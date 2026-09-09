@@ -1,7 +1,7 @@
 {
-  "version": "4.124.0",
+  "version": "4.125.0",
   "date": "2026-09-08",
   "highlights": [
-    "Internal: the nav tab order can now be set from a new Admin page (Debug & smoke → Admin config). The setting does not save yet — the database column is authored but not applied — and the page says so."
+    "Frost advisories now show in the app, radiative-cooling nights are detected ahead of the grid forecast, and a drought signal flags plantings that have gone 20 days without a deep soak."
   ]
 }

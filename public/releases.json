@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.125.0",
+    "date": "2026-09-08",
+    "highlights": [
+      "Frost advisories now show in the app, radiative-cooling nights are detected ahead of the grid forecast, and a drought signal flags plantings that have gone 20 days without a deep soak."
+    ]
+  },
+  {
     "version": "4.124.0",
     "date": "2026-09-08",
     "highlights": [
