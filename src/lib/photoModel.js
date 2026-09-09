@@ -25,14 +25,49 @@
 //     this header. TREAT THEM ALL AS POINT-IN-TIME AND RE-MEASURE BEFORE RELYING ON ONE. An agent
 //     read this line as current, wrote it into its own comment on this file's authority, and only
 //     caught it by probing prod (BUG-PHOTOPROJECTIONGAP-001).
-//     `takenAt` is still surfaced and never used as a sort/group key — but the reason is now that
-//     nothing READS it, not that there is no data in it.
+//     `takenAt` WAS surfaced and never used as a sort/group key, on the reasoning that nothing read
+//     it. V4-PHOTOTAKENAT-002 inverted that: nothing read it because the gallery route withheld it,
+//     so the absence of a reader kept justifying the absence of the data. It is now projected, and
+//     photoDate() below is the sort/group key for every surface. Re-measured 2026-09-09: 315 of
+//     1,584 live rows carry a taken_at, 150 of them on a different day than their upload.
 //   - caption is NULL on all but 2 rows (2/1396 set as of 2026-08-31; was 2/1094), so the alt
 //     fallback is the common path, not the edge case.
 // Duplicated from PhotoImg deliberately: this module is pure data and must not pull React in via a
 // component import. photoModel.test.js asserts the two constants stay equal, so drift fails a test
 // rather than silently splitting the expiry model in half.
 export const PRESIGN_TTL_MS = 900 * 1000   // == server view-url expiresIn:900
+
+// THE date of a photograph: when the shutter fired, falling back to when the row was created.
+// V4-PHOTOTAKENAT-002 — every gallery sort and the Photos wall's month sectioning go through this
+// one function, so a photograph cannot land in one place on one surface and somewhere else on
+// another. Mirrors the public site's `coalesce(e.event_date, p.taken_at, p.created_at)`
+// (gam-site/tools/generate_candidates.py) minus the event leg, which this model cannot see.
+//
+// WHY IT EXISTS. Every surface used to sort on created_at alone, so a frame shot 2026-08-13 and
+// uploaded 2026-09-08 sorted — and sectioned — under September. Measured against live prod
+// 2026-09-09: 150 of the 315 rows carrying a taken_at had a capture date different from their
+// upload date, the widest 36 days apart. The website already placed them correctly, so the two
+// halves of the same system disagreed about the same photograph.
+//
+// THE FALLBACK IS THE FEATURE, not defensive padding: taken_at is NULL on 1,269 of 1,584 live rows
+// (everything before the EXIF read shipped mid-August 2026, plus any frame whose EXIF was already
+// gone — a screenshot, anything that arrived via a messaging app). Sorting on the bare field would
+// sink all of them to the bottom of every gallery.
+//
+// ACCEPTS BOTH SPELLINGS on purpose. Callers hand it raw API rows (`taken_at`/`created_at`) in the
+// filter helpers and built models (`takenAt`/`createdAt`) elsewhere; making each caller remember
+// which shape it holds is how the two drift apart again. Returns an ISO string or null — null sorts
+// LAST in both directions at every call site, never to the head of a list someone is scanning.
+export function photoDate(photo) {
+  if (!photo) return null
+  return photo.takenAt ?? photo.taken_at ?? photo.createdAt ?? photo.created_at ?? null
+}
+
+// Whether photoDate() came from the camera rather than the upload. Surfaces that print a date can
+// use it to say so; nothing is required to.
+export function photoDateIsCapture(photo) {
+  return Boolean(photo && (photo.takenAt ?? photo.taken_at))
+}
 
 // The six parent FKs the live CHECK actually counts, in the order the CHECK names them.
 export const PARENT_KINDS = Object.freeze(['event', 'project', 'location', 'plant', 'inventory', 'space'])
@@ -96,7 +131,9 @@ export function toPhoto(raw, { receivedAt = Date.now() } = {}) {
     // photo always announces; a decorative usage passes alt="" at the call site instead.
     alt: caption || 'Garden photo',
     createdAt: raw.created_at ?? null,
-    // Surfaced because it is in the schema, but 100% NULL live — never group or sort on it.
+    // EXIF DateTimeOriginal, or null on the 1,269 of 1,584 live rows that predate the client-side
+    // read (or whose EXIF was stripped before the file ever reached us). Do NOT sort on this
+    // directly — go through photoDate(), which supplies the created_at fallback those rows need.
     takenAt: raw.taken_at ?? null,
     parents: Object.freeze(parents),
     parentKinds: Object.freeze(parentKinds),

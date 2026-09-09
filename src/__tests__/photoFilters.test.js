@@ -178,3 +178,43 @@ describe('activeFilterPills — the breadcrumb', () => {
     expect(prettySlug('winter-squash')).toBe('Winter Squash')
   })
 })
+
+// V4-PHOTOTAKENAT-002 — sortPhotos ranks by CAPTURE time where the camera recorded one.
+describe('sortPhotos — capture time outranks upload time', () => {
+  const ids = (list) => list.map((p) => p.id)
+  // Same upload instant on all three, so any assertion here is expressible ONLY via taken_at:
+  // revert photoDate() to created_at and the order becomes the id tiebreaker instead.
+  const SAME_UPLOAD = '2026-09-08T22:10:00Z'
+  const MIXED = [
+    photo('aug04', { taken_at: '2026-08-04T11:30:00Z', created_at: SAME_UPLOAD }),
+    photo('sep09', { taken_at: '2026-09-09T09:00:00Z', created_at: SAME_UPLOAD }),
+    photo('aug13', { taken_at: '2026-08-13T18:04:00Z', created_at: SAME_UPLOAD }),
+  ]
+
+  it('newest-first means most recently PHOTOGRAPHED', () => {
+    expect(ids(sortPhotos(MIXED, PHOTO_SORT_NEWEST))).toEqual(['sep09', 'aug13', 'aug04'])
+  })
+
+  it('oldest-first mirrors it', () => {
+    expect(ids(sortPhotos(MIXED, PHOTO_SORT_OLDEST))).toEqual(['aug04', 'aug13', 'sep09'])
+  })
+
+  it('interleaves rows that have a capture time with rows that do not', () => {
+    // THE MIXED CORPUS IS THE REAL ONE — 315 of 1,584 live rows carry a taken_at and 1,269 do not,
+    // so every gallery sorts a blend of the two keys. A legacy row uploaded between two backdated
+    // captures must land between them by its upload time, not above or below the whole cohort.
+    const blended = [
+      photo('capture-late',  { taken_at: '2026-08-20T10:00:00Z', created_at: SAME_UPLOAD }),
+      photo('legacy-middle', { taken_at: null, created_at: '2026-08-15T10:00:00Z' }),
+      photo('capture-early', { taken_at: '2026-08-10T10:00:00Z', created_at: SAME_UPLOAD }),
+    ]
+    expect(ids(sortPhotos(blended, PHOTO_SORT_NEWEST)))
+      .toEqual(['capture-late', 'legacy-middle', 'capture-early'])
+  })
+
+  it('a row with neither timestamp still sorts LAST in both directions', () => {
+    const withNull = [...MIXED, photo('undated', { taken_at: null, created_at: null })]
+    expect(ids(sortPhotos(withNull, PHOTO_SORT_NEWEST)).at(-1)).toBe('undated')
+    expect(ids(sortPhotos(withNull, PHOTO_SORT_OLDEST)).at(-1)).toBe('undated')
+  })
+})

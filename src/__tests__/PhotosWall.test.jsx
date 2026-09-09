@@ -159,3 +159,57 @@ describe('PhotosWall — prop-config surface (canonical renderer, not a fourth c
     expect(tile.parentElement.childElementCount).toBe(1)
   })
 })
+
+// V4-PHOTOTAKENAT-002 — the wall sections by CAPTURE month, not upload month.
+//
+// THE CASE THIS EXISTS FOR, stated as Dave hit it: photographs taken during an August walk through
+// the garden, uploaded weeks later in one batch. Before this ticket every one of them rendered under
+// a September header, because created_at was the only timestamp the gallery route sent. Measured
+// against live prod 2026-09-09, 150 of the 315 rows carrying a taken_at were in exactly that state.
+describe('PhotosWall — capture date drives the section, not upload date', () => {
+  // Uploaded the SAME DAY as each other, captured a month apart. Any assertion that still passes
+  // when photoDate() is reverted to created_at would be worthless, so the upload dates are
+  // deliberately identical: with created_at the three collapse into ONE September section.
+  const BACKDATED = [
+    { id: 'aug13', view_url: 'https://s3.test/a.jpg', caption: 'Harvest basket',
+      taken_at: '2026-08-13T18:04:00Z', created_at: '2026-09-08T22:10:00Z' },
+    { id: 'aug04', view_url: 'https://s3.test/b.jpg', caption: 'Bed at dawn',
+      taken_at: '2026-08-04T11:30:00Z', created_at: '2026-09-08T22:10:00Z' },
+    { id: 'sep09', view_url: 'https://s3.test/c.jpg', caption: 'Shot today',
+      taken_at: '2026-09-09T09:00:00Z', created_at: '2026-09-08T22:10:00Z' },
+  ]
+
+  it('files a photo under the month it was TAKEN, not the month it was uploaded', async () => {
+    await renderWall(BACKDATED)
+    const labels = [...document.querySelectorAll('section[aria-label]')]
+      .map(el => el.getAttribute('aria-label'))
+    expect(labels).toContain('August 2026')
+    expect(labels).toContain('September 2026')
+    // The August section holds the two August captures — both uploaded in September.
+    const august = document.querySelector('section[aria-label="August 2026"]')
+    expect(august.querySelectorAll('img[src^="https://s3.test/"]').length).toBe(2)
+  })
+
+  it('orders newest-capture-first across sections', async () => {
+    await renderWall(BACKDATED)
+    const labels = [...document.querySelectorAll('section[aria-label]')]
+      .map(el => el.getAttribute('aria-label'))
+    // September (the 9th) precedes August (the 13th and 4th). With the old created_at key all three
+    // are the same instant and this ordering is not expressible at all.
+    expect(labels.indexOf('September 2026')).toBeLessThan(labels.indexOf('August 2026'))
+  })
+
+  it('a row with no taken_at still sections by upload month rather than falling to Undated', async () => {
+    // 1,269 of 1,584 live rows are in this state — every upload predating the client-side EXIF read,
+    // plus any frame whose EXIF was gone before it arrived (a screenshot, anything via a messaging
+    // app). The created_at fallback is what keeps them in the wall instead of a dead bucket.
+    await renderWall([
+      { id: 'legacy', view_url: 'https://s3.test/d.jpg', caption: 'Pre-EXIF upload',
+        taken_at: null, created_at: '2026-07-04T15:00:00Z' },
+    ])
+    const labels = [...document.querySelectorAll('section[aria-label]')]
+      .map(el => el.getAttribute('aria-label'))
+    expect(labels).toContain('July 2026')
+    expect(labels).not.toContain('Undated')
+  })
+})

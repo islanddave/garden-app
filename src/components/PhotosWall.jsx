@@ -7,9 +7,15 @@
 // Lives OUTSIDE src/components/forms/, so it is exempt from the forms freeze-guard and the
 // no-hex / no-emoji ESLint scope (like PlantingTile). It still composes P/T tokens for chrome.
 //
-// Grouping/sort is by created_at — the ONLY timestamp /api/photos exposes. Capture-time (EXIF
-// DateTimeOriginal) would be the ideal grouping key but is not surfaced by the photos Lambda;
-// we do NOT parse EXIF client-side. Swap the key here if/when the API adds a captured_at field.
+// Grouping/sort is by photoDate() — capture time (EXIF DateTimeOriginal) where the camera recorded
+// one, upload time otherwise. This note used to say capture time "would be the ideal grouping key
+// but is not surfaced by the photos Lambda" and to wait for the API to add a field. The field was
+// already there: photos.taken_at had been written on every upload since mid-August 2026, and the
+// gallery route simply did not project it. V4-PHOTOTAKENAT-002 projects it, and this is the surface
+// the omission was most visible on — a frame shot on 13 August and uploaded on 8 September sat
+// under a SEPTEMBER header. 150 of the 315 rows carrying a capture time were in that position when
+// measured 2026-09-09. Sorting and sectioning both go through photoDate() so a tile cannot land in
+// one month and sort as though it were in another.
 //
 // V4-SPACEPHOTO-001 Lane C — this is the CANONICAL month-grouped gallery renderer. The Space
 // gallery is a PROP-CONFIG of it (`path` + `empty` + `renderTileFooter` + `testId`), NOT a fourth
@@ -17,6 +23,7 @@
 // behavior, so the Garden Photos sub-tab (<PhotosWall /> with no props) is byte-unchanged.
 import React, { useState, useCallback, useMemo } from 'react'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
+import { photoDate } from '../lib/photoModel.js'
 import { P } from '../lib/constants.js'
 import TileGrid from './forms/TileGrid.jsx'
 import AsyncRegion from './forms/AsyncRegion.jsx'
@@ -38,7 +45,10 @@ export function photoLoadErrorMessage(error, subject) {
 }
 
 // Month bucket key + human label from an ISO-ish timestamp. Falls back to an "Undated" bucket
-// (sorted last) when created_at is missing/garbage, so a malformed row never drops out silently.
+// (sorted last) when the photo has no usable date at all, so a malformed row never drops out
+// silently. Note that a row with no taken_at is NOT undated — photoDate() hands this its created_at,
+// which is why the 1,269 pre-EXIF rows still section by upload month rather than piling into
+// "Undated".
 const UNDATED_KEY = '0000-00'
 function monthKey(ts) {
   const t = ts ? Date.parse(ts) : NaN
@@ -79,8 +89,9 @@ export default function PhotosWall({
   // its Lightbox slide regardless of which month section it lives in.
   const sorted = useMemo(() => {
     return [...photos].sort((a, b) => {
-      const ta = a?.created_at ? Date.parse(a.created_at) : NaN
-      const tb = b?.created_at ? Date.parse(b.created_at) : NaN
+      const da = photoDate(a), db = photoDate(b)
+      const ta = da ? Date.parse(da) : NaN
+      const tb = db ? Date.parse(db) : NaN
       const va = Number.isFinite(ta) ? ta : -Infinity  // undated sinks to the bottom
       const vb = Number.isFinite(tb) ? tb : -Infinity
       return vb - va
@@ -100,7 +111,7 @@ export default function PhotosWall({
     const out = []
     let cur = null
     windowedPhotos.forEach((photo, flatIndex) => {
-      const key = monthKey(photo?.created_at)
+      const key = monthKey(photoDate(photo))
       if (!cur || cur.key !== key) {
         cur = { key, label: monthLabel(key), items: [] }
         out.push(cur)

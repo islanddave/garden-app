@@ -477,7 +477,7 @@ async function fetchSpaceHero(sql, spaceId, householdIds, spaceEnabled) {
               WHERE p.space_id = s.id
                 AND p.deleted_at IS NULL
                 AND p.created_by = ANY(${householdIds})
-              ORDER BY p.created_at DESC
+              ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
               LIMIT 1
            ) fb ON true
      WHERE s.id = ${spaceId}
@@ -1088,20 +1088,40 @@ export const handler = async (event) => {
       // PENDING. Uniformity is the point: a reader comparing the templates should not have to work out
       // which one may omit a column, and the next branch added by copy-paste inherits both.
       //
-      // STILL NOT DELIVERED HERE, both deliberate, both measured rather than assumed:
+      // STILL NOT DELIVERED HERE, deliberate and measured rather than assumed:
       //   p.space_id  — gated. The decorating query below supplies it only when SPACE_PHOTOS_ENABLED
       //     is on, and that gating is the point (see its header); projecting it here would break the
       //     flag-off rollback invariant space-photos.test.js pins.
-      //   p.taken_at  — read by photoModel.js:90 as `takenAt` but consumed by NOTHING: a repo-wide
-      //     search finds no production reader of photo.takenAt (every other `takenAt` hit is the EXIF
-      //     upload path in imagePipeline.js/useUploadPhoto.js, which WRITES taken_at). Delivering it
-      //     would populate a property no surface reads.
-      //     ⚠ DO NOT justify that from photoModel.js:18-20's "taken_at ... 100% NULL on every live
-      //     row". That was measured 2026-08-07 over 1094 rows and is STALE: on 2026-08-31, 127 of
-      //     1396 live rows carry a non-null taken_at. The column is inert here because it has no
-      //     reader, NOT because it has no data — the distinction matters the moment someone adds one.
+      //
+      // p.taken_at IS NOW DELIVERED, and this note is the record of why the previous one was wrong.
+      // It used to read "consumed by NOTHING" and cite a repo-wide search for a reader — a true
+      // observation that was being used as a reason. It was the wrong way round: the column had no
+      // reader BECAUSE this route withheld it, so the absence of a reader kept justifying the
+      // absence of the data, and the app went on sorting a photograph by when the file arrived.
+      //
+      // V4-PHOTOTAKENAT-002. taken_at is EXIF DateTimeOriginal, read off the original file before the
+      // downscale and before the privacy strip (useUploadPhoto.js, order documented as load-bearing
+      // there). Measured against live prod 2026-09-09: 315 of 1,584 rows carry one, and 150 of those
+      // 315 were CAPTURED ON A DIFFERENT DAY THAN THEY WERE UPLOADED — the widest 36 days apart, a
+      // frame shot 2026-08-04 and uploaded 2026-09-08. Every one of those 150 sorted, and sectioned
+      // on the Photos wall, under its upload month. The public site had already been publishing them
+      // correctly on `coalesce(e.event_date, p.taken_at, p.created_at)`
+      // (gam-site/tools/generate_candidates.py), so the app and the website disagreed about the date
+      // of the same photograph — that disagreement is what this closes.
+      //
+      // ORDER BY COALESCE(p.taken_at, p.created_at), NOT taken_at alone. The column is NULL on 1,269
+      // of 1,584 rows — everything uploaded before the EXIF read shipped mid-August 2026, plus any
+      // frame whose EXIF was already gone before it got here (a screenshot, anything that came
+      // through a messaging app). Sorting on the bare column sinks all 1,269 to the bottom of every
+      // gallery. The COALESCE is the whole feature for those rows, not a defensive nicety.
+      //
+      // NOT INDEX-BACKED, and that is a measured choice rather than an oversight: the expression
+      // defeats the (created_by, taken_at) index the P1 migration added, so these queries sort in
+      // memory. At 1,584 live rows against a LIMIT of 120 that is noise. It stops being noise
+      // somewhere in the tens of thousands — the fix then is an expression index on
+      // COALESCE(taken_at, created_at), not a retreat to created_at.
       // Full field-by-field census of what photoModel reads vs what these templates send, with the
-      // supplied-post-query cases separated out, is asserted in gallery-intake-status.test.js.
+      // supplied-post-query cases separated out, is asserted in gallery-parent-projection.test.js.
 
       let rows;
       if (attachedTo) {
@@ -1109,7 +1129,7 @@ export const handler = async (event) => {
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.inventory_item_id, p.intake_status,
-              p.storage_path, p.caption, p.is_public, p.created_at,
+              p.storage_path, p.caption, p.is_public, p.created_at, p.taken_at,
               pp.display_name AS project_name
             FROM photos p
             LEFT JOIN public.container pp ON pp.id = p.project_id
@@ -1122,7 +1142,7 @@ export const handler = async (event) => {
                   WHERE e.plant_id = ${attachedTo} AND e.deleted_at IS NULL
                 )
               )
-            ORDER BY p.created_at DESC
+            ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
             LIMIT ${limit}
           `;
       } else if (locationId) {
@@ -1130,7 +1150,7 @@ export const handler = async (event) => {
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.inventory_item_id, p.intake_status,
-              p.storage_path, p.caption, p.is_public, p.created_at,
+              p.storage_path, p.caption, p.is_public, p.created_at, p.taken_at,
               pp.display_name AS project_name
             FROM photos p
             LEFT JOIN public.container pp ON pp.id = p.project_id
@@ -1156,7 +1176,7 @@ export const handler = async (event) => {
                 )
                 SELECT id FROM loc_subtree
               )
-            ORDER BY p.created_at DESC
+            ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
             LIMIT ${limit}
           `;
       } else if (projectId) {
@@ -1164,7 +1184,7 @@ export const handler = async (event) => {
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.inventory_item_id, p.intake_status,
-              p.storage_path, p.caption, p.is_public, p.created_at,
+              p.storage_path, p.caption, p.is_public, p.created_at, p.taken_at,
               pp.display_name AS project_name
             FROM photos p
             LEFT JOIN public.container pp ON pp.id = p.project_id
@@ -1181,7 +1201,7 @@ export const handler = async (event) => {
                 WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
                   AND gne.archived_at IS NOT NULL
               )
-            ORDER BY p.created_at DESC
+            ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
             LIMIT ${limit}
           `;
       } else if (spaceId) {
@@ -1192,7 +1212,7 @@ export const handler = async (event) => {
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.inventory_item_id, p.space_id, p.intake_status,
-              p.storage_path, p.caption, p.is_public, p.created_at,
+              p.storage_path, p.caption, p.is_public, p.created_at, p.taken_at,
               pp.display_name AS project_name
             FROM photos p
             LEFT JOIN public.container pp ON pp.id = p.project_id
@@ -1209,7 +1229,7 @@ export const handler = async (event) => {
                   AND gne.archived_at IS NOT NULL
               )
               AND p.space_id = ${spaceId}
-            ORDER BY p.created_at DESC
+            ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
             LIMIT ${limit}
           `;
       } else {
@@ -1217,7 +1237,7 @@ export const handler = async (event) => {
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.inventory_item_id, p.intake_status,
-              p.storage_path, p.caption, p.is_public, p.created_at,
+              p.storage_path, p.caption, p.is_public, p.created_at, p.taken_at,
               pp.display_name AS project_name
             FROM photos p
             LEFT JOIN public.container pp ON pp.id = p.project_id
@@ -1233,7 +1253,7 @@ export const handler = async (event) => {
                 WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
                   AND gne.archived_at IS NOT NULL
               )
-            ORDER BY p.created_at DESC
+            ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
             LIMIT ${limit}
           `;
       }

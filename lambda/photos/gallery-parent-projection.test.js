@@ -216,11 +216,11 @@ const NOT_SENT_BY_THIS_ROUTE = {
   // GET /api/photos. photoModel accepts both spellings so one model serves both wire shapes.
   featured_photo_view_url: 'foreign route (plants/projects/spaces)',
   featured_photo_thumb_url: 'foreign route (plants/projects/spaces)',
-  // Read as `takenAt` but consumed by NO production surface (repo-wide search 2026-08-31: every other
-  // takenAt is the EXIF upload path, which WRITES taken_at). Deliberately not projected.
-  // NOT justified by photoModel.js:18-20's "100% NULL" claim, which is STALE — measured 2026-08-31,
-  // 127 of 1396 live rows carry a non-null taken_at. It is inert for want of a READER, not of data.
-  taken_at: 'no production reader of photo.takenAt',
+  // taken_at USED TO SIT HERE, excused as having no production reader. V4-PHOTOTAKENAT-002 removed
+  // the entry rather than updating its reason, and the removal is the point: with no bucket to fall
+  // into, the census below now REQUIRES every gallery template to project p.taken_at, and dropping
+  // it from one template while adding a sixth reds this file. The old excuse was circular anyway —
+  // the column had no reader because this route withheld it.
 };
 
 describe('BUG-PHOTOPARENTUNDELIVERED-001 — class-closing census', () => {
@@ -261,3 +261,25 @@ describe('BUG-PHOTOPARENTUNDELIVERED-001 — class-closing census', () => {
     expect(unaccounted, 'photoModel reads fields the gallery never sends').toEqual([]);
   });
 });
+
+// V4-PHOTOTAKENAT-002 — the galleries order by CAPTURE time, with upload time as the fallback.
+describe('V4-PHOTOTAKENAT-002 — gallery ordering', () => {
+  it('every gallery template orders on COALESCE(taken_at, created_at), never on created_at alone', () => {
+    forEachTemplate((t) => {
+      expect(t, `gallery template still orders on bare created_at:\n${t}`)
+        .not.toMatch(/ORDER BY\s+p\.created_at\b/i)
+      expect(t, `gallery template is missing the COALESCE order key:\n${t}`)
+        .toMatch(/ORDER BY\s+COALESCE\(p\.taken_at,\s*p\.created_at\)\s+DESC/i)
+    })
+  })
+
+  it('the order key COALESCES rather than sorting on taken_at alone', () => {
+    // NOT a style point. taken_at is NULL on 1,269 of 1,584 live rows (2026-09-09) — every upload
+    // predating the client-side EXIF read. `ORDER BY p.taken_at DESC` puts all 1,269 of them in one
+    // undifferentiated block at the end of every gallery, which is a worse regression than the bug
+    // this ticket fixed. The fallback is the feature.
+    forEachTemplate((t) => {
+      expect(t).not.toMatch(/ORDER BY\s+p\.taken_at\s+DESC/i)
+    })
+  })
+})

@@ -7,7 +7,7 @@ import { T } from '../lib/tokens.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import PhotoView from '../components/photo/PhotoView.jsx'
-import { toPhoto, TIER } from '../lib/photoModel.js'
+import { toPhoto, TIER, photoDate } from '../lib/photoModel.js'
 import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
@@ -118,6 +118,11 @@ const SEED_CAP = 8
 function seedFromPhotos(source) {
   const seen = new Set()
   const out = []
+  // DELIBERATELY STILL created_at, and the one sort in this file V4-PHOTOTAKENAT-002 left alone.
+  // Every gallery sort moved to photoDate() because a gallery answers "when was this photographed".
+  // This deck answers a different question — "which plants has Dave been working with lately" — and
+  // that is about his recent ACTIVITY, not about the frames' place in the garden's history. The two
+  // keys pick the same plants in the common case anyway, because a bulk upload lands as one batch.
   const recent = (source ?? []).slice().sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
   for (const p of recent) {
     if (!p.plant_id || seen.has(p.plant_id)) continue
@@ -507,9 +512,17 @@ export default function PhotoLibrary() {
       if (!filterProject && !filterLocation) {
         setUntaggedCount(data.filter(p => !toPhoto(p).isAttached).length)
       }
-      // V4-PHOTOTODAYFILTER-001. Keyed on created_at, NOT taken_at: photoModel.js records that
-      // taken_at is NULL on every live row, so a taken_at filter would return an empty library
-      // every time and look like "no photos today" rather than like a broken predicate.
+      // V4-PHOTOTODAYFILTER-001. Keyed on created_at, NOT taken_at — and V4-PHOTOTAKENAT-002 KEPT it
+      // that way while moving every gallery sort to capture time, so the reason has to stand on its
+      // own rather than on the old one. The old one was "taken_at is NULL on every live row", which
+      // is no longer true and was never the real argument anyway.
+      // THE REAL ARGUMENT: this filter serves the tagging workflow, and it answers "what arrived
+      // today, that I have not dealt with yet". Keying it to capture time would make it actively
+      // harmful in the exact case that motivated the rest of this change — bulk-uploading a month of
+      // older photographs. Every one of them would be absent from "Today" on the day it was added,
+      // so the filter you would reach for to find your new photos is the one filter that cannot see
+      // them. Upload day is the right axis HERE precisely because capture day is the right axis
+      // everywhere else.
       // "Today" is the garden day in HARVEST_TZ, not the browser's — the same boundary the harvest
       // log groups by, so a photo and the pick it belongs to never land on different days.
       // Client-side like its two siblings below, and complete rather than windowed: /api/photos
@@ -736,9 +749,12 @@ export default function PhotoLibrary() {
 
   // ---- V4-PHOTOBULK-001 S6 — the one-at-a-time drain ----
 
-  // Oldest first. `taken_at` is NULL on effectively every live row (photoModel records this), so
-  // created_at IS the capture order in practice, and ascending replays a garden walk in the order it
-  // happened — which is what makes the shortcut MRU converge instead of thrashing.
+  // Oldest first, ascending, so the drain replays a garden walk in the order it happened — which is
+  // what makes the shortcut MRU converge instead of thrashing. This used to say created_at "IS the
+  // capture order in practice" because taken_at was NULL on effectively every row. That premise
+  // expired: 315 of 1,584 live rows carry a real capture time as of 2026-09-09, and on 150 of them
+  // it falls on a different DAY than the upload. The sort below now uses photoDate(), so the walk it
+  // replays is the walk that happened rather than the order S3 acknowledged the files.
   //
   // BUG-QUICKTAGSCOPE-001 — THE DECK IS GLOBAL BECAUSE THE BADGE IS GLOBAL.
   // `untaggedCount` is deliberately a global number: it is recomputed only from an UNSCOPED fetch and
@@ -772,10 +788,17 @@ export default function PhotoLibrary() {
         setQuickTagOpening(false)
       }
     }
+    // OLDEST FIRST, and on photoDate() rather than created_at — CAPTURE order, which is the order
+    // this carousel was designed around. The P1 migration says so outright where it indexes
+    // (created_by, taken_at): the inbox walks "untagged photos in CAPTURE order (taken_at), which is
+    // what the carousel exploits (spatial memory from a garden walk)". That intent shipped with the
+    // column and then sat unused for want of the projection — a batch of photographs walked in one
+    // pass through the garden and uploaded weeks later arrived here in UPLOAD order, which is the
+    // order S3 happened to acknowledge them, and the walk's sequence was gone. V4-PHOTOTAKENAT-002.
     const pending = source
       .filter(p => !toPhoto(p).isAttached)
       .slice()
-      .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))
+      .sort((a, b) => String(photoDate(a) ?? '').localeCompare(String(photoDate(b) ?? '')))
     // We have just measured the global truth, so reconcile the held badge to it. This is what makes
     // the empty case self-explanatory: the count the user tapped disappears instead of the tap
     // appearing to fail. It also heals a count left stale by another device draining the inbox.

@@ -21,6 +21,8 @@
 // `ORDER BY p.created_at DESC`), so 'newest' reproduces the shipped order — but it is re-derived
 // here rather than assumed, because the client now re-orders and a sort that merely trusted the
 // wire would silently disagree with itself the moment anything reordered the array upstream.
+import { photoDate } from './photoModel.js'
+
 export const PHOTO_SORT_NEWEST = 'newest'
 export const PHOTO_SORT_OLDEST = 'oldest'
 export const DEFAULT_PHOTO_SORT = PHOTO_SORT_NEWEST
@@ -69,15 +71,25 @@ export function filterByCrop(photos, cropSel, cropByPlantId) {
   })
 }
 
-// Non-mutating. `created_at` is an ISO-8601 string on the wire, so a lexical compare IS the
-// chronological one; `id` breaks ties so the order is total and a test can pin it. A row with no
-// created_at sorts LAST in both directions rather than drifting to the head of 'oldest' — an
-// unknown timestamp must not outrank a measured one at the top of a list someone is scanning.
+// Non-mutating. Sorts on photoDate() — capture time where the camera recorded one, upload time
+// otherwise — so "newest" means the newest PHOTOGRAPH, not the newest upload. V4-PHOTOTAKENAT-002;
+// the rule and the measurements behind it live on photoDate() in photoModel.js, in one place so
+// this helper and PhotosWall's month sectioning cannot drift apart.
+//
+// LEXICAL COMPARE STILL HOLDS, and now spans two columns rather than one. Both taken_at and
+// created_at are timestamptz that reach the client as ISO-8601 with a Z — the driver renders them
+// identically because they are the same PG type on the same round trip — so a string compare IS the
+// chronological one and mixing the two is safe. That is a property of the wire format, not a
+// coincidence: if either column ever arrives in a different shape, this must become Date.parse.
+//
+// `id` breaks ties so the order is total and a test can pin it. A row with no date at all sorts
+// LAST in both directions rather than drifting to the head of 'oldest' — an unknown timestamp must
+// not outrank a measured one at the top of a list someone is scanning.
 export function sortPhotos(photos, order) {
   const list = [...(photos ?? [])]
   const dir = order === PHOTO_SORT_OLDEST ? 1 : -1
   return list.sort((a, b) => {
-    const A = a?.created_at, B = b?.created_at
+    const A = photoDate(a), B = photoDate(b)
     if (!A && !B) return String(a?.id ?? '').localeCompare(String(b?.id ?? ''))
     if (!A) return 1
     if (!B) return -1
