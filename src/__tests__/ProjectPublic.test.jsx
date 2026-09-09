@@ -1,7 +1,7 @@
 // WS-A1 — ProjectPublic is the `/garden/:slug` share page. It was UNAUTHENTICATED until
 // 2026-09-09; the route is now wrapped in <Protected> (pinned in App.routes.test.jsx) and the
-// matching server bypass is retired, so apiFetch carries the signed-in user's token like every
-// other call. It fetches GET /api/projects/public/:slug and renders the deny-by-default
+// matching server bypass is retired. The page therefore fetches through useApiFetch().fetch, which
+// attaches the signed-in user's token, like every other authenticated call. It fetches GET /api/projects/public/:slug and renders the deny-by-default
 // projection: name/species/variety/status + an events timeline. A 404 (apiFetch rejects with
 // err.status = 404) renders the not-found state.
 //
@@ -14,23 +14,29 @@
 // half of the guard holds independently of the server half in lambda/projects/public-route.test.js.
 // Deleting the field would make that test vacuous.
 //
-// apiFetch is mocked (we control the payload); react-router-dom is REAL — MemoryRouter supplies
-// the :slug param. No jest-dom (L-182): assert with .toBeTruthy() / queryByText.
+// The CREDENTIAL SEAM is mocked, not the raw transport, and that is the point. Until 2026-09-09
+// this file mocked `apiFetch` and asserted `mock.calls[0]).toHaveLength(1)` — i.e. it PINNED the
+// tokenless call. That assertion was correct while the route was public and became a LOCK ON A BUG
+// the moment the route required auth: the page shipped to prod returning 401 for signed-in users
+// with CI fully green. Both seams are mocked below so the test can assert the page uses
+// useApiFetch().fetch AND never reaches past it to the raw apiFetch. react-router-dom is REAL —
+// MemoryRouter supplies the :slug param. No jest-dom (L-182): assert .toBeTruthy() / queryByText.
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
-const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
+const { apiFetchSpy, seamSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn(), seamSpy: vi.fn() }))
 
 vi.mock('../lib/api.js', () => ({
   apiFetch: (...args) => apiFetchSpy(...args),
+  useApiFetch: () => ({ fetch: seamSpy, getToken: vi.fn() }),
 }))
 
 import ProjectPublic from '../pages/ProjectPublic.jsx'
 
-beforeEach(() => { apiFetchSpy.mockReset() })
+beforeEach(() => { apiFetchSpy.mockReset(); seamSpy.mockReset() })
 
 const PUBLIC_PAYLOAD = {
   name: 'Sungold Tomatoes',
@@ -59,15 +65,18 @@ function renderAt(slug) {
 }
 
 describe('ProjectPublic (public share page)', () => {
-  it('fetches the public endpoint UNauthenticated and renders species / events, never a location', async () => {
-    apiFetchSpy.mockResolvedValueOnce(PUBLIC_PAYLOAD)
+  it('fetches through the credential seam and renders species / events, never a location', async () => {
+    seamSpy.mockResolvedValueOnce(PUBLIC_PAYLOAD)
     renderAt('sungold-2026')
 
     await waitFor(() => expect(screen.getByText('Sungold Tomatoes')).toBeTruthy())
 
-    // Called with the public path ONLY — no token argument (unauthenticated fetch).
-    expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects/public/sungold-2026')
-    expect(apiFetchSpy.mock.calls[0]).toHaveLength(1)
+    // BUG-TOKENLESS-401-001 guard. The route requires a token since 2026-09-09, so the page MUST
+    // go through the credential seam. Asserting the seam was called is only half of it — the other
+    // half is that the raw transport was NOT, because reaching past useApiFetch is precisely how
+    // the headerless request got out. Reverting the page to `apiFetch(path)` fails both lines.
+    expect(seamSpy).toHaveBeenCalledWith('/api/projects/public/sungold-2026')
+    expect(apiFetchSpy).not.toHaveBeenCalled()
 
     expect(screen.getByText('Solanum lycopersicum')).toBeTruthy()
     expect(screen.getByText('Sungold')).toBeTruthy()
@@ -84,7 +93,7 @@ describe('ProjectPublic (public share page)', () => {
   it('renders the not-found state on a 404 (apiFetch rejects with status 404)', async () => {
     const err = new Error('Not found')
     err.status = 404
-    apiFetchSpy.mockRejectedValueOnce(err)
+    seamSpy.mockRejectedValueOnce(err)
     renderAt('does-not-exist')
 
     await waitFor(() => expect(screen.getByText('Project not found')).toBeTruthy())

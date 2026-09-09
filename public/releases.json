@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.126.1",
+    "date": "2026-09-09",
+    "highlights": [
+      "Garden project pages open again for signed-in users — they were returning an error after yesterday's sign-in requirement."
+    ]
+  },
+  {
     "version": "4.126.0",
     "date": "2026-09-09",
     "highlights": [

@@ -184,19 +184,26 @@ describe('sortPhotos — capture time outranks upload time', () => {
   const ids = (list) => list.map((p) => p.id)
   // Same upload instant on all three, so any assertion here is expressible ONLY via taken_at:
   // revert photoDate() to created_at and the order becomes the id tiebreaker instead.
+  //
+  // THE IDS ARE DELIBERATELY OUT OF ALPHABETICAL STEP WITH CAPTURE ORDER. They used to be
+  // aug04/aug13/sep09, which sort alphabetically into exactly capture-oldest-first — so the
+  // oldest-first case below passed verbatim under the reverted id tiebreaker (photoFilters.js:96
+  // is unconditionally ascending) and proved nothing. Alphabetical order here is m/a/z ->
+  // [aug13, aug04, sep09], which matches NEITHER expectation, so reverting photoDate() now
+  // reddens both cases rather than only one.
   const SAME_UPLOAD = '2026-09-08T22:10:00Z'
   const MIXED = [
-    photo('aug04', { taken_at: '2026-08-04T11:30:00Z', created_at: SAME_UPLOAD }),
-    photo('sep09', { taken_at: '2026-09-09T09:00:00Z', created_at: SAME_UPLOAD }),
-    photo('aug13', { taken_at: '2026-08-13T18:04:00Z', created_at: SAME_UPLOAD }),
+    photo('m-aug04', { taken_at: '2026-08-04T11:30:00Z', created_at: SAME_UPLOAD }),
+    photo('z-sep09', { taken_at: '2026-09-09T09:00:00Z', created_at: SAME_UPLOAD }),
+    photo('a-aug13', { taken_at: '2026-08-13T18:04:00Z', created_at: SAME_UPLOAD }),
   ]
 
   it('newest-first means most recently PHOTOGRAPHED', () => {
-    expect(ids(sortPhotos(MIXED, PHOTO_SORT_NEWEST))).toEqual(['sep09', 'aug13', 'aug04'])
+    expect(ids(sortPhotos(MIXED, PHOTO_SORT_NEWEST))).toEqual(['z-sep09', 'a-aug13', 'm-aug04'])
   })
 
   it('oldest-first mirrors it', () => {
-    expect(ids(sortPhotos(MIXED, PHOTO_SORT_OLDEST))).toEqual(['aug04', 'aug13', 'sep09'])
+    expect(ids(sortPhotos(MIXED, PHOTO_SORT_OLDEST))).toEqual(['m-aug04', 'a-aug13', 'z-sep09'])
   })
 
   it('interleaves rows that have a capture time with rows that do not', () => {

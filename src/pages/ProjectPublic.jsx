@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { useParams, Link } from 'react-router-dom'
-import { apiFetch } from '../lib/api.js'
+import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 
@@ -13,6 +13,13 @@ function formatDate(iso) {
 
 export default function ProjectPublic() {
   const { slug } = useParams()
+  // BUG-TOKENLESS-401-001, second instance. This page fetched via the RAW apiFetch with no token
+  // argument, which was correct while /api/projects/public/:slug was an unauthenticated route. The
+  // WS-A1 bypass retirement moved that dispatch below verifyToken, and App.jsx wraps /garden/:slug
+  // in <Protected> — so the only caller left is a SIGNED-IN user, and a headerless request from one
+  // is exactly the guaranteed-401 shape api.js warns against above acquireToken. Route it through
+  // the credential seam like every other authenticated page.
+  const { fetch } = useApiFetch()
   const [project, setProject] = useState(null)
   const [events,  setEvents]  = useState([])
   const [loading, setLoading] = useState(true)
@@ -20,7 +27,7 @@ export default function ProjectPublic() {
 
   useEffect(() => {
     let isMounted = true
-    apiFetch('/api/projects/public/' + slug)
+    fetch('/api/projects/public/' + slug)
       .then(proj => {
         if (!isMounted) return
         if (!proj) { setNotFound(true); setLoading(false); return }
@@ -34,7 +41,7 @@ export default function ProjectPublic() {
         setLoading(false)
       })
     return () => { isMounted = false }
-  }, [slug])
+  }, [slug, fetch])
 
   if (loading) return <Page><div style={{ padding: '80px 20px', textAlign: 'center', color: P.light }}>Loading…</div></Page>
   if (notFound) return (

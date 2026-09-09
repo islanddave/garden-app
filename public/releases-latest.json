@@ -1,8 +1,7 @@
 {
-  "version": "4.126.0",
+  "version": "4.126.1",
   "date": "2026-09-09",
   "highlights": [
-    "Photos now sort and group by when they were taken, not when they were uploaded — a picture from an August walk added in September files under August, and the untagged-photo carousel replays a garden walk in the order you actually walked it.",
-    "Recovered the original capture date for 926 older photographs from their embedded camera metadata, correcting the date on 463 of them."
+    "Garden project pages open again for signed-in users — they were returning an error after yesterday's sign-in requirement."
   ]
 }
