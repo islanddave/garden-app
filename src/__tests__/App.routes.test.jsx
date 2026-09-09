@@ -19,10 +19,17 @@ import { describe, it, expect, vi } from 'vitest'
 // (BottomNav.modeSwap.test.jsx:42 records both), and would have again for EVENT_REANCHOR_ENABLED.
 // The two flags this file actually pins are still stated explicitly; everything else now inherits
 // its shipped value instead of silently drifting from one.
+// PROJECTS_HIDDEN joined the explicit set 2026-09-09, for the reason stated above rather than a new
+// one: /projects is a `flag ? <Navigate> : <Protected>` element swap, so it is a REDIRECT under the
+// shipped configuration and a content route under the other. The Protected-coverage guard below has
+// to name it as one or the other, and pinning the flag here is what makes that answer stable —
+// otherwise flipping the flag reds this file for a reason that has nothing to do with route-table
+// integrity. Mirrors the shipped value (true), so nothing else in this file changes shape.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: true,
   OVERLAY_ROUTES_ENABLED: true,
+  PROJECTS_HIDDEN: true,
 }))
 
 import { renderRoutes } from '../App.jsx'
@@ -115,6 +122,62 @@ describe('App route table (single source of truth)', () => {
     const unscopedEv = routes.find((r) => r.props.path === '/events/:eventId')
     expect(scopedEv.props.element.type.name).toBe('ScopedEventRedirect')
     expect(unscopedEv.props.element.type.name).not.toBe('ScopedEventRedirect')
+  })
+
+  // WS-A1 retirement, 2026-09-09. `/garden/:slug` shipped unwrapped while every content route
+  // around it was Protected, and NOTHING asserted it should be — the route table was pinned by
+  // path set and by count, both of which an unprotected route satisfies perfectly. That gap is the
+  // actual defect; the missing wrapper was only its symptom. So this is written as a whole-table
+  // invariant with a closed exception list rather than as one assertion about one path: a future
+  // route added without <Protected> now fails here by default, and making it pass requires
+  // naming it in UNPROTECTED below, which is a reviewable act rather than an omission.
+  //
+  // The exception list is exhaustive and every entry is a redirect or auth plumbing — NOT a
+  // content surface. Redirects render <Navigate>/a *Redirect component and expose nothing; the
+  // targets they point at are themselves Protected. /login and /auth/callback are the auth
+  // entry points and cannot be behind the gate they exist to satisfy (/login branches on `user`
+  // itself, which authRenderGate.test.jsx covers separately).
+  const UNPROTECTED = new Set([
+    '/',                                    // <Navigate> → /today
+    '*',                                    // <Navigate> → /today
+    '/tasks',                               // <Navigate> → /today
+    '/plants',                              // PlantsRedirect
+    '/projects',                            // <Navigate> → /garden, under the PROJECTS_HIDDEN pin above
+
+    '/projects/:id/events/:eventId',        // ScopedEventRedirect
+    '/projects/:id/plantings/:plantingId',  // ScopedPlantingRedirect
+    '/login',                               // auth entry point
+    '/auth/callback',                       // auth entry point
+  ])
+
+  it('every content route is wrapped in <Protected> — the app has no anonymous surface', () => {
+    const routes = renderRoutes({ overlay: false, user: true })
+    // Identify Protected structurally, from a route known to use it, rather than by matching the
+    // name string — a minifier or a rename would quietly make a name check vacuous.
+    const Protected = routes.find((r) => r.props.path === '/garden').props.element.type
+    expect(Protected).toBeTypeOf('function')
+    const unwrapped = routes
+      .filter((r) => r.props.element.type !== Protected)
+      .map((r) => r.props.path)
+    expect(unwrapped.sort()).toEqual([...UNPROTECTED].sort())
+  })
+
+  it('/garden/:slug specifically is Protected (the WS-A1 public share route is retired)', () => {
+    const routes = renderRoutes({ overlay: false, user: true })
+    const slug = routes.find((r) => r.props.path === '/garden/:slug')
+    expect(slug, '/garden/:slug is gone — it should be Protected, not deleted').toBeTruthy()
+    expect(slug.props.element.type).toBe(routes.find((r) => r.props.path === '/garden').props.element.type)
+    // It keeps the sibling shape as well as the wrapper: <Protected><ErrorBoundary>…</></>.
+    // /garden/:slug fetches, so a throw there must cost the route and not blank the whole PWA.
+    expect(slug.props.element.props.children.props.scope).toBe('route')
+  })
+
+  // Non-vacuity for the two guards above: UNPROTECTED must name only paths that really are in the
+  // table. A stale entry (a route renamed or removed) would silently widen the allowlist and let a
+  // genuinely unprotected route hide behind a name nothing matches any more.
+  it('the unprotected allowlist contains no stale paths', () => {
+    const paths = new Set(pagePaths())
+    for (const p of UNPROTECTED) expect(paths, `${p} is allowlisted but not in the route table`).toContain(p)
   })
 
   it('the overlay tree contains ONLY the four overlayable routes', () => {

@@ -1,7 +1,13 @@
-// WS-A1 — ProjectPublic is the UNAUTHENTICATED `/garden/:slug` share page. It fetches
-// GET /api/projects/public/:slug via apiFetch WITHOUT a token and renders the deny-by-default
-// public projection: name/species/variety/status + an events timeline. A 404
-// (apiFetch rejects with err.status = 404) renders the not-found state.
+// WS-A1 — ProjectPublic is the `/garden/:slug` share page. It was UNAUTHENTICATED until
+// 2026-09-09; the route is now wrapped in <Protected> (pinned in App.routes.test.jsx) and the
+// matching server bypass is retired, so apiFetch carries the signed-in user's token like every
+// other call. It fetches GET /api/projects/public/:slug and renders the deny-by-default
+// projection: name/species/variety/status + an events timeline. A 404 (apiFetch rejects with
+// err.status = 404) renders the not-found state.
+//
+// This file renders the COMPONENT, not the route, so it is unaffected by the wrapper — and that
+// separation is deliberate: the auth boundary belongs to the route table and is asserted there,
+// while the projection-rendering guarantees below stay independent of it.
 //
 // location_path was dropped from this route 2026-08-27. PUBLIC_PAYLOAD deliberately STILL carries
 // it: the assertion below is that the page renders no location even when handed one, so the client

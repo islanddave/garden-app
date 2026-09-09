@@ -1,14 +1,20 @@
-// WS-A1 static-source security regression guard for the public share route.
+// WS-A1 static-source security regression guard for the project share route.
 //
-// `/garden/:slug` is served by GET /api/projects/public/:slug, which MUST be reachable
-// WITHOUT auth. Two properties are pinned here, both by inspecting index.js source (the
-// house static-test style — same as select-columns.test.js / pubhide.static.test.js):
+// `/garden/:slug` is served by GET /api/projects/public/:slug. It was an UNAUTHENTICATED
+// surface until 2026-09-09; the ordering assertion below has been INVERTED to match, and now
+// pins the opposite of what it originally pinned. Three properties, all by inspecting index.js
+// source (the house static-test style — same as select-columns.test.js / pubhide.static.test.js):
 //
-//   1. Ordering: the public route is matched + dispatched BEFORE the verifyToken() call, so
-//      an unauthenticated request reaches handlePublicProject and never 401s.
-//   2. Deny-by-default projection: the handlePublicProject body never selects or returns any
-//      sensitive column. This is the security boundary — a regression that spreads a DB row
-//      or widens the SELECT would surface here rather than in prod.
+//   1. Ordering: the route is matched + dispatched AFTER the verifyToken() call, so an
+//      unauthenticated request 401s and never reaches handlePublicProject. This is the guard
+//      that the retired bypass cannot be reinstated by accident.
+//   2. Still dispatched: the auth bypass was removed, the dispatch was NOT. This remains the
+//      only code path serving the path, so dropping it would 405 the route for signed-in users
+//      as well — "no longer public" must not silently become "no longer works".
+//   3. Deny-by-default projection: the handlePublicProject body never selects or returns any
+//      sensitive column. Kept in full after the auth gate landed — it is a narrower boundary,
+//      not a redundant one; a regression that spreads a DB row or widens the SELECT surfaces
+//      here rather than in prod.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -35,23 +41,43 @@ describe('WS-A1 public share route', () => {
     expect(SRC).toContain('projects\\/public\\/([^/]+)$');
   });
 
-  it('matches + dispatches the public route BEFORE verifyToken() (unauthenticated reachability)', () => {
+  // INVERTED 2026-09-09 (was: "dispatches BEFORE verifyToken (unauthenticated reachability)").
+  // The pre-auth early return was the app's last unauthenticated content surface and is retired;
+  // this assertion is the thing that stops it coming back. Offsets are compared against the
+  // 401-return of the auth block rather than the `verifyToken(` call alone, so moving the dispatch
+  // into the middle of the try/catch would not satisfy it.
+  it('matches + dispatches the route AFTER verifyToken() (no unauthenticated reachability)', () => {
     const handlerIdx = SRC.indexOf('export const handler');
     expect(handlerIdx).toBeGreaterThan(-1);
-    // The early-return CALL inside the handler (not the function definition above it).
+    // The dispatch CALL inside the handler (not the function definition above it).
     const callIdx = SRC.indexOf('handlePublicProject(publicMatch[1]', handlerIdx);
     const verifyIdx = SRC.indexOf('verifyToken(', handlerIdx);
+    const unauthIdx = SRC.indexOf("return resp(401, { error: 'Unauthorized' })", handlerIdx);
     expect(callIdx).toBeGreaterThan(-1);
     expect(verifyIdx).toBeGreaterThan(-1);
-    expect(callIdx).toBeLessThan(verifyIdx);
+    expect(unauthIdx).toBeGreaterThan(-1);
+    expect(callIdx, 'public-slug dispatch is back above verifyToken — the WS-A1 bypass has returned')
+      .toBeGreaterThan(verifyIdx);
+    expect(callIdx, 'public-slug dispatch precedes the 401 return, so it is still reachable unauthenticated')
+      .toBeGreaterThan(unauthIdx);
   });
 
-  it('only intercepts GET on the public path (other methods fall through to auth)', () => {
+  // Non-vacuity for the guard above: the dispatch must still EXIST. Only the auth bypass was
+  // removed — this is the sole code path serving /api/projects/public/:slug (the two-segment path
+  // cannot match the one-segment by-id idMatch), so deleting it would fall through to the handler's
+  // trailing 405 and break the route for signed-in users too. An "is it after verifyToken" test
+  // passes trivially against code that no longer serves the route at all; this one does not.
+  it('still dispatches the route (removing the bypass must not remove the handler)', () => {
+    expect(SRC).toContain('handlePublicProject(publicMatch[1]');
+    expect(SRC).toContain('async function handlePublicProject');
+  });
+
+  it('only intercepts GET on the public path (other methods fall through to the 405)', () => {
     // Anchored on a COMMENT marker, so the offsets must come from RAW; the extracted block is
     // decommented before matching so the `=== 'GET'` below cannot be satisfied by prose.
-    const start = RAW.indexOf('WS-A1: public project share route.');
-    const end = RAW.indexOf('const authHeader', start);
-    expect(start).toBeGreaterThan(-1);
+    const start = RAW.indexOf('WS-A1 share route, now AUTH-GATED');
+    const end = RAW.indexOf('Must check /types routes before idMatch', start);
+    expect(start, 'WS-A1 anchor comment not found — this guard has gone blind').toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = decomment(RAW.slice(start, end));
     expect(block).toContain("=== 'GET'");

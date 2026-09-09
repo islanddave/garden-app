@@ -139,8 +139,10 @@ export async function reparentCore(sql, { subjectId, newParentId, opId, expected
   }
 }
 
-// WS-A1: public project share route target. `/garden/:slug` is an UNAUTHENTICATED surface, so
-// this runs BEFORE verifyToken in the handler (early return). TWO independent boundaries guard it:
+// WS-A1: project share route target. `/garden/:slug` was an UNAUTHENTICATED surface until
+// 2026-09-09; it is now behind verifyToken like every other path in this handler, and the "public"
+// in the URL is historical. TWO independent boundaries still guard the projection — kept, not
+// retired, because neither is an auth check and both stay meaningful for a signed-in caller:
 //
 //   (1) ROW GATE — is_public on both the project and its events. ADDED 2026-08-24, reversing the
 //       earlier "post-PUBHIDE: no is_public gate, per Dave's locked decision". Reversed by Dave
@@ -237,18 +239,6 @@ export const handler = async (event) => {
     return resp(500, { error: 'Internal server error' });
   }
 
-  // WS-A1: public project share route. Served BEFORE verifyToken so `/garden/:slug` renders
-  // unauthenticated. Two-segment path (/public/:slug) — cannot collide with the one-segment
-  // by-id idMatch (/api/projects/:id) below, which requires no interior slash. GET-only; any
-  // other method to this path falls through to verifyToken (stays auth-gated).
-  const publicMethod = event.requestContext?.http?.method ?? 'GET';
-  const publicMatch = publicMethod === 'GET'
-    ? (event.rawPath ?? '').match(/^\/api\/projects\/public\/([^/]+)$/)
-    : null;
-  if (publicMatch) {
-    return await handlePublicProject(publicMatch[1], secrets);
-  }
-
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
   let userId;
@@ -274,6 +264,23 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
   const qs = event.queryStringParameters ?? {};
+
+  // WS-A1 share route, now AUTH-GATED (2026-09-09). This dispatch used to sit above verifyToken so
+  // `/garden/:slug` rendered to anonymous visitors; that bypass is retired — the app has no
+  // unauthenticated content surface any more. Only the bypass was removed, not the handler: this
+  // is still the ONLY code path serving /api/projects/public/:slug (the two-segment path cannot
+  // match the one-segment by-id idMatch below, which forbids an interior slash), so deleting the
+  // dispatch outright would 405 the route for signed-in users too. Both boundaries documented on
+  // handlePublicProject — the is_public ROW gate and the deny-by-default COLUMN projection — are
+  // deliberately KEPT. They are narrower than the auth check rather than redundant with it: the
+  // projection is what stops a newly-added sensitive column reaching this response, and it earns
+  // its keep whoever is asking. Must stay ahead of idMatch for the same reason it always did.
+  const publicMatch = method === 'GET'
+    ? rawPath.match(/^\/api\/projects\/public\/([^/]+)$/)
+    : null;
+  if (publicMatch) {
+    return await handlePublicProject(publicMatch[1], secrets);
+  }
 
   // Must check /types routes before idMatch — otherwise 'types' is treated as a project UUID
   const typesItemMatch = rawPath.match(/^\/api\/projects\/types\/([^/]+)$/);

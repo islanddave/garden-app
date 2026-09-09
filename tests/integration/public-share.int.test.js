@@ -1,5 +1,13 @@
 // public-share.int.test.js — 0A.5 Phase-1 leak-lock: GET /api/projects/public/:slug (handlePublicProject).
-// The public share route is UNAUTHENTICATED (served before verifyToken).
+//
+// The route was UNAUTHENTICATED (served before verifyToken) until 2026-09-09; it now sits behind
+// the auth gate like every other path in the handler. This file is UNCHANGED by that and still
+// asserts exactly what it always did — the harness attaches an authorization header to every
+// request and stubs verifyToken, so these calls were always authenticated and simply used to
+// arrive via the bypass instead. The auth boundary itself is NOT assertable here for that reason
+// (a stub that always resolves cannot express "signed out"); it is pinned statically in
+// lambda/projects/public-route.test.js. What THIS file locks is the projection, which outlived the
+// bypass deliberately — it is the narrower boundary and still governs what a signed-in caller sees.
 //
 // IMPORTANT — what this locks and why. This route has TWO independent boundaries and this file
 // proves each one WITHOUT the other able to mask it:

@@ -238,7 +238,16 @@ export function OverlayHost({ ariaLabel, size = 'peek', children }) {
 export function renderRoutes({ overlay, user, loading }) {
   const routes = [
     { path: '/',              element: <Navigate to="/today" replace /> },
-    { path: '/garden/:slug',  element: <ProjectPublic /> },
+    // WS-A1 retired 2026-09-09. This was the app's LAST unauthenticated content route — every
+    // sibling below is Protected, and nothing asserted that this one should be, which is how it
+    // sat unwrapped. Projects are deprecated (Dave, 2026-08-26), so the share link outlived the
+    // feature it shared; the gam-site website reads Neon and S3 directly and never fetched this
+    // surface, so closing it breaks no external consumer. Wrapped rather than deleted: the URL
+    // still resolves for a signed-in user, it just stops rendering to anyone who is not. The
+    // matching lambda bypass (GET /api/projects/public/:slug, dispatched before verifyToken) moved
+    // behind the auth gate in the same change — half of this is worse than neither half, either a
+    // route that renders an empty shell or an API that still answers anonymously.
+    { path: '/garden/:slug',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><ProjectPublic /></ErrorBoundary></Protected> },
     // ErrorBoundary is NOT decorative here: /garden was the only data-fetching route without one,
     // and it is the app's most-used surface. A throw escaped to the app-level boundary and blanked
     // the whole PWA — and because the service worker serves the bundle cache-first, a reload gets
