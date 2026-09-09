@@ -15,7 +15,8 @@ const fc = require('./frostClass');
 // V4-OVERWINTER-001 — overwintering as a care_profile ATTRIBUTE (never a plants.status value). Holds a
 // planting out of the summer water/feed cadence and gives it a REDUCED-cadence moisture check instead;
 // the window is a pure function of the date, so the exit needs no writer. See overwinter.js header.
-const ow = require('./overwinter');
+const ow = require('./overwinter')
+const lw = require('./leafWetness');
 // V5-LEGACYEXCEPTIONCARE-001 — the drought signal (consecutive days with no >=0.60in deep soak). Read on
 // the dormancy_suppressed arm only, and INERT unless the handler threads a state in: an un-updated caller
 // passes nothing, droughtNote returns null, and the emitted row is byte-identical.
@@ -1263,6 +1264,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const users={};
   for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState);
     users[u]=up; }
+  const lwOut=(hy && Array.isArray(hy.wetness_window)) ? lw.assessLeafWetness(hy.wetness_window, today) : null;
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
     // BUG-RAINACTUAL-001 §3-1: today_observed_in / today_remaining_in ride along for observability — they are
@@ -1271,10 +1273,23 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop,
       ...(hy.today_observed_in!=null?{today_observed_in:hy.today_observed_in}:{}), ...(hy.today_remaining_in!=null?{today_remaining_in:hy.today_remaining_in}:{}),
       rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
+    // V5-LEAFWETNESS-001 — SPREAD CONDITIONALLY, not emitted as an always-present null. The first cut
+    // wrote `leaf_wetness: <result-or-null>` unconditionally and the G-PARITY gate caught it: a new
+    // always-present key changes EVERY stored payload, so all 26 committed goldens went red at once.
+    // That gate is correct and the fix is the house pattern three lines above — `today_observed_in`
+    // spreads conditionally for exactly this reason ("a run with no bound station emits a
+    // byte-identical payload; the keys are absent, not null").
+    //
+    // The cost is real and worth stating: an ABSENT key cannot distinguish "no wet days" from "the
+    // cue was deleted". That detectability is bought back in the test suite instead — the Today mount
+    // case reddens if the element goes, and the engine case reddens if the key stops appearing when a
+    // qualifying window IS supplied. PLAN_SCHEMA_VERSION stays unbumped: readers select named keys,
+    // and a bump nulls the plan in three reader Lambdas with no regeneration path.
+    ...(lwOut ? { leaf_wetness: lwOut } : {}),
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
 module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression, feedSuppression, isMedHerb,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
   FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered, bagHeatDemoteCredit,
   dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,
-  overwinter: ow, drought: dr};
+  overwinter: ow, drought: dr, leafWetness: lw};

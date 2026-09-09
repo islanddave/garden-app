@@ -4,6 +4,7 @@ import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import WeatherCueLine from '../components/today/WeatherCueLine.jsx'
 import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
 import DroughtLine from '../components/today/DroughtLine.jsx'
+import LeafWetnessLine from '../components/today/LeafWetnessLine.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
@@ -132,6 +133,15 @@ export default function Today() {
               Below FrostAlertLine because frost is tonight and can kill; drought is a standing
               condition measured over 20 days. Renders nothing unless the plan says `dry`. */}
           <DroughtLine plan={plan} />
+
+          {/* V5-LEAFWETNESS-001 — the foliar infection-window line. MOUNTED IN THE SAME CHANGE AS THE
+              COMPONENT, for the reason the comment above records: DroughtLine shipped inert and its
+              header still carries the "NOT MOUNTED" warning it was written with. A mount assertion in
+              leafWetnessLine.test.jsx pins this element so it cannot regress into that state quietly.
+              Below DroughtLine because drought asks him to water and this only asks him to LOOK — and
+              because it is the least time-critical of the four ambient lines. Renders nothing on the
+              77% of days (94 of 122 measured) where no day crosses 8 modelled wet hours in band. */}
+          <LeafWetnessLine plan={plan} />
 
           {/* V4-TODAYHOLD-001 — Today is an ACTION surface: show the substrate/feeding note only
               when it is actionable. `substrate.on_hold` is true exactly when there are zero feed

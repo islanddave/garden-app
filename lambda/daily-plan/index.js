@@ -237,6 +237,21 @@ async function fetchPrecip(lat, lng) {
       // 0) on absence, same rule as every field above.
       today_et0_in: Number.isFinite(et0[2]) ? round3(et0[2]) : null,
       today_tmax_f: Number.isFinite(tmax[2]) ? round2(tmax[2]) : null,
+      // V5-LEAFWETNESS-001 — the D-2..D+3 wetness window, lifted from arrays ALREADY fetched on this
+      // ungated path. No URL change, no DB read, no flag: `precipitation_hours` has been in the daily
+      // request since 2026-09-07 and was consumed at exactly one site (settled_days), which excludes
+      // D0 — so today's and all three forecast days' values were fetched and discarded every run.
+      //
+      // Carried as a SERIES rather than a D0 scalar because the cue is about runs of wet days, and
+      // because the forecast half is only reachable here: weather_daily stores completed days only,
+      // has no future rows, and by design never holds today. Same null discipline as every field
+      // above — an absent hour count is null, never 0, because 0 hours is a real dry day.
+      wetness_window: times.map((t, i) => ({
+        date: t,
+        precip_hours: Number.isFinite(preciph[i]) ? round2(preciph[i]) : null,
+        tmax_f: Number.isFinite(tmax[i]) ? round2(tmax[i]) : null,
+        tmin_f: Number.isFinite(tmin[i]) ? round2(tmin[i]) : null,
+      })).filter((d) => d.date),
       // BUG-RAINACTUAL-001 H5 — the hour-resolution forecast, carried VERBATIM (local ISO timestamps + the tz
       // they are expressed in) so station.remainingHourlyIn can scope "still to come" to the hours that have
       // not elapsed. Passed through untransformed on purpose: the date-string matching in that helper is what
