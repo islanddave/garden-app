@@ -1110,10 +1110,16 @@ export const handler = async (event) => {
       // of the same photograph — that disagreement is what this closes.
       //
       // ORDER BY COALESCE(p.taken_at, p.created_at), NOT taken_at alone. The column is NULL on 1,269
-      // of 1,584 rows — everything uploaded before the EXIF read shipped mid-August 2026, plus any
-      // frame whose EXIF was already gone before it got here (a screenshot, anything that came
-      // through a messaging app). Sorting on the bare column sinks all 1,269 to the bottom of every
-      // gallery. The COALESCE is the whole feature for those rows, not a defensive nicety.
+      // of 1,584 rows, so sorting on it bare sinks four rows in five to the end of every gallery.
+      // The COALESCE is the whole feature for those rows, not a defensive nicety.
+      //
+      // AND THOSE ROWS ARE MOSTLY RECOVERABLE, which is worth knowing before anyone treats the
+      // fallback as permanent. Censused 2026-09-09 across all 1,269 objects: 926 (73%) still carry a
+      // readable EXIF DateTimeOriginal in S3. They are NULL because the upload path did not read the
+      // tag yet, not because the data was absent. The 343 that truly lost it were re-encoded through
+      // a canvas by the client-side downscale (ee2f6ec, 2026-07-27); the privacy strip shipped
+      // 2026-08-20, AFTER the last affected upload, and never touched this population.
+      // A backfill (V4-PHOTOEXIF-001) would move 313 of the 926 into a different day-section here.
       //
       // NOT INDEX-BACKED, and that is a measured choice rather than an oversight: the expression
       // defeats the (created_by, taken_at) index the P1 migration added, so these queries sort in

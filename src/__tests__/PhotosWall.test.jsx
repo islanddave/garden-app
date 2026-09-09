@@ -200,9 +200,10 @@ describe('PhotosWall — capture date drives the section, not upload date', () =
   })
 
   it('a row with no taken_at still sections by upload month rather than falling to Undated', async () => {
-    // 1,269 of 1,584 live rows are in this state — every upload predating the client-side EXIF read,
-    // plus any frame whose EXIF was gone before it arrived (a screenshot, anything via a messaging
-    // app). The created_at fallback is what keeps them in the wall instead of a dead bucket.
+    // 1,269 of 1,584 live rows are in this state — every upload predating the client-side EXIF read.
+    // The created_at fallback is what keeps them in the wall instead of a dead bucket. It stays
+    // load-bearing even after a backfill: a 2026-09-09 census of all 1,269 objects found 926 with
+    // recoverable EXIF, leaving 343 that a canvas re-encode stripped for good.
     await renderWall([
       { id: 'legacy', view_url: 'https://s3.test/d.jpg', caption: 'Pre-EXIF upload',
         taken_at: null, created_at: '2026-07-04T15:00:00Z' },

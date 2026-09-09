@@ -49,10 +49,17 @@ export const PRESIGN_TTL_MS = 900 * 1000   // == server view-url expiresIn:900
 // upload date, the widest 36 days apart. The website already placed them correctly, so the two
 // halves of the same system disagreed about the same photograph.
 //
-// THE FALLBACK IS THE FEATURE, not defensive padding: taken_at is NULL on 1,269 of 1,584 live rows
-// (everything before the EXIF read shipped mid-August 2026, plus any frame whose EXIF was already
-// gone — a screenshot, anything that arrived via a messaging app). Sorting on the bare field would
-// sink all of them to the bottom of every gallery.
+// THE FALLBACK IS THE FEATURE, not defensive padding: taken_at is NULL on 1,269 of 1,584 live rows,
+// so sorting on the bare field would sink four rows in five to the bottom of every gallery.
+//
+// WHY THOSE 1,269 ARE NULL — censused 2026-09-09 over all 1,269 S3 objects, replacing the guess this
+// comment shipped with ("a screenshot, anything via a messaging app"), which was wrong in kind: the
+// files are 1,269 of 1,269 JPEG, none of them second-hand. 926 of them (73%) STILL CARRY a readable
+// EXIF DateTimeOriginal in S3 right now. The column is empty because the upload path did not read it
+// yet, not because the data was ever missing. The 343 that genuinely lost it were re-encoded through
+// a canvas by the client-side downscale (ee2f6ec, 2026-07-27), which writes no EXIF — the privacy
+// strip is innocent here, it shipped 2026-08-20, after the last affected upload.
+// So this fallback is load-bearing TODAY and mostly reversible: see V4-PHOTOEXIF-001.
 //
 // ACCEPTS BOTH SPELLINGS on purpose. Callers hand it raw API rows (`taken_at`/`created_at`) in the
 // filter helpers and built models (`takenAt`/`createdAt`) elsewhere; making each caller remember
