@@ -261,15 +261,20 @@ describe('Lightbox component', () => {
   })
 
   it('reduced-motion path renders without error', () => {
-    const spy = vi.spyOn(window, 'matchMedia').mockImplementation((q) => ({
+    // stubGlobal, NOT spyOn: jsdom ships NO window.matchMedia at all, and Lightbox.jsx:98 guards on
+    // that absence (`!window.matchMedia` -> motion not reduced). vitest 2's spyOn silently CREATED
+    // the missing property, so this test worked by accident; vitest 4 refuses to spy on a non-
+    // function. stubGlobal defines it either way, which is what this test actually needs in order to
+    // reach the reduced-motion branch at all.
+    vi.stubGlobal('matchMedia', vi.fn((q) => ({
       matches: true, media: q, onchange: null,
       addListener: () => {}, removeListener: () => {},
       addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
-    }))
+    })))
     expect(() =>
       render(<Lightbox open images={IMAGES} onClose={() => {}} />)
     ).not.toThrow()
     expect(screen.getByRole('dialog')).toBeTruthy()
-    spy.mockRestore()
+    vi.unstubAllGlobals()
   })
 })

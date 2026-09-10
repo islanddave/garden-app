@@ -11,9 +11,17 @@
 // THIS FILE MUST NOT `import React`. That absence is half the assertion: the inline `<Probe />`
 // below is compiled by the same transform under test.
 //
-// NOT VACUOUS — verified by mutation. Removing the `esbuild` block from vitest.config.ts turns
-// every test here RED with `ReferenceError: React is not defined`, and the anchor assertions below
-// fail loudly rather than silently matching nothing if a page's copy changes.
+// NOT VACUOUS — verified by mutation... UNDER VITEST 2. Removing the `esbuild` block from
+// vitest.config.ts turned every test here RED with `ReferenceError: React is not defined`.
+//
+// UPDATE 2026-09-10 (vitest 2.1.9 -> 4.1.11, security upgrade): THIS FILE IS NOW VACUOUS with
+// respect to the esbuild block. vitest 4 drops the nested vite@5.4.21 and runs the unit transform
+// under the top-level vite 8, which @vitejs/plugin-react supports, so the automatic runtime is
+// configured whether or not that block is present — re-measured by mutation this session: removed
+// the block, all 4 tests here stayed GREEN. The file is kept because it still proves the automatic
+// runtime is ACTIVE (a real property worth pinning, and the anchor assertions below still fail
+// loudly if a page's copy changes) — but it no longer guards the config line it names, so do not
+// treat a green run here as evidence that removing that line is safe.
 import { render, screen } from '@testing-library/react'
 import Home from '../pages/Home.jsx'
 import Tasks from '../pages/Tasks.jsx'

@@ -15,7 +15,16 @@ export default defineConfig({
   // each affected file) treats the symptom and re-arms with every new component.
   // This file governs the UNIT RUN ONLY — the production bundle is built from vite.config.js, where
   // plugin-react runs under a vite it supports and is unaffected by this block.
-  // Guarded by src/__tests__/jsxAutomaticRuntime.test.jsx: revert this and that file goes red.
+  // Guarded by src/__tests__/jsxAutomaticRuntime.test.jsx.
+  //
+  // UPDATE 2026-09-10 (vitest 2.1.9 -> 4.1.11, security upgrade). The MECHANISM described above is
+  // no longer current: vitest 4 drops the nested vite@5.4.21 and transforms unit-run modules under
+  // the top-level vite 8, which @vitejs/plugin-react DOES support, so its automatic-runtime config
+  // now reaches the pipeline on its own. Verified by mutation this session — deleting this line
+  // leaves jsxAutomaticRuntime.test.jsx GREEN, where under vitest 2 it turned every test in that
+  // file red. The line is KEPT because it is still correct and costs nothing, but it is now
+  // belt-and-braces rather than the load-bearing fix, and its guard is correspondingly vacuous (see
+  // the matching note there). Do NOT cite the vite@5.4.21 story above as present-tense fact.
   esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
   // Lambda runtime deps, aliased to stubs so handlers can be IMPORTED and executed by the unit run.
   //

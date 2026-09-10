@@ -45,7 +45,12 @@ let mic
 
 beforeEach(() => {
   mic = installFakeSpeechRecognition(vi)
-  for (const h of Object.values(haptics)) h.mockClear?.()
+  // mockReset, NOT mockClear: mockClear wipes call history but LEAVES a mockReturnValue in place, so
+  // a refusal test that flips one wrapper to `false` leaked that false into every later test. Under
+  // vitest 2 the afterEach `restoreAllMocks()` happened to reset vi.fn mocks too and hid the gap;
+  // vitest 4 restores only vi.spyOn spies, so the leak surfaced. mockReset restores the original
+  // `vi.fn(() => true)` implementation, which is the TRUE-by-default contract stated above.
+  for (const h of Object.values(haptics)) h.mockReset?.()
   apiFetchSpy.mockReset()
   apiFetchSpy.mockImplementation((url) => (String(url).startsWith('/api/plants')
     ? Promise.resolve({ plants: PLANTS })
