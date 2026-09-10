@@ -150,7 +150,7 @@ describe('BUG-ANCHORSQLFROST-001 — 0b-backfill.sql frost anchor', () => {
 
   it('resolves the anchor into the GROW YEAR the derived anchor sits in', () => {
     // Grow year runs Nov 1 - Oct 31, so from November the NEXT first fall frost belongs to the
-    // following calendar year — the same roll watch.js firstFallFrostFor() applies, and the reason a
+    // following calendar year — the same roll watch.js watchHorizonFor() applies, and the reason a
     // fixed calendar date could not have been merely "moved later".
     // MUTATION: drop the November branch (compare against extract(year) alone) and the >= 11 line
     // reds; resolve against `today` instead of `anchor_date` and the anchor_date lines red.

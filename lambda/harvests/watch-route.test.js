@@ -520,12 +520,46 @@ describe('V4-ANCHORFLIP-001 derived anchor, at the route', () => {
   it.each([
     ['cut_and_come_again habit (condition 5)', { harvest_habit: 'cut_and_come_again' }],
     ['a fruiting planting (condition 4)', { status: 'fruiting' }],
-    ['a watch opening inside the frost window (condition 3)', { derived_anchor_date: '2026-07-25' }],
+    // REBASELINED BY BUG-WATCHFROSTMARGIN-001 (07-25 -> 08-01). The fixture is a potato — a TENDER
+    // slug — with dtm 90 and lead 22, so check_from = anchor + 68. The old anchor opened 2026-10-01,
+    // which was suppressed only because the tender cutoff was the sowing-safety margin's 09-18; it
+    // is now correctly admitted, and that exact case is asserted as the un-blinding below. 08-01
+    // opens 2026-10-08, past the measured cutoff of 10-05, so condition 3 still bites here.
+    ['a watch opening inside the frost window (condition 3)', { derived_anchor_date: '2026-08-01' }],
   ])('suppresses %s even with the tier enabled', async (_label, over) => {
     const sql = makeSql([[derivedRow(over)]]);
     const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled: true }));
     expect(res.body.candidates).toEqual([]);
     expect(res.body.excluded.no_anchor).toBe(1);
+  });
+
+  // BUG-WATCHFROSTMARGIN-001 at the ROUTE — the same un-blinding anchorDerive.test.js proves against
+  // buildWatchList, re-proven one layer up through handleWatchGet, which is what the PWA calls. The
+  // pair matters: a horizon that is right in the resolver and still suppressed at the route is the
+  // defect shape this Lambda has shipped before.
+  it('stops discarding a TENDER derived row the sowing-safety margin used to suppress', async () => {
+    // The literal fixture the case above used to carry: opens 2026-10-01, i.e. 13 days past the old
+    // 09-18 cutoff and 4 days short of the measured 10-05 one.
+    //
+    // THE ASSERTION IS ON THE REASON, NOT ON PRESENCE, and that is the point rather than a dodge.
+    // The route's clock is 2026-08-12, so this row is legitimately `not_yet_open` either way — it
+    // has not opened yet. What changed is that it now HAS an anchor at all: `no_anchor` means the
+    // row was suppressed outright and will never surface, `not_yet_open` means it is on the books
+    // and will surface on 10-01. Asserting `candidates` alone could not tell those two silences
+    // apart, which is exactly the collapse this module's discriminated verdicts exist to prevent.
+    const sql = makeSql([[derivedRow({ derived_anchor_date: '2026-07-25' })]]);
+    const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled: true }));
+    expect(res.body.excluded.no_anchor ?? 0, 'still discarded as no_anchor at the route').toBe(0);
+    expect(res.body.excluded.not_yet_open).toBe(1);
+  });
+
+  it('serves that same row once its watch opens', async () => {
+    // ...and the non-vacuity half: advance the route's clock past 10-01 and the row is a real
+    // candidate, so the test above is not merely trading one silence for another.
+    const sql = makeSql([[derivedRow({ derived_anchor_date: '2026-07-25', et_today: '2026-10-02' })]]);
+    const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled: true }));
+    expect(res.body.candidates).toHaveLength(1);
+    expect(res.body.candidates[0].check_from).toBe('2026-10-01');
   });
 
   // Condition 2's other half. The migration widens the CHECK; this proves the value that would hit

@@ -78,7 +78,7 @@
 //     first-fall-frost anchor and a catalogue DTM; this Lambda has neither, and inventing a frost
 //     date here would be a second, disagreeing copy of one. It is not a gap in coverage: the
 //     consumer already suppresses that class at READ time — lambda/harvests/watch.js condition 3
-//     compares the date the watch would OPEN against firstFallFrostFor(etToday) and drops the row.
+//     compares the date the watch would OPEN against watchHorizonFor(etToday) and drops the row.
 //     The plausibility vocabulary is a CHECK constraint, so a third value would be a migration, and
 //     an unapplied CHECK value written by a deployed Lambda is a 23514 on every create.
 
