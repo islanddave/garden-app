@@ -10,8 +10,9 @@ name: revert-gate
 # REHEARSAL_MODE=1 (throwaway refs, prod Lambda/CF legs skipped). THIS workflow is the real thing —
 # REHEARSAL_MODE is OFF, the code legs target real dev/main, and CONFIRM_DATA_LOSS must be "yes".
 #
-# Dispatchability: workflow_dispatch requires the workflow on the default branch (main). This file lands on
-# dev now and becomes dispatchable from the Actions UI once it reaches main via the normal promote-gate ship.
+# Dispatchability: workflow_dispatch requires the workflow on the default branch (main). It IS on main —
+# see STATUS below. Edits made here on dev do not take effect for a dispatch until the next promote-gate
+# ship carries them to main; the Actions UI keeps running main's copy in the meantime.
 #
 # APPROVAL GATE (2026-08-05, OPS-REVERTGATE-001). This job runs under `environment: production-destructive`,
 # which carries a REQUIRED REVIEWER (islanddave) — the run pauses at the environment gate until that review is
@@ -19,22 +20,40 @@ name: revert-gate
 # that environment carries a branch/tag ref policy ONLY and has had ZERO required reviewers since 2026-06-22,
 # so it is not an approval stop of any kind. Prior versions of this header claimed a "Dave-approved" gate that
 # did not exist in infrastructure; the `confirm_data_loss` dropdown was the only guard and it is selected by
-# whoever is already dispatching. The workflow was disabled via `gh workflow disable` on 2026-08-05 while this
-# environment was created; re-enable with `gh workflow enable revert-gate` once this change reaches main.
+# whoever is already dispatching.
 #
-# BLOCKING PREREQ — IAM trust policy. The snap OIDC role (SNAP_AWS_ROLE_ARN =
-# arn:aws:iam::769788341849:role/garden-app-github-snap) trusts EXACTLY ONE subject:
-#   token.actions.githubusercontent.com:sub == "repo:islanddave/garden-app:environment:production"
-# Changing this job's environment changes the subject claim to ...:environment:production-destructive,
-# which does NOT match, so sts:AssumeRoleWithWebIdentity FAILS and the AWS legs die. The trust policy
-# MUST list the production-destructive subject before this workflow is re-enabled or promoted. Keep it
-# an exact-match list (two literal subjects) — do NOT relax it to a StringLike wildcard.
+# STATUS — LIVE AND DISPATCHABLE (verified 2026-09-10). `state: active`, and this file is present on the
+# default branch (main), so it is dispatchable from the Actions UI right now. An earlier version of this
+# header said it had been disabled via `gh workflow disable` on 2026-08-05 and needed `gh workflow enable`
+# once it reached main; that stopped being true when it reached main. Do NOT plan an incident response
+# around this workflow being inert.
+#
+# IAM trust policy — SATISFIED, no longer a prereq (verified 2026-09-10). The snap OIDC role
+# (SNAP_AWS_ROLE_ARN = arn:aws:iam::769788341849:role/garden-app-github-snap) trusts BOTH subjects as an
+# exact-match list:
+#   repo:islanddave/garden-app:environment:production
+#   repo:islanddave/garden-app:environment:production-destructive
+# so sts:AssumeRoleWithWebIdentity SUCCEEDS for this job and the AWS legs do get credentials. This block
+# previously read "BLOCKING PREREQ ... trusts EXACTLY ONE subject"; it is done. Keep it an exact-match list
+# of two literal subjects — do NOT relax it to a StringLike wildcard. Corollary for anyone triaging
+# mid-incident: the credential step is NOT a safety net, it will succeed. The step that fails safe is the
+# IAM preflight below.
+#
+# PERMISSION PREFLIGHT — THIS WORKFLOW CURRENTLY ABORTS, BY DESIGN (OPS-REVERTPREFLIGHT, 2026-09-10).
+# scripts/revert-to.py restores the prod DB (~:928) BEFORE its Lambda (~:825) and CloudFront (~:837) legs,
+# and the snap role is not granted lambda:UpdateFunctionCode or cloudfront:CreateInvalidation — both
+# implicitDeny per simulate-principal-policy, 2026-09-10. Unguarded, a real revert restores prod to N-1,
+# dies on the code leg, and rolls the DB back from the PRE-revert snap — silently destroying every prod
+# write made in between, then raising a "prod may be inconsistent — PAGE DAVE" that is, in that failure
+# mode, a false alarm indistinguishable from a real one. The preflight step below simulates all six actions
+# the revert can perform and aborts before anything is touched unless every one is `allowed`. It fails
+# TODAY and keeps failing until those two grants are added. That is correct — a rollback that cannot
+# complete must refuse to begin. There is no bypass flag and no warn-only mode; do not add one.
+# It also supersedes the old "confirm the snap role carries these permissions" note: the rehearsal SKIPS
+# the prod Lambda/CF legs, so it can never prove them, and the preflight now does.
 #
 # Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
-# NOTE (pre-first-use): confirm the snap OIDC role (SNAP_AWS_ROLE_ARN) carries the Lambda version-restore +
-# CloudFront invalidation + S3 dump-read permissions revert-to.py's code/asset legs need — the rehearsal
-# SKIPS those prod legs, so they are unproven by the rehearsal alone.
 
 on:
   workflow_dispatch:
@@ -126,6 +145,19 @@ jobs:
         with:
           role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
           aws-region: us-east-1
+
+      # FAIL-CLOSED GATE — must stay between the credential step and revert-to.py.
+      # Every ARN lives in env, never inline in run:, so no quoted colon can reach
+      # GitHub's workflow parser (PyYAML accepts those; GHA silently rejects them).
+      # Stdlib + the preinstalled aws CLI only, so it runs before the pip install
+      # and aborts as early as possible. Expected to FAIL today — see the header.
+      - name: Preflight — assert the snap role can complete the WHOLE revert
+        env:
+          SNAP_AWS_ROLE_ARN: ${{ vars.SNAP_AWS_ROLE_ARN }}
+          SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+          TARGET_VERSION: ${{ inputs.target_version }}
+          CF_DIST: E3FAJTXAORQYDT
+        run: python3 scripts/preflight-revert-iam.py
 
       - name: Install python deps
         run: pip install boto3 requests --quiet
