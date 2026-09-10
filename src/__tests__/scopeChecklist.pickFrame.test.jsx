@@ -329,8 +329,11 @@ describe('S3 — filters narrow the VIEW, never the batch (the S1 invariant, re-
     // matches San Marzano. A no-match fixture that quietly matches would have made this assertion
     // pass for the wrong reason in the other direction.
     type('quince')
-    expect((await screen.findByTestId('pick-no-matches')).textContent)
-      .toMatch(/Clear the search or the crop chips to see all 12/)
+    // Waits on the TEXT, not the testid. `pick-no-matches` is gated on `candidates.length === 0`
+    // (ScopeChecklist.jsx:1076), which is TRUE before the dry run lands — and `total` is then 0, so
+    // findByTestId resolves on first paint against "…to see all 0." The counted copy only exists
+    // once `preview` has committed. Do not revert to findByTestId + .textContent.
+    expect(await screen.findByText(/Clear the search or the crop chips to see all 12/)).toBeTruthy()
   })
 })
 

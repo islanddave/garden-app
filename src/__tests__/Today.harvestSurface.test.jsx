@@ -101,7 +101,11 @@ describe('Today composition (panel Q1, re-anchored post-BD-008)', () => {
     expect(planBlock.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // Unlabelled: an imperative line, not a fourth headed section. UNCHANGED by the move.
     expect(lead.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull()
-    expect(lead.textContent).toMatch(/^Sow Winter Density by /)
+    // waitFor, because `lead` above did NOT wait for data: CultivationLead returns its <Link>
+    // unconditionally (CultivationLead.jsx:110) and reads 'Sow now' until the sow payload commits,
+    // so findByTestId resolves on first paint. Verified by delaying the SOW response 60ms —
+    // this assertion then read 'Sow now'. Do not collapse this back to a bare read.
+    await waitFor(() => expect(lead.textContent).toMatch(/^Sow Winter Density by /))
   })
 
   it('keeps a /sow door in the lead region when the engine yields no content', async () => {
