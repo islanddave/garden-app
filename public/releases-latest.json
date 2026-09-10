@@ -1,7 +1,8 @@
 {
-  "version": "4.127.0",
-  "date": "2026-09-09",
+  "version": "4.128.0",
+  "date": "2026-09-10",
   "highlights": [
-    "Today now flags stretches of wet-leaf weather — long spells when foliage stays wet at mild temperatures, which is what foliar diseases need to get going. It is a prompt to go and look at the susceptible crops, not a diagnosis, and it stays quiet on about three days in four."
+    "The harvest watch no longer goes dark in the middle of September. It was keyed to a sowing-safety date rather than to frost, so every year it stopped flagging tender crops on 18 September — in ten of the last eleven seasons that was between two and six weeks before frost actually arrived. It now runs to the measured first-frost date.",
+    "Logging several care tasks in a row no longer buries Today under a pile of notifications. They stack in a fixed column, cap at three, and repeats of the same kind combine into one."
   ]
 }
