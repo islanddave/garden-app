@@ -135,7 +135,12 @@ describe('BatchInputsField — what is already in the batch', () => {
   it('counts, and pluralises', async () => {
     installRouter({ inputs: [inputRow(1)] })
     renderField()
-    expect((await screen.findByTestId('batch-inputs-count')).textContent).toBe('1 thing written down.')
+    // Waits on the TEXT, not the testid. The <p data-testid="batch-inputs-count"> is present on
+    // first paint rendering 'Nothing written down yet.', so findByTestId resolves BEFORE the fetch
+    // lands and .textContent reads the pre-resolve string. That raced green locally and red in CI
+    // (run 34492158777). The counted text only exists once rows have committed, so waiting on it
+    // is what makes this deterministic. Do not revert to findByTestId + .textContent.
+    expect(await screen.findByText('1 thing written down.')).toBeTruthy()
   })
 
   it('NEVER renders the rows until a deliberate second tap', async () => {
@@ -143,7 +148,8 @@ describe('BatchInputsField — what is already in the batch', () => {
     // scrollable wall of them is the discoverability failure this feature exists to avoid.
     installRouter({ inputs: PREDICATE_139.map((_, i) => inputRow(i + 1)) })
     renderField()
-    expect((await screen.findByTestId('batch-inputs-count')).textContent).toBe('139 things written down.')
+    // Same race as 'counts, and pluralises' above — wait on the counted text, not the testid.
+    expect(await screen.findByText('139 things written down.')).toBeTruthy()
     expect(screen.queryByTestId('batch-inputs-list')).toBeNull()
     // Green control over the SAME query on the SAME surface: the door exists and opens.
     fireEvent.click(screen.getByTestId('batch-inputs-reveal'))
