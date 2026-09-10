@@ -419,6 +419,13 @@ export default function CareNeeded({ plan }) {
       announce('Logged ' + NEED_LABEL[row.need] + ' for ' + row.name + ' — ' + remaining + ' remaining')
       toast.showUndo({
         message: 'Logged ' + NEED_LABEL[row.need] + ' for ' + row.name,
+        // Rapid one-tap logging DOWN a list is the dominant interaction on this surface, so these
+        // coalesce rather than stack: repeat taps of the same care action merge into a single toast
+        // ("Logged Water for 12 plants") whose one Undo reverses every tap in the run — the same
+        // shape runBulk below has always produced. Keyed by eventType so a Water run and a Feed run
+        // stay separate statements instead of collapsing into one wrong count.
+        group: 'care-log-' + row.eventType,
+        groupMessage: (n) => 'Logged ' + NEED_LABEL[row.need] + ' for ' + n + ' plants',
         onUndo: async () => {
           // WS-A5: only un-fade the row once the DELETE is confirmed. A failed undo must KEEP the
           // row hidden — re-surfacing it lets it be re-logged as a duplicate (L-104). A 404 means

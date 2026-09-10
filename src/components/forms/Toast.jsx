@@ -15,17 +15,23 @@ import { P } from '../../lib/constants.js'
 // which sets it to its real height on mount and back to 0px on unmount — so this expression is
 // correct on both signed-in surfaces (nav present) and signed-out ones (no nav, so no reservation).
 // The 0px fallback covers the pre-mount frame and any surface that never renders a nav at all.
-// Exported so the stacking offset in ToastContext builds on the same base rather than re-hardcoding.
+// (2026-07-31: this replaced a bare `bottom: 24`, which drew the toast ON TOP of the 56px fixed
+// BottomNav rather than above it.) Exported so ToastContext's stack CONTAINER anchors on the same
+// base rather than re-hardcoding the expression.
 export const TOAST_BOTTOM = 'calc(var(--bottom-nav-height, 0px) + env(safe-area-inset-bottom) + 12px)'
-export const toastStackBottom = (i) =>
-  `calc(var(--bottom-nav-height, 0px) + env(safe-area-inset-bottom) + ${12 + i * 56}px)`
 
-export default function Toast({ message, show = true, duration = 2500, onDone, tone = 'success', style }) {
+export default function Toast({ message, show = true, duration = 2500, onDone, tone = 'success', inStack = false, style }) {
+  // onDone lives in a ref so the dismiss timer depends only on (show, duration). It used to be an
+  // effect dep, and ToastContext hands down a fresh closure on every render — so pushing a second
+  // toast restarted the FIRST one's timer, and a run of quick taps left the whole stack standing
+  // instead of draining. That was half of the pile-up this file's stack policy now prevents.
+  const doneRef = React.useRef(onDone)
+  doneRef.current = onDone
   React.useEffect(() => {
     if (!show || !duration) return
-    const id = setTimeout(() => { if (onDone) onDone() }, duration)
+    const id = setTimeout(() => { if (doneRef.current) doneRef.current() }, duration)
     return () => clearTimeout(id)
-  }, [show, duration, onDone])
+  }, [show, duration])
   if (!show || !message) return null
   const bg = tone === 'error' ? P.terra : P.greenLight
   return (
@@ -33,16 +39,18 @@ export default function Toast({ message, show = true, duration = 2500, onDone, t
       role="status"
       aria-live="polite"
       style={{
-        // 2026-07-31 — was `bottom: 24` at zIndex 1000, which renders a toast ON TOP of the 56px
-        // fixed BottomNav (zIndex 100) rather than above it. UpdateBanner.jsx already ships the
-        // correct expression; this adopts it so the two bottom-anchored operational surfaces share
-        // one offset convention instead of two incompatible ones.
-        position: 'fixed', bottom: TOAST_BOTTOM, left: '50%', transform: 'translateX(-50%)',
+        // Two modes. Standalone (default) anchors itself above the nav. `inStack` means
+        // ToastContext's flex-column container owns position AND spacing, so the toast must be a
+        // plain flow child — see the STACK POLICY note in ToastContext.jsx for why per-toast fixed
+        // positioning at a fixed per-index stride was removed rather than re-tuned.
+        ...(inStack
+          ? { position: 'static' }
+          : { position: 'fixed', bottom: TOAST_BOTTOM, left: '50%', transform: 'translateX(-50%)' }),
         backgroundColor: bg, color: P.white, padding: '12px 24px', borderRadius: 8,
         fontSize: '0.9rem', fontWeight: 600, boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
         // whiteSpace was 'nowrap': any message longer than the viewport overflowed horizontally
         // rather than wrapping, on a 360px-wide Android target. Wrap and cap instead.
-        zIndex: 1000, maxWidth: 'calc(100vw - 32px)', pointerEvents: 'none', ...style,
+        zIndex: 1000, maxWidth: inStack ? '100%' : 'calc(100vw - 32px)', pointerEvents: 'none', ...style,
       }}
     >
       {message}

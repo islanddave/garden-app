@@ -27,7 +27,7 @@ import PlantingSelect, { CROP_CHIPS_AUTO } from '../components/forms/PlantingSel
 import Button from '../components/forms/Button.jsx'
 // Direct import, NOT via the forms barrel: formsPrimitivesFreeze.test.js pins the barrel's export
 // set exactly, and buttonChrome is shared chrome rather than a frozen primitive. Same idiom, same
-// reason, as ToastContext.jsx's toastStackBottom import.
+// reason, as ToastContext.jsx's TOAST_BOTTOM import.
 import { buttonChrome } from '../components/forms/formStyles.js'
 // V4-PLANTFORMUNIFY-001 (BD-014) ⊇ V4-SNAPVARIETY-001 (BD-015): Snap was the LAST add/edit-planting
 // surface still hand-rolling its own fields (a bare name Input + a read-only <Select> over

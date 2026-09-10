@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Toast stack — one-tap logging run, real browser</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      /* BottomNav is not mounted here, so stand in for the custom property it owns — the toast
+         container anchors on it and would otherwise sit 56px lower than it does in the app. */
+      :root { --bottom-nav-height: 56px; }
+      #verdict {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+        font: 11px/1.4 ui-monospace, monospace; color: #fff; padding: 4px 8px; white-space: pre-wrap;
+      }
+      #nav { position: fixed; bottom: 0; left: 0; right: 0; height: 56px; background: #fff;
+             border-top: 1px solid #e4ded1; z-index: 100; display: flex; align-items: center;
+             justify-content: space-around; font: 11px system-ui; color: #2d6a4f; }
+      #root { padding: 44px 12px 80px; }
+    </style>
+  </head>
+  <body>
+    <div id="verdict">booting…</div>
+    <div id="root"></div>
+    <div id="nav"><span>Today</span><span>Garden</span><span>＋</span><span>Harvests</span><span>More</span></div>
+    <script type="module" src="/tests/harness/toaststack.jsx"></script>
+  </body>
+</html>
