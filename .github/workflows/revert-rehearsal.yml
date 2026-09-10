@@ -65,26 +65,50 @@ jobs:
           RID="${{ github.run_id }}"
           DEVB="revert-rehearsal-dev-$RID"
           MAINB="revert-rehearsal-main-$RID"
-          BASE=$(curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$REPO/git/refs/heads/dev" \
-            | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+          API="https://api.github.com/repos/$REPO"
+          # DIAGNOSTICS (2026-09-10). Every call below captures the HTTP status AND
+          # the body and reports both through scripts/gh_api_check.py. The previous
+          # `curl | python3 -c "...['object']['sha']"` threw the body away, so 401,
+          # 403 and 404 all surfaced as an identical `KeyError: 'object'` with no
+          # message -- which is why run 34507891849 was undiagnosable. Failure
+          # disposition per call site is UNCHANGED: only --fatal calls can end the
+          # step, and the tolerated calls stay tolerated (they annotate and continue).
+          CHK="python3 scripts/gh_api_check.py"
+          ghcurl() {
+            curl -sS -o /tmp/gh-body.json -w "%{http_code}" \
+              -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"
+          }
+          CODE=$(ghcurl "$API/git/refs/heads/dev")
+          $CHK ref-sha --endpoint "$API/git/refs/heads/dev" --method GET \
+            --status "$CODE" --body-file /tmp/gh-body.json --sha-file /tmp/base.sha
+          BASE=$(cat /tmp/base.sha)
           echo "base dev HEAD = $BASE"
           for B in "$DEVB" "$MAINB"; do
-            CODE=$(curl -sS -o /tmp/r.json -w "%{http_code}" -X POST \
-              -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              -d "{\"ref\":\"refs/heads/$B\",\"sha\":\"$BASE\"}" \
-              "https://api.github.com/repos/$REPO/git/refs")
+            CODE=$(ghcurl -X POST -d "{\"ref\":\"refs/heads/$B\",\"sha\":\"$BASE\"}" "$API/git/refs")
+            # 201 = created; 422 = already exists on a re-fire (both expected).
+            # Anything else is annotated and then still falls through to the
+            # force-update below, exactly as it did before.
+            $CHK status --endpoint "$API/git/refs" --method POST --status "$CODE" \
+              --body-file /tmp/gh-body.json --ok 201 --ok 422 --severity warning
             if [ "$CODE" != "201" ]; then
-              curl -sS -X PATCH -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                -d "{\"sha\":\"$BASE\",\"force\":true}" \
-                "https://api.github.com/repos/$REPO/git/refs/heads/$B" >/dev/null
+              CODE=$(ghcurl -X PATCH -d "{\"sha\":\"$BASE\",\"force\":true}" "$API/git/refs/heads/$B")
+              # Was `>/dev/null` with no status check: a refused force-update left
+              # the rehearsal branch missing and the step still green, so the real
+              # failure landed later, somewhere else. Now it is named. Non-fatal
+              # (no --fatal) to keep this step's control flow identical.
+              $CHK status --endpoint "$API/git/refs/heads/$B" --method PATCH \
+                --status "$CODE" --body-file /tmp/gh-body.json --ok 200
             fi
           done
-          curl -sS -X DELETE -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/$REPO/git/refs/tags/$TV" >/dev/null || true
-          curl -sS -X POST -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            -d "{\"ref\":\"refs/tags/$TV\",\"sha\":\"$TARGET_MAIN_SHA\"}" \
-            "https://api.github.com/repos/$REPO/git/refs" >/dev/null
+          # The tag legs are deliberately tolerant (the tag may be absent, and
+          # release-tag-integrity bypass-restricts refs/tags/v* deletion to the
+          # garden-bot App), so these warn and continue -- as `|| true` did.
+          CODE=$(ghcurl -X DELETE "$API/git/refs/tags/$TV")
+          $CHK status --endpoint "$API/git/refs/tags/$TV" --method DELETE --status "$CODE" \
+            --body-file /tmp/gh-body.json --ok 204 --ok 404 --severity warning
+          CODE=$(ghcurl -X POST -d "{\"ref\":\"refs/tags/$TV\",\"sha\":\"$TARGET_MAIN_SHA\"}" "$API/git/refs")
+          $CHK status --endpoint "$API/git/refs" --method POST --status "$CODE" \
+            --body-file /tmp/gh-body.json --ok 201 --ok 422 --severity warning
           {
             echo "DEVB=$DEVB"
             echo "MAINB=$MAINB"
@@ -180,21 +204,50 @@ jobs:
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
         run: |
           set +e
+          API="https://api.github.com/repos/$REPO"
+          CHK="python3 scripts/gh_api_check.py"
+          ghcurl() {
+            curl -sS -o /tmp/gh-body.json -w "%{http_code}" \
+              -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"
+          }
+          # Teardown stays best-effort and never fails the job (set +e, --severity
+          # warning, no --fatal). The only change is that a refused delete now says
+          # WHICH ref, WHICH status and WHY instead of vanishing into /dev/null --
+          # a leaked rehearsal ref used to be completely silent.
           for B in "$DEVB" "$MAINB"; do
-            [ -n "$B" ] && curl -sS -X DELETE -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/$REPO/git/refs/heads/$B" >/dev/null
+            [ -n "$B" ] || continue
+            CODE=$(ghcurl -X DELETE "$API/git/refs/heads/$B")
+            $CHK status --endpoint "$API/git/refs/heads/$B" --method DELETE --status "$CODE" \
+              --body-file /tmp/gh-body.json --ok 204 --ok 404 --severity warning
           done
           for T in "$TV" "$PV"; do
-            [ -n "$T" ] && curl -sS -X DELETE -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/$REPO/git/refs/tags/$T" >/dev/null
+            [ -n "$T" ] || continue
+            CODE=$(ghcurl -X DELETE "$API/git/refs/tags/$T")
+            $CHK status --endpoint "$API/git/refs/tags/$T" --method DELETE --status "$CODE" \
+              --body-file /tmp/gh-body.json --ok 204 --ok 404 --severity warning
           done
           python3 - <<'PY'
           import os, requests
           key = os.environ["NEON_API_KEY"]; proj = os.environ["NEON_PROJECT_ID"]
           pre = os.environ.get("PV", "v0.0.1"); tv = os.environ.get("TV", "v0.0.0")
           H = {"accept": "application/json", "Authorization": f"Bearer {key}"}
+          BRANCHES_URL = f"https://console.neon.tech/api/v2/projects/{proj}/branches"
+          def list_branches():
+              # Same blind spot as the GitHub legs: a bare .json()["branches"] turns
+              # any auth/quota/outage response into a bare KeyError with the status
+              # and body discarded. Report both, then fail the same way as before.
+              r = requests.get(BRANCHES_URL, headers=H, timeout=60)
+              if r.status_code != 200:
+                  raise RuntimeError(f"GET {BRANCHES_URL} -> HTTP {r.status_code}: {r.text[:400]}")
+              data = r.json()
+              if not isinstance(data, dict) or "branches" not in data:
+                  raise RuntimeError(
+                      f"GET {BRANCHES_URL} -> HTTP 200 but no 'branches' key "
+                      f"(keys: {sorted(data) if isinstance(data, dict) else type(data).__name__}): "
+                      f"{str(data)[:400]}")
+              return data["branches"]
           try:
-              bs = requests.get(f"https://console.neon.tech/api/v2/projects/{proj}/branches", headers=H, timeout=60).json()["branches"]
+              bs = list_branches()
           except Exception as e:
               print("teardown: neon list failed", e); raise SystemExit(0)
           def doomed(n):
@@ -204,7 +257,7 @@ jobs:
           # can end up an ANCESTOR of staging and is then un-deletable by design).
           # Report status honestly instead of assuming success.
           for _pass in range(4):
-              bs = requests.get(f"https://console.neon.tech/api/v2/projects/{proj}/branches", headers=H, timeout=60).json()["branches"]
+              bs = list_branches()
               targets = [b for b in bs if doomed(b.get("name", ""))]
               if not targets:
                   break

@@ -44,6 +44,34 @@ jobs:
         with:
           ref: dev
 
+      # DIAGNOSTICS (2026-09-10). This workflow makes no curl calls of its own --
+      # its GitHub API traffic is inside scripts/snap.py, which already reports
+      # `{status}: {body}` on every failure. What it lacked was any signal about
+      # the CREDENTIAL itself: GH_TOKEN is secrets.RULESET_READ_PAT, the same
+      # secret whose read failure made revert-rehearsal die with a bare
+      # `KeyError: 'object'` (run 34507891849). A dead or under-scoped token used
+      # to surface ~4 minutes in, after the pg17 fetch, the OIDC assume and pip.
+      # This probe is the same endpoint and the same reporter, in ~1s, up front.
+      # It changes no rehearsal behaviour: a credential that fails here would
+      # have failed the run anyway, just later and less legibly. It deliberately
+      # declares NO env of its own so it always probes the job-level GH_TOKEN --
+      # a step-local copy would keep passing against the old secret if the job's
+      # credential were ever repointed.
+      - name: Preflight - GH_TOKEN can read git refs
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_TOKEN is empty or unset for this job - check the job-level env GH_TOKEN secret. snap.py cannot create the rehearsal tag without it."
+            exit 1
+          fi
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          CODE=$(curl -sS -o /tmp/gh-body.json -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$API/git/refs/heads/dev")
+          python3 scripts/gh_api_check.py ref-sha --endpoint "$API/git/refs/heads/dev" \
+            --method GET --status "$CODE" --body-file /tmp/gh-body.json --sha-file /tmp/base.sha
+          echo "GH_TOKEN reads dev at $(cat /tmp/base.sha)"
+
       - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
         run: |
           sudo mkdir -p /usr/lib/postgresql/17/bin
