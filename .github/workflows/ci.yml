@@ -84,6 +84,29 @@ jobs:
           node-version: '20.19.0'
           cache: 'npm'
 
+      - name: Dependency manifest re-resolves (strict peers)
+        # Placed BEFORE npm ci on purpose, same reasoning as the gate_runner step above:
+        # it fails in seconds, and node_modules must NOT exist yet or npm takes a
+        # satisfied-tree fast path and the check goes vacuous.
+        #
+        # WHY THIS EXISTS: `npm ci` replays package-lock.json and never re-solves, so a
+        # package.json that CANNOT resolve is invisible to every job in this repo. It was
+        # invisible for 77 days — efc7703 (2026-06-25) put @eslint/js@^10 against a pinned
+        # eslint@^9, so every `npm install` died ERESOLVE while `npm ci` stayed green
+        # through 1,917 commits. node_modules silently drifted from the manifest on dev
+        # machines; axe-core and @typescript-eslint/parser went absent locally. Fixed in
+        # ec07063 (2026-09-10).
+        #
+        # NO --legacy-peer-deps here. That flag is precisely the blindfold this step
+        # removes, and copying it from the npm ci line below would re-vacuate the check.
+        # --dry-run --package-lock-only writes nothing — it only re-solves the graph.
+        #
+        # NON-VACUITY (verified 2026-09-10, clean dir + real lockfile, the state CI runs in):
+        #   ec07063^ manifest+lock -> exit 1     ec07063 manifest+lock -> exit 0 in 0.26s
+        # If this ever needs --legacy-peer-deps to pass, the manifest is broken. Fix the
+        # manifest; do not add the flag.
+        run: npm install --dry-run --package-lock-only
+
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
