@@ -1199,24 +1199,6 @@ function computeCallout(weather, hy){
   const low=weather&&weather.tonightLow, high=weather&&weather.highToday;
   if(low!=null && low<40) return {icon:'freeze', text:`Freeze tonight (${low}°F) — cover or bring peppers & tomatoes in`};
   if(low!=null && low<45) return {icon:'cold', text:`Cool night (${low}°F) — protect flowering peppers/tomatoes`};
-  // V5-CHILLBAND-001 — the 45-50F gap. There was a rule at <40 and a rule at <45 and NOTHING between
-  // 45 and 50, so the season's first two sub-50 nights (2026-09-07 45.6F, 2026-09-08 49.7F) both
-  // passed in silence while chilling-sensitive crops were still in the ground.
-  //
-  // CHILLING INJURY IS NOT FROST DAMAGE, and that is the whole reason this band needs its own rule:
-  // sweet potato, okra and peppers take cumulative damage in the high 40s WITHOUT the temperature
-  // ever approaching freezing, so a gardener watching the frost forecast sees nothing coming. The
-  // copy says "above freezing" for exactly that reason.
-  //
-  // NOT WALLPAPER — measured, not assumed. Across the 122 stored days this band contains 10 nights
-  // (8%): 8 in May/early June and 2 in September. It fires at the two shoulders of the season, which
-  // is when tender transplants and un-lifted roots are actually exposed, and is silent through the
-  // 104 nights at 50F+.
-  //
-  // DISPLAY ONLY. This callout feeds WeatherCueLine; it does NOT drive the alert path — advisories
-  // are computed separately (frostEval, alerts_sent), which is why a night can carry an advisory
-  // while callout is null (handler.js:826). So adding a band cannot add a single notification.
-  if(low!=null && low<50) return {icon:'cool', text:`Chilly night (${low}°F) — chilling damage starts above freezing for sweet potato, okra and peppers`};
   if(high!=null && high>=88) return {icon:'heat', text:`Hot day (${high}°F) — deep-water thirsty crops, shade if wilting`};
   if(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null || hy.tomorrow_pop>=50)){
     // DRG-WXPROB-001 — mirror the Today widget's probability-gated rain AMOUNT in this nightly snapshot
