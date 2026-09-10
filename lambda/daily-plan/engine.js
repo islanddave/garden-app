@@ -15,7 +15,7 @@ const fc = require('./frostClass');
 // V4-OVERWINTER-001 — overwintering as a care_profile ATTRIBUTE (never a plants.status value). Holds a
 // planting out of the summer water/feed cadence and gives it a REDUCED-cadence moisture check instead;
 // the window is a pure function of the date, so the exit needs no writer. See overwinter.js header.
-const ow = require('./overwinter')
+const ow = require('./overwinter');
 const lw = require('./leafWetness');
 // V5-LEGACYEXCEPTIONCARE-001 — the drought signal (consecutive days with no >=0.60in deep soak). Read on
 // the dormancy_suppressed arm only, and INERT unless the handler threads a state in: an un-updated caller

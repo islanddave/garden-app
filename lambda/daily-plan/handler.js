@@ -1576,12 +1576,21 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
+          // V5-LEAFWETNESS-001 `leaf_wetness`: a GARDEN-level key, same conditional-spread rule. THIS LINE
+          // IS THE WHOLE FEATURE — the row below is an explicit named-key allowlist, not a spread of
+          // `plan`, so a key the engine computes and this literal omits is silently discarded on write and
+          // the Today line can never render. That is precisely how the first cut of this shipped: engine,
+          // component, mount and 16,050 tests all green, and the feature 100% inert. G-PARITY cannot catch
+          // it either — the goldens compare STORED payloads, so a key that never reaches a row leaves them
+          // green for the wrong reason. Caught by the pre-promote pass; guarded now by the end-to-end case
+          // in leafWetnessWiring.test.js, which drives run() and reads the key back off the written row.
+          //
           // V5-DROUGHTSPACE-001 `drought`: a SPACE-level key, spread CONDITIONALLY so a non-firing day
           // writes a byte-identical row. Both users in a Space get the same object because it is a fact
           // about the garden, not about a caretaker — which is exactly what makes it one line rather
           // than a per-plant note. Additive on an existing row, read by name, so PLAN_SCHEMA_VERSION is
           // NOT bumped: three reader Lambdas pin that literal and deploy in one unordered wave.
-          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...(gardenDrought ? { drought: gardenDrought } : {}), ...userPlan.tasks })]);
+          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...(gardenDrought ? { drought: gardenDrought } : {}), ...(plan.leaf_wetness ? { leaf_wetness: plan.leaf_wetness } : {}), ...userPlan.tasks })]);
         // BUG-TODAYWATER-001: record yesterday's observed rain on yesterday's row. Fail-open (returns
         // false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final.
         await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId], stationProvBySpace[spaceId]);
