@@ -232,7 +232,7 @@ export const DERIVED_FROST_WINDOW_DAYS = 10;          // = FROST_ANCHORS.windowC
 // predecessor of the SPA deploy, so the Lambda ships FIRST and the SPA is withheld if the matrix
 // fails; the divergence window is new-Lambda + old-SPA, never the reverse. The behaviour that moves
 // here: `frostSuppressed` fires when check_from >= firstFallFrostFor(...) - DERIVED_FROST_WINDOW_DAYS,
-// so for the 26 hardy slugs the suppression cutoff moves Oct 19 -> Oct 5, permanently and not just
+// so for the hardy slugs the suppression cutoff moves Oct 19 -> Oct 5, permanently and not just
 // during the window. More derived rows are suppressed. That is the fail-safe direction by this file's
 // own rule at the head of this block (a suppressed row preserves today's behaviour; an admitted one
 // invites a walk to a dead plant), so the correction does not need a coordinated cutover.
@@ -240,11 +240,13 @@ export const DERIVED_OBSERVED_FIRST_FALL_FROST_MMDD = '10-15';
 // = FALL_HARDY_CROPS. The edible subset of frostClass's hardy band: the harvested organ keeps
 // standing, or improves, through repeated fall frost — so for these crops the window this tier
 // points at DOES exist past the margin, which is the whole premise of the suppression.
+// DATA-WINTERGREENS-001 (2026-09-10) added claytonia/mache/mizuna/tatsoi upstream — 27 slugs -> 31.
+// Zero varieties and zero live plantings on all four, so no row this Lambda emits today changes.
 export const DERIVED_FROST_HARDY_SLUGS = new Set([
   'arugula', 'beet', 'bok_choy', 'broccoli', 'brussels_sprouts', 'bunching_onion', 'cabbage',
-  'carrot', 'celery', 'chard', 'chervil', 'chives', 'cilantro', 'collard', 'endive', 'garlic',
-  'kale', 'kohlrabi', 'leek', 'lettuce', 'mustard', 'parsley', 'parsnip', 'radicchio', 'radish',
-  'spinach', 'turnip',
+  'carrot', 'celery', 'chard', 'chervil', 'chives', 'cilantro', 'claytonia', 'collard', 'endive',
+  'garlic', 'kale', 'kohlrabi', 'leek', 'lettuce', 'mache', 'mizuna', 'mustard', 'parsley',
+  'parsnip', 'radicchio', 'radish', 'spinach', 'tatsoi', 'turnip',
 ]);
 
 // The first-fall-frost date for the grow year `ymd` sits in, for a crop of type `cropTypeSlug`. The

@@ -2033,8 +2033,39 @@ describe('V4-HARDYSET-001 fall hardiness set', () => {
       `not banded hardy in lambda/daily-plan/frostClass.js — band it there first: ${strays.join(', ')}`,
     ).toEqual([]);
     // Non-vacuity: an emptied set passes the diff above while silently restoring the 14d clamp for
-    // everything. 27 slugs today; the floor is the panel's stated bar.
+    // everything. 31 slugs today; the floor is the panel's stated bar. Deliberately a FLOOR and not
+    // an equality — widening the set must not have to bump a number, or the number becomes the thing
+    // people edit to make the build go green.
     expect(FALL_HARDY_CROPS.size).toBeGreaterThanOrEqual(25);
+  });
+
+  // DATA-WINTERGREENS-001. The subset guard above is one-directional — it cannot see a slug banded
+  // hardy in frostClass and never added HERE, which is exactly how claytonia/mache/mizuna/tatsoi sat
+  // out for 24 days after their crop_types were created and banded on 2026-08-17. This pin closes
+  // that direction: it states the whole membership, so ANY drift in either direction is a red test
+  // naming the slug rather than a comment nobody re-reads.
+  //
+  // This is the input to the harvest-watch frost gate (lambda/harvests/watch.js
+  // DERIVED_FROST_HARDY_SLUGS, pinned equal in anchorDerive.test.js) — a slug moving in or out of
+  // this list moves WHICH frost anchor that watch reads for it, so the set is deliberately pinned
+  // exactly rather than by size.
+  it('has exactly the membership the frost gate is scoped to', () => {
+    expect([...FALL_HARDY_CROPS].sort()).toEqual([
+      'arugula', 'beet', 'bok_choy', 'broccoli', 'brussels_sprouts', 'bunching_onion', 'cabbage',
+      'carrot', 'celery', 'chard', 'chervil', 'chives', 'cilantro', 'claytonia', 'collard', 'endive',
+      'garlic', 'kale', 'kohlrabi', 'leek', 'lettuce', 'mache', 'mizuna', 'mustard', 'parsley',
+      'parsnip', 'radicchio', 'radish', 'spinach', 'tatsoi', 'turnip',
+    ]);
+  });
+
+  it('carries the four overwintering greens now that their crop_types exist', () => {
+    // The specific regression this closes. Verified against live prod 2026-09-10: all four exist in
+    // `crop_types` (created 2026-08-17, category 'vegetable') and all four are banded hardy in
+    // frostClass. Asserted by name so the failure message says WHICH green went missing.
+    for (const slug of ['claytonia', 'mache', 'mizuna', 'tatsoi']) {
+      expect(FALL_HARDY_CROPS.has(slug), slug).toBe(true);
+      expect(fc.SLUGS_BY_BAND.hardy.includes(slug), `${slug} band`).toBe(true);
+    }
   });
 
   it('covers every crop the prose test missed', () => {

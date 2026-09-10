@@ -291,13 +291,31 @@ function num(value) {
 //   asparagus/strawberry/
 //   the woody fruit
 //
-// mache, claytonia, tatsoi and mizuna belong here the day those crop_types exist (they do not yet —
-// DATA-WINTERGREENS-001). Band them in frostClass first, or the subset guard will say so.
+// DATA-WINTERGREENS-001 IS DONE, AND THIS BLOCK IS THE FOLLOW-THROUGH IT WAS WAITING ON. The text
+// here used to read "mache, claytonia, tatsoi and mizuna belong here the day those crop_types exist
+// (they do not yet)". Both halves of that precondition were satisfied on 2026-08-17 and neither was
+// noticed: the four crop_types were created in prod that day, and the SAME day V4-TROPICALCOLD-001
+// banded all four `hardy` in frostClass.js (commit d564e94) — which is the "band them in frostClass
+// first" step this note asked for. Re-verified against live prod 2026-09-10: all four rows exist in
+// `crop_types`, category 'vegetable'.
+//
+// WHY THE SUBSET GUARD DID NOT SAY SO. It is one-directional by construction — it asserts
+// FALL_HARDY_CROPS ⊆ band, which catches a slug added HERE without a band and is silent about a slug
+// banded THERE and never added here. That asymmetry is correct for its own job (a stray here would
+// emit 40°F frost alerts) but it means the note above was the only thing tracking this, and prose
+// does not fail a build. The exact-membership pin added alongside this change is what makes the next
+// such omission visible.
+//
+// NOTHING MOVES FOR ANY CURRENT PLANTING, which is why it is being done now rather than deferred:
+// live prod carries 0 varieties and 0 plantings on all four slugs, so this is forward coverage bought
+// before the planting exists — the same "only time it is free" argument frostClass.js makes for its
+// own 16-slug pass. The four are the overwintering greens whose entire purpose is standing through
+// hard frost, so they are the least marginal members of this set, not the most.
 export const FALL_HARDY_CROPS = new Set([
   'arugula', 'beet', 'bok_choy', 'broccoli', 'brussels_sprouts', 'bunching_onion', 'cabbage',
-  'carrot', 'celery', 'chard', 'chervil', 'chives', 'cilantro', 'collard', 'endive', 'garlic',
-  'kale', 'kohlrabi', 'leek', 'lettuce', 'mustard', 'parsley', 'parsnip', 'radicchio', 'radish',
-  'spinach', 'turnip',
+  'carrot', 'celery', 'chard', 'chervil', 'chives', 'cilantro', 'claytonia', 'collard', 'endive',
+  'garlic', 'kale', 'kohlrabi', 'leek', 'lettuce', 'mache', 'mizuna', 'mustard', 'parsley',
+  'parsnip', 'radicchio', 'radish', 'spinach', 'tatsoi', 'turnip',
 ]);
 
 // Days past the SOWING-SAFETY anchor a cool-season but NOT frost-hardy direct sowing may be aimed
