@@ -109,6 +109,8 @@ UNKNOWNS to resolve in the staging rehearsal (flagged, not guessed):
 """
 from __future__ import annotations
 
+import base64
+import fnmatch
 import inspect
 import json
 import os
@@ -162,6 +164,11 @@ SPA_DEPLOY_WORKFLOW = "deploy.yml"
 DEPLOY_ENVIRONMENT = "production"  # what both redeploy workflows run under
 # Runs of these must all be finished before a revert starts (promote-gate calls the other two).
 IN_FLIGHT_WORKFLOWS = ("promote-gate.yml", LAMBDA_DEPLOY_WORKFLOW, SPA_DEPLOY_WORKFLOW)
+# The target's own workflows decide what its revert does (require_revertible_target).
+TARGET_WORKFLOWS_DIR = ".github/workflows"
+# A live `|| echo "{}"` base under deploy-lambda.yml's env merge: one failed read on the forward
+# leg writes {} as the function's whole environment, and nothing in the revert puts it back.
+ENV_WIPE_RE = re.compile(r"""\|\|\s*echo\s+(["']?)\{\}\1""")
 RUN_LOCATE_ATTEMPTS = 30        # x RUN_LOCATE_INTERVAL_S for the dispatched run to appear
 RUN_LOCATE_INTERVAL_S = 10
 RUN_CLOCK_SKEW_S = 60           # runner-vs-GitHub clock allowance when matching created_at
@@ -925,7 +932,13 @@ def restore_lambda_versions(cfg, manifest, lambda_client=None):
 # After ff_main, main's tree IS the target's tree, so dispatching the deploy workflows on main
 # rebuilds the target with the target's OWN recipe (a dispatch loads the workflow file from the
 # dispatched ref; all 262 release tags v2.5.4..v4.128.0 carry workflow_dispatch in both files).
-# Nothing else redeploys on a main move: zero workflows trigger on push to main (L1 Gap A).
+# A push runs the PUSHED commit's workflow files, so what else a main move starts is the TARGET's
+# business, not today's: 193 of the 260 snapped targets (v2.5.4..v4.16.0) still carry
+# deploy-lambda.yml's old `push: branches: [main]` trigger, and on those ff_main alone would start
+# a Lambda deploy this script neither sees nor cancels. require_revertible_target refuses such a
+# target before anything is touched, so on every target that gets this far nothing but these two
+# dispatches redeploys on the main move. (Corrected in R2; this said "zero workflows trigger on
+# push to main", which is true of the current tree only.)
 # Order is the promote's (promote-gate.yml deploy-lambdas -> deploy): Lambdas first, SPA only
 # once every Lambda leg succeeded, because a new SPA on old Lambdas can silently drop fields.
 # Both workflows run under the DEPLOY role, so the snap role needs no site-bucket or CloudFront
@@ -975,6 +988,121 @@ def require_dispatchable(cfg):
         raise RevertError(f"the {DEPLOY_ENVIRONMENT} environment holds runs ({', '.join(held)}); every "
                           "redeploy leg, the rollback's included, would wait there past its poll ceiling. "
                           "Refusing to start")
+
+
+def _workflow_on(doc, name):
+    """A workflow's triggers as {event: config}. PyYAML reads the YAML 1.1 bare key `on:` as the
+    boolean True, so both spellings are read; the quoted 'on' wins when both appear."""
+    on = doc["on"] if "on" in doc else doc.get(True)
+    if on is None:
+        return {}
+    if isinstance(on, str):
+        return {on: None}
+    if isinstance(on, list) and all(isinstance(k, str) for k in on):
+        return {k: None for k in on}
+    if isinstance(on, dict):
+        return on
+    raise ValueError(f"{name}: unreadable `on:` block ({on!r:.80})")
+
+
+def _push_reaches_main(on, name):
+    """True when a push to main starts this workflow. GitHub's filter semantics: branches wins,
+    then branches-ignore; a push filtered to tags only never fires for a branch. A paths filter
+    does not help: the revert's fast-forward can touch any path. Patterns match with fnmatch, a
+    superset of GitHub's globs, and a '!' exclusion is not modelled — both err towards refusing."""
+    if "push" not in on:
+        return False
+    push = on["push"]
+    if push is None:
+        return True
+    if not isinstance(push, dict):
+        raise ValueError(f"{name}: unreadable `push:` trigger ({push!r:.80})")
+
+    def patterns(key):
+        v = push.get(key)
+        return [v] if isinstance(v, str) else list(v or [])
+    if push.get("branches") is not None:
+        return any(fnmatch.fnmatchcase("main", str(p)) for p in patterns("branches"))
+    if push.get("branches-ignore") is not None:
+        return not any(fnmatch.fnmatchcase("main", str(p)) for p in patterns("branches-ignore"))
+    return push.get("tags") is None and push.get("tags-ignore") is None
+
+
+def target_workflow_hazards(files):
+    """Pure core of require_revertible_target: {file name: text} of the target's
+    .github/workflows -> why a revert to that target is unsafe ([] when nothing is). Raises
+    ValueError (or ImportError without PyYAML) when a file cannot be judged; the caller refuses.
+
+    Unsafe means: any workflow that a push to main starts (the fast-forward would start it, and
+    the rollback could neither see nor stop it); a live, non-comment `|| echo "{}"` env-merge base
+    in deploy-lambda.yml (a transient read failure on the forward leg wipes a function's env);
+    and a target that cannot rebuild itself — a redeploy workflow missing, without
+    workflow_dispatch, or a deploy.yml without the skip_version_bump input redeploy_spa sends.
+    scripts/revert-gate.yml's header derives the supported target range from exactly these."""
+    import yaml  # at call time: the stdlib-only preflight never imports this module's checks
+
+    hazards, docs = [], {}
+    for name in sorted(files):
+        try:
+            doc = yaml.safe_load(files[name])
+        except yaml.YAMLError as e:
+            raise ValueError(f"{name}: not parseable YAML ({str(e)[:200]})")
+        doc = {} if doc is None else doc
+        if not isinstance(doc, dict):
+            raise ValueError(f"{name}: not a YAML mapping")
+        docs[name] = doc
+        if _push_reaches_main(_workflow_on(doc, name), name):
+            hazards.append(f"{name} runs on a push to main (the revert's fast-forward would start it, unseen)")
+    for name in (LAMBDA_DEPLOY_WORKFLOW, SPA_DEPLOY_WORKFLOW):
+        if name not in docs:
+            hazards.append(f"{name} is missing, so the target cannot rebuild itself")
+        elif "workflow_dispatch" not in _workflow_on(docs[name], name):
+            hazards.append(f"{name} has no workflow_dispatch trigger, so its redeploy leg cannot start")
+    spa_dispatch = _workflow_on(docs[SPA_DEPLOY_WORKFLOW], SPA_DEPLOY_WORKFLOW).get("workflow_dispatch") \
+        if SPA_DEPLOY_WORKFLOW in docs else None
+    if SPA_DEPLOY_WORKFLOW in docs and "skip_version_bump" not in ((spa_dispatch or {}).get("inputs") or {}):
+        hazards.append(f"{SPA_DEPLOY_WORKFLOW} has no skip_version_bump dispatch input, which the SPA leg sends")
+    wipe = [i for i, line in enumerate(files.get(LAMBDA_DEPLOY_WORKFLOW, "").splitlines(), 1)
+            if not line.lstrip().startswith("#") and ENV_WIPE_RE.search(line)]
+    if wipe:
+        hazards.append(f"{LAMBDA_DEPLOY_WORKFLOW} merges env onto an `|| echo \"{{}}\"` base (lines "
+                       f"{wipe[:6]}): one failed read on the forward leg wipes that function's "
+                       "environment, and nothing in the revert puts it back")
+    return hazards
+
+
+def require_revertible_target(cfg, manifest):
+    """Before the pre-revert snap: read the TARGET's own .github/workflows at manifest.main_sha
+    (contents + blobs API, the same token) and refuse a target target_workflow_hazards() finds
+    unsafe. Everything that cannot be read, decoded or parsed refuses too (REG B1; the env-wipe
+    half of REG "config")."""
+    if cfg.rehearsal:
+        return
+    sha = manifest["main_sha"]
+    listing = _gh_read(cfg, f"/contents/{TARGET_WORKFLOWS_DIR}?ref={sha}")
+    if not isinstance(listing, list):
+        raise RevertError(f"cannot list {TARGET_WORKFLOWS_DIR} at the target's commit {sha[:12]}; "
+                          "refusing a target whose workflows cannot be checked")
+    files = {}
+    for entry in listing:
+        name = str(entry.get("name", "")) if isinstance(entry, dict) else ""
+        if not name.endswith((".yml", ".yaml")) or entry.get("type") != "file":
+            continue
+        blob = _gh_read(cfg, f"/git/blobs/{entry.get('sha')}")
+        try:
+            if not isinstance(blob, dict) or blob.get("encoding") != "base64":
+                raise ValueError("blob unreadable or not base64")
+            files[name] = base64.b64decode(blob["content"]).decode("utf-8")
+        except (ValueError, KeyError, TypeError) as e:
+            raise RevertError(f"cannot read the target's {name} at {sha[:12]} ({e}); refusing a target "
+                              "whose workflows cannot be checked")
+    try:
+        hazards = target_workflow_hazards(files)
+    except (ValueError, ImportError) as e:
+        raise RevertError(f"cannot check the target's workflows at {sha[:12]} ({e}); refusing")
+    if hazards:
+        raise RevertError(f"target {cfg.target_version} ({sha[:12]}) is outside the revertible range: "
+                          + "; ".join(hazards) + ". See revert-gate.yml's header")
 
 
 def require_no_deploy_in_flight(cfg):
@@ -1332,6 +1460,7 @@ def run(cfg, s3=None, lambda_client=None):
     # Lambda versions.
     require_dispatchable(cfg)
     require_no_deploy_in_flight(cfg)
+    require_revertible_target(cfg, manifest)
     prerevert = prerevert_snap(cfg)
 
     # OPS-REVERTRESTORE-001 — one more refusal while NOTHING in prod has changed yet: rollback()

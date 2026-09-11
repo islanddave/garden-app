@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Mocked unit tests for revert-to.py (spec §3 B2). All GitHub/Neon/AWS I/O mocked."""
+import base64
 import importlib.util
 import json
 import os
@@ -486,13 +487,33 @@ class FakeActions:
         return FakeResp(202)
 
 
-def prod_world(monkeypatch, prerevert=None, **actions_kw):
+WF_DIR = os.path.join(HERE, "..", ".github", "workflows")
+
+
+def current_workflows():
+    """The checked-out tree's own workflow files: what the next promote will tag, so the shape of
+    every recent target (this lane's base is dev after v4.128.0)."""
+    return {n: open(os.path.join(WF_DIR, n)).read()
+            for n in sorted(os.listdir(WF_DIR)) if n.endswith((".yml", ".yaml"))}
+
+
+def serve_target_workflows(fr, files, sha="a" * 40):
+    """The contents + blobs API over `files`, as the target's .github/workflows at `sha`."""
+    listing = [{"name": n, "path": f".github/workflows/{n}", "sha": f"blob-{n}", "type": "file"}
+               for n in files]
+    fr.add("GET", f"/contents/.github/workflows?ref={sha}", FakeResp(200, listing))
+    fr.add("GET", "/git/blobs/blob-", lambda url: FakeResp(200, {
+        "encoding": "base64", "content": base64.b64encode(files[url.rsplit("/blob-", 1)[1]].encode()).decode()}))
+
+
+def prod_world(monkeypatch, prerevert=None, target_files=None, **actions_kw):
     """Everything run() talks to, prod mode, fast path. -> (cfg, s3, fr, gh, events, lc)."""
     cfg = rt.Config(env=base_env())
     s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
     events = []
     gh = FakeActions(fr, events, **actions_kw)
+    serve_target_workflows(fr, current_workflows() if target_files is None else target_files)
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
     fr.add("GET", "/branches", FakeResp(200, {"branches": [
@@ -830,6 +851,123 @@ def test_a_run_list_that_cannot_be_read_is_refused_before_the_snap(monkeypatch):
     cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
     fr.routes.insert(0, ("GET", "promote-gate.yml/runs?", FakeResp(502, text="Bad Gateway")))
     with pytest.raises(rt.RevertError, match="cannot list promote-gate.yml runs"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+
+
+# --- R2 item 2: refuse targets whose own workflows make the revert unsafe ----------------------
+
+LAMBDA_JOBS = "jobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo deploy\n"
+PUSH_TO_MAIN = {
+    "v4.16.0 shape": "on:\n  push:\n    branches: [main]\n    paths:\n      - 'lambda/**'\n  workflow_dispatch:\n",
+    "quoted on key": "'on':\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
+    "list form": "on: [push, workflow_dispatch]\n",
+    "bare push": "on:\n  push:\n  workflow_dispatch:\n",
+    "branches-ignore without main": "on:\n  push:\n    branches-ignore: [dev]\n  workflow_dispatch:\n",
+    "glob": "on:\n  push:\n    branches: ['ma*']\n  workflow_dispatch:\n",
+}
+NOT_PUSH_TO_MAIN = {
+    "tags only": "on:\n  push:\n    tags: ['promote-v*']\n  workflow_dispatch:\n",
+    "dev only": "on:\n  push:\n    branches: [dev]\n  workflow_dispatch:\n",
+    "main ignored": "on:\n  push:\n    branches-ignore: [main]\n  workflow_dispatch:\n",
+}
+ENV_WIPE_LINE = ("          EXISTING=$(aws lambda get-function-configuration --function-name \"$FN\" "
+                 "--query 'Environment.Variables' --output json 2>/dev/null || echo {q}{{}}{q})\n")
+
+
+def with_lambda(on=None, body_line=None):
+    """The current tree's workflows with deploy-lambda.yml swapped for a small one."""
+    files = current_workflows()
+    text = (on or "on:\n  workflow_dispatch:\n") + "jobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n"
+    text += "      - name: merge env\n        run: |\n" + (body_line or "          echo ok\n")
+    files["deploy-lambda.yml"] = text
+    return files
+
+
+def test_a_v4_128_shaped_target_passes_the_workflow_check(monkeypatch):
+    """The current tree (v4.128.0 plus dev): no push trigger on main, no `|| echo "{}"` base,
+    both redeploy workflows dispatchable with the inputs the revert sends."""
+    assert rt.target_workflow_hazards(current_workflows()) == []
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    assert rt.run(cfg, s3=s3, lambda_client=lc)["spa_run"] == 101
+    assert ("GET", f"{rt.GITHUB_API}/repos/islanddave/garden-app/contents/.github/workflows?ref={'a' * 40}") in fr.calls
+
+
+@pytest.mark.parametrize("shape", sorted(PUSH_TO_MAIN))
+def test_every_spelling_of_a_push_to_main_trigger_is_a_hazard(shape):
+    hz = rt.target_workflow_hazards(with_lambda(on=PUSH_TO_MAIN[shape]))
+    assert hz == ["deploy-lambda.yml runs on a push to main (the revert's fast-forward would start it, unseen)"]
+
+
+@pytest.mark.parametrize("shape", sorted(NOT_PUSH_TO_MAIN))
+def test_a_push_trigger_that_cannot_fire_on_main_is_not_a_hazard(shape):
+    assert rt.target_workflow_hazards(with_lambda(on=NOT_PUSH_TO_MAIN[shape])) == []
+
+
+def test_a_push_to_main_trigger_on_any_other_workflow_is_a_hazard_too():
+    files = current_workflows()
+    files["nightly.yml"] = "on:\n  push:\n    branches: ['**']\njobs: {}\n"
+    assert rt.target_workflow_hazards(files) == [
+        "nightly.yml runs on a push to main (the revert's fast-forward would start it, unseen)"]
+
+
+def test_a_push_to_main_target_is_refused_before_the_snap_with_no_mutation(monkeypatch):
+    """REG B1: 193 of 260 targets (v2.5.4..v4.16.0) trigger deploy-lambda.yml on a push to main, so
+    ff_main alone would start a Lambda deploy the rollback can neither see nor stop."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, target_files=with_lambda(on=PUSH_TO_MAIN["v4.16.0 shape"]))
+    with pytest.raises(rt.RevertError, match="outside the revertible range: deploy-lambda.yml runs on a push to main"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+    assert lc.calls == []
+
+
+@pytest.mark.parametrize("quote", ['"', "'", ""])
+def test_a_live_env_wipe_base_is_a_hazard(quote):
+    hz = rt.target_workflow_hazards(with_lambda(body_line=ENV_WIPE_LINE.format(q=quote)))
+    assert len(hz) == 1 and hz[0].startswith('deploy-lambda.yml merges env onto an `|| echo "{}"` base (lines [')
+
+
+def test_a_commented_out_env_wipe_base_is_not_a_hazard():
+    line = "          # was: " + ENV_WIPE_LINE.format(q='"').lstrip()
+    assert rt.target_workflow_hazards(with_lambda(body_line=line)) == []
+
+
+def test_an_env_wipe_target_is_refused_before_the_snap_with_no_mutation(monkeypatch):
+    """REG "config": 212 of 260 targets (up to v4.43.0) carry a live `|| echo "{}"` merge base."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, target_files=with_lambda(body_line=ENV_WIPE_LINE.format(q='"')))
+    with pytest.raises(rt.RevertError, match=r"outside the revertible range: deploy-lambda.yml merges env onto"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+    assert lc.calls == []
+
+
+def test_a_target_that_cannot_rebuild_itself_is_a_hazard():
+    files = current_workflows()
+    del files["deploy.yml"]
+    assert rt.target_workflow_hazards(files) == ["deploy.yml is missing, so the target cannot rebuild itself"]
+    assert rt.target_workflow_hazards(with_lambda(on="on:\n  workflow_call:\n")) == [
+        "deploy-lambda.yml has no workflow_dispatch trigger, so its redeploy leg cannot start"]
+    files = current_workflows()
+    files["deploy.yml"] = "on:\n  workflow_dispatch:\njobs: {}\n"
+    assert rt.target_workflow_hazards(files) == [
+        "deploy.yml has no skip_version_bump dispatch input, which the SPA leg sends"]
+
+
+@pytest.mark.parametrize("breakage", ["listing 404", "blob 500", "blob not base64", "yaml error", "no pyyaml"])
+def test_target_workflows_that_cannot_be_read_or_judged_refuse(monkeypatch, breakage):
+    files = current_workflows()
+    if breakage == "yaml error":
+        files["deploy.yml"] = "on: [unclosed\n"
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, target_files=files)
+    if breakage == "listing 404":
+        fr.routes.insert(0, ("GET", "/contents/.github/workflows", FakeResp(404, text="Not Found")))
+    elif breakage == "blob 500":
+        fr.routes.insert(0, ("GET", "/git/blobs/blob-deploy.yml", FakeResp(500, text="oops")))
+    elif breakage == "blob not base64":
+        fr.routes.insert(0, ("GET", "/git/blobs/blob-deploy.yml", FakeResp(200, {"encoding": "utf-8", "content": "x"})))
+    elif breakage == "no pyyaml":
+        monkeypatch.setitem(sys.modules, "yaml", None)
+    with pytest.raises(rt.RevertError, match=r"cannot (list|read|check) (\.github/workflows at )?the target's"):
         rt.run(cfg, s3=s3, lambda_client=lc)
     _refused_before_the_snap(events, gh)
 
