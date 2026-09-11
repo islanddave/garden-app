@@ -428,9 +428,23 @@ class FakeActions:
 
     def __init__(self, fr, events, lambda_legs=None, spa_conclusions=("success",),
                  spa_completes=True, spa_job=True, run_sha=None, state="active",
-                 env_rules=None, seed_runs=(), skew_s=0):
+                 env_rules=None, seed_runs=(), skew_s=0, lambda_leg_polls=None, cancel_status=202,
+                 cancel_stops_after=0, late_runs=(), appear_after=0):
         self.fr, self.events = fr, events
         self.skew_s = skew_s  # GitHub's clock minus the runner's, stamped on every dispatched run
+        # R2 item 7 — fakes that can fail:
+        # lambda_leg_polls: the Lambda run's legs, one list per poll (the last repeats) — legs that
+        #   finish across polls, or one stuck past the ceiling; the run stays in_progress until
+        #   they all complete.
+        self.lambda_leg_polls = [list(p) for p in lambda_leg_polls] if lambda_leg_polls else None
+        # cancel_status: what POST .../cancel answers (403 = refused). cancel_stops_after: polls
+        #   of the run before an accepted cancel takes effect (None = never).
+        self.cancel_status, self.cancel_stops_after = cancel_status, cancel_stops_after
+        self.pending_cancel = {}
+        # late_runs: runs that appear with the first dispatch, after the pre-checkpoint checks
+        #   (a concurrent promote's deploy, say). appear_after: list calls a dispatched run stays
+        #   invisible for (run-appearance latency).
+        self.late_runs, self.appear_after, self.hidden = list(late_runs), appear_after, {}
         self.main_sha = None
         self.dispatched, self.cancelled, self.runs = [], [], {}
         self.lambda_legs = lambda_legs
@@ -479,7 +493,18 @@ class FakeActions:
             if not self.spa_completes:
                 run["status"], run["conclusion"] = "in_progress", None
                 self.spa_completes = True  # only the FIRST (forward) SPA run hangs
+        if wf == "deploy-lambda.yml" and self.lambda_leg_polls:
+            run["status"], run["conclusion"] = "in_progress", None  # its legs decide, see _jobs
         self.runs[rid] = run
+        if self.appear_after:
+            self.hidden[rid] = self.appear_after
+        for i, late in enumerate(self.late_runs):
+            extra = {"id": 950 + i, "event": "workflow_dispatch", "head_branch": "main",
+                     "created_at": run["created_at"], "status": "in_progress", "conclusion": None,
+                     "head_sha": "f" * 40}
+            extra.update(late)
+            self.runs[extra["id"]] = extra
+        self.late_runs = []
         return FakeResp(204)
 
     def _list(self, url):
@@ -487,17 +512,33 @@ class FakeActions:
         filters by event really cannot see a push run."""
         wf = self._wf(url)
         q = dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&") if "=" in p)
-        runs = [dict(r) for r in self.runs.values() if r["workflow"] == wf
+        hide = {i for i, n in self.hidden.items() if n > 0 and self.runs[i]["workflow"] == wf}
+        for i in hide:
+            self.hidden[i] -= 1
+        runs = [dict(r) for r in self.runs.values() if r["workflow"] == wf and r["id"] not in hide
                 and q.get("event", r.get("event")) == r.get("event")
                 and q.get("branch", r.get("head_branch")) == r.get("head_branch")]
         return FakeResp(200, {"workflow_runs": runs})
 
     def _run(self, url):
-        r = self.runs[self._id(url)]
+        rid = self._id(url)
+        r = self.runs[rid]
+        if self.pending_cancel.get(rid) is not None:
+            self.pending_cancel[rid] -= 1
+            if self.pending_cancel[rid] <= 0:
+                del self.pending_cancel[rid]
+                r["status"], r["conclusion"] = "completed", "cancelled"
         return FakeResp(200, {k: r.get(k) for k in ("id", "head_sha", "status", "conclusion")})
 
     def _jobs(self, url):
         r = self.runs[self._id(url)]
+        if r["workflow"] == "deploy-lambda.yml" and self.lambda_leg_polls:
+            polls = self.lambda_leg_polls
+            legs = polls.pop(0) if len(polls) > 1 else polls[0]
+            if all(j["status"] == "completed" for j in legs) and r["status"] != "completed":
+                r["status"] = "completed"
+                r["conclusion"] = "success" if all(j["conclusion"] == "success" for j in legs) else "failure"
+            return FakeResp(200, {"jobs": [dict(j) for j in legs]})
         if r["workflow"] == "deploy-lambda.yml":
             legs = self.lambda_legs if self.lambda_legs is not None else (
                 [{"name": f"deploy ({f})", "status": "completed", "conclusion": "success"}
@@ -510,9 +551,14 @@ class FakeActions:
 
     def _cancel(self, url):
         r = self.runs[self._id(url)]
-        self.cancelled.append(r["id"])
         self.events.append(("cancel", r["id"]))
-        r["status"], r["conclusion"] = "completed", "cancelled"
+        if self.cancel_status != 202:
+            return FakeResp(self.cancel_status, text="Resource not accessible by integration")
+        self.cancelled.append(r["id"])
+        if self.cancel_stops_after == 0:
+            r["status"], r["conclusion"] = "completed", "cancelled"
+        else:
+            self.pending_cancel[r["id"]] = self.cancel_stops_after  # None = the run never stops
         return FakeResp(202)
 
 
@@ -1349,6 +1395,119 @@ def test_a_stuck_function_cannot_outlast_the_restore_budget(monkeypatch, phase):
         _restore(monkeypatch, lc, ["garden-plants"])
     assert len([c for c in lc.calls if c[0] in ("idle", "config")]) < 100
     assert lc.updated() == ["garden-plants"]  # once the budget has run out, no further retry
+
+
+# --- R2 item 7: one test per QA mutant (Q-M1..Q-M10) on fakes that can fail --------------------
+
+def test_a_lambda_leg_stuck_past_the_ceiling_fails_the_revert_and_never_ships_the_spa(monkeypatch):
+    """Q-M1: the Lambda ceiling must never read as success, or the SPA ships over unfinished Lambdas."""
+    stuck = [{"name": "deploy (plants)", "status": "completed", "conclusion": "success"},
+             {"name": "deploy (events)", "status": "in_progress", "conclusion": None}]
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, lambda_leg_polls=[stuck])
+    with pytest.raises(rt.RevertError, match=rf"rolled back to pre-revert snap: Lambda redeploy run 100 "
+                                             rf"unfinished after {rt.RUN_POLL_CEILING_S // 60} min"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert [wf for wf, _ in gh.dispatched] == ["deploy-lambda.yml"]
+    assert gh.cancelled == [100]  # the stuck run was stopped before the rollback put prod back
+
+
+def test_lambda_legs_that_finish_across_polls_are_all_waited_for(monkeypatch):
+    """Q-M2: one finished leg is not all of them."""
+    first = [{"name": "deploy (plants)", "status": "completed", "conclusion": "success"},
+             {"name": "deploy (events)", "status": "in_progress", "conclusion": None}]
+    done = [{"name": "deploy (plants)", "status": "completed", "conclusion": "success"},
+            {"name": "deploy (events)", "status": "completed", "conclusion": "success"}]
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, lambda_leg_polls=[first, first, done])
+    assert rt.run(cfg, s3=s3, lambda_client=lc)["spa_run"] == 101
+    assert len([c for c in fr.calls if "/runs/100/jobs" in c[1]]) == 3
+
+
+def test_a_refused_cancel_pages_dave_and_names_the_run(monkeypatch):
+    """Q-M3: memo §8.2 — if the garden-bot token cannot cancel, the rollback must say so."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_completes=False, cancel_status=403)
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    msg = str(e.value)
+    assert "PAGE DAVE" in msg and "cancel deploy.yml run 101 failed 403" in msg
+    assert ("neon_restore", "br-pre") in events
+
+
+def test_a_cancel_that_never_takes_effect_pages_dave_and_names_the_run(monkeypatch):
+    """Q-M4: a 202 is a request, not a stop."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_completes=False, cancel_stops_after=None)
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert "PAGE DAVE" in str(e.value)
+    assert f"deploy.yml run 101 for {REVERT_SHA} still running {rt.CANCEL_WAIT_S}s after cancel" in str(e.value)
+
+
+def test_a_cancel_that_takes_a_few_polls_is_waited_for_then_the_rollback_completes(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_completes=False, cancel_stops_after=3)
+    with pytest.raises(rt.RevertError, match="rolled back to pre-revert snap") as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert "PAGE DAVE" not in str(e.value)
+    assert events.index(("cancel", 101)) < events.index(("neon_restore", "br-pre"))
+
+
+def test_a_rollback_that_cannot_move_main_back_never_rebuilds_the_spa(monkeypatch):
+    """Q-M6: with main still on the revert commit, an SPA dispatch would rebuild the REVERT tree."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_conclusions=("failure",))
+    n = {"ff": 0}
+
+    def ff_once(url):
+        n["ff"] += 1
+        return gh.ff(url) if n["ff"] == 1 else FakeResp(422, text="Update is not a fast forward")
+    fr.routes.insert(0, ("PATCH", "/git/refs/heads/main", ff_once))
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert "PAGE DAVE" in str(e.value) and "SPA NOT redeployed: main could not be moved back" in str(e.value)
+    assert [(ev[1], ev[2]) for ev in events if ev[0] == "dispatch"] == [
+        ("deploy-lambda.yml", REVERT_SHA), ("deploy.yml", REVERT_SHA)]
+
+
+def test_the_rollback_never_cancels_another_commit_s_run(monkeypatch):
+    """Q-M8: a deploy for some other commit (a promote that started mid-revert, say) is not ours
+    to stop; only the revert commit's own runs are."""
+    foreign = {"workflow": "deploy.yml", "event": "workflow_dispatch", "status": "in_progress"}
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_completes=False, late_runs=[foreign])
+    with pytest.raises(rt.RevertError, match="rolled back to pre-revert snap"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert gh.cancelled == [101]  # the revert's own stray SPA run, never the foreign 950
+
+
+def test_a_failure_before_the_lambda_leg_restores_no_lambda(monkeypatch):
+    """Q-M9: no forward Lambda leg, so nothing to restore — a restore would be pure risk."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    real = next(r for r in fr.routes if r[0] == "POST" and r[1] == "/git/commits")[2]
+    n = {"c": 0}
+
+    def first_commit_fails(url):
+        n["c"] += 1
+        return FakeResp(500, text="GitHub is down") if n["c"] == 1 else real(url)
+    fr.routes.insert(0, ("POST", "/git/commits", first_commit_fails))
+    with pytest.raises(rt.RevertError, match="rolled back to pre-revert snap: create revert commit failed 500"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert lc.calls == [] and gh.dispatched == []
+    assert [e[1] for e in events if e[0] == "neon_restore"] == ["br-snap", "br-pre"]
+
+
+def test_a_run_created_before_the_dispatch_is_never_taken_for_ours(monkeypatch):
+    """Q-M10, with run-appearance latency: our run is invisible on the first poll, and an older run
+    for the same commit is visible. Only a run created after the dispatch may be accepted."""
+    old = {"workflow": "deploy-lambda.yml", "event": "workflow_dispatch", "status": "completed",
+           "conclusion": "failure", "head_sha": REVERT_SHA, "created_at": "2026-09-11T11:00:00Z"}
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, seed_runs=[old], appear_after=1)
+    assert rt.run(cfg, s3=s3, lambda_client=lc)["lambda_run"] == 100
+
+
+@pytest.mark.parametrize("skew, accepted", [(-45, True), (-90, False)])
+def test_github_s_clock_may_lag_the_runner_s_by_the_skew_allowance_and_no_more(monkeypatch, skew, accepted):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, skew_s=skew)
+    if accepted:
+        assert rt.run(cfg, s3=s3, lambda_client=lc)["lambda_run"] == 100
+    else:
+        with pytest.raises(rt.RevertError, match="rolled back to pre-revert snap: no deploy-lambda.yml run for"):
+            rt.run(cfg, s3=s3, lambda_client=lc)
 
 
 def test_main_exit_code_on_error(monkeypatch):
