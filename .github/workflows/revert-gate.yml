@@ -15,13 +15,21 @@ name: revert-gate
 # see STATUS below. Edits made here on dev do not take effect for a dispatch until the next promote-gate
 # ship carries them to main; the Actions UI keeps running main's copy in the meantime.
 #
-# APPROVAL GATE (2026-08-05, OPS-REVERTGATE-001). This job runs under `environment: production-destructive`,
-# which carries a REQUIRED REVIEWER (islanddave) — the run pauses at the environment gate until that review is
-# granted, so the dispatcher cannot also be the sole approver. Do NOT point this at `environment: production`:
-# that environment carries a branch/tag ref policy ONLY and has had ZERO required reviewers since 2026-06-22,
-# so it is not an approval stop of any kind. Prior versions of this header claimed a "Dave-approved" gate that
-# did not exist in infrastructure; the `confirm_data_loss` dropdown was the only guard and it is selected by
-# whoever is already dispatching.
+# APPROVAL GATE (2026-08-05, OPS-REVERTGATE-001; corrected 2026-09-11, OPS-REVERTRESTORE-001 R2). This job runs
+# under `environment: production-destructive`, which carries a REQUIRED REVIEWER (islanddave): the run pauses at
+# the environment gate until that review is granted. What that enforces is an IDENTITY gate that ALLOWS
+# SELF-APPROVAL, not a two-person rule: prevent_self_review=false and can_admins_bypass=true, and islanddave is
+# both the only reviewer and the only dispatcher, so the dispatcher approves his own run (and anything holding
+# his token could do both). Earlier versions of this header said "the dispatcher cannot also be the sole
+# approver"; that was never true of the live configuration.
+#   - Self-approval accepted by Dave, 2026-09-11 (SEC I3).
+#   - Environment restricted to the main branch, 2026-09-11: Dave's decision; he applies the deployment branch
+#     policy himself. Until it is applied the environment admits any ref — check with
+#     `gh api repos/islanddave/garden-app/environments/production-destructive` (deployment_branch_policy).
+# Do NOT point this at `environment: production`: that environment carries a branch/tag ref policy ONLY and has
+# had ZERO required reviewers since 2026-06-22, so it is not an approval stop of any kind. Prior versions of this
+# header claimed a "Dave-approved" gate that did not exist in infrastructure; the `confirm_data_loss` dropdown
+# was the only guard and it is selected by whoever is already dispatching.
 #
 # STATUS — LIVE AND DISPATCHABLE (verified 2026-09-10). `state: active`, and this file is present on the
 # default branch (main), so it is dispatchable from the Actions UI right now. An earlier version of this
@@ -192,6 +200,10 @@ jobs:
           SNAP_AWS_ROLE_ARN: ${{ vars.SNAP_AWS_ROLE_ARN }}
           SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
           TARGET_VERSION: ${{ inputs.target_version }}
+          # Kept for ONE release (R2): today's preflight ignores it, but if OPS-REVERTRESTORE-001 is git-reverted
+          # on dev after a promote has carried this file to main, dev's OLD preflight runs here again and refuses
+          # every revert with "CF_DIST is empty" without it. Drop it in the release after the one that ships this.
+          CF_DIST: E3FAJTXAORQYDT
         run: python3 scripts/preflight-revert-iam.py
 
       - name: Install python deps

@@ -9,8 +9,9 @@ name: Deploy Lambda Functions
 # accidental (a vite build happens to take about as long as a 26-function matrix), not designed.
 #
 # It also raced `snap.py` inside the promote job, so the revertibility manifest recorded a TORN mix
-# of pre- and post-deploy Lambda package versions — see snap.py's L-221 note. `revert-to.py` restores
-# from that manifest, so the safety net was recording the wrong target.
+# of pre- and post-deploy Lambda package versions — see snap.py's L-221 note. (`revert-to.py` no longer
+# restores a target's Lambdas from its manifest: it rebuilds them from the target's tree through this
+# workflow, and restores snapshot versions only on rollback, from its own pre-revert snap.)
 #
 # promote-gate now calls this workflow explicitly as a `needs:` predecessor of the SPA deploy, which
 # makes the ordering a graph edge instead of a coincidence, and puts it strictly AFTER snap.py.

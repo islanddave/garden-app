@@ -972,6 +972,15 @@ def test_revert_gate_passes_a_budget_equal_to_its_timeout_that_covers_the_worst_
     assert 'echo "REVERT_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"' in first
 
 
+def test_the_preflight_step_still_passes_cf_dist_for_one_release():
+    """REG MINOR: until the release after this one, git-reverting OPS-REVERTRESTORE-001 on dev must
+    not leave dev's OLD preflight (which raises "CF_DIST is empty") without it under main's file."""
+    import yaml
+    job = yaml.safe_load(open(os.path.join(WF_DIR, "revert-gate.yml")))["jobs"]["revert"]
+    step = next(s for s in job["steps"] if "scripts/preflight-revert-iam.py" in s.get("run", ""))
+    assert step["env"].get("CF_DIST") == rt.PROD_CF_DIST
+
+
 @pytest.mark.parametrize("over, why", [
     ({"REVERT_JOB_BUDGET_MIN": None}, "missing or not integers"),
     ({"REVERT_JOB_STARTED_AT": None}, "missing or not integers"),
