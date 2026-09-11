@@ -399,19 +399,29 @@ class FakeActions:
     jobs, and a cancel stops a run. `events` is shared with the world so tests can assert ORDER."""
 
     def __init__(self, fr, events, lambda_legs=None, spa_conclusions=("success",),
-                 spa_completes=True, spa_job=True, run_sha=None, state="active"):
+                 spa_completes=True, spa_job=True, run_sha=None, state="active",
+                 env_rules=None, seed_runs=()):
         self.fr, self.events = fr, events
         self.main_sha = None
         self.dispatched, self.cancelled, self.runs = [], [], {}
         self.lambda_legs = lambda_legs
         self.spa_conclusions = list(spa_conclusions)
         self.spa_completes, self.spa_job, self.run_sha, self.state = spa_completes, spa_job, run_sha, state
+        # the `production` environment's protection rules; live today = the branch policy only
+        self.env_rules = [{"type": "branch_policy"}] if env_rules is None else env_rules
+        # runs that exist before the revert starts (ids 900+): a promote in flight, a push run, ...
+        for i, seed in enumerate(seed_runs):
+            run = {"id": 900 + i, "event": "push", "head_branch": "main", "created_at": CREATED,
+                   "status": "in_progress", "conclusion": None, "head_sha": "e" * 40}
+            run.update(seed)
+            self.runs[run["id"]] = run
         fr.add("POST", "/dispatches", self._dispatch)
         fr.add("POST", "/cancel", self._cancel)
-        fr.add("GET", "/runs?event=workflow_dispatch", self._list)
+        fr.add("GET", "/runs?", self._list)
         fr.add("GET", "/jobs?", self._jobs)
         fr.add("GET", "/actions/runs/", self._run)
         fr.add("GET", "/actions/workflows/", lambda url: FakeResp(200, {"state": self.state}))
+        fr.add("GET", "/environments/production", lambda url: FakeResp(200, {"protection_rules": self.env_rules}))
 
     @staticmethod
     def _wf(url):
@@ -430,8 +440,9 @@ class FakeActions:
         wf = self._wf(url)
         self.dispatched.append((wf, dict(self.fr.last_json)))
         self.events.append(("dispatch", wf, self.main_sha))
-        rid = 100 + len(self.runs)
+        rid = 99 + len(self.dispatched)
         run = {"id": rid, "workflow": wf, "head_sha": self.run_sha or self.main_sha,
+               "event": "workflow_dispatch", "head_branch": "main",
                "created_at": CREATED, "status": "completed", "conclusion": "success"}
         if wf == "deploy.yml":
             run["conclusion"] = self.spa_conclusions.pop(0) if self.spa_conclusions else "success"
@@ -442,12 +453,18 @@ class FakeActions:
         return FakeResp(204)
 
     def _list(self, url):
+        """Honours the event= and branch= filters the way the Actions API does, so a query that
+        filters by event really cannot see a push run."""
         wf = self._wf(url)
-        return FakeResp(200, {"workflow_runs": [dict(r) for r in self.runs.values() if r["workflow"] == wf]})
+        q = dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&") if "=" in p)
+        runs = [dict(r) for r in self.runs.values() if r["workflow"] == wf
+                and q.get("event", r.get("event")) == r.get("event")
+                and q.get("branch", r.get("head_branch")) == r.get("head_branch")]
+        return FakeResp(200, {"workflow_runs": runs})
 
     def _run(self, url):
         r = self.runs[self._id(url)]
-        return FakeResp(200, {k: r[k] for k in ("id", "head_sha", "status", "conclusion")})
+        return FakeResp(200, {k: r.get(k) for k in ("id", "head_sha", "status", "conclusion")})
 
     def _jobs(self, url):
         r = self.runs[self._id(url)]
@@ -500,7 +517,10 @@ def prod_world(monkeypatch, prerevert=None, **actions_kw):
     fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))  # snapshot package download
     monkeypatch.setattr(rt, "requests", fr)
     monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
-    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: prerevert or full_prerevert())
+    def snap(cfg):
+        events.append(("snap",))  # a refusal that needs no snapshot must come before this
+        return prerevert or full_prerevert()
+    monkeypatch.setattr(rt, "prerevert_snap", snap)
     monkeypatch.setattr(rt, "_sleep", lambda s: None)
     monkeypatch.setattr(rt, "_now", lambda: rt._gh_time(CREATED))
     return cfg, s3, fr, gh, events, FakeLambda()
@@ -739,6 +759,79 @@ def test_restore_waits_through_in_progress_to_successful(monkeypatch):
     assert rt.restore_lambda_versions(
         cfg, {"lambda_versions": {"garden-plants": "7"}}, lambda_client=lc) == {"garden-plants": "7"}
     assert len([c for c in lc.calls if c[0] == "config"]) == 3
+
+
+# --- R2 items 4 + 5: every refusal that needs no snapshot comes before it -----------------------
+
+def _refused_before_the_snap(events, gh):
+    assert ("snap",) not in events
+    assert not [e for e in events if e[0] in ("neon_restore", "commit", "ff_main", "dispatch")]
+    assert gh.dispatched == [] and gh.cancelled == []
+
+
+def test_a_disabled_workflow_is_refused_before_the_prerevert_snap(monkeypatch):
+    """A refusal after the snap strands a permanent PREREVERT tag, a Neon branch, a dump and up to
+    26 published versions, and the retry needs a fresh PREREVERT_VERSION."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, state="disabled_manually")
+    with pytest.raises(rt.RevertError, match="'disabled_manually', not 'active'"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+
+
+@pytest.mark.parametrize("rule, named", [
+    ({"type": "required_reviewers", "reviewers": [{"type": "User"}]}, "required_reviewers"),
+    ({"type": "wait_timer", "wait_timer": 5}, "wait_timer 5"),
+    ({"type": "custom"}, "custom"),  # any rule but the branch policy can hold a run
+])
+def test_a_production_environment_that_holds_runs_is_refused_before_the_snap(monkeypatch, rule, named):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, env_rules=[{"type": "branch_policy"}, rule])
+    with pytest.raises(rt.RevertError, match=rf"holds runs \({named}\)"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+
+
+def test_a_zero_wait_timer_and_the_branch_policy_do_not_hold_runs(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(
+        monkeypatch, env_rules=[{"type": "branch_policy"}, {"type": "wait_timer", "wait_timer": 0}])
+    assert rt.run(cfg, s3=s3, lambda_client=lc)["spa_run"] == 101
+
+
+def test_an_unreadable_production_environment_is_refused_before_the_snap(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    fr.routes.insert(0, ("GET", "/environments/production", FakeResp(404, text="Not Found")))
+    with pytest.raises(rt.RevertError, match="cannot read the production environment"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+
+
+@pytest.mark.parametrize("seed", [
+    {"workflow": "promote-gate.yml", "event": "workflow_dispatch", "status": "in_progress"},
+    {"workflow": "deploy-lambda.yml", "event": "push", "status": "queued"},
+    {"workflow": "deploy.yml", "event": "workflow_dispatch", "status": "waiting", "head_branch": "dev"},
+])
+def test_a_promote_or_deploy_in_flight_is_refused_before_the_snap(monkeypatch, seed):
+    """QA "assumption surfacing": the pre-revert snap is what prod runs only if nothing is
+    mid-deploy. Any event, any branch — a push-event run and a dev-branch run count too."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, seed_runs=[seed])
+    with pytest.raises(rt.RevertError,
+                       match=rf"in flight: {seed['workflow']} run 900 \({seed['event']}, {seed['status']}"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+
+
+def test_finished_runs_do_not_block_a_revert(monkeypatch):
+    done = [{"workflow": wf, "status": "completed", "conclusion": c} for wf, c in (
+        ("promote-gate.yml", "success"), ("deploy-lambda.yml", "failure"), ("deploy.yml", "cancelled"))]
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, seed_runs=done)
+    assert rt.run(cfg, s3=s3, lambda_client=lc)["spa_run"] == 101
+
+
+def test_a_run_list_that_cannot_be_read_is_refused_before_the_snap(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    fr.routes.insert(0, ("GET", "promote-gate.yml/runs?", FakeResp(502, text="Bad Gateway")))
+    with pytest.raises(rt.RevertError, match="cannot list promote-gate.yml runs"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
 
 
 # --- R2 item 1: a rollback that survives GitHub being unreachable ------------------------------

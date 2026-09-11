@@ -159,6 +159,9 @@ SANITY_TABLES = [
 # OPS-REVERTRESTORE-001 — the redeploy legs (workflow_dispatch on main, polled to success).
 LAMBDA_DEPLOY_WORKFLOW = "deploy-lambda.yml"
 SPA_DEPLOY_WORKFLOW = "deploy.yml"
+DEPLOY_ENVIRONMENT = "production"  # what both redeploy workflows run under
+# Runs of these must all be finished before a revert starts (promote-gate calls the other two).
+IN_FLIGHT_WORKFLOWS = ("promote-gate.yml", LAMBDA_DEPLOY_WORKFLOW, SPA_DEPLOY_WORKFLOW)
 RUN_LOCATE_ATTEMPTS = 30        # x RUN_LOCATE_INTERVAL_S for the dispatched run to appear
 RUN_LOCATE_INTERVAL_S = 10
 RUN_CLOCK_SKEW_S = 60           # runner-vs-GitHub clock allowance when matching created_at
@@ -937,8 +940,13 @@ def _gh_time(ts):
 
 
 def require_dispatchable(cfg):
-    """Pre-checkpoint: both redeploy workflows must be readable and ACTIVE. A disabled or
-    unreadable one would otherwise surface only AFTER the prod DB reset."""
+    """Before the pre-revert snap: both redeploy workflows must be readable and ACTIVE, and the
+    `production` environment they deploy under must not hold a run for anyone. A disabled or
+    unreadable workflow would otherwise surface only AFTER the prod DB reset. A required reviewer,
+    a wait timer or any other protection rule than the branch policy would park every dispatched
+    leg — the rollback's SPA leg included — past RUN_POLL_CEILING_S. It runs before the snap
+    because a revert refused after it leaves a permanent PREREVERT tag, a Neon branch, a dump and
+    up to 26 published Lambda versions behind."""
     if cfg.rehearsal:
         return
     for wf in (LAMBDA_DEPLOY_WORKFLOW, SPA_DEPLOY_WORKFLOW):
@@ -951,6 +959,43 @@ def require_dispatchable(cfg):
         if state != "active":
             raise RevertError(f"workflow {wf} is {state!r}, not 'active'; refusing to start a revert "
                               "that would reset prod's DB and then be unable to redeploy the code")
+    r = requests.get(_gh(cfg, f"/environments/{DEPLOY_ENVIRONMENT}"), headers=gh_headers(cfg),
+                     timeout=HTTP_TIMEOUT)
+    if r.status_code != 200:
+        raise RevertError(f"cannot read the {DEPLOY_ENVIRONMENT} environment ({r.status_code}: "
+                          f"{r.text[:300]}); refusing to start a revert whose redeploy legs might wait "
+                          "for an approval")
+    held = []
+    for rule in r.json().get("protection_rules") or []:
+        kind = rule.get("type")
+        if kind == "branch_policy" or (kind == "wait_timer" and not rule.get("wait_timer")):
+            continue
+        held.append(f"{kind} {rule.get('wait_timer') or ''}".strip())
+    if held:
+        raise RevertError(f"the {DEPLOY_ENVIRONMENT} environment holds runs ({', '.join(held)}); every "
+                          "redeploy leg, the rollback's included, would wait there past its poll ceiling. "
+                          "Refusing to start")
+
+
+def require_no_deploy_in_flight(cfg):
+    """Before the pre-revert snap: refuse while any promote or deploy run is queued, waiting or in
+    progress, whatever event or branch started it. The rollback restores from the pre-revert snap,
+    which is "what prod runs" only if nothing is mid-deploy while it is taken, and a promote's
+    queued legs would otherwise land on top of the revert. An unreadable run list refuses."""
+    if cfg.rehearsal:
+        return
+    busy = []
+    for wf in IN_FLIGHT_WORKFLOWS:
+        body = _gh_read(cfg, f"/actions/workflows/{wf}/runs?per_page=100")
+        runs = body.get("workflow_runs") if isinstance(body, dict) else None
+        if not isinstance(runs, list):
+            raise RevertError(f"cannot list {wf} runs to prove no promote or deploy is in flight; "
+                              "refusing to start")
+        busy += [f"{wf} run {x.get('id')} ({x.get('event')}, {x.get('status')}, "
+                 f"{str(x.get('head_sha'))[:12]})" for x in runs if x.get("status") != "completed"]
+    if busy:
+        raise RevertError("a promote or deploy is in flight: " + "; ".join(busy)
+                          + ". Refusing to start; re-run once it has finished")
 
 
 def dispatch_workflow(cfg, workflow, inputs=None):
@@ -1282,13 +1327,17 @@ def run(cfg, s3=None, lambda_client=None):
             "CONFIRM_DATA_LOSS != 'yes' — refusing prod DB reset (data loss guard). "
             f"RPO: {rpo['total_live_rows']} live rows, latest event {rpo['latest_event']}"
         )
+    # R2 — every refusal that needs no snapshot runs BEFORE the pre-revert snap: a revert refused
+    # after it strands a permanent PREREVERT tag, a Neon branch, a dump and up to 26 published
+    # Lambda versions.
+    require_dispatchable(cfg)
+    require_no_deploy_in_flight(cfg)
     prerevert = prerevert_snap(cfg)
 
-    # OPS-REVERTRESTORE-001 — two more refusals while NOTHING in prod has changed yet: rollback()
-    # must be able to put every release function back, and both redeploy workflows must be
-    # dispatchable. Either failing after the checkpoint would mean a DB reset with no way forward.
+    # OPS-REVERTRESTORE-001 — one more refusal while NOTHING in prod has changed yet: rollback()
+    # must be able to put every release function back. Failing after the checkpoint would mean a
+    # DB reset with no way forward.
     require_complete_rollback_capture(cfg, prerevert)
-    require_dispatchable(cfg)
 
     # ---- everything below is a prod-mutating checkpoint; failures -> rollback ----
     checkpointed = False
