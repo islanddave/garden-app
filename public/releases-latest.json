@@ -1,7 +1,7 @@
 {
-  "version": "4.128.1",
+  "version": "4.129.0",
   "date": "2026-09-11",
   "highlights": [
-    "Sow Now used to give a seed packet with a single indoor-start number (“start 8 weeks before last frost”) a start window just one day long, and marked it as closing on that day. It now gets a two-week window centred on that number, the same width most packets publish. That covers 23 of your packets, 17 of them peppers."
+    "Behind the scenes: groundwork for a safe one-step release rollback. Each release now keeps a copy of all 26 of the app's server functions, and a rollback would rebuild the older release from its own code. The rollback stays switched off until its last safety checks are in place; nothing in the app changes."
   ]
 }
