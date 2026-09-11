@@ -304,10 +304,15 @@ def test_ff_main_failure_raises(monkeypatch):
 
 class FakeLambda:
     """U1-resolved mechanism: get_function(Qualifier) -> Code.Location, then
-    update_function_code($LATEST). No aliases (Function URLs hit $LATEST)."""
-    def __init__(self, code_loc="https://s3/pkg.zip"):
+    update_function_code($LATEST), then get_function_configuration until the update
+    settles. No aliases (Function URLs hit $LATEST).
+    fail_update={fn}: update_function_code raises for those functions.
+    settle={fn: [LastUpdateStatus, ...]}: status sequence per function (default Successful)."""
+    def __init__(self, code_loc="https://s3/pkg.zip", fail_update=(), settle=None):
         self.calls = []
         self.code_loc = code_loc
+        self.fail_update = set(fail_update)
+        self.settle = {k: list(v) for k, v in (settle or {}).items()}
 
     def get_function(self, FunctionName, Qualifier=None):
         self.calls.append(("get", FunctionName, Qualifier))
@@ -315,7 +320,20 @@ class FakeLambda:
 
     def update_function_code(self, **k):
         self.calls.append(("update_code", k))
+        if k["FunctionName"] in self.fail_update:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "TooManyRequestsException",
+                                         "Message": "Rate exceeded"}}, "UpdateFunctionCode")
         return {"Version": "99"}
+
+    def get_function_configuration(self, FunctionName):
+        seq = self.settle.get(FunctionName)
+        status = seq.pop(0) if seq else "Successful"
+        self.calls.append(("config", FunctionName, status))
+        return {"LastUpdateStatus": status}
+
+    def updated(self):
+        return [c[1]["FunctionName"] for c in self.calls if c[0] == "update_code"]
 
 
 def test_restore_lambda_pushes_code_to_latest(monkeypatch):
@@ -355,87 +373,368 @@ def test_run_data_loss_guard(monkeypatch):
     assert "CONFIRM_DATA_LOSS" in str(e.value)
 
 
-def test_run_happy_path_fastpath(monkeypatch):
+# --- OPS-REVERTRESTORE-001: the redeploy legs + a REAL rollback, end to end ----
+
+RELEASE = rt.lambda_fleet.release_functions()
+REVERT_SHA = "r" * 40
+RESTORE_SHA = "s" * 40
+CREATED = "2026-09-11T12:00:00Z"
+
+
+def full_prerevert(**over):
+    """A pre-revert snap that captured every release function — what rollback() needs."""
+    man = {"neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40,
+           "lambda_versions": {fn: "41" for fn in RELEASE}, "lambda_uncaptured": {}}
+    man.update(over)
+    return {"manifest": man}
+
+
+class FakeActions:
+    """Stateful GitHub Actions double for the redeploy legs. A dispatch creates a run that builds
+    whatever main points at (a real workflow_dispatch on a branch does exactly that), runs expose
+    jobs, and a cancel stops a run. `events` is shared with the world so tests can assert ORDER."""
+
+    def __init__(self, fr, events, lambda_legs=None, spa_conclusions=("success",),
+                 spa_completes=True, spa_job=True, run_sha=None, state="active"):
+        self.fr, self.events = fr, events
+        self.main_sha = None
+        self.dispatched, self.cancelled, self.runs = [], [], {}
+        self.lambda_legs = lambda_legs
+        self.spa_conclusions = list(spa_conclusions)
+        self.spa_completes, self.spa_job, self.run_sha, self.state = spa_completes, spa_job, run_sha, state
+        fr.add("POST", "/dispatches", self._dispatch)
+        fr.add("POST", "/cancel", self._cancel)
+        fr.add("GET", "/runs?event=workflow_dispatch", self._list)
+        fr.add("GET", "/jobs?", self._jobs)
+        fr.add("GET", "/actions/runs/", self._run)
+        fr.add("GET", "/actions/workflows/", lambda url: FakeResp(200, {"state": self.state}))
+
+    @staticmethod
+    def _wf(url):
+        return url.split("/actions/workflows/", 1)[1].split("/", 1)[0]
+
+    @staticmethod
+    def _id(url):
+        return int(url.split("/actions/runs/", 1)[1].split("/", 1)[0].split("?", 1)[0])
+
+    def ff(self, url):
+        self.main_sha = self.fr.last_json["sha"]
+        self.events.append(("ff_main", self.main_sha))
+        return FakeResp(200, {"object": {"sha": self.main_sha}})
+
+    def _dispatch(self, url):
+        wf = self._wf(url)
+        self.dispatched.append((wf, dict(self.fr.last_json)))
+        self.events.append(("dispatch", wf, self.main_sha))
+        rid = 100 + len(self.runs)
+        run = {"id": rid, "workflow": wf, "head_sha": self.run_sha or self.main_sha,
+               "created_at": CREATED, "status": "completed", "conclusion": "success"}
+        if wf == "deploy.yml":
+            run["conclusion"] = self.spa_conclusions.pop(0) if self.spa_conclusions else "success"
+            if not self.spa_completes:
+                run["status"], run["conclusion"] = "in_progress", None
+                self.spa_completes = True  # only the FIRST (forward) SPA run hangs
+        self.runs[rid] = run
+        return FakeResp(204)
+
+    def _list(self, url):
+        wf = self._wf(url)
+        return FakeResp(200, {"workflow_runs": [dict(r) for r in self.runs.values() if r["workflow"] == wf]})
+
+    def _run(self, url):
+        r = self.runs[self._id(url)]
+        return FakeResp(200, {k: r[k] for k in ("id", "head_sha", "status", "conclusion")})
+
+    def _jobs(self, url):
+        r = self.runs[self._id(url)]
+        if r["workflow"] == "deploy-lambda.yml":
+            legs = self.lambda_legs if self.lambda_legs is not None else (
+                [{"name": f"deploy ({f})", "status": "completed", "conclusion": "success"}
+                 for f in ("plants", "events", "harvests")]
+                # verify-daily-plan does NOT decide the revert, exactly as it does not hold the SPA
+                + [{"name": "verify-daily-plan", "status": "completed", "conclusion": "failure"}])
+            return FakeResp(200, {"jobs": legs})
+        jobs = [{"name": "deploy", "status": r["status"], "conclusion": r["conclusion"]}] if self.spa_job else []
+        return FakeResp(200, {"jobs": jobs})
+
+    def _cancel(self, url):
+        r = self.runs[self._id(url)]
+        self.cancelled.append(r["id"])
+        self.events.append(("cancel", r["id"]))
+        r["status"], r["conclusion"] = "completed", "cancelled"
+        return FakeResp(202)
+
+
+def prod_world(monkeypatch, prerevert=None, **actions_kw):
+    """Everything run() talks to, prod mode, fast path. -> (cfg, s3, fr, gh, events, lc)."""
     cfg = rt.Config(env=base_env())
     s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
+    events = []
+    gh = FakeActions(fr, events, **actions_kw)
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
-    fr.add("GET", "/git/ref/heads/main", FakeResp(200, {"object": {"sha": "mainHEAD"}}))
     fr.add("GET", "/branches", FakeResp(200, {"branches": [
         {"id": "br-snap", "name": "snap-v2.5.0", "current_state_lsn": "0/ABC"}]}))
-    fr.add("POST", "/restore", FakeResp(200, {"ok": True}))
-    fr.add("GET", f"/git/commits/{'a'*40}", FakeResp(200, {"tree": {"sha": "treeX"}}))
+
+    def neon_restore(url):
+        events.append(("neon_restore", fr.last_json["source_branch_id"]))
+        return FakeResp(200, {"ok": True})
+    fr.add("POST", "/restore", neon_restore)
+    fr.add("GET", f"/git/commits/{'a' * 40}", FakeResp(200, {"tree": {"sha": "treeTARGET"}}))
+    fr.add("GET", f"/git/commits/{'m' * 40}", FakeResp(200, {"tree": {"sha": "treePREREVERT"}}))
     fr.add("GET", "/git/ref/heads/dev", FakeResp(200, {"object": {"sha": "devHEAD"}}))
-    fr.add("POST", "/git/commits", FakeResp(201, {"sha": "revcommit"}))
-    fr.add("PATCH", "/git/refs/heads/dev", FakeResp(200, {"object": {"sha": "revcommit"}}))
-    fr.add("PATCH", "/git/refs/heads/main", FakeResp(200, {"object": {"sha": "revcommit"}}))
-    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))  # lambda pkg download
+    shas = iter([REVERT_SHA, RESTORE_SHA])
+
+    def commit(url):
+        sha = next(shas)
+        events.append(("commit", fr.last_json["tree"], sha))
+        return FakeResp(201, {"sha": sha})
+    fr.add("POST", "/git/commits", commit)
+    fr.add("PATCH", "/git/refs/heads/dev", FakeResp(200, {}))
+    fr.add("PATCH", "/git/refs/heads/main", gh.ff)
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))  # snapshot package download
     monkeypatch.setattr(rt, "requests", fr)
     monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
-    # pre-revert snap mocked
-    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: {"manifest": {
-        "neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40,
-        "lambda_versions": {}}})
-    lc = FakeLambda(); cfc = types.SimpleNamespace(create_invalidation=lambda **k: None)
-    out = rt.run(cfg, s3=s3, lambda_client=lc, cloudfront_client=cfc)
+    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: prerevert or full_prerevert())
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    monkeypatch.setattr(rt, "_now", lambda: rt._gh_time(CREATED))
+    return cfg, s3, fr, gh, events, FakeLambda()
+
+
+def test_run_happy_path_rebuilds_lambdas_then_spa_from_the_revert_commit(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    out = rt.run(cfg, s3=s3, lambda_client=lc)
     assert out["reverted_to"] == "v2.5.0"
-    assert out["revert_commit"] == "revcommit"
+    assert out["revert_commit"] == REVERT_SHA
+    # Lambdas first, SPA second, both dispatched on main only AFTER main points at the revert commit
+    assert [(e[1], e[2]) for e in events if e[0] == "dispatch"] == [
+        ("deploy-lambda.yml", REVERT_SHA), ("deploy.yml", REVERT_SHA)]
+    assert events.index(("ff_main", REVERT_SHA)) < events.index(("dispatch", "deploy-lambda.yml", REVERT_SHA))
+    assert [body for _, body in gh.dispatched] == [
+        {"ref": "main"}, {"ref": "main", "inputs": {"skip_version_bump": "true"}}]
+    assert (out["lambda_run"], out["spa_run"]) == (100, 101)
+    # the forward leg rebuilds the target from its tree; it never restores snapshot versions
+    assert lc.updated() == []
+    assert [e for e in events if e[0] == "neon_restore"] == [("neon_restore", "br-snap")]
+    assert gh.cancelled == []
     # fast path used -> no revert-stage branch creation POST /branches
     assert not any(m == "POST" and url.endswith("/branches") for m, url in fr.calls)
 
 
 def test_run_aborts_and_rolls_back(monkeypatch):
-    """A failure AFTER the prod-DB checkpoint must trigger rollback()."""
-    cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
-    fr = FakeRequests()
-    fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
-    fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
-    fr.add("GET", "/branches", FakeResp(200, {"branches": [
-        {"id": "br-snap", "name": "snap-v2.5.0", "current_state_lsn": "0/ABC"}]}))
-    fr.add("POST", "/restore", FakeResp(200, {"ok": True}))
-    fr.add("GET", f"/git/commits/{'a'*40}", FakeResp(200, {"tree": {"sha": "treeX"}}))
-    fr.add("GET", "/git/ref/heads/dev", FakeResp(200, {"object": {"sha": "devHEAD"}}))
-    fr.add("POST", "/git/commits", FakeResp(201, {"sha": "revcommit"}))
-    fr.add("PATCH", "/git/refs/heads/dev", FakeResp(200, {"object": {"sha": "revcommit"}}))
-    # main FF FAILS -> abort -> rollback
-    fr.add("PATCH", "/git/refs/heads/main", FakeResp(422, text="boom"))
-    monkeypatch.setattr(rt, "requests", fr)
-    monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
-    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: {"manifest": {
-        "neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40,
-        "lambda_versions": {}}})
+    """A failure AFTER the prod-DB checkpoint must trigger rollback() (the orchestration contract;
+    the REAL rollback is executed by the test_real_rollback_* tests below)."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    fr.routes.insert(0, ("PATCH", "/git/refs/heads/main", FakeResp(422, text="boom")))  # main FF FAILS
     rollback_called = {"n": 0}
-    real_rollback = rt.rollback
-    def spy(cfg2, pre, lambda_client=None):
+
+    def spy(cfg2, pre, lambda_client=None, progress=None):
         rollback_called["n"] += 1
     monkeypatch.setattr(rt, "rollback", spy)
-    lc = FakeLambda()
     with pytest.raises(rt.RevertError) as e:
         rt.run(cfg, s3=s3, lambda_client=lc)
     assert rollback_called["n"] == 1
     assert "rolled back" in str(e.value)
+    assert gh.dispatched == []  # nothing redeploys once the code leg has failed
 
 
 def test_run_failure_before_checkpoint_no_rollback(monkeypatch):
     """A failure BEFORE the prod-DB checkpoint must NOT roll back (nothing mutated)."""
-    cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
-    fr = FakeRequests()
-    fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
-    fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
-    # fast path absent -> create stage branch path; make branch list raise to fail pre-checkpoint
-    fr.add("GET", "/branches", FakeResp(500, text="neon down"))
-    monkeypatch.setattr(rt, "requests", fr)
-    monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
-    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: {"manifest": {
-        "neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40, "lambda_versions": {}}})
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    fr.routes.insert(0, ("GET", "/branches", FakeResp(500, text="neon down")))
     rolled = {"n": 0}
     monkeypatch.setattr(rt, "rollback", lambda *a, **k: rolled.__setitem__("n", rolled["n"] + 1))
-    with pytest.raises(rt.RevertError):
+    with pytest.raises(rt.RevertError, match="Neon list branches failed 500"):
         rt.run(cfg, s3=s3)
     assert rolled["n"] == 0
+    assert not [e for e in events if e[0] == "neon_restore"]
+
+
+def test_real_rollback_after_a_failed_lambda_leg(monkeypatch):
+    """L1 Gap D: rollback() had never executed anywhere. The REAL rollback runs here, against
+    fakes: DB back to the pre-revert branch, a forward restore-commit carrying the pre-revert
+    tree, main FF'd to it, every release function back to its PRE-REVERT version — and no SPA
+    dispatch at all, because the SPA leg never started."""
+    legs = [{"name": "deploy (plants)", "status": "completed", "conclusion": "failure"},
+            {"name": "deploy (events)", "status": "completed", "conclusion": "success"}]
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, lambda_legs=legs)
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    msg = str(e.value)
+    assert "rolled back to pre-revert snap" in msg
+    assert "'deploy (plants)': 'failure'" in msg and "DID move to the target code: ['deploy (events)']" in msg
+    assert [e[1] for e in events if e[0] == "neon_restore"] == ["br-snap", "br-pre"]
+    assert [(e[1], e[2]) for e in events if e[0] == "commit"] == [
+        ("treeTARGET", REVERT_SHA), ("treePREREVERT", RESTORE_SHA)]
+    assert [e[1] for e in events if e[0] == "ff_main"] == [REVERT_SHA, RESTORE_SHA]
+    assert lc.updated() == sorted(RELEASE)
+    assert {c[2] for c in lc.calls if c[0] == "get"} == {"41"}  # the PRE-REVERT versions, qualified
+    assert [wf for wf, _ in gh.dispatched] == ["deploy-lambda.yml"]  # SPA held back, never started
+
+
+def test_real_rollback_after_a_failed_spa_leg_rebuilds_the_restored_tree(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_conclusions=("failure", "success"))
+    # name the REASON: the job-level check would also fail this run, so a looser match would let
+    # the run-conclusion check be deleted with the suite still green
+    with pytest.raises(rt.RevertError,
+                       match=r"rolled back to pre-revert snap: SPA redeploy run 101 concluded 'failure'"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert [(e[1], e[2]) for e in events if e[0] == "dispatch"] == [
+        ("deploy-lambda.yml", REVERT_SHA), ("deploy.yml", REVERT_SHA), ("deploy.yml", RESTORE_SHA)]
+    assert lc.updated() == sorted(RELEASE)
+    # the rollback's SPA rebuild is dispatched only once main is back on the restore commit
+    assert events.index(("ff_main", RESTORE_SHA)) < events.index(("dispatch", "deploy.yml", RESTORE_SHA))
+
+
+def test_a_run_built_from_another_commit_is_never_accepted(monkeypatch):
+    """A dispatch names a branch. If main moved, the run builds someone else's commit: that must
+    fail the leg and roll back, never count as the revert's deploy."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, run_sha="f" * 40)
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert "main moved" in str(e.value) and "rolled back" in str(e.value)
+    assert [wf for wf, _ in gh.dispatched] == ["deploy-lambda.yml"]
+
+
+def test_zero_lambda_legs_is_a_failure_not_a_pass(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, lambda_legs=[])
+    with pytest.raises(rt.RevertError, match="NO deploy legs"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert [wf for wf, _ in gh.dispatched] == ["deploy-lambda.yml"]
+
+
+def test_green_spa_run_without_a_deploy_job_is_a_failure(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_job=False)
+    with pytest.raises(rt.RevertError, match="no successful 'deploy' job"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+
+
+def test_rollback_cancels_a_forward_deploy_still_in_flight_first(monkeypatch):
+    """A forward SPA run that outlives the poll must be stopped BEFORE the rollback starts, or it
+    could land on top of the restored prod."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_completes=False)
+    with pytest.raises(rt.RevertError, match="rolled back to pre-revert snap"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert gh.cancelled == [101]
+    assert events.index(("cancel", 101)) < events.index(("neon_restore", "br-pre"))
+    assert ("dispatch", "deploy.yml", RESTORE_SHA) in events
+
+
+def test_rollback_that_cannot_restore_every_function_pages_dave_and_names_them(monkeypatch):
+    legs = [{"name": "deploy (plants)", "status": "completed", "conclusion": "failure"}]
+    cfg, s3, fr, gh, events, _ = prod_world(monkeypatch, lambda_legs=legs)
+    lc = FakeLambda(fail_update={"garden-events"})
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    msg = str(e.value)
+    assert "AND rollback FAILED" in msg and "PAGE DAVE" in msg
+    assert f"{len(RELEASE) - 1}/{len(RELEASE)} restored" in msg
+    assert "NOT restored: garden-events@41" in msg
+    assert lc.updated() == sorted(RELEASE)  # every OTHER function was still attempted
+
+
+def test_revert_refuses_before_touching_prod_if_the_prerevert_snap_missed_a_function(monkeypatch):
+    pre = full_prerevert()
+    pre["manifest"]["lambda_versions"].pop("garden-harvests")
+    pre["manifest"]["lambda_uncaptured"] = {"garden-harvests": "AccessDeniedException: not authorized"}
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, prerevert=pre)
+    rolled = {"n": 0}
+    monkeypatch.setattr(rt, "rollback", lambda *a, **k: rolled.__setitem__("n", 1))
+    with pytest.raises(rt.RevertError, match="garden-harvests"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert not [e for e in events if e[0] in ("neon_restore", "commit", "dispatch")]
+    assert rolled["n"] == 0
+
+
+def test_a_function_that_does_not_exist_yet_does_not_block_the_revert(monkeypatch):
+    pre = full_prerevert()
+    pre["manifest"]["lambda_versions"].pop("garden-harvests")
+    pre["manifest"]["lambda_uncaptured"] = {"garden-harvests": "ResourceNotFoundException: Function not found"}
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, prerevert=pre)
+    assert rt.run(cfg, s3=s3, lambda_client=lc)["spa_run"] == 101
+
+
+def test_legacy_prerevert_manifest_is_judged_against_the_release_set(monkeypatch):
+    """A pre-revert snap from an older snap.py (no lambda_uncaptured) holding the old 11 must not
+    pass for complete."""
+    old11 = ["garden-dashboard", "garden-events", "garden-favorites", "garden-inventory-items",
+             "garden-locations", "garden-photos", "garden-plants", "garden-projects",
+             "garden-varieties", "garden-app-events", "garden-achievements"]
+    pre = {"manifest": {"neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40,
+                        "lambda_versions": {fn: "7" for fn in old11}}}
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, prerevert=pre)
+    with pytest.raises(rt.RevertError, match="garden-harvests"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert not [e for e in events if e[0] == "neon_restore"]
+
+
+def test_a_disabled_redeploy_workflow_refuses_before_touching_prod(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, state="disabled_manually")
+    with pytest.raises(rt.RevertError, match="not 'active'"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert not [e for e in events if e[0] in ("neon_restore", "dispatch")]
+
+
+def test_dispatch_refuses_rehearsal_and_any_ref_but_main(monkeypatch):
+    fr = FakeRequests()
+    monkeypatch.setattr(rt, "requests", fr)
+    with pytest.raises(rt.RevertError, match="it deploys prod"):
+        rt.dispatch_workflow(rt.Config(env=reh_env()), "deploy.yml")
+    cfg = rt.Config(env=base_env())
+    cfg.main_branch = "revert-rehearsal-main-1"
+    with pytest.raises(rt.RevertError, match="it deploys prod"):
+        rt.dispatch_workflow(cfg, "deploy.yml")
+    assert fr.calls == []
+
+
+def test_dispatch_that_is_not_accepted_is_a_failure(monkeypatch):
+    fr = FakeRequests()
+    fr.add("POST", "/dispatches", FakeResp(422, text="Unexpected inputs provided"))
+    monkeypatch.setattr(rt, "requests", fr)
+    with pytest.raises(rt.RevertError, match="failed 422"):
+        rt.dispatch_workflow(rt.Config(env=base_env()), "deploy.yml", inputs={"skip_version_bump": "true"})
+
+
+def test_restore_keeps_going_past_a_failed_function_and_names_exactly_what_moved(monkeypatch):
+    """L1 Gap E: a mid-loop failure used to raise at once and discard which functions had moved."""
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))
+    monkeypatch.setattr(rt, "requests", fr)
+    lc = FakeLambda(fail_update={"garden-events"})
+    man = {"lambda_versions": {"garden-plants": "7", "garden-events": "8", "garden-dashboard": "9"}}
+    with pytest.raises(rt.RevertError) as e:
+        rt.restore_lambda_versions(cfg, man, lambda_client=lc)
+    msg = str(e.value)
+    assert lc.updated() == ["garden-dashboard", "garden-events", "garden-plants"]
+    assert "2/3 restored [garden-dashboard, garden-plants]" in msg
+    assert "NOT restored: garden-events@8:" in msg
+
+
+def test_restore_waits_for_the_update_to_settle_and_rejects_failed(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    lc = FakeLambda(settle={"garden-plants": ["InProgress", "Failed"]})
+    with pytest.raises(rt.RevertError, match="garden-plants ended 'Failed'"):
+        rt.restore_lambda_versions(cfg, {"lambda_versions": {"garden-plants": "7"}}, lambda_client=lc)
+    assert [c for c in lc.calls if c[0] == "config"] == [
+        ("config", "garden-plants", "InProgress"), ("config", "garden-plants", "Failed")]
+
+
+def test_restore_waits_through_in_progress_to_successful(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    lc = FakeLambda(settle={"garden-plants": ["InProgress", "InProgress", "Successful"]})
+    assert rt.restore_lambda_versions(
+        cfg, {"lambda_versions": {"garden-plants": "7"}}, lambda_client=lc) == {"garden-plants": "7"}
+    assert len([c for c in lc.calls if c[0] == "config"]) == 3
 
 
 def test_main_exit_code_on_error(monkeypatch):
@@ -521,12 +820,15 @@ def test_lambda_skipped_in_rehearsal():
     assert lc.calls == []
 
 
-def test_cf_skipped_in_rehearsal():
+def test_redeploy_legs_skipped_in_rehearsal(monkeypatch):
+    """Both redeploy workflows deploy PROD; a rehearsal must never dispatch either one."""
     cfg = rt.Config(env=reh_env())
-    called = {"n": 0}
-    cfc = types.SimpleNamespace(create_invalidation=lambda **k: called.__setitem__("n", called["n"] + 1))
-    rt.cf_invalidate(cfg, cloudfront_client=cfc)
-    assert called["n"] == 0
+    fr = FakeRequests()
+    monkeypatch.setattr(rt, "requests", fr)
+    progress = {}
+    assert rt.redeploy_lambdas(cfg, REVERT_SHA, progress) is None
+    assert rt.redeploy_spa(cfg, REVERT_SHA, progress) is None
+    assert fr.calls == [] and progress == {}
 
 
 # --- REHEARSAL_MODE: full run paths -----------------------------------------
@@ -571,10 +873,11 @@ def test_run_rehearsal_dump_path(monkeypatch):
     monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
     monkeypatch.setattr(rt, "_psql_scalar", lambda url, sql: "25" if "information_schema" in sql else "10")
     lc = FakeLambda()
-    out = rt.run(cfg, s3=s3, lambda_client=lc,
-                 cloudfront_client=types.SimpleNamespace(create_invalidation=lambda **k: None))
+    out = rt.run(cfg, s3=s3, lambda_client=lc)
     assert out["reverted_to"] == "v2.5.0"
     assert lc.calls == []  # Lambda untouched in rehearsal
+    assert (out["lambda_run"], out["spa_run"]) == (None, None)
+    assert not any("/actions/" in u for m, u in fr.calls)  # no prod redeploy dispatched or polled
     assert any(m == "POST" and u.endswith("/branches") for m, u in fr.calls)  # dump path
     assert any("br-polished-art-am12o4ue/restore" in u for m, u in fr.calls)  # reset STAGING, not prod
     assert any("revert-rehearsal-main-1" in u for m, u in fr.calls)

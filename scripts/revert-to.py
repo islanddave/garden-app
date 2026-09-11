@@ -24,14 +24,22 @@ SPEC B2 STEP MAP (repo-version-env-spec-V100-20260602.md §3 B2):
      IFF it still exists and its LSN/lineage matches the manifest, else dump.
      NEVER pg_restore in-place against live prod.
   4. CODE: create a FORWARD revert-commit on `dev` whose tree == tag vX's tree,
-     then FF-promote it to `main` -> CF redeploy. Restore Lambda versions to
-     manifest.lambda_versions.
+     then FF-promote it to `main`. Then REBUILD vX from that tree (OPS-REVERTRESTORE-001):
+     dispatch deploy-lambda.yml on main and wait for every Lambda leg, THEN dispatch
+     deploy.yml (the SPA) and wait — the promote's own order. Nothing else redeploys
+     on a main move. manifest.lambda_versions is NOT restored forward: a promote snaps
+     BEFORE its own Lambda deploy, so vX's manifest holds v(X-1)'s Lambda code
+     (measured on v4.128.0, 2026-09-11). Snapshot versions are restored only by
+     rollback(), from the PRE-REVERT snap, which records what prod is running.
   5. ORDERING + ABORT: stage + validate the DB target FIRST, then cut over
-     code+DB TOGETHER; if either leg fails, roll back to the pre-revert snap.
+     code+DB TOGETHER; if either leg fails, roll back to the pre-revert snap
+     (DB, code, every release Lambda, SPA rebuild — see rollback()).
 
 ENV CONTRACT (read at runtime; no secrets hardcoded):
   GH_TOKEN            garden-bot GitHub App installation token (tag read, dev
-                      commit, main FF — all restricted to garden-bot).
+                      commit, main FF — all restricted to garden-bot — plus
+                      workflow dispatch, run read and run cancel for the
+                      redeploy legs; promote-gate dispatches with the same token).
   GITHUB_REPOSITORY   "owner/repo".
   TARGET_VERSION      the vX to revert TO. ^v\\d+(\\.\\d+){0,2}$.
   PREREVERT_VERSION   a fresh, unused vX to snapshot CURRENT prod as before the
@@ -55,17 +63,22 @@ ENV CONTRACT (read at runtime; no secrets hardcoded):
                       Expiry-stamping is best-effort: a Neon API that rejects
                       expires_at degrades to a loud WARN, never a failed revert;
                       integrity-weekly's out-of-band branch check is the backstop.
-  CF_DIST             CloudFront distribution id (default E3FAJTXAORQYDT).
+  CF_DIST             CloudFront distribution id (default E3FAJTXAORQYDT). Passed through
+                      to the pre-revert snap's manifest only: this script makes NO
+                      CloudFront call. The SPA leg's deploy.yml invalidates under the
+                      deploy role, and the snap role is deliberately not granted
+                      cloudfront:CreateInvalidation.
   CONFIRM_DATA_LOSS   must equal the literal string "yes" to perform the prod
                       DB reset (defense-in-depth on top of the env approval —
                       reverting prod DB is real data loss for live users).
 
 REHEARSAL CONTRACT (staging dry-run; honored ONLY together):
   REHEARSAL_MODE      "1" enables the safe dry-run. Code legs are redirected to
-                      throwaway revert-rehearsal-* refs, Lambda/CF legs are
-                      skipped, and rehearsal_guard() fails closed unless the
-                      redirects + a non-prod Neon target are set. With it unset,
-                      DEV_BRANCH/MAIN_BRANCH overrides are REFUSED.
+                      throwaway revert-rehearsal-* refs, the Lambda/SPA redeploy
+                      legs and the Lambda restore are skipped (a dispatch also
+                      refuses any ref but main), and rehearsal_guard() fails
+                      closed unless the redirects + a non-prod Neon target are
+                      set. With it unset, DEV_BRANCH/MAIN_BRANCH overrides are REFUSED.
   DEV_BRANCH          rehearsal code-leg branch (must start 'revert-rehearsal-',
                       != dev/main). Default 'dev' (prod).
   MAIN_BRANCH         rehearsal promote-leg branch (same rules; != DEV_BRANCH).
@@ -75,9 +88,9 @@ REHEARSAL CONTRACT (staging dry-run; honored ONLY together):
   FORCE_ABORT         "1" (rehearsal only) raises after the DB checkpoint to
                       exercise the abort->rollback path.
 
-Dependencies: boto3 (S3/Lambda/CloudFront), requests (Neon + GitHub REST),
-pg_restore/psql (pg17 client) via subprocess, and snap.py (co-located in
-scripts/) for the pre-revert snap.
+Dependencies: boto3 (S3/Lambda), requests (Neon + GitHub REST, including Actions),
+pg_restore/psql (pg17 client) via subprocess, snap.py (co-located in scripts/)
+for the pre-revert snap, and lambda_fleet.py (co-located) for the release set.
 
 UNKNOWNS to resolve in the staging rehearsal (flagged, not guessed):
   U1. Lambda restore mechanism. snap records PUBLISHED version numbers per fn.
@@ -103,11 +116,15 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 
 import boto3
 import requests
 from botocore.exceptions import ClientError
+
+# Co-located in scripts/: THE Lambda release set (stdlib only).
+import lambda_fleet
 
 # snap.py is co-located in scripts/ — reused for the pre-revert snapshot.
 try:
@@ -135,19 +152,25 @@ SANITY_TABLES = [
     "plant_varieties",
 ]
 
-LAMBDA_FUNCTIONS = [
-    "garden-dashboard",
-    "garden-events",
-    "garden-favorites",
-    "garden-inventory-items",
-    "garden-locations",
-    "garden-photos",
-    "garden-plants",
-    "garden-projects",
-    "garden-varieties",
-    "garden-app-events",
-    "garden-achievements",
-]
+# The Lambda release set is lambda_fleet.release_functions(): the list snap.py publishes,
+# preflight-revert-iam.py checks and deploy-lambda.yml's matrix builds. The hand-kept list of 11
+# that used to sit here was never read by anything — the restore iterates the manifest.
+
+# OPS-REVERTRESTORE-001 — the redeploy legs (workflow_dispatch on main, polled to success).
+LAMBDA_DEPLOY_WORKFLOW = "deploy-lambda.yml"
+SPA_DEPLOY_WORKFLOW = "deploy.yml"
+RUN_LOCATE_ATTEMPTS = 30        # x RUN_LOCATE_INTERVAL_S for the dispatched run to appear
+RUN_LOCATE_INTERVAL_S = 10
+RUN_CLOCK_SKEW_S = 60           # runner-vs-GitHub clock allowance when matching created_at
+RUN_POLL_INTERVAL_S = 15
+RUN_POLL_CEILING_S = 20 * 60    # queue + run, per leg; v4.128.0 measured ~70 s Lambda, 83 s SPA
+CANCEL_WAIT_S = 120
+LAMBDA_UPDATE_POLL_S = 3
+LAMBDA_UPDATE_TIMEOUT_S = 90
+# Worst case, forward + rollback: 2 x (5 min locate + 20 min poll) + 2 x 2 min cancel waits +
+# 26 x 90 s restores + one more SPA leg (25 min) ~= 118 min, plus the pre-revert snap and the DB
+# legs. revert-gate.yml's timeout-minutes is sized from this: a job killed mid-rollback is a
+# durable split-brain, which is worse than any failure this script can report.
 
 
 class RevertError(Exception):
@@ -795,8 +818,33 @@ def ff_main(cfg, sha):
     return sha
 
 
+def _sleep(seconds):
+    time.sleep(seconds)
+
+
+def _now():
+    return time.time()
+
+
+def _wait_lambda_updated(client, fn):
+    """Poll until fn's code update settles; return its LastUpdateStatus.
+
+    update_function_code returning 200 means the update was ACCEPTED. The swap is asynchronous
+    and can still end 'Failed', so a restore that stops at the API call can report a function
+    as rolled back while it never moved. Returns 'Successful', 'Failed', or 'InProgress' if the
+    ceiling passed.
+    """
+    waited = 0
+    while True:
+        status = client.get_function_configuration(FunctionName=fn).get("LastUpdateStatus")
+        if status != "InProgress" or waited >= LAMBDA_UPDATE_TIMEOUT_S:
+            return status
+        _sleep(LAMBDA_UPDATE_POLL_S)
+        waited += LAMBDA_UPDATE_POLL_S
+
+
 def restore_lambda_versions(cfg, manifest, lambda_client=None):
-    """Restore each function's $LATEST code to the snapped published version.
+    """Restore each function's $LATEST code to the snapped published version. ROLLBACK ONLY.
 
     U1 (RESOLVED 2026-06-03): the garden-* Function URLs are UNQUALIFIED — they
     invoke $LATEST directly; there is NO 'live' alias and no URL qualifier
@@ -806,14 +854,30 @@ def restore_lambda_versions(cfg, manifest, lambda_client=None):
     returns a presigned Code.Location) and pushes that same zip back onto
     $LATEST via update_function_code(Publish=True). The URL (→ $LATEST) then
     serves the old code. Re-running re-pushes identical code (harmless).
+
+    WHICH SNAPSHOT (OPS-REVERTRESTORE-001). Only rollback() calls this, with the PRE-REVERT snap
+    run() took minutes earlier: its versions are exactly the code prod was serving. Never point
+    it at a revert TARGET's manifest. A promote snaps BEFORE its own Lambda deploy, so manifest
+    vX holds v(X-1)'s code (measured 2026-09-11 on v4.128.0); the forward revert rebuilds the
+    target from its own tree instead (redeploy_lambdas).
+
+    PER-FUNCTION PROGRESS (L1 Gap E). Every function is attempted even after one fails — a
+    compensation should put back all it can — and each update is waited on until Lambda says it
+    settled. The raise names exactly which functions moved and which did not.
+
+    IAM: lambda:GetFunction on the QUALIFIED ARN function:<fn>:<ver> (an unqualified grant does
+    not cover a Qualifier read — proven with a federation-token probe 2026-09-11),
+    lambda:UpdateFunctionCode and lambda:GetFunctionConfiguration on the function.
+    preflight-revert-iam.py asserts all three for every release function before a revert starts.
     """
     if cfg.rehearsal:
         # Never mutate prod Lambda code during a rehearsal.
         return {}
     client = lambda_client or boto3.client("lambda")
     versions = manifest.get("lambda_versions", {})
-    restored = {}
-    for fn, ver in versions.items():
+    restored, failed = {}, {}
+    for fn in sorted(versions):
+        ver = versions[fn]
         try:
             meta = client.get_function(FunctionName=fn, Qualifier=str(ver))
             loc = meta.get("Code", {}).get("Location")
@@ -823,51 +887,306 @@ def restore_lambda_versions(cfg, manifest, lambda_client=None):
             if pkg.status_code != 200 or not pkg.content:
                 raise RevertError(f"download {fn}@{ver} package failed {pkg.status_code}")
             client.update_function_code(FunctionName=fn, ZipFile=pkg.content, Publish=True)
+            status = _wait_lambda_updated(client, fn)
+            if status != "Successful":
+                raise RevertError(f"code update for {fn} ended {status!r}, not 'Successful'")
             restored[fn] = ver
-        except ClientError as e:
-            raise RevertError(f"lambda restore failed for {fn}@{ver}: {e}")
+        except Exception as e:  # noqa: BLE001 — a compensation keeps going, then names the gaps
+            failed[fn] = f"{ver}: {e}"
+    if failed:
+        raise RevertError(
+            f"lambda restore incomplete: {len(restored)}/{len(versions)} restored "
+            f"[{', '.join(sorted(restored)) or 'none'}]; NOT restored: "
+            + "; ".join(f"{fn}@{why}" for fn, why in sorted(failed.items())))
     return restored
 
 
-def cf_invalidate(cfg, cloudfront_client=None):
+# --- step 4b: rebuild the target from its own tree (OPS-REVERTRESTORE-001) ----
+# After ff_main, main's tree IS the target's tree, so dispatching the deploy workflows on main
+# rebuilds the target with the target's OWN recipe (a dispatch loads the workflow file from the
+# dispatched ref; all 262 release tags v2.5.4..v4.128.0 carry workflow_dispatch in both files).
+# Nothing else redeploys on a main move: zero workflows trigger on push to main (L1 Gap A).
+# Order is the promote's (promote-gate.yml deploy-lambdas -> deploy): Lambdas first, SPA only
+# once every Lambda leg succeeded, because a new SPA on old Lambdas can silently drop fields.
+# Both workflows run under the DEPLOY role, so the snap role needs no site-bucket or CloudFront
+# grant; the old cf_invalidate() here only flushed /index.html of an unchanged bundle.
+
+def _gh(cfg, path):
+    return f"{GITHUB_API}/repos/{cfg.repo}{path}"
+
+
+def _gh_time(ts):
+    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+
+
+def require_dispatchable(cfg):
+    """Pre-checkpoint: both redeploy workflows must be readable and ACTIVE. A disabled or
+    unreadable one would otherwise surface only AFTER the prod DB reset."""
     if cfg.rehearsal:
-        # The CF dist is prod; a rehearsal must not invalidate it.
         return
-    client = cloudfront_client or boto3.client("cloudfront")
-    client.create_invalidation(
-        DistributionId=cfg.cf_dist,
-        InvalidationBatch={
-            "Paths": {"Quantity": 1, "Items": ["/index.html"]},
-            "CallerReference": f"revert-{cfg.target_version}-{utc_now_iso()}",
-        },
-    )
+    for wf in (LAMBDA_DEPLOY_WORKFLOW, SPA_DEPLOY_WORKFLOW):
+        r = requests.get(_gh(cfg, f"/actions/workflows/{wf}"), headers=gh_headers(cfg),
+                         timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            raise RevertError(f"cannot read workflow {wf} ({r.status_code}: {r.text[:300]}); "
+                              "refusing to start a revert whose redeploy legs cannot be dispatched")
+        state = r.json().get("state")
+        if state != "active":
+            raise RevertError(f"workflow {wf} is {state!r}, not 'active'; refusing to start a revert "
+                              "that would reset prod's DB and then be unable to redeploy the code")
+
+
+def dispatch_workflow(cfg, workflow, inputs=None):
+    """workflow_dispatch `workflow` on main; return the epoch taken just before the call.
+
+    Refuses in rehearsal and on any ref but main, structurally: these workflows deploy PROD, and
+    the production environment admits only dev, main and promote-v*."""
+    if cfg.rehearsal or cfg.main_branch != "main":
+        raise RevertError(f"refusing to dispatch {workflow} (rehearsal={cfg.rehearsal}, "
+                          f"main_branch={cfg.main_branch!r}): it deploys prod")
+    since = _now()
+    body = {"ref": "main"}
+    if inputs:
+        body["inputs"] = inputs
+    r = requests.post(_gh(cfg, f"/actions/workflows/{workflow}/dispatches"),
+                      headers=gh_headers(cfg), json=body, timeout=HTTP_TIMEOUT)
+    if r.status_code != 204:
+        raise RevertError(f"dispatch {workflow} on main failed {r.status_code}: {r.text[:400]}")
+    return since
+
+
+def _list_runs(cfg, workflow):
+    r = requests.get(
+        _gh(cfg, f"/actions/workflows/{workflow}/runs?event=workflow_dispatch&branch=main&per_page=30"),
+        headers=gh_headers(cfg), timeout=HTTP_TIMEOUT)
+    return r.json().get("workflow_runs", []) if r.status_code == 200 else None
+
+
+def locate_run(cfg, workflow, sha, since):
+    """The run our dispatch created: created at/after `since`, head_sha == sha.
+
+    A dispatch names a BRANCH, so head_sha is the only proof the run builds the revert commit.
+    A fresh run for any other commit means main moved underneath us; it is never accepted."""
+    others = set()
+    for _ in range(RUN_LOCATE_ATTEMPTS):
+        runs = _list_runs(cfg, workflow)
+        if runs is not None:
+            fresh = [x for x in runs if _gh_time(x["created_at"]) >= since - RUN_CLOCK_SKEW_S]
+            mine = [x for x in fresh if x.get("head_sha") == sha]
+            if mine:
+                return max(mine, key=lambda x: x["created_at"])
+            others.update(x.get("head_sha") for x in fresh)
+        _sleep(RUN_LOCATE_INTERVAL_S)
+    raise RevertError(
+        f"no {workflow} run for {sha} appeared after the dispatch"
+        + (f"; fresh runs for OTHER commits did ({sorted(others)}), so main moved" if others else ""))
+
+
+def _get_run(cfg, run_id):
+    r = requests.get(_gh(cfg, f"/actions/runs/{run_id}"), headers=gh_headers(cfg),
+                     timeout=HTTP_TIMEOUT)
+    return r.json() if r.status_code == 200 else None
+
+
+def _get_jobs(cfg, run_id):
+    r = requests.get(_gh(cfg, f"/actions/runs/{run_id}/jobs?filter=latest&per_page=100"),
+                     headers=gh_headers(cfg), timeout=HTTP_TIMEOUT)
+    return r.json().get("jobs", []) if r.status_code == 200 else None
+
+
+def _is_lambda_leg(job):
+    name = job.get("name", "")
+    return name == "deploy" or name.startswith("deploy (")
+
+
+def wait_for_lambda_legs(cfg, run_id):
+    """Every `deploy (<fn>)` leg must complete with success. Mirrors promote-gate's deploy_result:
+    the matrix decides; verify-daily-plan (a post-deploy invariant on one function) does not.
+    Zero legs is a failure — an environment-policy rejection looks exactly like that."""
+    waited = 0
+    while waited <= RUN_POLL_CEILING_S:
+        jobs = _get_jobs(cfg, run_id)
+        if jobs is not None:
+            legs = [j for j in jobs if _is_lambda_leg(j)]
+            if legs and all(j.get("status") == "completed" for j in legs):
+                moved = sorted(j["name"] for j in legs if j.get("conclusion") == "success")
+                bad = {j["name"]: j.get("conclusion") for j in legs if j.get("conclusion") != "success"}
+                if bad:
+                    raise RevertError(
+                        f"Lambda redeploy run {run_id}: {len(bad)} of {len(legs)} legs failed {bad}; "
+                        f"these DID move to the target code: {moved}")
+                return legs
+            if not legs:
+                run = _get_run(cfg, run_id)
+                if run and run.get("status") == "completed":
+                    raise RevertError(f"Lambda redeploy run {run_id} completed with NO deploy legs "
+                                      f"(conclusion {run.get('conclusion')!r}): nothing was deployed")
+        _sleep(RUN_POLL_INTERVAL_S)
+        waited += RUN_POLL_INTERVAL_S
+    raise RevertError(f"Lambda redeploy run {run_id} unfinished after {RUN_POLL_CEILING_S // 60} min")
+
+
+def wait_for_spa_run(cfg, run_id):
+    """The deploy.yml run must complete with success AND contain a successful `deploy` job — a
+    green run with no deploy job would be a vacuous pass."""
+    waited = 0
+    while waited <= RUN_POLL_CEILING_S:
+        run = _get_run(cfg, run_id)
+        if run and run.get("status") == "completed":
+            if run.get("conclusion") != "success":
+                raise RevertError(f"SPA redeploy run {run_id} concluded {run.get('conclusion')!r}")
+            job = next((j for j in (_get_jobs(cfg, run_id) or []) if j.get("name") == "deploy"), None)
+            if not job or job.get("conclusion") != "success":
+                raise RevertError(f"SPA redeploy run {run_id} is green but has no successful 'deploy' job")
+            return run
+        _sleep(RUN_POLL_INTERVAL_S)
+        waited += RUN_POLL_INTERVAL_S
+    raise RevertError(f"SPA redeploy run {run_id} unfinished after {RUN_POLL_CEILING_S // 60} min")
+
+
+def redeploy_lambdas(cfg, sha, progress):
+    """Forward Lambda leg: rebuild every release function from `sha`'s tree via deploy-lambda.yml,
+    the same path a Lambda-changing promote takes. Returns the run id."""
+    if cfg.rehearsal:
+        sys.stdout.write("[revert] REHEARSAL: Lambda redeploy skipped\n")
+        return None
+    progress["lambda_attempted"] = True
+    since = dispatch_workflow(cfg, LAMBDA_DEPLOY_WORKFLOW)
+    run = locate_run(cfg, LAMBDA_DEPLOY_WORKFLOW, sha, since)
+    progress["lambda_run"] = run["id"]
+    wait_for_lambda_legs(cfg, run["id"])
+    return run["id"]
+
+
+def redeploy_spa(cfg, sha, progress):
+    """SPA leg: build, sync and invalidate `sha`'s tree via deploy.yml. skip_version_bump because a
+    revert is not a release (the input exists in every release tag's deploy.yml). Returns run id."""
+    if cfg.rehearsal:
+        sys.stdout.write("[revert] REHEARSAL: SPA redeploy skipped\n")
+        return None
+    progress["spa_attempted"] = True
+    since = dispatch_workflow(cfg, SPA_DEPLOY_WORKFLOW, inputs={"skip_version_bump": "true"})
+    run = locate_run(cfg, SPA_DEPLOY_WORKFLOW, sha, since)
+    progress["spa_run"] = run["id"]
+    wait_for_spa_run(cfg, run["id"])
+    return run["id"]
+
+
+def cancel_stray_runs(cfg, sha):
+    """Cancel every unfinished redeploy run for `sha` and wait for it to stop, so a forward deploy
+    still queued or running cannot land AFTER rollback() put prod back. Returns the runs it could
+    not confirm stopped; rollback() escalates them."""
+    problems = []
+    for wf in (LAMBDA_DEPLOY_WORKFLOW, SPA_DEPLOY_WORKFLOW):
+        runs = _list_runs(cfg, wf)
+        if runs is None:
+            problems.append(f"could not list {wf} runs to stop strays for {sha}")
+            continue
+        for x in runs:
+            if x.get("head_sha") != sha or x.get("status") == "completed":
+                continue
+            c = requests.post(_gh(cfg, f"/actions/runs/{x['id']}/cancel"), headers=gh_headers(cfg),
+                              timeout=HTTP_TIMEOUT)
+            if c.status_code not in (202, 409):
+                problems.append(f"cancel {wf} run {x['id']} failed {c.status_code}: {c.text[:200]}")
+                continue
+            waited = 0
+            while True:
+                run = _get_run(cfg, x["id"])
+                if run and run.get("status") == "completed":
+                    break
+                if waited >= CANCEL_WAIT_S:
+                    problems.append(f"{wf} run {x['id']} for {sha} still running {CANCEL_WAIT_S}s after cancel")
+                    break
+                _sleep(RUN_POLL_INTERVAL_S)
+                waited += RUN_POLL_INTERVAL_S
+    return problems
 
 
 # --- rollback ----------------------------------------------------------------
 
-def rollback(cfg, prerevert_result, lambda_client=None):
-    """Best-effort rollback to the pre-revert snap after a post-checkpoint
-    failure: reset prod DB from the pre-revert snap branch and reset main to the
-    pre-revert main SHA. Lambda aliases are restored to the pre-revert versions.
-    Raises RevertError only if rollback itself cannot complete (page Dave).
+def rollback(cfg, prerevert_result, lambda_client=None, progress=None):
+    """Best-effort rollback to the pre-revert snap after a post-checkpoint failure.
+
+    1. Stop any forward redeploy still queued/running for the revert commit, so it cannot land
+       on top of the rollback.
+    2. DB: restore prod from the pre-revert snap branch. If THIS fails, raise at once: moving
+       the code back to N on a DB still at vX would make things worse, not better.
+    3. Code: forward restore-commit on dev with the pre-revert main tree, FF main (no force).
+    4. Lambdas, only if the forward Lambda leg was attempted: every function back to the
+       pre-revert snap's version (captured minutes ago, so it IS what prod was serving).
+    5. SPA, only if the forward SPA leg was attempted: rebuild the restored tree via deploy.yml.
+       Skipped when main could not be moved back (a dispatch would rebuild the revert tree).
+    Steps 3-5 keep going past a failure; whatever did not complete is raised at the end, and
+    the caller turns that into PAGE DAVE.
     """
+    progress = progress or {}
     man = prerevert_result["manifest"]
-    # DB: restore prod from the pre-revert snap branch.
+    problems = []
+    if progress.get("revert_sha") and (progress.get("lambda_attempted") or progress.get("spa_attempted")):
+        problems += cancel_stray_runs(cfg, progress["revert_sha"])
     neon_restore_prod_from(cfg, man["neon_branch_id"], man.get("neon_lsn"))
-    # Code: reset main to pre-revert main SHA (FF or via revert-commit on dev).
-    pre_main = man["main_sha"]
     # main may now be ahead (our failed revert commit); a forward restore-commit
     # mirrors the no-force-push rule. Reuse the same forward-tree mechanism.
-    fake_manifest = {"main_sha": pre_main}
-    new_sha = create_revert_commit_on_dev(cfg, fake_manifest)
-    ff_main(cfg, new_sha)
-    # Lambda: re-point aliases to the pre-revert versions.
-    restore_lambda_versions(cfg, man, lambda_client=lambda_client)
+    try:
+        restore_sha = create_revert_commit_on_dev(cfg, {"main_sha": man["main_sha"]})
+        ff_main(cfg, restore_sha)
+    except Exception as e:  # noqa: BLE001 — record it, keep restoring what does not need main
+        problems.append(f"code not moved back: {e}")
+        restore_sha = None
+    if progress.get("lambda_attempted"):
+        try:
+            restore_lambda_versions(cfg, man, lambda_client=lambda_client)
+        except Exception as e:  # noqa: BLE001
+            problems.append(str(e))
+    if progress.get("spa_attempted"):
+        if restore_sha is None:
+            problems.append("SPA NOT redeployed: main could not be moved back, so a dispatch "
+                            "would rebuild the revert tree")
+        else:
+            try:
+                redeploy_spa(cfg, restore_sha, {})
+            except Exception as e:  # noqa: BLE001
+                problems.append(f"SPA not redeployed: {e}")
+    if problems:
+        raise RevertError("rollback incomplete: " + " | ".join(problems))
 
 
 # --- orchestration -----------------------------------------------------------
 
-def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
+def require_complete_rollback_capture(cfg, prerevert_result):
+    """Pre-checkpoint: rollback() can only put back the functions the pre-revert snap captured.
+
+    Refuse to touch prod unless that snap captured every release function that EXISTS. A function
+    it could not see because it does not exist yet (ResourceNotFoundException) has nothing to roll
+    back. Anything else uncaptured — typically AccessDenied because snap-ops was not extended —
+    would stay on the target code if the revert then had to roll back. A pre-revert manifest with
+    no lambda_uncaptured field (an older snap.py) is judged against the release set directly.
+    Prod only: a rehearsal never touches prod Lambdas.
+    """
+    if cfg.rehearsal:
+        return
+    try:
+        release = lambda_fleet.release_functions()
+    except lambda_fleet.FleetError as e:
+        raise RevertError(str(e))
+    man = (prerevert_result or {}).get("manifest") or {}
+    captured = set(man.get("lambda_versions") or {})
+    uncaptured = man.get("lambda_uncaptured")
+    if uncaptured is None:
+        uncaptured = {fn: "absent from the pre-revert snapshot (snap.py predates lambda_uncaptured)"
+                      for fn in release if fn not in captured}
+    blocking = {fn: why for fn, why in uncaptured.items()
+                if not str(why).startswith("ResourceNotFoundException")}
+    missing = [fn for fn in release if fn not in captured and fn not in uncaptured]
+    if blocking or missing:
+        raise RevertError(
+            f"pre-revert snapshot {cfg.prerevert_version} cannot roll back every release function "
+            f"(uncaptured: {blocking}; never attempted: {missing}); refusing to reset prod. Extend "
+            f"snap-ops (Projects/Gardening/iam-trust-rollback), then re-run with a fresh PREREVERT_VERSION")
+
+
+def run(cfg, s3=None, lambda_client=None):
     s3 = s3 or boto3.client("s3")
 
     validate_version(cfg.target_version, "TARGET_VERSION")
@@ -880,7 +1199,7 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
     if cfg.rehearsal:
         sys.stdout.write(
             f"[revert] REHEARSAL_MODE: code legs -> {cfg.dev_branch}/{cfg.main_branch}, "
-            f"db target -> {cfg.neon_prod_branch_id}, Lambda/CF skipped"
+            f"db target -> {cfg.neon_prod_branch_id}, Lambda/SPA redeploy + Lambda restore skipped"
             + (", FORCE_DUMP_PATH" if cfg.force_dump_path else "")
             + (", FORCE_ABORT" if cfg.force_abort else "")
             + "\n"
@@ -904,8 +1223,16 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
         )
     prerevert = prerevert_snap(cfg)
 
+    # OPS-REVERTRESTORE-001 — two more refusals while NOTHING in prod has changed yet: rollback()
+    # must be able to put every release function back, and both redeploy workflows must be
+    # dispatchable. Either failing after the checkpoint would mean a DB reset with no way forward.
+    require_complete_rollback_capture(cfg, prerevert)
+    require_dispatchable(cfg)
+
     # ---- everything below is a prod-mutating checkpoint; failures -> rollback ----
     checkpointed = False
+    progress = {}
+    lambda_run = spa_run = None
     try:
         # Step 3 — stage + validate DB target FIRST (no prod mutation yet).
         # Rehearsal may force the dump+fresh-branch+validate path to exercise it
@@ -933,16 +1260,20 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
                 "FORCE_ABORT (rehearsal): injected post-checkpoint failure to exercise rollback"
             )
 
-        # ... then code + lambda together.
+        # ... then the code: main to the target tree, then the target's OWN Lambdas, then its SPA
+        # (the promote's order). manifest.lambda_versions is deliberately NOT used here: a promote
+        # snaps before its own Lambda deploy, so the target's manifest holds the PREVIOUS release's
+        # Lambda code (measured 2026-09-11). The target's tree is the authority for its code.
         revert_sha = create_revert_commit_on_dev(cfg, manifest)
+        progress["revert_sha"] = revert_sha
         ff_main(cfg, revert_sha)
-        restore_lambda_versions(cfg, manifest, lambda_client=lambda_client)
-        cf_invalidate(cfg, cloudfront_client=cloudfront_client)
+        lambda_run = redeploy_lambdas(cfg, revert_sha, progress)
+        spa_run = redeploy_spa(cfg, revert_sha, progress)
     except Exception as e:  # noqa: BLE001 — any post-checkpoint failure rolls back
         if checkpointed:
             sys.stderr.write(f"[revert] FAIL after checkpoint: {e}; rolling back\n")
             try:
-                rollback(cfg, prerevert, lambda_client=lambda_client)
+                rollback(cfg, prerevert, lambda_client=lambda_client, progress=progress)
             except Exception as re:  # noqa: BLE001
                 raise RevertError(
                     f"revert FAILED ({e}) AND rollback FAILED ({re}) — prod may be "
@@ -957,6 +1288,8 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
         "revert_commit": revert_sha,
         "prerevert_version": cfg.prerevert_version,
         "rpo": rpo,
+        "lambda_run": lambda_run,
+        "spa_run": spa_run,
     }
 
 
@@ -973,7 +1306,8 @@ def main(argv=None):
     sys.stdout.write(
         f"[revert] OK reverted to {result['reverted_to']} "
         f"(main {result['main_sha'][:12]} via revert-commit "
-        f"{result['revert_commit'][:12]}; pre-revert snap {result['prerevert_version']})\n"
+        f"{result['revert_commit'][:12]}; Lambda redeploy run {result.get('lambda_run')}, "
+        f"SPA redeploy run {result.get('spa_run')}; pre-revert snap {result['prerevert_version']})\n"
     )
     return 0
 
