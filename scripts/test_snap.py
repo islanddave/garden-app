@@ -316,10 +316,61 @@ def test_publish_lambda_versions():
     cfg = make_cfg()
     client = mock.Mock()
     client.publish_version.side_effect = lambda FunctionName: {"Version": "7"}
-    out = snap.publish_lambda_versions(cfg, lambda_client=client)
-    assert set(out.keys()) == set(snap.LAMBDA_FUNCTIONS)
-    assert len(out) == 11
+    out, uncaptured = snap.publish_lambda_versions(cfg, lambda_client=client)
+    # OPS-REVERTRESTORE-001: the WHOLE release set, not the 11 snap used to hand-keep.
+    assert set(out) == set(snap.lambda_fleet.release_functions())
+    assert len(out) == 26
+    assert "garden-harvests" in out and "garden-daily-plan" in out  # two the old list skipped
     assert all(v == "7" for v in out.values())
+    assert uncaptured == {}
+
+
+def _client_error(code, msg="nope", op="PublishVersion"):
+    from botocore.exceptions import ClientError
+    return ClientError({"Error": {"Code": code, "Message": msg}}, op)
+
+
+def test_publish_records_absent_and_ungranted_functions_instead_of_failing_the_ship(capsys):
+    """The promote's snap runs AFTER the fast-forward. A brand-new Lambda does not exist yet at
+    its first promote (deploy-lambdas creates it after snap), and one added before snap-ops is
+    extended is AccessDenied. Neither may red a promote whose main has already moved: both are
+    recorded and warned, and revert-to.py enforces completeness where it is actually used."""
+    cfg = make_cfg()
+    client = mock.Mock()
+
+    def publish(FunctionName):
+        if FunctionName == "garden-new":
+            raise _client_error("ResourceNotFoundException", "Function not found")
+        if FunctionName == "garden-ungranted":
+            raise _client_error("AccessDeniedException", "not authorized to perform: lambda:PublishVersion")
+        return {"Version": "3"}
+    client.publish_version.side_effect = publish
+    out, uncaptured = snap.publish_lambda_versions(
+        cfg, lambda_client=client, functions=["garden-a", "garden-new", "garden-ungranted"])
+    assert out == {"garden-a": "3"}
+    assert set(uncaptured) == {"garden-new", "garden-ungranted"}
+    assert uncaptured["garden-new"].startswith("ResourceNotFoundException")
+    assert uncaptured["garden-ungranted"].startswith("AccessDeniedException")
+    warned = capsys.readouterr().out
+    assert warned.count("::warning::") == 2
+    assert "garden-new" in warned and "garden-ungranted" in warned
+
+
+def test_publish_capturing_nothing_fails_the_ship():
+    """Zero captured is systemic (role broken, statement deleted) and must stay loud."""
+    cfg = make_cfg()
+    client = mock.Mock()
+    client.publish_version.side_effect = _client_error("AccessDeniedException")
+    with pytest.raises(snap.SnapError, match="ZERO"):
+        snap.publish_lambda_versions(cfg, lambda_client=client, functions=["garden-a", "garden-b"])
+
+
+def test_publish_other_errors_still_fail_the_ship():
+    cfg = make_cfg()
+    client = mock.Mock()
+    client.publish_version.side_effect = _client_error("ServiceException", "boom")
+    with pytest.raises(snap.SnapError, match="publish_version failed for garden-a"):
+        snap.publish_lambda_versions(cfg, lambda_client=client, functions=["garden-a", "garden-b"])
 
 
 def test_publish_lambda_versions_no_version_fails():
@@ -647,7 +698,7 @@ def test_prune_writes_step_summary(monkeypatch, tmp_path):
 
 # --- manifest written LAST ---------------------------------------------------
 
-def _patch_run_steps(monkeypatch, order):
+def _patch_run_steps(monkeypatch, order, uncaptured=None):
     monkeypatch.setattr(snap, "precheck_existing_manifest", lambda s, c: None)
     monkeypatch.setattr(snap, "ensure_tag",
                         lambda c: order.append("tag") or "v1.2.3")
@@ -660,9 +711,25 @@ def _patch_run_steps(monkeypatch, order):
     monkeypatch.setattr(snap, "capture_photo_versions",
                         lambda s, c: order.append("photos") or "photos/snap-v1.2.3.versionids.json")
     monkeypatch.setattr(snap, "publish_lambda_versions",
-                        lambda c, lambda_client=None: order.append("lambda") or {"garden-plants": "3"})
+                        lambda c, lambda_client=None: order.append("lambda")
+                        or ({"garden-plants": "3"}, dict(uncaptured or {})))
     monkeypatch.setattr(snap, "self_verify",
                         lambda *a, **k: order.append("verify"))
+
+
+def test_run_records_uncaptured_functions_in_the_manifest(monkeypatch):
+    """revert-to.py reads manifest.lambda_uncaptured to refuse an incomplete pre-revert snap."""
+    cfg = make_cfg()
+    order, manifests = [], []
+    _patch_run_steps(monkeypatch, order,
+                     uncaptured={"garden-new": "ResourceNotFoundException: Function not found"})
+    monkeypatch.setattr(snap, "write_manifest",
+                        lambda s, c, m: manifests.append(json.loads(json.dumps(m))) or "snapshots/v1.2.3.json")
+    monkeypatch.setattr(snap, "prune_old_branches", lambda c: {"pruned": [], "skipped": []})
+    result = snap.run(cfg, s3=mock.Mock(), lambda_client=mock.Mock())
+    assert manifests[0]["lambda_versions"] == {"garden-plants": "3"}
+    assert manifests[0]["lambda_uncaptured"] == {"garden-new": "ResourceNotFoundException: Function not found"}
+    assert result["manifest"]["lambda_uncaptured"] == manifests[0]["lambda_uncaptured"]
 
 
 def test_run_writes_manifest_last(monkeypatch):
@@ -724,7 +791,7 @@ def test_run_aborts_if_self_verify_fails(monkeypatch):
     monkeypatch.setattr(snap, "dump_globals_to_s3", lambda s, c: "db/x.globals.sql")
     monkeypatch.setattr(snap, "capture_photo_versions", lambda s, c: "photos/x.json")
     monkeypatch.setattr(snap, "publish_lambda_versions",
-                        lambda c, lambda_client=None: {"garden-plants": "3"})
+                        lambda c, lambda_client=None: ({"garden-plants": "3"}, {}))
     def boom(*a, **k):
         raise snap.SnapError("artifact missing")
     monkeypatch.setattr(snap, "self_verify", boom)

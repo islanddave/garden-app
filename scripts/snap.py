@@ -60,6 +60,8 @@ import boto3
 import requests
 from botocore.exceptions import ClientError
 
+import lambda_fleet
+
 # --- constants ---------------------------------------------------------------
 
 VERSION_RE = re.compile(r"^v\d+(\.\d+){0,2}$")
@@ -67,20 +69,14 @@ NEON_API = "https://console.neon.tech/api/v2"
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 60
 
-# The 11 Lambda functions whose deployed version is part of the coupled snap.
-LAMBDA_FUNCTIONS = [
-    "garden-dashboard",
-    "garden-events",
-    "garden-favorites",
-    "garden-inventory-items",
-    "garden-locations",
-    "garden-photos",
-    "garden-plants",
-    "garden-projects",
-    "garden-varieties",
-    "garden-app-events",
-    "garden-achievements",
-]
+# The Lambda functions in the coupled snap are NOT listed here any more. They are every function
+# a release ships — lambda_fleet.release_functions(), derived from lambda-config-expected.json and
+# pinned equal to deploy-lambda.yml's matrix (OPS-REVERTRESTORE-001). A hand-kept list of 11
+# covered 11 of 26, so a revert left the other 15 at the newer code with no signal at all.
+
+# Per-function capture failures that are RECORDED (manifest.lambda_uncaptured + ::warning::)
+# instead of failing the ship. Everything else still fails it. See publish_lambda_versions().
+UNCAPTURED_OK = ("ResourceNotFoundException", "AccessDeniedException")
 
 
 class SnapError(Exception):
@@ -524,21 +520,57 @@ def _wait_lambda_idle(client, fn, timeout=120, interval=3):
     return "InProgress"
 
 
-def publish_lambda_versions(cfg, lambda_client=None):
-    """Publish a new version for each function and record the returned Version.
+def release_lambda_functions():
+    """Every Lambda a release ships (deploy-lambda.yml's matrix). Unreadable manifest = fail."""
+    try:
+        return lambda_fleet.release_functions()
+    except lambda_fleet.FleetError as e:
+        raise SnapError(str(e))
+
+
+def _uncaptured_hint(why):
+    if why.startswith("ResourceNotFoundException"):
+        return "it does not exist yet (its first deploy runs after snap), so there is nothing to roll back"
+    return ("a revert cannot roll it back, and revert-to.py refuses to start, until snap-ops grants "
+            "lambda:PublishVersion + lambda:GetFunctionConfiguration on it "
+            "(Projects/Gardening/iam-trust-rollback)")
+
+
+def publish_lambda_versions(cfg, lambda_client=None, functions=None):
+    """Publish a new version for each release function and record the returned Version.
 
     publish-version is idempotent at the AWS layer: if there are no unpublished
     changes, Lambda returns the existing latest published version rather than
-    erroring, so re-running is safe. Returns {fn: version}.
+    erroring, so re-running is safe. Returns ({fn: version}, {fn: why_uncaptured}).
+
+    WHAT THE VERSIONS ARE (OPS-REVERTRESTORE-001, measured 2026-09-11). Each version is the code
+    that was LIVE when this snap ran. Inside promote-gate that is the PREVIOUS release's code,
+    not this one's: snap is a step of the `promote` job and `deploy-lambdas` needs that job, so
+    it deploys after snap. Manifest v4.128.0 recorded garden-plants v175, whose code is the
+    v4.127.0 deploy, while $LATEST carried v4.128.0's. Inside revert-to.py's PRE-REVERT snap the
+    versions are exactly what prod is serving. So revert-to.py restores from these versions only
+    in rollback(), from its own pre-revert snap; a forward revert rebuilds the target's Lambdas
+    from the target's tree instead.
 
     Race-hardened (L-221): the promote FF triggers a push:main Lambda deploy, which can
     leave a function with LastUpdateStatus=InProgress when snap runs — PublishVersion
     then raises ResourceConflictException and reds the whole promote. We wait for each
     function to go idle, then publish with bounded backoff retry on ResourceConflictException.
+
+    UNCAPTURED IS RECORDED, NOT FATAL (OPS-REVERTRESTORE-001). This runs AFTER promote-gate's
+    fast-forward, so a raise here strands main advanced with nothing deployed. Two per-function
+    outcomes are therefore returned in `uncaptured` (-> manifest.lambda_uncaptured) and warned:
+      ResourceNotFoundException  a function whose FIRST deploy is this very promote.
+      AccessDeniedException      a release function snap-ops does not grant yet.
+    Until 2026-09-11 an AccessDenied here failed the ship. It now warns, and revert-to.py refuses
+    to START while its pre-revert snap left any existing function uncaptured, so completeness is
+    enforced where it is used. Capturing NOTHING is still fatal (a broken role, not a new
+    function), and every other error still fails the ship exactly as before.
     """
     client = lambda_client or boto3.client("lambda")
-    out = {}
-    for fn in LAMBDA_FUNCTIONS:
+    fns = release_lambda_functions() if functions is None else list(functions)
+    out, uncaptured = {}, {}
+    for fn in fns:
         _wait_lambda_idle(client, fn)
         ver = None
         last_err = None
@@ -554,11 +586,25 @@ def publish_lambda_versions(cfg, lambda_client=None):
                     _wait_lambda_idle(client, fn)
                     time.sleep(min(2 ** attempt, 20))
                     continue
+                if code in UNCAPTURED_OK:
+                    uncaptured[fn] = f"{code}: {e.response.get('Error', {}).get('Message', '')}"[:300]
+                    break
                 raise SnapError(f"publish_version failed for {fn}: {e}")
+        if fn in uncaptured:
+            continue
         if not ver:
             raise SnapError(f"publish_version for {fn} failed after retries: {last_err or 'no Version returned'}")
         out[fn] = ver
-    return out
+    if not out:
+        raise SnapError(
+            f"publish_version captured ZERO of {len(fns)} functions — that is a broken snap role, "
+            f"not a new function: {uncaptured}")
+    for fn, why in sorted(uncaptured.items()):
+        gha_warning(f"snap: {fn} NOT captured ({why}) — {_uncaptured_hint(why)}")
+    if uncaptured:
+        gha_step_summary(["### snap: Lambda functions NOT captured"]
+                         + [f"- {fn}: {why}" for fn, why in sorted(uncaptured.items())])
+    return out, uncaptured
 
 
 # --- self-verify -------------------------------------------------------------
@@ -730,8 +776,8 @@ def run(cfg, s3=None, lambda_client=None, prune=True):
     globals_key = dump_globals_to_s3(s3, cfg)
     # (d)(i) photos version ids
     photo_key = capture_photo_versions(s3, cfg)
-    # (d)(ii) lambda versions
-    lambda_versions = publish_lambda_versions(cfg, lambda_client=lambda_client)
+    # (d)(ii) lambda versions — every release function; uncaptured ones recorded, not fatal
+    lambda_versions, lambda_uncaptured = publish_lambda_versions(cfg, lambda_client=lambda_client)
 
     # self-verify EVERY artifact before the manifest commit-marker
     self_verify(s3, cfg, dump_key, globals_key, photo_key, neon_branch_id, tag)
@@ -746,6 +792,7 @@ def run(cfg, s3=None, lambda_client=None, prune=True):
         "globals_s3_key": globals_key,
         "photo_versionids_key": photo_key,
         "lambda_versions": lambda_versions,
+        "lambda_uncaptured": lambda_uncaptured,
         "cf_dist": cfg.cf_dist,
         "app_version": cfg.app_version,
         "timestamp": utc_now_iso(),
