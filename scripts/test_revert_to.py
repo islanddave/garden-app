@@ -7,6 +7,7 @@ import sys
 import types
 
 import pytest
+import requests as real_requests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -26,13 +27,16 @@ rt = _load()
 # --- fakes -------------------------------------------------------------------
 
 class FakeResp:
-    def __init__(self, status, payload=None, text="", content=b""):
+    def __init__(self, status, payload=None, text="", content=b"", bad_json=False):
         self.status_code = status
         self._payload = payload if payload is not None else {}
         self.text = text or json.dumps(self._payload)
         self.content = content
+        self.bad_json = bad_json  # a 200 whose body is not JSON (an HTML error page, a cut-off body)
 
     def json(self):
+        if self.bad_json:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
         return self._payload
 
 
@@ -735,6 +739,167 @@ def test_restore_waits_through_in_progress_to_successful(monkeypatch):
     assert rt.restore_lambda_versions(
         cfg, {"lambda_versions": {"garden-plants": "7"}}, lambda_client=lc) == {"garden-plants": "7"}
     assert len([c for c in lc.calls if c[0] == "config"]) == 3
+
+
+# --- R2 item 1: a rollback that survives GitHub being unreachable ------------------------------
+
+def test_rollback_still_restores_the_db_when_github_is_unreachable(monkeypatch):
+    """QA probe 1 (review-R-qa-evidence/probe_rollback.py), committed with its assertion inverted.
+    The forward SPA leg fails, then every GitHub read the rollback makes raises ConnectionError, as
+    a GitHub incident would. Before R2 the first of them escaped rollback() and skipped the DB
+    restore, the code restore and every Lambda. The DB restore must run whatever GitHub does."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_conclusions=("failure", "success"))
+    n = {"list": 0}
+
+    def flaky_list(url):
+        n["list"] += 1
+        if n["list"] >= 3:  # 1 = locate Lambda run, 2 = locate SPA run, 3+ = the rollback's reads
+            raise real_requests.ConnectionError("github unreachable")
+        return gh._list(url)
+    fr.routes.insert(0, ("GET", "/runs?event=workflow_dispatch", flaky_list))
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    msg = str(e.value)
+    assert ("neon_restore", "br-pre") in events
+    assert "PAGE DAVE" in msg and "could not list deploy-lambda.yml runs" in msg
+    assert lc.updated() == sorted(RELEASE)  # the rest of the compensation ran too
+
+
+def test_rollback_step_one_failure_of_any_kind_does_not_skip_the_db_restore(monkeypatch):
+    """The transport catch is one guard; rollback() also wraps step 1 whole, so an answer of an
+    unexpected shape (a run with no id) cannot skip the DB restore either."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, spa_conclusions=("failure", "success"))
+    n = {"list": 0}
+
+    def malformed_after_forward(url):
+        n["list"] += 1
+        if n["list"] >= 3:
+            return FakeResp(200, {"workflow_runs": [{"head_sha": REVERT_SHA, "status": "in_progress"}]})
+        return gh._list(url)
+    fr.routes.insert(0, ("GET", "/runs?event=workflow_dispatch", malformed_after_forward))
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert ("neon_restore", "br-pre") in events
+    assert "could not stop stray forward runs: KeyError" in str(e.value)
+
+
+def test_a_github_read_retries_a_transport_blip_then_succeeds(monkeypatch):
+    fr = FakeRequests()
+    n = {"n": 0}
+
+    def blip(url):
+        n["n"] += 1
+        if n["n"] == 1:
+            raise real_requests.ReadTimeout("read timed out")
+        return FakeResp(200, {"workflow_runs": [{"id": 7}]})
+    fr.add("GET", "/runs?", blip)
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    assert rt._list_runs(rt.Config(env=base_env()), "deploy.yml") == [{"id": 7}]
+    assert n["n"] == 2
+
+
+def test_github_reads_turn_transport_errors_and_non_json_into_none_after_bounded_retries(monkeypatch):
+    fr = FakeRequests()
+    n = {"n": 0}
+
+    def down(url):
+        n["n"] += 1
+        raise real_requests.ConnectionError("connection refused")
+    fr.add("GET", "/actions/runs/", down)
+    fr.add("GET", "/runs?", FakeResp(200, bad_json=True))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    cfg = rt.Config(env=base_env())
+    assert rt._get_run(cfg, 5) is None
+    assert n["n"] == rt.GH_READ_ATTEMPTS  # bounded: never an endless retry
+    assert rt._get_jobs(cfg, 5) is None
+    assert rt._list_runs(cfg, "deploy.yml") is None
+
+
+def test_a_cancel_that_cannot_reach_github_is_reported_and_the_rest_still_run(monkeypatch):
+    fr = FakeRequests()
+    runs = {"deploy-lambda.yml": [{"id": 1, "head_sha": REVERT_SHA, "status": "in_progress"}],
+            "deploy.yml": [{"id": 2, "head_sha": REVERT_SHA, "status": "in_progress"}]}
+    fr.add("GET", "/runs?", lambda url: FakeResp(200, {"workflow_runs": runs[FakeActions._wf(url)]}))
+
+    def cancel(url):
+        if "/runs/1/" in url:
+            raise real_requests.ConnectionError("connection reset")
+        runs["deploy.yml"][0]["status"] = "completed"
+        return FakeResp(202)
+    fr.add("POST", "/cancel", cancel)
+    fr.add("GET", "/actions/runs/2", lambda url: FakeResp(200, runs["deploy.yml"][0]))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    problems = rt.cancel_stray_runs(rt.Config(env=base_env()), REVERT_SHA)
+    assert problems == [f"cancel deploy-lambda.yml run 1 for {REVERT_SHA}: GitHub unreachable"]
+    assert ("POST", f"{rt.GITHUB_API}/repos/islanddave/garden-app/actions/runs/2/cancel") in fr.calls
+
+
+def test_a_rollback_whose_db_restore_fails_stops_before_moving_any_code(monkeypatch):
+    """rollback()'s docstring: if the DB restore fails, raise at once — moving the code back on a
+    DB still at vX makes things worse. What step 1 found is kept in the page."""
+    legs = [{"name": "deploy (plants)", "status": "completed", "conclusion": "failure"}]
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, lambda_legs=legs)
+
+    def neon(url):
+        src = fr.last_json["source_branch_id"]
+        events.append(("neon_restore", src))
+        return FakeResp(200, {"ok": True}) if src == "br-snap" else FakeResp(500, text="neon down")
+    fr.routes.insert(0, ("POST", "/restore", neon))
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    msg = str(e.value)
+    assert "PAGE DAVE" in msg and "DB NOT restored" in msg and "neon down" in msg
+    assert [ev[2] for ev in events if ev[0] == "commit"] == [REVERT_SHA]  # no restore commit
+    assert [ev[1] for ev in events if ev[0] == "ff_main"] == [REVERT_SHA]
+    assert lc.updated() == []
+    assert [wf for wf, _ in gh.dispatched] == ["deploy-lambda.yml"]
+
+
+@pytest.mark.parametrize("loop", ["locate", "lambda_legs", "spa", "cancel", "lambda_settle"])
+def test_every_poll_loop_also_stops_on_the_wall_clock(monkeypatch, loop):
+    """A sleep count leaves each call's own latency (up to HTTP_TIMEOUT) outside revert-gate.yml's
+    budget. With a clock that jumps past every ceiling, each loop must give up after at most one
+    poll per run — not after the 9 to 81 polls its sleep count alone would allow."""
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    stuck = {"id": 9, "head_sha": REVERT_SHA, "status": "in_progress", "conclusion": None,
+             "created_at": CREATED}
+    fr.add("GET", "/runs?", FakeResp(200, {"workflow_runs": [stuck]}))
+    fr.add("GET", "/jobs?", FakeResp(200, {"jobs": [{"name": "deploy (plants)", "status": "in_progress"}]}))
+    fr.add("GET", "/actions/runs/", FakeResp(200, stuck))
+    fr.add("POST", "/cancel", FakeResp(202))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    clock = {"t": 0.0}
+
+    def jump():
+        clock["t"] += 10 ** 6
+        return clock["t"]
+    monkeypatch.setattr(rt, "_monotonic", jump)
+    gets = lambda sub: len([c for c in fr.calls if c[0] == "GET" and sub in c[1]])
+    if loop == "locate":
+        with pytest.raises(rt.RevertError, match="appeared after the dispatch"):
+            rt.locate_run(cfg, "deploy.yml", RESTORE_SHA, rt._gh_time(CREATED))
+        assert gets("/runs?") <= 1
+    elif loop == "lambda_legs":
+        with pytest.raises(rt.RevertError, match="unfinished"):
+            rt.wait_for_lambda_legs(cfg, 9)
+        assert gets("/jobs?") <= 1
+    elif loop == "spa":
+        with pytest.raises(rt.RevertError, match="unfinished"):
+            rt.wait_for_spa_run(cfg, 9)
+        assert gets("/actions/runs/9") <= 1
+    elif loop == "cancel":
+        problems = rt.cancel_stray_runs(cfg, REVERT_SHA)
+        assert len(problems) == 2 and all("still running" in p for p in problems)
+        assert gets("/actions/runs/9") == 2  # one look per cancelled run
+    else:
+        lc = FakeLambda(settle={"garden-plants": ["InProgress"] * 100})
+        assert rt._wait_lambda_updated(lc, "garden-plants") == "InProgress"
+        assert len([c for c in lc.calls if c[0] == "config"]) == 1
 
 
 def test_main_exit_code_on_error(monkeypatch):

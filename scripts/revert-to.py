@@ -167,6 +167,13 @@ RUN_POLL_CEILING_S = 20 * 60    # queue + run, per leg; v4.128.0 measured ~70 s 
 CANCEL_WAIT_S = 120
 LAMBDA_UPDATE_POLL_S = 3
 LAMBDA_UPDATE_TIMEOUT_S = 90
+# A GitHub read that fails at the TRANSPORT level (no connection, a timeout, a body that is not
+# JSON) is retried a few times, then reads as None, which every caller already handles. Bound
+# from the real module here so a test double swapped in for `requests` cannot change what is
+# caught. Before R2 such an error escaped rollback()'s first step and skipped the DB restore.
+_GH_TRANSPORT_ERRORS = (requests.RequestException, ValueError)
+GH_READ_ATTEMPTS = 3
+GH_READ_RETRY_S = 5
 # Worst case, forward + rollback: 2 x (5 min locate + 20 min poll) + 2 x 2 min cancel waits +
 # 26 x 90 s restores + one more SPA leg (25 min) ~= 118 min, plus the pre-revert snap and the DB
 # legs. revert-gate.yml's timeout-minutes is sized from this: a job killed mid-rollback is a
@@ -826,6 +833,13 @@ def _now():
     return time.time()
 
 
+def _monotonic():
+    """Wall clock for poll deadlines. Every poll loop stops on its sleep count OR on this,
+    whichever comes first: the sleep count alone leaves each call's own latency (up to
+    HTTP_TIMEOUT per GitHub call) outside the budget revert-gate.yml's timeout is sized from."""
+    return time.monotonic()
+
+
 def _wait_lambda_updated(client, fn):
     """Poll until fn's code update settles; return its LastUpdateStatus.
 
@@ -835,9 +849,12 @@ def _wait_lambda_updated(client, fn):
     ceiling passed.
     """
     waited = 0
+    deadline = _monotonic() + LAMBDA_UPDATE_TIMEOUT_S
     while True:
         status = client.get_function_configuration(FunctionName=fn).get("LastUpdateStatus")
         if status != "InProgress" or waited >= LAMBDA_UPDATE_TIMEOUT_S:
+            return status
+        if _monotonic() >= deadline:
             return status
         _sleep(LAMBDA_UPDATE_POLL_S)
         waited += LAMBDA_UPDATE_POLL_S
@@ -955,11 +972,26 @@ def dispatch_workflow(cfg, workflow, inputs=None):
     return since
 
 
+def _gh_read(cfg, path):
+    """GET a GitHub API path -> the parsed JSON, or None when it cannot be read.
+
+    A transport error (no connection, a timeout, a non-JSON body) is retried up to
+    GH_READ_ATTEMPTS times; a non-200 answer is None at once. None is what every caller already
+    handles (a poller tries again, cancel_stray_runs records a problem), so a GitHub blip never
+    escapes a poller as an exception."""
+    for attempt in range(GH_READ_ATTEMPTS):
+        try:
+            r = requests.get(_gh(cfg, path), headers=gh_headers(cfg), timeout=HTTP_TIMEOUT)
+            return r.json() if r.status_code == 200 else None
+        except _GH_TRANSPORT_ERRORS:
+            if attempt + 1 < GH_READ_ATTEMPTS:
+                _sleep(GH_READ_RETRY_S)
+    return None
+
+
 def _list_runs(cfg, workflow):
-    r = requests.get(
-        _gh(cfg, f"/actions/workflows/{workflow}/runs?event=workflow_dispatch&branch=main&per_page=30"),
-        headers=gh_headers(cfg), timeout=HTTP_TIMEOUT)
-    return r.json().get("workflow_runs", []) if r.status_code == 200 else None
+    body = _gh_read(cfg, f"/actions/workflows/{workflow}/runs?event=workflow_dispatch&branch=main&per_page=30")
+    return body.get("workflow_runs", []) if isinstance(body, dict) else None
 
 
 def locate_run(cfg, workflow, sha, since):
@@ -968,7 +1000,10 @@ def locate_run(cfg, workflow, sha, since):
     A dispatch names a BRANCH, so head_sha is the only proof the run builds the revert commit.
     A fresh run for any other commit means main moved underneath us; it is never accepted."""
     others = set()
+    deadline = _monotonic() + RUN_LOCATE_ATTEMPTS * RUN_LOCATE_INTERVAL_S
     for _ in range(RUN_LOCATE_ATTEMPTS):
+        if _monotonic() > deadline:
+            break
         runs = _list_runs(cfg, workflow)
         if runs is not None:
             fresh = [x for x in runs if _gh_time(x["created_at"]) >= since - RUN_CLOCK_SKEW_S]
@@ -983,15 +1018,26 @@ def locate_run(cfg, workflow, sha, since):
 
 
 def _get_run(cfg, run_id):
-    r = requests.get(_gh(cfg, f"/actions/runs/{run_id}"), headers=gh_headers(cfg),
-                     timeout=HTTP_TIMEOUT)
-    return r.json() if r.status_code == 200 else None
+    body = _gh_read(cfg, f"/actions/runs/{run_id}")
+    return body if isinstance(body, dict) else None
 
 
 def _get_jobs(cfg, run_id):
-    r = requests.get(_gh(cfg, f"/actions/runs/{run_id}/jobs?filter=latest&per_page=100"),
-                     headers=gh_headers(cfg), timeout=HTTP_TIMEOUT)
-    return r.json().get("jobs", []) if r.status_code == 200 else None
+    body = _gh_read(cfg, f"/actions/runs/{run_id}/jobs?filter=latest&per_page=100")
+    return body.get("jobs", []) if isinstance(body, dict) else None
+
+
+def _cancel_run(cfg, run_id):
+    """POST a cancel -> the response, or None when GitHub could not be reached at all (retried
+    like a read: cancelling a run that is already stopping answers 409, so a retry is harmless)."""
+    for attempt in range(GH_READ_ATTEMPTS):
+        try:
+            return requests.post(_gh(cfg, f"/actions/runs/{run_id}/cancel"), headers=gh_headers(cfg),
+                                 timeout=HTTP_TIMEOUT)
+        except _GH_TRANSPORT_ERRORS:
+            if attempt + 1 < GH_READ_ATTEMPTS:
+                _sleep(GH_READ_RETRY_S)
+    return None
 
 
 def _is_lambda_leg(job):
@@ -1004,7 +1050,8 @@ def wait_for_lambda_legs(cfg, run_id):
     the matrix decides; verify-daily-plan (a post-deploy invariant on one function) does not.
     Zero legs is a failure — an environment-policy rejection looks exactly like that."""
     waited = 0
-    while waited <= RUN_POLL_CEILING_S:
+    deadline = _monotonic() + RUN_POLL_CEILING_S
+    while waited <= RUN_POLL_CEILING_S and _monotonic() <= deadline:
         jobs = _get_jobs(cfg, run_id)
         if jobs is not None:
             legs = [j for j in jobs if _is_lambda_leg(j)]
@@ -1030,7 +1077,8 @@ def wait_for_spa_run(cfg, run_id):
     """The deploy.yml run must complete with success AND contain a successful `deploy` job — a
     green run with no deploy job would be a vacuous pass."""
     waited = 0
-    while waited <= RUN_POLL_CEILING_S:
+    deadline = _monotonic() + RUN_POLL_CEILING_S
+    while waited <= RUN_POLL_CEILING_S and _monotonic() <= deadline:
         run = _get_run(cfg, run_id)
         if run and run.get("status") == "completed":
             if run.get("conclusion") != "success":
@@ -1085,17 +1133,20 @@ def cancel_stray_runs(cfg, sha):
         for x in runs:
             if x.get("head_sha") != sha or x.get("status") == "completed":
                 continue
-            c = requests.post(_gh(cfg, f"/actions/runs/{x['id']}/cancel"), headers=gh_headers(cfg),
-                              timeout=HTTP_TIMEOUT)
+            c = _cancel_run(cfg, x["id"])
+            if c is None:
+                problems.append(f"cancel {wf} run {x['id']} for {sha}: GitHub unreachable")
+                continue
             if c.status_code not in (202, 409):
                 problems.append(f"cancel {wf} run {x['id']} failed {c.status_code}: {c.text[:200]}")
                 continue
             waited = 0
+            deadline = _monotonic() + CANCEL_WAIT_S
             while True:
                 run = _get_run(cfg, x["id"])
                 if run and run.get("status") == "completed":
                     break
-                if waited >= CANCEL_WAIT_S:
+                if waited >= CANCEL_WAIT_S or _monotonic() >= deadline:
                     problems.append(f"{wf} run {x['id']} for {sha} still running {CANCEL_WAIT_S}s after cancel")
                     break
                 _sleep(RUN_POLL_INTERVAL_S)
@@ -1109,7 +1160,10 @@ def rollback(cfg, prerevert_result, lambda_client=None, progress=None):
     """Best-effort rollback to the pre-revert snap after a post-checkpoint failure.
 
     1. Stop any forward redeploy still queued/running for the revert commit, so it cannot land
-       on top of the rollback.
+       on top of the rollback. GUARDED (R2): any failure here — GitHub unreachable, an answer
+       of an unexpected shape — is recorded and the rollback carries on. A GitHub incident is
+       the likeliest cause of the forward failure that got us here, so this step must never
+       cost the DB restore.
     2. DB: restore prod from the pre-revert snap branch. If THIS fails, raise at once: moving
        the code back to N on a DB still at vX would make things worse, not better.
     3. Code: forward restore-commit on dev with the pre-revert main tree, FF main (no force).
@@ -1124,8 +1178,15 @@ def rollback(cfg, prerevert_result, lambda_client=None, progress=None):
     man = prerevert_result["manifest"]
     problems = []
     if progress.get("revert_sha") and (progress.get("lambda_attempted") or progress.get("spa_attempted")):
-        problems += cancel_stray_runs(cfg, progress["revert_sha"])
-    neon_restore_prod_from(cfg, man["neon_branch_id"], man.get("neon_lsn"))
+        try:
+            problems += cancel_stray_runs(cfg, progress["revert_sha"])
+        except Exception as e:  # noqa: BLE001 — step 1 must never cost the DB restore
+            problems.append(f"could not stop stray forward runs: {type(e).__name__}: {e}")
+    try:
+        neon_restore_prod_from(cfg, man["neon_branch_id"], man.get("neon_lsn"))
+    except Exception as e:  # noqa: BLE001 — raise at once, but keep what step 1 found
+        raise RevertError(f"DB NOT restored, rollback stopped before moving any code: {e}"
+                          + (f" | earlier: {' | '.join(problems)}" if problems else ""))
     # main may now be ahead (our failed revert commit); a forward restore-commit
     # mirrors the no-force-push rule. Reuse the same forward-tree mechanism.
     try:
