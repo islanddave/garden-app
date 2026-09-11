@@ -7,8 +7,9 @@ name: revert-gate
 # revertible: revert-to.py takes a PRE-REVERT snap of CURRENT prod first, so a bad revert can be rolled back.
 #
 # Relationship to revert-rehearsal.yml: that workflow exercises the SAME script against STAGING with
-# REHEARSAL_MODE=1 (throwaway refs, prod Lambda/CF legs skipped). THIS workflow is the real thing —
-# REHEARSAL_MODE is OFF, the code legs target real dev/main, and CONFIRM_DATA_LOSS must be "yes".
+# REHEARSAL_MODE=1 (throwaway refs; the prod Lambda/SPA redeploy and Lambda-restore legs skipped). THIS
+# workflow is the real thing — REHEARSAL_MODE is OFF, the code legs target real dev/main, and
+# CONFIRM_DATA_LOSS must be "yes".
 #
 # Dispatchability: workflow_dispatch requires the workflow on the default branch (main). It IS on main —
 # see STATUS below. Edits made here on dev do not take effect for a dispatch until the next promote-gate
@@ -39,18 +40,30 @@ name: revert-gate
 # mid-incident: the credential step is NOT a safety net, it will succeed. The step that fails safe is the
 # IAM preflight below.
 #
-# PERMISSION PREFLIGHT — THIS WORKFLOW CURRENTLY ABORTS, BY DESIGN (OPS-REVERTPREFLIGHT, 2026-09-10).
-# scripts/revert-to.py restores the prod DB (~:928) BEFORE its Lambda (~:825) and CloudFront (~:837) legs,
-# and the snap role is not granted lambda:UpdateFunctionCode or cloudfront:CreateInvalidation — both
-# implicitDeny per simulate-principal-policy, 2026-09-10. Unguarded, a real revert restores prod to N-1,
-# dies on the code leg, and rolls the DB back from the PRE-revert snap — silently destroying every prod
-# write made in between, then raising a "prod may be inconsistent — PAGE DAVE" that is, in that failure
-# mode, a false alarm indistinguishable from a real one. The preflight step below simulates all six actions
-# the revert can perform and aborts before anything is touched unless every one is `allowed`. It fails
-# TODAY and keeps failing until those two grants are added. That is correct — a rollback that cannot
-# complete must refuse to begin. There is no bypass flag and no warn-only mode; do not add one.
-# It also supersedes the old "confirm the snap role carries these permissions" note: the rehearsal SKIPS
-# the prod Lambda/CF legs, so it can never prove them, and the preflight now does.
+# PERMISSION PREFLIGHT — THIS WORKFLOW CURRENTLY ABORTS, BY DESIGN (OPS-REVERTPREFLIGHT 2026-09-10, widened
+# by OPS-REVERTRESTORE-001 2026-09-11). scripts/revert-to.py resets the prod DB first and redeploys after, so
+# a revert that could not also be ROLLED BACK must refuse to begin. The preflight step below simulates every
+# action the snap role performs — the pre-revert snap's lambda:PublishVersion + GetFunctionConfiguration and
+# the rollback's lambda:UpdateFunctionCode + GetFunction on the QUALIFIED ARN function:<fn>:<version>, on
+# EVERY release function (scripts/lambda_fleet.py: the 26 deploy-lambda.yml builds), plus the two snapshot
+# reads — and aborts before anything is touched unless all 106 pairs are `allowed`. Measured live 2026-09-11:
+# 82 of 106 denied. It keeps failing until snap-ops Stage 1 AND Stage 2 are applied (Projects/Gardening/
+# iam-trust-rollback, README section 2026-09-11). That is correct — a rollback that cannot complete must
+# refuse to begin. There is no bypass flag and no warn-only mode; do not add one. The rehearsal SKIPS every
+# prod Lambda and SPA leg, so it can never prove these permissions; the preflight does.
+#
+# RESTORE LEGS (OPS-REVERTRESTORE-001). After the DB reset and the main fast-forward, revert-to.py REBUILDS the
+# target from its own tree: it dispatches deploy-lambda.yml, then deploy.yml, on main (= the revert commit)
+# with the garden-bot token and polls each to success inside its checkpoint — Lambdas first, the SPA only once
+# every Lambda leg is green, the promote's own order. Those run under the DEPLOY role; this job's snap role
+# changes no Lambda code and no CloudFront state on the forward path. The target manifest's lambda_versions are
+# NOT restored: a promote snaps before its own Lambda deploy, so that manifest holds the PREVIOUS release's
+# Lambda code. On any failure the rollback restores every release function from the PRE-REVERT snap (taken
+# minutes earlier, so it is what prod was running) and rebuilds the SPA from the restored tree.
+# timeout-minutes below is sized for forward + rollback worst case (arithmetic in revert-to.py): a job killed
+# mid-rollback leaves prod split, which is worse than any failure the script can report.
+# NOTE: "Checkout dev" means revert-to.py, snap.py and preflight-revert-iam.py changes govern a revert as soon
+# as they land on dev; changes to THIS file govern a dispatch only once a promote carries them to main.
 #
 # Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
@@ -83,7 +96,7 @@ jobs:
   revert:
     runs-on: ubuntu-latest
     environment: production-destructive
-    timeout-minutes: 45
+    timeout-minutes: 150  # forward redeploys + a full rollback, worst case (RESTORE LEGS above)
     steps:
       - name: Validate inputs (injection-safe — read from env, never interpolated into run)
         env:
@@ -149,14 +162,16 @@ jobs:
       # FAIL-CLOSED GATE — must stay between the credential step and revert-to.py.
       # Every ARN lives in env, never inline in run:, so no quoted colon can reach
       # GitHub's workflow parser (PyYAML accepts those; GHA silently rejects them).
-      # Stdlib + the preinstalled aws CLI only, so it runs before the pip install
-      # and aborts as early as possible. Expected to FAIL today — see the header.
+      # Stdlib + the preinstalled aws CLI only (scripts/lambda_fleet.py is stdlib too),
+      # so it runs before the pip install and aborts as early as possible. It asserts
+      # the snap role's pre-revert-snap and rollback grants on every release function,
+      # and no CloudFront action (the revert makes no CloudFront call any more).
+      # Expected to FAIL until snap-ops Stage 2 is applied — see the header.
       - name: Preflight — assert the snap role can complete the WHOLE revert
         env:
           SNAP_AWS_ROLE_ARN: ${{ vars.SNAP_AWS_ROLE_ARN }}
           SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
           TARGET_VERSION: ${{ inputs.target_version }}
-          CF_DIST: E3FAJTXAORQYDT
         run: python3 scripts/preflight-revert-iam.py
 
       - name: Install python deps
