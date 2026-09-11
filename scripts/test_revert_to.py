@@ -311,30 +311,55 @@ class FakeLambda:
     """U1-resolved mechanism: get_function(Qualifier) -> Code.Location, then
     update_function_code($LATEST), then get_function_configuration until the update
     settles. No aliases (Function URLs hit $LATEST).
-    fail_update={fn}: update_function_code raises for those functions.
-    settle={fn: [LastUpdateStatus, ...]}: status sequence per function (default Successful)."""
-    def __init__(self, code_loc="https://s3/pkg.zip", fail_update=(), settle=None):
+
+    Stateful since R2, so it can fail the way Lambda does:
+    fail_update={fn}: update_function_code raises TooManyRequestsException for those functions.
+    idle={fn: [LastUpdateStatus, ...]}: the function's state over successive reads BEFORE an update
+      is accepted (default Successful); recorded as ("idle", fn, status).
+    settle={fn: [...]}: the same AFTER an accepted update; recorded as ("config", fn, status).
+    stuck_idle / stuck_settle={fn}: that phase stays InProgress for ever.
+    conflicts={fn: n}: the first n updates raise ResourceConflictException. An update while the
+      function is still InProgress (the head of its idle sequence, or stuck_idle) conflicts too,
+      whether or not anyone looked — as in Lambda."""
+    def __init__(self, code_loc="https://s3/pkg.zip", fail_update=(), settle=None, idle=None,
+                 conflicts=None, stuck_idle=(), stuck_settle=()):
         self.calls = []
         self.code_loc = code_loc
         self.fail_update = set(fail_update)
         self.settle = {k: list(v) for k, v in (settle or {}).items()}
+        self.idle = {k: list(v) for k, v in (idle or {}).items()}
+        self.conflicts = dict(conflicts or {})
+        self.stuck_idle, self.stuck_settle = set(stuck_idle), set(stuck_settle)
+        self.updating = set()  # an accepted update not yet read back as settled
 
     def get_function(self, FunctionName, Qualifier=None):
         self.calls.append(("get", FunctionName, Qualifier))
         return {"Code": {"Location": self.code_loc}}
 
     def update_function_code(self, **k):
+        from botocore.exceptions import ClientError
+        fn = k["FunctionName"]
         self.calls.append(("update_code", k))
-        if k["FunctionName"] in self.fail_update:
-            from botocore.exceptions import ClientError
+        if fn in self.fail_update:
             raise ClientError({"Error": {"Code": "TooManyRequestsException",
                                          "Message": "Rate exceeded"}}, "UpdateFunctionCode")
+        busy = fn in self.stuck_idle or (self.idle.get(fn) or [None])[0] == "InProgress"
+        if self.conflicts.get(fn, 0) > 0 or busy:
+            self.conflicts[fn] = max(0, self.conflicts.get(fn, 0) - 1)
+            raise ClientError({"Error": {"Code": "ResourceConflictException",
+                                         "Message": "An update is in progress for resource"}}, "UpdateFunctionCode")
+        self.updating.add(fn)
         return {"Version": "99"}
 
     def get_function_configuration(self, FunctionName):
-        seq = self.settle.get(FunctionName)
-        status = seq.pop(0) if seq else "Successful"
-        self.calls.append(("config", FunctionName, status))
+        fn = FunctionName
+        phase = "config" if fn in self.updating else "idle"
+        stuck = self.stuck_settle if phase == "config" else self.stuck_idle
+        seq = (self.settle if phase == "config" else self.idle).get(fn)
+        status = "InProgress" if fn in stuck else (seq.pop(0) if seq else "Successful")
+        if phase == "config" and status != "InProgress":
+            self.updating.discard(fn)
+        self.calls.append((phase, fn, status))
         return {"LastUpdateStatus": status}
 
     def updated(self):
@@ -1089,7 +1114,7 @@ def test_a_rollback_whose_db_restore_fails_stops_before_moving_any_code(monkeypa
     assert [wf for wf, _ in gh.dispatched] == ["deploy-lambda.yml"]
 
 
-@pytest.mark.parametrize("loop", ["locate", "lambda_legs", "spa", "cancel", "lambda_settle"])
+@pytest.mark.parametrize("loop", ["locate", "lambda_legs", "spa", "cancel", "lambda_settle", "lambda_idle"])
 def test_every_poll_loop_also_stops_on_the_wall_clock(monkeypatch, loop):
     """A sleep count leaves each call's own latency (up to HTTP_TIMEOUT) outside revert-gate.yml's
     budget. With a clock that jumps past every ceiling, each loop must give up after at most one
@@ -1127,10 +1152,117 @@ def test_every_poll_loop_also_stops_on_the_wall_clock(monkeypatch, loop):
         problems = rt.cancel_stray_runs(cfg, REVERT_SHA)
         assert len(problems) == 2 and all("still running" in p for p in problems)
         assert gets("/actions/runs/9") == 2  # one look per cancelled run
-    else:
-        lc = FakeLambda(settle={"garden-plants": ["InProgress"] * 100})
+    elif loop == "lambda_settle":
+        lc = FakeLambda(stuck_settle={"garden-plants"})
+        lc.updating.add("garden-plants")  # an update was accepted and never settles
         assert rt._wait_lambda_updated(lc, "garden-plants") == "InProgress"
         assert len([c for c in lc.calls if c[0] == "config"]) == 1
+    else:
+        lc = FakeLambda(stuck_idle={"garden-plants"})
+        assert rt._wait_lambda_idle(lc, "garden-plants", float("inf")) == "InProgress"
+        assert len([c for c in lc.calls if c[0] == "idle"]) == 1
+
+
+# --- R2 item 6: the Lambda restore waits for idle, retries conflicts, and has a budget ----------
+
+def _restore(monkeypatch, lc, fns=None):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    return rt.restore_lambda_versions(cfg, {"lambda_versions": {fn: "7" for fn in (fns or RELEASE)}},
+                                      lambda_client=lc)
+
+
+def test_restore_waits_for_a_function_to_go_idle_before_updating_it(monkeypatch):
+    lc = FakeLambda(idle={"garden-plants": ["InProgress", "InProgress", "Successful"]})
+    assert _restore(monkeypatch, lc, ["garden-plants"]) == {"garden-plants": "7"}
+    assert [c[0] for c in lc.calls] == ["get", "idle", "idle", "idle", "update_code", "config"]
+    assert lc.updated() == ["garden-plants"]  # waited, so the one update never conflicted
+
+
+def test_a_conflict_on_every_function_is_retried_and_all_of_them_are_restored(monkeypatch):
+    """QA IMPORTANT: one ResourceConflictException used to cost that function ("25/26 restored
+    ... PAGE DAVE", QA probe 2). Conflict-then-success on every release function restores all."""
+    lc = FakeLambda(conflicts={fn: 1 for fn in RELEASE})
+    assert _restore(monkeypatch, lc) == {fn: "7" for fn in RELEASE}
+    assert lc.updated() == [fn for fn in sorted(RELEASE) for _ in (1, 2)]
+
+
+def test_a_rollback_after_a_conflicting_forward_leg_now_restores_everything(monkeypatch):
+    """QA probe 2 with its assertion inverted: the same conflict now ends 'rolled back', not PAGE DAVE."""
+    legs = [{"name": "deploy (plants)", "status": "completed", "conclusion": "failure"}]
+    cfg, s3, fr, gh, events, _ = prod_world(monkeypatch, lambda_legs=legs)
+    lc = FakeLambda(conflicts={"garden-plants": 1})
+    with pytest.raises(rt.RevertError, match="revert aborted, rolled back to pre-revert snap") as e:
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert "PAGE DAVE" not in str(e.value)
+    assert sorted(set(lc.updated())) == sorted(RELEASE)
+
+
+def test_a_conflict_that_never_clears_is_reported_after_bounded_attempts(monkeypatch):
+    lc = FakeLambda(stuck_idle={"garden-plants"})
+    with pytest.raises(rt.RevertError) as e:
+        _restore(monkeypatch, lc)
+    msg = str(e.value)
+    assert f"{len(RELEASE) - 1}/{len(RELEASE)} restored" in msg
+    assert "NOT restored: garden-plants@7: update of garden-plants still conflicting after " \
+           f"{rt.LAMBDA_CONFLICT_ATTEMPTS} attempt(s)" in msg
+    assert lc.updated().count("garden-plants") == rt.LAMBDA_CONFLICT_ATTEMPTS
+
+
+def test_other_update_errors_are_not_retried(monkeypatch):
+    lc = FakeLambda(fail_update={"garden-plants"})
+    with pytest.raises(rt.RevertError, match="NOT restored: garden-plants@7: .*TooManyRequestsException"):
+        _restore(monkeypatch, lc)
+    assert lc.updated().count("garden-plants") == 1
+
+
+def test_a_function_still_in_progress_after_its_update_is_reported_never_successful(monkeypatch):
+    """QA Q-M7: an update still InProgress at the settle ceiling must not count as restored."""
+    lc = FakeLambda(stuck_settle={"garden-plants"})
+    with pytest.raises(rt.RevertError) as e:
+        _restore(monkeypatch, lc)
+    msg = str(e.value)
+    assert "NOT restored: garden-plants@7: code update for garden-plants ended 'InProgress'" in msg
+    assert "garden-plants," not in msg.split("restored [", 1)[1].split("]", 1)[0] + ","
+
+
+def _ticking_clock(monkeypatch):
+    t = {"now": 0.0}
+
+    def tick():
+        t["now"] += 1
+        return t["now"]
+    monkeypatch.setattr(rt, "_monotonic", tick)
+
+
+def test_the_restore_stops_at_its_budget_and_names_what_it_never_attempted(monkeypatch):
+    _ticking_clock(monkeypatch)
+    monkeypatch.setattr(rt, "LAMBDA_RESTORE_BUDGET_S", 12)
+    lc = FakeLambda()
+    with pytest.raises(rt.RevertError) as e:
+        _restore(monkeypatch, lc)
+    msg = str(e.value)
+    assert "not attempted: the 0-min restore budget ran out" in msg
+    assert 0 < len(lc.updated()) < len(RELEASE)
+    assert f"{len(lc.updated())}/{len(RELEASE)} restored" in msg
+
+
+@pytest.mark.parametrize("phase", ["idle", "settle"])
+def test_a_stuck_function_cannot_outlast_the_restore_budget(monkeypatch, phase):
+    """Each wait is capped by the WHOLE restore's budget, not only by its own ceiling, so the
+    budget is a true bound on the restore (revert-gate.yml's timeout is sized from it)."""
+    _ticking_clock(monkeypatch)
+    monkeypatch.setattr(rt, "LAMBDA_RESTORE_BUDGET_S", 50)
+    monkeypatch.setattr(rt, "LAMBDA_IDLE_WAIT_S", 10 ** 5)
+    monkeypatch.setattr(rt, "LAMBDA_UPDATE_TIMEOUT_S", 10 ** 5)
+    lc = FakeLambda(**{f"stuck_{phase}": {"garden-plants"}})
+    with pytest.raises(rt.RevertError, match="NOT restored"):
+        _restore(monkeypatch, lc, ["garden-plants"])
+    assert len([c for c in lc.calls if c[0] in ("idle", "config")]) < 100
+    assert lc.updated() == ["garden-plants"]  # once the budget has run out, no further retry
 
 
 def test_main_exit_code_on_error(monkeypatch):

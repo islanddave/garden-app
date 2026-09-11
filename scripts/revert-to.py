@@ -184,6 +184,14 @@ LAMBDA_UPDATE_TIMEOUT_S = 90
 _GH_TRANSPORT_ERRORS = (requests.RequestException, ValueError)
 GH_READ_ATTEMPTS = 3
 GH_READ_RETRY_S = 5
+# The rollback's Lambda restore (R2): wait out an update still in progress before each
+# update_function_code, retry ResourceConflictException with bounded backoff (snap.py's L-221
+# pattern), and bound the WHOLE restore, so the worst case is this number, not 26 x per-function
+# worst cases. A function the budget does not reach is reported as not restored, never skipped.
+LAMBDA_IDLE_WAIT_S = 120
+LAMBDA_CONFLICT_ATTEMPTS = 5
+LAMBDA_CONFLICT_BACKOFF_CAP_S = 20
+LAMBDA_RESTORE_BUDGET_S = 39 * 60
 # Worst case, forward + rollback: 2 x (5 min locate + 20 min poll) + 2 x 2 min cancel waits +
 # 26 x 90 s restores + one more SPA leg (25 min) ~= 118 min, plus the pre-revert snap and the DB
 # legs. revert-gate.yml's timeout-minutes is sized from this: a job killed mid-rollback is a
@@ -850,16 +858,50 @@ def _monotonic():
     return time.monotonic()
 
 
-def _wait_lambda_updated(client, fn):
+def _wait_lambda_idle(client, fn, restore_deadline):
+    """Before an update: poll until fn has no update in progress; return its LastUpdateStatus
+    ('InProgress' if LAMBDA_IDLE_WAIT_S or the restore budget ran out first). A forward Lambda
+    leg that failed or was cancelled can leave a function mid-update, and update_function_code on
+    it answers ResourceConflictException — the class snap.py already waits out (L-221)."""
+    waited = 0
+    deadline = min(_monotonic() + LAMBDA_IDLE_WAIT_S, restore_deadline)
+    while True:
+        status = client.get_function_configuration(FunctionName=fn).get("LastUpdateStatus")
+        if status != "InProgress" or waited >= LAMBDA_IDLE_WAIT_S or _monotonic() >= deadline:
+            return status
+        _sleep(LAMBDA_UPDATE_POLL_S)
+        waited += LAMBDA_UPDATE_POLL_S
+
+
+def _update_code_retrying(client, fn, package, restore_deadline):
+    """update_function_code, retrying ResourceConflictException up to LAMBDA_CONFLICT_ATTEMPTS
+    times with capped exponential backoff and an idle wait before each retry. Any other error, or
+    a conflict that outlasts the attempts or the restore budget, raises."""
+    for attempt in range(LAMBDA_CONFLICT_ATTEMPTS):
+        try:
+            return client.update_function_code(FunctionName=fn, ZipFile=package, Publish=True)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") != "ResourceConflictException":
+                raise
+            if attempt + 1 >= LAMBDA_CONFLICT_ATTEMPTS or _monotonic() >= restore_deadline:
+                raise RevertError(f"update of {fn} still conflicting after {attempt + 1} attempt(s): {e}")
+            _wait_lambda_idle(client, fn, restore_deadline)
+            _sleep(min(2 ** attempt, LAMBDA_CONFLICT_BACKOFF_CAP_S))
+    raise RevertError(f"update of {fn} not accepted after {LAMBDA_CONFLICT_ATTEMPTS} attempts")
+
+
+def _wait_lambda_updated(client, fn, restore_deadline=None):
     """Poll until fn's code update settles; return its LastUpdateStatus.
 
     update_function_code returning 200 means the update was ACCEPTED. The swap is asynchronous
     and can still end 'Failed', so a restore that stops at the API call can report a function
     as rolled back while it never moved. Returns 'Successful', 'Failed', or 'InProgress' if the
-    ceiling passed.
+    ceiling (or the restore budget) passed.
     """
     waited = 0
     deadline = _monotonic() + LAMBDA_UPDATE_TIMEOUT_S
+    if restore_deadline is not None:
+        deadline = min(deadline, restore_deadline)
     while True:
         status = client.get_function_configuration(FunctionName=fn).get("LastUpdateStatus")
         if status != "InProgress" or waited >= LAMBDA_UPDATE_TIMEOUT_S:
@@ -892,6 +934,12 @@ def restore_lambda_versions(cfg, manifest, lambda_client=None):
     compensation should put back all it can — and each update is waited on until Lambda says it
     settled. The raise names exactly which functions moved and which did not.
 
+    CONFLICTS + BUDGET (R2). The conditions that cause a rollback leave functions mid-update (a
+    failed or cancelled forward Lambda leg), so each function is first waited on until idle, and
+    a ResourceConflictException is retried with bounded backoff. The whole restore is bounded by
+    LAMBDA_RESTORE_BUDGET_S: once it runs out, every function not yet restored is reported as
+    NOT restored, and one still InProgress is never counted as Successful.
+
     IAM: lambda:GetFunction on the QUALIFIED ARN function:<fn>:<ver> (an unqualified grant does
     not cover a Qualifier read — proven with a federation-token probe 2026-09-11),
     lambda:UpdateFunctionCode and lambda:GetFunctionConfiguration on the function.
@@ -902,10 +950,13 @@ def restore_lambda_versions(cfg, manifest, lambda_client=None):
         return {}
     client = lambda_client or boto3.client("lambda")
     versions = manifest.get("lambda_versions", {})
+    budget_end = _monotonic() + LAMBDA_RESTORE_BUDGET_S
     restored, failed = {}, {}
     for fn in sorted(versions):
         ver = versions[fn]
         try:
+            if _monotonic() >= budget_end:
+                raise RevertError(f"not attempted: the {LAMBDA_RESTORE_BUDGET_S // 60}-min restore budget ran out")
             meta = client.get_function(FunctionName=fn, Qualifier=str(ver))
             loc = meta.get("Code", {}).get("Location")
             if not loc:
@@ -913,8 +964,9 @@ def restore_lambda_versions(cfg, manifest, lambda_client=None):
             pkg = requests.get(loc, timeout=HTTP_TIMEOUT)
             if pkg.status_code != 200 or not pkg.content:
                 raise RevertError(f"download {fn}@{ver} package failed {pkg.status_code}")
-            client.update_function_code(FunctionName=fn, ZipFile=pkg.content, Publish=True)
-            status = _wait_lambda_updated(client, fn)
+            _wait_lambda_idle(client, fn, budget_end)
+            _update_code_retrying(client, fn, pkg.content, budget_end)
+            status = _wait_lambda_updated(client, fn, budget_end)
             if status != "Successful":
                 raise RevertError(f"code update for {fn} ended {status!r}, not 'Successful'")
             restored[fn] = ver
