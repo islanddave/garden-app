@@ -805,10 +805,10 @@ function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon = 
 // A packet that says "start 8 weeks before last frost" arrives as start_indoor_weeks_min = max = 8
 // (parseRange turns a lone number into an equal pair). The spring window was [LF - max, LF - min], so
 // open == close: the packet was actionable on ONE day a year and already `window_closing` at daysLeft
-// 0 on it — "Opens Mar 25" the day before, too_late the day after. 23 live seed-holding varieties had
-// that shape on 2026-09-11: 17 peppers and Moss Curled parsley at 8; German Chamomile, Sensation
-// cosmos, Hales Best, Honey Dew and Summer Savory at 4. The vendor numbers are faithful, so the engine
-// gives a lone number a tolerance rather than the data being rewritten.
+// 0 on it (an 8-week warm packet read "Opens Mar 25" the day before and too_late the day after). 23
+// live seed-holding varieties had that shape on 2026-09-11: 17 peppers and Moss Curled parsley at 8;
+// German Chamomile, Sensation cosmos, Hales Best, Honey Dew and Summer Savory at 4. The vendor numbers
+// are faithful, so the engine gives a lone number a tolerance rather than the data being rewritten.
 //
 // ±1 WEEK, CENTRED. The WIDTH is measured: of the 199 live candidate varieties whose packets DO
 // publish a range, 179 publish exactly two weeks (17 one, 3 four), so N+1..N-1 has the shape vendors
@@ -817,9 +817,12 @@ function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon = 
 // LONG — 41 of the 65 pepper ranges start at 8 (38 say 8-10) and the one other melon says 4-6. It
 // stays centred because (1) it keeps the vendor's own date inside its window with a week of slack,
 // where a floor reading makes that date the LAST day — the same "already closing on the recommended
-// day" symptom this fixes, one step milder; and (2) LF is not when warm crops go out here
-// (soilTempFloor holds them to Jun 1+), so N weeks before LF already delivers an older transplant
-// than N weeks at planting, and a window leaning earlier would compound it. N-1 is floored at 0 so
+// day" symptom this fixes, one step milder; and (2) LF is a frost margin, not a planting date: this
+// catalogue's own packets say to transplant tender crops AFTER it ("transplant after May 20", "early
+// June for Conway hilltown" — the Biquinho and Black Krim golden fixtures in sowEngine.test.js), so N
+// weeks before LF already delivers an older transplant than N weeks at planting, and a window leaning
+// earlier would compound it. soilTempFloor is NOT evidence for this: it clamps only a direct-sow
+// clause that names a soil temperature and never touches a transplant. N-1 is floored at 0 so
 // "start indoors" never lands after last frost (the validator allows 0; nothing live is below 2).
 //
 // SPRING WINDOW ONLY. wMin/wMax keep the vendor's number, because the fall pass below reads wMax as
