@@ -1,8 +1,7 @@
 {
-  "version": "4.128.0",
-  "date": "2026-09-10",
+  "version": "4.128.1",
+  "date": "2026-09-11",
   "highlights": [
-    "The harvest watch no longer goes dark in the middle of September. It was keyed to a sowing-safety date rather than to frost, so every year it stopped flagging tender crops on 18 September — in ten of the last eleven seasons that was between two and six weeks before frost actually arrived. It now runs to the measured first-frost date.",
-    "Logging several care tasks in a row no longer buries Today under a pile of notifications. They stack in a fixed column, cap at three, and repeats of the same kind combine into one."
+    "Sow Now used to give a seed packet with a single indoor-start number (“start 8 weeks before last frost”) a start window just one day long, and marked it as closing on that day. It now gets a two-week window centred on that number, the same width most packets publish. That covers 23 of your packets, 17 of them peppers."
   ]
 }

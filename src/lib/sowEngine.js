@@ -800,6 +800,34 @@ function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon = 
   });
 }
 
+// BUG-SOWSINGLEWEEK-001 — a single-number indoor lead is a POINT, and a point is not a window.
+//
+// A packet that says "start 8 weeks before last frost" arrives as start_indoor_weeks_min = max = 8
+// (parseRange turns a lone number into an equal pair). The spring window was [LF - max, LF - min], so
+// open == close: the packet was actionable on ONE day a year and already `window_closing` at daysLeft
+// 0 on it — "Opens Mar 25" the day before, too_late the day after. 23 live seed-holding varieties had
+// that shape on 2026-09-11: 17 peppers and Moss Curled parsley at 8; German Chamomile, Sensation
+// cosmos, Hales Best, Honey Dew and Summer Savory at 4. The vendor numbers are faithful, so the engine
+// gives a lone number a tolerance rather than the data being rewritten.
+//
+// ±1 WEEK, CENTRED. The WIDTH is measured: of the 199 live candidate varieties whose packets DO
+// publish a range, 179 publish exactly two weeks (17 one, 3 four), so N+1..N-1 has the shape vendors
+// write when they commit to a range. CENTRED is the judgement call, and the evidence against it is
+// recorded rather than hidden: where a single-number crop has range-publishing neighbours they lean
+// LONG — 41 of the 65 pepper ranges start at 8 (38 say 8-10) and the one other melon says 4-6. It
+// stays centred because (1) it keeps the vendor's own date inside its window with a week of slack,
+// where a floor reading makes that date the LAST day — the same "already closing on the recommended
+// day" symptom this fixes, one step milder; and (2) LF is not when warm crops go out here
+// (soilTempFloor holds them to Jun 1+), so N weeks before LF already delivers an older transplant
+// than N weeks at planting, and a window leaning earlier would compound it. N-1 is floored at 0 so
+// "start indoors" never lands after last frost (the validator allows 0; nothing live is below 2).
+//
+// SPRING WINDOW ONLY. wMin/wMax keep the vendor's number, because the fall pass below reads wMax as
+// the V4-MATURITYBASIS nursery LENGTH — a physical duration, not scheduling slop — and widening it
+// would pull every from-transplant fall start a week earlier for no reason. A real range, a one-week
+// one included, is never touched.
+const SINGLE_INDOOR_LEAD_TOLERANCE_WEEKS = 1;
+
 function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   const windows = [];
   if (!methodIncludesIndoor(candidate.start_method)) return windows;
@@ -808,9 +836,12 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   wMin = wMin ?? wMax;
   wMax = wMax ?? wMin;
   if (wMax != null) {
+    const single = wMin === wMax;
+    const openWeeks = single ? wMax + SINGLE_INDOOR_LEAD_TOLERANCE_WEEKS : wMax;
+    const closeWeeks = single ? Math.max(0, wMin - SINGLE_INDOOR_LEAD_TOLERANCE_WEEKS) : wMin;
     windows.push({
-      open: ctx.LF - wMax * 7 * DAY_MS,
-      close: ctx.LF - wMin * 7 * DAY_MS,
+      open: ctx.LF - openWeeks * 7 * DAY_MS,
+      close: ctx.LF - closeWeeks * 7 * DAY_MS,
       action: 'start_indoors',
       cls: 'spring_indoor',
     });
@@ -836,7 +867,9 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   // brassicas that cannot beat a Sep-28 frost is the failure this corrects.
   //
   // `wMax` (normalised above to start_indoor_weeks_max ?? _min) is the deliberate choice over wMin:
-  // a LONGER nursery closes the window EARLIER, the conservative direction in a frost race.
+  // a LONGER nursery closes the window EARLIER, the conservative direction in a frost race. It is the
+  // VENDOR's number, never BUG-SOWSINGLEWEEK-001's widened spring window: that tolerance is slop on a
+  // date and a nursery is a duration. sowEngine.test.js pins the separation.
   // from-sow and NULL (uncurated) shift by zero — byte-identical to the pre-basis behaviour, which
   // is what keeps this a provable no-op for direct-sow crops and for every uncurated crop type.
   // V4-FALLINDOORHARDY-001 — the follow-up BUG-FROSTANCHORWRONG-001 filed. This pass used to be keyed

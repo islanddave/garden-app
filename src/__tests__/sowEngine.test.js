@@ -2497,3 +2497,90 @@ describe('V4-FALLINDOORHARDY-001 fall indoor pass — hardiness, not just season
     expect((toMs(HARDY_GROWTH_STOP_MONTH_DAY) - maturity) / D).toBe(FALL_SLOWDOWN_DAYS);
   });
 });
+
+// ── BUG-SOWSINGLEWEEK-001 ─────────────────────────────────────────────────────
+// A single-number indoor lead ("start 8 weeks before last frost" -> min = max = 8) used to open a
+// ONE-DAY spring window: actionable on one date a year and already `window_closing` on it. The engine
+// now reads a lone number N as LF-(N+1)w .. LF-(N-1)w, spring window only. 23 live varieties carried
+// the shape on 2026-09-11, 17 of them peppers at 8 weeks — which is what `pepper8` models.
+describe('BUG-SOWSINGLEWEEK-001 — a single-number indoor lead opens a real window, not one day', () => {
+  // LF 2026-05-20: 9 wks = Mar 18, 8 wks = Mar 25 (the vendor's own date), 7 wks = Apr 1.
+  const indoor = (min, max, over = {}) => synth({
+    start_method: 'start_indoors', start_indoor_weeks_min: min, start_indoor_weeks_max: max,
+    sow_season: 'warm', // warm = no fall pass, so the spring window is the only window
+    ...over,
+  });
+  const pepper8 = (over) => indoor(8, 8, over);
+
+  // Days in 2026 on which the card is actionable at all — the quantity the defect collapsed to 1.
+  function actionableDays(candidate) {
+    let n = 0;
+    for (let t = Date.UTC(2026, 0, 1); t <= Date.UTC(2026, 11, 31); t += 86400000) {
+      const { bucket } = run(candidate, new Date(t).toISOString().slice(0, 10));
+      if (bucket === 'start_indoors_now' || bucket === 'window_closing') n += 1;
+    }
+    return n;
+  }
+
+  it('is actionable for 15 days a year, not 1', () => {
+    // MUTATION: put the window back on [LF - wMax, LF - wMin] and this reads 1.
+    expect(actionableDays(pepper8())).toBe(15);
+  });
+
+  it('opens a week before the vendor date and closes a week after it', () => {
+    const before = run(pepper8(), '2026-03-17');
+    expect(before.bucket).toBe('hold');
+    expect(before.entry.reopensOn).toBe('2026-03-18');
+    const open = run(pepper8(), '2026-03-18');
+    expect(open.bucket).toBe('start_indoors_now');
+    expect(open.entry.daysLeft).toBe(14);
+    expect(open.entry.windowLabel).toBe('Start indoors through Apr 1');
+    // The vendor's own date sits inside the window with a week to spare — no longer its last day.
+    expect(run(pepper8(), '2026-03-25').entry.daysLeft).toBe(7);
+    const last = run(pepper8(), '2026-04-01');
+    expect(last.bucket).toBe('window_closing');
+    expect(last.entry.daysLeft).toBe(0);
+    expect(run(pepper8(), '2026-04-02').bucket).toBe('too_late');
+  });
+
+  it('carries the same urgency split as any two-week vendor range', () => {
+    // daysLeft 14..11 -> start_indoors_now, 10..0 -> window_closing: identical to the 6-8 case in
+    // 'window math boundaries', so a single number reads like a range rather than a special case.
+    expect(run(pepper8(), '2026-03-21').bucket).toBe('start_indoors_now'); // 11 left
+    expect(run(pepper8(), '2026-03-22').bucket).toBe('window_closing');    // 10 left
+  });
+
+  it('leaves a real range alone — a one-week range included', () => {
+    // MUTATION: apply the tolerance to every spring window and 7-8 widens to 6-9 (22 days).
+    expect(actionableDays(indoor(7, 8))).toBe(8);   // Mar 25 .. Apr 1
+    expect(actionableDays(indoor(6, 8))).toBe(15);  // Mar 25 .. Apr 8
+  });
+
+  it('a lone min or a lone max is the same single number', () => {
+    const label = (c) => run(c, '2026-03-18').entry.windowLabel;
+    expect(label(indoor(8, null))).toBe('Start indoors through Apr 1');
+    expect(label(indoor(null, 8))).toBe('Start indoors through Apr 1');
+  });
+
+  it('neon-driver strings take the same path', () => {
+    expect(actionableDays(indoor('8', '8'))).toBe(15);
+  });
+
+  it('floors N-1 at zero — a 0-week lead never lands after last frost', () => {
+    // MUTATION: drop the Math.max(0, …) and the close moves to LF + 7d (15 days, through May 27).
+    expect(actionableDays(indoor(0, 0))).toBe(8);   // May 13 .. May 20
+    expect(run(indoor(0, 0), '2026-05-21').bucket).toBe('too_late');
+  });
+
+  it('the fall nursery stays the VENDOR number, not the widened window', () => {
+    // wMax doubles as the V4-MATURITYBASIS nursery length. cool / not hardy / from-transplant /
+    // 4 wks / dtm 60: latest = FF + (28 - 60 - 14 - 28) = Sep 28 - 74d = Jul 16, open Jun 18.
+    // MUTATION: feed the widened open-weeks (5) into nurseryDays and latest moves to Jul 9, so on
+    // Jul 14 the window has closed; feed the narrowed close-weeks (3) in and it reads "through Jul 23".
+    const fall = indoor(4, 4, { sow_season: 'cool', days_to_maturity_max: 60, dtm_basis: 'from-transplant' });
+    const { bucket, entry } = run(fall, '2026-07-14');
+    expect(bucket).toBe('window_closing');
+    expect(entry.windowLabel).toBe('Start indoors through Jul 16');
+    expect(entry.daysLeft).toBe(2);
+  });
+});
