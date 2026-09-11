@@ -319,7 +319,7 @@ def test_publish_lambda_versions():
     out, uncaptured = snap.publish_lambda_versions(cfg, lambda_client=client)
     # OPS-REVERTRESTORE-001: the WHOLE release set, not the 11 snap used to hand-keep.
     assert set(out) == set(snap.lambda_fleet.release_functions())
-    assert len(out) == 26
+    assert len(out) == len(snap.lambda_fleet.release_functions())  # follows the fleet (was a literal 26)
     assert "garden-harvests" in out and "garden-daily-plan" in out  # two the old list skipped
     assert all(v == "7" for v in out.values())
     assert uncaptured == {}

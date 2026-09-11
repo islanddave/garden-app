@@ -7,9 +7,11 @@ coverage — a pair the simulator never returned, an empty response, a simulator
 bad config — plus the OPS-REVERTRESTORE-001 scope: every release function, the qualified package
 read, no CloudFront, and parity with the AWS calls the revert actually makes.
 """
+import ast
 import importlib.util
 import os
-import re
+
+import boto3
 
 import lambda_fleet
 
@@ -30,6 +32,15 @@ FN = "arn:aws:lambda:us-east-1:769788341849:function:"
 OLD11 = ["garden-dashboard", "garden-events", "garden-favorites", "garden-inventory-items",
          "garden-locations", "garden-photos", "garden-plants", "garden-projects",
          "garden-varieties", "garden-app-events", "garden-achievements"]
+
+# Counts FOLLOW THE FLEET (R2 item 8): adding a Lambda must not red a literal here. What the revert
+# and its rollback need per release function is written out HERE on purpose — deriving it from
+# pri.LAMBDA_ACTIONS would let a dropped action shrink both sides of every count.
+REVERT_LAMBDA_ACTIONS = ("lambda:PublishVersion", "lambda:GetFunctionConfiguration", "lambda:UpdateFunctionCode")
+REVERT_QUALIFIED_ACTIONS = ("lambda:GetFunction",)
+SNAPSHOT_OBJECTS = 2  # the target's manifest and its dump
+N_FN = len(lambda_fleet.release_functions())
+N_PAIRS = SNAPSHOT_OBJECTS + N_FN * (len(REVERT_LAMBDA_ACTIONS) + len(REVERT_QUALIFIED_ACTIONS))
 
 
 def fake_simulator(overrides=None, drop=None):
@@ -85,8 +96,9 @@ def checked_pairs():
 # --- the required set is the real one (a guard that checks nothing is vacuous) ---
 
 def test_required_set_is_106_pairs():
-    """2 snapshot objects + 3 unqualified actions x 26 functions + 1 qualified read x 26."""
-    assert len(checked_pairs()) == 106
+    """2 snapshot objects + 3 unqualified actions x N functions + 1 qualified read x N (106 at 26
+    functions when this was written; derived since R2 item 8)."""
+    assert len(checked_pairs()) == N_PAIRS
 
 
 def test_snapshot_objects_are_required():
@@ -127,7 +139,7 @@ def test_s3_and_lambda_are_not_cross_producted():
 def test_all_allowed_passes(capsys):
     rc = pri.main(env=dict(ENV), simulate_fn=fake_simulator())
     assert rc == 0
-    assert "preflight OK — all 106 required actions allowed" in capsys.readouterr().out
+    assert f"preflight OK — all {N_PAIRS} required actions allowed" in capsys.readouterr().out
 
 
 # --- direction 2: one pair denied -> FAIL, naming exactly it ---
@@ -138,8 +150,8 @@ def test_single_implicit_deny_fails_and_names_exactly_that_pair(capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert f"::error::DENIED (implicitDeny): lambda:UpdateFunctionCode on {FN}garden-harvests" in out
-    assert "1 of 106 required action(s) not allowed" in out
-    assert out.count("::error::DENIED") == 1  # the 105 allowed pairs are not smeared into it
+    assert f"1 of {N_PAIRS} required action(s) not allowed" in out
+    assert out.count("::error::DENIED") == 1  # the allowed pairs are not smeared into it
 
 
 def test_unqualified_only_grant_fails_the_qualified_package_read(capsys):
@@ -151,7 +163,7 @@ def test_unqualified_only_grant_fails_the_qualified_package_read(capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert f"::error::DENIED (implicitDeny): lambda:GetFunction on {FN}garden-plants:1" in out
-    assert "26 of 106 required action(s) not allowed" in out
+    assert f"{N_FN * len(REVERT_QUALIFIED_ACTIONS)} of {N_PAIRS} required action(s) not allowed" in out
 
 
 def test_todays_live_role_is_refused(capsys):
@@ -163,8 +175,11 @@ def test_todays_live_role_is_refused(capsys):
     rc = pri.main(env=dict(ENV), simulate_fn=exact_match_simulator(granted))
     out = capsys.readouterr().out
     assert rc == 1
-    # 15 x (PublishVersion + GetFunctionConfiguration) + 26 UpdateFunctionCode + 26 qualified reads
-    assert "82 of 106 required action(s) not allowed" in out
+    assert set(OLD11) <= set(lambda_fleet.release_functions())  # the count below assumes it
+    # every release function outside the old 11 lacks PublishVersion + GetFunctionConfiguration, and
+    # every one lacks UpdateFunctionCode and the qualified read (82 of 106 at 26 functions)
+    denied = (N_FN - len(OLD11)) * 2 + N_FN + N_FN
+    assert f"{denied} of {N_PAIRS} required action(s) not allowed" in out
 
 
 def test_explicit_deny_also_fails(capsys):
@@ -183,12 +198,12 @@ def test_omitted_action_counts_as_missing(capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert "::error::DENIED (MISSING): lambda:PublishVersion" in out
-    assert "26 of 106 required action(s) not allowed" in out
+    assert f"{N_FN} of {N_PAIRS} required action(s) not allowed" in out
 
 
 def test_empty_response_denies_everything():
     denials, checked = pri.evaluate([{}, {}, {}], groups())
-    assert len(denials) == len(checked) == 106
+    assert len(denials) == len(checked) == N_PAIRS
     assert {d for _, _, d in denials} == {"MISSING"}
 
 
@@ -279,19 +294,54 @@ AWS_METHOD_ACTIONS = {
 }
 
 
-def _aws_calls(filename, receivers):
+def _boto3_ops(*services):
+    """Every method name a boto3 client of `services` exposes for an API operation, plus S3's
+    injected transfer helpers. Built offline: constructing a client makes no AWS call."""
+    names = set()
+    for svc in services:
+        c = boto3.client(svc, region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
+        names |= set(c.meta.method_to_api_mapping)
+        if svc == "s3":
+            names |= {"download_file", "upload_file", "download_fileobj", "upload_fileobj", "copy"}
+    return names
+
+
+def _ast_of(filename):
     with open(os.path.join(HERE, filename)) as fh:
-        src = fh.read()
-    return set(re.findall(r"\b(?:%s)\.([a-z_]+)\(" % "|".join(receivers), src)), src
+        return ast.parse(fh.read(), filename)
+
+
+def _aws_calls(filename, services):
+    """Every call `<anything>.<op>(...)` in filename whose method is an operation of `services`,
+    WHATEVER the receiver is called (R2 item 8). The old scan matched the receiver names client./s3.,
+    so a call through lambda_client or lc escaped it — proven by mutant R2-M8a, which survived it."""
+    ops = _boto3_ops(*services)
+    return {n.func.attr for n in ast.walk(_ast_of(filename))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ops}
+
+
+def _boto3_client_services(filename):
+    """The service named by every boto3.client(...) in filename, positional or service_name=;
+    '?' when it is not a literal."""
+    out = set()
+    for n in ast.walk(_ast_of(filename)):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "client"
+                and isinstance(n.func.value, ast.Name) and n.func.value.id == "boto3"):
+            arg = n.args[0] if n.args else next((k.value for k in n.keywords if k.arg == "service_name"), None)
+            out.add(arg.value if isinstance(arg, ast.Constant) else "?")
+    return out
 
 
 def test_every_aws_call_the_revert_makes_is_asserted_by_the_preflight():
     """L1's gap was an AWS call the role could not make; P2 was a call shape nobody simulated.
-    Any boto3 call added to revert-to.py, or to snap.py's Lambda client, must be mapped here AND
-    asserted by the preflight (AND granted in snap-ops), or this fails."""
+    Any Lambda or S3 call added to revert-to.py, through ANY receiver, or any Lambda call added to
+    snap.py, must be mapped here AND asserted by the preflight (AND granted in snap-ops), or this
+    fails. revert-to.py may create clients for lambda and s3 only."""
     group_actions = {"s3": [pri.S3_READ], "lambda": pri.LAMBDA_ACTIONS, "qualified": pri.QUALIFIED_ACTIONS}
-    rt_calls, rt_src = _aws_calls("revert-to.py", ["client", "s3"])
-    snap_calls, _ = _aws_calls("snap.py", ["client"])
+    assert _boto3_client_services("revert-to.py") <= {"lambda", "s3"}, \
+        "revert-to.py grew a client for another AWS service (or a non-literal one) the snap role cannot use"
+    rt_calls = _aws_calls("revert-to.py", ("lambda", "s3"))
+    snap_calls = _aws_calls("snap.py", ("lambda",))
     assert {"get_object", "download_file", "get_function", "update_function_code",
             "get_function_configuration"} <= rt_calls, "the scan stopped seeing revert-to.py's AWS calls"
     assert {"publish_version", "get_function_configuration"} <= snap_calls
@@ -299,4 +349,3 @@ def test_every_aws_call_the_revert_makes_is_asserted_by_the_preflight():
         assert m in AWS_METHOD_ACTIONS, f"unmapped AWS call {m}(): map it AND add it to the preflight + snap-ops"
         action, grp = AWS_METHOD_ACTIONS[m]
         assert action in group_actions[grp], f"{m}() needs {action} ({grp}) but the preflight does not assert it"
-    assert 'client("cloudfront")' not in rt_src, "revert-to.py grew a CloudFront client the snap role cannot use"

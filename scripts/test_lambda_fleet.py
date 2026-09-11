@@ -33,8 +33,11 @@ def test_release_set_equals_the_deploy_matrix():
 
 
 def test_release_set_is_all_26_not_the_old_11():
+    """26 when this was written. The count follows the fleet (R2 item 8): it must equal the deploy
+    matrix and the drift-guard manifest, never a number frozen here, because adding a Lambda is a
+    routine change that should red nothing but a genuine mismatch."""
     fns = lambda_fleet.release_functions()
-    assert len(fns) == 26
+    assert len(fns) == len(_deploy_matrix()) == len(clc.load_manifest())
     # four of the 15 the hand-kept snap list never covered, and one it did
     for fn in ("garden-harvests", "garden-daily-plan", "garden-photocdn-derivative",
                "garden-facebook-share", "garden-plants"):
