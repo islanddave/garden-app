@@ -60,8 +60,14 @@ name: revert-gate
 # NOT restored: a promote snaps before its own Lambda deploy, so that manifest holds the PREVIOUS release's
 # Lambda code. On any failure the rollback restores every release function from the PRE-REVERT snap (taken
 # minutes earlier, so it is what prod was running) and rebuilds the SPA from the restored tree.
-# timeout-minutes below is sized for forward + rollback worst case (arithmetic in revert-to.py): a job killed
-# mid-rollback leaves prod split, which is worse than any failure the script can report.
+# timeout-minutes below is sized for forward + rollback worst case: a job killed mid-rollback leaves prod split,
+# which is worse than any failure the script can report. JOB BUDGET (R2): the first step writes the job's start to
+# REVERT_JOB_STARTED_AT, and the revert step passes timeout-minutes again as REVERT_JOB_BUDGET_MIN (the two must be
+# equal; scripts/test_revert_to.py parses this file and checks). revert-to.py refuses before the pre-revert snap
+# unless that budget covers post_checkpoint_worst_case_s() + JOB_START_ALLOWANCE_S (164 min on 2026-09-11, every
+# poll loop and GitHub read counted at its ceiling), and again at the checkpoint, before the first mutation, unless
+# that much time is still left. A copy of this file WITHOUT the marker — main's, until a promote carries this one —
+# makes every revert refuse, so arming IAM Stage 2 early cannot run a revert under the old 45-minute job.
 #
 # SUPPORTED TARGETS (OPS-REVERTRESTORE-001 R2, 2026-09-11). Not every snapshot can be reverted to. Before the
 # pre-revert snap, revert-to.py reads the TARGET's own .github/workflows at its tagged commit and refuses it when
@@ -107,8 +113,11 @@ jobs:
   revert:
     runs-on: ubuntu-latest
     environment: production-destructive
-    timeout-minutes: 150  # forward redeploys + a full rollback, worst case (RESTORE LEGS above)
+    timeout-minutes: 180  # = REVERT_JOB_BUDGET_MIN below; forward redeploys + a full rollback (JOB BUDGET above)
     steps:
+      - name: Record the job's start (revert-to.py measures the time left from it)
+        run: echo "REVERT_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Validate inputs (injection-safe — read from env, never interpolated into run)
         env:
           TARGET_VERSION: ${{ inputs.target_version }}
@@ -205,6 +214,7 @@ jobs:
           PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}
           SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
           CF_DIST: E3FAJTXAORQYDT
+          REVERT_JOB_BUDGET_MIN: "180"  # MUST equal timeout-minutes above (JOB BUDGET in the header)
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/revert-to.py

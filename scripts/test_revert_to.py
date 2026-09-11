@@ -7,6 +7,8 @@ import os
 import sys
 import types
 
+from datetime import datetime, timezone
+
 import pytest
 import requests as real_requests
 
@@ -426,8 +428,9 @@ class FakeActions:
 
     def __init__(self, fr, events, lambda_legs=None, spa_conclusions=("success",),
                  spa_completes=True, spa_job=True, run_sha=None, state="active",
-                 env_rules=None, seed_runs=()):
+                 env_rules=None, seed_runs=(), skew_s=0):
         self.fr, self.events = fr, events
+        self.skew_s = skew_s  # GitHub's clock minus the runner's, stamped on every dispatched run
         self.main_sha = None
         self.dispatched, self.cancelled, self.runs = [], [], {}
         self.lambda_legs = lambda_legs
@@ -469,7 +472,8 @@ class FakeActions:
         rid = 99 + len(self.dispatched)
         run = {"id": rid, "workflow": wf, "head_sha": self.run_sha or self.main_sha,
                "event": "workflow_dispatch", "head_branch": "main",
-               "created_at": CREATED, "status": "completed", "conclusion": "success"}
+               "created_at": datetime.fromtimestamp(rt._now() + self.skew_s, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "status": "completed", "conclusion": "success"}
         if wf == "deploy.yml":
             run["conclusion"] = self.spa_conclusions.pop(0) if self.spa_conclusions else "success"
             if not self.spa_completes:
@@ -531,9 +535,23 @@ def serve_target_workflows(fr, files, sha="a" * 40):
         "encoding": "base64", "content": base64.b64encode(files[url.rsplit("/blob-", 1)[1]].encode()).decode()}))
 
 
-def prod_world(monkeypatch, prerevert=None, target_files=None, **actions_kw):
-    """Everything run() talks to, prod mode, fast path. -> (cfg, s3, fr, gh, events, lc)."""
-    cfg = rt.Config(env=base_env())
+def job_env():
+    """What revert-gate.yml passes: a budget that covers the worst case, and the job's start."""
+    need = rt.post_checkpoint_worst_case_s() + rt.JOB_START_ALLOWANCE_S
+    return {"REVERT_JOB_BUDGET_MIN": str(-(-need // 60) + 15),
+            "REVERT_JOB_STARTED_AT": str(int(rt._gh_time(CREATED)))}
+
+
+def prod_world(monkeypatch, prerevert=None, target_files=None, env_over=None, **actions_kw):
+    """Everything run() talks to, prod mode, fast path. -> (cfg, s3, fr, gh, events, lc).
+    env_over={key: value | None}: override (None = remove) what the job passes."""
+    env = base_env(**job_env())
+    for k, v in (env_over or {}).items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
+    cfg = rt.Config(env=env)
     s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
     events = []
@@ -878,6 +896,74 @@ def test_a_run_list_that_cannot_be_read_is_refused_before_the_snap(monkeypatch):
     with pytest.raises(rt.RevertError, match="cannot list promote-gate.yml runs"):
         rt.run(cfg, s3=s3, lambda_client=lc)
     _refused_before_the_snap(events, gh)
+
+
+# --- R2 item 3: never cross the checkpoint without the time to finish a rollback ---------------
+
+def test_the_worst_case_is_the_documented_sum_of_its_legs():
+    """QA testability 1: recomputed leg by leg from the module constants, so a changed ceiling or a
+    dropped leg shows up here — and, through the next test, in revert-gate.yml's timeout."""
+    read = rt.GH_READ_ATTEMPTS * rt.GH_READ_TIMEOUT_S + (rt.GH_READ_ATTEMPTS - 1) * rt.GH_READ_RETRY_S
+    leg = {"dispatch": rt.HTTP_TIMEOUT,
+           "find the run": rt.RUN_LOCATE_ATTEMPTS * rt.RUN_LOCATE_INTERVAL_S + read + rt.RUN_LOCATE_INTERVAL_S,
+           "poll it": rt.RUN_POLL_CEILING_S + 2 * read + rt.RUN_POLL_INTERVAL_S}
+    neon, code = 3 * rt.HTTP_TIMEOUT, 5 * rt.HTTP_TIMEOUT
+    forward = {"db": neon, "code": code, "lambda leg": sum(leg.values()), "spa leg": sum(leg.values())}
+    rollback = {"stop strays": 2 * (3 * read + rt.CANCEL_WAIT_S + rt.RUN_POLL_INTERVAL_S), "db": neon,
+                "code": code, "lambdas": rt.LAMBDA_RESTORE_BUDGET_S + rt.LAMBDA_CALL_WORST_S,
+                "spa leg": sum(leg.values())}
+    assert rt.post_checkpoint_worst_case_s() == sum(forward.values()) + sum(rollback.values())
+
+
+def test_revert_gate_passes_a_budget_equal_to_its_timeout_that_covers_the_worst_case():
+    import yaml
+    job = yaml.safe_load(open(os.path.join(WF_DIR, "revert-gate.yml")))["jobs"]["revert"]
+    step = next(s for s in job["steps"] if "scripts/revert-to.py" in s.get("run", ""))
+    marker = int(step["env"]["REVERT_JOB_BUDGET_MIN"])
+    assert marker == job["timeout-minutes"]
+    assert marker * 60 >= rt.post_checkpoint_worst_case_s() + rt.JOB_START_ALLOWANCE_S
+    first = job["steps"][0].get("run", "")  # the start is recorded as early as a step can
+    assert 'echo "REVERT_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"' in first
+
+
+@pytest.mark.parametrize("over, why", [
+    ({"REVERT_JOB_BUDGET_MIN": None}, "missing or not integers"),
+    ({"REVERT_JOB_STARTED_AT": None}, "missing or not integers"),
+    ({"REVERT_JOB_BUDGET_MIN": "three hours"}, "missing or not integers"),
+    ({"REVERT_JOB_BUDGET_MIN": "45"}, "job budget 45 min is below"),
+    ({"REVERT_JOB_STARTED_AT": str(int(rt._gh_time(CREATED)) - 4 * 3600)}, "min left in the job"),
+])
+def test_a_job_that_cannot_afford_a_rollback_is_refused_before_the_snap(monkeypatch, over, why):
+    """Marker absent = main's revert-gate.yml today (45 min, no marker) running dev's script: the
+    reason an early IAM Stage 2 is harmless. 45 = that same file with a marker."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch, env_over=over)
+    with pytest.raises(rt.RevertError, match=f"before the pre-revert snap: .*{why}"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    _refused_before_the_snap(events, gh)
+
+
+@pytest.mark.parametrize("spare", [-60, 0])
+def test_the_time_left_is_measured_again_at_the_checkpoint(monkeypatch, spare):
+    """The pre-revert snap and the DB staging are unbounded. A job that crosses the checkpoint with
+    less than the worst case left can be killed mid-rollback, so it refuses there, before the first
+    mutation. spare = seconds left at the checkpoint beyond the worst case."""
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    clock = {"now": rt._gh_time(CREATED)}
+    monkeypatch.setattr(rt, "_now", lambda: clock["now"])
+    left = int(cfg.job_budget_min) * 60 - rt.JOB_START_ALLOWANCE_S
+
+    def slow_snap(cfg2):
+        events.append(("snap",))
+        clock["now"] += left - rt.post_checkpoint_worst_case_s() - spare
+        return full_prerevert()
+    monkeypatch.setattr(rt, "prerevert_snap", slow_snap)
+    if spare < 0:
+        with pytest.raises(rt.RevertError, match=r"at the checkpoint: \d+ min left in the job"):
+            rt.run(cfg, s3=s3, lambda_client=lc)
+        assert ("snap",) in events
+        assert not [e for e in events if e[0] in ("neon_restore", "commit", "ff_main", "dispatch")]
+    else:
+        assert rt.run(cfg, s3=s3, lambda_client=lc)["spa_run"] == 101
 
 
 # --- R2 item 2: refuse targets whose own workflows make the revert unsafe ----------------------

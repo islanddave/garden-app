@@ -71,6 +71,11 @@ ENV CONTRACT (read at runtime; no secrets hardcoded):
   CONFIRM_DATA_LOSS   must equal the literal string "yes" to perform the prod
                       DB reset (defense-in-depth on top of the env approval —
                       reverting prod DB is real data loss for live users).
+  REVERT_JOB_BUDGET_MIN  revert-gate.yml's timeout-minutes, passed again (R2 item 3).
+  REVERT_JOB_STARTED_AT  the job's start, epoch seconds (revert-gate.yml's first step).
+                      Without both, or with a budget below post_checkpoint_worst_case_s(),
+                      a prod revert refuses before the pre-revert snap; with too little of
+                      the budget left, it refuses again at the checkpoint.
 
 REHEARSAL CONTRACT (staging dry-run; honored ONLY together):
   REHEARSAL_MODE      "1" enables the safe dry-run. Code legs are redirected to
@@ -113,6 +118,7 @@ import base64
 import fnmatch
 import inspect
 import json
+import math
 import os
 import re
 import subprocess
@@ -184,6 +190,7 @@ LAMBDA_UPDATE_TIMEOUT_S = 90
 _GH_TRANSPORT_ERRORS = (requests.RequestException, ValueError)
 GH_READ_ATTEMPTS = 3
 GH_READ_RETRY_S = 5
+GH_READ_TIMEOUT_S = 20  # per attempt; the API answers in well under a second, and item 3's budget counts it
 # The rollback's Lambda restore (R2): wait out an update still in progress before each
 # update_function_code, retry ResourceConflictException with bounded backoff (snap.py's L-221
 # pattern), and bound the WHOLE restore, so the worst case is this number, not 26 x per-function
@@ -192,10 +199,13 @@ LAMBDA_IDLE_WAIT_S = 120
 LAMBDA_CONFLICT_ATTEMPTS = 5
 LAMBDA_CONFLICT_BACKOFF_CAP_S = 20
 LAMBDA_RESTORE_BUDGET_S = 39 * 60
-# Worst case, forward + rollback: 2 x (5 min locate + 20 min poll) + 2 x 2 min cancel waits +
-# 26 x 90 s restores + one more SPA leg (25 min) ~= 118 min, plus the pre-revert snap and the DB
-# legs. revert-gate.yml's timeout-minutes is sized from this: a job killed mid-rollback is a
-# durable split-brain, which is worse than any failure this script can report.
+LAMBDA_CALL_WORST_S = 5 * 60  # one function's calls still in flight when that budget runs out
+# The job budget (R2 item 3). post_checkpoint_worst_case_s() is the wall-clock ceiling of
+# everything after the checkpoint; revert-gate.yml passes its timeout-minutes as
+# REVERT_JOB_BUDGET_MIN and the job's start as REVERT_JOB_STARTED_AT, and require_job_budget()
+# refuses unless the job can still afford that ceiling. A job killed mid-rollback is a durable
+# split-brain, which is worse than any failure this script can report.
+JOB_START_ALLOWANCE_S = 120  # the job's clock starts before its first step can record the time
 
 
 class RevertError(Exception):
@@ -225,6 +235,10 @@ class Config:
         self.branch_ttl_days = int(env.get("REVERT_BRANCH_TTL_DAYS", "7"))
         self.cf_dist = env.get("CF_DIST", "E3FAJTXAORQYDT")
         self.confirm_data_loss = env.get("CONFIRM_DATA_LOSS", "")
+        # R2 item 3: revert-gate.yml's timeout-minutes and the job's start (epoch seconds). Kept raw;
+        # require_job_budget() parses them, so a bad value refuses with a reason instead of crashing.
+        self.job_budget_min = env.get("REVERT_JOB_BUDGET_MIN", "")
+        self.job_started_at = env.get("REVERT_JOB_STARTED_AT", "")
         # --- rehearsal redirect (REHEARSAL_MODE=1 only) ---------------------
         # Outside rehearsal the code legs MUST target the real dev/main refs.
         # In rehearsal they are redirected to throwaway revert-rehearsal-* refs
@@ -1206,7 +1220,7 @@ def _gh_read(cfg, path):
     escapes a poller as an exception."""
     for attempt in range(GH_READ_ATTEMPTS):
         try:
-            r = requests.get(_gh(cfg, path), headers=gh_headers(cfg), timeout=HTTP_TIMEOUT)
+            r = requests.get(_gh(cfg, path), headers=gh_headers(cfg), timeout=GH_READ_TIMEOUT_S)
             return r.json() if r.status_code == 200 else None
         except _GH_TRANSPORT_ERRORS:
             if attempt + 1 < GH_READ_ATTEMPTS:
@@ -1258,7 +1272,7 @@ def _cancel_run(cfg, run_id):
     for attempt in range(GH_READ_ATTEMPTS):
         try:
             return requests.post(_gh(cfg, f"/actions/runs/{run_id}/cancel"), headers=gh_headers(cfg),
-                                 timeout=HTTP_TIMEOUT)
+                                 timeout=GH_READ_TIMEOUT_S)
         except _GH_TRANSPORT_ERRORS:
             if attempt + 1 < GH_READ_ATTEMPTS:
                 _sleep(GH_READ_RETRY_S)
@@ -1440,6 +1454,60 @@ def rollback(cfg, prerevert_result, lambda_client=None, progress=None):
 
 # --- orchestration -----------------------------------------------------------
 
+def post_checkpoint_worst_case_s():
+    """Wall-clock ceiling, in seconds, of everything after the checkpoint when the forward legs
+    fail as late as they can and the full rollback runs. From the module constants only:
+      - a GitHub read (_gh_read, _cancel_run) costs at most GH_READ_ATTEMPTS x GH_READ_TIMEOUT_S
+        plus the retry sleeps; any other request (Neon, a git write, a dispatch) HTTP_TIMEOUT;
+      - every poll loop stops on _monotonic() as well as its sleep count, so it overruns its own
+        ceiling by at most one iteration: its reads plus one sleep;
+      - the Lambda restore is bounded as a whole: LAMBDA_RESTORE_BUDGET_S, plus the calls of the
+        one function in flight when it runs out.
+    revert-gate.yml's timeout-minutes (= REVERT_JOB_BUDGET_MIN) must cover this plus
+    JOB_START_ALLOWANCE_S; test_revert_to.py parses the workflow and checks it."""
+    read = GH_READ_ATTEMPTS * GH_READ_TIMEOUT_S + (GH_READ_ATTEMPTS - 1) * GH_READ_RETRY_S
+    locate = RUN_LOCATE_ATTEMPTS * RUN_LOCATE_INTERVAL_S + read + RUN_LOCATE_INTERVAL_S
+    poll = RUN_POLL_CEILING_S + 2 * read + RUN_POLL_INTERVAL_S  # an iteration reads jobs and run
+    leg = HTTP_TIMEOUT + locate + poll                           # dispatch, find the run, poll it
+    neon = 3 * HTTP_TIMEOUT      # the restore, then the preserve branch's expiry stamp (list, patch)
+    code = 5 * HTTP_TIMEOUT      # read the commit and dev, write the commit and dev, FF main
+    forward = neon + code + leg + leg                            # the Lambda leg, then the SPA leg
+    cancel = 2 * (3 * read + CANCEL_WAIT_S + RUN_POLL_INTERVAL_S)  # per workflow: list, cancel, wait
+    restore = LAMBDA_RESTORE_BUDGET_S + LAMBDA_CALL_WORST_S
+    rollback = cancel + neon + code + restore + leg              # ... and rebuild the restored SPA
+    return forward + rollback
+
+
+def require_job_budget(cfg, where):
+    """R2 item 3. Refuse unless the job's budget covers post_checkpoint_worst_case_s() AND at least
+    that much of it is still left. Run before the pre-revert snap and again at the checkpoint,
+    before the first mutation: the snap and the DB staging are unbounded, so the time left is
+    measured, never assumed. A revert-gate.yml without the marker — main's copy until a promote
+    carries R2's (45 min, no marker) — makes every revert refuse here, which is what makes an
+    early IAM Stage 2 harmless. Rehearsals skip it: they never reach a redeploy or restore leg."""
+    if cfg.rehearsal:
+        return
+    worst = post_checkpoint_worst_case_s()
+    try:
+        budget_s = int(cfg.job_budget_min) * 60
+        started = int(cfg.job_started_at)
+    except (TypeError, ValueError):
+        raise RevertError(
+            f"{where}: REVERT_JOB_BUDGET_MIN={cfg.job_budget_min!r} / REVERT_JOB_STARTED_AT="
+            f"{cfg.job_started_at!r} missing or not integers; revert-gate.yml must pass both. Refusing: "
+            "without them the time a rollback needs cannot be proven")
+    if budget_s < worst + JOB_START_ALLOWANCE_S:
+        raise RevertError(
+            f"{where}: job budget {budget_s // 60} min is below the post-checkpoint worst case "
+            f"{math.ceil((worst + JOB_START_ALLOWANCE_S) / 60)} min (forward legs + a full rollback); "
+            "refusing. Raise revert-gate.yml's timeout-minutes and REVERT_JOB_BUDGET_MIN together")
+    left = started + budget_s - JOB_START_ALLOWANCE_S - _now()
+    if left < worst:
+        raise RevertError(
+            f"{where}: {max(0, int(left)) // 60} min left in the job, below the {math.ceil(worst / 60)} min "
+            "the forward legs plus a full rollback can take; refusing before anything else is touched")
+
+
 def require_complete_rollback_capture(cfg, prerevert_result):
     """Pre-checkpoint: rollback() can only put back the functions the pre-revert snap captured.
 
@@ -1510,6 +1578,7 @@ def run(cfg, s3=None, lambda_client=None):
     # R2 — every refusal that needs no snapshot runs BEFORE the pre-revert snap: a revert refused
     # after it strands a permanent PREREVERT tag, a Neon branch, a dump and up to 26 published
     # Lambda versions.
+    require_job_budget(cfg, "before the pre-revert snap")
     require_dispatchable(cfg)
     require_no_deploy_in_flight(cfg)
     require_revertible_target(cfg, manifest)
@@ -1540,6 +1609,10 @@ def run(cfg, s3=None, lambda_client=None):
             _key, expected_counts = restore_dump_into_branch(s3, cfg, manifest, uri)
             validate_branch(cfg, uri, expected_counts=expected_counts)
             source_lsn = None
+
+        # R2 item 3 — the pre-revert snap and the DB staging above are unbounded, so the time left
+        # is measured again here, before the first prod mutation.
+        require_job_budget(cfg, "at the checkpoint")
 
         # Cut over: prod DB reset (first prod mutation) ...
         checkpointed = True
