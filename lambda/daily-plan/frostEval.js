@@ -341,6 +341,73 @@ function dedupKey({ spaceId, eventDate, tier, level, crops }) {
   return (d ? [...base, d] : base).join('|');
 }
 
+// ── OPS-PLANHOURLY-001 §escalation-only — key equality is not enough once the day holds 19 runs ────
+//
+// The dedup key above is CHANGE-detection: a different level or a different tripped-crop set is a new
+// key and re-sends. With one evaluation per evening that is exactly right — the only way to get a
+// second key was a real escalation. The hourly schedule puts FOUR evaluations in the 14:00-17:59 ET
+// window, and across an afternoon the forecast low genuinely wanders: a crop crosses a band and comes
+// back, the set gains one and loses another, the site low ticks 33.4 -> 32.8 -> 33.1. Every one of
+// those is a new key, and every new key is an email. Dave's ruling (2026-09-13): re-check hourly,
+// but only tell me if it gets WORSE.
+//
+// So the key still establishes IDENTITY (have I sent exactly this?) and this function establishes
+// DIRECTION (is this worse than everything I have already sent tonight?). Both must pass to publish.
+//
+// "Worse" is ordinal and evaluated on two axes, because either can move alone:
+//   - the SITE level escalating (advisory -> protect -> hard_freeze), which changes the headline; and
+//   - any INDIVIDUAL crop escalating, including a crop that was not tripped at all before (rank 0),
+//     which changes what Dave has to go out and cover.
+// A shrinking set, a de-escalating crop, and a low that wobbles without crossing a band are all
+// explicitly NOT worse and stay silent — that is the noise this exists to remove.
+//
+// Heat is deliberately OUT of scope: it is a separate tier on a separate axis (a hot day is not a
+// colder night), its key already admits one send per space per day, and comparing it against frost
+// ranks would be a category error. handler.js applies this gate to frost tiers only.
+const FROST_SEVERITY_RANK = { advisory: 1, protect: 2, hard_freeze: 3 };
+function severityRank(level) { return FROST_SEVERITY_RANK[level] || 0; }
+
+// Compact {slug: level} map persisted on each alerts_sent entry so a later run can compare per-crop
+// rather than re-deriving from a hash. Uses the same slug||label fallback as cropDigest so the two
+// cannot disagree about a crop's identity.
+function cropLevels(trippedCrops) {
+  const rows = (Array.isArray(trippedCrops) ? trippedCrops : []).filter(Boolean);
+  if (!rows.length) return null;
+  const out = {};
+  for (const c of rows) {
+    const k = c.slug || c.label;
+    if (!k) continue;
+    if (severityRank(c.level) > severityRank(out[k])) out[k] = c.level;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// `sent` is the alerts_sent array as stored (entries: { tier, level, crops? }). Returns true when the
+// decision is strictly worse than the high-water mark of everything already sent for the same night.
+//
+// An entry written before this change carries no `crops`. Its level still counts toward the site
+// high-water mark, but it contributes NO per-crop history — so a crop tripped tonight reads as new and
+// the alert goes out. That errs toward sending for the one evening that spans the deploy, which is the
+// posture §3-7 states repeatedly: a swallowed frost alert is the failure this feature exists to
+// prevent, and a duplicate is merely annoying.
+function escalatesBeyond(sent, { level, crops } = {}) {
+  const prior = (Array.isArray(sent) ? sent : []).filter((a) => a && severityRank(a.level) > 0);
+  if (!prior.length) return true;                       // nothing sent tonight — anything is an escalation
+  const maxSent = Math.max(...prior.map((a) => severityRank(a.level)));
+  if (severityRank(level) > maxSent) return true;       // the headline got worse
+  const seen = {};
+  for (const a of prior) {
+    for (const [k, lv] of Object.entries(a.crops || {})) {
+      if (severityRank(lv) > severityRank(seen[k])) seen[k] = lv;
+    }
+  }
+  const now = crops || {};
+  for (const [k, lv] of Object.entries(now)) {
+    if (severityRank(lv) > severityRank(seen[k])) return true;   // a crop got worse, or is newly at risk
+  }
+  return false;
+}
+
 // ── §3-7 frost season — Sep 1 to Nov 15 inclusive, from the plan_date CALENDAR LABEL (never a clock read).
 // Inside this window a null tonightLow is an alertable degradation, not "no frost tonight".
 function isFrostSeason(planDate, opts = {}) {
@@ -544,11 +611,16 @@ function frostEval(input = {}, opts = {}) {
       radiativeTripped: !!(imminent && imminent.radiativeOnly),
     },
     dedupKey: tier ? dedupKey({ spaceId: input.spaceId, eventDate: input.eventDate, tier, level, crops: trippedCrops }) : null,
+    // OPS-PLANHOURLY-001 — the per-crop severity map the escalation gate compares against, and what
+    // handler.js persists on the alerts_sent entry. Null on the no-crop-breakdown (legacy) path, which
+    // the gate handles by falling back to the site level alone.
+    cropLevels: tier ? cropLevels(trippedCrops) : null,
   };
 }
 
 module.exports = {
   frostEval, resolveThresholds, dedupKey, cropDigest,
+  escalatesBeyond, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,
   isFrostSeason, resolveFrostRun,

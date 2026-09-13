@@ -49,12 +49,42 @@ describe('BUG-TODAYWATER-001 — prior_runs audit trail', () => {
     expect(out[1].generated_at).toBe('t1');
   });
 
-  it('caps the history and keeps the OLDEST — the nightly run is the baseline worth keeping', async () => {
+  // OPS-PLANHOURLY-001 — this test previously asserted `.not.toContain('newest')`, i.e. that the run
+  // being recorded was the one thrown away. That was correct for a 3-run day (the 4th entry only ever
+  // existed after a manual re-run) and became the defect under the hourly schedule: the trail froze on
+  // runs 1-3 and never recorded another thing. Both ends are now retained; the MIDDLE is dropped.
+  it('caps the history keeping BOTH the day baseline and the newest run', async () => {
     const many = Array.from({ length: PRIOR_RUNS_MAX + 2 }, (_, i) => ({ generated_at: `t${i}`, hydrology: {}, counts: {} }));
     const out = await readPriorRuns(pgWith([{ items: { ...NIGHTLY, prior_runs: many }, generated_at: 'newest' }]), USER, DATE);
     expect(out).toHaveLength(PRIOR_RUNS_MAX);
-    expect(out[0].generated_at).toBe('t0');            // the nightly baseline survives
-    expect(out.map(r => r.generated_at)).not.toContain('newest');
+    expect(out[0].generated_at).toBe('t0');                       // the overnight baseline survives
+    expect(out[out.length - 1].generated_at).toBe('newest');      // and so does the run being recorded
+    // What gets sacrificed is the middle of the day, not either end.
+    expect(out.map(r => r.generated_at)).not.toContain('t1');
+  });
+
+  it('stays under the cap without reordering — an ordinary day is byte-identical to before', async () => {
+    const few = Array.from({ length: PRIOR_RUNS_MAX - 2 }, (_, i) => ({ generated_at: `t${i}`, hydrology: {}, counts: {} }));
+    const out = await readPriorRuns(pgWith([{ items: { ...NIGHTLY, prior_runs: few }, generated_at: 'newest' }]), USER, DATE);
+    expect(out).toHaveLength(PRIOR_RUNS_MAX - 1);
+    expect(out.map(r => r.generated_at)).toEqual([...few.map(r => r.generated_at), 'newest']);
+  });
+
+  // THE REGRESSION THAT MOTIVATED THE CHANGE, driven the way it actually happens: 19 sequential runs,
+  // each folding the previous row. Under the old `.slice(0, MAX)` the trail pinned to the first three
+  // generations and every later run vanished — so this fails loudly against the pre-fix code rather
+  // than merely asserting the new shape.
+  it('a full hourly day: every run is recorded at the time it happens, and the newest never falls out', async () => {
+    let prior = [];
+    for (let i = 0; i < 19; i++) {
+      const stamp = `run${i}`;
+      prior = await readPriorRuns(pgWith(i === 0 ? [] : [{ items: { ...NIGHTLY, prior_runs: prior }, generated_at: stamp }]), USER, DATE);
+      if (i > 0) expect(prior[prior.length - 1].generated_at).toBe(stamp);
+      expect(prior.length).toBeLessThanOrEqual(PRIOR_RUNS_MAX);
+    }
+    expect(prior).toHaveLength(PRIOR_RUNS_MAX);
+    expect(prior[0].generated_at).toBe('run1');           // first retained generation of the day
+    expect(prior[prior.length - 1].generated_at).toBe('run18');
   });
 
   it('never throws when the DB read fails — an audit trail must not be able to block a plan', async () => {

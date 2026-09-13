@@ -1,7 +1,7 @@
 {
-  "version": "4.129.0",
-  "date": "2026-09-11",
+  "version": "4.130.0",
+  "date": "2026-09-13",
   "highlights": [
-    "Behind the scenes: groundwork for a safe one-step release rollback. Each release now keeps a copy of all 26 of the app's server functions, and a rollback would rebuild the older release from its own code. The rollback stays switched off until its last safety checks are in place; nothing in the app changes."
+    "Today's plan now refreshes every hour through the day instead of three times, and the page reloads it when you open the app — so a morning downpour shows up in your watering list within the hour."
   ]
 }

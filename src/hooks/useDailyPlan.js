@@ -28,8 +28,29 @@
 // (house pattern — TodayBand.jsx:48, useAmbientBandFetch.js:48). It matters here because Android
 // fires BOTH `focus` and `visibilitychange` on a single wake, which without it is two concurrent
 // fetches per wake.
+//
+// BUG-PLANNOREVALIDATE-001 (2026-09-13) — the listeners the block above describes DID NOT EXIST.
+// `refresh` was exported and called by NOBODY: Today.jsx destructured only { data, loading, error },
+// and neither it nor this hook registered `focus` or `visibilitychange`. So the plan was fetched once
+// per Today mount and never revalidated — leave the PWA open on Today and resume hours later and you
+// were reading whatever was current when you opened it. Every other piece of DRG-INTRADAY-002 shipped
+// (the two fetch modes, the coalescing ref, stale-beats-blank, the stable `refresh` identity); only
+// the registration was missing, which is why it was invisible — nothing was broken, a thing simply
+// never ran. Found while making the daily-plan cron hourly: 16 extra server-side generations a day
+// buy nothing if the client never asks for them again.
+//
+// The listeners live HERE, not in Today.jsx, because `refresh`'s identity is deliberately stabilised
+// in this file (see hasDataRef above) so registration survives a successful fetch. A consumer wiring
+// its own listener would re-derive that guarantee and eventually get it wrong.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
+
+// Floor between wake-triggered revalidations. `focus` is noisier than it looks on Android — a
+// dismissed keyboard or a permission sheet fires it — and the in-flight ref only coalesces
+// CONCURRENT wakes, not a rapid sequence of settled ones. 60s is two orders of magnitude below the
+// hourly generation cadence, so this costs nothing in freshness and removes the app-switch storm.
+// Deliberately NOT applied to `refresh` itself: an explicit caller asked, and gets a fetch.
+const REVALIDATE_MIN_MS = 60_000
 
 export function useDailyPlan({ includeHousehold = false } = {}) {
   const { fetch } = useApiFetch()
@@ -39,6 +60,9 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
   const [error, setError] = useState(null)
   const loadCounterRef = useRef(0)
   const inflightRef = useRef(false)
+  // When the last fetch SETTLED (success or failure), for the REVALIDATE_MIN_MS floor. Stamped on
+  // settle rather than on start so a run of failures in a dead zone cannot busy-loop the radio.
+  const lastSettledAtRef = useRef(0)
   // Tracks "we have shown a real plan at least once" WITHOUT reading `data` in the callback, which
   // would put `data` in the useCallback deps and change `refresh`'s identity on every successful
   // fetch — re-registering the focus/visibility listeners each time.
@@ -64,6 +88,7 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
       if (!isRefresh || !hasDataRef.current) setError(err?.message ?? 'Failed to load your plan')
     } finally {
       if (loadCounterRef.current === my) { setLoading(false); setRefreshing(false) }
+      lastSettledAtRef.current = Date.now()
       inflightRef.current = false
     }
   }, [fetch, includeHousehold])
@@ -72,5 +97,25 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
   const refresh = useCallback(() => run(true),  [run])
 
   useEffect(() => { reload() }, [reload])
+
+  // BUG-PLANNOREVALIDATE-001 — the missing half of DRG-INTRADAY-002. Both events, because Android
+  // fires them inconsistently: `visibilitychange` on app switch, `focus` on window re-focus within
+  // the app, and frequently both on one wake (which inflightRef coalesces).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onWake = () => {
+      // A `visibilitychange` also fires when going AWAY. Only a wake should revalidate.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (Date.now() - lastSettledAtRef.current < REVALIDATE_MIN_MS) return
+      refresh()
+    }
+    window.addEventListener('focus', onWake)
+    document.addEventListener('visibilitychange', onWake)
+    return () => {
+      window.removeEventListener('focus', onWake)
+      document.removeEventListener('visibilitychange', onWake)
+    }
+  }, [refresh])
+
   return { data, loading, refreshing, error, reload, refresh }
 }

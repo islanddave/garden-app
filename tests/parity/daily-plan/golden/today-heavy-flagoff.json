@@ -9,7 +9,7 @@
       "ok": true,
       "uncertainty": {
         "flag": true,
-        "reason": "showery today (90% on 2.5\") — a pre-dawn snapshot can shift by midday"
+        "reason": "showery today (90% on 2.5\") — showery amounts shift through the day"
       }
     },
     "today_pop": 90,

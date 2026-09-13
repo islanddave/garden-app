@@ -9,7 +9,7 @@
       "ok": true,
       "uncertainty": {
         "flag": true,
-        "reason": "rain likely today (80%) but little in the pre-dawn snapshot — the amount may climb"
+        "reason": "rain likely today (80%) but little in the latest forecast — the amount may climb"
       }
     },
     "today_pop": 80,

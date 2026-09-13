@@ -1214,10 +1214,18 @@ function computeCallout(weather, hy){
     return {icon:'wet', text:`${hy.recent_precip_in}" fell recently — soil is wet, skip outdoor watering`};
   return null;
 }
-// Full-picture gate + uncertainty. The plan's precip figures are a FROZEN ~2AM snapshot; in showery/
-// convective regimes the amount can move several-fold by midday, so the OLD 40-60%-PoP-only band missed
-// the common high-PoP cases (e.g. 88% PoP with a trace or modest amount — DRG-WXROLL/bell). Flag the
-// snapshot as volatile whenever rain is reasonably likely today or tomorrow, or when data is missing.
+// Full-picture gate + uncertainty. In showery/convective regimes the amount can move several-fold within
+// hours, so the OLD 40-60%-PoP-only band missed the common high-PoP cases (e.g. 88% PoP with a trace or
+// modest amount — DRG-WXROLL/bell). Flag the figures as volatile whenever rain is reasonably likely today
+// or tomorrow, or when data is missing.
+//
+// OPS-PLANHOURLY-001 — these strings used to say "pre-dawn snapshot", which was accurate when the plan
+// was generated at 02:00/05:30/15:30 ET and became a FALSE STATEMENT under the hourly schedule: the
+// figures are now at most ~an hour old. The uncertainty itself is unchanged and still real — a showery
+// regime shifts whatever time you read it — so only the provenance half of the copy moved. Naming the
+// generation time was doing real work in the old copy (it explained WHY the number might be wrong), so
+// it is replaced rather than dropped: "latest" still tells Dave this is a forecast that can move, without
+// asserting a generation time that is no longer true.
 // METADATA ONLY — no watering recommendation reads this flag (presentation honesty for the Today widget;
 // the conservative watering model is unchanged). DRG-WX Phase 2.
 const SHOWERY_POP = 50;
@@ -1229,14 +1237,14 @@ function hydrologyStatus(hy){
   let reason=null;
   if(tPop!=null && tPop>=SHOWERY_POP)
     reason = tIn<0.1
-      ? `rain likely today (${tPop}%) but little in the pre-dawn snapshot — the amount may climb`
-      : `showery today (${tPop}% on ${tIn}") — a pre-dawn snapshot can shift by midday`;
+      ? `rain likely today (${tPop}%) but little in the latest forecast — the amount may climb`
+      : `showery today (${tPop}% on ${tIn}") — showery amounts shift through the day`;
   else if(mPop!=null && mPop>=SHOWERY_POP)
     reason = mIn<0.1
-      ? `rain likely tomorrow (${mPop}%) but little in the pre-dawn snapshot — the amount may climb`
-      : `showery tomorrow (${mPop}% on ${mIn}") — a pre-dawn snapshot can shift`;
+      ? `rain likely tomorrow (${mPop}%) but little in the latest forecast — the amount may climb`
+      : `showery tomorrow (${mPop}% on ${mIn}") — the amount can still shift`;
   else if((tPop!=null && tPop>=40 && tIn>=0.1) || (mPop!=null && mPop>=40 && mIn>=0.1))
-    reason = `rain amounts uncertain — pre-dawn estimate (today ${tPop==null?'?':tPop}% / tomorrow ${mPop==null?'?':mPop}%)`;
+    reason = `rain amounts uncertain — latest estimate (today ${tPop==null?'?':tPop}% / tomorrow ${mPop==null?'?':mPop}%)`;
   return {ok:true, uncertainty: reason ? {flag:true, reason} : {flag:false}};
 }
 

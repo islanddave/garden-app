@@ -6,7 +6,7 @@
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
 const { deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
-const { frostEval, isFrostSeason, resolveFrostRun } = require('./frostEval');    // V4-FROST-001 F1/F3
+const { frostEval, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
@@ -63,9 +63,25 @@ async function coordsForSpace(space, { geocodeZip }) {
 }
 
 // BUG-TODAYWATER-001 — how many earlier generations of the SAME day to retain inside items.prior_runs.
-// 3 covers the nightly plus both intraday refreshes; a 4th would mean someone re-ran manually, and the
-// oldest (the nightly) is the one worth keeping, so we keep the head and drop from the tail.
-const PRIOR_RUNS_MAX = 3;
+//
+// OPS-PLANHOURLY-001 (2026-09-13) — was 3 with a plain `.slice(0, 3)`, sized when the day held exactly
+// three generations ("a 4th would mean someone re-ran manually"). Under the hourly schedule the day
+// holds 19, and that sizing did not merely truncate — it INVERTED. `.slice(0, 3)` keeps the FIRST
+// three, so from run #4 onward each run appended its predecessor and immediately dropped it again:
+// the trail would have frozen on runs 1-3 and recorded nothing about the other 16. Silent, and no
+// test could have caught it — the cap behaved exactly as written, only its premise had expired. That
+// is the worst shape for an audit surface, because hourly regeneration is precisely what makes
+// "which generation produced this, and what rain did it believe?" the question you need answered.
+//
+// The fix keeps BOTH ends deliberately: the day's first entry (the overnight baseline the original
+// comment correctly valued — it is the forecast the day was planned against) plus the most recent
+// MAX-1. The middle of the day is what gets dropped, which is the part that carries least: a
+// suppression is diagnosed from what the baseline predicted versus what the last few hours measured.
+//
+// 12 covers the baseline plus ~11 hours of the daylight watering window. Sized freely because this
+// key is server-side only — daily-plan-read selects named keys and never ships prior_runs, so it
+// costs Dave no mobile payload (verified 2026-09-13: zero references in lambda/daily-plan-read/).
+const PRIOR_RUNS_MAX = 12;
 
 // Read the row this run is about to replace and fold it into a compact history entry. Returns [] on a
 // first run of the day or on ANY failure — this is an audit nicety and must never be able to empty or
@@ -82,8 +98,11 @@ async function readPriorRuns(pg, userId, planDate) {
       hydrology: prev.hydrology ?? null,
       counts: prev.counts ?? null,
     };
-    // Oldest-first, newest-dropped-when-full: the nightly run is the baseline worth keeping.
-    return [...(Array.isArray(prev.prior_runs) ? prev.prior_runs : []), entry].slice(0, PRIOR_RUNS_MAX);
+    // Oldest-first. When full, drop from the MIDDLE — keep the day's baseline and the recent window
+    // (see PRIOR_RUNS_MAX above). Under the cap this is a plain append, byte-identical to before.
+    const all = [...(Array.isArray(prev.prior_runs) ? prev.prior_runs : []), entry];
+    if (all.length <= PRIOR_RUNS_MAX) return all;
+    return [all[0], ...all.slice(-(PRIOR_RUNS_MAX - 1))];
   } catch (e) {
     console.warn(JSON.stringify({ msg: 'prior-runs read failed — continuing without history', error: e?.message }));
     return [];
@@ -1551,15 +1570,31 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
         if (frostAlertEnabled) {
           alertsSent = await readAlertsSent(pg, user_id, today);
           const dk = frostDecision && frostDecision.dedupKey;
+          // OPS-PLANHOURLY-001 — two gates now, and they answer different questions. The key answers
+          // "have I sent EXACTLY this?"; escalatesBeyond answers "is this WORSE than anything I have
+          // sent tonight?". Under the 3-run schedule only the first was needed, because the 14:00-17:59
+          // window held exactly one evaluation and a second key implied a real escalation. Hourly puts
+          // four evaluations in that window, where an afternoon of forecast wobble mints new keys that
+          // are not escalations — see frostEval.escalatesBeyond. Dave's ruling: re-check hourly, email
+          // only on worse.
+          //
+          // Scoped to frost tiers. Heat keeps pure key dedup: its key already admits one send per space
+          // per day, and ranking a hot day against a cold night is a category error.
+          const escalationGated = frostDecision && frostDecision.tier !== 'heat';
+          const worse = !escalationGated
+            || escalatesBeyond(alertsSent, { level: frostDecision.level, crops: frostDecision.cropLevels });
           if (frostDecision && frostDecision.alert && dk && !frostPublished.has(dk)
-              && !alertsSent.some((a) => a && a.key === dk)) {
+              && !alertsSent.some((a) => a && a.key === dk) && worse) {
             if (!publishAlert) {
               console.warn(JSON.stringify({ msg: 'frost alert SUPPRESSED — no publisher injected', space: spaceId, dedup_key: dk }));
             } else {
               try {
                 await publishAlert({ topic: 'frost', subject: frostSubject(frostDecision), message: frostDecision.message });
                 frostPublished.add(dk);
-                alertsSent = [...alertsSent, { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), ...frostWeatherFacts(frostDecision) }].slice(-ALERTS_SENT_MAX);
+                // `crops` (OPS-PLANHOURLY-001) is what makes the NEXT run's escalation gate able to
+                // compare per-crop instead of only on the headline level. Omitted when null so the
+                // stored shape is unchanged on the legacy no-breakdown path.
+                alertsSent = [...alertsSent, { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), ...(frostDecision.cropLevels ? { crops: frostDecision.cropLevels } : {}), ...frostWeatherFacts(frostDecision) }].slice(-ALERTS_SENT_MAX);
                 console.log(JSON.stringify({ msg: 'frost alert PUBLISHED', space: spaceId, user: user_id, dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level }));
               } catch (e) {
                 // §3-7: a swallowed frost alert is the failure mode this feature exists to prevent. Log at
@@ -1570,6 +1605,16 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
                 frostFailures.push({ kind: 'frost_publish_failed', spaceId, userId: user_id, dedupKey: dk, error: e?.message });
               }
             }
+          } else if (frostDecision && frostDecision.alert && dk && escalationGated && !worse
+                     && !alertsSent.some((a) => a && a.key === dk)) {
+            // OPS-PLANHOURLY-001 — a held alert MUST leave a trace. Without this line "no email
+            // tonight" is indistinguishable from a broken gate, and the difference is a lost frost
+            // warning. Logged at INFO because holding is the designed behaviour, not a fault; the
+            // fields are what you would need to answer "should it have gone out?" after the fact.
+            console.log(JSON.stringify({ msg: 'frost alert HELD — not an escalation', space: spaceId, user: user_id,
+              dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level,
+              crops: frostDecision.cropLevels || null,
+              already_sent: alertsSent.map((a) => (a && { level: a.level, crops: a.crops || null })).filter(Boolean) }));
           }
         }
         await pg.query(

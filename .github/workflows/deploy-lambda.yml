@@ -574,22 +574,46 @@ jobs:
       # NOT fix this — a plan computed at 02:00 is only ever as good as the 02:00 forecast. The input has to
       # be refreshed while the day is happening.
       #
-      # Two refreshes, each tied to a real decision moment rather than a round number:
-      #   05:30 ET — before the primary morning watering window (foliage must dry before evening or you
-      #              drive foliar disease in this humidity), and before Dave looks at Today.
-      #   15:30 ET — before the evening container top-up, the one call that genuinely needs observed rather
-      #              than forecast rain.
-      # Cron is fixed-UTC so both drift an hour with DST; each lands inside its window in either offset.
+      # OPS-PLANHOURLY-001 (2026-09-13) — SUPERSEDES the three-run schedule described above. Dave's
+      # ruling: hourly 05:00-21:00 ET plus a couple of overnight runs.
+      #
+      # What forced it: on 2026-09-13 the gauge read 0.79" by midday while Today still listed 153
+      # plantings to water. Nothing was broken — the 05:30 snapshot was correct for 05:30, when the
+      # gauge held 0.07"; the rain fell 06:40-08:40 and the next run was not until 15:30. Two refreshes
+      # tied to "real decision moments" still leave a ~10-hour blind window, and rain does not consult
+      # the schedule. It is also the precondition for forecast-aware watering deferral: deferring on a
+      # forecast is only defensible if a busted forecast can be noticed and undone within the hour
+      # (cf. 2026-08-08, 0.97" predicted at 28% PoP, 0.04" fell, 32 plantings lost a watering for the day).
+      #
+      #   cron(0 0-1,3,5,9-23 * * ? *) — 19 runs. UTC 09-23 + 00-01 is 05:00-21:00 ET hourly; UTC 03
+      #   is 23:00 ET and UTC 05 is 01:00 ET (the two overnight runs). Fixed-UTC as before, so the whole
+      #   thing shifts an hour earlier in EST (04:00-20:00 + 22:00 + 00:00 ET) — which is why the two
+      #   application-side hour windows are written WIDE and still hold in both offsets:
+      #     rain autolog  00:00-05:59 ET  — keeps 2 runs in either offset (01:00+05:00 EDT / 00:00+04:00+05:00 EST)
+      #     frost eval    14:00-17:59 ET  — 3-4 runs; see the escalation gate note below.
+      #
+      # Cost, measured rather than assumed (2026-09-13): Lambda p50 9.8s at 256MB => ~+$0.02/month.
+      # Both Neon endpoints carry the 5-minute default autosuspend, and 60-minute spacing is far wider
+      # than that, so the compute still sleeps between runs — no pinned-awake bill. Outbound calls go
+      # ~21/day -> ~133/day; the AWN 1-req/sec limit is enforced in index.js and is a PER-SECOND bound,
+      # unaffected by run frequency.
       #
       # Safe to run repeatedly by construction: writes stay gated on the Lambda's own env DRY_RUN (an event
       # can never force a live run), per-plant done state is computed at READ time from event_log
       # (V3-TODAYDONE-001) so regeneration cannot clobber check-offs, and the row carries items.prior_runs
       # so an earlier generation is auditable rather than destroyed.
       #
-      # The nightly rule is (re)asserted here too. It has existed since DRG-TODAY-001 but was created out of
-      # band, so it was a snowflake — declaring it makes the whole schedule reproducible and drift-visible.
-      # put-rule is idempotent and the expression below is byte-identical to what is live.
-      - name: Ensure EventBridge cron rules for daily-plan (nightly + intraday)
+      # THREE THINGS HAD TO CHANGE WITH THE SCHEDULE, because each was correct only at 3 runs/day:
+      #   1. handler.js PRIOR_RUNS_MAX — was `.slice(0, 3)`, which keeps the OLDEST three. From run #4
+      #      the audit trail would have frozen on runs 1-3 and recorded nothing further. Now keeps the
+      #      day baseline + the recent window.
+      #   2. frostEval escalation gate — the 14:00-17:59 ET window held ONE evaluation; it now holds 3-4,
+      #      and ordinary afternoon forecast wobble mints a new dedup key (hence an email) each time.
+      #      Alerts now publish only when the assessment is strictly WORSE than what was already sent.
+      #   3. useDailyPlan wake revalidation — the client fetched the plan once per Today mount and never
+      #      again (`refresh` was exported and called by nobody), so the extra runs would have been
+      #      invisible on Dave's phone. Now revalidates on focus/visibilitychange.
+      - name: Ensure EventBridge cron rules for daily-plan (hourly + overnight)
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission on deploy role
         run: |
@@ -610,9 +634,30 @@ jobs:
               --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission $SID already exists (expected on re-deploy)."
             echo "EventBridge rule $NAME -> garden-daily-plan ($EXPR)"
           }
-          ensure_rule garden-daily-plan-nightly    'cron(0 6 * * ? *)'   'Overnight Daily Plan generation (DRG-TODAY-001). LIVE.'                                  EventBridgeInvokeDaily
-          ensure_rule garden-daily-plan-intraday-am 'cron(30 9 * * ? *)'  'Intraday Daily Plan refresh, 05:30 ET, before the morning watering window (BUG-TODAYWATER-001).' EventBridgeInvokeIntradayAm
-          ensure_rule garden-daily-plan-intraday-pm 'cron(30 19 * * ? *)' 'Intraday Daily Plan refresh, 15:30 ET, before the evening container pass (BUG-TODAYWATER-001).'  EventBridgeInvokeIntradayPm
+          # Retire a superseded rule. ensure_rule only ever asserts the names it knows, so without this
+          # the three old rules would survive untouched and un-declared — firing alongside the new one
+          # forever, and invisible to this mechanism (drift in the direction nothing checks). Every step
+          # tolerates already-gone so the retirement is idempotent across re-deploys.
+          retire_rule () {
+            local NAME="$1" SID="$2"
+            if aws events describe-rule --name "$NAME" >/dev/null 2>&1; then
+              aws events remove-targets --rule "$NAME" --ids 1 >/dev/null 2>&1 || true
+              aws events delete-rule --name "$NAME" >/dev/null 2>&1 || true
+              echo "Retired superseded EventBridge rule $NAME"
+            else
+              echo "EventBridge rule $NAME already absent (expected after the first post-OPS-PLANHOURLY-001 deploy)."
+            fi
+            aws lambda remove-permission --function-name garden-daily-plan --statement-id "$SID" >/dev/null 2>&1 \
+              || echo "Lambda permission $SID already removed."
+          }
+          ensure_rule garden-daily-plan-hourly 'cron(0 0-1,3,5,9-23 * * ? *)' 'Daily Plan generation, hourly 05:00-21:00 ET + 23:00/01:00 ET overnight (OPS-PLANHOURLY-001). Supersedes nightly+intraday-am+intraday-pm. LIVE.' EventBridgeInvokeHourly
+          # Asserted BEFORE the retirements so there is never a window with no schedule at all. The
+          # overlap runs the other way — both old and new rules live for a few seconds — and that is
+          # harmless: the generator is an idempotent upsert on (user_id, plan_date), and its one
+          # non-idempotent side effect (the frost SNS publish) is behind the dedup + escalation gates.
+          retire_rule garden-daily-plan-nightly     EventBridgeInvokeDaily
+          retire_rule garden-daily-plan-intraday-am EventBridgeInvokeIntradayAm
+          retire_rule garden-daily-plan-intraday-pm EventBridgeInvokeIntradayPm
 
       - name: Ensure EventBridge cron rule for xp-reconcile
         if: matrix.function == 'xp-reconcile'

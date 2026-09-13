@@ -445,7 +445,10 @@ export default function WeatherWidget({
           color: PAL.warnInk, background: PAL.warnBg, border: `1px solid ${PAL.warnBorder}`,
           borderRadius: 9, padding: '5px 8px',
         }}>
-          &#9888; Showery pattern &mdash; these amounts are a pre-dawn snapshot and can change through the day. The watering call above already plays it safe.
+          {/* OPS-PLANHOURLY-001 — was "these amounts are a pre-dawn snapshot", true of the 02:00/05:30
+              generation and false under the hourly schedule. The caveat survives because the showery
+              uncertainty is real regardless of when the plan ran; only the provenance claim is gone. */}
+          &#9888; Showery pattern &mdash; these amounts can still change through the day. The watering call above already plays it safe.
         </div>
       )}
     </div>
