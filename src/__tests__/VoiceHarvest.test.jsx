@@ -601,30 +601,95 @@ describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () =
     expect(record()).not.toContain('Brentwood')
   })
 
-  it('shows a held number as UNFINISHED, never as a filled quantity', async () => {
-    // A bare number rendered as "2" would look exactly like a complete slot, which is the
-    // looks-complete-but-isn't failure the record card exists to prevent.
+  // ── V5-VOICEVOCAB-001 — the unit is ASSUMED, not asked for ──────────────────────────────────────
+  //
+  // THESE TWO TESTS REPLACE, AND DELIBERATELY INVERT, the pair that pinned the old behaviour
+  // ("shows a held number as UNFINISHED" / "refuses to save a held number that never got its unit").
+  // They were correct characterisations of a decision Dave has since reversed — he does not want to
+  // say "count" or "grams" — so they are rewritten to encode the NEW decision rather than deleted.
+  // The safety property genuinely changed: a bare number IS now applied on its own. What replaces
+  // "refuse the save" as the guard is "announce the inference", which the second test pins.
+  it('no longer DEMANDS a unit — holding is now optional, not an instruction', async () => {
     const rec = await startListening()
     await speak(rec, 'Suyo Long')
     await speak(rec, 'two')
-    expect(record()).toContain('needs a unit')
-    expect(statusText()).toContain('now say the unit')
+    expect(statusText()).not.toContain('now say the unit')
+    expect(statusText()).toContain('carry on')
   })
 
-  it('refuses to save a held number that never got its unit', async () => {
-    // The honest outcome. A number with no unit is exactly the shape of a silent wrong save, so it
-    // is never applied on its own — saveRecord reports the gap out loud instead.
+  it('STILL rejoins when the unit arrives next — the split case that must not regress', async () => {
+    // THE REGRESSION THIS PAIR EXISTS FOR. The first implementation applied the assumed unit the
+    // instant the number arrived, which consumed "231" into the COUNT slot before its "grams" could
+    // land — turning "231 grams" into 231 count. Chrome splits exactly this way constantly: in the
+    // 2026-09-13 device trace EVERY weight arrived as "85" then "85 G". Assuming may only happen
+    // when no unit ever comes.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '231')
+    await speak(rec, 'grams')
+    expect(record()).toContain('231 g')
+    expect(record()).not.toContain('231 count')
+  })
+
+  it('applies the held number with an assumed unit instead of dropping it', async () => {
+    // The fixture leaves default_unit null, so the 'count' fallback is what is exercised here.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'two')
+    await speak(rec, 'text')
+    expect(record()).toContain('2 count')
+    expect(statusText()).not.toContain('dropped 2')
+  })
+
+  it('SAYS the unit was assumed — the inference is never silent', async () => {
+    // This is the guard that REPLACED "refuse the save". Dave spoke the number, not the unit, so the
+    // unit is the app's inference; an unannounced inference is the fabricated-value class this page
+    // was already bitten by once. If this assertion is removed to shorten the readback, the trade
+    // Dave accepted (V5-VOICEVOCAB-001) stops holding.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'two')
+    await speak(rec, 'text')
+    expect(statusText()).toContain('2 count assumed')
+  })
+
+  it('saves without either unit word — crop, count, weight', async () => {
+    // Dave's target phrasing with both unit words dropped.
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     await speak(rec, 'Suyo Long')
     await speak(rec, 'three')
+    await speak(rec, '231')
     await speak(rec, 'next')
     await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
 
-    expect(harvestPosts()).toHaveLength(0)
-    expect(statusText()).toContain('Not saved')
-    expect(statusText()).toContain('quantity')
+    expect(harvestPosts()).toHaveLength(1)
+    const body = harvestPosts()[0]
+    expect(JSON.stringify(body)).toContain('231')
     vi.useRealTimers()
+  })
+
+  it('uses the variety default_unit when the crop type has one', async () => {
+    const WITH_UNIT = [planting('p9', 'Green Magic', 'broccoli', 'head')]
+    apiFetchSpy.mockImplementation((url) => {
+      if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: WITH_UNIT })
+      return Promise.resolve({ eventId: 'evt-1' })
+    })
+    const rec = await startListening()
+    await speak(rec, 'Green Magic')
+    await speak(rec, 'two')
+    await speak(rec, 'text')
+    expect(record()).toContain('2 head')
+  })
+
+  it('does NOT assume a unit before a planting is selected — the gate still holds', async () => {
+    // Non-vacuity for the gate: with nothing selected a bare number must stay a SEARCH, because that
+    // is the state where it may legitimately be a crop name. Dropping the unit words makes every
+    // quantity a bare number, so this gate is what stops that widening the search branch.
+    const rec = await startListening()
+    await speak(rec, 'two')
+    expect(record()).not.toContain('2 count')
+    expect(statusText()).not.toContain('assumed')
   })
 
   it('a second number replaces the first — that is a correction, not a pair', async () => {
@@ -947,14 +1012,23 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     expect(record()).not.toContain('needs a unit')
   })
 
-  it('says it on an utterance it did not understand either, where the loss is least explicable', async () => {
+  it('APPLIES the held number on an utterance it did not understand — no longer a loss', async () => {
+    // INVERTED by V5-VOICEVOCAB-001, and the inversion is the point. This case used to be "the loss
+    // is least explicable": an unrecognised utterance threw away a number Dave had spoken, and the
+    // fix of the day was to at least SAY so. Now the record is still standing, so the number is
+    // applied with an assumed unit instead of being lost at all — which is what BUG-VOICEFAILSILENT-001
+    // actually wanted. The announcement survives; only its content changed from a loss to an
+    // inference. Contrast the sibling test above, where a SEARCH changes the crop and dropping is
+    // still correct.
     useMixed()
     const rec = await startListening()
     await speak(rec, 'Suyo Long')
     await speak(rec, 'three')
     await speak(rec, 'text')
     expect(statusText()).toContain("Didn't catch that")
-    expect(statusText()).toContain('dropped 3')
+    expect(statusText()).not.toContain('dropped 3')
+    expect(statusText()).toContain('3 count assumed')
+    expect(record()).toContain('3 count')
   })
 
   it('says NOTHING about a drop when the number gets its unit — non-vacuity for the note', async () => {

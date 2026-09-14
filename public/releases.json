@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.131.0",
+    "date": "2026-09-14",
+    "highlights": [
+      "Harvest by voice no longer needs the unit words. Say the crop, then the count, then the weight, and the app fills in the units - telling you which one it assumed, so a wrong one is visible before you save. Saying count or grams still works and still takes precedence."
+    ]
+  },
+  {
     "version": "4.130.0",
     "date": "2026-09-13",
     "highlights": [
