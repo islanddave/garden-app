@@ -24,6 +24,18 @@ import { P, tokens, ICON, ICON_COLORS } from '../../lib/tokens.js'
 //           level 0 -> gold-tint "wait". Headline + rain note restate the guidance (WCAG 1.4.10).
 // Operational surface (Reward-UX V101 §7): semantic state color is appropriate; no reward-surface rules.
 //
+// BUG-WXLIVESTAMPSTALE-001 (2026-09-13) — supersedes the line above for the stale/uncertain caveats:
+// they are no longer byte-identical to LOCKED v1, because as shipped they hid behind the live overlay.
+// Dave's gauge read 0.79" by midday while the card read `0.07" fallen · 0.38" more expected · 83%`
+// under `Updated 12:10 · live forecast`. Every number was honest; the presentation was not. Two
+// separate faults, fixed together because they are the same mistake — treating a client-side forecast
+// fetch as if it refreshed the whole card:
+//   1. A current timestamp sat over a measurement frozen at plan generation. The measured figure now
+//      carries its own `as of {time}` inline, in Today.jsx's existing V4-TODAYBASIS-001 grammar.
+//   2. The `!live` gate on `uncertain` (and on `stale`) suppressed the one caveat that explained the
+//      gap. The overlay replaces ONE informational figure; it refreshes neither the plan nor the
+//      weather pattern, so it no longer silences statements about either.
+//
 // V4-WEATHERWIDGETICONS-001 (2026-09-02) — icon debt. This file held ELEVEN hand-rolled SVGs with
 // seven off-token stroke widths on the post-login home screen. Five now render through the shared
 // <Icon>: the watering can (care.wateringCanFill), the hold shape (care.pause), the `clear`
@@ -191,11 +203,18 @@ function isStaleSnapshot(generatedAt, planDate) {
   const genEtDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
   return genEtDate < planDate
 }
-function liveTimeLabel(refreshedAt) {
-  if (!refreshedAt) return 'just now'
-  const d = new Date(refreshedAt)
-  if (isNaN(d.getTime())) return 'just now'
+// The ET TIME half of asOfLabel's grammar, for inline use inside a sentence. Not a second vocabulary:
+// same formatter, same "as of {time}" phrasing Today.jsx already stamps the care list with
+// (V4-TODAYBASIS-001), just without the "Jun 22 · " that would collide with a ·-separated sentence.
+// liveTimeLabel is this plus its 'just now' fallback, so there is one formatter, not two.
+function basisTimeLabel(at) {
+  if (!at) return null
+  const d = new Date(at)
+  if (isNaN(d.getTime())) return null
   return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(d)
+}
+function liveTimeLabel(refreshedAt) {
+  return basisTimeLabel(refreshedAt) || 'just now'
 }
 
 // NET-NEW — derive the no-wrap headline sentence from the two lane verdicts.
@@ -237,8 +256,25 @@ export default function WeatherWidget({
   const live = !!(liveHydrology && (liveHydrology.today_precip_in != null || liveHydrology.tomorrow_precip_in != null))
   const asOf = asOfLabel(generatedAt)
   const liveAt = live ? liveTimeLabel(refreshedAt) : null
-  const stale = !live && isStaleSnapshot(generatedAt, planDate)
-  const uncertain = !live && !!(hydrology && hydrology.status && hydrology.status.uncertainty && hydrology.status.uncertainty.flag) && !stale
+  // BUG-WXLIVESTAMPSTALE-001 — both caveats used to carry a `!live` gate, so the overlay hid them
+  // precisely when the card looked freshest. Neither caveat is about the rain figure the overlay
+  // replaces: `stale` is about the PLAN (a previous-day generation still driving the lanes and the
+  // measured totals) and `uncertain` is the engine's verdict on the WEATHER PATTERN, which a showery
+  // day has whatever time you read it. A client-side forecast fetch refreshes neither, so neither is
+  // gated on it now. Measured 2026-09-13: a morning the gauge finished at 0.79" read
+  // `0.07" fallen · 0.38" more expected · 83%` under a live stamp, with the stored caveat — "showery
+  // today … amounts shift through the day", the one line that explained the gap — suppressed.
+  // `stale` still wins over `uncertain`: one banner, not two (unchanged precedence). The other two
+  // readers of `uncertain` — `showToday` and the rain-line render gate — are unmoved by the ungating:
+  // both already OR it with `live`, so the branch it newly reaches was one `live` had covered anyway.
+  const stale = isStaleSnapshot(generatedAt, planDate)
+  const uncertain = !!(hydrology?.status?.uncertainty?.flag) && !stale
+  // The NOTE's softened phrasing stays live-gated, unlike the banner. That copy restates the STORED
+  // snapshot's own figures ("~0.21″ today — could climb") and drops the PoP weighting; applied to the
+  // overlay it would swap a hedged number for a raw one while adding a hedging word, and would assert
+  // the engine's verdict over figures the engine never saw. Regime-level caveat: shown either way.
+  // Number-level caveat: only over the numbers it was computed from.
+  const softenedNote = uncertain && !live
 
   // DRG-WXSTATION-002 — provenance rides on the NIGHTLY hydrology (the live overlay is a client-side
   // Open-Meteo fetch and carries none), so read it off `hydrology` regardless of the live branch.
@@ -286,11 +322,25 @@ export default function WeatherWidget({
   const gaugeMeasured = measuredToday != null && measuredToday > 0
   const remainingToday = Number.isFinite(hydrology?.today_remaining_in) ? hydrology.today_remaining_in : null
 
+  // BUG-WXLIVESTAMPSTALE-001 — the whole sentence below is frozen at plan generation (deliberately:
+  // see above), but the live branch takes over the stamp line and prints `Updated 12:10 PM` under it.
+  // On 2026-09-13 that put a current timestamp over a 05:30 measurement. So when the overlay owns the
+  // stamp, the measurement carries its own basis inline; when it does not, the `As of …` stamp below
+  // already IS that basis and repeating it would only lengthen the line. Time-only is safe here
+  // because a previous-day plan now raises the stale banner instead of hiding behind the overlay.
+  const measuredAt = live ? basisTimeLabel(generatedAt) : null
+  // …and the chance in that sentence comes off `hydrology` for the same reason its two amounts do.
+  // It had been riding on `rainSrc`, so with the overlay on, a LIVE chance sat between two stored
+  // figures — the exact mixing the block above forbids, and it matters more now that the sentence is
+  // explicitly stamped `as of {measuredAt}`.
+  const measuredPop = hydrology?.today_pop ?? 0
+  const fallenSuffix = measuredAt ? ` as of ${measuredAt}` : ''
+
   const rainNote = gaugeMeasured
     ? (remainingToday != null && remainingToday > 0
-        ? `${measuredToday.toFixed(2)}″ fallen · ${remainingToday.toFixed(2)}″ more expected · ${todayPop}%`
-        : `${measuredToday.toFixed(2)}″ fallen today · none more expected`)
-    : uncertain
+        ? `${measuredToday.toFixed(2)}″ fallen${fallenSuffix} · ${remainingToday.toFixed(2)}″ more expected · ${measuredPop}%`
+        : `${measuredToday.toFixed(2)}″ fallen${fallenSuffix || ' today'} · none more expected`)
+    : softenedNote
     ? (rainAmtKnown && rainIn >= 0.1
         ? `~${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% — could climb`
         : `${rainPop}% chance ${rainWhen} · little so far, could climb`)
@@ -422,8 +472,11 @@ export default function WeatherWidget({
           {/* DRG-WXSTATION-002 — with a gauge on site the live overlay is forecast-ONLY (client Open-Meteo),
               so a bare "live" would let a predicted figure read as a measured one directly under a stamp
               that says "rain gauge" the rest of the day. That masquerade is the BUG-RAINACTUAL-001 defect
-              class. Qualified only when a gauge exists to be confused with; no station -> copy unchanged. */}
-          Updated {liveAt} &middot; {stationProv ? 'live forecast' : 'live'}
+              class. Qualified only when a gauge exists to be confused with; no station -> copy unchanged.
+              BUG-WXLIVESTAMPSTALE-001 adds `gaugeMeasured`: a card showing a measured "fallen" figure has
+              something to be confused with whether or not the provenance bag came through, and that is the
+              exact card this stamp was misread on. */}
+          Updated {liveAt} &middot; {stationProv || gaugeMeasured ? 'live forecast' : 'live'}
         </div>
       ) : asOf ? (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, color: PAL.micro }}>
@@ -436,7 +489,13 @@ export default function WeatherWidget({
           color: PAL.warnInk, background: PAL.warnBg, border: `1px solid ${PAL.warnBorder}`,
           borderRadius: 9, padding: '5px 8px',
         }}>
-          &#9888; This is an older snapshot &mdash; today&rsquo;s forecast hasn&rsquo;t refreshed yet, so numbers may be out of date.
+          {/* BUG-WXLIVESTAMPSTALE-001 — was "today's forecast hasn't refreshed yet", which is a FALSE
+              statement on the branch this banner now also reaches: with the live overlay on, a fresh
+              forecast is exactly what HAS arrived. What has not refreshed is the PLAN, and naming it
+              says what is actually affected — the lanes and the fallen/expected totals, all still read
+              off a previous day's generation. True on both branches, so the banner no longer needs to
+              hide from one of them. */}
+          &#9888; This is an older snapshot &mdash; today&rsquo;s plan hasn&rsquo;t refreshed yet, so the watering call and rain totals may be out of date.
         </div>
       )}
       {uncertain && (

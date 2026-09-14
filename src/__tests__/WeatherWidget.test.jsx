@@ -111,14 +111,21 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
   }
   const live = { recent_precip_in: 0.10, today_precip_in: 0.61, today_pop: 92, tomorrow_precip_in: 0.20, tomorrow_pop: 30 }
 
-  it('overlays the LIVE figure + "Updated … live" stamp and suppresses the stale + uncertainty caveats', () => {
+  it('overlays the LIVE figure + "Updated … live" stamp, and the caveats survive it', () => {
+    // BUG-WXLIVESTAMPSTALE-001 — the stale assertion here used to read "suppressed when live", and
+    // that WAS the defect: a prior-day plan under a fresh-looking stamp is the worst case to go quiet
+    // on. The overlay still owns the FIGURE and the stamp line (DRG-WXROLL-001, unchanged); it no
+    // longer owns the caveats. Showery stays absent on THIS fixture only because `stale` outranks it
+    // — one banner, not two — and `could climb` stays absent because the note's number-level hedge is
+    // still live-gated. Both of those are asserted positively in the BUG-WXLIVESTAMPSTALE-001 block
+    // at the end of this file, so neither null below is carrying the new behaviour's proof.
     render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={live}
       refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-20T06:00:41Z" planDate="2026-06-22" />)
     expect(screen.getByText(/0\.56/)).toBeTruthy()        // live D0 amount probability-weighted (0.61 * 92%), not the raw 0.61 or the 0.21 nightly
     expect(screen.getByText(/· live/i)).toBeTruthy()
-    expect(screen.queryByText(/As of/i)).toBeNull()       // live stamp replaces the as-of stamp
-    expect(screen.queryByText(/older snapshot/i)).toBeNull()   // stale suppressed when live
-    expect(screen.queryByText(/Showery pattern/i)).toBeNull()  // uncertainty suppressed when live
+    expect(screen.queryByText(/As of/i)).toBeNull()       // live stamp still replaces the as-of stamp
+    expect(screen.getByText(/older snapshot/i)).toBeTruthy()   // NO LONGER suppressed by the overlay
+    expect(screen.queryByText(/Showery pattern/i)).toBeNull()  // outranked by stale, not hidden by live
     expect(screen.queryByText(/could climb/i)).toBeNull()
   })
 
@@ -477,5 +484,114 @@ describe('WeatherWidget — a measurement outranks a forecast (BUG-RAINCARDFOREC
       expect(screen.queryByText(/fallen/), `observed=${observed}`).toBeNull()
       unmount()
     }
+  })
+})
+
+// BUG-WXLIVESTAMPSTALE-001 — the live overlay made the card look current and then told two lies about
+// what that meant. Dave's gauge read 0.79" by midday on 2026-09-13 while the card read
+// `0.07" fallen · 0.38" more expected · 83%` under `Updated 12:10 · live forecast`, with the stored
+// showery caveat — the ONE line that would have explained the gap — hidden by its `!live` gate.
+// Every fixture below is that morning. Both defects are one mistake: a client-side forecast fetch
+// refreshes the rain FIGURE and nothing else, so it may not stamp, nor silence, anything else.
+describe('WeatherWidget — a live stamp covers only what is live (BUG-WXLIVESTAMPSTALE-001)', () => {
+  const GEN = '2026-09-13T09:30:00Z'        // 5:30 AM ET — when the plan (and the gauge read) froze
+  const REFRESHED = '2026-09-13T16:10:00Z'  // 12:10 PM ET — when the client re-fetched the forecast
+  const DAY = '2026-09-13'
+  // Verbatim shape of that morning's stored hydrology: the gauge total and the remainder are the
+  // plan's, and the uncertainty reason is the engine's current string (OPS-PLANHOURLY-001 replaced
+  // the old "pre-dawn snapshot" wording; do not reintroduce it).
+  const SEP13 = {
+    recent_precip_in: 0.12, today_precip_in: 0.45, today_observed_in: 0.07, today_remaining_in: 0.38,
+    today_pop: 83, tomorrow_precip_in: 0.10, tomorrow_pop: 20, rain_coming: true,
+    station: { recent_source: 'station', today_source: 'station+forecast', station_fresh: true },
+    status: { ok: true, uncertainty: { flag: true, reason: 'showery today (83% on 0.45") — showery amounts shift through the day' } },
+  }
+  // The midday overlay. Its chance (90) deliberately differs from the plan's (83) so an assertion can
+  // tell which basis the measured sentence is quoting.
+  const SEP13_LIVE = { recent_precip_in: 0.12, today_precip_in: 0.52, today_pop: 90, tomorrow_precip_in: 0.10, tomorrow_pop: 20 }
+  const overlaid = (extra = {}) => render(
+    <WeatherWidget weather={weather} hydrology={{ ...SEP13, ...extra }} liveHydrology={SEP13_LIVE}
+      refreshedAt={REFRESHED} generatedAt={GEN} planDate={DAY} />
+  )
+
+  // ── defect 1: a current timestamp over a frozen measurement ────────────────────────────────────
+  it('attaches the measurement\'s OWN basis time to the measurement', () => {
+    overlaid()
+    // ONE node, not two: getByText matches a single element's text, so this is the attachment proof
+    // — a basis time floating elsewhere on the card is what the 12:10 stamp already was.
+    expect(screen.getByText(/0\.07″ fallen as of 5:30 AM · 0\.38″ more expected · 83%/)).toBeTruthy()
+    expect(screen.getByText(/^Updated/).textContent).toBe('Updated 12:10 PM · live forecast')
+  })
+
+  it('never lets the overlay\'s chance into the sentence its own two figures predate', () => {
+    // The sentence is stamped "as of 5:30 AM". The overlay says 90%; the plan said 83%. A sentence
+    // cannot be as-of one time and quote a number from another.
+    overlaid()
+    expect(screen.getByText(/· 83%/)).toBeTruthy()
+    expect(screen.queryByText(/90%/)).toBeNull()
+  })
+
+  it('swaps "today" for the basis time rather than stacking both, on the nothing-more-coming form', () => {
+    overlaid({ today_observed_in: 0.79, today_remaining_in: 0 })
+    expect(screen.getByText(/0\.79″ fallen as of 5:30 AM · none more expected/)).toBeTruthy()
+    expect(screen.queryByText(/fallen today/)).toBeNull()
+  })
+
+  it('qualifies the live stamp as FORECAST whenever a measured figure is on the card', () => {
+    // DRG-WXSTATION-002 qualified this on the provenance bag. A card showing "0.07″ fallen" has
+    // something to be confused with whether or not the bag came through, and a bagless gauge day is
+    // exactly the card the stamp was misread on.
+    const { station, ...noBag } = SEP13
+    render(<WeatherWidget weather={weather} hydrology={noBag} liveHydrology={SEP13_LIVE}
+      refreshedAt={REFRESHED} generatedAt={GEN} planDate={DAY} />)
+    expect(screen.getByText(/^Updated/).textContent).toBe('Updated 12:10 PM · live forecast')
+  })
+
+  it('adds NOTHING on the nightly path — the As-of stamp under the note is already that basis', () => {
+    // Scope proof. The inline basis appears only when the overlay has taken the stamp line; repeating
+    // it under the stamp that already says it would just lengthen the line on a 390px phone.
+    render(<WeatherWidget weather={weather} hydrology={SEP13} generatedAt={GEN} planDate={DAY} />)
+    expect(screen.getByText(/0\.07″ fallen · 0\.38″ more expected · 83%/)).toBeTruthy()
+    expect(screen.queryByText(/fallen as of/)).toBeNull()
+    expect(screen.getByText(/^As of/).textContent).toBe('As of Sep 13 · 5:30 AM · rain gauge + forecast')
+  })
+
+  // ── defect 2: the overlay suppressed the caveats ───────────────────────────────────────────────
+  it('shows the showery caveat THROUGH the overlay — the line that explained the 0.79" gap', () => {
+    overlaid()
+    expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
+    expect(screen.getByText(/plays it safe/i)).toBeTruthy()
+  })
+
+  it('shows the older-snapshot banner through the overlay, and names the PLAN not the forecast', () => {
+    // The prior-day case: freshest-looking card, oldest plan. The old copy ("today's forecast hasn't
+    // refreshed yet") would have been a false statement on this branch — a live forecast is exactly
+    // what HAS arrived. What has not refreshed is the plan the lanes and totals still come from.
+    render(<WeatherWidget weather={weather} hydrology={SEP13} liveHydrology={SEP13_LIVE}
+      refreshedAt={REFRESHED} generatedAt="2026-09-12T09:30:00Z" planDate={DAY} />)
+    expect(screen.getByText(/older snapshot/i)).toBeTruthy()
+    expect(screen.getByText(/watering call and rain totals may be out of date/i)).toBeTruthy()
+    expect(screen.queryByText(/forecast hasn.t refreshed/i)).toBeNull()
+  })
+
+  it('still shows ONE banner, not two, when the plan is both stale and flagged', () => {
+    // Ungating both did not ungate the precedence between them.
+    render(<WeatherWidget weather={weather} hydrology={SEP13} liveHydrology={SEP13_LIVE}
+      refreshedAt={REFRESHED} generatedAt="2026-09-12T09:30:00Z" planDate={DAY} />)
+    expect(screen.queryByText(/Showery pattern/i)).toBeNull()
+  })
+
+  it('does NOT restate the engine\'s hedge over the overlay\'s own numbers', () => {
+    // The scope line between the two caveats. The BANNER is regime-level ("showery pattern") and is
+    // true of the day however you read it, so it shows. The NOTE's hedge restates the STORED
+    // snapshot's figures and drops the PoP weighting, so over live numbers it would swap a hedged
+    // figure for a raw one while adding a hedging word — it stays live-gated. No gauge on this
+    // fixture, or the measured sentence would win before either branch is reached.
+    const noGauge = { ...SEP13, today_observed_in: 0, today_remaining_in: null, station: undefined }
+    render(<WeatherWidget weather={weather} hydrology={noGauge} liveHydrology={SEP13_LIVE}
+      refreshedAt={REFRESHED} generatedAt={GEN} planDate={DAY} />)
+    expect(screen.getByText(/Showery pattern/i)).toBeTruthy()      // banner: shown
+    expect(screen.queryByText(/could climb/i)).toBeNull()          // note hedge: still live-gated
+    expect(screen.getByText(/0\.47″ rain expected today · 90%/)).toBeTruthy()  // 0.52 * 90% — the live figure, still PoP-weighted
   })
 })
