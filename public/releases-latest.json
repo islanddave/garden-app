@@ -1,7 +1,7 @@
 {
-  "version": "4.133.0",
+  "version": "4.134.0",
   "date": "2026-09-14",
   "highlights": [
-    "The voice debug log now states what it measures. It records the first stage of speech handling only, so a phrase that reads as unrecognised there may still work correctly when you log a harvest for real - the log now says so rather than leaving it to be guessed."
+    "Behind the scenes: the first piece of spoken care commands - the part that reads a phrase like water all bag area except three plants and decides whether it can be trusted. It is not connected to anything yet and nothing in the app changes."
   ]
 }
